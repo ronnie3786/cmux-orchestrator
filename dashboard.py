@@ -936,6 +936,52 @@ function api(method,path,body){
 
 function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 
+function colorize(text){
+  if(!text)return '<span style="color:var(--text-muted);font-style:italic">(no data yet)</span>';
+  var h=esc(text);
+  // Claude Code tool actions: ⚡ Read/Edit/Write/Bash etc
+  h=h.replace(/(⚡\s*)(Read|Edit|Write|Bash|MultiEdit|Search|Glob|Grep|ListDir|Fetch|Browse|TodoRead|TodoWrite|WebFetch|MCP|WebSearch|Task|NotebookRead|NotebookEdit)(\s+)/g,
+    '<span style="color:var(--purple);font-weight:600">$1$2</span>$3');
+  // File paths after tool actions (anything that looks like a path)
+  h=h.replace(/((?:Sources|Tests|Packages|App|src|lib|test|spec|config|public|views|models|controllers)\/[^\s<]+)/g,
+    '<span style="color:var(--accent)">$1</span>');
+  // Also color generic file paths with extensions
+  h=h.replace(/([A-Za-z0-9_\-]+\.(?:swift|ts|tsx|js|jsx|py|rb|go|rs|json|yaml|yml|toml|css|html|md|sh|sql|xml|plist|h|m|c|cpp|java|kt))/g,
+    '<span style="color:var(--accent)">$1</span>');
+  // Musing.../Thinking.../Processing...
+  h=h.replace(/(Musing\.\.\.|Thinking\.\.\.|Processing\.\.\.)/g,
+    '<span style="color:var(--green);font-style:italic">$1</span>');
+  // Claude Code REPL prompt ❯ (and the ) variant)
+  h=h.replace(/^(\s*[❯)]\s*)/gm,
+    '<span style="color:var(--green);font-weight:600">$1</span>');
+  // Shell prompts ($ at start of line)
+  h=h.replace(/^(\$\s)/gm,
+    '<span style="color:var(--green)">$1</span>');
+  // (Y/n) and (y/n) prompts
+  h=h.replace(/(\([Yy](?:\/[Nn]|es\/no)\))/g,
+    '<span style="color:var(--yellow);font-weight:600">$1</span>');
+  // "Allow <Tool>" prompts
+  h=h.replace(/(Allow\s+(?:Read|Write|Edit|Bash|Browser|MCP|Fetch|MultiEdit))/g,
+    '<span style="color:var(--yellow);font-weight:600">$1</span>');
+  // Numbered menu items with cursor
+  h=h.replace(/^(\s*[❯)]\s*\d+[.)]\s+.*)$/gm,
+    '<span style="color:var(--yellow)">$1</span>');
+  // Model:/Cost:/Ctx: info lines
+  h=h.replace(/(Model:\s*[^\n]+)/g,'<span style="color:var(--text-muted)">$1</span>');
+  h=h.replace(/(Cost:\s*\$[^\n]+)/g,'<span style="color:var(--text-muted)">$1</span>');
+  h=h.replace(/(Ctx:\s*[^\n]+)/g,'<span style="color:var(--text-muted)">$1</span>');
+  // Success messages
+  h=h.replace(/(Build complete!|All \d+ tests passed|✓[^\n]*|Done[.!]?)/g,
+    '<span style="color:var(--green)">$1</span>');
+  // Error/warning keywords
+  h=h.replace(/(error:|Error:|ERROR|failed|Failed|FAILED|warning:|Warning:)/g,
+    '<span style="color:var(--red);font-weight:600">$1</span>');
+  // Diff-style lines
+  h=h.replace(/^(\+[^\n]+)$/gm,'<span style="color:var(--green)">$1</span>');
+  h=h.replace(/^(-[^\n]+)$/gm,'<span style="color:var(--red)">$1</span>');
+  return h;
+}
+
 function fmtTime(iso){
   if(!iso)return '\u2014';
   try{return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}catch(e){return iso}
@@ -1007,7 +1053,7 @@ function buildGrid(){
     if(w.lastCheck)html+='<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>';
     html+='</div>';
 
-    html+='<div class="card-terminal">'+(w.screenTail?esc(w.screenTail):'<span style="color:var(--text-muted);font-style:italic">(no data yet)</span>')+'</div>';
+    html+='<div class="card-terminal">'+colorize(w.screenTail)+'</div>';
 
     html+='<div class="card-footer">';
     html+='<input class="card-input" placeholder="Send message..." id="input-'+w.index+'" onkeydown="if(event.key===\'Enter\')sendToWs('+w.index+')">';
@@ -1095,7 +1141,7 @@ function updateExpanded(){
   if(ws.enabled!==false)autoEl.classList.add('on');
   else autoEl.classList.remove('on');
 
-  document.getElementById('expTerminal').textContent=ws.screenFull||ws.screenTail||'(no data yet)';
+  document.getElementById('expTerminal').innerHTML=colorize(ws.screenFull||ws.screenTail);
 
   // Activity feed for this workspace
   var wsLog=logData.filter(function(e){return e.workspace===expandedWsIndex});
