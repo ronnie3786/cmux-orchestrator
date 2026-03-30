@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux harness — Command Center</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-hover: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --orange: #f0883e;
+    --radius: 12px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ─── Top Bar ─── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 20px; }
+  .topbar-logo { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+  .topbar-logo span { color: var(--accent); }
+  .topbar-stats { display: flex; gap: 20px; }
+  .stat { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
+  .stat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .topbar-actions { display: flex; gap: 10px; }
+  .btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: var(--surface-hover); border-color: var(--accent); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
+  .btn-primary:hover { opacity: 0.9; }
+
+  /* ─── Grid View ─── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(540px, 1fr));
+    gap: 16px;
+    padding: 24px 28px;
+  }
+
+  /* ─── Card ─── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .card:hover { border-color: #444c56; }
+  .card.needs-attention {
+    border-color: var(--yellow);
+    box-shadow: 0 0 16px rgba(210,153,34,0.1);
+    order: -1;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-title-row { display: flex; align-items: center; gap: 10px; }
+  .card-status { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .card-status.active { background: var(--green); box-shadow: 0 0 8px rgba(63,185,80,0.4); }
+  .card-status.waiting { background: var(--yellow); animation: pulse 2s infinite; }
+  .card-status.idle { background: var(--text-muted); opacity: 0.5; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .card-name { font-size: 15px; font-weight: 600; }
+
+  .card-header-right { display: flex; align-items: center; gap: 8px; }
+  .badge {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .badge-active { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-waiting { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .badge-idle { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+  .expand-btn {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+  .expand-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Auto-approve toggle */
+  .auto-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .auto-toggle-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-muted);
+    transition: color 0.2s;
+  }
+  .auto-toggle.on .auto-toggle-label { color: var(--green); }
+  .toggle-track {
+    width: 36px; height: 20px;
+    background: var(--border);
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .auto-toggle.on .toggle-track { background: var(--green); }
+  .toggle-track::after {
+    content: '';
+    width: 16px; height: 16px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+    top: 2px; left: 2px;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .auto-toggle.on .toggle-track::after { transform: translateX(16px); }
+
+  .card-meta {
+    display: flex;
+    gap: 14px;
+    padding: 10px 18px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+  }
+
+  .card-terminal {
+    padding: 12px 18px;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    background: rgba(0,0,0,0.2);
+    min-height: 90px;
+    max-height: 120px;
+    overflow: hidden;
+    position: relative;
+  }
+  .card-terminal::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 24px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.3));
+  }
+  .t-prompt { color: var(--green); }
+  .t-tool { color: var(--purple); }
+  .t-file { color: var(--accent); }
+  .t-warn { color: var(--yellow); }
+
+  .card-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border);
+  }
+  .card-input {
+    flex: 1;
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }
+  .card-input:focus { border-color: var(--accent); }
+  .card-input::placeholder { color: var(--text-muted); }
+  .card-send {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #000;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     EXPANDED OVERLAY
+     ═══════════════════════════════════════════════════════ */
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    animation: fadeIn 0.15s ease;
+  }
+  .overlay.visible { display: flex; }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+  .expanded-panel {
+    display: flex;
+    width: 92vw;
+    max-width: 1400px;
+    height: 85vh;
+    margin: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    animation: slideUp 0.2s ease;
+  }
+  @keyframes slideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+  /* Expanded: Main content */
+  .exp-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .exp-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .exp-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+  .exp-meta { display: flex; gap: 20px; font-size: 13px; color: var(--text-muted); flex-wrap: wrap; }
+  .exp-header-actions { display: flex; gap: 8px; align-items: flex-start; }
+  .exp-close {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .exp-close:hover { border-color: var(--red); color: var(--red); }
+
+  .exp-terminal {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 24px;
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    background: rgba(0,0,0,0.15);
+  }
+  .exp-terminal .t-line { padding: 1px 0; }
+  .t-section {
+    margin: 14px 0 8px;
+    padding: 6px 14px;
+    background: rgba(88,166,255,0.08);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    font-family: -apple-system, sans-serif;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  .t-dim { color: var(--text-muted); }
+
+  .exp-input {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .mode-toggle {
+    display: flex;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .mode-btn {
+    padding: 8px 14px;
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--text-muted);
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mode-btn.active { background: var(--accent); color: #000; font-weight: 600; }
+  .mode-btn:hover:not(.active) { background: var(--surface-hover); }
+  .exp-input-field {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .exp-input-field:focus { border-color: var(--accent); }
+  .exp-input-field::placeholder { color: var(--text-muted); }
+  .exp-send {
+    padding: 10px 22px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #000;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  /* Expanded: Activity Feed (right panel) */
+  .exp-activity {
+    width: 300px;
+    border-left: 1px solid var(--border);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .exp-activity-header {
+    padding: 16px 18px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .exp-activity-count {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    background: rgba(88,166,255,0.1);
+    color: var(--accent);
+  }
+  .exp-activity-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .act-item {
+    padding: 12px 18px;
+    border-bottom: 1px solid rgba(48,54,61,0.4);
+    transition: background 0.1s;
+  }
+  .act-item:hover { background: rgba(88,166,255,0.03); }
+  .act-item:last-child { border-bottom: none; }
+  .act-time { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; }
+  .act-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+  .act-type {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    margin-right: 4px;
+  }
+  .act-type.approved { background: rgba(63,185,80,0.15); color: var(--green); }
+  .act-type.flagged { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .act-type.action { background: rgba(88,166,255,0.1); color: var(--accent); }
+
+  /* ─── Escape key hint ─── */
+  .esc-hint {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(0,0,0,0.5);
+    color: var(--text-muted);
+    font-size: 11px;
+    pointer-events: none;
+  }
+  .esc-hint kbd {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.1);
+    font-family: inherit;
+    font-size: 10px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════ TOP BAR ════════ -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo"><span>cmux</span> harness</div>
+    <div class="topbar-stats">
+      <div class="stat"><span class="stat-dot" style="background:var(--green)"></span> 3 active</div>
+      <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> 1 waiting</div>
+      <div class="stat"><span class="stat-dot" style="background:var(--text-muted);opacity:0.5"></span> 2 idle</div>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn">⚙ Settings</button>
+    <button class="btn btn-primary">+ New Session</button>
+  </div>
+</div>
+
+<!-- ════════ CARD GRID ════════ -->
+<div class="grid">
+
+  <!-- NEEDS ATTENTION (auto-sorts first via order:-1) -->
+  <div class="card needs-attention">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status waiting"></div>
+        <span class="card-name">IOSDOX-4819 — Fix Crash on Profile Load</span>
+      </div>
+      <div class="card-header-right">
+        <span class="badge badge-waiting">Needs You</span>
+        <div class="auto-toggle on" onclick="toggleAuto(this)">
+          <span class="auto-toggle-label">Auto</span>
+          <div class="toggle-track"></div>
+        </div>
+        <button class="expand-btn" onclick="openExpanded('4819')">⤢</button>
+      </div>
+    </div>
+    <div class="card-meta">
+      <span>📂 ~/Dev/Doximity-Cloud</span>
+      <span>🌿 worktree/IOSDOX-4819</span>
+      <span>⏱ 8m · Waiting 2m</span>
+    </div>
+    <div class="card-terminal">
+      <div>Which approach should I take?</div>
+      <div><span class="t-warn">❯ 1. Refactor ProfileViewModel to use async/await</span></div>
+      <div>  2. Add nil check guard at the call site</div>
+      <div>  3. Wrap in Result type with proper error handling</div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- ACTIVE -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status active"></div>
+        <span class="card-name">IOSDOX-4821 — Auth Token Refresh</span>
+      </div>
+      <div class="card-header-right">
+        <span class="badge badge-active">Active</span>
+        <div class="auto-toggle on" onclick="toggleAuto(this)">
+          <span class="auto-toggle-label">Auto</span>
+          <div class="toggle-track"></div>
+        </div>
+        <button class="expand-btn" onclick="openExpanded('4821')">⤢</button>
+      </div>
+    </div>
+    <div class="card-meta">
+      <span>📂 ~/Dev/Doximity-Cloud</span>
+      <span>🌿 worktree/IOSDOX-4821</span>
+      <span>⏱ 12m</span>
+      <span>🤖 claude-sonnet-4</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
+      <div>  Adding refresh token retry logic with exponential backoff...</div>
+      <div><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
+      <div>  Updating keychain wrapper to handle token rotation...</div>
+      <div><span class="t-prompt">Musing...</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- ACTIVE -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status active"></div>
+        <span class="card-name">IOSDOX-4815 — Dark Mode Sidebar</span>
+      </div>
+      <div class="card-header-right">
+        <span class="badge badge-active">Active</span>
+        <div class="auto-toggle" onclick="toggleAuto(this)">
+          <span class="auto-toggle-label">Auto</span>
+          <div class="toggle-track"></div>
+        </div>
+        <button class="expand-btn" onclick="openExpanded('4815')">⤢</button>
+      </div>
+    </div>
+    <div class="card-meta">
+      <span>📂 ~/Dev/Doximity-Cloud</span>
+      <span>🌿 worktree/IOSDOX-4815</span>
+      <span>⏱ 22m</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/UI/Sidebar/SidebarTheme.swift</span></div>
+      <div>  Updating color tokens for dark mode variant...</div>
+      <div><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/UI/Theme/ColorPalette.swift</span></div>
+      <div><span class="t-prompt">Thinking...</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- ACTIVE (just finished build) -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status active"></div>
+        <span class="card-name">IOSDOX-4812 — API Pagination</span>
+      </div>
+      <div class="card-header-right">
+        <span class="badge badge-active">Active</span>
+        <div class="auto-toggle on" onclick="toggleAuto(this)">
+          <span class="auto-toggle-label">Auto</span>
+          <div class="toggle-track"></div>
+        </div>
+        <button class="expand-btn" onclick="openExpanded('4812')">⤢</button>
+      </div>
+    </div>
+    <div class="card-meta">
+      <span>📂 ~/Dev/Doximity-Cloud</span>
+      <span>🌿 worktree/IOSDOX-4812</span>
+      <span>⏱ 5m</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="t-tool">⚡ Bash</span> swift build 2>&1 | tail -5</div>
+      <div>  Build complete! (42.3s)</div>
+      <div><span class="t-prompt">❯</span> Ready for next instruction</div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- IDLE -->
+  <div class="card" style="opacity:0.6;">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status idle"></div>
+        <span class="card-name">Scratch — Playground</span>
+      </div>
+      <div class="card-header-right">
+        <span class="badge badge-idle">Idle</span>
+        <div class="auto-toggle" onclick="toggleAuto(this)">
+          <span class="auto-toggle-label">Auto</span>
+          <div class="toggle-track"></div>
+        </div>
+        <button class="expand-btn" onclick="openExpanded('scratch')">⤢</button>
+      </div>
+    </div>
+    <div class="card-meta">
+      <span>📂 ~/projects/scratch</span>
+      <span>🌿 main</span>
+      <span>⏱ 1h ago</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="t-prompt">❯</span> claude</div>
+      <div>  Model: claude-sonnet-4-20250514</div>
+      <div>  Cost: $0.14 this session</div>
+      <div><span class="t-prompt">❯</span> <span style="opacity:0.4">_</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- IDLE -->
+  <div class="card" style="opacity:0.6;">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status idle"></div>
+        <span class="card-name">cmux-harness — This project</span>
+      </div>
+      <div class="card-header-right">
+        <span class="badge badge-idle">Idle</span>
+        <div class="auto-toggle" onclick="toggleAuto(this)">
+          <span class="auto-toggle-label">Auto</span>
+          <div class="toggle-track"></div>
+        </div>
+        <button class="expand-btn" onclick="openExpanded('harness')">⤢</button>
+      </div>
+    </div>
+    <div class="card-meta">
+      <span>📂 ~/projects/cmux-harness</span>
+      <span>🌿 main</span>
+      <span>⏱ 45m ago</span>
+    </div>
+    <div class="card-terminal">
+      <div>$ git status</div>
+      <div>On branch main</div>
+      <div>nothing to commit, working tree clean</div>
+      <div>$ <span style="opacity:0.4">_</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════ EXPANDED OVERLAY ════════ -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeExpanded()">
+
+  <div class="expanded-panel">
+
+    <!-- Left: full terminal view -->
+    <div class="exp-main">
+      <div class="exp-header">
+        <div>
+          <div class="exp-title" id="exp-title">IOSDOX-4821 — Auth Token Refresh</div>
+          <div class="exp-meta" id="exp-meta">
+            <span>📂 ~/Documents/Development/Doximity-Cloud</span>
+            <span>🌿 worktree/IOSDOX-4821</span>
+            <span>⏱ 12 min</span>
+            <span>🤖 claude-sonnet-4</span>
+          </div>
+        </div>
+        <div class="exp-header-actions">
+          <div class="auto-toggle on" onclick="toggleAuto(this)" style="margin-right:4px;">
+            <span class="auto-toggle-label">Auto</span>
+            <div class="toggle-track"></div>
+          </div>
+          <button class="btn" style="font-size:12px;">⏸ Pause</button>
+          <button class="btn" style="font-size:12px;border-color:var(--red);color:var(--red);">✕ Stop</button>
+          <button class="exp-close" onclick="closeExpanded()">✕</button>
+        </div>
+      </div>
+
+      <div class="exp-terminal" id="exp-terminal">
+        <div class="t-section">Session started 12 minutes ago</div>
+
+        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
+        <div class="t-line"><span class="t-dim">  Reading 142 lines...</span></div>
+        <div class="t-line">&nbsp;</div>
+
+        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
+        <div class="t-line"><span class="t-dim">  Reading 89 lines...</span></div>
+        <div class="t-line">&nbsp;</div>
+
+        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Network/APIClient.swift</span></div>
+        <div class="t-line"><span class="t-dim">  Reading 210 lines...</span></div>
+        <div class="t-line">&nbsp;</div>
+
+        <div class="t-section">Auto-approved: Edit Sources/Auth/TokenManager.swift</div>
+
+        <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
+        <div class="t-line">  Adding refresh token retry logic with exponential backoff.</div>
+        <div class="t-line">  Modified lines 45-78: added RetryPolicy struct and</div>
+        <div class="t-line">  refreshWithBackoff() method.</div>
+        <div class="t-line">&nbsp;</div>
+
+        <div class="t-section">Auto-approved: Edit Sources/Auth/TokenStorage.swift</div>
+
+        <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
+        <div class="t-line">  Updating keychain wrapper to handle token rotation.</div>
+        <div class="t-line">  Added rotateToken() and invalidateStale() methods.</div>
+        <div class="t-line">&nbsp;</div>
+
+        <div class="t-section">Auto-approved: Read Sources/Network/APIClient.swift</div>
+
+        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Network/APIClient.swift</span></div>
+        <div class="t-line"><span class="t-dim">  Reviewing retry integration points in API layer...</span></div>
+        <div class="t-line">&nbsp;</div>
+
+        <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Network/APIClient.swift</span></div>
+        <div class="t-line">  Wiring TokenManager.refreshWithBackoff() into the 401</div>
+        <div class="t-line">  response interceptor. Added automatic retry on token refresh.</div>
+        <div class="t-line">&nbsp;</div>
+
+        <div class="t-line"><span class="t-prompt">Musing...</span></div>
+      </div>
+
+      <div class="exp-input">
+        <div class="mode-toggle">
+          <button class="mode-btn active" onclick="setMode(this)">Raw</button>
+          <button class="mode-btn" onclick="setMode(this)">Intent</button>
+        </div>
+        <input class="exp-input-field" placeholder="Type a message or instruction for this session..." />
+        <button class="exp-send">Send ↵</button>
+      </div>
+    </div>
+
+    <!-- Right: activity feed -->
+    <div class="exp-activity">
+      <div class="exp-activity-header">
+        Activity
+        <span class="exp-activity-count" id="act-count">8 events</span>
+      </div>
+      <div class="exp-activity-list" id="exp-activity-list">
+
+        <div class="act-item">
+          <div class="act-time">17:36</div>
+          <div class="act-text">
+            <span class="act-type approved">✓ AUTO</span>
+            Edit Sources/Network/APIClient.swift
+          </div>
+        </div>
+
+        <div class="act-item">
+          <div class="act-time">17:35</div>
+          <div class="act-text">
+            <span class="act-type approved">✓ AUTO</span>
+            Read Sources/Network/APIClient.swift
+          </div>
+        </div>
+
+        <div class="act-item">
+          <div class="act-time">17:34</div>
+          <div class="act-text">
+            <span class="act-type approved">✓ AUTO</span>
+            Edit Sources/Auth/TokenStorage.swift
+          </div>
+        </div>
+
+        <div class="act-item">
+          <div class="act-time">17:33</div>
+          <div class="act-text">
+            <span class="act-type approved">✓ AUTO</span>
+            Edit Sources/Auth/TokenManager.swift
+          </div>
+        </div>
+
+        <div class="act-item">
+          <div class="act-time">17:31</div>
+          <div class="act-text">
+            <span class="act-type approved">✓ AUTO</span>
+            Read Sources/Auth/TokenStorage.swift
+          </div>
+        </div>
+
+        <div class="act-item">
+          <div class="act-time">17:31</div>
+          <div class="act-text">
+            <span class="act-type approved">✓ AUTO</span>
+            Read Sources/Auth/TokenManager.swift
+          </div>
+        </div>
+
+        <div class="act-item">
+          <div class="act-time">17:30</div>
+          <div class="act-text">
+            <span class="act-type action">→ START</span>
+            Session initialized
+          </div>
+        </div>
+
+        <div class="act-item">
+          <div class="act-time">17:30</div>
+          <div class="act-text">
+            <span class="act-type action">→ NEW</span>
+            Workspace created
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <div class="esc-hint"><kbd>esc</kbd> to close</div>
+</div>
+
+<script>
+function toggleAuto(el) {
+  el.classList.toggle('on');
+}
+
+function openExpanded(id) {
+  document.getElementById('overlay').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeExpanded() {
+  document.getElementById('overlay').classList.remove('visible');
+  document.body.style.overflow = '';
+}
+
+function setMode(btn) {
+  btn.parentElement.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeExpanded();
+});
+</script>
+
+</body>
+</html>

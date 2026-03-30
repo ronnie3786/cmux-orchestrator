@@ -185,8 +185,9 @@ def llm_classify(screen_text):
     lines = screen_text.splitlines()
     tail = "\n".join(lines[-25:]) if len(lines) > 25 else screen_text
 
+    active_model = _engine.model if _engine is not None else OLLAMA_MODEL
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": active_model,
         "system": _LLM_SYSTEM,
         "prompt": f"Terminal screen:\n\n{tail}\n\nClassify this terminal screen.",
         "stream": False,
@@ -214,7 +215,7 @@ def llm_classify(screen_text):
             "event": "llm_response",
             "raw": raw,
             "parsed": parsed,
-            "model": OLLAMA_MODEL,
+            "model": active_model,
         })
         if not parsed.get("waiting", False):
             return None
@@ -379,7 +380,9 @@ class HarnessEngine(threading.Thread):
         self.approval_log = []
         self.workspaces = []
         self.fingerprints = {}
+        self.screen_cache = {}   # idx -> last screen text (tail)
         self._lock = threading.Lock()
+        self.model = OLLAMA_MODEL
 
     def set_enabled(self, val):
         with self._lock:
@@ -393,23 +396,36 @@ class HarnessEngine(threading.Thread):
         with self._lock:
             self.poll_interval = max(2, min(30, int(val)))
 
+    def set_model(self, name):
+        with self._lock:
+            self.model = name
+
     def get_status(self):
         with self._lock:
             ws_list = []
             for ws in self.workspaces:
                 idx = ws.get("index", ws.get("id"))
+                screen_tail = self.screen_cache.get(idx, "")
+                # Get last 5 lines for card preview
+                lines = screen_tail.strip().splitlines() if screen_tail else []
+                preview = "\n".join(lines[-5:]) if lines else ""
                 ws_list.append({
                     "index": idx,
                     "name": ws.get("name", f"workspace-{idx}"),
                     "uuid": ws.get("uuid", ""),
                     "enabled": self.workspace_enabled.get(idx, True),
                     "lastCheck": ws.get("_lastCheck", ""),
+                    "screenTail": preview,
+                    "screenFull": screen_tail,
+                    "cwd": ws.get("_cwd", ""),
+                    "branch": ws.get("_branch", ""),
                 })
             return {
                 "enabled": self.enabled,
                 "workspaces": ws_list,
                 "pollInterval": self.poll_interval,
                 "socketFound": _find_socket_path() is not None,
+                "model": self.model,
             }
 
     def get_log(self, limit=200):
@@ -492,11 +508,21 @@ class HarnessEngine(threading.Thread):
 
         screen = cmux_read_workspace(idx, surface_index, lines=40, workspace_uuid=ws_uuid)
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Try to get sidebar state (cwd, git branch) via v2 API
+        sidebar = _v2_request("sidebar.state", {"workspace_id": ws_uuid}) if ws_uuid else None
+
         with self._lock:
             for w in self.workspaces:
                 if w.get("index", w.get("id")) == idx:
                     w["_lastCheck"] = now_str
+                    if sidebar:
+                        w["_cwd"] = sidebar.get("cwd", "")
+                        w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
                     break
+            # Cache screen text for UI
+            if screen:
+                self.screen_cache[idx] = screen
 
         if not screen:
             _debug_log({"event": "empty_screen", "workspace": idx, "name": ws_name})
@@ -583,13 +609,33 @@ class HarnessEngine(threading.Thread):
                 # Always refresh workspace list so the UI shows them
                 # even before the global toggle is enabled.
                 self.refresh_workspaces()
+
+                # Read screens for ALL workspaces so the UI has data
+                with self._lock:
+                    ws_snap = list(self.workspaces)
+                for ws in ws_snap:
+                    ws_uuid = ws.get("uuid", "")
+                    idx = ws.get("index", ws.get("id"))
+                    if ws_uuid:
+                        screen = cmux_read_workspace(idx, 0, lines=40, workspace_uuid=ws_uuid)
+                        if screen:
+                            with self._lock:
+                                self.screen_cache[idx] = screen
+                        # Also try sidebar state
+                        sidebar = _v2_request("sidebar.state", {"workspace_id": ws_uuid})
+                        if sidebar:
+                            with self._lock:
+                                for w in self.workspaces:
+                                    if w.get("index", w.get("id")) == idx:
+                                        w["_cwd"] = sidebar.get("cwd", "")
+                                        w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
+                                        break
+
                 if enabled:
                     # Phase 1: Check which workspaces have unread
                     # notifications WITHOUT switching workspaces.
                     attention_uuids = self.get_workspaces_needing_attention()
 
-                    with self._lock:
-                        ws_snap = list(self.workspaces)
                     for ws in ws_snap:
                         idx = ws.get("index", ws.get("id"))
                         ws_uuid = ws.get("uuid", "")
@@ -597,8 +643,8 @@ class HarnessEngine(threading.Thread):
                             ws_on = self.workspace_enabled.get(idx, True)
                         if not ws_on:
                             continue
-                        # Phase 2: Only switch to workspaces that have
-                        # unread notifications (need attention).
+                        # Phase 2: Only run auto-approve on workspaces
+                        # that have unread notifications.
                         if attention_uuids and ws_uuid not in attention_uuids:
                             continue
                         self.check_workspace(ws)
@@ -611,223 +657,498 @@ class HarnessEngine(threading.Thread):
 # Dashboard HTML — embedded as string
 # ---------------------------------------------------------------------------
 
-DASHBOARD_HTML = """<!DOCTYPE html>
+DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>cmux Auto-Approve Dashboard</title>
+<title>cmux harness — Command Center</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;padding:20px;min-height:100vh}
-.container{max-width:900px;margin:0 auto}
-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px}
-header h1{font-size:1.5rem;font-weight:700;letter-spacing:-.5px}
-.conn-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-left:8px;vertical-align:middle}
-.conn-dot.ok{background:#4caf50;box-shadow:0 0 6px #4caf50}
-.conn-dot.err{background:#f44336;box-shadow:0 0 6px #f44336}
-.card{background:#16213e;border-radius:12px;padding:20px;margin-bottom:20px;border:1px solid #0f3460}
-.card h2{font-size:1.1rem;margin-bottom:14px;color:#a0c4ff}
-.row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-.switch{position:relative;display:inline-block;width:56px;height:30px}
-.switch input{opacity:0;width:0;height:0}
-.slider{position:absolute;cursor:pointer;inset:0;background:#555;border-radius:30px;transition:.3s}
-.slider:before{content:"";position:absolute;height:24px;width:24px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
-input:checked+.slider{background:#4caf50}
-input:checked+.slider:before{transform:translateX(26px)}
-.toggle-label{font-size:.95rem;font-weight:600}
-select{background:#0f3460;color:#e0e0e0;border:1px solid #1a3a6e;border-radius:6px;padding:6px 10px;font-size:.9rem}
-.ws-list{list-style:none}
-.ws-list li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #0f3460}
-.ws-list li:last-child{border-bottom:none}
-.ws-list .name{flex:1;font-weight:500}
-.ws-list .meta{font-size:.8rem;color:#888;font-family:'SF Mono',Menlo,monospace}
-.ws-list input[type=checkbox]{width:18px;height:18px;accent-color:#4caf50}
-.log-wrap{max-height:360px;overflow-y:auto;border-radius:8px}
-.log-wrap::-webkit-scrollbar{width:6px}
-.log-wrap::-webkit-scrollbar-thumb{background:#0f3460;border-radius:3px}
-table{width:100%;border-collapse:collapse;font-family:'SF Mono',Menlo,monospace;font-size:.82rem}
-th{text-align:left;padding:8px 10px;background:#0f3460;color:#a0c4ff;position:sticky;top:0;z-index:1}
-td{padding:6px 10px;border-bottom:1px solid #162040}
-tr:hover td{background:#1a2744}
-.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.78rem;font-weight:600}
-.badge-green{background:#1b5e20;color:#a5d6a7}
-.badge-yellow{background:#4e3a00;color:#ffd54f}
-.badge-red{background:#5e1a1a;color:#ff8a80}
-.empty{text-align:center;color:#666;padding:32px;font-style:italic}
-footer{text-align:center;color:#555;font-size:.75rem;margin-top:32px}
+:root{--bg:#0d1117;--surface:#161b22;--surface-hover:#1c2129;--border:#30363d;--text:#e6edf3;--text-muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff;--radius:12px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+
+/* Top Bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:100}
+.topbar-left{display:flex;align-items:center;gap:20px}
+.logo{font-size:18px;font-weight:700;letter-spacing:-.5px}
+.logo span{color:var(--accent)}
+.conn-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle}
+.conn-dot.ok{background:var(--green);box-shadow:0 0 6px rgba(63,185,80,.5)}
+.conn-dot.err{background:var(--red);box-shadow:0 0 6px rgba(248,81,73,.5)}
+.topbar-stats{display:flex;gap:20px}
+.stat{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted)}
+.stat-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.topbar-actions{display:flex;gap:10px}
+.btn{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;cursor:pointer;transition:all .15s}
+.btn:hover{background:var(--surface-hover);border-color:var(--accent)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#000;font-weight:600}
+.btn-primary:hover{opacity:.9}
+
+/* Global toggle in topbar */
+.global-toggle{display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg)}
+.global-toggle-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+
+/* Grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px}
+.grid-empty{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:15px;grid-column:1/-1}
+
+/* Card */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .2s,box-shadow .2s}
+.card:hover{border-color:#444c56}
+.card.needs-attention{border-color:var(--yellow);box-shadow:0 0 16px rgba(210,153,34,.1);order:-1}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
+.card-title-row{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.card-status{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.card-status.active{background:var(--green);box-shadow:0 0 8px rgba(63,185,80,.4)}
+.card-status.waiting{background:var(--yellow);animation:pulse 2s infinite}
+.card-status.idle{background:var(--text-muted);opacity:.5}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.card-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-header-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.badge-active{background:rgba(63,185,80,.15);color:var(--green)}
+.badge-waiting{background:rgba(210,153,34,.15);color:var(--yellow)}
+.badge-idle{background:rgba(139,148,158,.15);color:var(--text-muted)}
+
+/* Auto toggle */
+.auto-toggle{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.auto-toggle-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-muted);transition:color .2s}
+.auto-toggle.on .auto-toggle-label{color:var(--green)}
+.toggle-track{width:34px;height:18px;background:var(--border);border-radius:9px;position:relative;transition:background .2s;flex-shrink:0}
+.auto-toggle.on .toggle-track{background:var(--green)}
+.toggle-track::after{content:'';width:14px;height:14px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.auto-toggle.on .toggle-track::after{transform:translateX(16px)}
+
+/* Global toggle track (slightly larger) */
+.global-track{width:40px;height:22px;background:var(--border);border-radius:11px;position:relative;transition:background .2s;flex-shrink:0;cursor:pointer}
+.global-track.on{background:var(--green)}
+.global-track::after{content:'';width:18px;height:18px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.global-track.on::after{transform:translateX(18px)}
+
+.expand-btn{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.expand-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+.card-meta{display:flex;gap:14px;padding:10px 18px 0;font-size:12px;color:var(--text-muted);flex-wrap:wrap}
+.card-terminal{padding:12px 18px;font-family:'JetBrains Mono','SF Mono','Menlo',monospace;font-size:12px;line-height:1.6;color:var(--text-muted);background:rgba(0,0,0,.2);min-height:80px;max-height:120px;overflow:hidden;position:relative;white-space:pre-wrap;word-break:break-all}
+.card-terminal::after{content:'';position:absolute;bottom:0;left:0;right:0;height:24px;background:linear-gradient(transparent,rgba(0,0,0,.3))}
+.card-footer{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--border)}
+.card-input{flex:1;padding:9px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none}
+.card-input:focus{border-color:var(--accent)}
+.card-input::placeholder{color:var(--text-muted)}
+.card-send{padding:9px 16px;border-radius:8px;border:none;background:var(--accent);color:#000;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+
+/* Expanded overlay */
+.overlay{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);animation:fadeIn .15s ease}
+.overlay.visible{display:flex}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.expanded-panel{display:flex;width:92vw;max-width:1400px;height:85vh;margin:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5);animation:slideUp .2s ease}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.exp-main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.exp-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between}
+.exp-title{font-size:22px;font-weight:700;margin-bottom:8px}
+.exp-meta{display:flex;gap:20px;font-size:13px;color:var(--text-muted);flex-wrap:wrap}
+.exp-header-actions{display:flex;gap:8px;align-items:center}
+.exp-close{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.exp-close:hover{border-color:var(--red);color:var(--red)}
+.exp-terminal{flex:1;overflow-y:auto;padding:16px 24px;font-family:'JetBrains Mono','SF Mono',monospace;font-size:13px;line-height:1.8;background:rgba(0,0,0,.15);white-space:pre-wrap;word-break:break-all}
+.exp-input{display:flex;align-items:center;gap:10px;padding:16px 24px;border-top:1px solid var(--border);background:var(--surface)}
+.mode-toggle{display:flex;border-radius:8px;overflow:hidden;border:1px solid var(--border);flex-shrink:0}
+.mode-btn{padding:8px 14px;font-size:12px;background:var(--bg);color:var(--text-muted);border:none;cursor:pointer;transition:all .15s}
+.mode-btn.active{background:var(--accent);color:#000;font-weight:600}
+.mode-btn:hover:not(.active){background:var(--surface-hover)}
+.exp-input-field{flex:1;padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline:none}
+.exp-input-field:focus{border-color:var(--accent)}
+.exp-input-field::placeholder{color:var(--text-muted)}
+.exp-send{padding:10px 22px;border-radius:8px;border:none;background:var(--accent);color:#000;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+
+/* Activity panel */
+.exp-activity{width:300px;border-left:1px solid var(--border);background:var(--bg);display:flex;flex-direction:column;flex-shrink:0}
+.exp-activity-header{padding:16px 18px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.exp-activity-count{padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(88,166,255,.1);color:var(--accent)}
+.exp-activity-list{flex:1;overflow-y:auto;padding:4px 0}
+.act-item{padding:12px 18px;border-bottom:1px solid rgba(48,54,61,.4)}
+.act-item:last-child{border-bottom:none}
+.act-time{font-size:10px;color:var(--text-muted);margin-bottom:4px}
+.act-text{font-size:12px;color:var(--text);line-height:1.5}
+.act-type{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;margin-right:4px}
+.act-type.approved{background:rgba(63,185,80,.15);color:var(--green)}
+.act-type.flagged{background:rgba(210,153,34,.15);color:var(--yellow)}
+.act-type.action{background:rgba(88,166,255,.1);color:var(--accent)}
+.esc-hint{position:fixed;top:16px;right:16px;padding:4px 10px;border-radius:6px;background:rgba(0,0,0,.5);color:var(--text-muted);font-size:11px;pointer-events:none;z-index:1001;display:none}
+.overlay.visible .esc-hint-show{display:block}
+
+/* Settings modal */
+.settings-overlay{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.6);backdrop-filter:blur(3px)}
+.settings-overlay.visible{display:flex;align-items:center;justify-content:center}
+.settings-panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:420px;max-width:90vw;box-shadow:0 16px 60px rgba(0,0,0,.5)}
+.settings-title{font-size:18px;font-weight:700;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between}
+.settings-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}
+.settings-row:last-child{border-bottom:none}
+.settings-label{font-size:14px;color:var(--text)}
+.settings-sublabel{font-size:11px;color:var(--text-muted);margin-top:2px}
+.settings-select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;min-width:160px}
+.settings-select:focus{border-color:var(--accent)}
 </style>
 </head>
 <body>
-<div class="container">
-  <header>
-    <h1>&#9889; cmux Auto-Approve<span class="conn-dot" id="connDot"></span></h1>
-  </header>
-  <div class="card">
-    <div class="row">
-      <label class="switch"><input type="checkbox" id="globalToggle"><span class="slider"></span></label>
-      <span class="toggle-label" id="toggleLabel">OFF</span>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-        <label for="pollSelect" style="font-size:.85rem;color:#888">Poll interval</label>
-        <select id="pollSelect">
-          <option value="2">2 s</option>
-          <option value="3">3 s</option>
-          <option value="5" selected>5 s</option>
-          <option value="10">10 s</option>
-        </select>
-      </div>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo"><span>cmux</span> harness<span class="conn-dot" id="connDot"></span></div>
+    <div class="topbar-stats" id="topStats">
+      <div class="stat"><span class="stat-dot" style="background:var(--green)"></span> <span id="statActive">0</span> active</div>
+      <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> <span id="statWaiting">0</span> waiting</div>
+      <div class="stat"><span class="stat-dot" style="background:var(--text-muted);opacity:.5"></span> <span id="statIdle">0</span> idle</div>
     </div>
   </div>
-  <div class="card">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <h2 style="margin:0">Workspaces</h2>
-      <div style="display:flex;gap:8px">
-        <button onclick="toggleAllWs(true)" style="background:#1b5e20;color:#a5d6a7;border:none;border-radius:6px;padding:4px 12px;font-size:.8rem;cursor:pointer">Select All</button>
-        <button onclick="toggleAllWs(false)" style="background:#4e1a1a;color:#ff8a80;border:none;border-radius:6px;padding:4px 12px;font-size:.8rem;cursor:pointer">Deselect All</button>
-      </div>
+  <div class="topbar-actions">
+    <div class="global-toggle">
+      <span class="global-toggle-label" id="globalLabel">OFF</span>
+      <div class="global-track" id="globalTrack" onclick="toggleGlobal()"></div>
     </div>
-    <ul class="ws-list" id="wsList"><li class="empty">Waiting for data...</li></ul>
+    <button class="btn" onclick="openSettings()">&#9881; Settings</button>
+    <button class="btn btn-primary" onclick="newSession()">+ New Session</button>
   </div>
-  <div class="card">
-    <h2>Approval Log</h2>
-    <div class="log-wrap">
-      <table>
-        <thead><tr><th>Time</th><th>Workspace</th><th>Prompt</th><th>Action</th></tr></thead>
-        <tbody id="logBody"><tr><td colspan="4" class="empty">No approvals yet.</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-  <footer>cmux-harness &middot; auto-approve dashboard</footer>
 </div>
+
+<div class="grid" id="grid">
+  <div class="grid-empty">Connecting to cmux...</div>
+</div>
+
+<!-- Expanded overlay -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeExpanded()">
+  <div class="expanded-panel">
+    <div class="exp-main">
+      <div class="exp-header">
+        <div>
+          <div class="exp-title" id="expTitle">—</div>
+          <div class="exp-meta" id="expMeta"></div>
+        </div>
+        <div class="exp-header-actions">
+          <div class="auto-toggle" id="expAutoToggle" onclick="toggleExpAuto()">
+            <span class="auto-toggle-label">Auto</span>
+            <div class="toggle-track"></div>
+          </div>
+          <button class="btn" style="font-size:12px" onclick="closeExpanded()">&#10005; Close</button>
+        </div>
+      </div>
+      <div class="exp-terminal" id="expTerminal">(no data)</div>
+      <div class="exp-input">
+        <div class="mode-toggle">
+          <button class="mode-btn active" onclick="setMode(this,'raw')">Raw</button>
+          <button class="mode-btn" onclick="setMode(this,'intent')">Intent</button>
+        </div>
+        <input class="exp-input-field" id="expInput" placeholder="Type a message or instruction..." onkeydown="if(event.key==='Enter')sendExp()">
+        <button class="exp-send" onclick="sendExp()">Send &#8629;</button>
+      </div>
+    </div>
+    <div class="exp-activity">
+      <div class="exp-activity-header">Activity <span class="exp-activity-count" id="expActCount">0</span></div>
+      <div class="exp-activity-list" id="expActList"></div>
+    </div>
+  </div>
+</div>
+<div class="esc-hint" id="escHint"><kbd style="padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.1);font-family:inherit;font-size:10px">esc</kbd> to close</div>
+
+<!-- Settings overlay -->
+<div class="settings-overlay" id="settingsOverlay" onclick="if(event.target===this)closeSettings()">
+  <div class="settings-panel">
+    <div class="settings-title">Settings <button class="exp-close" onclick="closeSettings()" style="width:32px;height:32px;font-size:14px">&#10005;</button></div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Poll Interval</div>
+        <div class="settings-sublabel">How often to check workspaces</div>
+      </div>
+      <select class="settings-select" id="settingsPoll" onchange="saveSetting('pollInterval',parseInt(this.value))">
+        <option value="2">2 seconds</option>
+        <option value="3">3 seconds</option>
+        <option value="5">5 seconds</option>
+        <option value="10">10 seconds</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">LLM Model</div>
+        <div class="settings-sublabel">Ollama model for fallback classification</div>
+      </div>
+      <select class="settings-select" id="settingsModel" onchange="saveSetting('model',this.value)">
+        <option>Loading...</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">LLM Enabled</div>
+        <div class="settings-sublabel">Use LLM when regex doesn't match</div>
+      </div>
+      <div class="auto-toggle on" id="settingsLlm" onclick="this.classList.toggle('on')">
+        <span class="auto-toggle-label">On</span>
+        <div class="toggle-track"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
-  var globalToggle = document.getElementById('globalToggle');
-  var toggleLabel = document.getElementById('toggleLabel');
-  var pollSelect = document.getElementById('pollSelect');
-  var connDot = document.getElementById('connDot');
-  var wsList = document.getElementById('wsList');
-  var logBody = document.getElementById('logBody');
+var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false};
+var logData = [];
+var expandedWsIndex = null;
 
-  function toggleAllWs(enabled) {
-    var checkboxes = document.querySelectorAll('#wsList input[type=checkbox]');
-    checkboxes.forEach(function(cb) {
-      cb.checked = enabled;
-      var idx = parseInt(cb.dataset.idx);
-      if (!isNaN(idx)) api('POST', '/api/workspace', {index: idx, enabled: enabled});
-    });
-  }
+function api(method,path,body){
+  var opts={method:method,headers:{'Content-Type':'application/json'}};
+  if(body!==undefined)opts.body=JSON.stringify(body);
+  return fetch(path,opts).then(function(r){return r.json()}).catch(function(){return null});
+}
 
-  function api(method, path, body) {
-    var opts = {method: method, headers: {'Content-Type': 'application/json'}};
-    if (body !== undefined) opts.body = JSON.stringify(body);
-    return fetch(path, opts).then(function(r){ return r.json(); }).catch(function(){ return null; });
-  }
+function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 
-  function esc(s) {
-    var d = document.createElement('div');
-    d.textContent = s || '';
-    return d.innerHTML;
-  }
+function fmtTime(iso){
+  if(!iso)return '\u2014';
+  try{return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}catch(e){return iso}
+}
 
-  globalToggle.addEventListener('change', function(){
-    api('POST', '/api/toggle', {enabled: globalToggle.checked});
+// ─── Global toggle ───
+window.toggleGlobal=function(){
+  state.enabled=!state.enabled;
+  api('POST','/api/toggle',{enabled:state.enabled});
+  updateGlobalToggle();
+};
+function updateGlobalToggle(){
+  var t=document.getElementById('globalTrack');
+  var l=document.getElementById('globalLabel');
+  if(state.enabled){t.classList.add('on');l.textContent='ON';l.style.color='var(--green)'}
+  else{t.classList.remove('on');l.textContent='OFF';l.style.color='var(--red)'}
+}
+
+// ─── Build cards ───
+function buildGrid(){
+  var grid=document.getElementById('grid');
+  var ws=state.workspaces;
+  if(!ws||ws.length===0){grid.innerHTML='<div class="grid-empty">No workspaces detected. Is cmux running?</div>';return}
+
+  // Count stats
+  var active=0,waiting=0,idle=0;
+  ws.forEach(function(w){
+    var s=classifyWs(w);
+    if(s==='waiting')waiting++;
+    else if(s==='active')active++;
+    else idle++;
   });
-  pollSelect.addEventListener('change', function(){
-    api('POST', '/api/config', {pollInterval: parseInt(pollSelect.value)});
+  document.getElementById('statActive').textContent=active;
+  document.getElementById('statWaiting').textContent=waiting;
+  document.getElementById('statIdle').textContent=idle;
+
+  // Sort: waiting first
+  var sorted=ws.slice().sort(function(a,b){
+    var sa=classifyWs(a)==='waiting'?0:1;
+    var sb=classifyWs(b)==='waiting'?0:1;
+    return sa-sb;
   });
 
-  function fmtTime(iso) {
-    if (!iso) return '\\u2014';
-    return new Date(iso).toLocaleTimeString();
-  }
+  var html='';
+  sorted.forEach(function(w){
+    var s=classifyWs(w);
+    var isWaiting=s==='waiting';
+    var isIdle=s==='idle';
+    var cardClass='card'+(isWaiting?' needs-attention':'');
+    var statusClass='card-status '+s;
+    var badgeClass=isWaiting?'badge badge-waiting':isIdle?'badge badge-idle':'badge badge-active';
+    var badgeText=isWaiting?'Needs You':isIdle?'Idle':'Active';
+    var autoOn=w.enabled!==false;
+    var autoClass='auto-toggle'+(autoOn?' on':'');
+    var opacity=isIdle?' style="opacity:.6"':'';
 
-  function buildWsItem(ws) {
-    var li = document.createElement('li');
-    var cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = ws.enabled;
-    cb.dataset.idx = ws.index;
-    cb.style.width = '18px';
-    cb.style.height = '18px';
-    cb.style.accentColor = '#4caf50';
-    cb.addEventListener('change', function(){
-      api('POST', '/api/workspace', {index: ws.index, enabled: cb.checked});
+    html+='<div class="'+cardClass+'"'+opacity+'>';
+    html+='<div class="card-header">';
+    html+='<div class="card-title-row"><div class="'+statusClass+'"></div><span class="card-name">'+esc(w.name)+'</span></div>';
+    html+='<div class="card-header-right">';
+    html+='<span class="'+badgeClass+'">'+badgeText+'</span>';
+    html+='<div class="'+autoClass+'" onclick="toggleWsAuto('+w.index+',this)"><span class="auto-toggle-label">Auto</span><div class="toggle-track"></div></div>';
+    html+='<button class="expand-btn" onclick="openExpanded('+w.index+')">&#10530;</button>';
+    html+='</div></div>';
+
+    html+='<div class="card-meta">';
+    html+='<span>\uD83D\uDCC2 '+esc(w.cwd||'—')+'</span>';
+    if(w.branch)html+='<span>\uD83C\uDF3F '+esc(w.branch)+'</span>';
+    if(w.lastCheck)html+='<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>';
+    html+='</div>';
+
+    html+='<div class="card-terminal">'+(w.screenTail?esc(w.screenTail):'<span style="color:var(--text-muted);font-style:italic">(no data yet)</span>')+'</div>';
+
+    html+='<div class="card-footer">';
+    html+='<input class="card-input" placeholder="Send message..." id="input-'+w.index+'" onkeydown="if(event.key===\'Enter\')sendToWs('+w.index+')">';
+    html+='<button class="card-send" onclick="sendToWs('+w.index+')">Send</button>';
+    html+='</div></div>';
+  });
+  grid.innerHTML=html;
+}
+
+function classifyWs(w){
+  // Check if any recent log entry flagged this workspace as needs_human
+  var recent=logData.filter(function(e){return e.workspace===w.index});
+  if(recent.length>0){
+    var last=recent[0]; // logData is already reversed (newest first)
+    if(last.action&&last.action.indexOf('human')!==-1)return 'waiting';
+  }
+  if(!w.lastCheck)return 'idle';
+  // If checked recently, consider active
+  try{
+    var diff=Date.now()-new Date(w.lastCheck).getTime();
+    if(diff>300000)return 'idle'; // 5 min
+  }catch(e){}
+  return 'active';
+}
+
+// ─── Per-workspace auto toggle ───
+window.toggleWsAuto=function(idx,el){
+  el.classList.toggle('on');
+  var on=el.classList.contains('on');
+  api('POST','/api/workspace',{index:idx,enabled:on});
+};
+
+// ─── Send to workspace ───
+window.sendToWs=function(idx){
+  var inp=document.getElementById('input-'+idx);
+  if(!inp||!inp.value.trim())return;
+  var text=inp.value.trim()+'\n';
+  api('POST','/api/send',{index:idx,text:text});
+  inp.value='';
+};
+
+// ─── Expanded view ───
+window.openExpanded=function(idx){
+  expandedWsIndex=idx;
+  document.getElementById('overlay').classList.add('visible');
+  document.getElementById('escHint').style.display='block';
+  document.body.style.overflow='hidden';
+  updateExpanded();
+};
+window.closeExpanded=function(){
+  expandedWsIndex=null;
+  document.getElementById('overlay').classList.remove('visible');
+  document.getElementById('escHint').style.display='none';
+  document.body.style.overflow='';
+};
+window.toggleExpAuto=function(){
+  if(expandedWsIndex===null)return;
+  var el=document.getElementById('expAutoToggle');
+  el.classList.toggle('on');
+  var on=el.classList.contains('on');
+  api('POST','/api/workspace',{index:expandedWsIndex,enabled:on});
+};
+window.sendExp=function(){
+  if(expandedWsIndex===null)return;
+  var inp=document.getElementById('expInput');
+  if(!inp.value.trim())return;
+  api('POST','/api/send',{index:expandedWsIndex,text:inp.value.trim()+'\n'});
+  inp.value='';
+};
+window.setMode=function(btn){
+  btn.parentElement.querySelectorAll('.mode-btn').forEach(function(b){b.classList.remove('active')});
+  btn.classList.add('active');
+};
+
+function updateExpanded(){
+  if(expandedWsIndex===null)return;
+  var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
+  if(!ws)return;
+  document.getElementById('expTitle').textContent=ws.name;
+  var meta='';
+  if(ws.cwd)meta+='\uD83D\uDCC2 '+esc(ws.cwd)+'  ';
+  if(ws.branch)meta+='\uD83C\uDF3F '+esc(ws.branch)+'  ';
+  if(ws.lastCheck)meta+='\u23F1 '+fmtTime(ws.lastCheck);
+  document.getElementById('expMeta').innerHTML=meta;
+
+  var autoEl=document.getElementById('expAutoToggle');
+  if(ws.enabled!==false)autoEl.classList.add('on');
+  else autoEl.classList.remove('on');
+
+  document.getElementById('expTerminal').textContent=ws.screenFull||ws.screenTail||'(no data yet)';
+
+  // Activity feed for this workspace
+  var wsLog=logData.filter(function(e){return e.workspace===expandedWsIndex});
+  var listEl=document.getElementById('expActList');
+  document.getElementById('expActCount').textContent=wsLog.length+' events';
+  if(wsLog.length===0){
+    listEl.innerHTML='<div style="padding:40px 18px;text-align:center;color:var(--text-muted);font-size:13px">No activity yet for this workspace.</div>';
+    return;
+  }
+  var h='';
+  wsLog.forEach(function(e){
+    var isHuman=e.action&&e.action.indexOf('human')!==-1;
+    var typeClass=isHuman?'flagged':'approved';
+    var typeText=isHuman?'\u26A0 FLAGGED':'\u2713 AUTO';
+    h+='<div class="act-item"><div class="act-time">'+fmtTime(e.timestamp)+'</div>';
+    h+='<div class="act-text"><span class="act-type '+typeClass+'">'+typeText+'</span> '+esc(e.promptType||'')+'</div>';
+    h+='</div>';
+  });
+  listEl.innerHTML=h;
+}
+
+// ─── Settings ───
+window.openSettings=function(){
+  document.getElementById('settingsOverlay').classList.add('visible');
+  document.getElementById('settingsPoll').value=String(state.pollInterval);
+  // Load models
+  api('GET','/api/models').then(function(r){
+    if(!r)return;
+    var sel=document.getElementById('settingsModel');
+    sel.innerHTML='';
+    var models=r.models||[];
+    if(models.length===0){sel.innerHTML='<option>No models found</option>';return}
+    models.forEach(function(m){
+      var opt=document.createElement('option');
+      opt.value=m;opt.textContent=m;
+      if(m===state.model)opt.selected=true;
+      sel.appendChild(opt);
     });
-    var nameSpan = document.createElement('span');
-    nameSpan.className = 'name';
-    nameSpan.textContent = ws.name;
-    var metaSpan = document.createElement('span');
-    metaSpan.className = 'meta';
-    metaSpan.textContent = ws.lastCheck ? fmtTime(ws.lastCheck) : '\\u2014';
-    li.appendChild(cb);
-    li.appendChild(nameSpan);
-    li.appendChild(metaSpan);
-    return li;
+  });
+};
+window.closeSettings=function(){
+  document.getElementById('settingsOverlay').classList.remove('visible');
+};
+window.saveSetting=function(key,val){
+  var body={};body[key]=val;
+  api('POST','/api/config',body);
+  if(key==='model')state.model=val;
+  if(key==='pollInterval')state.pollInterval=val;
+};
+
+// ─── New session (placeholder) ───
+window.newSession=function(){
+  // Future: create workspace via cmux API
+  alert('New session creation coming in v3!');
+};
+
+// ─── Keyboard ───
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'){
+    if(document.getElementById('settingsOverlay').classList.contains('visible'))closeSettings();
+    else closeExpanded();
   }
+});
 
-  function buildLogRow(e) {
-    var tr = document.createElement('tr');
-    var td1 = document.createElement('td');
-    td1.textContent = fmtTime(e.timestamp);
-    var td2 = document.createElement('td');
-    td2.textContent = e.workspaceName || String(e.workspace);
-    var td3 = document.createElement('td');
-    var b3 = document.createElement('span');
-    b3.className = 'badge badge-yellow';
-    b3.textContent = e.promptType;
-    td3.appendChild(b3);
-    var td4 = document.createElement('td');
-    var b4 = document.createElement('span');
-    var isHuman = e.action && e.action.indexOf('human') !== -1;
-    b4.className = isHuman ? 'badge badge-red' : 'badge badge-green';
-    b4.textContent = e.action;
-    td4.appendChild(b4);
-    if (isHuman) { tr.style.background = '#2a1a1a'; }
-    tr.appendChild(td1);
-    tr.appendChild(td2);
-    tr.appendChild(td3);
-    tr.appendChild(td4);
-    return tr;
-  }
-
-  function refresh() {
-    Promise.all([api('GET', '/api/status'), api('GET', '/api/log')]).then(function(results){
-      var status = results[0];
-      var log = results[1];
-      if (!status) { connDot.className = 'conn-dot err'; return; }
-      connDot.className = status.socketFound ? 'conn-dot ok' : 'conn-dot err';
-      globalToggle.checked = status.enabled;
-      toggleLabel.textContent = status.enabled ? 'ON' : 'OFF';
-      toggleLabel.style.color = status.enabled ? '#4caf50' : '#f44336';
-      pollSelect.value = String(status.pollInterval);
-
-      wsList.textContent = '';
-      if (status.workspaces.length === 0) {
-        var emptyLi = document.createElement('li');
-        emptyLi.className = 'empty';
-        emptyLi.textContent = 'No workspaces detected.';
-        wsList.appendChild(emptyLi);
-      } else {
-        status.workspaces.forEach(function(ws){ wsList.appendChild(buildWsItem(ws)); });
-      }
-
-      logBody.textContent = '';
-      if (!log || log.length === 0) {
-        var emptyTr = document.createElement('tr');
-        var emptyTd = document.createElement('td');
-        emptyTd.colSpan = 4;
-        emptyTd.className = 'empty';
-        emptyTd.textContent = 'No approvals yet.';
-        emptyTr.appendChild(emptyTd);
-        logBody.appendChild(emptyTr);
-      } else {
-        log.forEach(function(e){ logBody.appendChild(buildLogRow(e)); });
-      }
-    });
-  }
-
-  refresh();
-  setInterval(refresh, 2000);
+// ─── Refresh loop ───
+function refresh(){
+  Promise.all([api('GET','/api/status'),api('GET','/api/log')]).then(function(results){
+    var status=results[0];
+    var log=results[1];
+    if(!status){document.getElementById('connDot').className='conn-dot err';return}
+    document.getElementById('connDot').className=status.socketFound?'conn-dot ok':'conn-dot err';
+    state.enabled=status.enabled;
+    state.pollInterval=status.pollInterval;
+    state.model=status.model||'';
+    state.workspaces=status.workspaces||[];
+    state.socketFound=status.socketFound;
+    logData=log||[];
+    updateGlobalToggle();
+    buildGrid();
+    if(expandedWsIndex!==null)updateExpanded();
+  });
+}
+refresh();
+setInterval(refresh,2000);
 })();
 </script>
 </body>
@@ -877,7 +1198,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(_engine.get_log())
         elif self.path == "/api/config":
             with _engine._lock:
-                self._json_response({"pollInterval": _engine.poll_interval})
+                self._json_response({"pollInterval": _engine.poll_interval, "model": _engine.model})
+        elif self.path == "/api/models":
+            try:
+                import urllib.request as _ur
+                with _ur.urlopen(f"{OLLAMA_URL}/api/tags", timeout=4) as r:
+                    data = json.loads(r.read())
+                names = [m["name"] for m in data.get("models", [])]
+                self._json_response({"models": names})
+            except Exception as e:
+                self._json_response({"models": [], "error": str(e)})
         else:
             self.send_error(404)
 
@@ -896,8 +1226,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             pi = data.get("pollInterval")
             if pi is not None:
                 _engine.set_poll_interval(pi)
+            model = data.get("model")
+            if model is not None:
+                _engine.set_model(model)
             with _engine._lock:
-                self._json_response({"ok": True, "pollInterval": _engine.poll_interval})
+                self._json_response({"ok": True, "pollInterval": _engine.poll_interval, "model": _engine.model})
+        elif self.path == "/api/send":
+            idx = data.get("index")
+            text = data.get("text", "")
+            if idx is None or not text:
+                self._json_response({"ok": False, "error": "index and text required"}, 400)
+                return
+            idx = int(idx)
+            with _engine._lock:
+                ws_snap = list(_engine.workspaces)
+            ws = next((w for w in ws_snap if w.get("index", w.get("id")) == idx), None)
+            if ws is None:
+                self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                return
+            ok = cmux_send_to_workspace(idx, 0, text=text, workspace_uuid=ws.get("uuid"))
+            self._json_response({"ok": ok})
         else:
             self.send_error(404)
 

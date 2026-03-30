@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux harness — Option B: Split View</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-alt: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --radius: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ─── Top Bar ─── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 16px; }
+  .logo { font-size: 17px; font-weight: 700; }
+  .logo span { color: var(--accent); }
+  .stats { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); }
+  .stat-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .btn {
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn-accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #000;
+    font-weight: 600;
+  }
+  .topbar-actions { display: flex; gap: 8px; }
+
+  /* ─── Main Layout ─── */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ─── Sidebar ─── */
+  .sidebar {
+    width: 300px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .sidebar-header {
+    padding: 14px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-list {
+    flex: 1;
+    overflow-y: auto;
+  }
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  .sidebar-item:hover { background: var(--surface-alt); }
+  .sidebar-item.selected {
+    background: var(--surface-alt);
+    border-left-color: var(--accent);
+  }
+  .sidebar-item.attention {
+    border-left-color: var(--yellow);
+  }
+  .si-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .si-dot.active { background: var(--green); }
+  .si-dot.waiting { background: var(--yellow); animation: pulse 2s infinite; }
+  .si-dot.idle { background: var(--text-muted); opacity: 0.5; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .si-info { flex: 1; min-width: 0; }
+  .si-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .si-detail {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .si-badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .si-badge.needs { background: rgba(210,153,34,0.2); color: var(--yellow); }
+  .si-badge.running { background: rgba(63,185,80,0.15); color: var(--green); }
+
+  /* ─── Detail Panel ─── */
+  .detail {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .detail-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .detail-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .detail-meta {
+    display: flex;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .detail-actions { display: flex; gap: 8px; }
+
+  /* Terminal view */
+  .terminal-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 24px;
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    background: rgba(0,0,0,0.15);
+  }
+  .t-line { padding: 1px 0; }
+  .t-prompt { color: var(--green); }
+  .t-tool { color: var(--purple); font-weight: 600; }
+  .t-file { color: var(--accent); }
+  .t-dim { color: var(--text-muted); }
+  .t-warn { color: var(--yellow); }
+  .t-section {
+    margin: 12px 0 6px;
+    padding: 6px 12px;
+    background: rgba(88,166,255,0.08);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    font-family: -apple-system, sans-serif;
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  /* Input bar */
+  .input-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .mode-toggle {
+    display: flex;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .mode-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--text-muted);
+    border: none;
+    cursor: pointer;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    color: #000;
+    font-weight: 600;
+  }
+  .input-field {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .input-field:focus { border-color: var(--accent); }
+  .input-field::placeholder { color: var(--text-muted); }
+  .send-btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #000;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* ─── Activity Feed (right) ─── */
+  .activity {
+    width: 280px;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .activity-header {
+    padding: 14px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .activity-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+  .activity-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(48,54,61,0.5);
+  }
+  .activity-item:last-child { border-bottom: none; }
+  .ai-time {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .ai-text {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.4;
+  }
+  .ai-ws {
+    font-size: 11px;
+    color: var(--accent);
+    margin-top: 3px;
+  }
+  .ai-type {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .ai-type.approved { background: rgba(63,185,80,0.15); color: var(--green); }
+  .ai-type.flagged { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .ai-type.action { background: rgba(88,166,255,0.1); color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo"><span>cmux</span> harness</div>
+    <div class="stats">
+      <span><span class="stat-dot" style="background:var(--green)"></span>3 active</span>
+      <span><span class="stat-dot" style="background:var(--yellow)"></span>1 waiting</span>
+      <span><span class="stat-dot" style="background:var(--text-muted);opacity:0.5"></span>2 idle</span>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn">⚙ Settings</button>
+    <button class="btn btn-accent">+ New Session</button>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Left sidebar: workspace list -->
+  <div class="sidebar">
+    <div class="sidebar-header">Workspaces</div>
+    <div class="sidebar-list">
+
+      <div class="sidebar-item attention">
+        <div class="si-dot waiting"></div>
+        <div class="si-info">
+          <div class="si-name">IOSDOX-4819 — Profile Crash</div>
+          <div class="si-detail">Which approach should I take?</div>
+        </div>
+        <span class="si-badge needs">!</span>
+      </div>
+
+      <div class="sidebar-item selected">
+        <div class="si-dot active"></div>
+        <div class="si-info">
+          <div class="si-name">IOSDOX-4821 — Auth Token Refresh</div>
+          <div class="si-detail">Editing TokenManager.swift...</div>
+        </div>
+        <span class="si-badge running">▶</span>
+      </div>
+
+      <div class="sidebar-item">
+        <div class="si-dot active"></div>
+        <div class="si-info">
+          <div class="si-name">IOSDOX-4815 — Dark Mode Sidebar</div>
+          <div class="si-detail">Reading ColorPalette.swift...</div>
+        </div>
+        <span class="si-badge running">▶</span>
+      </div>
+
+      <div class="sidebar-item">
+        <div class="si-dot active"></div>
+        <div class="si-info">
+          <div class="si-name">IOSDOX-4812 — API Pagination</div>
+          <div class="si-detail">Build complete! Ready.</div>
+        </div>
+      </div>
+
+      <div class="sidebar-item" style="opacity: 0.6;">
+        <div class="si-dot idle"></div>
+        <div class="si-info">
+          <div class="si-name">Scratch — Playground</div>
+          <div class="si-detail">Idle for 1h</div>
+        </div>
+      </div>
+
+      <div class="sidebar-item" style="opacity: 0.6;">
+        <div class="si-dot idle"></div>
+        <div class="si-info">
+          <div class="si-name">cmux-harness</div>
+          <div class="si-detail">Idle for 45m</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Center: selected workspace detail -->
+  <div class="detail">
+    <div class="detail-header">
+      <div>
+        <div class="detail-title">IOSDOX-4821 — Auth Token Refresh</div>
+        <div class="detail-meta">
+          <span>📂 ~/Documents/Development/Doximity-Cloud</span>
+          <span>🌿 worktree/IOSDOX-4821</span>
+          <span>⏱ 12 min</span>
+          <span>🤖 claude-sonnet-4</span>
+        </div>
+      </div>
+      <div class="detail-actions">
+        <button class="btn" style="font-size:12px;">⏸ Pause</button>
+        <button class="btn" style="font-size:12px; border-color:var(--red); color:var(--red);">✕ Stop</button>
+      </div>
+    </div>
+
+    <div class="terminal-view">
+      <div class="t-section">Session started 12 minutes ago</div>
+
+      <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
+      <div class="t-line"><span class="t-dim">  Reading 142 lines...</span></div>
+      <div class="t-line"></div>
+
+      <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
+      <div class="t-line"><span class="t-dim">  Reading 89 lines...</span></div>
+      <div class="t-line"></div>
+
+      <div class="t-section">Auto-approved: Edit Sources/Auth/TokenManager.swift</div>
+
+      <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
+      <div class="t-line">  Adding refresh token retry logic with exponential backoff.</div>
+      <div class="t-line">  Modified lines 45-78: added RetryPolicy struct and</div>
+      <div class="t-line">  refreshWithBackoff() method.</div>
+      <div class="t-line"></div>
+
+      <div class="t-section">Auto-approved: Edit Sources/Auth/TokenStorage.swift</div>
+
+      <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
+      <div class="t-line">  Updating keychain wrapper to handle token rotation.</div>
+      <div class="t-line">  Added rotateToken() and invalidateStale() methods.</div>
+      <div class="t-line"></div>
+
+      <div class="t-line"><span class="t-prompt">Musing...</span></div>
+    </div>
+
+    <div class="input-bar">
+      <div class="mode-toggle">
+        <button class="mode-btn active">Raw</button>
+        <button class="mode-btn">Intent</button>
+      </div>
+      <input class="input-field" placeholder="Type a message or instruction for this session..." />
+      <button class="send-btn">Send ↵</button>
+    </div>
+  </div>
+
+  <!-- Right: activity feed -->
+  <div class="activity">
+    <div class="activity-header">Activity Feed</div>
+    <div class="activity-list">
+
+      <div class="activity-item">
+        <div class="ai-time">17:36</div>
+        <div class="ai-text">
+          <span class="ai-type flagged">⚠ FLAGGED</span>
+          Menu with domain-specific options detected
+        </div>
+        <div class="ai-ws">IOSDOX-4819</div>
+      </div>
+
+      <div class="activity-item">
+        <div class="ai-time">17:35</div>
+        <div class="ai-text">
+          <span class="ai-type approved">✓ AUTO</span>
+          Edit Sources/Auth/TokenStorage.swift
+        </div>
+        <div class="ai-ws">IOSDOX-4821</div>
+      </div>
+
+      <div class="activity-item">
+        <div class="ai-time">17:34</div>
+        <div class="ai-text">
+          <span class="ai-type approved">✓ AUTO</span>
+          Edit Sources/Auth/TokenManager.swift
+        </div>
+        <div class="ai-ws">IOSDOX-4821</div>
+      </div>
+
+      <div class="activity-item">
+        <div class="ai-time">17:33</div>
+        <div class="ai-text">
+          <span class="ai-type approved">✓ AUTO</span>
+          Read Sources/UI/Theme/ColorPalette.swift
+        </div>
+        <div class="ai-ws">IOSDOX-4815</div>
+      </div>
+
+      <div class="activity-item">
+        <div class="ai-time">17:32</div>
+        <div class="ai-text">
+          <span class="ai-type approved">✓ AUTO</span>
+          Bash: swift build
+        </div>
+        <div class="ai-ws">IOSDOX-4812</div>
+      </div>
+
+      <div class="activity-item">
+        <div class="ai-time">17:30</div>
+        <div class="ai-text">
+          <span class="ai-type action">→ NEW</span>
+          Session started: IOSDOX-4821
+        </div>
+        <div class="ai-ws">IOSDOX-4821</div>
+      </div>
+
+      <div class="activity-item">
+        <div class="ai-time">17:28</div>
+        <div class="ai-text">
+          <span class="ai-type approved">✓ AUTO</span>
+          Edit Sources/UI/Sidebar/SidebarTheme.swift
+        </div>
+        <div class="ai-ws">IOSDOX-4815</div>
+      </div>
+
+      <div class="activity-item">
+        <div class="ai-time">17:25</div>
+        <div class="ai-text">
+          <span class="ai-type approved">✓ AUTO</span>
+          Read Sources/API/PaginationController.swift
+        </div>
+        <div class="ai-ws">IOSDOX-4812</div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

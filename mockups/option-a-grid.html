@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux harness — Option A: Card Grid</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-hover: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --orange: #f0883e;
+    --radius: 12px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ─── Top Bar ─── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .topbar-left { display: flex; align-items: center; gap: 16px; }
+  .topbar-logo {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+  .topbar-logo span { color: var(--accent); }
+  .topbar-stats { display: flex; gap: 20px; }
+  .stat {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .stat-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .stat-dot.green { background: var(--green); }
+  .stat-dot.yellow { background: var(--yellow); }
+  .stat-dot.red { background: var(--red); }
+
+  .topbar-actions { display: flex; gap: 10px; }
+  .btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: var(--surface-hover); border-color: var(--accent); }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #000;
+    font-weight: 600;
+  }
+  .btn-primary:hover { opacity: 0.9; }
+
+  /* ─── Grid ─── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 16px;
+    padding: 24px;
+  }
+
+  /* ─── Card ─── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card.needs-attention { border-color: var(--yellow); }
+  .card.needs-attention .card-header { border-bottom-color: var(--yellow); }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .card-status {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .card-status.active { background: var(--green); box-shadow: 0 0 8px rgba(63,185,80,0.4); }
+  .card-status.waiting { background: var(--yellow); animation: pulse 2s infinite; }
+  .card-status.idle { background: var(--text-muted); }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .card-name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .card-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .card-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .card-badges {
+    display: flex;
+    gap: 6px;
+  }
+  .badge {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .badge-active { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-waiting { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .badge-idle { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+
+  /* Terminal preview */
+  .card-terminal {
+    padding: 12px 16px;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    background: rgba(0,0,0,0.2);
+    min-height: 100px;
+    max-height: 140px;
+    overflow: hidden;
+    position: relative;
+  }
+  .card-terminal::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 30px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.3));
+  }
+  .term-prompt { color: var(--green); }
+  .term-tool { color: var(--purple); }
+  .term-path { color: var(--accent); }
+  .term-warning { color: var(--yellow); }
+
+  /* Card footer */
+  .card-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .card-input {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }
+  .card-input:focus { border-color: var(--accent); }
+  .card-input::placeholder { color: var(--text-muted); }
+  .card-send {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #000;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* ─── Toggle ─── */
+  .toggle {
+    width: 40px; height: 22px;
+    background: var(--border);
+    border-radius: 11px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle.on { background: var(--green); }
+  .toggle::after {
+    content: '';
+    width: 18px; height: 18px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+    top: 2px; left: 2px;
+    transition: transform 0.2s;
+  }
+  .toggle.on::after { transform: translateX(18px); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo"><span>cmux</span> harness</div>
+    <div class="topbar-stats">
+      <div class="stat"><span class="stat-dot green"></span> 3 active</div>
+      <div class="stat"><span class="stat-dot yellow"></span> 1 waiting</div>
+      <div class="stat"><span class="stat-dot"></span> 2 idle</div>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn">⚙ Settings</button>
+    <button class="btn-primary btn">+ New Session</button>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- Active card -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status active"></div>
+        <span class="card-name">IOSDOX-4821 — Auth Token Refresh</span>
+      </div>
+      <div class="card-badges">
+        <span class="badge badge-active">Active</span>
+      </div>
+    </div>
+    <div class="card-meta" style="padding: 10px 16px 0;">
+      <span class="card-meta-item">📂 ~/Documents/Development/Doximity-Cloud</span>
+      <span class="card-meta-item">🌿 worktree/IOSDOX-4821</span>
+      <span class="card-meta-item">⏱ 12m</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="term-tool">⚡ Edit</span> Sources/Auth/TokenManager.swift</div>
+      <div>  Adding refresh token retry logic with exponential backoff...</div>
+      <div><span class="term-tool">⚡ Edit</span> Sources/Auth/TokenStorage.swift</div>
+      <div>  Updating keychain wrapper to handle token rotation...</div>
+      <div><span class="term-prompt">Musing...</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- Needs attention card -->
+  <div class="card needs-attention">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status waiting"></div>
+        <span class="card-name">IOSDOX-4819 — Fix Crash on Profile Load</span>
+      </div>
+      <div class="card-badges">
+        <span class="badge badge-waiting">Needs You</span>
+      </div>
+    </div>
+    <div class="card-meta" style="padding: 10px 16px 0;">
+      <span class="card-meta-item">📂 ~/Documents/Development/Doximity-Cloud</span>
+      <span class="card-meta-item">🌿 worktree/IOSDOX-4819</span>
+      <span class="card-meta-item">⏱ 8m</span>
+    </div>
+    <div class="card-terminal">
+      <div>Which approach should I take?</div>
+      <div><span class="term-warning">❯ 1. Refactor ProfileViewModel to use async/await</span></div>
+      <div>  2. Add nil check guard at the call site</div>
+      <div>  3. Wrap in Result type with proper error handling</div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- Another active card -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status active"></div>
+        <span class="card-name">IOSDOX-4815 — Dark Mode Sidebar</span>
+      </div>
+      <div class="card-badges">
+        <span class="badge badge-active">Active</span>
+      </div>
+    </div>
+    <div class="card-meta" style="padding: 10px 16px 0;">
+      <span class="card-meta-item">📂 ~/Documents/Development/Doximity-Cloud</span>
+      <span class="card-meta-item">🌿 worktree/IOSDOX-4815</span>
+      <span class="card-meta-item">⏱ 22m</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="term-tool">⚡ Edit</span> Sources/UI/Sidebar/SidebarTheme.swift</div>
+      <div>  Updating color tokens for dark mode variant...</div>
+      <div><span class="term-tool">⚡ Read</span> Sources/UI/Theme/ColorPalette.swift</div>
+      <div><span class="term-prompt">Thinking...</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- Active card -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status active"></div>
+        <span class="card-name">IOSDOX-4812 — API Pagination</span>
+      </div>
+      <div class="card-badges">
+        <span class="badge badge-active">Active</span>
+      </div>
+    </div>
+    <div class="card-meta" style="padding: 10px 16px 0;">
+      <span class="card-meta-item">📂 ~/Documents/Development/Doximity-Cloud</span>
+      <span class="card-meta-item">🌿 worktree/IOSDOX-4812</span>
+      <span class="card-meta-item">⏱ 5m</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="term-tool">⚡ Bash</span> swift build 2>&1 | tail -5</div>
+      <div>  Build complete! (42.3s)</div>
+      <div><span class="term-prompt">❯</span> Ready for next instruction</div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- Idle card -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status idle"></div>
+        <span class="card-name">Scratch — Playground</span>
+      </div>
+      <div class="card-badges">
+        <span class="badge badge-idle">Idle</span>
+      </div>
+    </div>
+    <div class="card-meta" style="padding: 10px 16px 0;">
+      <span class="card-meta-item">📂 ~/projects/scratch</span>
+      <span class="card-meta-item">🌿 main</span>
+      <span class="card-meta-item">⏱ 1h ago</span>
+    </div>
+    <div class="card-terminal">
+      <div><span class="term-prompt">❯</span> claude</div>
+      <div>  Model: claude-sonnet-4-20250514</div>
+      <div>  Cost: $0.14 this session</div>
+      <div><span class="term-prompt">❯</span> <span style="opacity:0.4">_</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+  <!-- Another idle -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title-row">
+        <div class="card-status idle"></div>
+        <span class="card-name">cmux-harness — This project</span>
+      </div>
+      <div class="card-badges">
+        <span class="badge badge-idle">Idle</span>
+      </div>
+    </div>
+    <div class="card-meta" style="padding: 10px 16px 0;">
+      <span class="card-meta-item">📂 ~/projects/cmux-harness</span>
+      <span class="card-meta-item">🌿 main</span>
+      <span class="card-meta-item">⏱ 45m ago</span>
+    </div>
+    <div class="card-terminal">
+      <div>$ git status</div>
+      <div>On branch main</div>
+      <div>nothing to commit, working tree clean</div>
+      <div>$ <span style="opacity:0.4">_</span></div>
+    </div>
+    <div class="card-footer">
+      <input class="card-input" placeholder="Send instruction or message..." />
+      <button class="card-send">Send</button>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
