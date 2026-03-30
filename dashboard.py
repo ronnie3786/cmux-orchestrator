@@ -231,6 +231,34 @@ def llm_classify(screen_text):
         return None
 
 
+def _detect_claude_session(screen_text):
+    """Return True if Claude Code appears to be running in this terminal.
+    Looks for Claude Code REPL indicators, active thinking/musing, tool use,
+    or the characteristic prompt/status lines."""
+    if not screen_text:
+        return False
+    # Check last 30 lines for Claude Code signatures
+    lines = screen_text.strip().splitlines()
+    tail = "\n".join(lines[-30:]) if len(lines) > 30 else screen_text
+    # Claude Code REPL: "❯" with Model:/Cost:/Ctx: lines nearby
+    if re.search(r"(Model:\s*(Sonnet|Opus|Haiku|Claude|claude)|Cost:\s*\$|Ctx:\s*\d)", tail):
+        return True
+    # Active Claude Code: thinking, musing, tool use
+    if re.search(r"(Musing\.\.\.|Thinking\.\.\.|⚡\s*(Read|Edit|Write|Bash|MultiEdit|Search|Glob|Grep|ListDir|Fetch|Browse|TodoRead|TodoWrite|WebFetch|MCP))", tail):
+        return True
+    # Claude Code permission prompts
+    if re.search(r"(Allow\s+(Read|Write|Edit|Bash|Browser|MCP|Fetch|MultiEdit)|Do you want to proceed|\(Y/n\)|\(y/n\))", tail):
+        return True
+    # Claude Code compact prompt with ❯ (not a regular shell prompt)
+    # The ❯ followed by claude-specific content
+    if re.search(r"[❯)]\s*(Yes|No|Allow|Deny|Approve|Confirm)", tail):
+        return True
+    # "claude" command was recently run (visible in scrollback)
+    if re.search(r"^\$?\s*claude\s*$", tail, re.MULTILINE):
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Prompt detection (regex fast-path + LLM fallback)
 # ---------------------------------------------------------------------------
@@ -409,11 +437,14 @@ class HarnessEngine(threading.Thread):
                 # Get last 5 lines for card preview
                 lines = screen_tail.strip().splitlines() if screen_tail else []
                 preview = "\n".join(lines[-5:]) if lines else ""
+                # Detect if Claude Code is running in this terminal
+                has_claude = _detect_claude_session(screen_tail) if screen_tail else False
                 ws_list.append({
+                    "hasClaude": has_claude,
                     "index": idx,
                     "name": ws.get("name", f"workspace-{idx}"),
                     "uuid": ws.get("uuid", ""),
-                    "enabled": self.workspace_enabled.get(idx, True),
+                    "enabled": self.workspace_enabled.get(idx, False),
                     "lastCheck": ws.get("_lastCheck", ""),
                     "screenTail": preview,
                     "screenFull": screen_tail,
@@ -955,7 +986,7 @@ function buildGrid(){
     var statusClass='card-status '+s;
     var badgeClass=isWaiting?'badge badge-waiting':isIdle?'badge badge-idle':'badge badge-active';
     var badgeText=isWaiting?'Needs You':isIdle?'Idle':'Active';
-    var autoOn=w.enabled!==false;
+    var autoOn=w.enabled===true;
     var autoClass='auto-toggle'+(autoOn?' on':'');
     var opacity=isIdle?' style="opacity:.6"':'';
 
@@ -991,13 +1022,9 @@ function classifyWs(w){
     var last=recent[0]; // logData is already reversed (newest first)
     if(last.action&&last.action.indexOf('human')!==-1)return 'waiting';
   }
-  if(!w.lastCheck)return 'idle';
-  // If checked recently, consider active
-  try{
-    var diff=Date.now()-new Date(w.lastCheck).getTime();
-    if(diff>300000)return 'idle'; // 5 min
-  }catch(e){}
-  return 'active';
+  // Active = Claude Code is running in this terminal
+  // Idle = just a regular shell prompt, no Claude session
+  return w.hasClaude ? 'active' : 'idle';
 }
 
 // ─── Per-workspace auto toggle ───
