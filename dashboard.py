@@ -1247,6 +1247,17 @@ function refresh(){
 }
 refresh();
 setInterval(refresh,2000);
+// Faster refresh for expanded view (500ms)
+setInterval(function(){
+  if(expandedWsIndex===null)return;
+  api('GET','/api/status').then(function(r){
+    if(!r)return;
+    state.workspaces=r.workspaces||[];
+    var expFocused=document.activeElement&&document.activeElement.id==='expInput';
+    updateExpanded();
+    if(expFocused)document.getElementById('expInput').focus();
+  });
+},500);
 })();
 </script>
 </body>
