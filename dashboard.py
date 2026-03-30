@@ -1025,6 +1025,17 @@ function buildGrid(){
     return sa-sb;
   });
 
+  // Preserve focus: if user is typing in an input, save it
+  var activeEl=document.activeElement;
+  var focusedInputId=null;
+  var focusedValue='';
+  var focusedCursor=0;
+  if(activeEl&&activeEl.classList&&activeEl.classList.contains('card-input')){
+    focusedInputId=activeEl.id;
+    focusedValue=activeEl.value;
+    focusedCursor=activeEl.selectionStart||0;
+  }
+
   var html='';
   sorted.forEach(function(w){
     var s=classifyWs(w);
@@ -1063,6 +1074,11 @@ function buildGrid(){
   grid.innerHTML=html;
   // Auto-scroll all terminal previews to bottom
   document.querySelectorAll('.card-terminal').forEach(function(el){el.scrollTop=el.scrollHeight});
+  // Restore focus if user was typing
+  if(focusedInputId){
+    var el=document.getElementById(focusedInputId);
+    if(el){el.value=focusedValue;el.focus();el.setSelectionRange(focusedCursor,focusedCursor)}
+  }
 }
 
 function classifyWs(w){
@@ -1221,7 +1237,12 @@ function refresh(){
     logData=log||[];
     updateGlobalToggle();
     buildGrid();
-    if(expandedWsIndex!==null)updateExpanded();
+    if(expandedWsIndex!==null){
+      // Don't clobber expanded input if user is typing
+      var expFocused=document.activeElement&&document.activeElement.id==='expInput';
+      updateExpanded();
+      if(expFocused)document.getElementById('expInput').focus();
+    }
   });
 }
 refresh();
