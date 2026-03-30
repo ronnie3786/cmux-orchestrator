@@ -761,8 +761,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .expand-btn:hover{border-color:var(--accent);color:var(--accent)}
 
 .card-meta{display:flex;gap:14px;padding:10px 18px 0;font-size:12px;color:var(--text-muted);flex-wrap:wrap}
-.card-terminal{padding:12px 18px;font-family:'JetBrains Mono','SF Mono','Menlo',monospace;font-size:12px;line-height:1.6;color:var(--text-muted);background:rgba(0,0,0,.2);min-height:80px;max-height:120px;overflow:hidden;position:relative;white-space:pre-wrap;word-break:break-all}
-.card-terminal::after{content:'';position:absolute;bottom:0;left:0;right:0;height:24px;background:linear-gradient(transparent,rgba(0,0,0,.3))}
+.card-terminal{padding:12px 18px;font-family:'JetBrains Mono','SF Mono','Menlo',monospace;font-size:12px;line-height:1.6;color:var(--text-muted);background:rgba(0,0,0,.2);min-height:80px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.card-terminal::-webkit-scrollbar{width:6px}
+.card-terminal::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.card-terminal::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
 .card-footer{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--border)}
 .card-input{flex:1;padding:9px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none}
 .card-input:focus{border-color:var(--accent)}
