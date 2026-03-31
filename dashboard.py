@@ -403,9 +403,36 @@ LOG_FILE = LOG_DIR / "approval-log.jsonl"
 DEBUG_LOG = LOG_DIR / "debug-log.jsonl"
 CONFIG_FILE = LOG_DIR / "workspace-config.json"
 
+MAX_DEBUG_LOG_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+def _rotate_log_file(log_path, max_size=MAX_DEBUG_LOG_SIZE):
+    """Rotate a log file if it exceeds max_size. Keeps one .1.jsonl backup."""
+    try:
+        if log_path.exists() and log_path.stat().st_size > max_size:
+            backup = log_path.parent / (log_path.stem + ".1.jsonl")
+            if backup.exists():
+                backup.unlink()
+            log_path.rename(backup)
+            print(f"[harness] Rotated {log_path.name} ({max_size // 1024 // 1024}MB limit)")
+    except OSError as e:
+        print(f"[harness] Log rotation error: {e}")
+
+
+def _rotate_debug_log():
+    """Rotate debug log if it exceeds MAX_DEBUG_LOG_SIZE."""
+    _rotate_log_file(DEBUG_LOG)
+
+
+_debug_log_writes = 0
+
 
 def _debug_log(entry):
     """Append a debug entry to the debug log file (full data dump)."""
+    global _debug_log_writes
+    _debug_log_writes += 1
+    if _debug_log_writes % 100 == 0:
+        _rotate_debug_log()
     entry["_ts"] = datetime.now(timezone.utc).isoformat()
     try:
         with open(DEBUG_LOG, "a") as f:
@@ -619,6 +646,9 @@ class HarnessEngine(threading.Thread):
                 f.write(json.dumps(entry) + "\n")
         except OSError:
             pass
+        self._log_write_count = getattr(self, "_log_write_count", 0) + 1
+        if self._log_write_count % 100 == 0:
+            _rotate_log_file(LOG_FILE)
         ts = entry.get("timestamp", "")
         ws_name = entry.get("workspaceName", "?")
         ptype = entry.get("promptType", "?")
