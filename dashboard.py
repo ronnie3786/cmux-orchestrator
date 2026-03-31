@@ -198,6 +198,8 @@ def llm_classify(screen_text):
     Returns (pattern_name, action) or None on failure."""
     if not USE_LLM:
         return None
+    if _engine is not None and not _engine._check_ollama():
+        return None
     # Only send the last 25 lines to keep token count low
     lines = screen_text.splitlines()
     tail = "\n".join(lines[-25:]) if len(lines) > 25 else screen_text
@@ -469,6 +471,9 @@ class HarnessEngine(threading.Thread):
         self.consecutive_failures = 0   # count of consecutive failed polls
         self._lock = threading.Lock()
         self.model = OLLAMA_MODEL
+        self.ollama_available = None   # None=unknown, True=available, False=unavailable
+        self.ollama_last_check = 0     # timestamp of last Ollama health check
+        self.ollama_retry_interval = 60  # seconds between retries after failure
         self.ws_config = self._load_config()
 
     def _load_config(self):
@@ -487,6 +492,28 @@ class HarnessEngine(threading.Thread):
                 json.dump({"workspaces": self.ws_config}, f, indent=2)
         except OSError as e:
             print(f"[harness] config save error: {e}")
+
+    def _check_ollama(self):
+        """Check if Ollama is reachable. Rate-limited to once per retry_interval."""
+        now = time.time()
+        with self._lock:
+            if self.ollama_available is not None and (now - self.ollama_last_check) < self.ollama_retry_interval:
+                return self.ollama_available
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=3) as r:
+                r.read()
+            with self._lock:
+                self.ollama_available = True
+                self.ollama_last_check = now
+            return True
+        except Exception:
+            with self._lock:
+                if self.ollama_available is not False:
+                    print("[harness] ⚠ Ollama unavailable, will retry every 60s")
+                self.ollama_available = False
+                self.ollama_last_check = now
+            return False
 
     def set_enabled(self, val):
         with self._lock:
@@ -575,6 +602,7 @@ class HarnessEngine(threading.Thread):
                 "lastSuccessfulPoll": self.last_successful_poll,
                 "connectionLostAt": self.connection_lost_at,
                 "staleData": not self.socket_connected,
+                "ollamaAvailable": self.ollama_available,
             }
 
     def get_log(self, limit=200):
@@ -1025,6 +1053,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .settings-sublabel{font-size:11px;color:var(--text-muted);margin-top:2px}
 .settings-select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;min-width:160px}
 .settings-select:focus{border-color:var(--accent)}
+.ollama-status{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);margin-top:4px}
+.ollama-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.ollama-dot.green{background:var(--green)}
+.ollama-dot.red{background:var(--red)}
+.ollama-dot.gray{background:var(--text-muted);opacity:.5}
+.llm-unavail{font-size:11px;color:var(--red);opacity:.85;margin-left:4px}
 </style>
 </head>
 <body>
@@ -1036,6 +1070,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
       <div class="stat"><span class="stat-dot" style="background:var(--green)"></span> <span id="statActive">0</span> active</div>
       <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> <span id="statWaiting">0</span> waiting</div>
       <div class="stat"><span class="stat-dot" style="background:var(--text-muted);opacity:.5"></span> <span id="statIdle">0</span> idle</div>
+      <div class="stat" id="statLlm" style="display:none"><span class="stat-dot" style="background:var(--red)"></span> <span class="llm-unavail">LLM ✗</span></div>
     </div>
   </div>
   <div class="topbar-actions">
@@ -1104,14 +1139,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         <option value="10">10 seconds</option>
       </select>
     </div>
-    <div class="settings-row">
-      <div>
-        <div class="settings-label">LLM Model</div>
-        <div class="settings-sublabel">Ollama model for fallback classification</div>
+    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+        <div>
+          <div class="settings-label">LLM Model</div>
+          <div class="settings-sublabel">Ollama model for fallback classification</div>
+          <div class="ollama-status" id="ollamaStatus">
+            <span class="ollama-dot gray" id="ollamaDot"></span>
+            <span id="ollamaStatusText">Unknown</span>
+          </div>
+        </div>
+        <select class="settings-select" id="settingsModel" onchange="saveSetting('model',this.value)">
+          <option>Loading...</option>
+        </select>
       </div>
-      <select class="settings-select" id="settingsModel" onchange="saveSetting('model',this.value)">
-        <option>Loading...</option>
-      </select>
     </div>
     <div class="settings-row">
       <div>
@@ -1148,7 +1189,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 
 <script>
 (function(){
-var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false,connected:undefined};
+var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false,connected:undefined,ollamaAvailable:null};
 var logData = [];
 var expandedWsIndex = null;
 var prevWsStates = {};
@@ -1313,6 +1354,24 @@ function updateGlobalToggle(){
   var l=document.getElementById('globalLabel');
   if(state.enabled){t.classList.add('on');l.textContent='ON';l.style.color='var(--green)'}
   else{t.classList.remove('on');l.textContent='OFF';l.style.color='var(--red)'}
+}
+
+function updateOllamaStatus(){
+  var avail=state.ollamaAvailable;
+  // Top bar LLM indicator
+  var statLlm=document.getElementById('statLlm');
+  if(statLlm)statLlm.style.display=(avail===false)?'':'none';
+  // Settings modal indicator
+  var dot=document.getElementById('ollamaDot');
+  var txt=document.getElementById('ollamaStatusText');
+  if(!dot||!txt)return;
+  if(avail===true){
+    dot.className='ollama-dot green';txt.textContent='Connected';
+  } else if(avail===false){
+    dot.className='ollama-dot red';txt.textContent='Unavailable';
+  } else {
+    dot.className='ollama-dot gray';txt.textContent='Unknown';
+  }
 }
 
 // ─── Build cards ───
@@ -1554,13 +1613,22 @@ window.openSettings=function(){
   var notifEl=document.getElementById('settingsNotif');
   if(notificationsEnabled){notifEl.classList.add('on');notifEl.querySelector('.auto-toggle-label').textContent='On';}
   else{notifEl.classList.remove('on');notifEl.querySelector('.auto-toggle-label').textContent='Off';}
+  updateOllamaStatus();
   // Load models
   api('GET','/api/models').then(function(r){
     if(!r)return;
+    // Update availability state from response
+    if(r.available!==undefined){
+      state.ollamaAvailable=r.available;
+      updateOllamaStatus();
+    }
     var sel=document.getElementById('settingsModel');
     sel.innerHTML='';
     var models=r.models||[];
-    if(models.length===0){sel.innerHTML='<option>No models found</option>';return}
+    if(models.length===0){
+      sel.innerHTML='<option>'+(r.available===false?'Ollama unavailable':'No models found')+'</option>';
+      return;
+    }
     models.forEach(function(m){
       var opt=document.createElement('option');
       opt.value=m;opt.textContent=m;
@@ -1682,8 +1750,10 @@ function refresh(){
     state.model=status.model||'';
     state.workspaces=status.workspaces||[];
     state.socketFound=status.socketFound;
+    state.ollamaAvailable=status.ollamaAvailable!==undefined?status.ollamaAvailable:state.ollamaAvailable;
     logData=log||[];
     updateGlobalToggle();
+    updateOllamaStatus();
     checkNotifications(state.workspaces);
     buildGrid();
     updatePageTitle();
@@ -1759,14 +1829,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             with _engine._lock:
                 self._json_response({"pollInterval": _engine.poll_interval, "model": _engine.model})
         elif self.path == "/api/models":
-            try:
-                import urllib.request as _ur
-                with _ur.urlopen(f"{OLLAMA_URL}/api/tags", timeout=4) as r:
-                    data = json.loads(r.read())
-                names = [m["name"] for m in data.get("models", [])]
-                self._json_response({"models": names})
-            except Exception as e:
-                self._json_response({"models": [], "error": str(e)})
+            # Use cached availability — if already known unavailable, skip the connect attempt
+            with _engine._lock:
+                cached = _engine.ollama_available
+            if cached is False:
+                self._json_response({"models": [], "available": False})
+            else:
+                try:
+                    import urllib.request as _ur
+                    with _ur.urlopen(f"{OLLAMA_URL}/api/tags", timeout=4) as r:
+                        data = json.loads(r.read())
+                    names = [m["name"] for m in data.get("models", [])]
+                    with _engine._lock:
+                        _engine.ollama_available = True
+                        _engine.ollama_last_check = time.time()
+                    self._json_response({"models": names, "available": True})
+                except Exception as e:
+                    with _engine._lock:
+                        _engine.ollama_available = False
+                        _engine.ollama_last_check = time.time()
+                    self._json_response({"models": [], "available": False, "error": str(e)})
         else:
             self.send_error(404)
 
