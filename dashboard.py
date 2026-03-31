@@ -356,17 +356,23 @@ def detect_prompt(screen_text):
     """
     if not screen_text:
         return None
+    # Strip trailing blank lines — read_screen returns fixed-height output
+    # with blank padding below the actual terminal content
     lines = screen_text.splitlines()
-    tail = "\n".join(lines[-25:]) if len(lines) > 25 else screen_text
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return None
+    tail = "\n".join(lines[-25:]) if len(lines) > 25 else "\n".join(lines)
 
     # SKIP: Claude Code idle REPL (has ❯ but also Model:/Cost: lines)
     if _REPL_IDLE_RE.search(tail):
         return None
 
     # SKIP: Plain shell prompt with no Claude Code indicators
-    last_lines = "\n".join(lines[-5:]) if len(lines) > 5 else screen_text
-    if not re.search(r"(Allow |Do you want|proceed|\([Yy](?:/[Nn]|es/no)\)|Enter to select|Esc to cancel|Musing|Thinking|⚡|Model:|Cost:|Ctx:)", last_lines):
-        # No prompt indicators at all in the last 5 lines — likely just a shell
+    last_chunk = "\n".join(lines[-10:]) if len(lines) > 10 else "\n".join(lines)
+    if not re.search(r"(Allow |Do you want|proceed|\([Yy](?:/[Nn]|es/no)\)|Enter to select|Esc to cancel|Musing|Thinking|⚡|Model:|Cost:|Ctx:)", last_chunk):
+        # No prompt indicators at all — likely just a shell
         return None
 
     # LLM classifies everything else
