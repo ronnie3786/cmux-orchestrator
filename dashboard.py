@@ -472,6 +472,19 @@ def _get_review(session_id):
     return None
 
 
+def _get_review_path(session_id):
+    if not session_id:
+        return None
+    try:
+        for path in REVIEWS_DIR.glob("*.json"):
+            review = _read_review_file(path)
+            if review and review.get("sessionId") == session_id:
+                return path
+    except OSError:
+        return None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Session cost parser
 # ---------------------------------------------------------------------------
@@ -874,9 +887,9 @@ class HarnessEngine(threading.Thread):
         })
         return prompt
 
-    def _run_review_ollama(self, prompt):
+    def _run_review_ollama(self, prompt, model_override=None):
         self._set_review_error("")
-        model = self.review_model or self.model or OLLAMA_MODEL
+        model = model_override or self.review_model or self.model or OLLAMA_MODEL
         self._set_review_model_used(model)
         payload = {
             "model": model,
@@ -907,10 +920,10 @@ class HarnessEngine(threading.Thread):
             _debug_log({"event": "review_ollama_error", "model": model, "error": str(e)})
             return None
 
-    def _run_review_lmstudio(self, prompt):
+    def _run_review_lmstudio(self, prompt, model_override=None):
         self._set_review_error("")
         endpoint = "http://100.89.93.84:1234/v1/chat/completions"
-        model = self.review_model or "qwen3.5-27b-opus-distilled-v2-mlx"
+        model = model_override or self.review_model or "qwen3.5-27b-opus-distilled-v2-mlx"
         try:
             with urllib.request.urlopen("http://100.89.93.84:1234/v1/models", timeout=5) as resp:
                 models_data = json.loads(resp.read())
@@ -952,14 +965,14 @@ class HarnessEngine(threading.Thread):
             _debug_log({"event": "review_lmstudio_error", "model": model, "error": str(e)})
             return None
 
-    def _run_review_claude(self, prompt):
+    def _run_review_claude(self, prompt, model_override=None):
         self._set_review_error("")
         claude_bin = shutil.which("claude")
         if not claude_bin:
             self._set_review_error("claude binary not found")
             _debug_log({"event": "review_claude_missing", "fallback": "ollama"})
-            return self._run_review_ollama(prompt)
-        self._set_review_model_used("claude")
+            return self._run_review_ollama(prompt, model_override=model_override)
+        self._set_review_model_used(model_override or "claude")
         _debug_log({"event": "review_claude_start", "binary": claude_bin})
         try:
             result = subprocess.run(
@@ -986,7 +999,7 @@ class HarnessEngine(threading.Thread):
             _debug_log({"event": "review_claude_exception", "error": str(e)})
             return None
 
-    def _run_review(self, review_path):
+    def _run_review(self, review_path, model_override=None, backend_override=None):
         start_ts = time.time()
         path = Path(review_path)
         review_data = _read_review_file(path)
@@ -1017,16 +1030,16 @@ class HarnessEngine(threading.Thread):
 
         prompt = self._build_review_prompt(review_data)
         with self._lock:
-            backend = self.review_backend
-            configured_model = self.review_model
+            backend = backend_override or self.review_backend
+            configured_model = model_override or self.review_model
         _debug_log({"event": "review_start", "path": str(path), "backend": backend, "model": configured_model})
 
         if backend == "lmstudio":
-            review_result = self._run_review_lmstudio(prompt)
+            review_result = self._run_review_lmstudio(prompt, model_override=configured_model)
         elif backend == "ollama":
-            review_result = self._run_review_ollama(prompt)
+            review_result = self._run_review_ollama(prompt, model_override=configured_model)
         else:
-            review_result = self._run_review_claude(prompt)
+            review_result = self._run_review_claude(prompt, model_override=configured_model)
 
         error_message = self._pop_review_error()
         resolved_model = self._pop_review_model_used() or configured_model or self.model or OLLAMA_MODEL
@@ -1445,6 +1458,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .topbar-left{display:flex;align-items:center;gap:20px}
 .logo{font-size:18px;font-weight:700;letter-spacing:-.5px}
 .logo span{color:var(--accent)}
+.view-switcher{display:flex;align-items:center;gap:8px}
+.view-btn{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:12px;cursor:pointer;transition:all .15s}
+.view-btn.active{background:rgba(88,166,255,.12);border-color:var(--accent);color:var(--accent);font-weight:600}
+.view-btn:hover:not(.active){background:var(--surface-hover);color:var(--text)}
+.review-badge{display:none;min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:var(--red);color:#fff;font-size:11px;line-height:18px;text-align:center}
 .conn-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle}
 .conn-dot.ok{background:var(--green);box-shadow:0 0 6px rgba(63,185,80,.5)}
 .conn-dot.warn{background:var(--yellow);box-shadow:0 0 6px rgba(210,153,34,.5);animation:pulse-dot 2s infinite}
@@ -1469,6 +1487,48 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 /* Grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px 50px}
 .grid-empty{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:15px;grid-column:1/-1}
+.reviews-container{padding:20px 28px 60px}
+.reviews-filters{position:sticky;top:73px;z-index:40;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;margin-bottom:18px;border:1px solid var(--border);border-radius:14px;background:rgba(22,27,34,.96);backdrop-filter:blur(10px)}
+.reviews-filters-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.reviews-count{font-size:13px;color:var(--text-muted);white-space:nowrap}
+.reviews-list{display:flex;flex-direction:column;gap:16px}
+.reviews-empty{text-align:center;padding:72px 20px;border:1px dashed var(--border);border-radius:14px;background:rgba(0,0,0,.12);color:var(--text-muted);font-size:14px}
+.review-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;display:flex;flex-direction:column;gap:14px;transition:border-color .2s,box-shadow .2s}
+.review-card:hover{border-color:#444c56}
+.review-card.dismissed{opacity:.5}
+.review-card.pending-card{border-color:rgba(188,140,255,.35)}
+.review-card.error-card{border-color:rgba(248,81,73,.35)}
+.review-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.review-head-main{display:flex;align-items:center;gap:10px;min-width:0}
+.review-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.review-dot.green{background:var(--green);box-shadow:0 0 8px rgba(63,185,80,.4)}
+.review-dot.yellow{background:var(--yellow);box-shadow:0 0 8px rgba(210,153,34,.35)}
+.review-dot.red{background:var(--red);box-shadow:0 0 8px rgba(248,81,73,.35)}
+.review-dot.purple{background:var(--purple);box-shadow:0 0 8px rgba(188,140,255,.4)}
+.review-dot.pulse{animation:pulse 1.6s infinite}
+.review-dot.gray{background:var(--text-muted);opacity:.7}
+.review-title{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.review-meta-right{display:flex;align-items:center;gap:14px;flex-shrink:0;font-size:12px;color:var(--text-muted)}
+.review-cost{font-family:'JetBrains Mono','SF Mono','Menlo',monospace}
+.review-summary{font-size:14px;line-height:1.5;color:var(--text)}
+.review-stats{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--text-muted)}
+.review-status-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.review-status-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid transparent}
+.review-status-badge.ready{background:rgba(63,185,80,.14);color:var(--green)}
+.review-status-badge.issues{background:rgba(210,153,34,.15);color:var(--yellow)}
+.review-status-badge.attention,.review-status-badge.error{background:rgba(248,81,73,.14);color:var(--red)}
+.review-status-badge.pending{background:rgba(188,140,255,.14);color:var(--purple)}
+.review-status-badge.dismissed,.review-status-badge.skipped{background:rgba(139,148,158,.12);color:var(--text-muted)}
+.review-issues,.review-highlights{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
+.review-issues li,.review-highlights li{font-size:13px;line-height:1.5}
+.review-highlights{padding:12px 18px;border-radius:12px;background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.15)}
+.review-highlights li{color:#b7f0bf}
+.review-recommendation{margin:0;padding:12px 14px;border-left:3px solid var(--accent);border-radius:8px;background:rgba(88,166,255,.08);color:var(--text);font-size:13px;line-height:1.6}
+.review-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.review-action-btn{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;cursor:pointer;transition:all .15s}
+.review-action-btn:hover{border-color:var(--accent);color:var(--accent)}
+.review-action-btn.danger:hover{border-color:var(--red);color:var(--red)}
+.review-more{padding:0;border:none;background:none;color:var(--accent);font-size:12px;cursor:pointer;text-align:left}
 
 /* Card */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .2s,box-shadow .2s}
@@ -1549,6 +1609,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-title{font-size:22px;font-weight:700;margin-bottom:8px}
 .exp-meta{display:flex;gap:20px;font-size:13px;color:var(--text-muted);flex-wrap:wrap}
 .exp-header-actions{display:flex;gap:8px;align-items:center}
+.exp-header-actions.hidden,.exp-input.hidden{display:none}
 .exp-close{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .exp-close:hover{border-color:var(--red);color:var(--red)}
 .exp-terminal{flex:1;overflow-y:auto;padding:16px 24px;font-family:'JetBrains Mono','SF Mono',monospace;font-size:13px;line-height:1.8;background:rgba(0,0,0,.15);white-space:pre-wrap;word-break:break-all}
@@ -1612,6 +1673,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .ae-type.approved{background:rgba(63,185,80,0.15);color:var(--green)}
 .ae-type.flagged{background:rgba(210,153,34,0.15);color:var(--yellow)}
 .ae-prompt{color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+@media (max-width: 960px){
+  .topbar{padding:14px 18px;flex-wrap:wrap;gap:12px}
+  .topbar-left,.topbar-actions{width:100%;justify-content:space-between;flex-wrap:wrap}
+  .reviews-container,.grid{padding-left:18px;padding-right:18px}
+  .reviews-filters{top:120px;flex-direction:column;align-items:stretch}
+  .reviews-filters-left{width:100%}
+  .reviews-count{text-align:right}
+  .expanded-panel{width:96vw;height:92vh;flex-direction:column}
+  .exp-activity{width:100%;height:240px;border-left:none;border-top:1px solid var(--border)}
+}
 </style>
 </head>
 <body>
@@ -1619,6 +1691,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 <div class="topbar">
   <div class="topbar-left">
     <div class="logo"><span>cmux</span> harness<span class="conn-dot" id="connDot"></span><span class="conn-status" id="connStatus"></span></div>
+    <div class="view-switcher">
+      <button class="view-btn active" id="viewBtn-center" onclick="switchView('center')">&#128308; Command Center</button>
+      <button class="view-btn" id="viewBtn-reviews" onclick="switchView('reviews')">&#128203; Reviews <span class="review-badge" id="reviewBadge"></span></button>
+    </div>
     <div class="topbar-stats" id="topStats">
       <div class="stat"><span class="stat-dot" style="background:var(--green)"></span> <span id="statActive">0</span> active</div>
       <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> <span id="statWaiting">0</span> waiting</div>
@@ -1639,6 +1715,35 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 <div class="stale-banner" id="staleBanner">&#9888; Showing stale data — cmux connection lost. Attempting to reconnect...</div>
 <div class="grid" id="grid">
   <div class="grid-empty">Connecting to cmux...</div>
+</div>
+<div class="reviews-container" id="reviewsContainer" style="display:none">
+  <div class="reviews-filters" id="reviewsFilters">
+    <div class="reviews-filters-left">
+      <select class="settings-select" id="reviewStatusFilter" onchange="setReviewFilter('status',this.value)">
+        <option value="all">All statuses</option>
+        <option value="ready">Ready for PR</option>
+        <option value="issues">Has Issues</option>
+        <option value="attention">Needs Attention</option>
+        <option value="pending">Pending</option>
+        <option value="error">Error</option>
+        <option value="dismissed">Dismissed</option>
+      </select>
+      <select class="settings-select" id="reviewTimeFilter" onchange="setReviewFilter('time',this.value)">
+        <option value="today">Today</option>
+        <option value="24h">Last 24h</option>
+        <option value="7d">Last 7 days</option>
+        <option value="all">All time</option>
+      </select>
+      <select class="settings-select" id="reviewSortFilter" onchange="setReviewFilter('sort',this.value)">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="files">Most files</option>
+        <option value="cost">Highest cost</option>
+      </select>
+    </div>
+    <div class="reviews-count" id="reviewsCount">0 reviews</div>
+  </div>
+  <div class="reviews-list" id="reviewsList"></div>
 </div>
 
 <!-- Global Activity Feed -->
@@ -1757,9 +1862,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false,connected:undefined,ollamaAvailable:null};
 var logData = [];
 var expandedWsIndex = null;
+var expandedReview = null;
+var expandedMode = 'workspace';
+var currentView = 'center';
 var prevWsStates = {};
 var notificationsEnabled = true;
 var audioCtx = null;
+var reviewsData = [];
+var reviewsLoaded = false;
+var reviewsRefreshTimer = null;
+var reviewFilters = {status:'all',time:'today',sort:'newest'};
 
 // Request notification permission on page load
 if ('Notification' in window && Notification.permission === 'default') {
@@ -1845,6 +1957,90 @@ function costColor(cost) {
   return 'var(--red)';
 }
 
+function diffColorize(text){
+  if(!text)return '<span style="color:var(--text-muted);font-style:italic">(no diff available)</span>';
+  var h=esc(text);
+  h=h.replace(/^(@@.*)$/gm,'<span style="color:var(--purple);font-weight:600">$1</span>');
+  h=h.replace(/^(diff --git.*|index .*|--- .*|\+\+\+ .*)$/gm,'<span style="color:var(--accent)">$1</span>');
+  h=h.replace(/^(\+[^\n]*)$/gm,'<span style="color:var(--green)">$1</span>');
+  h=h.replace(/^(-[^\n]*)$/gm,'<span style="color:var(--red)">$1</span>');
+  return h;
+}
+
+function plural(n,word){return n+' '+word+(n===1?'':'s')}
+
+function parseIso(ts){
+  var d=ts?new Date(ts):null;
+  return d&&isFinite(d.getTime())?d:null;
+}
+
+function formatReviewTimestamp(ts){
+  var d=parseIso(ts);
+  if(!d)return '—';
+  return d.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+}
+
+function formatReviewDuration(seconds){
+  var total=Math.max(0,Math.round(Number(seconds)||0));
+  var mins=Math.floor(total/60);
+  var secs=total%60;
+  if(mins===0)return secs+'s';
+  return mins+'m '+secs+'s';
+}
+
+function reviewCostValue(cost){
+  var m=(cost||'').match(/\$([\d.]+)/);
+  return m?parseFloat(m[1]):0;
+}
+
+function reviewFilesChanged(review){
+  var data=review.review||{};
+  if(Array.isArray(data.filesChanged)&&data.filesChanged.length)return data.filesChanged.length;
+  return 0;
+}
+
+function getUnreadReviewCount(){
+  return reviewsData.filter(function(r){return ['pending','reviewing','error'].indexOf(r.reviewStatus)!==-1}).length;
+}
+
+function updateReviewBadge(){
+  var badge=document.getElementById('reviewBadge');
+  if(!badge)return;
+  var count=getUnreadReviewCount();
+  badge.textContent=String(count);
+  badge.style.display=count>0?'inline-block':'none';
+}
+
+function reviewStatusMeta(item){
+  var status=item.reviewStatus||'pending';
+  var review=item.review||{};
+  var issues=Array.isArray(review.issues)?review.issues:[];
+  if(status==='dismissed')return {key:'dismissed',label:'Dismissed',icon:'⦸',dot:'gray',card:'dismissed'};
+  if(status==='error')return {key:'error',label:'Error',icon:'❌',dot:'red',card:'error-card'};
+  if(status==='skipped')return {key:'skipped',label:'Skipped',icon:'➖',dot:'gray'};
+  if(status==='pending' || status==='reviewing')return {key:'pending',label:'Pending',icon:'⏳',dot:'purple pulse',card:'pending-card'};
+  if(status==='flagged'){
+    if((review.confidence||'').toLowerCase()==='low')return {key:'attention',label:'Needs Attention',icon:'🔴',dot:'red'};
+    return {key:'issues',label:'Has Issues'+(issues.length?' ('+issues.length+')':''),icon:'⚠️',dot:'yellow'};
+  }
+  if(review.readyForPR)return {key:'ready',label:'Ready for PR',icon:'✅',dot:'green'};
+  if(issues.length)return {key:'issues',label:'Has Issues ('+issues.length+')',icon:'⚠️',dot:'yellow'};
+  if((review.confidence||'').toLowerCase()==='low')return {key:'attention',label:'Needs Attention',icon:'🔴',dot:'red'};
+  return {key:'ready',label:'Ready for PR',icon:'✅',dot:'green'};
+}
+
+function reviewSummaryText(item){
+  var status=item.reviewStatus||'pending';
+  var review=item.review||{};
+  if(review.summary)return review.summary;
+  if(status==='pending')return 'Queued for review.';
+  if(status==='reviewing')return 'Review is running.';
+  if(status==='error')return item.reviewError||'Review failed.';
+  if(status==='skipped')return 'Review skipped because no diff was captured.';
+  if(status==='dismissed')return 'Review dismissed.';
+  return 'No summary available.';
+}
+
 // ─── Notification helpers ───
 function playNotifSound() {
   try {
@@ -1878,11 +2074,10 @@ function updatePageTitle() {
   state.workspaces.forEach(function(w) {
     if (classifyWs(w) === 'waiting') waitingCount++;
   });
-  if (waitingCount > 0) {
-    document.title = '(' + waitingCount + ') cmux harness \u2014 Command Center';
-  } else {
-    document.title = 'cmux harness \u2014 Command Center';
-  }
+  var unreadCount = getUnreadReviewCount();
+  var badgeCount = currentView==='reviews' ? unreadCount : waitingCount;
+  var baseTitle = currentView==='reviews' ? 'cmux harness \u2014 Reviews' : 'cmux harness \u2014 Command Center';
+  document.title = badgeCount > 0 ? '(' + badgeCount + ') ' + baseTitle : baseTitle;
 }
 
 function checkNotifications(newWorkspaces) {
@@ -1938,6 +2133,176 @@ function updateOllamaStatus(){
     dot.className='ollama-dot gray';txt.textContent='Unknown';
   }
 }
+
+window.switchView=function(view){
+  currentView=view==='reviews'?'reviews':'center';
+  document.getElementById('grid').style.display=currentView==='center'?'grid':'none';
+  document.getElementById('reviewsContainer').style.display=currentView==='reviews'?'block':'none';
+  ['center','reviews'].forEach(function(name){
+    var btn=document.getElementById('viewBtn-'+name);
+    if(btn)btn.classList.toggle('active',currentView===name);
+  });
+  updatePageTitle();
+  if(currentView==='reviews'){
+    refreshReviews();
+    if(reviewsRefreshTimer===null){
+      reviewsRefreshTimer=setInterval(function(){
+        if(currentView==='reviews')refreshReviews();
+      },5000);
+    }
+  } else if(reviewsRefreshTimer!==null){
+    clearInterval(reviewsRefreshTimer);
+    reviewsRefreshTimer=null;
+  }
+};
+
+window.setReviewFilter=function(key,value){
+  reviewFilters[key]=value;
+  buildReviews();
+};
+
+function filterReviews(items){
+  var now=Date.now();
+  return items.filter(function(item){
+    var meta=reviewStatusMeta(item);
+    if(reviewFilters.status!=='all' && meta.key!==reviewFilters.status)return false;
+    if(reviewFilters.time!=='all'){
+      var ts=parseIso(item.completedAt||item.reviewedAt);
+      if(!ts)return false;
+      var age=now-ts.getTime();
+      if(reviewFilters.time==='today'){
+        var start=new Date();
+        start.setHours(0,0,0,0);
+        if(ts.getTime()<start.getTime())return false;
+      } else if(reviewFilters.time==='24h' && age>24*60*60*1000)return false;
+      else if(reviewFilters.time==='7d' && age>7*24*60*60*1000)return false;
+    }
+    return true;
+  }).sort(function(a,b){
+    if(reviewFilters.sort==='oldest')return (parseIso(a.completedAt)||0)-(parseIso(b.completedAt)||0);
+    if(reviewFilters.sort==='files')return reviewFilesChanged(b)-reviewFilesChanged(a);
+    if(reviewFilters.sort==='cost')return reviewCostValue(b.finalCost)-reviewCostValue(a.finalCost);
+    return (parseIso(b.completedAt)||0)-(parseIso(a.completedAt)||0);
+  });
+}
+
+function buildIssueList(items, sessionId){
+  if(!items || !items.length)return '';
+  var sid=String(sessionId||'');
+  var visible=items.slice(0,3);
+  var extra=items.slice(3);
+  var html='<ul class="review-issues">';
+  visible.forEach(function(issue){html+='<li>'+esc(issue)+'</li>';});
+  html+='</ul>';
+  if(extra.length){
+    html+='<ul class="review-issues" id="review-more-'+esc(sid)+'" style="display:none">';
+    extra.forEach(function(issue){html+='<li>'+esc(issue)+'</li>';});
+    html+='</ul>';
+    html+='<button class="review-more" onclick="toggleReviewIssues(\''+esc(sid)+'\')">Show '+extra.length+' more</button>';
+  }
+  return html;
+}
+
+window.toggleReviewIssues=function(sessionId){
+  var wrap=document.getElementById('review-more-'+sessionId);
+  if(!wrap)return;
+  var btn=wrap.nextElementSibling;
+  var open=wrap.style.display!=='none';
+  wrap.style.display=open?'none':'block';
+  if(btn&&btn.tagName==='BUTTON'){
+    var extraCount=wrap.querySelectorAll('li').length;
+    btn.textContent=open?'Show '+extraCount+' more':'Show less';
+  }
+};
+
+function buildReviewCard(item){
+  var sessionId=String(item.sessionId||'');
+  var meta=reviewStatusMeta(item);
+  var review=item.review||{};
+  var issues=Array.isArray(review.issues)?review.issues:[];
+  var highlights=Array.isArray(review.highlights)?review.highlights:[];
+  var filesChanged=reviewFilesChanged(item);
+  var summary=reviewSummaryText(item);
+  var cardClass='review-card '+(meta.card||'');
+  var cost=item.finalCost?'<span class="review-cost" style="color:'+costColor(item.finalCost)+'">'+esc(item.finalCost)+'</span>':'';
+  var lines='+'+String(review.linesAdded||0)+' / -'+String(review.linesRemoved||0);
+  var branch=item.branch||'—';
+  var duration=formatReviewDuration(item.reviewDuration || item.duration);
+  var highlightHtml='';
+  if(highlights.length){
+    highlightHtml='<ul class="review-highlights">';
+    highlights.forEach(function(h){highlightHtml+='<li>'+esc(h)+'</li>';});
+    highlightHtml+='</ul>';
+  }
+  return ''+
+    '<div class="'+cardClass+'" id="review-card-'+esc(item.sessionId)+'">'+
+      '<div class="review-header">'+
+        '<div class="review-head-main">'+
+          '<div class="review-dot '+meta.dot+'"></div>'+
+          '<div class="review-title">'+esc(item.workspaceName||'Unknown workspace')+'</div>'+
+        '</div>'+
+        '<div class="review-meta-right">'+
+          '<span>'+esc(formatReviewTimestamp(item.completedAt||item.reviewedAt))+'</span>'+
+          cost+
+        '</div>'+
+      '</div>'+
+      '<div class="review-summary">'+esc(summary)+'</div>'+
+      '<div class="review-stats">'+
+        '<span>📁 '+filesChanged+' files changed</span>'+
+        '<span>'+esc(lines)+'</span>'+
+        '<span>🌿 '+esc(branch)+'</span>'+
+        '<span>⏱ '+esc(duration)+'</span>'+
+      '</div>'+
+      '<div class="review-status-row">'+
+        '<span class="review-status-badge '+meta.key+'">'+meta.icon+' '+esc(meta.label)+'</span>'+
+      '</div>'+
+      (issues.length?buildIssueList(issues,sessionId):'')+
+      (review.recommendation?'<blockquote class="review-recommendation">'+esc(review.recommendation)+'</blockquote>':'')+
+      highlightHtml+
+      '<div class="review-actions">'+
+        '<button class="review-action-btn" onclick="openReviewOverlay(\''+esc(sessionId)+'\',\'diff\')">View Diff</button>'+
+        '<button class="review-action-btn" onclick="openReviewOverlay(\''+esc(sessionId)+'\',\'terminal\')">View Terminal</button>'+
+        '<button class="review-action-btn" onclick="rerunReview(\''+esc(sessionId)+'\')">Rerun Review &#9662;</button>'+
+        '<button class="review-action-btn danger" onclick="dismissReview(\''+esc(sessionId)+'\')">Dismiss</button>'+
+      '</div>'+
+    '</div>';
+}
+
+function buildReviews(){
+  var list=document.getElementById('reviewsList');
+  var countEl=document.getElementById('reviewsCount');
+  if(!list || !countEl)return;
+  var filtered=filterReviews(reviewsData.slice());
+  countEl.textContent=plural(filtered.length,'review');
+  if(!filtered.length){
+    list.innerHTML='<div class="reviews-empty">No reviews match the current filters.</div>';
+    return;
+  }
+  list.innerHTML=filtered.map(buildReviewCard).join('');
+}
+
+function refreshReviews(){
+  return api('GET','/api/reviews').then(function(result){
+    if(!result)return;
+    reviewsData=result||[];
+    reviewsLoaded=true;
+    updateReviewBadge();
+    buildReviews();
+    updatePageTitle();
+  });
+}
+
+window.rerunReview=function(sessionId){
+  api('POST','/api/reviews/'+encodeURIComponent(sessionId)+'/rerun',{}).then(function(r){
+    if(r&&r.ok)refreshReviews();
+  });
+};
+
+window.dismissReview=function(sessionId){
+  api('POST','/api/reviews/'+encodeURIComponent(sessionId)+'/dismiss',{}).then(function(r){
+    if(r&&r.ok)refreshReviews();
+  });
+};
 
 // ─── Build cards ───
 function buildGrid(){
@@ -2116,7 +2481,9 @@ window.sendToWs=function(idx){
 
 // ─── Expanded view ───
 window.openExpanded=function(idx){
+  expandedMode='workspace';
   expandedWsIndex=idx;
+  expandedReview=null;
   document.getElementById('overlay').classList.add('visible');
   document.getElementById('escHint').style.display='block';
   document.body.style.overflow='hidden';
@@ -2124,6 +2491,8 @@ window.openExpanded=function(idx){
 };
 window.closeExpanded=function(){
   expandedWsIndex=null;
+  expandedReview=null;
+  expandedMode='workspace';
   document.getElementById('overlay').classList.remove('visible');
   document.getElementById('escHint').style.display='none';
   document.body.style.overflow='';
@@ -2148,9 +2517,15 @@ window.setMode=function(btn){
 };
 
 function updateExpanded(){
+  if(expandedMode==='review'){
+    updateExpandedReview();
+    return;
+  }
   if(expandedWsIndex===null)return;
   var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
   if(!ws)return;
+  document.querySelector('.exp-header-actions').classList.remove('hidden');
+  document.querySelector('.exp-input').classList.remove('hidden');
   var expDisplayName=ws.customName||ws.name;
   document.getElementById('expTitle').textContent=expDisplayName;
   var origNameEl=document.getElementById('expOrigName');
@@ -2197,6 +2572,57 @@ function updateExpanded(){
   });
   listEl.innerHTML=h;
 }
+
+function buildReviewActivityHtml(item){
+  var review=item.review||{};
+  var issues=Array.isArray(review.issues)?review.issues:[];
+  var highlights=Array.isArray(review.highlights)?review.highlights:[];
+  var html='<div class="act-item"><div class="act-time">'+esc(formatReviewTimestamp(item.completedAt||item.reviewedAt))+'</div><div class="act-text">'+esc(reviewSummaryText(item))+'</div></div>';
+  if(issues.length){
+    html+='<div class="act-item"><div class="act-time">Issues</div><div class="act-text">'+issues.map(function(issue){return '• '+esc(issue);}).join('<br>')+'</div></div>';
+  }
+  if(review.recommendation){
+    html+='<div class="act-item"><div class="act-time">Recommendation</div><div class="act-text">'+esc(review.recommendation)+'</div></div>';
+  }
+  if(highlights.length){
+    html+='<div class="act-item"><div class="act-time">Highlights</div><div class="act-text">'+highlights.map(function(h){return '• '+esc(h);}).join('<br>')+'</div></div>';
+  }
+  return html;
+}
+
+function updateExpandedReview(){
+  if(!expandedReview)return;
+  document.querySelector('.exp-header-actions').classList.add('hidden');
+  document.querySelector('.exp-input').classList.add('hidden');
+  document.getElementById('expTitle').textContent=expandedReview.workspaceName||'Review';
+  var origNameEl=document.getElementById('expOrigName');
+  if(origNameEl)origNameEl.remove();
+  var review=expandedReview.review||{};
+  var meta='';
+  meta+='<span>🌿 '+esc(expandedReview.branch||'—')+'</span>';
+  meta+='<span>📁 '+reviewFilesChanged(expandedReview)+' files changed</span>';
+  meta+='<span>+'+esc(String(review.linesAdded||0))+' / -'+esc(String(review.linesRemoved||0))+'</span>';
+  document.getElementById('expMeta').innerHTML=meta;
+  document.getElementById('expTerminal').innerHTML=expandedReview._overlayTab==='terminal'
+    ? colorize(expandedReview.terminalSnapshot||'')
+    : diffColorize(expandedReview.gitDiff||'');
+  document.getElementById('expActCount').textContent='review';
+  document.getElementById('expActList').innerHTML=buildReviewActivityHtml(expandedReview);
+}
+
+window.openReviewOverlay=function(sessionId,tab){
+  api('GET','/api/reviews/'+encodeURIComponent(sessionId)).then(function(review){
+    if(!review)return;
+    expandedMode='review';
+    expandedWsIndex=null;
+    expandedReview=review;
+    expandedReview._overlayTab=tab||'diff';
+    document.getElementById('overlay').classList.add('visible');
+    document.getElementById('escHint').style.display='block';
+    document.body.style.overflow='hidden';
+    updateExpandedReview();
+  });
+};
 
 // ─── Settings ───
 window.toggleNotifications=function(el){
@@ -2398,7 +2824,7 @@ function refresh(){
     buildGrid();
     updatePageTitle();
     updateActivityFeed(logData);
-    if(expandedWsIndex!==null){
+    if(expandedMode==='workspace' && expandedWsIndex!==null){
       // Don't clobber expanded input if user is typing
       var expFocused=document.activeElement&&document.activeElement.id==='expInput';
       updateExpanded();
@@ -2407,10 +2833,11 @@ function refresh(){
   });
 }
 refresh();
+refreshReviews();
 setInterval(refresh,2000);
 // Faster refresh for expanded view (500ms)
 setInterval(function(){
-  if(expandedWsIndex===null)return;
+  if(expandedMode!=='workspace' || expandedWsIndex===null)return;
   api('GET','/api/status').then(function(r){
     if(!r)return;
     state.workspaces=r.workspaces||[];
@@ -2493,8 +2920,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Use cached availability — if already known unavailable, skip the connect attempt
             with _engine._lock:
                 cached = _engine.ollama_available
+            lmstudio_available = False
+            claude_available = shutil.which("claude") is not None
+            try:
+                with urllib.request.urlopen("http://100.89.93.84:1234/v1/models", timeout=3) as r:
+                    json.loads(r.read())
+                lmstudio_available = True
+            except Exception:
+                lmstudio_available = False
             if cached is False:
-                self._json_response({"models": [], "available": False})
+                self._json_response({
+                    "models": [],
+                    "available": False,
+                    "lmstudioAvailable": lmstudio_available,
+                    "claudeAvailable": claude_available,
+                })
             else:
                 try:
                     import urllib.request as _ur
@@ -2504,12 +2944,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     with _engine._lock:
                         _engine.ollama_available = True
                         _engine.ollama_last_check = time.time()
-                    self._json_response({"models": names, "available": True})
+                    self._json_response({
+                        "models": names,
+                        "available": True,
+                        "lmstudioAvailable": lmstudio_available,
+                        "claudeAvailable": claude_available,
+                    })
                 except Exception as e:
                     with _engine._lock:
                         _engine.ollama_available = False
                         _engine.ollama_last_check = time.time()
-                    self._json_response({"models": [], "available": False, "error": str(e)})
+                    self._json_response({
+                        "models": [],
+                        "available": False,
+                        "lmstudioAvailable": lmstudio_available,
+                        "claudeAvailable": claude_available,
+                        "error": str(e),
+                    })
         else:
             self.send_error(404)
 
@@ -2575,6 +3026,52 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             ok = cmux_send_to_workspace(idx, 0, text=text, workspace_uuid=ws.get("uuid"))
             self._json_response({"ok": ok})
+        elif self.path.startswith("/api/reviews/") and self.path.endswith("/rerun"):
+            session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):-len("/rerun")]).rstrip("/")
+            path = _get_review_path(session_id)
+            if path is None:
+                self._json_response({"ok": False, "error": "review not found"}, 404)
+                return
+            review = _read_review_file(path)
+            if review is None:
+                self._json_response({"ok": False, "error": "review not found"}, 404)
+                return
+            model_override = data.get("model")
+            backend_override = data.get("backend")
+            review["reviewStatus"] = "pending"
+            review.pop("reviewedAt", None)
+            review.pop("reviewDuration", None)
+            review.pop("reviewError", None)
+            review.pop("reviewModel", None)
+            review.pop("review", None)
+            try:
+                _engine._write_review_file(path, review)
+            except OSError as e:
+                self._json_response({"ok": False, "error": str(e)}, 500)
+                return
+            threading.Thread(
+                target=_engine._run_review,
+                args=(path, model_override, backend_override),
+                daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+        elif self.path.startswith("/api/reviews/") and self.path.endswith("/dismiss"):
+            session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):-len("/dismiss")]).rstrip("/")
+            path = _get_review_path(session_id)
+            if path is None:
+                self._json_response({"ok": False, "error": "review not found"}, 404)
+                return
+            review = _read_review_file(path)
+            if review is None:
+                self._json_response({"ok": False, "error": "review not found"}, 404)
+                return
+            review["reviewStatus"] = "dismissed"
+            try:
+                _engine._write_review_file(path, review)
+            except OSError as e:
+                self._json_response({"ok": False, "error": str(e)}, 500)
+                return
+            self._json_response({"ok": True})
         elif self.path == "/api/new-session":
             cwd = data.get("cwd", "~/Documents/Development/Doximity-Cloud")
             command = data.get("command", "claude")
