@@ -58,10 +58,15 @@ def cmux_command(command):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.connect(path)
-        return _cmux_send(sock, command)
+        result = _cmux_send(sock, command)
+        return result
     except OSError:
         return None
     finally:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         sock.close()
 
 
@@ -84,6 +89,10 @@ def _v2_request(method, params):
     except (OSError, json.JSONDecodeError):
         return None
     finally:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         sock.close()
 
 
@@ -110,6 +119,10 @@ def cmux_read_workspace(ws_index, surface_index=0, lines=40, workspace_uuid=None
     except OSError:
         return None
     finally:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         sock.close()
 
 
@@ -145,6 +158,10 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
     except OSError:
         return False
     finally:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         sock.close()
 
 
