@@ -251,6 +251,10 @@ def llm_classify(screen_text):
         reason = parsed.get("reason", "")
         if action == "skip" or not safe:
             return ("needs_human", "skip")
+        # Fix action mismatch: if the screen is a numbered menu (Enter to select),
+        # always use "enter" even if the LLM said "y". Typing "y" in a menu does nothing.
+        if action == "y" and re.search(r"Enter to select|Esc to cancel", tail):
+            action = "enter"
         return (f"llm:{reason[:40]}", action)
     except Exception as e:
         print(f"[harness] LLM error: {e}")
