@@ -173,7 +173,7 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
 # ---------------------------------------------------------------------------
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:8b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
 USE_LLM = os.environ.get("USE_LLM", "1") != "0"  # enabled by default
 
 _LLM_SYSTEM = """You classify terminal prompts from Claude Code (an AI coding assistant).
