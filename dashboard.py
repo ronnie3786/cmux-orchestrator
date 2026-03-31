@@ -976,6 +976,11 @@ class HarnessEngine(threading.Thread):
         })
 
         if ok:
+            # Clear fingerprint so the next identical prompt gets a fresh check.
+            # Without this, back-to-back identical permission prompts (same last 5
+            # lines) get deduped and the harness stalls on the repeat.
+            with self._lock:
+                self.fingerprints.pop(idx, None)
             print(f"[harness] ✓ ws:{idx} ({ws_name}) {pattern_name} → {'Enter' if action == 'enter' else 'y'}")
             self._append_log({
                 "timestamp": now_str,
