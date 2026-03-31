@@ -337,7 +337,13 @@ def _is_permission_menu(options_text):
 
 def detect_prompt(screen_text):
     """Return (pattern_name, action) or None if no prompt detected.
-    Returns ("needs_human", "skip") if a menu needs manual intervention."""
+    Returns ("needs_human", "skip") if a prompt needs manual intervention.
+
+    Strategy: LLM-primary. The local model classifies every screen.
+    Only two fast pre-checks:
+    1. Idle REPL detection (skip without burning LLM tokens)
+    2. Plain shell prompt detection (skip without burning LLM tokens)
+    """
     if not screen_text:
         return None
     lines = screen_text.splitlines()
@@ -347,62 +353,13 @@ def detect_prompt(screen_text):
     if _REPL_IDLE_RE.search(tail):
         return None
 
-    # FIRST: Check for numbered menus (Enter to select / Esc to cancel).
-    has_menu_footer = bool(re.search(r"Enter to select|Esc to cancel", tail))
-    if has_menu_footer:
-        # Extract only the actual menu region to avoid false matches on
-        # numbered content in Claude's output above the prompt.
-        # Strategy: find the prompt question ("Do you want to proceed?" etc.)
-        # and extract everything from there to the footer. This handles
-        # wrapped option lines and missing spaces (e.g. "2.Yes, and don't...").
-        tail_lines = tail.splitlines()
-        menu_start = -1
-        menu_end = len(tail_lines)
-        for i, line in enumerate(tail_lines):
-            stripped = line.strip()
-            if re.match(r"(Do you want|This command requires|Allow |Approve |proceed\??)", stripped, re.I):
-                menu_start = i
-            if re.search(r"Enter to select|Esc to cancel", stripped):
-                menu_end = i
-                break
-        if menu_start >= 0:
-            menu_text = "\n".join(tail_lines[menu_start:menu_end])
-        else:
-            # Fallback: take last 10 lines before footer (covers most menus)
-            start = max(0, menu_end - 10)
-            menu_text = "\n".join(tail_lines[start:menu_end])
+    # SKIP: Plain shell prompt with no Claude Code indicators
+    last_lines = "\n".join(lines[-5:]) if len(lines) > 5 else screen_text
+    if not re.search(r"(Allow |Do you want|proceed|\([Yy](?:/[Nn]|es/no)\)|Enter to select|Esc to cancel|Musing|Thinking|⚡|Model:|Cost:|Ctx:)", last_lines):
+        # No prompt indicators at all in the last 5 lines — likely just a shell
+        return None
 
-        # Check if this is a standard permission menu (Yes/No variants)
-        # or a domain-specific choice menu
-        if not _is_permission_menu(menu_text):
-            return ("needs_human", "skip")
-
-        # It's a permission menu. Check if cursor is on an affirmative option.
-        cursor_re = re.compile(r"^\s*" + _CURSOR_CHARS + r"\s*\d+[.)]\s+")
-        for line in tail.splitlines():
-            if cursor_re.match(line) or ("❯" in line and _NUMBERED_MENU_RE.search(line)):
-                if _AFFIRM_RE.search(line):
-                    return ("confirm_menu", "enter")
-                else:
-                    return ("needs_human", "skip")
-        # Also check for cursor on a non-numbered line
-        cursor_plain_re = re.compile(r"^\s*" + _CURSOR_CHARS + r"\s+")
-        for line in tail.splitlines():
-            if cursor_plain_re.match(line):
-                if _AFFIRM_RE.search(line):
-                    return ("confirm_menu", "enter")
-                else:
-                    return ("needs_human", "skip")
-        return ("needs_human", "skip")
-
-    # Non-menu prompts (regex fast-path)
-    for name, primary, secondary, action in PROMPT_PATTERNS:
-        if re.search(primary, tail):
-            if secondary is None or re.search(secondary, tail):
-                return (name, action)
-
-    # If regex found nothing, try the LLM as a fallback.
-    # This catches prompt formats we haven't seen before.
+    # LLM classifies everything else
     llm_result = llm_classify(screen_text)
     if llm_result is not None:
         return llm_result
