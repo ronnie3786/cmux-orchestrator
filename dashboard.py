@@ -1625,12 +1625,13 @@ function buildGrid(){
   document.getElementById('statWaiting').textContent=waiting;
   document.getElementById('statIdle').textContent=idle;
 
-  // Sort: waiting first, active next, idle last
+  // Sort: active/waiting first (grouped), idle last. Stable order within groups.
   var sorted=ws.slice().sort(function(a,b){
-    var order={'waiting':0,'active':1,'idle':2};
-    var sa=order[classifyWs(a)]||1;
-    var sb=order[classifyWs(b)]||1;
-    return sa-sb;
+    var aIdle=classifyWs(a)==='idle'?1:0;
+    var bIdle=classifyWs(b)==='idle'?1:0;
+    if(aIdle!==bIdle)return aIdle-bIdle;
+    // Within the same group, preserve original index order
+    return a.index-b.index;
   });
 
   // Preserve focus: if user is typing in an input, save it
@@ -1677,7 +1678,6 @@ function buildGrid(){
     html+='<span>\uD83D\uDCC2 '+esc(w.cwd||'—')+'</span>';
     if(w.branch)html+='<span>\uD83C\uDF3F '+esc(w.branch)+'</span>';
     if(w.lastCheck)html+='<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>';
-    if(w.hasClaude&&w.sessionStart){var dur=formatDuration(w.sessionStart);if(dur)html+='<span>\u23F1 '+esc(dur)+'</span>';}
     if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);html+='<span>\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px">'+esc(w.sessionCost)+'</span></span>';}
     html+='</div>';
 
@@ -1724,7 +1724,6 @@ function buildGrid(){
         spans.push('<span>\uD83D\uDCC2 '+esc(w.cwd||'\u2014')+'</span>');
         if(w.branch)spans.push('<span>\uD83C\uDF3F '+esc(w.branch)+'</span>');
         if(w.lastCheck)spans.push('<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>');
-        if(w.hasClaude&&w.sessionStart){var dur=formatDuration(w.sessionStart);if(dur)spans.push('<span>\u23F1 '+esc(dur)+'</span>');}
         if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);spans.push('<span>\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px">'+esc(w.sessionCost)+'</span></span>');}
         var newMeta=spans.join('');
         if(meta.innerHTML!==newMeta)meta.innerHTML=newMeta;
@@ -1838,7 +1837,6 @@ function updateExpanded(){
   if(ws.cwd)meta+='\uD83D\uDCC2 '+esc(ws.cwd)+'  ';
   if(ws.branch)meta+='\uD83C\uDF3F '+esc(ws.branch)+'  ';
   if(ws.lastCheck)meta+='\u23F1 '+fmtTime(ws.lastCheck)+'  ';
-  if(ws.hasClaude&&ws.sessionStart){var dur=formatDuration(ws.sessionStart);if(dur)meta+='\u23F1 '+esc(dur)+'  ';}
   if(ws.hasClaude&&ws.sessionCost){var cc=costColor(ws.sessionCost);meta+='\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:12px">'+esc(ws.sessionCost)+'</span>  ';}
   document.getElementById('expMeta').innerHTML=meta;
 
