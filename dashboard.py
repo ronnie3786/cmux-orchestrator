@@ -382,6 +382,7 @@ LOG_DIR = Path.home() / ".cmux-harness"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "approval-log.jsonl"
 DEBUG_LOG = LOG_DIR / "debug-log.jsonl"
+CONFIG_FILE = LOG_DIR / "workspace-config.json"
 
 
 def _debug_log(entry):
@@ -409,8 +410,28 @@ class HarnessEngine(threading.Thread):
         self.workspaces = []
         self.fingerprints = {}
         self.screen_cache = {}   # idx -> last screen text (tail)
+        self.ws_has_claude = {}  # idx -> bool (tracks active Claude sessions per workspace)
+        self.idle_last_read = {} # idx -> float (timestamp of last screen read for idle workspaces)
         self._lock = threading.Lock()
         self.model = OLLAMA_MODEL
+        self.ws_config = self._load_config()
+
+    def _load_config(self):
+        """Read workspace config from JSON file. Returns empty dict if not found or invalid."""
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+            return data.get("workspaces", {})
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, OSError):
+            return {}
+
+    def _save_config(self):
+        """Write current ws_config to the JSON file. Call while holding self._lock."""
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump({"workspaces": self.ws_config}, f, indent=2)
+        except OSError as e:
+            print(f"[harness] config save error: {e}")
 
     def set_enabled(self, val):
         with self._lock:
@@ -419,6 +440,17 @@ class HarnessEngine(threading.Thread):
     def set_workspace_enabled(self, index, val):
         with self._lock:
             self.workspace_enabled[index] = bool(val)
+            # Persist by UUID so state survives index shifts
+            ws_uuid = None
+            for w in self.workspaces:
+                if w.get("index", w.get("id")) == index:
+                    ws_uuid = w.get("uuid")
+                    break
+            if ws_uuid:
+                if ws_uuid not in self.ws_config:
+                    self.ws_config[ws_uuid] = {}
+                self.ws_config[ws_uuid]["autoEnabled"] = bool(val)
+                self._save_config()
 
     def set_poll_interval(self, val):
         with self._lock:
@@ -428,23 +460,48 @@ class HarnessEngine(threading.Thread):
         with self._lock:
             self.model = name
 
+    def set_custom_name(self, index, name):
+        """Set a custom display name for the workspace at the given index.
+        Persists to config keyed by UUID so it survives index shifts."""
+        with self._lock:
+            ws_uuid = None
+            for w in self.workspaces:
+                if w.get("index", w.get("id")) == index:
+                    ws_uuid = w.get("uuid")
+                    break
+            if ws_uuid is None:
+                return False
+            if ws_uuid not in self.ws_config:
+                self.ws_config[ws_uuid] = {}
+            self.ws_config[ws_uuid]["customName"] = name
+            self._save_config()
+            return True
+
     def get_status(self):
         with self._lock:
             ws_list = []
             for ws in self.workspaces:
                 idx = ws.get("index", ws.get("id"))
+                uuid = ws.get("uuid", "")
                 screen_tail = self.screen_cache.get(idx, "")
                 # Get last 25 lines for card preview
                 lines = screen_tail.strip().splitlines() if screen_tail else []
                 preview = "\n".join(lines[-25:]) if lines else ""
-                # Detect if Claude Code is running in this terminal
-                has_claude = _detect_claude_session(screen_tail) if screen_tail else False
+                # Use cached Claude session detection (updated in run() loop)
+                has_claude = self.ws_has_claude.get(idx, False)
+                # Look up saved config state (keyed by UUID)
+                cfg = self.ws_config.get(uuid, {})
+                if "autoEnabled" in cfg:
+                    enabled = cfg["autoEnabled"]
+                else:
+                    enabled = self.workspace_enabled.get(idx, False)
                 ws_list.append({
                     "hasClaude": has_claude,
                     "index": idx,
                     "name": ws.get("name", f"workspace-{idx}"),
-                    "uuid": ws.get("uuid", ""),
-                    "enabled": self.workspace_enabled.get(idx, False),
+                    "uuid": uuid,
+                    "enabled": enabled,
+                    "customName": cfg.get("customName"),
                     "lastCheck": ws.get("_lastCheck", ""),
                     "screenTail": preview,
                     "screenFull": screen_tail,
@@ -641,26 +698,44 @@ class HarnessEngine(threading.Thread):
                 # even before the global toggle is enabled.
                 self.refresh_workspaces()
 
-                # Read screens for ALL workspaces so the UI has data
+                # Read screens for ALL workspaces so the UI has data.
+                # Active workspaces (hasClaude=True) are read every cycle.
+                # Idle workspaces are read at most once every 30 seconds.
+                IDLE_READ_INTERVAL = 30  # seconds
                 with self._lock:
                     ws_snap = list(self.workspaces)
+                now_ts = time.time()
                 for ws in ws_snap:
                     ws_uuid = ws.get("uuid", "")
                     idx = ws.get("index", ws.get("id"))
-                    if ws_uuid:
-                        screen = cmux_read_workspace(idx, 0, lines=40, workspace_uuid=ws_uuid)
-                        if screen:
-                            with self._lock:
-                                self.screen_cache[idx] = screen
-                        # Also try sidebar state
-                        sidebar = _v2_request("sidebar.state", {"workspace_id": ws_uuid})
-                        if sidebar:
-                            with self._lock:
-                                for w in self.workspaces:
-                                    if w.get("index", w.get("id")) == idx:
-                                        w["_cwd"] = sidebar.get("cwd", "")
-                                        w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
-                                        break
+                    if not ws_uuid:
+                        continue
+                    # Determine if this workspace is idle (no Claude session)
+                    with self._lock:
+                        is_idle = not self.ws_has_claude.get(idx, False)
+                        last_read = self.idle_last_read.get(idx, 0)
+                    # Skip idle workspaces that were read recently
+                    if is_idle and (now_ts - last_read) < IDLE_READ_INTERVAL:
+                        continue
+                    screen = cmux_read_workspace(idx, 0, lines=40, workspace_uuid=ws_uuid)
+                    if screen:
+                        has_claude = _detect_claude_session(screen)
+                        with self._lock:
+                            self.screen_cache[idx] = screen
+                            self.ws_has_claude[idx] = has_claude
+                            self.idle_last_read[idx] = now_ts
+                    else:
+                        with self._lock:
+                            self.idle_last_read[idx] = now_ts
+                    # Also try sidebar state
+                    sidebar = _v2_request("sidebar.state", {"workspace_id": ws_uuid})
+                    if sidebar:
+                        with self._lock:
+                            for w in self.workspaces:
+                                if w.get("index", w.get("id")) == idx:
+                                    w["_cwd"] = sidebar.get("cwd", "")
+                                    w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
+                                    break
 
                 if enabled:
                     # Phase 1: Check which workspaces have unread
@@ -735,12 +810,33 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .card-status.waiting{background:var(--yellow);animation:pulse 2s infinite}
 .card-status.idle{background:var(--text-muted);opacity:.5}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.card-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border-bottom:1px solid transparent;transition:border-color .15s}
+.card-name:hover{border-bottom-color:var(--accent)}
+.card-name-edit{font-size:15px;font-weight:600;background:transparent;border:none;border-bottom:2px solid var(--accent);color:var(--text);outline:none;width:180px;font-family:inherit;padding:0}
+.card-name-original{font-size:11px;color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card-header-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 .badge-active{background:rgba(63,185,80,.15);color:var(--green)}
 .badge-waiting{background:rgba(210,153,34,.15);color:var(--yellow)}
 .badge-idle{background:rgba(139,148,158,.15);color:var(--text-muted)}
+
+/* Collapsed idle card */
+.card-collapsed{opacity:0.7;order:1}
+.card-collapsed .card-header{border-bottom:none}
+.card-collapsed:hover{opacity:0.9}
+.card-collapsed.expanded-inline .card-header{border-bottom:1px solid var(--border)}
+.card-collapsed .card-meta,.card-collapsed .card-terminal,.card-collapsed .card-footer{display:none}
+.card-collapsed.expanded-inline .card-meta,.card-collapsed.expanded-inline .card-terminal,.card-collapsed.expanded-inline .card-footer{display:flex}
+.card-collapsed.expanded-inline .card-terminal{display:block}
+.card-expand-caret{width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
+.card-expand-caret:hover{border-color:var(--accent);color:var(--accent)}
+.card-collapsed.expanded-inline .card-expand-caret{background:rgba(88,166,255,.1);color:var(--accent);border-color:var(--accent)}
+/* Active cards always show full content */
+.card:not(.card-collapsed) .card-meta{display:flex}
+.card:not(.card-collapsed) .card-terminal{display:block}
+.card:not(.card-collapsed) .card-footer{display:flex}
+/* Smooth transition for idle→active expansion */
+.card{transition:border-color .2s,box-shadow .2s,opacity .3s}
 
 /* Auto toggle */
 .auto-toggle{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
@@ -919,6 +1015,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         <div class="toggle-track"></div>
       </div>
     </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Notifications</div>
+        <div class="settings-sublabel">Browser alerts + sound on state changes</div>
+      </div>
+      <div class="auto-toggle on" id="settingsNotif" onclick="toggleNotifications(this)">
+        <span class="auto-toggle-label">On</span>
+        <div class="toggle-track"></div>
+      </div>
+    </div>
+    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+      <div>
+        <div class="settings-label">Default Working Directory</div>
+        <div class="settings-sublabel">Used when creating new sessions</div>
+      </div>
+      <input class="settings-select" id="settingsCwd" type="text"
+        style="width:100%;min-width:0;font-family:inherit"
+        placeholder="~/Documents/Development/Doximity-Cloud"
+        onchange="defaultCwd=this.value.trim()||'~/Documents/Development/Doximity-Cloud'">
+    </div>
   </div>
 </div>
 
@@ -927,6 +1043,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false};
 var logData = [];
 var expandedWsIndex = null;
+var prevWsStates = {};
+var notificationsEnabled = true;
+var audioCtx = null;
+
+// Request notification permission on page load
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
 
 function api(method,path,body){
   var opts={method:method,headers:{'Content-Type':'application/json'}};
@@ -987,6 +1111,69 @@ function fmtTime(iso){
   try{return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}catch(e){return iso}
 }
 
+// ─── Notification helpers ───
+function playNotifSound() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.frequency.setValueAtTime(523, audioCtx.currentTime);
+    osc.frequency.setValueAtTime(659, audioCtx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.3);
+  } catch(e) {}
+}
+
+function notify(title, body, tag) {
+  if (!notificationsEnabled) return;
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      var n = new Notification(title, {body: body, tag: tag});
+      setTimeout(function() { n.close(); }, 8000);
+    } catch(e) {}
+  }
+  playNotifSound();
+}
+
+function updatePageTitle() {
+  var waitingCount = 0;
+  state.workspaces.forEach(function(w) {
+    if (classifyWs(w) === 'waiting') waitingCount++;
+  });
+  if (waitingCount > 0) {
+    document.title = '(' + waitingCount + ') cmux harness \u2014 Command Center';
+  } else {
+    document.title = 'cmux harness \u2014 Command Center';
+  }
+}
+
+function checkNotifications(newWorkspaces) {
+  if (!notificationsEnabled) return;
+  newWorkspaces.forEach(function(w) {
+    var idx = w.index;
+    var newStatus = classifyWs(w);
+    var newHasClaude = w.hasClaude;
+    var prev = prevWsStates[idx];
+    if (prev !== undefined) {
+      // Workspace transitioned TO waiting
+      if (prev.status !== 'waiting' && newStatus === 'waiting') {
+        var wsName = w.customName || w.name;
+        notify('\u26A0\uFE0F Needs Your Attention', wsName + ' is waiting for input.', 'ws-waiting-' + idx);
+      }
+      // Claude Code session completed: hasClaude went true → false
+      if (prev.hasClaude && !newHasClaude) {
+        var wsName = w.customName || w.name;
+        notify('\u2705 Session Complete', wsName + ' — Claude Code has finished.', 'ws-done-' + idx);
+      }
+    }
+    prevWsStates[idx] = {hasClaude: newHasClaude, status: newStatus};
+  });
+}
+
 // ─── Global toggle ───
 window.toggleGlobal=function(){
   state.enabled=!state.enabled;
@@ -1018,10 +1205,11 @@ function buildGrid(){
   document.getElementById('statWaiting').textContent=waiting;
   document.getElementById('statIdle').textContent=idle;
 
-  // Sort: waiting first
+  // Sort: waiting first, active next, idle last
   var sorted=ws.slice().sort(function(a,b){
-    var sa=classifyWs(a)==='waiting'?0:1;
-    var sb=classifyWs(b)==='waiting'?0:1;
+    var order={'waiting':0,'active':1,'idle':2};
+    var sa=order[classifyWs(a)]||1;
+    var sb=order[classifyWs(b)]||1;
     return sa-sb;
   });
 
@@ -1041,20 +1229,26 @@ function buildGrid(){
     var s=classifyWs(w);
     var isWaiting=s==='waiting';
     var isIdle=s==='idle';
-    var cardClass='card'+(isWaiting?' needs-attention':'');
+    var cardClass='card'+(isWaiting?' needs-attention':'')+(isIdle?' card-collapsed':'');
     var statusClass='card-status '+s;
     var badgeClass=isWaiting?'badge badge-waiting':isIdle?'badge badge-idle':'badge badge-active';
     var badgeText=isWaiting?'Needs You':isIdle?'Idle':'Active';
     var autoOn=w.enabled===true;
     var autoClass='auto-toggle'+(autoOn?' on':'');
-    var opacity=isIdle?' style="opacity:.6"':'';
 
-    html+='<div class="'+cardClass+'"'+opacity+'>';
+    html+='<div class="'+cardClass+'" id="card-'+w.index+'">';
+    var displayName=w.customName||w.name;
     html+='<div class="card-header">';
-    html+='<div class="card-title-row"><div class="'+statusClass+'"></div><span class="card-name">'+esc(w.name)+'</span></div>';
+    html+='<div class="card-title-row"><div class="'+statusClass+'"></div>';
+    html+='<div style="min-width:0">';
+    html+='<span class="card-name" onclick="startRename('+w.index+',this)" title="Click to rename">'+esc(displayName)+'</span>';
+    if(w.customName)html+='<div class="card-name-original">'+esc(w.name)+'</div>';
+    html+='</div>';
+    html+='</div>';
     html+='<div class="card-header-right">';
     html+='<span class="'+badgeClass+'">'+badgeText+'</span>';
     html+='<div class="'+autoClass+'" onclick="toggleWsAuto('+w.index+',this)"><span class="auto-toggle-label">Auto</span><div class="toggle-track"></div></div>';
+    if(isIdle)html+='<button class="card-expand-caret" onclick="toggleInlineExpand('+w.index+')" title="Show details">&#9660;</button>';
     html+='<button class="expand-btn" onclick="openExpanded('+w.index+')">&#10530;</button>';
     html+='</div></div>';
 
@@ -1079,6 +1273,11 @@ function buildGrid(){
     var el=document.getElementById(focusedInputId);
     if(el){el.value=focusedValue;el.focus();el.setSelectionRange(focusedCursor,focusedCursor)}
   }
+  // Restore inline-expanded state for idle cards
+  Object.keys(inlineExpanded).forEach(function(idx){
+    var card=document.getElementById('card-'+idx);
+    if(card&&card.classList.contains('card-collapsed'))card.classList.add('expanded-inline');
+  });
 }
 
 function classifyWs(w){
@@ -1092,6 +1291,23 @@ function classifyWs(w){
   // Idle = just a regular shell prompt, no Claude session
   return w.hasClaude ? 'active' : 'idle';
 }
+
+// ─── Inline expand for collapsed idle cards ───
+var inlineExpanded={};
+window.toggleInlineExpand=function(idx){
+  var card=document.getElementById('card-'+idx);
+  if(!card)return;
+  if(inlineExpanded[idx]){
+    card.classList.remove('expanded-inline');
+    delete inlineExpanded[idx];
+  }else{
+    card.classList.add('expanded-inline');
+    inlineExpanded[idx]=true;
+    // scroll terminal to bottom
+    var term=card.querySelector('.card-terminal');
+    if(term)term.scrollTop=term.scrollHeight;
+  }
+};
 
 // ─── Per-workspace auto toggle ───
 window.toggleWsAuto=function(idx,el){
@@ -1146,7 +1362,20 @@ function updateExpanded(){
   if(expandedWsIndex===null)return;
   var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
   if(!ws)return;
-  document.getElementById('expTitle').textContent=ws.name;
+  var expDisplayName=ws.customName||ws.name;
+  document.getElementById('expTitle').textContent=expDisplayName;
+  var origNameEl=document.getElementById('expOrigName');
+  if(ws.customName){
+    if(!origNameEl){
+      origNameEl=document.createElement('div');
+      origNameEl.id='expOrigName';
+      origNameEl.style.cssText='font-size:12px;color:var(--text-muted);margin-top:2px';
+      document.getElementById('expTitle').insertAdjacentElement('afterend',origNameEl);
+    }
+    origNameEl.textContent=ws.name;
+  } else if(origNameEl){
+    origNameEl.remove();
+  }
   var meta='';
   if(ws.cwd)meta+='\uD83D\uDCC2 '+esc(ws.cwd)+'  ';
   if(ws.branch)meta+='\uD83C\uDF3F '+esc(ws.branch)+'  ';
@@ -1180,9 +1409,18 @@ function updateExpanded(){
 }
 
 // ─── Settings ───
+window.toggleNotifications=function(el){
+  el.classList.toggle('on');
+  notificationsEnabled = el.classList.contains('on');
+  el.querySelector('.auto-toggle-label').textContent = notificationsEnabled ? 'On' : 'Off';
+};
 window.openSettings=function(){
   document.getElementById('settingsOverlay').classList.add('visible');
   document.getElementById('settingsPoll').value=String(state.pollInterval);
+  document.getElementById('settingsCwd').value=defaultCwd;
+  var notifEl=document.getElementById('settingsNotif');
+  if(notificationsEnabled){notifEl.classList.add('on');notifEl.querySelector('.auto-toggle-label').textContent='On';}
+  else{notifEl.classList.remove('on');notifEl.querySelector('.auto-toggle-label').textContent='Off';}
   // Load models
   api('GET','/api/models').then(function(r){
     if(!r)return;
@@ -1208,10 +1446,69 @@ window.saveSetting=function(key,val){
   if(key==='pollInterval')state.pollInterval=val;
 };
 
-// ─── New session (placeholder) ───
+// ─── New session ───
+var defaultCwd='~/Documents/Development/Doximity-Cloud';
 window.newSession=function(){
-  // Future: create workspace via cmux API
-  alert('New session creation coming in v3!');
+  var btn=document.querySelector('.btn-primary');
+  if(btn){btn.textContent='Creating...';btn.disabled=true;}
+  api('POST','/api/new-session',{cwd:defaultCwd,command:'claude'}).then(function(r){
+    if(btn){btn.textContent='+ New Session';btn.disabled=false;}
+    if(!r||!r.ok){
+      console.error('New session failed:',r&&r.error);
+      return;
+    }
+    // New workspace will appear on next refresh cycle — nothing else needed
+  }).catch(function(){
+    if(btn){btn.textContent='+ New Session';btn.disabled=false;}
+  });
+};
+
+// ─── Inline rename ───
+window.startRename=function(idx,spanEl){
+  // Prevent click propagation to expand-btn etc.
+  var currentName=spanEl.textContent;
+  var inp=document.createElement('input');
+  inp.className='card-name-edit';
+  inp.value=currentName;
+  spanEl.replaceWith(inp);
+  inp.focus();
+  inp.select();
+
+  var committed=false;
+  function commit(){
+    if(committed)return;
+    committed=true;
+    var newName=inp.value.trim();
+    var newSpan=document.createElement('span');
+    newSpan.className='card-name';
+    newSpan.setAttribute('title','Click to rename');
+    newSpan.onclick=function(){startRename(idx,newSpan)};
+    if(!newName||newName===currentName){
+      newSpan.textContent=currentName;
+      inp.replaceWith(newSpan);
+      return;
+    }
+    newSpan.textContent=newName;
+    inp.replaceWith(newSpan);
+    api('POST','/api/rename',{index:idx,name:newName}).then(function(r){
+      if(!r||!r.ok){newSpan.textContent=currentName}
+    });
+  }
+  function cancel(){
+    if(committed)return;
+    committed=true;
+    var newSpan=document.createElement('span');
+    newSpan.className='card-name';
+    newSpan.setAttribute('title','Click to rename');
+    newSpan.onclick=function(){startRename(idx,newSpan)};
+    newSpan.textContent=currentName;
+    inp.replaceWith(newSpan);
+  }
+  inp.addEventListener('blur',commit);
+  inp.addEventListener('keydown',function(e){
+    if(e.key==='Enter'){e.preventDefault();inp.removeEventListener('blur',commit);commit()}
+    else if(e.key==='Escape'){e.preventDefault();inp.removeEventListener('blur',commit);cancel()}
+  });
 };
 
 // ─── Keyboard ───
@@ -1236,7 +1533,9 @@ function refresh(){
     state.socketFound=status.socketFound;
     logData=log||[];
     updateGlobalToggle();
+    checkNotifications(state.workspaces);
     buildGrid();
+    updatePageTitle();
     if(expandedWsIndex!==null){
       // Don't clobber expanded input if user is typing
       var expFocused=document.activeElement&&document.activeElement.id==='expInput';
@@ -1340,6 +1639,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _engine.set_model(model)
             with _engine._lock:
                 self._json_response({"ok": True, "pollInterval": _engine.poll_interval, "model": _engine.model})
+        elif self.path == "/api/rename":
+            idx = data.get("index")
+            name = data.get("name", "")
+            if idx is None:
+                self._json_response({"ok": False, "error": "index required"}, 400)
+                return
+            ok = _engine.set_custom_name(int(idx), name)
+            if not ok:
+                self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                return
+            self._json_response({"ok": True})
         elif self.path == "/api/send":
             idx = data.get("index")
             text = data.get("text", "")
@@ -1355,6 +1665,73 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             ok = cmux_send_to_workspace(idx, 0, text=text, workspace_uuid=ws.get("uuid"))
             self._json_response({"ok": ok})
+        elif self.path == "/api/new-session":
+            cwd = data.get("cwd", "~/Documents/Development/Doximity-Cloud")
+            command = data.get("command", "claude")
+
+            # Step 1: Create workspace
+            create_result = _v2_request("workspace.create", {})
+            if create_result is None:
+                self._json_response({"ok": False, "error": "Failed to create workspace"})
+                return
+
+            # Step 2: Wait for initialization
+            time.sleep(0.5)
+
+            # Step 3: Resolve UUID — try create result first, then list
+            ws_uuid = None
+            ws_idx = None
+            if isinstance(create_result, dict):
+                ws_uuid = (create_result.get("uuid") or
+                           create_result.get("workspace_id") or
+                           create_result.get("id"))
+                ws_idx = create_result.get("index")
+
+            if not ws_uuid:
+                list_result = _v2_request("workspace.list", {})
+                if list_result:
+                    ws_list = list_result if isinstance(list_result, list) else list_result.get("workspaces", [])
+                    if ws_list:
+                        newest = ws_list[-1]
+                        ws_uuid = newest.get("uuid") or newest.get("id")
+                        ws_idx = newest.get("index")
+
+            if not ws_uuid:
+                self._json_response({"ok": False, "error": "Failed to get new workspace info"})
+                return
+
+            # If index still unknown, refresh engine and look it up
+            if ws_idx is None:
+                _engine.refresh_workspaces()
+                with _engine._lock:
+                    for w in _engine.workspaces:
+                        if w.get("uuid") == ws_uuid:
+                            ws_idx = w.get("index")
+                            break
+
+            # Step 4: cd to working directory (best-effort — don't abort on failure)
+            try:
+                _v2_request("surface.send_text", {
+                    "workspace_id": ws_uuid,
+                    "text": f"cd {cwd}\n",
+                })
+            except Exception:
+                pass
+
+            # Step 5: Brief pause before launching command
+            time.sleep(0.3)
+
+            # Step 6: Launch command (best-effort)
+            try:
+                _v2_request("surface.send_text", {
+                    "workspace_id": ws_uuid,
+                    "text": f"{command}\n",
+                })
+            except Exception:
+                pass
+
+            # Step 7: Return workspace info
+            self._json_response({"ok": True, "workspace": {"index": ws_idx, "uuid": ws_uuid}})
         else:
             self.send_error(404)
 
