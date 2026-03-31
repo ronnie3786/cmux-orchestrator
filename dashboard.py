@@ -6,9 +6,11 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -399,6 +401,8 @@ def fingerprint(screen_text):
 
 LOG_DIR = Path.home() / ".cmux-harness"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+REVIEWS_DIR = LOG_DIR / "reviews"
+REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "approval-log.jsonl"
 DEBUG_LOG = LOG_DIR / "debug-log.jsonl"
 CONFIG_FILE = LOG_DIR / "workspace-config.json"
@@ -439,6 +443,36 @@ def _debug_log(entry):
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:
         pass
+
+
+def _read_review_file(path):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _list_reviews():
+    reviews = []
+    try:
+        for path in REVIEWS_DIR.glob("*.json"):
+            review = _read_review_file(path)
+            if review is not None:
+                reviews.append(review)
+    except OSError:
+        return []
+    reviews.sort(key=lambda r: r.get("completedAt", ""), reverse=True)
+    return reviews
+
+
+def _get_review(session_id):
+    if not session_id:
+        return None
+    for review in _list_reviews():
+        if review.get("sessionId") == session_id:
+            return review
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +526,7 @@ class HarnessEngine(threading.Thread):
         self.idle_last_read = {} # idx -> float (timestamp of last screen read for idle workspaces)
         self.session_start = {}  # idx -> float (when hasClaude first went True)
         self.session_cost = {}   # idx -> str (parsed cost like "$0.45")
+        self.session_ids = {}    # idx -> str (workspace UUID + session start timestamp)
         self.socket_connected = False   # current socket connection state
         self.last_successful_poll = 0   # timestamp of last successful socket read
         self.connection_lost_at = 0     # when we first noticed the socket was gone
@@ -638,6 +673,11 @@ class HarnessEngine(threading.Thread):
 
     def _append_log(self, entry):
         with self._lock:
+            idx = entry.get("workspace")
+            if idx is not None and "session_id" not in entry:
+                session_id = self.session_ids.get(idx)
+                if session_id:
+                    entry["session_id"] = session_id
             self.approval_log.append(entry)
             if len(self.approval_log) > 500:
                 self.approval_log = self.approval_log[-500:]
@@ -654,6 +694,142 @@ class HarnessEngine(threading.Thread):
         ptype = entry.get("promptType", "?")
         action = entry.get("action", "?")
         print(f"[{ts}] approved ws={ws_name} type={ptype} action={action}")
+
+    def _run_git_command(self, cwd, args, max_bytes=None):
+        if not cwd:
+            return ""
+        try:
+            if not os.path.isdir(cwd):
+                return f"[error] cwd not found: {cwd}"
+            result = subprocess.run(
+                ["git"] + args,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            return f"[error] git {' '.join(args)} timed out after 10s"
+        except OSError as e:
+            return f"[error] git {' '.join(args)} failed: {e}"
+
+        output = result.stdout or ""
+        if result.returncode != 0:
+            err = (result.stderr or "").strip()
+            if err:
+                output = err if not output.strip() else f"{output.rstrip()}\n{err}"
+        if max_bytes is not None:
+            raw = output.encode("utf-8", errors="replace")
+            if len(raw) > max_bytes:
+                marker = b"\n...[truncated]..."
+                output = (raw[: max_bytes - len(marker)] + marker).decode("utf-8", errors="replace")
+        return output.strip()
+
+    def _get_session_approval_log(self, idx, session_id, start_ts, end_ts):
+        entries = []
+        start_iso = datetime.fromtimestamp(start_ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if start_ts else ""
+        end_iso = datetime.fromtimestamp(end_ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            with open(LOG_FILE, "r") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if entry.get("workspace") != idx:
+                        continue
+                    if session_id and entry.get("session_id") == session_id:
+                        entries.append(entry)
+                        continue
+                    ts = entry.get("timestamp", "")
+                    if start_iso and start_iso <= ts <= end_iso:
+                        entries.append(entry)
+        except FileNotFoundError:
+            return []
+        except OSError:
+            return []
+        return entries
+
+    def _capture_completion_snapshot(self, snapshot):
+        completed_at = datetime.now(timezone.utc)
+        completed_ts = completed_at.timestamp()
+        completed_iso = completed_at.isoformat()
+
+        idx = snapshot.get("workspaceIndex")
+        terminal_snapshot = snapshot.get("terminalSnapshot", "")
+        final_cost = snapshot.get("finalCost", "")
+        start_ts = snapshot.get("sessionStart", 0)
+        session_id = snapshot.get("sessionId", "")
+        workspace_uuid = snapshot.get("workspaceUuid", "")
+        workspace_name = snapshot.get("workspaceName", f"workspace-{idx}")
+        cwd = snapshot.get("cwd", "")
+        branch = snapshot.get("branch", "")
+
+        duration = max(0.0, completed_ts - start_ts) if start_ts else 0.0
+        approval_entries = self._get_session_approval_log(idx, session_id, start_ts, completed_ts)
+        review = {
+            "sessionId": session_id,
+            "workspaceIndex": idx,
+            "workspaceUuid": workspace_uuid,
+            "workspaceName": workspace_name,
+            "completedAt": completed_iso,
+            "duration": round(duration, 1),
+            "finalCost": final_cost,
+            "terminalSnapshot": terminal_snapshot,
+            "gitDiffStat": self._run_git_command(cwd, ["diff", "--stat"]),
+            "gitDiff": self._run_git_command(cwd, ["diff"], max_bytes=50 * 1024),
+            "gitLog": self._run_git_command(cwd, ["log", "--oneline", "-5"]),
+            "cwd": cwd,
+            "branch": branch,
+            "approvalLog": approval_entries,
+            "reviewStatus": "pending",
+        }
+
+        timestamp = completed_at.strftime("%Y%m%dT%H%M%SZ")
+        file_uuid = workspace_uuid or f"workspace-{idx}"
+        path = REVIEWS_DIR / f"{file_uuid}_{timestamp}.json"
+        try:
+            with open(path, "w") as f:
+                json.dump(review, f, indent=2)
+            _debug_log({
+                "event": "completion_snapshot_captured",
+                "workspace": idx,
+                "workspace_uuid": workspace_uuid,
+                "session_id": session_id,
+                "path": str(path),
+            })
+        except OSError as e:
+            _debug_log({
+                "event": "completion_snapshot_error",
+                "workspace": idx,
+                "workspace_uuid": workspace_uuid,
+                "session_id": session_id,
+                "error": str(e),
+            })
+
+    def _capture_completion_snapshot_async(self, ws, idx):
+        with self._lock:
+            current_ws = next(
+                (w for w in self.workspaces if w.get("index", w.get("id")) == idx),
+                {},
+            )
+            screen = self.screen_cache.get(idx, "")
+            snapshot = {
+                "sessionId": self.session_ids.get(idx, ""),
+                "workspaceIndex": idx,
+                "workspaceUuid": current_ws.get("uuid", ws.get("uuid", "")),
+                "workspaceName": current_ws.get("name", ws.get("name", f"workspace-{idx}")),
+                "sessionStart": self.session_start.get(idx, 0),
+                "finalCost": self.session_cost.get(idx, ""),
+                "terminalSnapshot": "\n".join(screen.splitlines()[-50:]) if screen else "",
+                "cwd": current_ws.get("_cwd", ws.get("_cwd", "")),
+                "branch": current_ws.get("_branch", ws.get("_branch", "")),
+            }
+        threading.Thread(
+            target=self._capture_completion_snapshot,
+            args=(snapshot,),
+            daemon=True,
+        ).start()
 
     def refresh_workspaces(self):
         raw = cmux_command("list_workspaces")
@@ -870,6 +1046,7 @@ class HarnessEngine(threading.Thread):
                     if screen:
                         has_claude = _detect_claude_session(screen)
                         cost = _parse_session_cost(screen)
+                        should_capture_snapshot = False
                         with self._lock:
                             self.screen_cache[idx] = screen
                             prev_has_claude = self.ws_has_claude.get(idx, False)
@@ -877,13 +1054,20 @@ class HarnessEngine(threading.Thread):
                             self.idle_last_read[idx] = now_ts
                             # Track session start/end transitions
                             if has_claude and not prev_has_claude:
-                                self.session_start[idx] = time.time()
+                                start_ts = time.time()
+                                self.session_start[idx] = start_ts
+                                self.session_ids[idx] = f"{ws_uuid}_{int(start_ts)}"
                             elif not has_claude and prev_has_claude:
-                                self.session_start.pop(idx, None)
-                                self.session_cost.pop(idx, None)
+                                should_capture_snapshot = True
                             # Update cost if Claude is active
                             if has_claude and cost is not None:
                                 self.session_cost[idx] = cost
+                        if should_capture_snapshot:
+                            self._capture_completion_snapshot_async(ws, idx)
+                            with self._lock:
+                                self.session_start.pop(idx, None)
+                                self.session_cost.pop(idx, None)
+                                self.session_ids.pop(idx, None)
                     else:
                         with self._lock:
                             self.idle_last_read[idx] = now_ts
@@ -1927,6 +2111,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(_engine.get_status())
         elif self.path == "/api/log":
             self._json_response(_engine.get_log())
+        elif self.path == "/api/reviews":
+            reviews = []
+            for review in _list_reviews():
+                item = dict(review)
+                item["gitDiff"] = (item.get("gitDiff") or "")[:500]
+                reviews.append(item)
+            self._json_response(reviews)
+        elif self.path.startswith("/api/reviews/"):
+            session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):])
+            review = _get_review(session_id)
+            if review is None:
+                self._json_response({"ok": False, "error": "review not found"}, 404)
+                return
+            self._json_response(review)
         elif self.path == "/api/config":
             with _engine._lock:
                 self._json_response({"pollInterval": _engine.poll_interval, "model": _engine.model})
