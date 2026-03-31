@@ -173,7 +173,7 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
 # ---------------------------------------------------------------------------
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:2b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:8b")
 USE_LLM = os.environ.get("USE_LLM", "1") != "0"  # enabled by default
 
 _LLM_SYSTEM = """You classify terminal prompts from Claude Code (an AI coding assistant).
@@ -181,15 +181,21 @@ When the terminal shows a PERMISSION prompt or confirmation dialog, decide the c
 Reply with ONLY a JSON object, no markdown, no explanation.
 
 Rules:
-- Simple confirmations (Yes/No, Y/n, proceed, approve, allow tool) → auto-approve
-- Domain-specific choices (which file, which section, pick a number) → needs human
-- Claude Code idle REPL showing "❯" with "Model:" and "Cost:" lines → NOT waiting, this is just the input prompt
+- Permission/confirmation prompts with Yes/No options → auto-approve (action: "enter")
+- Y/n or Yes/no inline prompts → auto-approve (action: "y")
+- "Allow <tool>" prompts → auto-approve (action: "y")
+- Menus where ALL options are permission variants (Yes, No, "Yes and don't ask again", "Yes, allow X from Y") → auto-approve by pressing Enter if cursor is on a Yes/Allow option
+- Domain-specific choices requiring human judgment (which file to edit, which approach to take, pick a specific item) → needs human (action: "skip")
+- Claude Code idle REPL showing "❯" with "Model:" and "Cost:" lines nearby → NOT waiting
 - A shell prompt (like "user@host %") → NOT waiting
 - Claude Code showing "Musing…" or "Thinking…" → NOT waiting, it's working
+- Claude Code actively running a tool (showing "⚡ Read", "⚡ Bash", etc.) → NOT waiting
 - If the terminal is NOT waiting for a permission prompt → not waiting
 
+IMPORTANT: Options like "Yes, allow reading from X", "Yes, and don't ask again for: bash ...", "Yes, allow X from this project" are ALL permission grants, NOT domain-specific choices. They should be auto-approved.
+
 JSON format: {"waiting": bool, "action": "enter"|"y"|"skip", "safe": bool, "reason": "brief"}
-- action "enter" = press Enter key (for menus where cursor is on the right option)
+- action "enter" = press Enter key (for menus where cursor ›/❯ is on the right option)
 - action "y" = type the letter y (for Y/n prompts)
 - action "skip" = needs human decision, don't send anything
 - waiting = true ONLY for permission/approval prompts, NOT for idle REPLs or shell prompts"""
