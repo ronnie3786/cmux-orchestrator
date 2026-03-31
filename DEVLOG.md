@@ -288,9 +288,7 @@ The LLM only runs once per session at completion, not during active work. So eve
 - [x] Graceful Ollama degradation (rate-limited retries)
 
 **Open:**
-- [ ] Auto-scroll lock — stop fighting user when they scroll up
-- [ ] Keyboard shortcuts (1-9 jump to workspace, `e` expand, `a` toggle auto)
 - [ ] Filter/sort controls (show only active, only needs-you)
 - [ ] "Pause for 5 minutes" button
-- [ ] Favicon for tab identification
-- [ ] Mobile-responsive layout
+- [ ] Favicon for tab identification *(low priority)*
+- [ ] Mobile-responsive layout *(low priority)*
