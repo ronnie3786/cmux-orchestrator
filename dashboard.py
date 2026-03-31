@@ -175,7 +175,7 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
 # ---------------------------------------------------------------------------
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b-nvfp4")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b-nvfp4")
 USE_LLM = os.environ.get("USE_LLM", "1") != "0"  # enabled by default
 
 _LLM_SYSTEM = """You classify terminal prompts from Claude Code (an AI coding assistant).
@@ -960,7 +960,7 @@ class HarnessEngine(threading.Thread):
     def _run_review_lmstudio(self, prompt, model_override=None):
         self._set_review_error("")
         endpoint = "http://100.89.93.84:1234/v1/chat/completions"
-        model = model_override or self.review_model or "qwen3.5-27b-opus-distilled-v2-mlx"
+        model = model_override or self.review_model or OLLAMA_MODEL
         try:
             with urllib.request.urlopen("http://100.89.93.84:1234/v1/models", timeout=5) as resp:
                 models_data = json.loads(resp.read())

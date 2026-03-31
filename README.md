@@ -31,7 +31,7 @@ git clone git@github.com:ronnie3786/cmux-harness.git
 cd cmux-harness
 
 # (Optional) Pull an LLM model for fallback classification
-ollama pull qwen3.5:2b
+ollama pull qwen3.5:35b-a3b-nvfp4
 
 # Start the dashboard
 python3 dashboard.py
@@ -92,7 +92,7 @@ Environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
-| `OLLAMA_MODEL` | `qwen3.5:2b` | Model for LLM classification |
+| `OLLAMA_MODEL` | `qwen3.5:35b-a3b-nvfp4` | Model for LLM classification |
 | `USE_LLM` | `1` | Set to `0` to disable LLM, regex only |
 
 All runtime settings (poll interval, model selection, per-workspace auto-approve, custom names) are configurable from the dashboard UI and persist to `~/.cmux-harness/workspace-config.json`.

@@ -28,8 +28,7 @@ Session ends → snapshot captured → JSON saved (reviewStatus: "pending")
 
 | Tier | Backend | Model | Speed | Quality |
 |---|---|---|---|---|
-| Fast | Ollama (local) | qwen3.5:9b-nvfp4 | ~5-15s | Good |
-| Thorough | LM Studio (Mac Studio) | qwen3.5-27b | ~15-30s | Better |
+| Fast | Ollama (local) | qwen3.5:35b-a3b-nvfp4 | ~5-15s | Good |
 | Claude | `claude --print` (Max sub) | Sonnet 4 | ~10-20s | Best |
 
 - LM Studio endpoint: `http://100.89.93.84:1234/v1/chat/completions` (OpenAI-compatible)
