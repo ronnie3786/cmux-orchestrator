@@ -94,13 +94,15 @@ Replaced the v1 dashboard with a full command center:
 
 ---
 
-## v3 Spec: Session Review Agent
+## v3 Brainstorm: Session Review Agent
 
-### Philosophy
+> **Note:** Everything below is brainstorming and early ideas. None of this is final or set in stone. The actual implementation will evolve as we build and learn what works.
 
-A human engineering manager doesn't watch every line of code scroll by. They check in at key moments and review the end result. The review agent works the same way: lightweight monitoring during execution, intelligent review at completion.
+### Core idea
 
-### Architecture
+Instead of watching every terminal line, what if the harness only paid attention at key moments (like a manager checking in) and ran a lightweight review when a session finishes?
+
+### Possible architecture (rough sketch)
 
 ```
 Monitoring Loop (lightweight, every poll cycle)
@@ -134,7 +136,7 @@ Completion Trigger (hasClaude: true → false)
             }
 ```
 
-### What the review agent sees (slim context)
+### What the review agent might see (slim context)
 
 1. **Approval log entries** — what was auto-approved, what was flagged, timestamps
 2. **State transitions** — "started", "waiting", "completed" events only
@@ -149,7 +151,7 @@ Completion Trigger (hasClaude: true → false)
 - Build output scrolling by
 - Raw terminal scrollback during active work
 
-### Review prompt template
+### Review prompt template (draft, needs iteration)
 
 ```
 You are reviewing code changes made by an AI coding agent (Claude Code).
@@ -178,35 +180,32 @@ Respond with JSON:
 }
 ```
 
-### Dashboard integration
+### Dashboard integration ideas
 
-- **Review card** — when a session completes, the card transforms to show the review summary instead of terminal output
-- **Review badge** — green check (ready for PR), yellow warning (issues found), red flag (needs attention)
-- **Expand for details** — full git diff with syntax highlighting, file-by-file breakdown
-- **One-click PR** — button to create PR from the worktree (future: auto-generate PR description from review)
+- Review card that replaces terminal output with a summary after completion
+- Badges: green (ready for PR), yellow (issues), red (needs attention)
+- Expandable diff view
+- One-click PR creation
 
-### Scaling to 10+ sessions
+### Scaling thoughts
 
-The key insight: monitoring stays at regex + state tracking cost (basically free). The LLM only runs once per session, at completion. Even with a 35B model taking 30 seconds to review, that's fine because reviews aren't time-sensitive. The developer was going to review the code anyway; this just gives them a head start.
+The LLM only runs once per session at completion, not during active work. So even a 35B model taking 30 seconds is fine. Token budget per review would be ~2-3K (approval log + 50-line snapshot + git diff stat).
 
-Token budget per review: ~2-3K (approval log + 50-line snapshot + git diff stat). Even large diffs stay manageable because `git diff --stat` gives the shape and we can truncate the full diff to the most important files.
+### Rough implementation order
 
-### Implementation plan
+1. Completion detection (hasClaude transitions)
+2. Snapshot + git diff capture on completion
+3. Review endpoint + runner
+4. Dashboard UI for review results
 
-1. **Completion detection** — enhance `_detect_claude_session()` to track transitions, not just current state. Store `prev_has_claude` per workspace.
-2. **Snapshot capture** — on completion transition, save the terminal snapshot + run git commands via `surface.send_text` (send `git diff --stat` then read the output).
-3. **Review endpoint** — `POST /api/review` triggers a review for a workspace, `GET /api/review/{index}` returns the review result.
-4. **Review runner** — background function that sends context to Ollama and parses the response.
-5. **Dashboard UI** — review summary card, review badge, expandable diff view.
+### Model thoughts
 
-### Model requirements
+- 2B might work for summaries but could miss subtle code issues
+- 8B is probably the sweet spot for code review quality vs speed
+- 35B+ for when quality matters more than latency
+- Should be configurable (already have the model picker)
 
-- **Minimum:** qwen3.5:2b (can summarize, may miss subtle code issues)
-- **Recommended:** qwen3.5:8b or similar (better code understanding, ~5s review time)
-- **Ideal:** 35B+ for complex reviews (30s review time, but highest quality)
-- Configurable via the existing model picker in settings
-
-### Open questions
+### Open questions (lots of these)
 
 - Should the agent auto-run `swift build` / `swift test` after completion to verify the changes compile?
 - Should it detect when two sessions are editing the same file and warn about merge conflicts?
@@ -217,15 +216,20 @@ Token budget per review: ~2-3K (approval log + 50-line snapshot + git diff stat)
 
 ### Known Issues / TODO
 
-- [x] ~~Workspace index can shift when workspaces are opened/closed mid-session~~ (fixed: UUID-based config)
-- [ ] Debug log grows unbounded — needs rotation
-- [x] ~~No macOS native notification when "needs human" is detected~~ (fixed: browser notifications)
-- [x] ~~Dashboard doesn't show which workspace the "needs human" prompt is in visually enough~~ (fixed: yellow border + sort to front)
-- [x] ~~Should highlight workspaces that need attention in the workspace list~~ (fixed: "Needs You" badge)
-- [ ] Consider adding a "pause for 5 minutes" button
-- [x] ~~The v2 API fallback to v1 still causes tab switching~~ (v2 is primary now)
-- [ ] Auto-scroll lock — stop fighting user when they scroll up to read
-- [ ] Keyboard shortcuts (1-6 jump to workspace, `e` expand, `a` toggle auto)
-- [ ] Filter/sort controls (show only active, only needs-you, hide idle)
-- [ ] Session timer (how long Claude Code has been running)
-- [ ] Cost display (parse Cost: $X.XX from Claude REPL)
+**Done:**
+- [x] Workspace index shifting (fixed: UUID-based config)
+- [x] Browser notifications on "needs human" and session complete
+- [x] Visual highlighting for workspaces needing attention (yellow border + sort to front)
+- [x] v2 API as primary (no more tab switching)
+- [x] Debug log rotation (10MB cap)
+- [x] Session timer and cost display
+- [x] Reconnection handling with stale data detection
+- [x] Graceful Ollama degradation (rate-limited retries)
+
+**Open:**
+- [ ] Auto-scroll lock — stop fighting user when they scroll up
+- [ ] Keyboard shortcuts (1-9 jump to workspace, `e` expand, `a` toggle auto)
+- [ ] Filter/sort controls (show only active, only needs-you)
+- [ ] "Pause for 5 minutes" button
+- [ ] Favicon for tab identification
+- [ ] Mobile-responsive layout
