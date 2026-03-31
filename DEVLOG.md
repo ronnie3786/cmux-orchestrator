@@ -54,7 +54,7 @@ The review produces structured JSON: summary, files changed, lines added/removed
 
 **Also shipped (prompt detection overhaul):**
 - Replaced regex-first prompt detection with LLM-primary classification
-- Local model (qwen3.5:9b) decides all approval actions
+- Local model (qwen3.5:9b-nvfp4) decides all approval actions
 - Only two regex pre-checks remain: idle REPL detection and plain shell detection
 - Trailing blank lines from read_screen stripped before processing
 - Menu action override: if LLM says "y" but screen has "Enter to select", forces "enter"
