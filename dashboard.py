@@ -175,7 +175,7 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
 # ---------------------------------------------------------------------------
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b-nvfp4")
 USE_LLM = os.environ.get("USE_LLM", "1") != "0"  # enabled by default
 
 _LLM_SYSTEM = """You classify terminal prompts from Claude Code (an AI coding assistant).
@@ -545,7 +545,7 @@ class HarnessEngine(threading.Thread):
         self.model = OLLAMA_MODEL
         self.review_enabled = True
         self.review_model = OLLAMA_MODEL
-        self.review_backend = "claude"
+        self.review_backend = "ollama"
         self.ollama_available = None   # None=unknown, True=available, False=unavailable
         self.ollama_last_check = 0     # timestamp of last Ollama health check
         self.ollama_retry_interval = 60  # seconds between retries after failure
@@ -657,7 +657,8 @@ class HarnessEngine(threading.Thread):
 
     def set_custom_name(self, index, name):
         """Set a custom display name for the workspace at the given index.
-        Persists to config keyed by UUID so it survives index shifts."""
+        Persists to config keyed by UUID so it survives index shifts.
+        Also renames the workspace in cmux so the sidebar stays in sync."""
         with self._lock:
             ws_uuid = None
             for w in self.workspaces:
@@ -670,7 +671,10 @@ class HarnessEngine(threading.Thread):
                 self.ws_config[ws_uuid] = {}
             self.ws_config[ws_uuid]["customName"] = name
             self._save_config()
-            return True
+
+        # Rename in cmux so the sidebar name stays in sync
+        _v2_request("workspace.rename", {"workspace_id": ws_uuid, "name": name})
+        return True
 
     def get_status(self):
         with self._lock:
@@ -943,6 +947,11 @@ class HarnessEngine(threading.Thread):
                 return None
             _debug_log({"event": "review_ollama_success", "model": model, "keys": sorted(parsed.keys())})
             return parsed
+        except urllib.error.HTTPError as e:
+            msg = f"Ollama returned {e.code}: model '{model}' not found — run 'ollama pull {model}'" if e.code == 404 else str(e)
+            self._set_review_error(msg)
+            _debug_log({"event": "review_ollama_error", "model": model, "error": msg})
+            return None
         except Exception as e:
             self._set_review_error(str(e))
             _debug_log({"event": "review_ollama_error", "model": model, "error": str(e)})
@@ -1436,16 +1445,29 @@ class HarnessEngine(threading.Thread):
                     # notifications WITHOUT switching workspaces.
                     attention_uuids = self.get_workspaces_needing_attention()
 
+                    # Fail-open: if notifications exist but none match
+                    # any known workspace UUID, the UUIDs are likely tab
+                    # UUIDs (not workspace UUIDs). Bypass the filter so
+                    # we don't silently skip all workspaces.
+                    known_uuids = {w.get("uuid", "") for w in ws_snap}
+                    filter_is_useful = not attention_uuids or bool(attention_uuids & known_uuids)
+
                     for ws in ws_snap:
                         idx = ws.get("index", ws.get("id"))
                         ws_uuid = ws.get("uuid", "")
                         with self._lock:
-                            ws_on = self.workspace_enabled.get(idx, True)
+                            # Check persistent config first (keyed by UUID),
+                            # fall back to runtime state (keyed by index).
+                            cfg = self.ws_config.get(ws_uuid, {})
+                            if "autoEnabled" in cfg:
+                                ws_on = cfg["autoEnabled"]
+                            else:
+                                ws_on = self.workspace_enabled.get(idx, True)
                         if not ws_on:
                             continue
-                        # Phase 2: Only run auto-approve on workspaces
-                        # that have unread notifications.
-                        if attention_uuids and ws_uuid not in attention_uuids:
+                        # Phase 2: Only filter by notifications when the
+                        # UUIDs actually match known workspaces.
+                        if filter_is_useful and attention_uuids and ws_uuid not in attention_uuids:
                             continue
                         self.check_workspace(ws)
             except Exception as exc:
@@ -2557,10 +2579,34 @@ function buildGrid(){
       if(el){el.value=focusedValue;el.focus();el.setSelectionRange(focusedCursor,focusedCursor)}
     }
   } else {
-    // Surgical update: only terminal content, meta, badge, and cost — no DOM destruction
+    // Surgical update: terminal content, meta, names, and badge — no DOM destruction
     sorted.forEach(function(w){
       var card=document.getElementById('card-'+w.index);
       if(!card)return;
+      // Update workspace name (fixes stale titles when names change between rebuilds)
+      var nameEl=card.querySelector('.card-name');
+      if(nameEl&&!nameEl.isContentEditable&&nameEl.tagName!=='INPUT'){
+        var displayName=w.customName||w.name;
+        if(nameEl.textContent!==displayName)nameEl.textContent=displayName;
+      }
+      // Update original-name subtitle
+      var origEl=card.querySelector('.card-name-original');
+      if(w.customName){
+        if(origEl){
+          if(origEl.textContent!==w.name)origEl.textContent=w.name;
+        }else{
+          // Need to add the original-name element
+          var nameWrapper=nameEl?nameEl.parentElement:null;
+          if(nameWrapper){
+            var newOrig=document.createElement('div');
+            newOrig.className='card-name-original';
+            newOrig.textContent=w.name;
+            nameWrapper.appendChild(newOrig);
+          }
+        }
+      }else if(origEl){
+        origEl.remove();
+      }
       // Update terminal preview (only if user hasn't scrolled up)
       var term=card.querySelector('.card-terminal');
       if(term){
