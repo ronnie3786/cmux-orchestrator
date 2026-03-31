@@ -931,7 +931,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .global-toggle-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
 
 /* Grid */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px 50px}
 .grid-empty{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:15px;grid-column:1/-1}
 
 /* Card */
@@ -1059,6 +1059,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .ollama-dot.red{background:var(--red)}
 .ollama-dot.gray{background:var(--text-muted);opacity:.5}
 .llm-unavail{font-size:11px;color:var(--red);opacity:.85;margin-left:4px}
+
+/* Global Activity Feed panel */
+.activity-panel{position:fixed;bottom:0;left:0;right:0;z-index:50;background:var(--surface);border-top:1px solid var(--border);transition:transform 0.2s ease}
+.activity-panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-muted)}
+.activity-panel-header:hover{color:var(--text)}
+.activity-count{padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(88,166,255,0.1);color:var(--accent);margin-left:8px}
+.activity-panel-body{max-height:250px;overflow-y:auto;padding:0 28px}
+.activity-panel.collapsed .activity-panel-body{display:none}
+.activity-panel.collapsed .activity-chevron{transform:rotate(180deg)}
+.activity-entry{display:flex;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
+.activity-entry:last-child{border-bottom:none}
+.ae-time{color:var(--text-muted);font-family:monospace;white-space:nowrap}
+.ae-ws{color:var(--accent);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.ae-type{padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700}
+.ae-type.approved{background:rgba(63,185,80,0.15);color:var(--green)}
+.ae-type.flagged{background:rgba(210,153,34,0.15);color:var(--yellow)}
+.ae-prompt{color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -1086,6 +1103,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 <div class="stale-banner" id="staleBanner">&#9888; Showing stale data — cmux connection lost. Attempting to reconnect...</div>
 <div class="grid" id="grid">
   <div class="grid-empty">Connecting to cmux...</div>
+</div>
+
+<!-- Global Activity Feed -->
+<div class="activity-panel collapsed" id="activityPanel">
+  <div class="activity-panel-header" onclick="toggleActivityPanel()">
+    <span>Activity Feed</span>
+    <span class="activity-count" id="activityCount">0</span>
+    <span class="activity-chevron" id="activityChevron">&#9650;</span>
+  </div>
+  <div class="activity-panel-body" id="activityBody">
+    <!-- populated by JS -->
+  </div>
 </div>
 
 <!-- Expanded overlay -->
@@ -1712,6 +1741,48 @@ window.startRename=function(idx,spanEl){
   });
 };
 
+// ─── Global Activity Feed ───
+var _lastActivityCount = -1;
+window.toggleActivityPanel = function(){
+  document.getElementById('activityPanel').classList.toggle('collapsed');
+};
+function updateActivityFeed(entries){
+  var panel = document.getElementById('activityPanel');
+  var bodyEl = document.getElementById('activityBody');
+  var countEl = document.getElementById('activityCount');
+  var isCollapsed = panel.classList.contains('collapsed');
+  var newCount = entries ? entries.length : 0;
+  // Skip rebuild if collapsed and count hasn't changed
+  if(isCollapsed && newCount === _lastActivityCount) return;
+  _lastActivityCount = newCount;
+  countEl.textContent = newCount;
+  if(isCollapsed) return;
+  var last50 = entries ? entries.slice(0, 50) : [];
+  if(last50.length === 0){
+    bodyEl.innerHTML = '<div style="padding:20px 0;text-align:center;color:var(--text-muted);font-size:12px">No activity yet.</div>';
+    return;
+  }
+  var h = '';
+  last50.forEach(function(e){
+    var isHuman = e.action && e.action.indexOf('human') !== -1;
+    var typeClass = isHuman ? 'flagged' : 'approved';
+    var typeText = isHuman ? 'FLAGGED' : 'APPROVED';
+    // Resolve workspace name from state
+    var wsName = '';
+    if(e.workspace !== undefined){
+      var ws = state.workspaces.find(function(w){ return w.index === e.workspace; });
+      wsName = ws ? (ws.customName || ws.name || ('ws-' + e.workspace)) : ('ws-' + e.workspace);
+    }
+    h += '<div class="activity-entry">';
+    h += '<span class="ae-time">' + fmtTime(e.timestamp) + '</span>';
+    h += '<span class="ae-ws">' + esc(wsName) + '</span>';
+    h += '<span class="ae-type ' + typeClass + '">' + typeText + '</span>';
+    h += '<span class="ae-prompt">' + esc(e.promptType || '') + '</span>';
+    h += '</div>';
+  });
+  bodyEl.innerHTML = h;
+}
+
 // ─── Keyboard ───
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){
@@ -1757,6 +1828,7 @@ function refresh(){
     checkNotifications(state.workspaces);
     buildGrid();
     updatePageTitle();
+    updateActivityFeed(logData);
     if(expandedWsIndex!==null){
       // Don't clobber expanded input if user is typing
       var expFocused=document.activeElement&&document.activeElement.id==='expInput';
