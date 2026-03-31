@@ -1698,13 +1698,36 @@ function buildGrid(){
     html+='<button class="card-send" onclick="sendToWs('+w.index+')">Send</button>';
     html+='</div></div>';
   });
-  grid.innerHTML=html;
-  // Auto-scroll all terminal previews to bottom
-  document.querySelectorAll('.card-terminal').forEach(function(el){el.scrollTop=el.scrollHeight});
-  // Restore focus if user was typing
-  if(focusedInputId){
-    var el=document.getElementById(focusedInputId);
-    if(el){el.value=focusedValue;el.focus();el.setSelectionRange(focusedCursor,focusedCursor)}
+  // Only rebuild DOM if structure actually changed (prevents focus loss)
+  var newHash=html.length+'_'+sorted.map(function(w){return w.index+'_'+classifyWs(w)}).join(',');
+  if(!window._lastGridHash||window._lastGridHash!==newHash||!grid.children.length){
+    grid.innerHTML=html;
+    // Auto-scroll all terminal previews to bottom
+    document.querySelectorAll('.card-terminal').forEach(function(el){el.scrollTop=el.scrollHeight});
+    // Restore focus if user was typing
+    if(focusedInputId){
+      var el=document.getElementById(focusedInputId);
+      if(el){el.value=focusedValue;el.focus();el.setSelectionRange(focusedCursor,focusedCursor)}
+    }
+    window._lastGridHash=newHash;
+  } else {
+    // Structure unchanged — do surgical updates (terminal, badges, meta) without replacing DOM
+    sorted.forEach(function(w){
+      var card=document.getElementById('card-'+w.index);
+      if(!card)return;
+      var term=card.querySelector('.card-terminal');
+      if(term){var newContent=colorize(w.screenTail);if(term.innerHTML!==newContent){term.innerHTML=newContent;term.scrollTop=term.scrollHeight}}
+      var meta=card.querySelector('.card-meta');
+      if(meta){
+        var m='';
+        m+='\uD83D\uDCC2 '+esc(w.cwd||'\u2014');
+        if(w.branch)m+=' &nbsp; \uD83C\uDF3F '+esc(w.branch);
+        if(w.lastCheck)m+=' &nbsp; \u23F1 '+fmtTime(w.lastCheck);
+        if(w.hasClaude&&w.sessionStart){var dur=formatDuration(w.sessionStart);if(dur)m+=' &nbsp; \u23F1 '+esc(dur);}
+        if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);m+=' &nbsp; \uD83D\uDCB0 <span style=\"color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px\">'+esc(w.sessionCost)+'</span>';}
+        meta.innerHTML=m;
+      }
+    });
   }
   // Restore inline-expanded state for idle cards
   Object.keys(inlineExpanded).forEach(function(idx){
