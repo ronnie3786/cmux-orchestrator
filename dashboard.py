@@ -100,16 +100,25 @@ def _v2_request(method, params):
         sock.close()
 
 
-def cmux_read_workspace(ws_index, surface_index=0, lines=40, workspace_uuid=None):
+def cmux_read_workspace(ws_index, surface_index=0, lines=40, workspace_uuid=None, surface_id=None):
     """Read terminal text from a workspace WITHOUT switching to it.
-    Uses the v2 JSON-RPC API with workspace_id parameter."""
+    Uses the v2 JSON-RPC API with workspace_id parameter.
+    When surface_id is provided (e.g. 'surface:2'), reads that specific surface."""
     if workspace_uuid:
-        result = _v2_request("surface.read_text", {
-            "workspace_id": workspace_uuid,
-            "lines": lines,
-        })
+        params = {"workspace_id": workspace_uuid, "lines": lines}
+        if surface_id:
+            params["surface_id"] = surface_id
+        result = _v2_request("surface.read_text", params)
         if result:
-            return result.get("text", "")
+            text = result.get("text", "")
+            if text:
+                return text
+            # Fallback: decode base64 if text field is empty
+            import base64 as _b64
+            b64 = result.get("base64", "")
+            if b64:
+                return _b64.b64decode(b64).decode(errors="replace")
+            return ""
     # Fallback to v1 (requires workspace switching)
     path = _find_socket_path()
     if not path:
@@ -130,21 +139,22 @@ def cmux_read_workspace(ws_index, surface_index=0, lines=40, workspace_uuid=None
         sock.close()
 
 
-def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspace_uuid=None):
+def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspace_uuid=None, surface_id=None):
     """Send text or a key to a surface WITHOUT switching workspaces.
-    Uses the v2 JSON-RPC API with workspace_id parameter."""
+    Uses the v2 JSON-RPC API with workspace_id parameter.
+    When surface_id is provided (e.g. 'surface:2'), targets that specific surface."""
     if workspace_uuid:
         if text is not None:
-            result = _v2_request("surface.send_text", {
-                "workspace_id": workspace_uuid,
-                "text": text,
-            })
+            params = {"workspace_id": workspace_uuid, "text": text}
+            if surface_id:
+                params["surface_id"] = surface_id
+            result = _v2_request("surface.send_text", params)
             return result is not None
         if key is not None:
-            result = _v2_request("surface.send_key", {
-                "workspace_id": workspace_uuid,
-                "key": key.lower(),
-            })
+            params = {"workspace_id": workspace_uuid, "key": key.lower()}
+            if surface_id:
+                params["surface_id"] = surface_id
+            result = _v2_request("surface.send_key", params)
             return result is not None
     # Fallback to v1 (requires workspace switching)
     path = _find_socket_path()
@@ -167,6 +177,50 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
         except OSError:
             pass
         sock.close()
+
+
+# Virtual index scheme: workspace idx 0 with 3 surfaces becomes idx 0, 10000, 10001.
+# Real index stays at position 0; additional surfaces start at VIRTUAL_BASE + real_idx * STRIDE.
+VIRTUAL_BASE = 10000
+VIRTUAL_STRIDE = 100
+
+SURFACE_MAP_TTL = 15  # seconds between cmux tree --all --json refreshes
+
+
+def cmux_tree():
+    """Fetch the full workspace/pane/surface hierarchy via cmux CLI.
+    Returns {workspace_index: [{"ref": "surface:N", "title": "...", "pane_ref": "..."}]} or None on failure."""
+    try:
+        r = subprocess.run(
+            ["cmux", "tree", "--all", "--json"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return None
+        data = json.loads(r.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        return None
+    result = {}
+    for win in data.get("windows", []):
+        for ws in win.get("workspaces", []):
+            ws_idx = ws.get("index")
+            if ws_idx is None:
+                continue
+            surfaces = []
+            for pane in ws.get("panes", []):
+                pane_ref = pane.get("ref", "")
+                for surf in pane.get("surfaces", []):
+                    if surf.get("type") != "terminal":
+                        continue
+                    surfaces.append({
+                        "ref": surf.get("ref", ""),
+                        "title": surf.get("title", ""),
+                        "pane_ref": pane_ref,
+                        "selected_in_pane": surf.get("selected_in_pane", False),
+                    })
+            if surfaces:
+                result[ws_idx] = surfaces
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +591,8 @@ class HarnessEngine(threading.Thread):
         self.session_start = {}  # idx -> float (when hasClaude first went True)
         self.session_cost = {}   # idx -> str (parsed cost like "$0.45")
         self.session_ids = {}    # idx -> str (workspace UUID + session start timestamp)
+        self.surface_map = {}    # workspace_ref -> [{"ref", "title", "pane_ref"}, ...]
+        self.surface_map_ts = 0  # timestamp of last cmux tree fetch
         self.socket_connected = False   # current socket connection state
         self.last_successful_poll = 0   # timestamp of last successful socket read
         self.connection_lost_at = 0     # when we first noticed the socket was gone
@@ -593,6 +649,41 @@ class HarnessEngine(threading.Thread):
                 }, f, indent=2)
         except OSError as e:
             print(f"[harness] config save error: {e}")
+
+    def _build_virtual_workspaces(self):
+        """Expand workspaces into virtual entries, one per surface.
+        Must be called with self._lock held.
+        Single-surface workspaces emit as-is. Multi-surface workspaces
+        produce one entry per surface with virtual indices."""
+        result = []
+        for ws in self.workspaces:
+            idx = ws.get("index", ws.get("id"))
+            surfaces = self.surface_map.get(idx, [])
+
+            if len(surfaces) <= 1:
+                # Single surface or no tree data — emit unchanged
+                entry = dict(ws)
+                entry["_surface_id"] = surfaces[0]["ref"] if surfaces else None
+                entry["_surface_title"] = None
+                entry["_surface_count"] = 1
+                entry["_real_index"] = idx
+                entry["_virtual"] = False
+                result.append(entry)
+            else:
+                for ordinal, surf in enumerate(surfaces):
+                    vidx = idx if ordinal == 0 else VIRTUAL_BASE + idx * VIRTUAL_STRIDE + ordinal
+                    raw_title = surf.get("title", "").strip()
+                    # Strip leading status chars (braille ⠂⠐, symbols ✳⠿, etc.)
+                    clean_title = re.sub(r'^[\u2800-\u28FF\u2733\u2734\u2735\u25CF\u25CB\u2B24]\s*', '', raw_title).strip()
+                    entry = dict(ws)
+                    entry["index"] = vidx
+                    entry["_real_index"] = idx
+                    entry["_surface_id"] = surf["ref"]
+                    entry["_surface_title"] = clean_title or f"Pane {ordinal + 1}"
+                    entry["_surface_count"] = len(surfaces)
+                    entry["_virtual"] = (ordinal > 0)
+                    result.append(entry)
+        return result
 
     def _check_ollama(self):
         """Check if Ollama is reachable. Rate-limited to once per retry_interval."""
@@ -678,22 +769,27 @@ class HarnessEngine(threading.Thread):
 
     def get_status(self):
         with self._lock:
+            virtual_ws = self._build_virtual_workspaces()
             ws_list = []
-            for ws in self.workspaces:
+            for ws in virtual_ws:
                 idx = ws.get("index", ws.get("id"))
                 uuid = ws.get("uuid", "")
                 screen_tail = self.screen_cache.get(idx, "")
-                # Get last 25 lines for card preview
                 lines = screen_tail.strip().splitlines() if screen_tail else []
                 preview = "\n".join(lines[-25:]) if lines else ""
-                # Use cached Claude session detection (updated in run() loop)
                 has_claude = self.ws_has_claude.get(idx, False)
-                # Look up saved config state (keyed by UUID)
                 cfg = self.ws_config.get(uuid, {})
                 if "autoEnabled" in cfg:
                     enabled = cfg["autoEnabled"]
                 else:
                     enabled = self.workspace_enabled.get(idx, False)
+                # Build surface label for multi-surface workspaces
+                surface_label = None
+                surface_count = ws.get("_surface_count", 1)
+                surface_title = ws.get("_surface_title")
+                if surface_count > 1 and surface_title:
+                    ws_display = cfg.get("customName") or ws.get("name", f"workspace-{idx}")
+                    surface_label = f"{ws_display} : {surface_title}"
                 ws_list.append({
                     "hasClaude": has_claude,
                     "index": idx,
@@ -708,6 +804,8 @@ class HarnessEngine(threading.Thread):
                     "branch": ws.get("_branch", ""),
                     "sessionStart": self.session_start.get(idx, 0),
                     "sessionCost": self.session_cost.get(idx, ""),
+                    "surfaceId": ws.get("_surface_id"),
+                    "surfaceLabel": surface_label,
                 })
             return {
                 "enabled": self.enabled,
@@ -782,6 +880,84 @@ class HarnessEngine(threading.Thread):
                 marker = b"\n...[truncated]..."
                 output = (raw[: max_bytes - len(marker)] + marker).decode("utf-8", errors="replace")
         return output.strip()
+
+    def _get_workspace_cwd(self, ws_index):
+        """Resolve the working directory for a workspace index."""
+        with self._lock:
+            virtual_ws = self._build_virtual_workspaces()
+            ws = next((w for w in virtual_ws if w.get("index", w.get("id")) == ws_index), None)
+        if ws is None:
+            return None
+        cwd = ws.get("_cwd", "")
+        if not cwd:
+            ws_uuid = ws.get("uuid", "")
+            if ws_uuid:
+                raw = cmux_command(f"sidebar_state --tab={ws_uuid}")
+                if raw:
+                    for line in raw.splitlines():
+                        line = line.strip()
+                        if line.startswith("cwd=") and not line.startswith("focused_cwd="):
+                            cwd = line[4:]
+        if not cwd or not os.path.isdir(cwd):
+            return None
+        return cwd
+
+    def get_git_status(self, ws_index):
+        """Return parsed git status for a workspace's cwd."""
+        with self._lock:
+            virtual_ws = self._build_virtual_workspaces()
+            ws = next((w for w in virtual_ws if w.get("index", w.get("id")) == ws_index), None)
+        if ws is None:
+            return None
+        cwd = ws.get("_cwd", "")
+        branch = ws.get("_branch", "")
+        # Fetch cwd from cmux sidebar_state (v1 command) if not cached
+        if not cwd:
+            ws_uuid = ws.get("uuid", "")
+            if ws_uuid:
+                raw = cmux_command(f"sidebar_state --tab={ws_uuid}")
+                if raw:
+                    for line in raw.splitlines():
+                        line = line.strip()
+                        if line.startswith("cwd=") and not line.startswith("focused_cwd="):
+                            cwd = line[4:]
+                        elif line.startswith("git_branch="):
+                            val = line[11:].split()[0]
+                            if val != "none":
+                                branch = val
+        if not cwd or not os.path.isdir(cwd):
+            return {"branch": branch, "cwd": cwd, "staged": [], "unstaged": [], "untracked": [], "commits": []}
+        # Get branch from git if not known
+        if not branch:
+            branch = self._run_git_command(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+        # Run git status directly — _run_git_command's strip() destroys
+        # the leading whitespace that porcelain format depends on.
+        try:
+            _gs = subprocess.run(["git", "status", "--porcelain=v1"], cwd=cwd, capture_output=True, text=True, timeout=10)
+            raw = _gs.stdout or ""
+        except (subprocess.TimeoutExpired, OSError):
+            raw = ""
+        staged, unstaged, untracked = [], [], []
+        for line in raw.splitlines():
+            if len(line) < 3:
+                continue
+            x, y, fpath = line[0], line[1], line[3:]
+            if x == "?" and y == "?":
+                untracked.append(fpath)
+            else:
+                if x not in (" ", "?"):
+                    staged.append({"status": x, "file": fpath})
+                if y not in (" ", "?"):
+                    unstaged.append({"status": y, "file": fpath})
+        log_raw = self._run_git_command(cwd, ["log", "--oneline", "-3"])
+        commits = []
+        for line in log_raw.splitlines():
+            if line.startswith("[error]"):
+                break
+            parts = line.split(" ", 1)
+            if len(parts) == 2:
+                commits.append({"hash": parts[0], "message": parts[1]})
+        return {"branch": branch, "cwd": cwd, "staged": staged, "unstaged": unstaged, "untracked": untracked, "commits": commits}
 
     def _get_session_approval_log(self, idx, session_id, start_ts, end_ts):
         entries = []
@@ -1166,16 +1342,24 @@ class HarnessEngine(threading.Thread):
 
     def _capture_completion_snapshot_async(self, ws, idx):
         with self._lock:
+            # Look up in virtual workspaces first, fall back to real workspaces
+            virtual_ws = self._build_virtual_workspaces()
             current_ws = next(
-                (w for w in self.workspaces if w.get("index", w.get("id")) == idx),
+                (w for w in virtual_ws if w.get("index", w.get("id")) == idx),
                 {},
             )
+            if not current_ws:
+                current_ws = next(
+                    (w for w in self.workspaces if w.get("index", w.get("id")) == idx),
+                    {},
+                )
             screen = self.screen_cache.get(idx, "")
             snapshot = {
                 "sessionId": self.session_ids.get(idx, ""),
                 "workspaceIndex": idx,
                 "workspaceUuid": current_ws.get("uuid", ws.get("uuid", "")),
                 "workspaceName": current_ws.get("name", ws.get("name", f"workspace-{idx}")),
+                "surfaceId": current_ws.get("_surface_id") or ws.get("_surface_id"),
                 "sessionStart": self.session_start.get(idx, 0),
                 "finalCost": self.session_cost.get(idx, ""),
                 "terminalSnapshot": "\n".join(screen.splitlines()[-50:]) if screen else "",
@@ -1245,11 +1429,13 @@ class HarnessEngine(threading.Thread):
     def check_workspace(self, ws):
         idx = ws.get("index", ws.get("id"))
         ws_name = ws.get("name", f"workspace-{idx}")
+        surface_id = ws.get("_surface_id")
+        real_idx = ws.get("_real_index", idx)
 
         surface_index = 0
         ws_uuid = ws.get("uuid", None)
 
-        screen = cmux_read_workspace(idx, surface_index, lines=40, workspace_uuid=ws_uuid)
+        screen = cmux_read_workspace(real_idx, surface_index, lines=40, workspace_uuid=ws_uuid, surface_id=surface_id)
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Try to get sidebar state (cwd, git branch) via v2 API
@@ -1257,18 +1443,17 @@ class HarnessEngine(threading.Thread):
 
         with self._lock:
             for w in self.workspaces:
-                if w.get("index", w.get("id")) == idx:
+                if w.get("index", w.get("id")) == real_idx:
                     w["_lastCheck"] = now_str
                     if sidebar:
                         w["_cwd"] = sidebar.get("cwd", "")
                         w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
                     break
-            # Cache screen text for UI
             if screen:
                 self.screen_cache[idx] = screen
 
         if not screen:
-            _debug_log({"event": "empty_screen", "workspace": idx, "name": ws_name})
+            _debug_log({"event": "empty_screen", "workspace": idx, "name": ws_name, "surface_id": surface_id})
             return
 
         fp = fingerprint(screen)
@@ -1279,18 +1464,17 @@ class HarnessEngine(threading.Thread):
         result = detect_prompt(screen)
         screen_tail = "\n".join(screen.splitlines()[-15:])
 
-        # Log EVERYTHING to debug log
         _debug_log({
             "event": "check",
             "workspace": idx,
             "name": ws_name,
             "surface": surface_index,
+            "surface_id": surface_id,
             "screen_tail": screen_tail,
             "detect_result": list(result) if result else None,
         })
 
         if result is None:
-            # No prompt detected — do NOT send anything
             return
 
         pattern_name, action = result
@@ -1311,13 +1495,14 @@ class HarnessEngine(threading.Thread):
                 "promptType": pattern_name,
                 "action": "⚠ needs human",
                 "surface": surface_index,
+                "surfaceId": surface_id,
             })
             return
 
         if action == "enter":
-            ok = cmux_send_to_workspace(idx, surface_index, key="enter", workspace_uuid=ws_uuid)
+            ok = cmux_send_to_workspace(real_idx, surface_index, key="enter", workspace_uuid=ws_uuid, surface_id=surface_id)
         else:
-            ok = cmux_send_to_workspace(idx, surface_index, text="y", workspace_uuid=ws_uuid)
+            ok = cmux_send_to_workspace(real_idx, surface_index, text="y", workspace_uuid=ws_uuid, surface_id=surface_id)
 
         _debug_log({
             "event": "approved",
@@ -1327,12 +1512,10 @@ class HarnessEngine(threading.Thread):
             "action_sent": "Enter" if action == "enter" else "y",
             "ok": ok,
             "screen_tail": screen_tail,
+            "surface_id": surface_id,
         })
 
         if ok:
-            # Clear fingerprint so the next identical prompt gets a fresh check.
-            # Without this, back-to-back identical permission prompts (same last 5
-            # lines) get deduped and the harness stalls on the repeat.
             with self._lock:
                 self.fingerprints.pop(idx, None)
             print(f"[harness] ✓ ws:{idx} ({ws_name}) {pattern_name} → {'Enter' if action == 'enter' else 'y'}")
@@ -1343,6 +1526,7 @@ class HarnessEngine(threading.Thread):
                 "promptType": pattern_name,
                 "action": f"sent {'Enter' if action == 'enter' else 'y'}",
                 "surface": surface_index,
+                "surfaceId": surface_id,
             })
 
     def run(self):
@@ -1382,94 +1566,116 @@ class HarnessEngine(threading.Thread):
                                 self.connection_lost_at = now_ts
                                 print(f"[harness] ✗ cmux socket lost after {self.consecutive_failures} consecutive failures")
 
-                # Read screens for ALL workspaces so the UI has data.
-                # Active workspaces (hasClaude=True) are read every cycle.
-                # Idle workspaces are read at most once every 30 seconds.
-                IDLE_READ_INTERVAL = 30  # seconds
+                # Refresh surface map periodically via cmux tree --all --json
+                if got_data and (now_ts - self.surface_map_ts) > SURFACE_MAP_TTL:
+                    new_map = cmux_tree()
+                    if new_map is not None:
+                        with self._lock:
+                            self.surface_map = new_map
+                            self.surface_map_ts = now_ts
+
+                # Build virtual workspace list (one entry per surface)
                 with self._lock:
-                    ws_snap = list(self.workspaces)
+                    virtual_ws = self._build_virtual_workspaces()
+
+                # Read screens for ALL virtual workspaces so the UI has data.
+                # Active (hasClaude=True) are read every cycle.
+                # Idle are read at most once every 30 seconds.
+                IDLE_READ_INTERVAL = 30  # seconds
                 now_ts = time.time()
-                for ws in ws_snap:
-                    ws_uuid = ws.get("uuid", "")
-                    idx = ws.get("index", ws.get("id"))
+                sidebar_cache = {}  # ws_uuid -> sidebar result
+                active_vidxs = set()
+                for vws in virtual_ws:
+                    ws_uuid = vws.get("uuid", "")
+                    vidx = vws.get("index", vws.get("id"))
+                    real_idx = vws.get("_real_index", vidx)
+                    surface_id = vws.get("_surface_id")
+                    active_vidxs.add(vidx)
                     if not ws_uuid:
                         continue
-                    # Determine if this workspace is idle (no Claude session)
                     with self._lock:
-                        is_idle = not self.ws_has_claude.get(idx, False)
-                        last_read = self.idle_last_read.get(idx, 0)
-                    # Skip idle workspaces that were read recently
+                        is_idle = not self.ws_has_claude.get(vidx, False)
+                        last_read = self.idle_last_read.get(vidx, 0)
                     if is_idle and (now_ts - last_read) < IDLE_READ_INTERVAL:
                         continue
-                    screen = cmux_read_workspace(idx, 0, lines=40, workspace_uuid=ws_uuid)
+                    screen = cmux_read_workspace(real_idx, 0, lines=40, workspace_uuid=ws_uuid, surface_id=surface_id)
                     if screen:
                         has_claude = _detect_claude_session(screen)
                         cost = _parse_session_cost(screen)
                         should_capture_snapshot = False
                         with self._lock:
-                            self.screen_cache[idx] = screen
-                            prev_has_claude = self.ws_has_claude.get(idx, False)
-                            self.ws_has_claude[idx] = has_claude
-                            self.idle_last_read[idx] = now_ts
-                            # Track session start/end transitions
+                            self.screen_cache[vidx] = screen
+                            prev_has_claude = self.ws_has_claude.get(vidx, False)
+                            self.ws_has_claude[vidx] = has_claude
+                            self.idle_last_read[vidx] = now_ts
                             if has_claude and not prev_has_claude:
                                 start_ts = time.time()
-                                self.session_start[idx] = start_ts
-                                self.session_ids[idx] = f"{ws_uuid}_{int(start_ts)}"
+                                self.session_start[vidx] = start_ts
+                                sid_parts = [ws_uuid]
+                                if surface_id:
+                                    sid_parts.append(surface_id)
+                                sid_parts.append(str(int(start_ts)))
+                                self.session_ids[vidx] = "_".join(sid_parts)
                             elif not has_claude and prev_has_claude:
                                 should_capture_snapshot = True
-                            # Update cost if Claude is active
                             if has_claude and cost is not None:
-                                self.session_cost[idx] = cost
+                                self.session_cost[vidx] = cost
                         if should_capture_snapshot:
-                            self._capture_completion_snapshot_async(ws, idx)
+                            self._capture_completion_snapshot_async(vws, vidx)
                             with self._lock:
-                                self.session_start.pop(idx, None)
-                                self.session_cost.pop(idx, None)
-                                self.session_ids.pop(idx, None)
+                                self.session_start.pop(vidx, None)
+                                self.session_cost.pop(vidx, None)
+                                self.session_ids.pop(vidx, None)
                     else:
                         with self._lock:
-                            self.idle_last_read[idx] = now_ts
-                    # Also try sidebar state
-                    sidebar = _v2_request("sidebar.state", {"workspace_id": ws_uuid})
-                    if sidebar:
-                        with self._lock:
-                            for w in self.workspaces:
-                                if w.get("index", w.get("id")) == idx:
-                                    w["_cwd"] = sidebar.get("cwd", "")
-                                    w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
-                                    break
+                            self.idle_last_read[vidx] = now_ts
+                    # Sidebar state: fetch once per real workspace UUID
+                    if ws_uuid not in sidebar_cache:
+                        sidebar = _v2_request("sidebar.state", {"workspace_id": ws_uuid})
+                        sidebar_cache[ws_uuid] = sidebar
+                        if sidebar:
+                            with self._lock:
+                                for w in self.workspaces:
+                                    if w.get("index", w.get("id")) == real_idx:
+                                        w["_cwd"] = sidebar.get("cwd", "")
+                                        w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
+                                        break
+
+                # Clean up stale virtual indices (surfaces that disappeared)
+                with self._lock:
+                    stale_keys = [k for k in list(self.ws_has_claude.keys())
+                                  if k not in active_vidxs and self.ws_has_claude.get(k)]
+                for sk in stale_keys:
+                    self._capture_completion_snapshot_async({}, sk)
+                    with self._lock:
+                        self.ws_has_claude.pop(sk, None)
+                        self.screen_cache.pop(sk, None)
+                        self.session_start.pop(sk, None)
+                        self.session_cost.pop(sk, None)
+                        self.session_ids.pop(sk, None)
+                        self.idle_last_read.pop(sk, None)
+                        self.fingerprints.pop(sk, None)
 
                 if enabled:
-                    # Phase 1: Check which workspaces have unread
-                    # notifications WITHOUT switching workspaces.
+                    # Check which workspaces have unread notifications
                     attention_uuids = self.get_workspaces_needing_attention()
-
-                    # Fail-open: if notifications exist but none match
-                    # any known workspace UUID, the UUIDs are likely tab
-                    # UUIDs (not workspace UUIDs). Bypass the filter so
-                    # we don't silently skip all workspaces.
-                    known_uuids = {w.get("uuid", "") for w in ws_snap}
+                    known_uuids = {vws.get("uuid", "") for vws in virtual_ws}
                     filter_is_useful = not attention_uuids or bool(attention_uuids & known_uuids)
 
-                    for ws in ws_snap:
-                        idx = ws.get("index", ws.get("id"))
-                        ws_uuid = ws.get("uuid", "")
+                    for vws in virtual_ws:
+                        vidx = vws.get("index", vws.get("id"))
+                        ws_uuid = vws.get("uuid", "")
                         with self._lock:
-                            # Check persistent config first (keyed by UUID),
-                            # fall back to runtime state (keyed by index).
                             cfg = self.ws_config.get(ws_uuid, {})
                             if "autoEnabled" in cfg:
                                 ws_on = cfg["autoEnabled"]
                             else:
-                                ws_on = self.workspace_enabled.get(idx, True)
+                                ws_on = self.workspace_enabled.get(vidx, True)
                         if not ws_on:
                             continue
-                        # Phase 2: Only filter by notifications when the
-                        # UUIDs actually match known workspaces.
                         if filter_is_useful and attention_uuids and ws_uuid not in attention_uuids:
                             continue
-                        self.check_workspace(ws)
+                        self.check_workspace(vws)
             except Exception as exc:
                 print(f"[harness] error: {exc}")
             time.sleep(interval)
@@ -1524,6 +1730,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 /* Grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px 50px}
 .grid-empty{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:15px;grid-column:1/-1}
+.grid-divider{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:4px 0;color:var(--text-muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.grid-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 .reviews-container{padding:20px 28px 60px}
 .reviews-filters{position:sticky;top:73px;z-index:40;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;margin-bottom:18px;border:1px solid var(--border);border-radius:14px;background:rgba(22,27,34,.96);backdrop-filter:blur(10px)}
 .reviews-filters-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -1655,6 +1863,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-tabs.visible{display:block}
 .exp-close{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .exp-close:hover{border-color:var(--red);color:var(--red)}
+.btn-build-run{background:rgba(63,185,80,.15);border-color:var(--green);color:var(--green);font-weight:600}
+.btn-build-run:hover{background:rgba(63,185,80,.25);border-color:var(--green);color:var(--green)}
 .exp-terminal{flex:1;overflow-y:auto;padding:16px 24px;font-family:'JetBrains Mono','SF Mono',monospace;font-size:13px;line-height:1.8;background:rgba(0,0,0,.15);white-space:pre-wrap;word-break:break-all}
 .exp-terminal.activity-list{padding:0;background:var(--bg);font-family:inherit;white-space:normal;word-break:normal}
 .exp-terminal.activity-list .act-item{padding:14px 18px}
@@ -1668,9 +1878,48 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-input-field::placeholder{color:var(--text-muted)}
 .exp-send{padding:10px 22px;border-radius:8px;border:none;background:var(--accent);color:#000;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
 
-/* Activity panel */
-.exp-activity{width:300px;border-left:1px solid var(--border);background:var(--bg);display:flex;flex-direction:column;flex-shrink:0}
-.exp-activity-header{padding:16px 18px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+/* Right sidebar (git + activity) */
+.exp-sidebar{width:300px;border-left:1px solid var(--border);background:var(--bg);display:flex;flex-direction:column;flex-shrink:0}
+
+/* Git status panel — top half */
+.exp-git{flex:1;display:flex;flex-direction:column;border-bottom:1px solid var(--border);overflow:hidden;min-height:0}
+.exp-git-header{padding:12px 18px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.exp-git-header .git-branch{font-weight:600;color:var(--accent);text-transform:none;letter-spacing:0;font-size:12px;margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exp-git-refresh{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
+.exp-git-refresh:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.exp-git-body{flex:1;overflow-y:auto;padding:4px 0}
+.git-section{padding:8px 18px 4px}
+.git-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.git-section-title.staged{color:var(--green)}
+.git-section-title.unstaged{color:var(--yellow)}
+.git-section-title.untracked{color:var(--text-muted)}
+.git-section-title.commits{color:var(--purple)}
+.git-section.commits-section{margin-top:4px;padding-top:10px;border-top:1px solid var(--border)}
+.git-file{display:flex;align-items:center;font-size:11px;font-family:'JetBrains Mono','SF Mono',monospace;padding:3px 4px;margin:1px -4px;border-radius:4px;color:var(--text);overflow:hidden;white-space:nowrap;cursor:pointer;transition:background .1s}
+.git-file-name{overflow:hidden;text-overflow:ellipsis}
+.git-file:hover{background:rgba(255,255,255,.06)}
+.git-file.selected{background:rgba(88,166,255,.15);outline:1px solid rgba(88,166,255,.35)}
+.git-file:active{background:rgba(255,255,255,.1)}
+.git-file .git-status{display:inline-block;min-width:14px;margin-right:6px;font-weight:700;text-align:center;flex-shrink:0}
+.git-file .git-status.st-staged{color:var(--green)}
+.git-file .git-status.st-unstaged{color:var(--yellow)}
+.git-file .git-status.st-untracked{color:var(--text-muted)}
+.git-commit{font-size:11px;font-family:'JetBrains Mono','SF Mono',monospace;padding:3px 4px;margin:1px -4px;border-radius:4px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default}
+.git-commit:hover{background:rgba(255,255,255,.03)}
+.git-commit .git-hash{color:var(--purple);margin-right:6px}
+.git-empty{padding:20px 18px;text-align:center;color:var(--text-muted);font-size:12px}
+
+/* Git context menu */
+.git-ctx-menu{position:fixed;z-index:10000;min-width:160px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);padding:4px 0;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:none}
+.git-ctx-menu.visible{display:block}
+.git-ctx-item{padding:7px 14px;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .1s}
+.git-ctx-item:hover{background:rgba(255,255,255,.08)}
+.git-ctx-item .ctx-icon{width:14px;text-align:center;flex-shrink:0;font-size:11px}
+.git-ctx-sep{height:1px;background:var(--border);margin:4px 0}
+
+/* Activity panel — bottom half */
+.exp-activity{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.exp-activity-header{padding:12px 18px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .exp-activity-count{padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(88,166,255,.1);color:var(--accent)}
 .exp-activity-list{flex:1;overflow-y:auto;padding:4px 0}
 .act-item{padding:12px 18px;border-bottom:1px solid rgba(48,54,61,.4)}
@@ -1733,7 +1982,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   .reviews-filters-left{width:100%}
   .reviews-count{text-align:right}
   .expanded-panel{width:96vw;height:92vh;flex-direction:column}
-  .exp-activity{width:100%;height:240px;border-left:none;border-top:1px solid var(--border)}
+  .exp-sidebar{width:100%;height:280px;border-left:none;border-top:1px solid var(--border);flex-direction:row}
+  .exp-git{border-bottom:none;border-right:1px solid var(--border)}
 }
 </style>
 </head>
@@ -1823,6 +2073,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
             <span class="auto-toggle-label">Auto</span>
             <div class="toggle-track"></div>
           </div>
+          <button class="btn btn-build-run" style="font-size:12px" onclick="buildAndRun()">&#9654; Build &amp; Run</button>
           <button class="btn" style="font-size:12px" onclick="closeExpanded()">&#10005; Close</button>
         </div>
       </div>
@@ -1843,9 +2094,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         <button class="exp-send" onclick="sendExp()">Send &#8629;</button>
       </div>
     </div>
-    <div class="exp-activity">
-      <div class="exp-activity-header">Activity <span class="exp-activity-count" id="expActCount">0</span></div>
-      <div class="exp-activity-list" id="expActList"></div>
+    <div class="exp-sidebar">
+      <div class="exp-git">
+        <div class="exp-git-header">
+          <span>Git <span class="git-branch" id="expGitBranch"></span></span>
+          <button class="exp-git-refresh" onclick="fetchGitStatus()" title="Refresh">&#8635;</button>
+        </div>
+        <div class="exp-git-body" id="expGitBody">
+          <div class="git-empty">No git info available</div>
+        </div>
+      </div>
+      <div class="exp-activity">
+        <div class="exp-activity-header">Activity <span class="exp-activity-count" id="expActCount">0</span></div>
+        <div class="exp-activity-list" id="expActList"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -2501,14 +2763,16 @@ function buildGrid(){
   document.getElementById('statWaiting').textContent=waiting;
   document.getElementById('statIdle').textContent=idle;
 
-  // Sort: active/waiting first (grouped), idle last. Stable order within groups.
-  var sorted=ws.slice().sort(function(a,b){
-    var aIdle=classifyWs(a)==='idle'?1:0;
-    var bIdle=classifyWs(b)==='idle'?1:0;
-    if(aIdle!==bIdle)return aIdle-bIdle;
-    // Within the same group, preserve original index order
-    return a.index-b.index;
+  // Split into active (active+waiting) and inactive (idle), alphabetical within each
+  var activeWs=[], inactiveWs=[];
+  ws.forEach(function(w){
+    if(classifyWs(w)==='idle') inactiveWs.push(w);
+    else activeWs.push(w);
   });
+  var nameof=function(w){return (w.surfaceLabel||w.customName||w.name||'').toLowerCase()};
+  activeWs.sort(function(a,b){return nameof(a).localeCompare(nameof(b))});
+  inactiveWs.sort(function(a,b){return nameof(a).localeCompare(nameof(b))});
+  var sorted=activeWs.concat(inactiveWs);
 
   // Preserve focus: if user is typing in an input, save it
   var activeEl=document.activeElement;
@@ -2522,7 +2786,12 @@ function buildGrid(){
   }
 
   var html='';
+  var dividerInserted=false;
   sorted.forEach(function(w){
+    if(!dividerInserted&&classifyWs(w)==='idle'){
+      html+='<div class="grid-divider">Inactive</div>';
+      dividerInserted=true;
+    }
     var s=classifyWs(w);
     var isWaiting=s==='waiting';
     var isIdle=s==='idle';
@@ -2535,12 +2804,12 @@ function buildGrid(){
     var autoClass='auto-toggle'+(autoOn?' on':'');
 
     html+='<div class="'+cardClass+'" id="card-'+w.index+'">';
-    var displayName=w.customName||w.name;
+    var displayName=w.surfaceLabel||w.customName||w.name;
     html+='<div class="card-header">';
     html+='<div class="card-title-row"><div class="'+statusClass+'"></div>';
-    html+='<div style="min-width:0">';
+    if(w.surfaceId)html+='<span style="color:var(--text-muted);font-size:11px;margin-right:2px" title="Split pane">&#9649;</span>';
+    html+='<div style="min-width:0;overflow:hidden">';
     html+='<span class="card-name" onclick="startRename('+w.index+',this)" title="Click to rename">'+esc(displayName)+'</span>';
-    if(w.customName)html+='<div class="card-name-original">'+esc(w.name)+'</div>';
     html+='</div>';
     html+='</div>';
     html+='<div class="card-header-right">';
@@ -2564,8 +2833,8 @@ function buildGrid(){
     html+='<button class="card-send" onclick="sendToWs('+w.index+')">Send</button>';
     html+='</div></div>';
   });
-  // Structural hash: only workspace indices and their status classification
-  var structHash=sorted.map(function(w){return w.index+'_'+classifyWs(w)}).join(',');
+  // Structural hash: workspace indices, status, and name (for alpha sort changes)
+  var structHash=sorted.map(function(w){return w.index+'_'+classifyWs(w)+'_'+nameof(w)}).join(',');
   var needsRebuild=!window._lastStructHash||window._lastStructHash!==structHash||!grid.children.length;
 
   if(needsRebuild){
@@ -2586,27 +2855,12 @@ function buildGrid(){
       // Update workspace name (fixes stale titles when names change between rebuilds)
       var nameEl=card.querySelector('.card-name');
       if(nameEl&&!nameEl.isContentEditable&&nameEl.tagName!=='INPUT'){
-        var displayName=w.customName||w.name;
+        var displayName=w.surfaceLabel||w.customName||w.name;
         if(nameEl.textContent!==displayName)nameEl.textContent=displayName;
       }
-      // Update original-name subtitle
+      // Remove any leftover original-name subtitle
       var origEl=card.querySelector('.card-name-original');
-      if(w.customName){
-        if(origEl){
-          if(origEl.textContent!==w.name)origEl.textContent=w.name;
-        }else{
-          // Need to add the original-name element
-          var nameWrapper=nameEl?nameEl.parentElement:null;
-          if(nameWrapper){
-            var newOrig=document.createElement('div');
-            newOrig.className='card-name-original';
-            newOrig.textContent=w.name;
-            nameWrapper.appendChild(newOrig);
-          }
-        }
-      }else if(origEl){
-        origEl.remove();
-      }
+      if(origEl)origEl.remove();
       // Update terminal preview (only if user hasn't scrolled up)
       var term=card.querySelector('.card-terminal');
       if(term){
@@ -2678,7 +2932,10 @@ window.sendToWs=function(idx){
   var inp=document.getElementById('input-'+idx);
   if(!inp||!inp.value.trim())return;
   var text=inp.value.trim()+'\n';
-  api('POST','/api/send',{index:idx,text:text});
+  var ws=state.workspaces.find(function(w){return w.index===idx});
+  var payload={index:idx,text:text};
+  if(ws&&ws.surfaceId)payload.surfaceId=ws.surfaceId;
+  api('POST','/api/send',payload);
   inp.value='';
 };
 
@@ -2691,8 +2948,12 @@ window.openExpanded=function(idx){
   document.getElementById('escHint').style.display='block';
   document.body.style.overflow='hidden';
   updateExpanded();
+  fetchGitStatus();
+  if(gitPollTimer)clearInterval(gitPollTimer);
+  gitPollTimer=setInterval(fetchGitStatus,10000);
 };
 window.closeExpanded=function(){
+  if(gitPollTimer){clearInterval(gitPollTimer);gitPollTimer=null;}
   expandedWsIndex=null;
   expandedReview=null;
   expandedMode='workspace';
@@ -2711,8 +2972,132 @@ window.sendExp=function(){
   if(expandedWsIndex===null)return;
   var inp=document.getElementById('expInput');
   if(!inp.value.trim())return;
-  api('POST','/api/send',{index:expandedWsIndex,text:inp.value.trim()+'\n'});
+  var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
+  var payload={index:expandedWsIndex,text:inp.value.trim()+'\n'};
+  if(ws&&ws.surfaceId)payload.surfaceId=ws.surfaceId;
+  api('POST','/api/send',payload);
   inp.value='';
+};
+window.buildAndRun=function(){
+  if(expandedWsIndex===null)return;
+  var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
+  var payload={index:expandedWsIndex,text:'/exp-project-run\n'};
+  if(ws&&ws.surfaceId)payload.surfaceId=ws.surfaceId;
+  api('POST','/api/send',payload);
+};
+var gitPollTimer=null;
+window.gitFileClick=function(file,el){
+  if(!el)return;
+  var wasSelected=el.classList.contains('selected');
+  document.querySelectorAll('.git-file.selected').forEach(function(f){f.classList.remove('selected')});
+  if(!wasSelected)el.classList.add('selected');
+};
+
+// ─── Git Context Menu ───
+(function(){
+  var menu=document.createElement('div');
+  menu.className='git-ctx-menu';
+  menu.id='gitCtxMenu';
+  document.body.appendChild(menu);
+
+  var _ctxFile='';
+  var _ctxSection=''; // 'staged','unstaged','untracked'
+
+  function hideMenu(){menu.classList.remove('visible')}
+
+  document.addEventListener('click',function(e){
+    if(!menu.contains(e.target))hideMenu();
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape')hideMenu();
+  });
+  // Prevent the menu itself from triggering the native context menu
+  menu.addEventListener('contextmenu',function(e){e.preventDefault()});
+
+  function doAction(action){
+    hideMenu();
+    if(!_ctxFile||expandedWsIndex===null)return;
+    var endpoint=action==='stage'?'/api/git-stage':action==='unstage'?'/api/git-unstage':'/api/git-open-file';
+    fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:expandedWsIndex,file:_ctxFile})})
+    .then(function(r){return r.json()})
+    .then(function(d){if(d.ok)fetchGitStatus();})
+    .catch(function(){});
+  }
+
+  // Delegated contextmenu listener on the git body
+  document.addEventListener('contextmenu',function(e){
+    var el=e.target.closest('.git-file[data-section]');
+    if(!el)return;
+    e.preventDefault();
+    _ctxFile=el.getAttribute('data-file');
+    _ctxSection=el.getAttribute('data-section');
+
+    var items='';
+    if(_ctxSection==='unstaged'||_ctxSection==='untracked'){
+      items+='<div class="git-ctx-item" data-action="stage"><span class="ctx-icon">+</span>Stage File</div>';
+    }
+    if(_ctxSection==='staged'){
+      items+='<div class="git-ctx-item" data-action="unstage"><span class="ctx-icon">&minus;</span>Unstage File</div>';
+    }
+    items+='<div class="git-ctx-sep"></div>';
+    items+='<div class="git-ctx-item" data-action="open"><span class="ctx-icon">&#8599;</span>Open File</div>';
+    menu.innerHTML=items;
+
+    // Position — keep within viewport
+    var x=e.clientX,y=e.clientY;
+    menu.classList.add('visible');
+    var mw=menu.offsetWidth,mh=menu.offsetHeight;
+    if(x+mw>window.innerWidth)x=window.innerWidth-mw-4;
+    if(y+mh>window.innerHeight)y=window.innerHeight-mh-4;
+    menu.style.left=x+'px';
+    menu.style.top=y+'px';
+  });
+
+  menu.addEventListener('click',function(e){
+    var item=e.target.closest('.git-ctx-item');
+    if(!item)return;
+    var action=item.getAttribute('data-action');
+    doAction(action);
+  });
+})();
+
+window.fetchGitStatus=function(){
+  if(expandedWsIndex===null)return;
+  fetch('/api/git-status?index='+expandedWsIndex).then(function(r){return r.json()}).then(function(d){
+    if(!d.ok)return;
+    var brEl=document.getElementById('expGitBranch');
+    if(brEl)brEl.textContent=d.branch||'';
+    var body=document.getElementById('expGitBody');
+    if(!body)return;
+    var empty=d.staged.length===0&&d.unstaged.length===0&&d.untracked.length===0&&d.commits.length===0;
+    if(empty){body.innerHTML='<div class="git-empty">'+(d.cwd?'Working tree clean':'No git repo detected')+'</div>';return;}
+    var h='';
+    function fileEl(status,file,cls,section){
+      var escaped=esc(file).replace(/'/g,"\\'");
+      return '<div class="git-file" data-file="'+esc(file).replace(/"/g,'&quot;')+'" data-section="'+section+'" onclick="gitFileClick(\''+escaped+'\',this)"><span class="git-status '+cls+'">'+esc(status)+'</span><span class="git-file-name">'+esc(file)+'</span></div>';
+    }
+    if(d.staged.length){
+      h+='<div class="git-section"><div class="git-section-title staged">Staged ('+d.staged.length+')</div>';
+      d.staged.forEach(function(f){h+=fileEl(f.status,f.file,'st-staged','staged');});
+      h+='</div>';
+    }
+    if(d.unstaged.length){
+      h+='<div class="git-section"><div class="git-section-title unstaged">Modified ('+d.unstaged.length+')</div>';
+      d.unstaged.forEach(function(f){h+=fileEl(f.status,f.file,'st-unstaged','unstaged');});
+      h+='</div>';
+    }
+    if(d.untracked.length){
+      h+='<div class="git-section"><div class="git-section-title untracked">Untracked ('+d.untracked.length+')</div>';
+      d.untracked.forEach(function(f){h+=fileEl('?',f,'st-untracked','untracked');});
+      h+='</div>';
+    }
+    if(d.commits.length){
+      h+='<div class="git-section commits-section"><div class="git-section-title commits">Recent Commits</div>';
+      d.commits.forEach(function(c){h+='<div class="git-commit"><span class="git-hash">'+esc(c.hash)+'</span>'+esc(c.message)+'</div>';});
+      h+='</div>';
+    }
+    body.innerHTML=h;
+  }).catch(function(){});
 };
 window.setMode=function(btn){
   btn.parentElement.querySelectorAll('.mode-btn').forEach(function(b){b.classList.remove('active')});
@@ -2731,10 +3116,10 @@ function updateExpanded(){
   if(!ws)return;
   document.querySelector('.exp-header-actions').classList.remove('hidden');
   document.querySelector('.exp-input').classList.remove('hidden');
-  var expDisplayName=ws.customName||ws.name;
+  var expDisplayName=ws.surfaceLabel||ws.customName||ws.name;
   document.getElementById('expTitle').textContent=expDisplayName;
   var origNameEl=document.getElementById('expOrigName');
-  if(ws.customName){
+  if(ws.surfaceLabel||ws.customName){
     if(!origNameEl){
       origNameEl=document.createElement('div');
       origNameEl.id='expOrigName';
@@ -3272,6 +3657,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(_engine.get_status())
         elif self.path == "/api/log":
             self._json_response(_engine.get_log())
+        elif self.path.startswith("/api/git-status"):
+            qs = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(qs)
+            idx_str = params.get("index", [None])[0]
+            if idx_str is None:
+                self._json_response({"ok": False, "error": "index required"}, 400)
+                return
+            result = _engine.get_git_status(int(idx_str))
+            if result is None:
+                self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                return
+            result["ok"] = True
+            self._json_response(result)
         elif self.path == "/api/reviews":
             reviews = []
             for review in _list_reviews():
@@ -3352,7 +3750,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             idx = data.get("index")
             enabled = data.get("enabled", True)
             if idx is not None:
-                _engine.set_workspace_enabled(int(idx), enabled)
+                idx = int(idx)
+                # For virtual indices, resolve to real index for config
+                with _engine._lock:
+                    virtual_ws = _engine._build_virtual_workspaces()
+                vws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
+                real_idx = vws.get("_real_index", idx) if vws else idx
+                _engine.set_workspace_enabled(real_idx, enabled)
             self._json_response({"ok": True})
         elif self.path == "/api/config":
             pi = data.get("pollInterval")
@@ -3385,7 +3789,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if idx is None:
                 self._json_response({"ok": False, "error": "index required"}, 400)
                 return
-            ok = _engine.set_custom_name(int(idx), name)
+            idx = int(idx)
+            # For virtual indices, resolve to real index for rename
+            with _engine._lock:
+                virtual_ws = _engine._build_virtual_workspaces()
+            vws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
+            real_idx = vws.get("_real_index", idx) if vws else idx
+            ok = _engine.set_custom_name(real_idx, name)
             if not ok:
                 self._json_response({"ok": False, "error": "workspace not found"}, 404)
                 return
@@ -3393,17 +3803,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/send":
             idx = data.get("index")
             text = data.get("text", "")
+            surface_id = data.get("surfaceId")
             if idx is None or not text:
                 self._json_response({"ok": False, "error": "index and text required"}, 400)
                 return
             idx = int(idx)
+            # Look up in virtual workspaces to resolve surface_id for multi-surface
             with _engine._lock:
-                ws_snap = list(_engine.workspaces)
-            ws = next((w for w in ws_snap if w.get("index", w.get("id")) == idx), None)
+                virtual_ws = _engine._build_virtual_workspaces()
+            ws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
             if ws is None:
                 self._json_response({"ok": False, "error": "workspace not found"}, 404)
                 return
-            ok = cmux_send_to_workspace(idx, 0, text=text, workspace_uuid=ws.get("uuid"))
+            sid = surface_id or ws.get("_surface_id")
+            real_idx = ws.get("_real_index", idx)
+            ok = cmux_send_to_workspace(real_idx, 0, text=text, workspace_uuid=ws.get("uuid"), surface_id=sid)
             self._json_response({"ok": ok})
         elif self.path.startswith("/api/reviews/") and self.path.endswith("/rerun"):
             session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):-len("/rerun")]).rstrip("/")
@@ -3518,6 +3932,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             # Step 7: Return workspace info
             self._json_response({"ok": True, "workspace": {"index": ws_idx, "uuid": ws_uuid}})
+        elif self.path == "/api/git-stage":
+            idx = data.get("index")
+            file = data.get("file")
+            if idx is None or not file:
+                self._json_response({"ok": False, "error": "index and file required"}, 400)
+                return
+            cwd = _engine._get_workspace_cwd(int(idx))
+            if not cwd:
+                self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                return
+            result = _engine._run_git_command(cwd, ["add", "--", file])
+            if result.startswith("[error]"):
+                self._json_response({"ok": False, "error": result}, 500)
+                return
+            self._json_response({"ok": True})
+        elif self.path == "/api/git-unstage":
+            idx = data.get("index")
+            file = data.get("file")
+            if idx is None or not file:
+                self._json_response({"ok": False, "error": "index and file required"}, 400)
+                return
+            cwd = _engine._get_workspace_cwd(int(idx))
+            if not cwd:
+                self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                return
+            result = _engine._run_git_command(cwd, ["reset", "HEAD", "--", file])
+            if result.startswith("[error]"):
+                self._json_response({"ok": False, "error": result}, 500)
+                return
+            self._json_response({"ok": True})
+        elif self.path == "/api/git-open-file":
+            idx = data.get("index")
+            file = data.get("file")
+            if idx is None or not file:
+                self._json_response({"ok": False, "error": "index and file required"}, 400)
+                return
+            cwd = _engine._get_workspace_cwd(int(idx))
+            if not cwd:
+                self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                return
+            full_path = os.path.realpath(os.path.join(cwd, file))
+            if not full_path.startswith(os.path.realpath(cwd)):
+                self._json_response({"ok": False, "error": "path outside workspace"}, 400)
+                return
+            if not os.path.exists(full_path):
+                self._json_response({"ok": False, "error": "file not found"}, 404)
+                return
+            try:
+                subprocess.Popen(["open", full_path])
+                self._json_response({"ok": True})
+            except OSError as e:
+                self._json_response({"ok": False, "error": str(e)}, 500)
         else:
             self.send_error(404)
 
