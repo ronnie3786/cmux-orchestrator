@@ -312,8 +312,8 @@ def _is_permission_menu(options_text):
     """Check if menu options are all Yes/No variants (permission prompt)
     vs domain-specific choices (needs human).
     Returns True if it's a standard permission prompt."""
-    # Extract option text (everything after "N. " or "N) ")
-    option_texts = re.findall(r"\d+[.)]\s+(.+)", options_text)
+    # Extract option text (everything after "N. " or "N) " — also handles "N.Text" with no space)
+    option_texts = re.findall(r"\d+[.)]\s*(.+)", options_text)
     has_affirmative = False
     has_domain_specific = False
     for opt in option_texts:
@@ -350,32 +350,27 @@ def detect_prompt(screen_text):
     # FIRST: Check for numbered menus (Enter to select / Esc to cancel).
     has_menu_footer = bool(re.search(r"Enter to select|Esc to cancel", tail))
     if has_menu_footer:
-        # Extract only the actual menu region (lines near the footer) to avoid
-        # false matches on numbered content in Claude's output above the prompt.
-        # Walk backwards from the footer to find menu option lines.
+        # Extract only the actual menu region to avoid false matches on
+        # numbered content in Claude's output above the prompt.
+        # Strategy: find the prompt question ("Do you want to proceed?" etc.)
+        # and extract everything from there to the footer. This handles
+        # wrapped option lines and missing spaces (e.g. "2.Yes, and don't...").
         tail_lines = tail.splitlines()
-        menu_lines = []
-        in_menu = False
-        for line in reversed(tail_lines):
+        menu_start = -1
+        menu_end = len(tail_lines)
+        for i, line in enumerate(tail_lines):
             stripped = line.strip()
+            if re.match(r"(Do you want|This command requires|Allow |Approve |proceed\??)", stripped, re.I):
+                menu_start = i
             if re.search(r"Enter to select|Esc to cancel", stripped):
-                in_menu = True
-                continue
-            if in_menu:
-                # Menu options: numbered items or cursor-prefixed items
-                if _NUMBERED_MENU_RE.match(stripped) or re.match(_CURSOR_CHARS + r"\s*\d+[.)]\s+", stripped):
-                    menu_lines.append(line)
-                elif re.match(r"(Do you want|This command|Allow |proceed\??)", stripped, re.I):
-                    # Prompt question line — include but stop collecting
-                    menu_lines.append(line)
-                    break
-                elif stripped == "":
-                    # Blank line — might be separator, keep scanning
-                    continue
-                else:
-                    # Hit non-menu content, stop
-                    break
-        menu_text = "\n".join(reversed(menu_lines)) if menu_lines else tail
+                menu_end = i
+                break
+        if menu_start >= 0:
+            menu_text = "\n".join(tail_lines[menu_start:menu_end])
+        else:
+            # Fallback: take last 10 lines before footer (covers most menus)
+            start = max(0, menu_end - 10)
+            menu_text = "\n".join(tail_lines[start:menu_end])
 
         # Check if this is a standard permission menu (Yes/No variants)
         # or a domain-specific choice menu
