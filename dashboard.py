@@ -413,6 +413,38 @@ def _debug_log(entry):
 
 
 # ---------------------------------------------------------------------------
+# Session cost parser
+# ---------------------------------------------------------------------------
+
+def _parse_session_cost(screen_text):
+    """Parse Claude Code session cost from terminal output.
+    Checks the last 5 lines where the statusline renders.
+    Returns a dollar amount string like "$0.45" or None if not found."""
+    if not screen_text:
+        return None
+    lines = screen_text.splitlines()
+    tail = "\n".join(lines[-5:]) if len(lines) > 5 else screen_text
+    # Pattern order matters: more specific patterns first
+    # Cost: $X.XX
+    m = re.search(r"Cost:\s*(\$\d+\.\d{2})", tail)
+    if m:
+        return m.group(1)
+    # 💰$X.XX or 💰 $X.XX
+    m = re.search(r"\U0001f4b0\s*(\$\d+\.\d{2})", tail)
+    if m:
+        return m.group(1)
+    # $X.XX block (ccstatusline block cost format)
+    m = re.search(r"(\$\d+\.\d{2})\s+block", tail)
+    if m:
+        return m.group(1)
+    # bare $X.XX (catch-all)
+    m = re.search(r"(\$\d+\.\d{2})", tail)
+    if m:
+        return m.group(1)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Harness engine (background thread)
 # ---------------------------------------------------------------------------
 
@@ -429,6 +461,8 @@ class HarnessEngine(threading.Thread):
         self.screen_cache = {}   # idx -> last screen text (tail)
         self.ws_has_claude = {}  # idx -> bool (tracks active Claude sessions per workspace)
         self.idle_last_read = {} # idx -> float (timestamp of last screen read for idle workspaces)
+        self.session_start = {}  # idx -> float (when hasClaude first went True)
+        self.session_cost = {}   # idx -> str (parsed cost like "$0.45")
         self.socket_connected = False   # current socket connection state
         self.last_successful_poll = 0   # timestamp of last successful socket read
         self.connection_lost_at = 0     # when we first noticed the socket was gone
@@ -528,6 +562,8 @@ class HarnessEngine(threading.Thread):
                     "screenFull": screen_tail,
                     "cwd": ws.get("_cwd", ""),
                     "branch": ws.get("_branch", ""),
+                    "sessionStart": self.session_start.get(idx, 0),
+                    "sessionCost": self.session_cost.get(idx, ""),
                 })
             return {
                 "enabled": self.enabled,
@@ -775,10 +811,21 @@ class HarnessEngine(threading.Thread):
                     screen = cmux_read_workspace(idx, 0, lines=40, workspace_uuid=ws_uuid)
                     if screen:
                         has_claude = _detect_claude_session(screen)
+                        cost = _parse_session_cost(screen)
                         with self._lock:
                             self.screen_cache[idx] = screen
+                            prev_has_claude = self.ws_has_claude.get(idx, False)
                             self.ws_has_claude[idx] = has_claude
                             self.idle_last_read[idx] = now_ts
+                            # Track session start/end transitions
+                            if has_claude and not prev_has_claude:
+                                self.session_start[idx] = time.time()
+                            elif not has_claude and prev_has_claude:
+                                self.session_start.pop(idx, None)
+                                self.session_cost.pop(idx, None)
+                            # Update cost if Claude is active
+                            if has_claude and cost is not None:
+                                self.session_cost[idx] = cost
                     else:
                         with self._lock:
                             self.idle_last_read[idx] = now_ts
@@ -1172,6 +1219,26 @@ function fmtTime(iso){
   try{return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}catch(e){return iso}
 }
 
+function formatDuration(start) {
+  if (!start) return '';
+  var secs = Math.floor(Date.now()/1000 - start);
+  if (secs < 60) return secs + 's';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm';
+  var hrs = Math.floor(mins / 60);
+  return hrs + 'h ' + (mins % 60) + 'm';
+}
+
+function costColor(cost) {
+  if (!cost) return '';
+  var m = cost.match(/\$([\d.]+)/);
+  if (!m) return 'var(--green)';
+  var val = parseFloat(m[1]);
+  if (val < 1) return 'var(--green)';
+  if (val <= 5) return 'var(--yellow)';
+  return 'var(--red)';
+}
+
 // ─── Notification helpers ───
 function playNotifSound() {
   try {
@@ -1318,6 +1385,8 @@ function buildGrid(){
     html+='<span>\uD83D\uDCC2 '+esc(w.cwd||'—')+'</span>';
     if(w.branch)html+='<span>\uD83C\uDF3F '+esc(w.branch)+'</span>';
     if(w.lastCheck)html+='<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>';
+    if(w.hasClaude&&w.sessionStart){var dur=formatDuration(w.sessionStart);if(dur)html+='<span>\u23F1 '+esc(dur)+'</span>';}
+    if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);html+='<span>\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px">'+esc(w.sessionCost)+'</span></span>';}
     html+='</div>';
 
     html+='<div class="card-terminal">'+colorize(w.screenTail)+'</div>';
@@ -1441,7 +1510,9 @@ function updateExpanded(){
   var meta='';
   if(ws.cwd)meta+='\uD83D\uDCC2 '+esc(ws.cwd)+'  ';
   if(ws.branch)meta+='\uD83C\uDF3F '+esc(ws.branch)+'  ';
-  if(ws.lastCheck)meta+='\u23F1 '+fmtTime(ws.lastCheck);
+  if(ws.lastCheck)meta+='\u23F1 '+fmtTime(ws.lastCheck)+'  ';
+  if(ws.hasClaude&&ws.sessionStart){var dur=formatDuration(ws.sessionStart);if(dur)meta+='\u23F1 '+esc(dur)+'  ';}
+  if(ws.hasClaude&&ws.sessionCost){var cc=costColor(ws.sessionCost);meta+='\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:12px">'+esc(ws.sessionCost)+'</span>  ';}
   document.getElementById('expMeta').innerHTML=meta;
 
   var autoEl=document.getElementById('expAutoToggle');
