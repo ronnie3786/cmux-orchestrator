@@ -847,9 +847,16 @@ class HarnessEngine(threading.Thread):
                 flagged_count += 1
             else:
                 approved_count += 1
+
+        git_diff = (review_data.get("gitDiff") or "").strip()
+        git_diff_stat = (review_data.get("gitDiffStat") or "").strip()
+        git_log = (review_data.get("gitLog") or "").strip()
+        has_code_changes = bool(git_diff or git_diff_stat)
+
         prompt = (
-            "You are reviewing code changes made by an AI coding agent (Claude Code).\n"
-            "A session just completed. Review the changes and provide a structured assessment.\n\n"
+            "You are reviewing a completed AI coding agent (Claude Code) session.\n"
+            "Your job is to summarize what happened and tell the developer what to do next.\n"
+            "EVERY session gets a review, whether or not code was changed.\n\n"
             f"Workspace: {review_data.get('workspaceName', '')}\n"
             f"Branch: {review_data.get('branch', '')}\n"
             f"Working directory: {review_data.get('cwd', '')}\n"
@@ -859,21 +866,42 @@ class HarnessEngine(threading.Thread):
             f"Actions flagged for human: {flagged_count}\n\n"
             "── Claude Code's final output (last 50 lines) ──\n"
             f"{review_data.get('terminalSnapshot', '')}\n\n"
-            "── Git diff summary ──\n"
-            f"{review_data.get('gitDiffStat', '')}\n\n"
-            "── Recent commits ──\n"
-            f"{review_data.get('gitLog', '')}\n\n"
-            "── Full diff ──\n"
-            f"{review_data.get('gitDiff', '')}\n\n"
+        )
+
+        if has_code_changes:
+            prompt += (
+                "── Git diff summary ──\n"
+                f"{git_diff_stat}\n\n"
+                "── Recent commits ──\n"
+                f"{git_log}\n\n"
+                "── Full diff ──\n"
+                f"{git_diff}\n\n"
+            )
+        else:
+            prompt += (
+                "── Note: No uncommitted code changes detected ──\n"
+                "This session may have involved exploration, debugging, planning,\n"
+                "reading code, answering questions, or changes that were already committed.\n"
+                "Review the terminal output above to determine what happened.\n\n"
+            )
+            if git_log:
+                prompt += (
+                    "── Recent commits (may include this session's work) ──\n"
+                    f"{git_log}\n\n"
+                )
+
+        prompt += (
             "Respond with ONLY a JSON object:\n"
             "{\n"
-            '  "summary": "One-line description of what changed",\n'
-            '  "filesChanged": ["list", "of", "files"],\n'
-            '  "linesAdded": number,\n'
-            '  "linesRemoved": number,\n'
+            '  "summary": "One-line description of what happened in this session",\n'
+            '  "whatHappened": "2-4 sentence description of what Claude did, what was accomplished, and any important context",\n'
+            '  "filesChanged": ["list", "of", "files"] or [] if no changes,\n'
+            '  "linesAdded": number or 0,\n'
+            '  "linesRemoved": number or 0,\n'
             '  "confidence": "high" | "medium" | "low",\n'
             '  "issues": ["list of concerns, empty if none"],\n'
-            '  "readyForPR": true | false,\n'
+            '  "readyForPR": true | false (false if no code changes),\n'
+            '  "nextSteps": "What should the developer do next based on this session",\n'
             '  "recommendation": "Brief recommendation for the developer",\n'
             '  "highlights": ["Notable good decisions or patterns worth calling out"]\n'
             "}\n"
@@ -1013,19 +1041,6 @@ class HarnessEngine(threading.Thread):
             self._write_review_file(path, review_data)
         except OSError as e:
             _debug_log({"event": "review_write_error", "path": str(path), "stage": "reviewing", "error": str(e)})
-            return
-
-        git_diff = (review_data.get("gitDiff") or "").strip()
-        if not git_diff:
-            review_data["reviewStatus"] = "skipped"
-            review_data["reviewedAt"] = datetime.now(timezone.utc).isoformat()
-            review_data["reviewDuration"] = round(time.time() - start_ts, 1)
-            review_data["reviewModel"] = "skipped"
-            try:
-                self._write_review_file(path, review_data)
-            except OSError as e:
-                _debug_log({"event": "review_write_error", "path": str(path), "stage": "skipped", "error": str(e)})
-            _debug_log({"event": "review_skipped_empty_diff", "path": str(path)})
             return
 
         prompt = self._build_review_prompt(review_data)
@@ -1505,6 +1520,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .review-dot.yellow{background:var(--yellow);box-shadow:0 0 8px rgba(210,153,34,.35)}
 .review-dot.red{background:var(--red);box-shadow:0 0 8px rgba(248,81,73,.35)}
 .review-dot.purple{background:var(--purple);box-shadow:0 0 8px rgba(188,140,255,.4)}
+.review-dot.blue{background:var(--accent);box-shadow:0 0 8px rgba(88,166,255,.4)}
 .review-dot.pulse{animation:pulse 1.6s infinite}
 .review-dot.gray{background:var(--text-muted);opacity:.7}
 .review-title{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1519,10 +1535,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .review-status-badge.attention,.review-status-badge.error{background:rgba(248,81,73,.14);color:var(--red)}
 .review-status-badge.pending{background:rgba(188,140,255,.14);color:var(--purple)}
 .review-status-badge.dismissed,.review-status-badge.skipped{background:rgba(139,148,158,.12);color:var(--text-muted)}
+.review-status-badge.reviewed{background:rgba(88,166,255,.14);color:var(--accent)}
 .review-issues,.review-highlights{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
 .review-issues li,.review-highlights li{font-size:13px;line-height:1.5}
 .review-highlights{padding:12px 18px;border-radius:12px;background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.15)}
 .review-highlights li{color:#b7f0bf}
+.review-what-happened{font-size:13px;line-height:1.6;color:var(--text-muted);margin:8px 0 12px;padding:10px 14px;background:rgba(139,148,158,.06);border-radius:8px}
+.review-next-steps{margin:0 0 8px;padding:12px 14px;border-left:3px solid var(--green);border-radius:8px;background:rgba(63,185,80,.08);color:var(--text);font-size:13px;line-height:1.6}
 .review-recommendation{margin:0;padding:12px 14px;border-left:3px solid var(--accent);border-radius:8px;background:rgba(88,166,255,.08);color:var(--text);font-size:13px;line-height:1.6}
 .review-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .review-action-btn{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;cursor:pointer;transition:all .15s}
@@ -2109,7 +2128,7 @@ function reviewStatusMeta(item){
   var issues=Array.isArray(review.issues)?review.issues:[];
   if(status==='dismissed')return {key:'dismissed',label:'Dismissed',icon:'⦸',dot:'gray',card:'dismissed'};
   if(status==='error')return {key:'error',label:'Error',icon:'❌',dot:'red',card:'error-card'};
-  if(status==='skipped')return {key:'skipped',label:'Skipped',icon:'➖',dot:'gray'};
+  if(status==='skipped')return {key:'skipped',label:'No Code Changes',icon:'📝',dot:'blue'};
   if(status==='pending' || status==='reviewing')return {key:'pending',label:'Pending',icon:'⏳',dot:'purple pulse',card:'pending-card'};
   if(status==='flagged'){
     if((review.confidence||'').toLowerCase()==='low')return {key:'attention',label:'Needs Attention',icon:'🔴',dot:'red'};
@@ -2118,6 +2137,8 @@ function reviewStatusMeta(item){
   if(review.readyForPR)return {key:'ready',label:'Ready for PR',icon:'✅',dot:'green'};
   if(issues.length)return {key:'issues',label:'Has Issues ('+issues.length+')',icon:'⚠️',dot:'yellow'};
   if((review.confidence||'').toLowerCase()==='low')return {key:'attention',label:'Needs Attention',icon:'🔴',dot:'red'};
+  var noChanges=!review.filesChanged||review.filesChanged.length===0;
+  if(noChanges)return {key:'reviewed',label:'Reviewed',icon:'📝',dot:'blue'};
   return {key:'ready',label:'Ready for PR',icon:'✅',dot:'green'};
 }
 
@@ -2128,7 +2149,7 @@ function reviewSummaryText(item){
   if(status==='pending')return 'Queued for review.';
   if(status==='reviewing')return 'Review is running.';
   if(status==='error')return item.reviewError||'Review failed.';
-  if(status==='skipped')return 'Review skipped because no diff was captured.';
+  if(status==='skipped')return 'Session reviewed (no code changes detected).';
   if(status==='dismissed')return 'Review dismissed.';
   return 'No summary available.';
 }
@@ -2379,6 +2400,7 @@ function buildReviewCard(item){
         '</div>'+
       '</div>'+
       '<div class="review-summary">'+esc(summary)+'</div>'+
+      (review.whatHappened?'<div class="review-what-happened">'+esc(review.whatHappened)+'</div>':'')+
       '<div class="review-stats">'+
         '<span>📁 '+filesChanged+' files changed</span>'+
         '<span>'+esc(lines)+'</span>'+
@@ -2389,6 +2411,7 @@ function buildReviewCard(item){
         '<span class="review-status-badge '+meta.key+'">'+meta.icon+' '+esc(meta.label)+'</span>'+
       '</div>'+
       (issues.length?buildIssueList(issues,sessionId):'')+
+      (review.nextSteps?'<blockquote class="review-next-steps">⏭ <strong>Next:</strong> '+esc(review.nextSteps)+'</blockquote>':'')+
       (review.recommendation?'<blockquote class="review-recommendation">'+esc(review.recommendation)+'</blockquote>':'')+
       highlightHtml+
       '<div class="review-actions">'+
