@@ -1610,9 +1610,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-meta{display:flex;gap:20px;font-size:13px;color:var(--text-muted);flex-wrap:wrap}
 .exp-header-actions{display:flex;gap:8px;align-items:center}
 .exp-header-actions.hidden,.exp-input.hidden{display:none}
+.exp-tabs{display:none;padding:0 24px 16px;border-bottom:1px solid var(--border);background:var(--surface)}
+.exp-tabs.visible{display:block}
 .exp-close{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .exp-close:hover{border-color:var(--red);color:var(--red)}
 .exp-terminal{flex:1;overflow-y:auto;padding:16px 24px;font-family:'JetBrains Mono','SF Mono',monospace;font-size:13px;line-height:1.8;background:rgba(0,0,0,.15);white-space:pre-wrap;word-break:break-all}
+.exp-terminal.activity-list{padding:0;background:var(--bg);font-family:inherit;white-space:normal;word-break:normal}
+.exp-terminal.activity-list .act-item{padding:14px 18px}
 .exp-input{display:flex;align-items:center;gap:10px;padding:16px 24px;border-top:1px solid var(--border);background:var(--surface)}
 .mode-toggle{display:flex;border-radius:8px;overflow:hidden;border:1px solid var(--border);flex-shrink:0}
 .mode-btn{padding:8px 14px;font-size:12px;background:var(--bg);color:var(--text-muted);border:none;cursor:pointer;transition:all .15s}
@@ -1648,6 +1652,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .settings-row:last-child{border-bottom:none}
 .settings-label{font-size:14px;color:var(--text)}
 .settings-sublabel{font-size:11px;color:var(--text-muted);margin-top:2px}
+.settings-section{padding:14px 0 8px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border)}
 .settings-select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;min-width:160px}
 .settings-select:focus{border-color:var(--accent)}
 .ollama-status{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);margin-top:4px}
@@ -1655,6 +1660,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .ollama-dot.green{background:var(--green)}
 .ollama-dot.red{background:var(--red)}
 .ollama-dot.gray{background:var(--text-muted);opacity:.5}
+.backend-status-list{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:11px;color:var(--text-muted)}
+.backend-status-item{display:flex;align-items:center;gap:5px}
+.backend-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--text-muted);opacity:.5}
+.backend-status-dot.green{background:var(--green);opacity:1}
+.backend-status-dot.red{background:var(--red);opacity:1}
 .llm-unavail{font-size:11px;color:var(--red);opacity:.85;margin-left:4px}
 
 /* Global Activity Feed panel */
@@ -1775,6 +1785,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
           <button class="btn" style="font-size:12px" onclick="closeExpanded()">&#10005; Close</button>
         </div>
       </div>
+      <div class="exp-tabs" id="expReviewTabs">
+        <div class="mode-toggle">
+          <button class="mode-btn" id="expTab-diff" onclick="switchReviewOverlayTab('diff')">Diff</button>
+          <button class="mode-btn" id="expTab-terminal" onclick="switchReviewOverlayTab('terminal')">Terminal</button>
+          <button class="mode-btn" id="expTab-approval" onclick="switchReviewOverlayTab('approval')">Approval Log</button>
+        </div>
+      </div>
       <div class="exp-terminal" id="expTerminal">(no data)</div>
       <div class="exp-input">
         <div class="mode-toggle">
@@ -1834,6 +1851,56 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         <div class="toggle-track"></div>
       </div>
     </div>
+    <div class="settings-section">Session Reviews</div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Review Enabled</div>
+        <div class="settings-sublabel">Enable reviews for completed sessions</div>
+      </div>
+      <div class="auto-toggle on" id="settingsReviewEnabled" onclick="toggleReviewEnabled()">
+        <span class="auto-toggle-label">On</span>
+        <div class="toggle-track"></div>
+      </div>
+    </div>
+    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px">
+        <div>
+          <div class="settings-label">Review Backend</div>
+          <div class="settings-sublabel">Choose which backend runs reviews</div>
+          <div class="backend-status-list" id="reviewBackendStatus">
+            <span class="backend-status-item"><span class="backend-status-dot" id="backendDot-claude"></span>Claude</span>
+            <span class="backend-status-item"><span class="backend-status-dot" id="backendDot-lmstudio"></span>LM Studio</span>
+            <span class="backend-status-item"><span class="backend-status-dot" id="backendDot-ollama"></span>Ollama</span>
+          </div>
+        </div>
+        <select class="settings-select" id="settingsReviewBackend" onchange="changeReviewBackend(this.value)">
+          <option value="claude">Claude (Sonnet 4)</option>
+          <option value="lmstudio">LM Studio (27B)</option>
+          <option value="ollama">Ollama (local)</option>
+        </select>
+      </div>
+    </div>
+    <div class="settings-row" id="settingsReviewModelRow" style="flex-direction:column;align-items:flex-start;gap:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px">
+        <div>
+          <div class="settings-label">Review Model</div>
+          <div class="settings-sublabel">Only shown when Review Backend is Ollama</div>
+        </div>
+        <select class="settings-select" id="settingsReviewModel" onchange="saveReviewSetting('reviewModel',this.value)">
+          <option value="">Loading...</option>
+        </select>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Auto-review on complete</div>
+        <div class="settings-sublabel">Same toggle as Review Enabled</div>
+      </div>
+      <div class="auto-toggle on" id="settingsReviewAuto" onclick="toggleReviewEnabled()">
+        <span class="auto-toggle-label">On</span>
+        <div class="toggle-track"></div>
+      </div>
+    </div>
     <div class="settings-row">
       <div>
         <div class="settings-label">Notifications</div>
@@ -1859,7 +1926,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 
 <script>
 (function(){
-var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false,connected:undefined,ollamaAvailable:null};
+var state = {
+  enabled:false,
+  workspaces:[],
+  model:'',
+  pollInterval:5,
+  socketFound:false,
+  connected:undefined,
+  ollamaAvailable:null,
+  reviewEnabled:true,
+  reviewModel:'',
+  reviewBackend:'claude',
+  backendAvailability:{claude:null,lmstudio:null,ollama:null}
+};
 var logData = [];
 var expandedWsIndex = null;
 var expandedReview = null;
@@ -1872,6 +1951,8 @@ var reviewsData = [];
 var reviewsLoaded = false;
 var reviewsRefreshTimer = null;
 var reviewFilters = {status:'all',time:'today',sort:'newest'};
+var notifiedReviewSessions = new Set();
+var lastGlobalReviewsRefresh = 0;
 
 // Request notification permission on page load
 if ('Notification' in window && Notification.permission === 'default') {
@@ -1959,12 +2040,23 @@ function costColor(cost) {
 
 function diffColorize(text){
   if(!text)return '<span style="color:var(--text-muted);font-style:italic">(no diff available)</span>';
-  var h=esc(text);
-  h=h.replace(/^(@@.*)$/gm,'<span style="color:var(--purple);font-weight:600">$1</span>');
-  h=h.replace(/^(diff --git.*|index .*|--- .*|\+\+\+ .*)$/gm,'<span style="color:var(--accent)">$1</span>');
-  h=h.replace(/^(\+[^\n]*)$/gm,'<span style="color:var(--green)">$1</span>');
-  h=h.replace(/^(-[^\n]*)$/gm,'<span style="color:var(--red)">$1</span>');
-  return h;
+  return text.split('\n').map(function(line){
+    if(line==='')return '';
+    var rendered=colorize(line);
+    if(/^diff --git /.test(line) || /^--- /.test(line) || /^\+\+\+ /.test(line)){
+      return '<span style="color:var(--accent);font-weight:700">'+rendered+'</span>';
+    }
+    if(/^@@/.test(line)){
+      return '<span style="color:var(--purple);font-weight:700">'+rendered+'</span>';
+    }
+    if(/^\+/.test(line) && !/^\+\+\+ /.test(line)){
+      return '<span style="color:var(--green)">'+rendered+'</span>';
+    }
+    if(/^-/.test(line) && !/^--- /.test(line)){
+      return '<span style="color:var(--red)">'+rendered+'</span>';
+    }
+    return rendered;
+  }).join('\n');
 }
 
 function plural(n,word){return n+' '+word+(n===1?'':'s')}
@@ -2039,6 +2131,46 @@ function reviewSummaryText(item){
   if(status==='skipped')return 'Review skipped because no diff was captured.';
   if(status==='dismissed')return 'Review dismissed.';
   return 'No summary available.';
+}
+
+function reviewIssueCount(item){
+  var review=item.review||{};
+  return Array.isArray(review.issues)?review.issues.length:0;
+}
+
+function isCompletedReviewStatus(status){
+  return ['reviewed','flagged','error'].indexOf(status)!==-1;
+}
+
+function checkReviewNotifications(items){
+  if(!items || !items.length)return;
+  items.forEach(function(item){
+    var sessionId=String(item.sessionId||'');
+    var status=item.reviewStatus||'pending';
+    if(!sessionId)return;
+    if(!isCompletedReviewStatus(status)){
+      notifiedReviewSessions.delete(sessionId);
+      return;
+    }
+    if(!reviewsLoaded){
+      notifiedReviewSessions.add(sessionId);
+      return;
+    }
+    if(notifiedReviewSessions.has(sessionId))return;
+    var workspaceName=item.workspaceName||'Unknown workspace';
+    var summary=reviewSummaryText(item);
+    var issueCount=reviewIssueCount(item);
+    if(status==='error'){
+      notify('Review Complete','❌ Review failed: '+workspaceName,'review-'+sessionId);
+    } else if(status==='reviewed' && issueCount===0){
+      notify('Review Complete','✅ Review: '+workspaceName+' — '+summary+'. Ready for PR.','review-'+sessionId);
+    } else if(issueCount>0){
+      notify('Review Complete','⚠️ Review: '+workspaceName+' — '+summary+'. '+issueCount+' issues found.','review-'+sessionId);
+    } else {
+      notify('Review Complete','⚠️ Review: '+workspaceName+' — '+summary+'. Needs attention.','review-'+sessionId);
+    }
+    notifiedReviewSessions.add(sessionId);
+  });
 }
 
 // ─── Notification helpers ───
@@ -2284,7 +2416,9 @@ function buildReviews(){
 function refreshReviews(){
   return api('GET','/api/reviews').then(function(result){
     if(!result)return;
-    reviewsData=result||[];
+    var nextReviews=result||[];
+    checkReviewNotifications(nextReviews);
+    reviewsData=nextReviews;
     reviewsLoaded=true;
     updateReviewBadge();
     buildReviews();
@@ -2522,6 +2656,8 @@ function updateExpanded(){
     return;
   }
   if(expandedWsIndex===null)return;
+  document.getElementById('expReviewTabs').classList.remove('visible');
+  document.getElementById('expTerminal').classList.remove('activity-list');
   var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
   if(!ws)return;
   document.querySelector('.exp-header-actions').classList.remove('hidden');
@@ -2590,10 +2726,37 @@ function buildReviewActivityHtml(item){
   return html;
 }
 
+function buildApprovalLogHtml(item){
+  var entries=Array.isArray(item.approvalLog)?item.approvalLog:[];
+  if(!entries.length){
+    return '<div style="padding:40px 18px;text-align:center;color:var(--text-muted);font-size:13px">No approval log entries captured for this review.</div>';
+  }
+  return entries.map(function(entry){
+    var action=String(entry.action||'');
+    var isFlagged=/needs human|flagged/i.test(action);
+    var typeClass=isFlagged?'flagged':'approved';
+    var typeText=isFlagged?'FLAGGED':'AUTO';
+    var detail=[
+      esc(entry.promptType||'Unknown prompt'),
+      esc(action||'No action'),
+      isFlagged?'Flagged for review':'Auto-approved'
+    ].join(' • ');
+    return '<div class="act-item"><div class="act-time">'+esc(formatReviewTimestamp(entry.timestamp)||entry.timestamp||'—')+'</div><div class="act-text"><span class="act-type '+typeClass+'">'+typeText+'</span> '+detail+'</div></div>';
+  }).join('');
+}
+
+function updateReviewOverlayTabs(activeTab){
+  ['diff','terminal','approval'].forEach(function(tab){
+    var btn=document.getElementById('expTab-'+tab);
+    if(btn)btn.classList.toggle('active',activeTab===tab);
+  });
+}
+
 function updateExpandedReview(){
   if(!expandedReview)return;
   document.querySelector('.exp-header-actions').classList.add('hidden');
   document.querySelector('.exp-input').classList.add('hidden');
+  document.getElementById('expReviewTabs').classList.add('visible');
   document.getElementById('expTitle').textContent=expandedReview.workspaceName||'Review';
   var origNameEl=document.getElementById('expOrigName');
   if(origNameEl)origNameEl.remove();
@@ -2603,12 +2766,24 @@ function updateExpandedReview(){
   meta+='<span>📁 '+reviewFilesChanged(expandedReview)+' files changed</span>';
   meta+='<span>+'+esc(String(review.linesAdded||0))+' / -'+esc(String(review.linesRemoved||0))+'</span>';
   document.getElementById('expMeta').innerHTML=meta;
-  document.getElementById('expTerminal').innerHTML=expandedReview._overlayTab==='terminal'
+  var tab=expandedReview._overlayTab||'diff';
+  var terminalEl=document.getElementById('expTerminal');
+  terminalEl.classList.toggle('activity-list',tab==='approval');
+  terminalEl.innerHTML=tab==='terminal'
     ? colorize(expandedReview.terminalSnapshot||'')
-    : diffColorize(expandedReview.gitDiff||'');
+    : tab==='approval'
+      ? buildApprovalLogHtml(expandedReview)
+      : diffColorize(expandedReview.gitDiff||'');
+  updateReviewOverlayTabs(tab);
   document.getElementById('expActCount').textContent='review';
   document.getElementById('expActList').innerHTML=buildReviewActivityHtml(expandedReview);
 }
+
+window.switchReviewOverlayTab=function(tab){
+  if(expandedMode!=='review' || !expandedReview)return;
+  expandedReview._overlayTab=tab||'diff';
+  updateExpandedReview();
+};
 
 window.openReviewOverlay=function(sessionId,tab){
   api('GET','/api/reviews/'+encodeURIComponent(sessionId)).then(function(review){
@@ -2630,45 +2805,173 @@ window.toggleNotifications=function(el){
   notificationsEnabled = el.classList.contains('on');
   el.querySelector('.auto-toggle-label').textContent = notificationsEnabled ? 'On' : 'Off';
 };
+
+function setToggleState(el,on){
+  if(!el)return;
+  el.classList.toggle('on',!!on);
+  var label=el.querySelector('.auto-toggle-label');
+  if(label)label.textContent=on?'On':'Off';
+}
+
+function updateReviewEnabledUI(){
+  setToggleState(document.getElementById('settingsReviewEnabled'),state.reviewEnabled);
+  setToggleState(document.getElementById('settingsReviewAuto'),state.reviewEnabled);
+}
+
+function backendMeta(){
+  return {
+    claude:{label:'Claude (Sonnet 4)'},
+    lmstudio:{label:'LM Studio (27B)'},
+    ollama:{label:'Ollama (local)'}
+  };
+}
+
+function backendOptionLabel(key,available){
+  var meta=backendMeta()[key];
+  var dot=available===true?'🟢':available===false?'🔴':'⚪';
+  return dot+' '+meta.label;
+}
+
+function updateBackendAvailabilityUI(){
+  ['claude','lmstudio','ollama'].forEach(function(key){
+    var dot=document.getElementById('backendDot-'+key);
+    if(!dot)return;
+    var avail=state.backendAvailability[key];
+    dot.className='backend-status-dot'+(avail===true?' green':avail===false?' red':'');
+  });
+  var select=document.getElementById('settingsReviewBackend');
+  if(!select)return;
+  Array.prototype.forEach.call(select.options,function(opt){
+    opt.textContent=backendOptionLabel(opt.value,state.backendAvailability[opt.value]);
+  });
+  select.value=state.reviewBackend||'claude';
+}
+
+function updateReviewModelSelect(models){
+  var sel=document.getElementById('settingsReviewModel');
+  if(!sel)return;
+  var list=Array.isArray(models)?models:[];
+  sel.innerHTML='';
+  if(!list.length){
+    var empty=document.createElement('option');
+    empty.value='';
+    empty.textContent=state.backendAvailability.ollama===false?'Ollama unavailable':'No models found';
+    sel.appendChild(empty);
+    return;
+  }
+  list.forEach(function(model){
+    var opt=document.createElement('option');
+    opt.value=model;
+    opt.textContent=model;
+    if(model===state.reviewModel)opt.selected=true;
+    sel.appendChild(opt);
+  });
+  if(state.reviewModel && list.indexOf(state.reviewModel)===-1){
+    var custom=document.createElement('option');
+    custom.value=state.reviewModel;
+    custom.textContent=state.reviewModel+' (configured)';
+    custom.selected=true;
+    sel.appendChild(custom);
+  } else if(!state.reviewModel && list.length){
+    sel.value=list[0];
+  }
+}
+
+function updateReviewSettingsVisibility(){
+  var row=document.getElementById('settingsReviewModelRow');
+  if(row)row.style.display=state.reviewBackend==='ollama'?'flex':'none';
+}
+
+function saveConfig(body){
+  return api('POST','/api/config',body).then(function(result){
+    if(!result)return result;
+    state.pollInterval=result.pollInterval!==undefined?result.pollInterval:state.pollInterval;
+    state.model=result.model||state.model;
+    state.reviewEnabled=result.reviewEnabled!==undefined?!!result.reviewEnabled:state.reviewEnabled;
+    state.reviewModel=result.reviewModel||state.reviewModel;
+    state.reviewBackend=result.reviewBackend||state.reviewBackend;
+    updateReviewEnabledUI();
+    updateBackendAvailabilityUI();
+    updateReviewSettingsVisibility();
+    return result;
+  });
+}
+
+function loadSettingsData(){
+  return Promise.all([api('GET','/api/status'),api('GET','/api/models')]).then(function(results){
+    var status=results[0]||{};
+    var models=results[1]||{};
+    var llmModels=models.models||[];
+    state.pollInterval=status.pollInterval!==undefined?status.pollInterval:state.pollInterval;
+    state.model=status.model||state.model;
+    state.reviewEnabled=status.reviewEnabled!==undefined?!!status.reviewEnabled:state.reviewEnabled;
+    state.reviewModel=status.reviewModel||state.reviewModel;
+    state.reviewBackend=status.reviewBackend||state.reviewBackend;
+    state.ollamaAvailable=models.available!==undefined?models.available:state.ollamaAvailable;
+    state.backendAvailability={
+      claude:models.claudeAvailable!==undefined?models.claudeAvailable:state.backendAvailability.claude,
+      lmstudio:models.lmstudioAvailable!==undefined?models.lmstudioAvailable:state.backendAvailability.lmstudio,
+      ollama:models.available!==undefined?models.available:state.backendAvailability.ollama
+    };
+    document.getElementById('settingsPoll').value=String(state.pollInterval);
+    var llmSelect=document.getElementById('settingsModel');
+    llmSelect.innerHTML='';
+    if(!llmModels.length){
+      llmSelect.innerHTML='<option>'+(models.available===false?'Ollama unavailable':'No models found')+'</option>';
+    } else {
+      llmModels.forEach(function(model){
+        var opt=document.createElement('option');
+        opt.value=model;
+        opt.textContent=model;
+        if(model===state.model)opt.selected=true;
+        llmSelect.appendChild(opt);
+      });
+    }
+    updateOllamaStatus();
+    updateReviewEnabledUI();
+    updateBackendAvailabilityUI();
+    updateReviewModelSelect(llmModels);
+    updateReviewSettingsVisibility();
+  });
+}
+
+window.toggleReviewEnabled=function(){
+  state.reviewEnabled=!state.reviewEnabled;
+  updateReviewEnabledUI();
+  saveConfig({reviewEnabled:state.reviewEnabled});
+};
+
+window.changeReviewBackend=function(value){
+  state.reviewBackend=value||'claude';
+  updateBackendAvailabilityUI();
+  updateReviewSettingsVisibility();
+  saveConfig({reviewBackend:state.reviewBackend});
+};
+
+window.saveReviewSetting=function(key,val){
+  var body={};
+  body[key]=val;
+  if(key==='reviewModel')state.reviewModel=val;
+  return saveConfig(body);
+};
+
 window.openSettings=function(){
   document.getElementById('settingsOverlay').classList.add('visible');
-  document.getElementById('settingsPoll').value=String(state.pollInterval);
   document.getElementById('settingsCwd').value=defaultCwd;
   var notifEl=document.getElementById('settingsNotif');
   if(notificationsEnabled){notifEl.classList.add('on');notifEl.querySelector('.auto-toggle-label').textContent='On';}
   else{notifEl.classList.remove('on');notifEl.querySelector('.auto-toggle-label').textContent='Off';}
   updateOllamaStatus();
-  // Load models
-  api('GET','/api/models').then(function(r){
-    if(!r)return;
-    // Update availability state from response
-    if(r.available!==undefined){
-      state.ollamaAvailable=r.available;
-      updateOllamaStatus();
-    }
-    var sel=document.getElementById('settingsModel');
-    sel.innerHTML='';
-    var models=r.models||[];
-    if(models.length===0){
-      sel.innerHTML='<option>'+(r.available===false?'Ollama unavailable':'No models found')+'</option>';
-      return;
-    }
-    models.forEach(function(m){
-      var opt=document.createElement('option');
-      opt.value=m;opt.textContent=m;
-      if(m===state.model)opt.selected=true;
-      sel.appendChild(opt);
-    });
-  });
+  loadSettingsData();
 };
 window.closeSettings=function(){
   document.getElementById('settingsOverlay').classList.remove('visible');
 };
 window.saveSetting=function(key,val){
   var body={};body[key]=val;
-  api('POST','/api/config',body);
   if(key==='model')state.model=val;
   if(key==='pollInterval')state.pollInterval=val;
+  saveConfig(body);
 };
 
 // ─── New session ───
@@ -2788,6 +3091,10 @@ document.addEventListener('keydown',function(e){
 
 // ─── Refresh loop ───
 function refresh(){
+  if(Date.now()-lastGlobalReviewsRefresh>5000){
+    lastGlobalReviewsRefresh=Date.now();
+    refreshReviews();
+  }
   Promise.all([api('GET','/api/status'),api('GET','/api/log')]).then(function(results){
     var status=results[0];
     var log=results[1];
@@ -2814,6 +3121,9 @@ function refresh(){
     state.enabled=status.enabled;
     state.pollInterval=status.pollInterval;
     state.model=status.model||'';
+    state.reviewEnabled=status.reviewEnabled!==undefined?!!status.reviewEnabled:state.reviewEnabled;
+    state.reviewModel=status.reviewModel||state.reviewModel;
+    state.reviewBackend=status.reviewBackend||state.reviewBackend;
     state.workspaces=status.workspaces||[];
     state.socketFound=status.socketFound;
     state.ollamaAvailable=status.ollamaAvailable!==undefined?status.ollamaAvailable:state.ollamaAvailable;
