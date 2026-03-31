@@ -228,7 +228,7 @@ def llm_classify(screen_text):
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read())
         raw = result.get("response", "").strip()
         # Extract JSON from response (model might add whitespace)
@@ -922,9 +922,6 @@ class HarnessEngine(threading.Thread):
             return
 
         pattern_name, action = result
-
-        with self._lock:
-            self.fingerprints[idx] = fp
 
         if action == "skip":
             print(f"[harness] ⚠ ws:{idx} ({ws_name}) needs human input: {pattern_name}")
