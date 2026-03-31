@@ -429,6 +429,10 @@ class HarnessEngine(threading.Thread):
         self.screen_cache = {}   # idx -> last screen text (tail)
         self.ws_has_claude = {}  # idx -> bool (tracks active Claude sessions per workspace)
         self.idle_last_read = {} # idx -> float (timestamp of last screen read for idle workspaces)
+        self.socket_connected = False   # current socket connection state
+        self.last_successful_poll = 0   # timestamp of last successful socket read
+        self.connection_lost_at = 0     # when we first noticed the socket was gone
+        self.consecutive_failures = 0   # count of consecutive failed polls
         self._lock = threading.Lock()
         self.model = OLLAMA_MODEL
         self.ws_config = self._load_config()
@@ -531,6 +535,10 @@ class HarnessEngine(threading.Thread):
                 "pollInterval": self.poll_interval,
                 "socketFound": _find_socket_path() is not None,
                 "model": self.model,
+                "connected": self.socket_connected,
+                "lastSuccessfulPoll": self.last_successful_poll,
+                "connectionLostAt": self.connection_lost_at,
+                "staleData": not self.socket_connected,
             }
 
     def get_log(self, limit=200):
@@ -556,7 +564,7 @@ class HarnessEngine(threading.Thread):
     def refresh_workspaces(self):
         raw = cmux_command("list_workspaces")
         if raw is None:
-            return
+            return False
         # cmux returns plain text lines like:
         #   * 0: UUID Name
         #     1: UUID Name2
@@ -585,8 +593,11 @@ class HarnessEngine(threading.Thread):
                 "name": name,
                 "selected": selected,
             })
+        if not workspaces:
+            return False
         with self._lock:
             self.workspaces = workspaces
+        return True
 
     def get_workspaces_needing_attention(self):
         """Check list_notifications (no workspace switching!) to find
@@ -711,9 +722,36 @@ class HarnessEngine(threading.Thread):
                 with self._lock:
                     enabled = self.enabled
                     interval = self.poll_interval
+                    had_workspaces = len(self.workspaces) > 0
+                    was_connected = self.socket_connected
                 # Always refresh workspace list so the UI shows them
                 # even before the global toggle is enabled.
-                self.refresh_workspaces()
+                got_data = self.refresh_workspaces()
+
+                now_ts = time.time()
+                if got_data:
+                    # Successful poll — reset failure counters
+                    with self._lock:
+                        self.last_successful_poll = now_ts
+                        if not self.socket_connected:
+                            # Reconnection event
+                            print(f"[harness] ✓ cmux socket reconnected after {now_ts - self.connection_lost_at:.0f}s")
+                            self.socket_connected = True
+                            self.consecutive_failures = 0
+                            # Clear stale state to force fresh detection
+                            self.ws_has_claude = {}
+                            self.screen_cache = {}
+                        else:
+                            self.consecutive_failures = 0
+                else:
+                    # Failed poll
+                    with self._lock:
+                        if had_workspaces:
+                            self.consecutive_failures += 1
+                            if self.consecutive_failures >= 3 and self.socket_connected:
+                                self.socket_connected = False
+                                self.connection_lost_at = now_ts
+                                print(f"[harness] ✗ cmux socket lost after {self.consecutive_failures} consecutive failures")
 
                 # Read screens for ALL workspaces so the UI has data.
                 # Active workspaces (hasClaude=True) are read every cycle.
@@ -798,7 +836,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .logo span{color:var(--accent)}
 .conn-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle}
 .conn-dot.ok{background:var(--green);box-shadow:0 0 6px rgba(63,185,80,.5)}
+.conn-dot.warn{background:var(--yellow);box-shadow:0 0 6px rgba(210,153,34,.5);animation:pulse-dot 2s infinite}
 .conn-dot.err{background:var(--red);box-shadow:0 0 6px rgba(248,81,73,.5)}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.4}}
+.conn-status{font-size:12px;color:var(--yellow);margin-left:4px}
+.stale-banner{display:none;align-items:center;justify-content:center;padding:10px 28px;background:rgba(210,153,34,.1);border-bottom:1px solid rgba(210,153,34,.3);color:var(--yellow);font-size:13px;gap:8px}
+.card.stale{opacity:.45;pointer-events:auto}
 .topbar-stats{display:flex;gap:20px}
 .stat{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted)}
 .stat-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
@@ -941,7 +984,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 
 <div class="topbar">
   <div class="topbar-left">
-    <div class="logo"><span>cmux</span> harness<span class="conn-dot" id="connDot"></span></div>
+    <div class="logo"><span>cmux</span> harness<span class="conn-dot" id="connDot"></span><span class="conn-status" id="connStatus"></span></div>
     <div class="topbar-stats" id="topStats">
       <div class="stat"><span class="stat-dot" style="background:var(--green)"></span> <span id="statActive">0</span> active</div>
       <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> <span id="statWaiting">0</span> waiting</div>
@@ -958,6 +1001,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   </div>
 </div>
 
+<div class="stale-banner" id="staleBanner">&#9888; Showing stale data — cmux connection lost. Attempting to reconnect...</div>
 <div class="grid" id="grid">
   <div class="grid-empty">Connecting to cmux...</div>
 </div>
@@ -1057,7 +1101,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 
 <script>
 (function(){
-var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false};
+var state = {enabled:false,workspaces:[],model:'',pollInterval:5,socketFound:false,connected:undefined};
 var logData = [];
 var expandedWsIndex = null;
 var prevWsStates = {};
@@ -1246,7 +1290,8 @@ function buildGrid(){
     var s=classifyWs(w);
     var isWaiting=s==='waiting';
     var isIdle=s==='idle';
-    var cardClass='card'+(isWaiting?' needs-attention':'')+(isIdle?' card-collapsed':'');
+    var isStale=state.connected===false;
+    var cardClass='card'+(isWaiting?' needs-attention':'')+(isIdle?' card-collapsed':'')+(isStale?' stale':'');
     var statusClass='card-status '+s;
     var badgeClass=isWaiting?'badge badge-waiting':isIdle?'badge badge-idle':'badge badge-active';
     var badgeText=isWaiting?'Needs You':isIdle?'Idle':'Active';
@@ -1542,7 +1587,25 @@ function refresh(){
     var status=results[0];
     var log=results[1];
     if(!status){document.getElementById('connDot').className='conn-dot err';return}
-    document.getElementById('connDot').className=status.socketFound?'conn-dot ok':'conn-dot err';
+    // Connection state handling
+    var wasConnected = state.connected;
+    state.connected = status.connected;
+    if(status.connected){
+      document.getElementById('connDot').className='conn-dot ok';
+      document.getElementById('connStatus').textContent='';
+      document.getElementById('staleBanner').style.display='none';
+    } else if(status.socketFound){
+      document.getElementById('connDot').className='conn-dot warn';
+      var lostAgo=status.connectionLostAt?Math.round((Date.now()/1000-status.connectionLostAt)/60):0;
+      document.getElementById('connStatus').textContent='Reconnecting'+(lostAgo>0?' \u00B7 lost '+lostAgo+'m ago':'...');
+      document.getElementById('staleBanner').style.display='flex';
+    } else {
+      document.getElementById('connDot').className='conn-dot err';
+      document.getElementById('connStatus').textContent='No socket';
+      document.getElementById('staleBanner').style.display='flex';
+    }
+    // Clear prevWsStates on reconnection to prevent false triggers
+    if(status.connected && !wasConnected && wasConnected!==undefined) prevWsStates={};
     state.enabled=status.enabled;
     state.pollInterval=status.pollInterval;
     state.model=status.model||'';
