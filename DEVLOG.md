@@ -2,6 +2,31 @@
 
 ## How this project was built
 
+### Phase 6b: Review System Fix — Always Review (2026-03-31)
+
+**Problem:** Sessions with no uncommitted git diff were being skipped entirely. The reviewer's only job was "review the diff," so sessions involving exploration, debugging, planning, Q&A, or already-committed changes all got "Skipped — no diff captured." That defeats the purpose. The reviewer should always tell you what happened.
+
+**Root cause:** `_run_review()` had a gate at the top: if `gitDiff` is empty, set `reviewStatus: "skipped"` and return. This treated the diff as a prerequisite instead of optional context.
+
+**Fix:**
+- Removed the skip-on-empty-diff gate entirely. Every session gets reviewed.
+- Rewrote the review prompt to be session-focused. The LLM's job is now: "Summarize what happened and tell the developer what to do next."
+- Terminal snapshot (last 50 lines) is always the primary input. Diff is included when present but is not required.
+- Added two new response fields: `whatHappened` (2-4 sentence description) and `nextSteps` (actionable next step).
+- No-diff sessions get explicit context in the prompt explaining the session may have been exploration, debugging, or planning.
+- Updated the UI: review cards now show `whatHappened` as a description block and `nextSteps` as a green-bordered callout.
+- New "Reviewed" status (blue dot/badge) for sessions with no code changes, distinct from "Ready for PR."
+
+**The reviewer's job (documented):**
+1. What did Claude do this session?
+2. What was the outcome?
+3. Were any files changed? (show diff if yes, fine if no)
+4. What should the developer do next?
+
+Every session gets a review. Always. No exceptions.
+
+---
+
 ### Phase 6: v3 Review System (2026-03-31)
 
 **Session completion snapshots:** When Claude Code exits a workspace (hasClaude true→false), the harness captures a full snapshot: last 50 lines of terminal, git diff (capped at 50KB), git log, session cost, duration, and all approval log entries for that session. Saved as JSON in `~/.cmux-harness/reviews/`.
