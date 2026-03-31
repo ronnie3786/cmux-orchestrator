@@ -2,6 +2,42 @@
 
 ## How this project was built
 
+### Phase 6: v3 Review System (2026-03-31)
+
+**Session completion snapshots:** When Claude Code exits a workspace (hasClaude true→false), the harness captures a full snapshot: last 50 lines of terminal, git diff (capped at 50KB), git log, session cost, duration, and all approval log entries for that session. Saved as JSON in `~/.cmux-harness/reviews/`.
+
+**LLM review runner:** After a snapshot is captured, an LLM reviews the code changes. Three backends:
+- **Claude CLI** (`claude --print`): Uses the Max subscription, Sonnet 4 quality. Default.
+- **LM Studio** (Mac Studio, port 1234): OpenAI-compatible API, 27B model.
+- **Ollama** (local): Same infrastructure as the classifier, configurable model.
+
+The review produces structured JSON: summary, files changed, lines added/removed, confidence level, issues list, ready-for-PR assessment, recommendation, and highlights.
+
+**Review dashboard:** New "Reviews" view alongside the existing Command Center. View switcher in the top bar. Review cards show confidence badges (green/yellow/red), summaries, stats, issues, and recommendations. Filter bar with status, time, and sort dropdowns.
+
+**Expanded overlay tabs:** When viewing a review, the overlay has three tabs: Diff (syntax-highlighted), Terminal (Claude's output), Approval Log (what was auto-approved). Command Center overlay works as before.
+
+**Review settings:** New section in settings modal. Backend picker with availability dots. Review model dropdown (Ollama only). Enable/disable toggle.
+
+**Review notifications:** Browser notifications fire when reviews complete. Different messages for ready-for-PR, has-issues, and error states.
+
+**Key architectural decisions:**
+- Reviews run in daemon threads (don't block the polling loop)
+- Review model is separate from classifier model (can use 9B for fast classification, Claude for thorough reviews)
+- `reviewStatus` state machine: pending → reviewing → reviewed/flagged/error/skipped/dismissed
+- Snapshot captures data BEFORE cleaning up session state (start time, cost, session ID)
+
+**Also shipped (prompt detection overhaul):**
+- Replaced regex-first prompt detection with LLM-primary classification
+- Local model (qwen3.5:9b) decides all approval actions
+- Only two regex pre-checks remain: idle REPL detection and plain shell detection
+- Trailing blank lines from read_screen stripped before processing
+- Menu action override: if LLM says "y" but screen has "Enter to select", forces "enter"
+- Fingerprint no longer locks out needs_human results (retries every cycle)
+- Surgical DOM updates prevent input focus loss and scroll position jumping
+
+---
+
 ### Origin (2026-03-30)
 
 Started from a question: "Can I control cmux workspaces programmatically so an agent can manage my coding sessions?"
