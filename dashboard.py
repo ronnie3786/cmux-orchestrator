@@ -350,9 +350,36 @@ def detect_prompt(screen_text):
     # FIRST: Check for numbered menus (Enter to select / Esc to cancel).
     has_menu_footer = bool(re.search(r"Enter to select|Esc to cancel", tail))
     if has_menu_footer:
+        # Extract only the actual menu region (lines near the footer) to avoid
+        # false matches on numbered content in Claude's output above the prompt.
+        # Walk backwards from the footer to find menu option lines.
+        tail_lines = tail.splitlines()
+        menu_lines = []
+        in_menu = False
+        for line in reversed(tail_lines):
+            stripped = line.strip()
+            if re.search(r"Enter to select|Esc to cancel", stripped):
+                in_menu = True
+                continue
+            if in_menu:
+                # Menu options: numbered items or cursor-prefixed items
+                if _NUMBERED_MENU_RE.match(stripped) or re.match(_CURSOR_CHARS + r"\s*\d+[.)]\s+", stripped):
+                    menu_lines.append(line)
+                elif re.match(r"(Do you want|This command|Allow |proceed\??)", stripped, re.I):
+                    # Prompt question line — include but stop collecting
+                    menu_lines.append(line)
+                    break
+                elif stripped == "":
+                    # Blank line — might be separator, keep scanning
+                    continue
+                else:
+                    # Hit non-menu content, stop
+                    break
+        menu_text = "\n".join(reversed(menu_lines)) if menu_lines else tail
+
         # Check if this is a standard permission menu (Yes/No variants)
         # or a domain-specific choice menu
-        if not _is_permission_menu(tail):
+        if not _is_permission_menu(menu_text):
             return ("needs_human", "skip")
 
         # It's a permission menu. Check if cursor is on an affirmative option.
