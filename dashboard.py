@@ -299,7 +299,7 @@ PROMPT_PATTERNS = [
 
 # Claude Code's Ink UI renders ❯ as the menu cursor, but cmux read_screen
 # often captures it as ) instead. Match both characters as cursor indicators.
-_CURSOR_CHARS = r"[❯)\>]"
+_CURSOR_CHARS = r"[❯›)\>]"
 _NUMBERED_MENU_RE = re.compile(r"^\s*\d+[.)]\s+")
 _AFFIRM_RE = re.compile(r"(Yes|Allow|Confirm|Approve|Accept|Proceed|Continue)", re.I)
 
