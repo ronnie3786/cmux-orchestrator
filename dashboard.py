@@ -1917,6 +1917,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .git-ctx-item .ctx-icon{width:14px;text-align:center;flex-shrink:0;font-size:11px}
 .git-ctx-sep{height:1px;background:var(--border);margin:4px 0}
 
+/* Git diff modal */
+.diff-overlay{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.6);backdrop-filter:blur(3px)}
+.diff-overlay.visible{display:flex;align-items:center;justify-content:center}
+.diff-panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:0;width:800px;max-width:92vw;max-height:80vh;box-shadow:0 16px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden}
+.diff-panel-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0}
+.diff-panel-title{font-size:14px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diff-panel-body{flex:1;overflow:auto;padding:0}
+.diff-table{width:100%;border-collapse:collapse;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.7}
+.diff-table td{padding:0;vertical-align:top;white-space:pre-wrap;word-break:break-all}
+.diff-ln{width:1px;min-width:44px;text-align:right;color:var(--text-muted);opacity:.4;user-select:none;padding:0 8px;font-size:11px}
+.diff-ln-new{border-right:1px solid rgba(48,54,61,.6)}
+.diff-content{padding:0 14px}
+.diff-row-del{background:rgba(248,81,73,.1)}
+.diff-row-del .diff-ln{color:rgba(248,81,73,.6)}
+.diff-row-add{background:rgba(63,185,80,.1)}
+.diff-row-add .diff-ln{color:rgba(63,185,80,.6)}
+.diff-row-hunk{background:rgba(56,139,253,.08)}
+.diff-row-hunk td{color:var(--purple);font-weight:700;padding:4px 14px}
+.diff-row-hdr td{color:var(--accent);font-weight:700;padding:2px 14px}
+.diff-hl-del{background:rgba(248,81,73,.4);border-radius:2px;padding:1px 0}
+.diff-hl-add{background:rgba(63,185,80,.4);border-radius:2px;padding:1px 0}
+.diff-loading{padding:40px;text-align:center;color:var(--text-muted);font-size:13px}
+
 /* Activity panel — bottom half */
 .exp-activity{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
 .exp-activity-header{padding:12px 18px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
@@ -2227,6 +2250,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   </div>
 </div>
 
+<!-- Diff overlay -->
+<div class="diff-overlay" id="diffOverlay" onclick="if(event.target===this)closeDiff()">
+  <div class="diff-panel">
+    <div class="diff-panel-header">
+      <span class="diff-panel-title" id="diffTitle">Diff</span>
+      <button class="exp-close" onclick="closeDiff()" style="width:32px;height:32px;font-size:14px">&#10005;</button>
+    </div>
+    <div class="diff-panel-body" id="diffBody">
+      <div class="diff-loading">Loading diff...</div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
 var state = {
@@ -2362,6 +2398,62 @@ function diffColorize(text){
     }
     return rendered;
   }).join('\n');
+}
+
+function wordDiff(oldStr,newStr){
+  var pLen=0;
+  while(pLen<oldStr.length&&pLen<newStr.length&&oldStr[pLen]===newStr[pLen])pLen++;
+  var sLen=0;
+  while(sLen<(oldStr.length-pLen)&&sLen<(newStr.length-pLen)&&oldStr[oldStr.length-1-sLen]===newStr[newStr.length-1-sLen])sLen++;
+  if(pLen+sLen===0&&oldStr.length>0&&newStr.length>0)return{old:esc(oldStr),new:esc(newStr)};
+  var oMid=oldStr.substring(pLen,oldStr.length-sLen);
+  var nMid=newStr.substring(pLen,newStr.length-sLen);
+  var prefix=esc(oldStr.substring(0,pLen));
+  var suffix=esc(oldStr.substring(oldStr.length-sLen));
+  return{
+    old:prefix+(oMid?'<span class="diff-hl-del">'+esc(oMid)+'</span>':'')+suffix,
+    new:prefix+(nMid?'<span class="diff-hl-add">'+esc(nMid)+'</span>':'')+suffix
+  };
+}
+
+function diffRow(oldN,newN,cls,content){
+  return '<tr class="diff-row-'+cls+'"><td class="diff-ln diff-ln-old">'+oldN+'</td><td class="diff-ln diff-ln-new">'+newN+'</td><td class="diff-content">'+content+'</td></tr>';
+}
+
+function renderDiffView(text){
+  if(!text)return '<div class="diff-loading" style="color:var(--text-muted);font-style:italic">(no diff available)</div>';
+  var lines=text.split('\n');
+  var html='<table class="diff-table">';
+  var oldNum=0,newNum=0,i=0;
+  while(i<lines.length){
+    var line=lines[i];
+    if(/^diff --git /.test(line)||/^index /.test(line)||/^--- /.test(line)||/^\+\+\+ /.test(line)||/^new file/.test(line)||/^deleted file/.test(line)){
+      html+=diffRow('','','hdr',esc(line));
+      i++;continue;
+    }
+    if(/^@@/.test(line)){
+      var m=line.match(/@@ -(\d+)/);if(m)oldNum=parseInt(m[1])-1;
+      m=line.match(/\+(\d+)/);if(m)newNum=parseInt(m[1])-1;
+      html+=diffRow('','','hunk',esc(line));
+      i++;continue;
+    }
+    if(/^[-+]/.test(line)&&!/^--- /.test(line)&&!/^\+\+\+ /.test(line)){
+      var removes=[],adds=[];
+      while(i<lines.length&&/^-/.test(lines[i])&&!/^--- /.test(lines[i])){removes.push(lines[i].substring(1));i++;}
+      while(i<lines.length&&/^\+/.test(lines[i])&&!/^\+\+\+ /.test(lines[i])){adds.push(lines[i].substring(1));i++;}
+      var maxP=Math.min(removes.length,adds.length);
+      var paired=[];
+      for(var j=0;j<maxP;j++)paired.push(wordDiff(removes[j],adds[j]));
+      for(var j=0;j<removes.length;j++){oldNum++;html+=diffRow(oldNum,'','del',j<maxP?paired[j].old:esc(removes[j]));}
+      for(var j=0;j<adds.length;j++){newNum++;html+=diffRow('',newNum,'add',j<maxP?paired[j].new:esc(adds[j]));}
+      continue;
+    }
+    if(/^ /.test(line)){oldNum++;newNum++;html+=diffRow(oldNum,newNum,'ctx',esc(line.substring(1)));i++;continue;}
+    html+=diffRow('','','ctx',esc(line));
+    i++;
+  }
+  html+='</table>';
+  return html;
 }
 
 function plural(n,word){return n+' '+word+(n===1?'':'s')}
@@ -3025,6 +3117,7 @@ window.gitFileClick=function(file,el){
   function doAction(action){
     hideMenu();
     if(!_ctxFile||expandedWsIndex===null)return;
+    if(action==='diff'){openDiff(_ctxFile,_ctxSection);return;}
     var endpoint=action==='stage'?'/api/git-stage':action==='unstage'?'/api/git-unstage':'/api/git-open-file';
     fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:expandedWsIndex,file:_ctxFile})})
     .then(function(r){return r.json()})
@@ -3047,6 +3140,7 @@ window.gitFileClick=function(file,el){
     if(_ctxSection==='staged'){
       items+='<div class="git-ctx-item" data-action="unstage"><span class="ctx-icon">&minus;</span>Unstage File</div>';
     }
+    items+='<div class="git-ctx-item" data-action="diff"><span class="ctx-icon">&#916;</span>View Diff</div>';
     items+='<div class="git-ctx-sep"></div>';
     items+='<div class="git-ctx-item" data-action="open"><span class="ctx-icon">&#8599;</span>Open File</div>';
     menu.innerHTML=items;
@@ -3089,13 +3183,10 @@ window.fetchGitStatus=function(){
       d.staged.forEach(function(f){h+=fileEl(f.status,f.file,'st-staged','staged');});
       h+='</div>';
     }
-    if(d.unstaged.length){
-      h+='<div class="git-section"><div class="git-section-title unstaged">Modified ('+d.unstaged.length+')</div>';
+    var unstTotal=d.unstaged.length+d.untracked.length;
+    if(unstTotal){
+      h+='<div class="git-section"><div class="git-section-title unstaged">Unstaged ('+unstTotal+')</div>';
       d.unstaged.forEach(function(f){h+=fileEl(f.status,f.file,'st-unstaged','unstaged');});
-      h+='</div>';
-    }
-    if(d.untracked.length){
-      h+='<div class="git-section"><div class="git-section-title untracked">Untracked ('+d.untracked.length+')</div>';
       d.untracked.forEach(function(f){h+=fileEl('?',f,'st-untracked','untracked');});
       h+='</div>';
     }
@@ -3441,6 +3532,30 @@ window.openSettings=function(){
 window.closeSettings=function(){
   document.getElementById('settingsOverlay').classList.remove('visible');
 };
+window.closeDiff=function(){
+  document.getElementById('diffOverlay').classList.remove('visible');
+};
+window.openDiff=function(file,section){
+  if(expandedWsIndex===null)return;
+  var overlay=document.getElementById('diffOverlay');
+  var titleEl=document.getElementById('diffTitle');
+  var bodyEl=document.getElementById('diffBody');
+  titleEl.textContent=file;
+  bodyEl.innerHTML='<div class="diff-loading">Loading diff\u2026</div>';
+  overlay.classList.add('visible');
+  fetch('/api/git-diff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:expandedWsIndex,file:file,section:section})})
+  .then(function(r){return r.json()})
+  .then(function(d){
+    if(d.ok){
+      bodyEl.innerHTML=renderDiffView(d.diff);
+    } else {
+      bodyEl.innerHTML='<div class="diff-loading" style="color:var(--red)">'+esc(d.error||'Failed to load diff')+'</div>';
+    }
+  })
+  .catch(function(){
+    bodyEl.innerHTML='<div class="diff-loading" style="color:var(--red)">Network error</div>';
+  });
+};
 window.saveSetting=function(key,val){
   var body={};body[key]=val;
   if(key==='model')state.model=val;
@@ -3575,6 +3690,7 @@ function updateActivityFeed(entries){
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){
     if(_activityOpen){_activityOpen=false;document.getElementById('activityPopover').classList.remove('visible')}
+    else if(document.getElementById('diffOverlay').classList.contains('visible'))closeDiff();
     else if(document.getElementById('settingsOverlay').classList.contains('visible'))closeSettings();
     else closeExpanded();
   }
@@ -4021,6 +4137,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True})
             except OSError as e:
                 self._json_response({"ok": False, "error": str(e)}, 500)
+        elif self.path == "/api/git-diff":
+            idx = data.get("index")
+            file = data.get("file")
+            section = data.get("section", "unstaged")
+            if idx is None or not file:
+                self._json_response({"ok": False, "error": "index and file required"}, 400)
+                return
+            cwd = _engine._get_workspace_cwd(int(idx))
+            if not cwd:
+                self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                return
+            if section == "staged":
+                diff_args = ["diff", "--cached", "--", file]
+            elif section == "untracked":
+                diff_args = ["diff", "--no-index", "/dev/null", file]
+            else:
+                diff_args = ["diff", "--", file]
+            result = _engine._run_git_command(cwd, diff_args, max_bytes=50 * 1024)
+            if result.startswith("[error]"):
+                self._json_response({"ok": False, "error": result}, 500)
+                return
+            self._json_response({"ok": True, "diff": result})
         else:
             self.send_error(404)
 
