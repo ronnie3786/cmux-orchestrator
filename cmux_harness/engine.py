@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import subprocess
@@ -167,7 +168,9 @@ class HarnessEngine(threading.Thread):
             storage.save_config(self.ws_config, self.review_enabled, self.review_model, self.review_backend)
 
         # Rename in cmux so the sidebar name stays in sync
-        cmux_api._v2_request("workspace.rename", {"workspace_id": ws_uuid, "name": name})
+        result = cmux_api._v2_request("workspace.rename", {"workspace_id": ws_uuid, "title": name})
+        if result is None:
+            logging.getLogger(__name__).warning("cmux rename failed for workspace %s", ws_uuid)
         return True
 
     def get_status(self):

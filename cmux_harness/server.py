@@ -6,6 +6,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -220,6 +221,18 @@ def make_handler(engine):
                 sid = surface_id or ws.get("_surface_id")
                 real_idx = ws.get("_real_index", idx)
                 ok = cmux_api.cmux_send_to_workspace(real_idx, 0, text=text, workspace_uuid=ws.get("uuid"), surface_id=sid)
+                if ok:
+                    # Clear "needs human" state so the badge resets
+                    engine._append_log({
+                        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "workspace": idx,
+                        "workspaceName": ws.get("name", ws.get("surfaceLabel", "")),
+                        "promptType": "manual",
+                        "action": "user input",
+                        "surfaceId": sid,
+                    })
+                    with engine._lock:
+                        engine.fingerprints.pop(idx, None)
                 self._json_response({"ok": ok})
             elif self.path.startswith("/api/reviews/") and self.path.endswith("/rerun"):
                 session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):-len("/rerun")]).rstrip("/")
@@ -315,7 +328,7 @@ def make_handler(engine):
                 try:
                     cmux_api._v2_request("workspace.rename", {
                         "workspace_id": ws_uuid,
-                        "name": "New Session",
+                        "title": "New Session",
                     })
                     engine.ws_config.setdefault(ws_uuid, {})["customName"] = "New Session"
                     storage.save_config(engine.ws_config, engine.review_enabled, engine.review_model, engine.review_backend)

@@ -1,9 +1,12 @@
 """Low-level cmux socket and CLI helpers."""
 
 import json
+import logging
 import os
 import socket
 import subprocess
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # cmux socket helpers
@@ -76,8 +79,11 @@ def _v2_request(method, params):
         parsed = json.loads(raw)
         if parsed.get("ok"):
             return parsed.get("result", {})
+        err = parsed.get("error", raw[:200])
+        log.warning("cmux v2 %s failed: %s", method, err)
         return None
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("cmux v2 %s error: %s", method, exc)
         return None
     finally:
         try:
