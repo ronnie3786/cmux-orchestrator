@@ -397,13 +397,25 @@ def make_handler(engine):
                 if not cwd:
                     self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
                     return
-                if section == "staged":
-                    diff_args = ["diff", "--cached", "--", file]
-                elif section == "untracked":
-                    diff_args = ["diff", "--no-index", "/dev/null", file]
+                full_path = os.path.join(cwd, file)
+                if section == "untracked" and os.path.isdir(full_path):
+                    # Directory: collect diffs for all files inside
+                    parts = []
+                    for root, _dirs, files in os.walk(full_path):
+                        for fname in sorted(files):
+                            fpath = os.path.relpath(os.path.join(root, fname), cwd)
+                            part = engine._run_git_command(cwd, ["diff", "--no-index", "/dev/null", fpath], max_bytes=50 * 1024)
+                            if not part.startswith("[error]"):
+                                parts.append(part)
+                    result = "\n".join(parts) if parts else "(empty directory)"
                 else:
-                    diff_args = ["diff", "--", file]
-                result = engine._run_git_command(cwd, diff_args, max_bytes=50 * 1024)
+                    if section == "staged":
+                        diff_args = ["diff", "--cached", "--", file]
+                    elif section == "untracked":
+                        diff_args = ["diff", "--no-index", "/dev/null", file]
+                    else:
+                        diff_args = ["diff", "--", file]
+                    result = engine._run_git_command(cwd, diff_args, max_bytes=50 * 1024)
                 if result.startswith("[error]"):
                     self._json_response({"ok": False, "error": result}, 500)
                     return

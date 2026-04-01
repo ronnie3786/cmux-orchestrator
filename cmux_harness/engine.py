@@ -345,7 +345,14 @@ class HarnessEngine(threading.Thread):
                 continue
             x, y, fpath = line[0], line[1], line[3:]
             if x == "?" and y == "?":
-                untracked.append(fpath)
+                # Expand untracked directories into individual files
+                full = os.path.join(cwd, fpath)
+                if fpath.endswith("/") or os.path.isdir(full):
+                    for root, _dirs, fnames in os.walk(full):
+                        for fn in sorted(fnames):
+                            untracked.append(os.path.relpath(os.path.join(root, fn), cwd))
+                else:
+                    untracked.append(fpath)
             else:
                 if x not in (" ", "?"):
                     staged.append({"status": x, "file": fpath})
