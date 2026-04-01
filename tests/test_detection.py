@@ -25,6 +25,21 @@ class TestDetectClaudeSession(unittest.TestCase):
         screen = "user@host ~ %"
         self.assertFalse(detect_claude_session(screen))
 
+    def test_shell_prompt_after_exit_with_scrollback(self):
+        # After /exit, scrollback may still contain "Sonnet 4.6 (default)" or
+        # other Claude-related text — but the last line is a shell prompt,
+        # so the session is NOT active.
+        screen = (
+            "> /model\n"
+            "  Set model to Sonnet 4.6 (default)\n"
+            "\n"
+            "> /exit\n"
+            "Resume this session with:\n"
+            "claude --resume abc123   Exit the REPL\n"
+            "ronnierocha@ronniesitym4mbp cmux-harness %"
+        )
+        self.assertFalse(detect_claude_session(screen))
+
     def test_empty_screen(self):
         self.assertFalse(detect_claude_session(""))
         self.assertFalse(detect_claude_session(None))

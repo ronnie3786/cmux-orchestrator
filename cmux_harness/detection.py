@@ -14,7 +14,7 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b-nvfp4")
 USE_LLM = os.environ.get("USE_LLM", "1") != "0"  # enabled by default
 
 _LLM_SYSTEM = """You classify terminal prompts from Claude Code (an AI coding assistant).
-When the terminal shows a PERMISSION prompt or confirmation dialog, decide the correct response.
+When the terminal shows a prompt that requires user input, decide the correct response.
 Reply with ONLY a JSON object, no markdown, no explanation.
 
 Rules:
@@ -23,11 +23,12 @@ Rules:
 - "Allow <tool>" prompts → auto-approve (action: "y")
 - Menus where ALL options are permission variants (Yes, No, "Yes and don't ask again", "Yes, allow X from Y") → auto-approve by pressing Enter if cursor is on a Yes/Allow option
 - Domain-specific choices requiring human judgment (which file to edit, which approach to take, pick a specific item) → needs human (action: "skip")
-- Claude Code idle REPL showing "❯" with "Model:" and "Cost:" lines nearby → NOT waiting
+- Claude Code at its idle REPL (❯ prompt with Model:/Cost: lines) with NO question asked above → NOT waiting
+- HOWEVER: if Claude asked the user an open-ended question in the text ABOVE the idle REPL prompt (e.g. "Does this look good?", "Should I proceed?", "Which approach do you prefer?", "What do you think?", any question ending with "?") → this IS waiting, needs human (action: "skip"). Claude is waiting for the user to answer before it continues.
 - A shell prompt (like "user@host %") → NOT waiting
 - Claude Code showing "Musing…" or "Thinking…" → NOT waiting, it's working
 - Claude Code actively running a tool (showing "⚡ Read", "⚡ Bash", etc.) → NOT waiting
-- If the terminal is NOT waiting for a permission prompt → not waiting
+- If the terminal is NOT waiting for any kind of input → not waiting
 
 IMPORTANT: Options like "Yes, allow reading from X", "Yes, and don't ask again for: bash ...", "Yes, allow X from this project" are ALL permission grants, NOT domain-specific choices. They should be auto-approved.
 
@@ -35,7 +36,7 @@ JSON format: {"waiting": bool, "action": "enter"|"y"|"skip", "safe": bool, "reas
 - action "enter" = press Enter key (for menus where cursor ›/❯ is on the right option)
 - action "y" = type the letter y (for Y/n prompts)
 - action "skip" = needs human decision, don't send anything
-- waiting = true ONLY for permission/approval prompts, NOT for idle REPLs or shell prompts"""
+- waiting = true if the terminal needs ANY user input (permission prompts, open-ended questions, etc.)"""
 
 
 def llm_classify(screen_text, model=None, ollama_available_checker=None):
@@ -113,6 +114,16 @@ def detect_claude_session(screen_text):
     # Check last 30 lines for Claude Code signatures
     lines = screen_text.strip().splitlines()
     tail = "\n".join(lines[-30:]) if len(lines) > 30 else screen_text
+
+    # Early exit: if the last non-empty line is a plain shell prompt and the
+    # last 5 lines have no Claude REPL indicators (Model:/Cost:/Ctx:), the
+    # session has ended (e.g. after /exit). This prevents scrollback text from
+    # a prior Claude Code session from triggering a false positive.
+    recent = "\n".join(lines[-5:]) if len(lines) >= 5 else "\n".join(lines)
+    last_line = next((l for l in reversed(lines) if l.strip()), "")
+    if (re.search(r"\w+@\w+[^\n]*[%$#]\s*$", last_line)
+            and not re.search(r"(Model:\s*(Sonnet|Opus|Haiku|Claude)|Cost:\s*\$|Ctx:\s*\d)", recent)):
+        return False
     # Claude Code REPL: "❯" with Model:/Cost:/Ctx: lines nearby
     if re.search(r"(Model:\s*(Sonnet|Opus|Haiku|Claude|claude)|Cost:\s*\$|Ctx:\s*\d)", tail):
         return True
@@ -127,13 +138,21 @@ def detect_claude_session(screen_text):
     if re.search(r"[❯)]\s*(Yes|No|Allow|Deny|Approve|Confirm)", tail):
         return True
     # Claude Code TUI header (box-drawing chars around "Claude Code")
-    if re.search(r"Claude Code", tail):
-        return True
+    # Must appear in a TUI context — not in a log line (which starts with a timestamp or "[harness]")
+    for line in tail.splitlines():
+        stripped = line.strip()
+        if "Claude Code" in stripped:
+            if re.match(r"^\[20\d\d-|\[harness\]|approved ws=|ws=", stripped):
+                continue
+            return True
     # Claude Code welcome screen after /clear (model names without "Model:" prefix)
     if re.search(r"(Welcome back|Claude (Enterprise|Pro|Max|Team|Free))", tail):
         return True
     # Claude Code model identifier in welcome screen (not prefixed by "Model:")
     if re.search(r"(Opus|Sonnet|Haiku)\s+[\d.]+\s*\(", tail):
+        return True
+    # Claude Code Ink TUI menu (numbered options with navigation hints)
+    if re.search(r"Enter to select.*Esc to cancel", tail):
         return True
     # "claude" command was recently run (visible in scrollback)
     if re.search(r"^\$?\s*claude\s*$", tail, re.MULTILINE):
@@ -195,6 +214,24 @@ def is_permission_menu(options_text):
     return has_affirmative and not has_domain_specific
 
 
+def _has_open_question(lines):
+    """Check if Claude asked the user a question in the terminal output.
+    Looks for lines ending with '?' in the content area above the status bar."""
+    # Find where the status bar starts (Model:/Cost: lines)
+    status_idx = len(lines)
+    for i, line in enumerate(lines):
+        if re.search(r"(Model:\s*(Sonnet|Opus|Haiku|Claude)|Cost:\s*\$)", line):
+            status_idx = i
+            break
+    # Check the last 15 content lines before status bar for questions
+    content = lines[max(0, status_idx - 15):status_idx]
+    for line in content:
+        stripped = line.strip()
+        if stripped.endswith('?') and len(stripped) > 10:
+            return True
+    return False
+
+
 def detect_prompt(screen_text, model=None, ollama_available_checker=None):
     """Return (pattern_name, action) or None if no prompt detected.
     Returns ("needs_human", "skip") if a prompt needs manual intervention.
@@ -220,6 +257,10 @@ def detect_prompt(screen_text, model=None, ollama_available_checker=None):
 
     # SKIP: Claude Code idle REPL (has ❯ but also Model:/Cost: lines)
     if _REPL_IDLE_RE.search(tail):
+        # Exception: if Claude asked the user a question above the REPL,
+        # this always needs human input (free-form response, not a Y/n prompt)
+        if _has_open_question(lines):
+            return ("needs_human", "skip")
         return None
 
     # SKIP: Plain shell prompt with no Claude Code indicators
