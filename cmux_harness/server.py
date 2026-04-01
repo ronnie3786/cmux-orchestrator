@@ -268,7 +268,7 @@ def make_handler(engine):
                     return
                 self._json_response({"ok": True})
             elif self.path == "/api/new-session":
-                cwd = data.get("cwd", "~/Documents/Development/Doximity-Cloud")
+                cwd = data.get("cwd", "~/Documents/Development/Doximity-Claude")
                 command = data.get("command", "claude")
 
                 # Step 1: Create workspace
@@ -311,23 +311,22 @@ def make_handler(engine):
                                 ws_idx = w.get("index")
                                 break
 
-                # Step 4: cd to working directory (best-effort — don't abort on failure)
+                # Step 4: Rename workspace to "New Session"
                 try:
-                    cmux_api._v2_request("surface.send_text", {
+                    cmux_api._v2_request("workspace.rename", {
                         "workspace_id": ws_uuid,
-                        "text": f"cd {cwd}\n",
+                        "name": "New Session",
                     })
+                    engine.ws_config.setdefault(ws_uuid, {})["customName"] = "New Session"
+                    storage.save_config(engine.ws_config, engine.review_enabled, engine.review_model, engine.review_backend)
                 except Exception:
                     pass
 
-                # Step 5: Brief pause before launching command
-                time.sleep(0.3)
-
-                # Step 6: Launch command (best-effort)
+                # Step 5: cd + launch command as a single line so cd must succeed first
                 try:
                     cmux_api._v2_request("surface.send_text", {
                         "workspace_id": ws_uuid,
-                        "text": f"{command}\n",
+                        "text": f"cd {cwd} && {command}\n",
                     })
                 except Exception:
                     pass

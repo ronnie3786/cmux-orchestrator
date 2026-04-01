@@ -563,8 +563,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
       </div>
       <input class="settings-select" id="settingsCwd" type="text"
         style="width:100%;min-width:0;font-family:inherit"
-        placeholder="~/Documents/Development/Doximity-Cloud"
-        onchange="defaultCwd=this.value.trim()||'~/Documents/Development/Doximity-Cloud'">
+        placeholder="~/Documents/Development/Doximity-Claude"
+        onchange="defaultCwd=this.value.trim()||'~/Documents/Development/Doximity-Claude'">
     </div>
   </div>
 </div>
@@ -1926,7 +1926,7 @@ window.saveSetting=function(key,val){
 };
 
 // ─── New session ───
-var defaultCwd='~/Documents/Development/Doximity-Cloud';
+var defaultCwd='~/Documents/Development/Doximity-Claude';
 window.newSession=function(){
   var btn=document.querySelector('.btn-primary');
   if(btn){btn.textContent='Creating...';btn.disabled=true;}
