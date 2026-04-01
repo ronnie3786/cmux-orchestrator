@@ -28,6 +28,7 @@ class HarnessEngine(threading.Thread):
         self.session_start = {}  # idx -> float (when hasClaude first went True)
         self.session_cost = {}   # idx -> str (parsed cost like "$0.45")
         self.session_ids = {}    # idx -> str (workspace UUID + session start timestamp)
+        self.idle_miss_count = {} # idx -> int (consecutive polls where detect_claude_session returned False while previously active)
         self.surface_map = {}    # workspace_ref -> [{"ref", "title", "pane_ref"}, ...]
         self.surface_map_ts = 0  # timestamp of last cmux tree fetch
         self.socket_connected = False   # current socket connection state
@@ -667,6 +668,7 @@ class HarnessEngine(threading.Thread):
                             # Clear stale state to force fresh detection
                             self.ws_has_claude = {}
                             self.screen_cache = {}
+                            self.idle_miss_count = {}
                         else:
                             self.consecutive_failures = 0
                 else:
@@ -716,9 +718,21 @@ class HarnessEngine(threading.Thread):
                         has_claude = detection.detect_claude_session(screen)
                         cost = storage.parse_session_cost(screen)
                         should_capture_snapshot = False
+                        # Hysteresis: require multiple consecutive non-detections
+                        # before transitioning ACTIVE → IDLE. This prevents transient
+                        # screen states (e.g. after /clear) from flipping status.
+                        IDLE_MISS_THRESHOLD = 3  # consecutive misses before transition
                         with self._lock:
                             self.screen_cache[vidx] = screen
                             prev_has_claude = self.ws_has_claude.get(vidx, False)
+                            if has_claude:
+                                self.idle_miss_count.pop(vidx, None)
+                            elif prev_has_claude and not has_claude:
+                                miss = self.idle_miss_count.get(vidx, 0) + 1
+                                self.idle_miss_count[vidx] = miss
+                                if miss < IDLE_MISS_THRESHOLD:
+                                    # Suppress transition — keep reporting as active
+                                    has_claude = True
                             self.ws_has_claude[vidx] = has_claude
                             self.idle_last_read[vidx] = now_ts
                             if has_claude and not prev_has_claude:
@@ -731,6 +745,7 @@ class HarnessEngine(threading.Thread):
                                 self.session_ids[vidx] = "_".join(sid_parts)
                             elif not has_claude and prev_has_claude:
                                 should_capture_snapshot = True
+                                self.idle_miss_count.pop(vidx, None)
                             if has_claude and cost is not None:
                                 self.session_cost[vidx] = cost
                         if should_capture_snapshot:
@@ -768,6 +783,7 @@ class HarnessEngine(threading.Thread):
                         self.session_ids.pop(sk, None)
                         self.idle_last_read.pop(sk, None)
                         self.fingerprints.pop(sk, None)
+                        self.idle_miss_count.pop(sk, None)
 
                 if enabled:
                     # Check which workspaces have unread notifications

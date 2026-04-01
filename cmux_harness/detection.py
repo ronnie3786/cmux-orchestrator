@@ -126,6 +126,15 @@ def detect_claude_session(screen_text):
     # The ❯ followed by claude-specific content
     if re.search(r"[❯)]\s*(Yes|No|Allow|Deny|Approve|Confirm)", tail):
         return True
+    # Claude Code TUI header (box-drawing chars around "Claude Code")
+    if re.search(r"Claude Code", tail):
+        return True
+    # Claude Code welcome screen after /clear (model names without "Model:" prefix)
+    if re.search(r"(Welcome back|Claude (Enterprise|Pro|Max|Team|Free))", tail):
+        return True
+    # Claude Code model identifier in welcome screen (not prefixed by "Model:")
+    if re.search(r"(Opus|Sonnet|Haiku)\s+[\d.]+\s*\(", tail):
+        return True
     # "claude" command was recently run (visible in scrollback)
     if re.search(r"^\$?\s*claude\s*$", tail, re.MULTILINE):
         return True
