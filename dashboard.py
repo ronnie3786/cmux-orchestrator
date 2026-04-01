@@ -1728,7 +1728,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .global-toggle-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
 
 /* Grid */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px 50px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px 28px}
 .grid-empty{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:15px;grid-column:1/-1}
 .grid-divider{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:4px 0;color:var(--text-muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 .grid-divider::after{content:'';flex:1;height:1px;background:var(--border)}
@@ -1957,14 +1957,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .backend-status-dot.red{background:var(--red);opacity:1}
 .llm-unavail{font-size:11px;color:var(--red);opacity:.85;margin-left:4px}
 
-/* Global Activity Feed panel */
-.activity-panel{position:fixed;bottom:0;left:0;right:0;z-index:50;background:var(--surface);border-top:1px solid var(--border);transition:transform 0.2s ease}
-.activity-panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-muted)}
-.activity-panel-header:hover{color:var(--text)}
-.activity-count{padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(88,166,255,0.1);color:var(--accent);margin-left:8px}
-.activity-panel-body{max-height:250px;overflow-y:auto;padding:0 28px}
-.activity-panel.collapsed .activity-panel-body{display:none}
-.activity-panel.collapsed .activity-chevron{transform:rotate(180deg)}
+/* Activity popover in topbar */
+.activity-btn-wrap{position:relative}
+.activity-btn{position:relative;display:flex;align-items:center;gap:6px}
+.activity-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.activity-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--accent);color:#000;font-size:10px;font-weight:700;line-height:18px;text-align:center}
+.activity-popover{display:none;position:absolute;top:calc(100% + 8px);right:0;width:480px;max-height:420px;overflow:hidden;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:200;flex-direction:column}
+.activity-popover.visible{display:flex}
+.activity-popover-header{padding:14px 18px;font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border)}
+.activity-popover-body{flex:1;overflow-y:auto;padding:0 18px;max-height:360px}
 .activity-entry{display:flex;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
 .activity-entry:last-child{border-bottom:none}
 .ae-time{color:var(--text-muted);font-family:monospace;white-space:nowrap}
@@ -2004,6 +2005,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     </div>
   </div>
   <div class="topbar-actions">
+    <div class="activity-btn-wrap">
+      <button class="btn activity-btn" id="activityBtn" onclick="toggleActivityPopover(event)">
+        <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span class="activity-badge" id="activityBadge" style="display:none">0</span>
+      </button>
+      <div class="activity-popover" id="activityPopover">
+        <div class="activity-popover-header">Activity Feed</div>
+        <div class="activity-popover-body" id="activityPopoverBody"></div>
+      </div>
+    </div>
     <div class="global-toggle">
       <span class="global-toggle-label" id="globalLabel">OFF</span>
       <div class="global-track" id="globalTrack" onclick="toggleGlobal()"></div>
@@ -2047,17 +2058,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   <div class="reviews-list" id="reviewsList"></div>
 </div>
 
-<!-- Global Activity Feed -->
-<div class="activity-panel collapsed" id="activityPanel">
-  <div class="activity-panel-header" onclick="toggleActivityPanel()">
-    <span>Activity Feed</span>
-    <span class="activity-count" id="activityCount">0</span>
-    <span class="activity-chevron" id="activityChevron">&#9650;</span>
-  </div>
-  <div class="activity-panel-body" id="activityBody">
-    <!-- populated by JS -->
-  </div>
-</div>
 
 <!-- Expanded overlay -->
 <div class="overlay" id="overlay" onclick="if(event.target===this)closeExpanded()">
@@ -3493,22 +3493,39 @@ window.startRename=function(idx,spanEl){
   });
 };
 
-// ─── Global Activity Feed ───
+// ─── Activity Popover ───
 var _lastActivityCount = -1;
-window.toggleActivityPanel = function(){
-  document.getElementById('activityPanel').classList.toggle('collapsed');
+var _activityOpen = false;
+window.toggleActivityPopover = function(ev){
+  if(ev) ev.stopPropagation();
+  var pop = document.getElementById('activityPopover');
+  _activityOpen = !_activityOpen;
+  pop.classList.toggle('visible', _activityOpen);
+  if(_activityOpen) updateActivityFeed(logData);
 };
+document.addEventListener('click', function(ev){
+  if(!_activityOpen) return;
+  var wrap = document.getElementById('activityBtn').parentElement;
+  if(!wrap.contains(ev.target)){
+    _activityOpen = false;
+    document.getElementById('activityPopover').classList.remove('visible');
+  }
+});
 function updateActivityFeed(entries){
-  var panel = document.getElementById('activityPanel');
-  var bodyEl = document.getElementById('activityBody');
-  var countEl = document.getElementById('activityCount');
-  var isCollapsed = panel.classList.contains('collapsed');
+  var bodyEl = document.getElementById('activityPopoverBody');
+  var badgeEl = document.getElementById('activityBadge');
   var newCount = entries ? entries.length : 0;
-  // Skip rebuild if collapsed and count hasn't changed
-  if(isCollapsed && newCount === _lastActivityCount) return;
+  // Update badge
+  if(newCount > 0){
+    badgeEl.style.display = '';
+    badgeEl.textContent = newCount > 99 ? '99+' : newCount;
+  } else {
+    badgeEl.style.display = 'none';
+  }
+  // Skip rebuild if popover is closed and count hasn't changed
+  if(!_activityOpen && newCount === _lastActivityCount) return;
   _lastActivityCount = newCount;
-  countEl.textContent = newCount;
-  if(isCollapsed) return;
+  if(!_activityOpen) return;
   var last50 = entries ? entries.slice(0, 50) : [];
   if(last50.length === 0){
     bodyEl.innerHTML = '<div style="padding:20px 0;text-align:center;color:var(--text-muted);font-size:12px">No activity yet.</div>';
@@ -3519,7 +3536,6 @@ function updateActivityFeed(entries){
     var isHuman = e.action && e.action.indexOf('human') !== -1;
     var typeClass = isHuman ? 'flagged' : 'approved';
     var typeText = isHuman ? 'FLAGGED' : 'APPROVED';
-    // Resolve workspace name from state
     var wsName = '';
     if(e.workspace !== undefined){
       var ws = state.workspaces.find(function(w){ return w.index === e.workspace; });
@@ -3538,7 +3554,8 @@ function updateActivityFeed(entries){
 // ─── Keyboard ───
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){
-    if(document.getElementById('settingsOverlay').classList.contains('visible'))closeSettings();
+    if(_activityOpen){_activityOpen=false;document.getElementById('activityPopover').classList.remove('visible')}
+    else if(document.getElementById('settingsOverlay').classList.contains('visible'))closeSettings();
     else closeExpanded();
   }
 });
