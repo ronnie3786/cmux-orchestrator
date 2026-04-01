@@ -2244,6 +2244,8 @@ var state = {
 };
 var logData = [];
 var expandedWsIndex = null;
+var expandedWsUuid = null;
+var expandedWsSurfaceId = null;
 var expandedReview = null;
 var expandedMode = 'workspace';
 var currentView = 'center';
@@ -2943,6 +2945,10 @@ window.sendToWs=function(idx){
 window.openExpanded=function(idx){
   expandedMode='workspace';
   expandedWsIndex=idx;
+  // Pin the workspace by UUID+surfaceId so index shifts don't cause a swap
+  var ws=state.workspaces.find(function(w){return w.index===idx});
+  expandedWsUuid=ws?ws.uuid:null;
+  expandedWsSurfaceId=ws?ws.surfaceId:null;
   expandedReview=null;
   document.getElementById('overlay').classList.add('visible');
   document.getElementById('escHint').style.display='block';
@@ -2955,6 +2961,8 @@ window.openExpanded=function(idx){
 window.closeExpanded=function(){
   if(gitPollTimer){clearInterval(gitPollTimer);gitPollTimer=null;}
   expandedWsIndex=null;
+  expandedWsUuid=null;
+  expandedWsSurfaceId=null;
   expandedReview=null;
   expandedMode='workspace';
   document.getElementById('overlay').classList.remove('visible');
@@ -3112,7 +3120,17 @@ function updateExpanded(){
   if(expandedWsIndex===null)return;
   document.getElementById('expReviewTabs').classList.remove('visible');
   document.getElementById('expTerminal').classList.remove('activity-list');
-  var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
+  // Find workspace by pinned UUID+surfaceId first (survives index shifts),
+  // then fall back to index lookup
+  var ws=null;
+  if(expandedWsUuid){
+    ws=state.workspaces.find(function(w){
+      return w.uuid===expandedWsUuid&&(w.surfaceId||null)===(expandedWsSurfaceId||null);
+    });
+    // Update expandedWsIndex if the workspace moved to a new index
+    if(ws&&ws.index!==expandedWsIndex)expandedWsIndex=ws.index;
+  }
+  if(!ws)ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
   if(!ws)return;
   document.querySelector('.exp-header-actions').classList.remove('hidden');
   document.querySelector('.exp-input').classList.remove('hidden');
@@ -3244,6 +3262,8 @@ window.openReviewOverlay=function(sessionId,tab){
     if(!review)return;
     expandedMode='review';
     expandedWsIndex=null;
+    expandedWsUuid=null;
+    expandedWsSurfaceId=null;
     expandedReview=review;
     expandedReview._overlayTab=tab||'diff';
     document.getElementById('overlay').classList.add('visible');
