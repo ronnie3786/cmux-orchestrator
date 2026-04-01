@@ -588,6 +588,10 @@ class HarnessEngine(threading.Thread):
             "detect_result": list(result) if result else None,
         })
 
+        # Store fingerprint so we don't re-process the same screen
+        with self._lock:
+            self.fingerprints[idx] = fp
+
         if result is None:
             return
 
@@ -795,12 +799,16 @@ class HarnessEngine(threading.Thread):
                         vidx = vws.get("index", vws.get("id"))
                         ws_uuid = vws.get("uuid", "")
                         with self._lock:
+                            has_claude = self.ws_has_claude.get(vidx, False)
                             cfg = self.ws_config.get(ws_uuid, {})
                             if "autoEnabled" in cfg:
                                 ws_on = cfg["autoEnabled"]
                             else:
                                 ws_on = self.workspace_enabled.get(vidx, True)
                         if not ws_on:
+                            continue
+                        # Only check workspaces with an active Claude Code session
+                        if not has_claude:
                             continue
                         if filter_is_useful and attention_uuids and ws_uuid not in attention_uuids:
                             continue
