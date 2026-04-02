@@ -85,6 +85,29 @@ class TestBuildReviewPrompt(unittest.TestCase):
         self.assertIn("Actions auto-approved: 3", prompt)
         self.assertIn("Actions flagged for human: 2", prompt)
 
+    def test_prompt_mentions_200_lines(self):
+        data = self._base_data()
+        prompt = build_review_prompt(data)
+        self.assertIn("last 200 lines", prompt)
+        self.assertNotIn("last 50 lines", prompt)
+
+    def test_prompt_handles_long_snapshot(self):
+        long_snapshot = "\n".join(f"line {i}" for i in range(200))
+        data = self._base_data(terminalSnapshot=long_snapshot)
+        prompt = build_review_prompt(data)
+        self.assertIn("line 0", prompt)
+        self.assertIn("line 199", prompt)
+
+    def test_includes_task_description(self):
+        data = self._base_data(taskDescription="Fix auth module")
+        prompt = build_review_prompt(data)
+        self.assertIn("Task: Fix auth module", prompt)
+
+    def test_omits_task_line_when_empty(self):
+        data = self._base_data(taskDescription="")
+        prompt = build_review_prompt(data)
+        self.assertNotIn("Task:", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

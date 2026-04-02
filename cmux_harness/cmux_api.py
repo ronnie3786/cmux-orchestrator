@@ -180,19 +180,12 @@ VIRTUAL_STRIDE = 100
 SURFACE_MAP_TTL = 15  # seconds between cmux tree --all --json refreshes
 
 
-def cmux_tree():
-    """Fetch the full workspace/pane/surface hierarchy via cmux CLI.
-    Returns {workspace_index: [{"ref": "surface:N", "title": "...", "pane_ref": "..."}]} or None on failure."""
-    try:
-        r = subprocess.run(
-            ["cmux", "tree", "--all", "--json"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode != 0:
-            return None
-        data = json.loads(r.stdout)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
-        return None
+def _parse_tree_data(data):
+    """Parse a cmux tree JSON structure into a surface map.
+    Returns {workspace_index: [{"ref", "title", "pane_ref", "selected_in_pane", "id"}]}
+    or {} if the data is invalid."""
+    if not data or not isinstance(data, dict):
+        return {}
     result = {}
     for win in data.get("windows", []):
         for ws in win.get("workspaces", []):
@@ -207,6 +200,7 @@ def cmux_tree():
                         continue
                     surfaces.append({
                         "ref": surf.get("ref", ""),
+                        "id": surf.get("id", ""),
                         "title": surf.get("title", ""),
                         "pane_ref": pane_ref,
                         "selected_in_pane": surf.get("selected_in_pane", False),
@@ -214,3 +208,89 @@ def cmux_tree():
             if surfaces:
                 result[ws_idx] = surfaces
     return result
+
+
+def cmux_tree():
+    """Fetch the full workspace/pane/surface hierarchy.
+    Prefers v2 socket API; falls back to CLI subprocess.
+    Returns {workspace_index: [{"ref", "title", "pane_ref", ...}]} or None on failure."""
+    # Try v2 socket API first (no subprocess overhead)
+    data = _v2_request("system.tree", {"all": True})
+    if data is not None:
+        result = _parse_tree_data(data)
+        if result:
+            return result
+    # Fallback to CLI subprocess
+    try:
+        r = subprocess.run(
+            ["cmux", "tree", "--all", "--json"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return None
+        data = json.loads(r.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        return None
+    return _parse_tree_data(data) or None
+
+
+def _parse_notifications(result):
+    """Parse a notification.list v2 response into a list of notification dicts.
+    Each dict has: id, workspace_id, surface_id, title, subtitle, body, is_read."""
+    if result is None:
+        return []
+    if isinstance(result, list):
+        notifications = result
+    elif isinstance(result, dict):
+        notifications = result.get("notifications", [])
+    else:
+        return []
+    return [n for n in notifications if isinstance(n, dict)]
+
+
+def cmux_notifications():
+    """Fetch notifications via v2 API.
+    Returns a list of notification dicts or None on failure."""
+    result = _v2_request("notification.list", {})
+    if result is None:
+        return None
+    return _parse_notifications(result)
+
+
+def _parse_debug_terminals(result):
+    """Parse a debug.terminals v2 response into a dict indexed by surface UUID.
+    Returns {surface_uuid: {surface_title, git_dirty, surface_created_at,
+    runtime_surface_age_seconds, current_directory, workspace_ref}}."""
+    if result is None:
+        return {}
+    if isinstance(result, list):
+        terminals = result
+    elif isinstance(result, dict):
+        terminals = result.get("terminals", [])
+    else:
+        return {}
+    indexed = {}
+    for t in terminals:
+        if not isinstance(t, dict):
+            continue
+        sid = t.get("surface_id", "")
+        if not sid:
+            continue
+        indexed[sid] = {
+            "surface_title": t.get("surface_title", ""),
+            "git_dirty": t.get("git_dirty", False),
+            "surface_created_at": t.get("surface_created_at", ""),
+            "runtime_surface_age_seconds": t.get("runtime_surface_age_seconds", 0),
+            "current_directory": t.get("current_directory", ""),
+            "workspace_ref": t.get("workspace_ref", ""),
+        }
+    return indexed
+
+
+def cmux_debug_terminals():
+    """Fetch terminal metadata via debug.terminals v2 API.
+    Returns {surface_uuid: {...metadata...}} or None on failure."""
+    result = _v2_request("debug.terminals", {})
+    if result is None:
+        return None
+    return _parse_debug_terminals(result)

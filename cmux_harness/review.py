@@ -58,8 +58,15 @@ def build_review_prompt(review_data):
         f"Session duration: {review_data.get('duration', 0)} seconds\n"
         f"Session cost: {review_data.get('finalCost', '')}\n"
         f"Actions auto-approved: {approved_count}\n"
-        f"Actions flagged for human: {flagged_count}\n\n"
-        "── Claude Code's final output (last 50 lines) ──\n"
+        f"Actions flagged for human: {flagged_count}\n"
+    )
+
+    task_desc = (review_data.get("taskDescription") or "").strip()
+    if task_desc:
+        prompt += f"Task: {task_desc}\n"
+
+    prompt += (
+        "\n── Claude Code's final output (last 200 lines) ──\n"
         f"{review_data.get('terminalSnapshot', '')}\n\n"
     )
 

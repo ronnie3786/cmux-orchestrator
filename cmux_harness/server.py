@@ -281,70 +281,67 @@ def make_handler(engine):
                     return
                 self._json_response({"ok": True})
             elif self.path == "/api/new-session":
+                name = data.get("name", "New Session")
                 cwd = data.get("cwd", "~/Documents/Development/Doximity-Claude")
                 command = data.get("command", "claude")
 
-                # Step 1: Create workspace
-                create_result = cmux_api._v2_request("workspace.create", {})
-                if create_result is None:
-                    self._json_response({"ok": False, "error": "Failed to create workspace"})
-                    return
-
-                # Step 2: Wait for initialization
-                time.sleep(0.5)
-
-                # Step 3: Resolve UUID — try create result first, then list
                 ws_uuid = None
                 ws_idx = None
-                if isinstance(create_result, dict):
-                    ws_uuid = (create_result.get("uuid") or
-                               create_result.get("workspace_id") or
-                               create_result.get("id"))
-                    ws_idx = create_result.get("index")
+
+                # Try single CLI call (handles name, cwd, and command in one shot)
+                try:
+                    cli_args = ["cmux", "new-workspace", "--name", name]
+                    if cwd:
+                        cli_args += ["--cwd", cwd]
+                    if command:
+                        cli_args += ["--command", command]
+                    cli_result = subprocess.run(
+                        cli_args, capture_output=True, text=True, timeout=10,
+                    )
+                    if cli_result.returncode != 0:
+                        cli_result = None
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    cli_result = None
+
+                if cli_result is None:
+                    # Fallback: v2 API create + send
+                    create_result = cmux_api._v2_request("workspace.create", {})
+                    if create_result is None:
+                        self._json_response({"ok": False, "error": "Failed to create workspace"})
+                        return
+
+                # Resolve UUID + index via workspace.list
+                list_result = cmux_api._v2_request("workspace.list", {})
+                if list_result:
+                    ws_list = list_result if isinstance(list_result, list) else list_result.get("workspaces", [])
+                    if ws_list:
+                        newest = ws_list[-1]
+                        ws_uuid = newest.get("id") or newest.get("uuid")
+                        ws_idx = newest.get("index")
 
                 if not ws_uuid:
-                    list_result = cmux_api._v2_request("workspace.list", {})
-                    if list_result:
-                        ws_list = list_result if isinstance(list_result, list) else list_result.get("workspaces", [])
-                        if ws_list:
-                            newest = ws_list[-1]
-                            ws_uuid = newest.get("uuid") or newest.get("id")
-                            ws_idx = newest.get("index")
-
-                if not ws_uuid:
-                    self._json_response({"ok": False, "error": "Failed to get new workspace info"})
+                    self._json_response({"ok": False, "error": "Failed to resolve new workspace"})
                     return
 
-                # If index still unknown, refresh engine and look it up
-                if ws_idx is None:
-                    engine.refresh_workspaces()
-                    with engine._lock:
-                        for w in engine.workspaces:
-                            if w.get("uuid") == ws_uuid:
-                                ws_idx = w.get("index")
-                                break
+                # If CLI failed, do rename + command send manually
+                if cli_result is None:
+                    try:
+                        cmux_api._v2_request("workspace.rename", {
+                            "workspace_id": ws_uuid, "title": name,
+                        })
+                    except Exception:
+                        pass
+                    try:
+                        cmux_api._v2_request("surface.send_text", {
+                            "workspace_id": ws_uuid,
+                            "text": f"cd {cwd} && {command}\n",
+                        })
+                    except Exception:
+                        pass
 
-                # Step 4: Rename workspace to "New Session"
-                try:
-                    cmux_api._v2_request("workspace.rename", {
-                        "workspace_id": ws_uuid,
-                        "title": "New Session",
-                    })
-                    engine.ws_config.setdefault(ws_uuid, {})["customName"] = "New Session"
-                    storage.save_config(engine.ws_config, engine.review_enabled, engine.review_model, engine.review_backend)
-                except Exception:
-                    pass
-
-                # Step 5: cd + launch command as a single line so cd must succeed first
-                try:
-                    cmux_api._v2_request("surface.send_text", {
-                        "workspace_id": ws_uuid,
-                        "text": f"cd {cwd} && {command}\n",
-                    })
-                except Exception:
-                    pass
-
-                # Step 7: Return workspace info
+                # Save config
+                engine.ws_config.setdefault(ws_uuid, {})["customName"] = name
+                storage.save_config(engine.ws_config, engine.review_enabled, engine.review_model, engine.review_backend)
                 self._json_response({"ok": True, "workspace": {"index": ws_idx, "uuid": ws_uuid}})
             elif self.path == "/api/git-stage":
                 idx = data.get("index")

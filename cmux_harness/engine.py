@@ -46,6 +46,10 @@ class HarnessEngine(threading.Thread):
         self.ollama_retry_interval = 60  # seconds between retries after failure
         self._review_errors = {}
         self._review_models = {}
+        self.branch_cache = {}        # uuid -> str (branch name)
+        self.branch_cache_ts = {}     # uuid -> float (when branch was last resolved)
+        self.terminal_metadata = {}   # surface_uuid -> metadata dict from debug.terminals
+        self.terminal_metadata_ts = 0 # timestamp of last debug.terminals refresh
         config = storage.load_config()
         self.ws_config = config.get("workspaces", {})
         review_settings = config.get("reviewSettings", {})
@@ -68,6 +72,7 @@ class HarnessEngine(threading.Thread):
                 # Single surface or no tree data — emit unchanged
                 entry = dict(ws)
                 entry["_surface_id"] = surfaces[0]["ref"] if surfaces else None
+                entry["_surface_uuid"] = surfaces[0].get("id", "") if surfaces else ""
                 entry["_surface_title"] = None
                 entry["_surface_count"] = 1
                 entry["_real_index"] = idx
@@ -83,6 +88,7 @@ class HarnessEngine(threading.Thread):
                     entry["index"] = vidx
                     entry["_real_index"] = idx
                     entry["_surface_id"] = surf["ref"]
+                    entry["_surface_uuid"] = surf.get("id", "")
                     entry["_surface_title"] = clean_title or f"Pane {ordinal + 1}"
                     entry["_surface_count"] = len(surfaces)
                     entry["_virtual"] = (ordinal > 0)
@@ -110,6 +116,34 @@ class HarnessEngine(threading.Thread):
                 self.ollama_available = False
                 self.ollama_last_check = now
             return False
+
+    BRANCH_CACHE_TTL = 30  # seconds between branch re-checks per workspace
+
+    def _resolve_branches(self):
+        """Populate _branch for workspaces with a valid _cwd.
+        Rate-limited per workspace via branch_cache_ts."""
+        now = time.time()
+        with self._lock:
+            workspaces = list(self.workspaces)
+        for ws in workspaces:
+            uuid = ws.get("uuid", "")
+            cwd = ws.get("_cwd", "")
+            if not uuid or not cwd or not os.path.isdir(cwd):
+                continue
+            last_ts = self.branch_cache_ts.get(uuid, 0)
+            if (now - last_ts) < self.BRANCH_CACHE_TTL:
+                continue
+            branch = self._run_git_command(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+            if branch.startswith("[error]"):
+                branch = ""
+            self.branch_cache[uuid] = branch
+            self.branch_cache_ts[uuid] = now
+        # Apply cached branches to workspace list
+        with self._lock:
+            for ws in self.workspaces:
+                uuid = ws.get("uuid", "")
+                if uuid and uuid in self.branch_cache:
+                    ws["_branch"] = self.branch_cache[uuid]
 
     def set_enabled(self, val):
         with self._lock:
@@ -196,6 +230,9 @@ class HarnessEngine(threading.Thread):
                 if surface_count > 1 and surface_title:
                     ws_display = cfg.get("customName") or ws.get("name", f"workspace-{idx}")
                     surface_label = f"{ws_display} : {surface_title}"
+                # Enrich with terminal metadata from debug.terminals
+                surface_uuid = ws.get("_surface_uuid", "")
+                tmeta = self.terminal_metadata.get(surface_uuid, {})
                 ws_list.append({
                     "hasClaude": has_claude,
                     "index": idx,
@@ -212,6 +249,10 @@ class HarnessEngine(threading.Thread):
                     "sessionCost": self.session_cost.get(idx, ""),
                     "surfaceId": ws.get("_surface_id"),
                     "surfaceLabel": surface_label,
+                    "surfaceTitle": tmeta.get("surface_title", ""),
+                    "gitDirty": tmeta.get("git_dirty", False),
+                    "surfaceCreatedAt": tmeta.get("surface_created_at", ""),
+                    "surfaceAge": tmeta.get("runtime_surface_age_seconds", 0),
                 })
             return {
                 "enabled": self.enabled,
@@ -425,6 +466,7 @@ class HarnessEngine(threading.Thread):
             "gitLog": self._run_git_command(cwd, ["log", "--oneline", "-5"]),
             "cwd": cwd,
             "branch": branch,
+            "taskDescription": snapshot.get("taskDescription", ""),
             "approvalLog": approval_entries,
             "reviewStatus": "pending",
         }
@@ -468,6 +510,8 @@ class HarnessEngine(threading.Thread):
                     {},
                 )
             screen = self.screen_cache.get(idx, "")
+            surface_uuid = current_ws.get("_surface_uuid", "")
+            tmeta = self.terminal_metadata.get(surface_uuid, {})
             snapshot = {
                 "sessionId": self.session_ids.get(idx, ""),
                 "workspaceIndex": idx,
@@ -479,7 +523,21 @@ class HarnessEngine(threading.Thread):
                 "terminalSnapshot": "\n".join(screen.splitlines()[-50:]) if screen else "",
                 "cwd": current_ws.get("_cwd", ws.get("_cwd", "")),
                 "branch": current_ws.get("_branch", ws.get("_branch", "")),
+                "taskDescription": tmeta.get("surface_title", ""),
             }
+
+        # Fresh extended scrollback read (outside the lock, before spawning thread)
+        ws_uuid = snapshot["workspaceUuid"]
+        sid = snapshot.get("surfaceId")
+        real_idx = current_ws.get("_real_index", idx) if current_ws else idx
+        if ws_uuid:
+            extended = cmux_api.cmux_read_workspace(
+                real_idx, 0, lines=200,
+                workspace_uuid=ws_uuid, surface_id=sid
+            )
+            if extended:
+                snapshot["terminalSnapshot"] = "\n".join(extended.splitlines()[-200:])
+
         threading.Thread(
             target=self._capture_completion_snapshot,
             args=(snapshot,),
@@ -494,12 +552,14 @@ class HarnessEngine(threading.Thread):
             if ws_list:
                 workspaces = []
                 for ws in ws_list:
+                    ws_uuid = ws.get("id", "")
                     workspaces.append({
                         "index": ws.get("index", 0),
-                        "uuid": ws.get("id", ""),
+                        "uuid": ws_uuid,
                         "name": ws.get("title", f"workspace-{ws.get('index', 0)}"),
                         "selected": ws.get("selected", False),
                         "_cwd": ws.get("current_directory", ""),
+                        "_branch": self.branch_cache.get(ws_uuid, ""),
                     })
                 with self._lock:
                     self.workspaces = workspaces
@@ -540,15 +600,23 @@ class HarnessEngine(threading.Thread):
         return True
 
     def get_workspaces_needing_attention(self):
-        """Check list_notifications (no workspace switching!) to find
-        which workspaces have unread notifications. Returns a set of
-        workspace UUIDs that have unread items."""
+        """Check notifications to find workspaces with unread items.
+        Returns a set of workspace UUIDs. Prefers v2 API, falls back to v1."""
+        notifications = cmux_api.cmux_notifications()
+        if notifications is not None:
+            uuids = set()
+            for notif in notifications:
+                if not notif.get("is_read", True):
+                    ws_id = notif.get("workspace_id", "")
+                    if ws_id:
+                        uuids.add(ws_id)
+            return uuids
+        # Fallback to v1 text parsing
         raw = cmux_api.cmux_command("list_notifications")
         if not raw or raw == "No notifications":
             return set()
         uuids_needing_attention = set()
         for line in raw.strip().split("\n"):
-            # Format: index:notifUUID|tabUUID|surfaceUUID|read/unread|title|subtitle|body
             parts = line.split("|")
             if len(parts) >= 4 and parts[3] == "unread":
                 tab_uuid = parts[1]
@@ -701,13 +769,26 @@ class HarnessEngine(threading.Thread):
                                 self.connection_lost_at = now_ts
                                 print(f"[harness] ✗ cmux socket lost after {self.consecutive_failures} consecutive failures")
 
-                # Refresh surface map periodically via cmux tree --all --json
+                # Refresh surface map periodically via v2 API (falls back to CLI)
                 if got_data and (now_ts - self.surface_map_ts) > cmux_api.SURFACE_MAP_TTL:
                     new_map = cmux_api.cmux_tree()
                     if new_map is not None:
                         with self._lock:
                             self.surface_map = new_map
                             self.surface_map_ts = now_ts
+
+                # Resolve git branches (per-workspace TTL inside method)
+                if got_data:
+                    self._resolve_branches()
+
+                # Refresh terminal metadata (debug.terminals)
+                TERMINAL_METADATA_TTL = 20
+                if got_data and (now_ts - self.terminal_metadata_ts) > TERMINAL_METADATA_TTL:
+                    metadata = cmux_api.cmux_debug_terminals()
+                    if metadata is not None:
+                        with self._lock:
+                            self.terminal_metadata = metadata
+                            self.terminal_metadata_ts = now_ts
 
                 # Build virtual workspace list (one entry per surface)
                 with self._lock:
