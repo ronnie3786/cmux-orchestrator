@@ -296,14 +296,15 @@ class HarnessEngine(threading.Thread):
             return None
         cwd = ws.get("_cwd", "")
         if not cwd:
+            # Fetch from v2 workspace.list as fallback
             ws_uuid = ws.get("uuid", "")
             if ws_uuid:
-                raw = cmux_api.cmux_command(f"sidebar_state --tab={ws_uuid}")
-                if raw:
-                    for line in raw.splitlines():
-                        line = line.strip()
-                        if line.startswith("cwd=") and not line.startswith("focused_cwd="):
-                            cwd = line[4:]
+                result = cmux_api._v2_request("workspace.list", {})
+                if result:
+                    ws_list = result if isinstance(result, list) else result.get("workspaces", [])
+                    match = next((w for w in ws_list if w.get("id") == ws_uuid), None)
+                    if match:
+                        cwd = match.get("current_directory", "")
         if not cwd or not os.path.isdir(cwd):
             return None
         return cwd
@@ -317,20 +318,16 @@ class HarnessEngine(threading.Thread):
             return None
         cwd = ws.get("_cwd", "")
         branch = ws.get("_branch", "")
-        # Fetch cwd from cmux sidebar_state (v1 command) if not cached
+        # Fetch cwd from v2 workspace.list if not cached
         if not cwd:
             ws_uuid = ws.get("uuid", "")
             if ws_uuid:
-                raw = cmux_api.cmux_command(f"sidebar_state --tab={ws_uuid}")
-                if raw:
-                    for line in raw.splitlines():
-                        line = line.strip()
-                        if line.startswith("cwd=") and not line.startswith("focused_cwd="):
-                            cwd = line[4:]
-                        elif line.startswith("git_branch="):
-                            val = line[11:].split()[0]
-                            if val != "none":
-                                branch = val
+                result = cmux_api._v2_request("workspace.list", {})
+                if result:
+                    ws_list = result if isinstance(result, list) else result.get("workspaces", [])
+                    match = next((w for w in ws_list if w.get("id") == ws_uuid), None)
+                    if match:
+                        cwd = match.get("current_directory", "")
         if not cwd or not os.path.isdir(cwd):
             return {"branch": branch, "cwd": cwd, "staged": [], "unstaged": [], "untracked": [], "commits": []}
         # Get branch from git if not known
@@ -490,12 +487,28 @@ class HarnessEngine(threading.Thread):
         ).start()
 
     def refresh_workspaces(self):
+        # Prefer v2 API — gives current_directory for each workspace
+        result = cmux_api._v2_request("workspace.list", {})
+        if result:
+            ws_list = result if isinstance(result, list) else result.get("workspaces", [])
+            if ws_list:
+                workspaces = []
+                for ws in ws_list:
+                    workspaces.append({
+                        "index": ws.get("index", 0),
+                        "uuid": ws.get("id", ""),
+                        "name": ws.get("title", f"workspace-{ws.get('index', 0)}"),
+                        "selected": ws.get("selected", False),
+                        "_cwd": ws.get("current_directory", ""),
+                    })
+                with self._lock:
+                    self.workspaces = workspaces
+                return True
+
+        # Fallback to v1 plain text
         raw = cmux_api.cmux_command("list_workspaces")
         if raw is None:
             return False
-        # cmux returns plain text lines like:
-        #   * 0: UUID Name
-        #     1: UUID Name2
         workspaces = []
         for line in raw.strip().split("\n"):
             line = line.strip()
@@ -511,7 +524,6 @@ class HarnessEngine(threading.Thread):
             except ValueError:
                 continue
             rest = parts[1].strip()
-            # rest is "UUID Name" — split on first space
             rest_parts = rest.split(" ", 1)
             uuid = rest_parts[0] if rest_parts else ""
             name = rest_parts[1] if len(rest_parts) > 1 else f"workspace-{idx}"
@@ -548,23 +560,21 @@ class HarnessEngine(threading.Thread):
         ws_name = ws.get("name", f"workspace-{idx}")
         surface_id = ws.get("_surface_id")
         real_idx = ws.get("_real_index", idx)
+        ws_uuid = ws.get("uuid", None)
 
         surface_index = 0
-        ws_uuid = ws.get("uuid", None)
+
+        # Skip workspaces with no terminal surface (e.g. browser-only)
+        if ws_uuid and not surface_id:
+            return
 
         screen = cmux_api.cmux_read_workspace(real_idx, surface_index, lines=40, workspace_uuid=ws_uuid, surface_id=surface_id)
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        # Try to get sidebar state (cwd, git branch) via v2 API
-        sidebar = cmux_api._v2_request("sidebar.state", {"workspace_id": ws_uuid}) if ws_uuid else None
 
         with self._lock:
             for w in self.workspaces:
                 if w.get("index", w.get("id")) == real_idx:
                     w["_lastCheck"] = now_str
-                    if sidebar:
-                        w["_cwd"] = sidebar.get("cwd", "")
-                        w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
                     break
             if screen:
                 self.screen_cache[idx] = screen
@@ -669,7 +679,10 @@ class HarnessEngine(threading.Thread):
                         self.last_successful_poll = now_ts
                         if not self.socket_connected:
                             # Reconnection event
-                            print(f"[harness] ✓ cmux socket reconnected after {now_ts - self.connection_lost_at:.0f}s")
+                            if self.connection_lost_at:
+                                print(f"[harness] ✓ cmux socket reconnected after {now_ts - self.connection_lost_at:.0f}s")
+                            else:
+                                print("[harness] ✓ cmux socket connected")
                             self.socket_connected = True
                             self.consecutive_failures = 0
                             # Clear stale state to force fresh detection
@@ -705,7 +718,6 @@ class HarnessEngine(threading.Thread):
                 # Idle are read at most once every 30 seconds.
                 IDLE_READ_INTERVAL = 30  # seconds
                 now_ts = time.time()
-                sidebar_cache = {}  # ws_uuid -> sidebar result
                 active_vidxs = set()
                 for vws in virtual_ws:
                     ws_uuid = vws.get("uuid", "")
@@ -713,7 +725,7 @@ class HarnessEngine(threading.Thread):
                     real_idx = vws.get("_real_index", vidx)
                     surface_id = vws.get("_surface_id")
                     active_vidxs.add(vidx)
-                    if not ws_uuid:
+                    if not ws_uuid or not surface_id:
                         continue
                     with self._lock:
                         is_idle = not self.ws_has_claude.get(vidx, False)
@@ -764,18 +776,6 @@ class HarnessEngine(threading.Thread):
                     else:
                         with self._lock:
                             self.idle_last_read[vidx] = now_ts
-                    # Sidebar state: fetch once per real workspace UUID
-                    if ws_uuid not in sidebar_cache:
-                        sidebar = cmux_api._v2_request("sidebar.state", {"workspace_id": ws_uuid})
-                        sidebar_cache[ws_uuid] = sidebar
-                        if sidebar:
-                            with self._lock:
-                                for w in self.workspaces:
-                                    if w.get("index", w.get("id")) == real_idx:
-                                        w["_cwd"] = sidebar.get("cwd", "")
-                                        w["_branch"] = sidebar.get("gitBranch", sidebar.get("git_branch", ""))
-                                        break
-
                 # Clean up stale virtual indices (surfaces that disappeared)
                 with self._lock:
                     stale_keys = [k for k in list(self.ws_has_claude.keys())

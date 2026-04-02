@@ -155,7 +155,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .card-terminal::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 .card-terminal::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
 .card-footer{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--border)}
-.card-input{flex:1;padding:9px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none}
+.card-input{flex:1;padding:9px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none;-webkit-appearance:none;appearance:none}
 .card-input:focus{border-color:var(--accent)}
 .card-input::placeholder{color:var(--text-muted)}
 .card-send{padding:9px 16px;border-radius:8px;border:none;background:var(--accent);color:#000;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
@@ -186,7 +186,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .mode-btn{padding:8px 14px;font-size:12px;background:var(--bg);color:var(--text-muted);border:none;cursor:pointer;transition:all .15s}
 .mode-btn.active{background:var(--accent);color:#000;font-weight:600}
 .mode-btn:hover:not(.active){background:var(--surface-hover)}
-.exp-input-field{flex:1;padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline:none}
+.exp-input-field{flex:1;padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline:none;-webkit-appearance:none;appearance:none}
 .exp-input-field:focus{border-color:var(--accent)}
 .exp-input-field::placeholder{color:var(--text-muted)}
 .exp-send{padding:10px 22px;border-radius:8px;border:none;background:var(--accent);color:#000;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
@@ -432,7 +432,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
           <button class="mode-btn active" onclick="setMode(this,'raw')">Raw</button>
           <button class="mode-btn" onclick="setMode(this,'intent')">Intent</button>
         </div>
-        <input class="exp-input-field" id="expInput" placeholder="Type a message or instruction..." onkeydown="if(event.key==='Enter')sendExp()">
+        <input type="search" class="exp-input-field" id="expInput" placeholder="Type a message or instruction..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" onkeydown="if(event.key==='Enter')sendExp()">
         <button class="exp-send" onclick="sendExp()">Send &#8629;</button>
       </div>
     </div>
@@ -1243,7 +1243,7 @@ function buildGrid(){
     html+='<div class="card-terminal">'+colorize(w.screenTail)+'</div>';
 
     html+='<div class="card-footer">';
-    html+='<input class="card-input" placeholder="Send message..." id="input-'+w.index+'" onkeydown="if(event.key===\'Enter\')sendToWs('+w.index+')">';
+    html+='<input type="search" class="card-input" placeholder="Send message..." id="input-'+w.index+'" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" onkeydown="if(event.key===\'Enter\')sendToWs('+w.index+')">';
     html+='<button class="card-send" onclick="sendToWs('+w.index+')">Send</button>';
     html+='</div></div>';
   });
@@ -1947,8 +1947,15 @@ window.startRename=function(idx,spanEl){
   // Prevent click propagation to expand-btn etc.
   var currentName=spanEl.textContent;
   var inp=document.createElement('input');
+  inp.type='search';
   inp.className='card-name-edit';
   inp.value=currentName;
+  inp.autocomplete='off';
+  inp.setAttribute('autocorrect','off');
+  inp.setAttribute('autocapitalize','off');
+  inp.setAttribute('spellcheck','false');
+  inp.setAttribute('data-1p-ignore','');
+  inp.setAttribute('data-lpignore','true');
   spanEl.replaceWith(inp);
   inp.focus();
   inp.select();
