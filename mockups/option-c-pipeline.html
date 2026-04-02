@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux — Option C: Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #08080e; --s1: #0f0f18; --s2: #161622; --s3: #1e1e2e;
+    --b: rgba(255,255,255,0.06); --b2: rgba(255,255,255,0.10);
+    --t1: #e8e8f8; --t2: #7878a8; --t3: #404060; --t4: #28283a;
+    --green: #50fa7b; --gg: rgba(80,250,123,0.08); --gb: rgba(80,250,123,0.22);
+    --cyan: #8be9fd; --cg: rgba(139,233,253,0.08); --cb: rgba(139,233,253,0.2);
+    --orange: #ffb86c; --og: rgba(255,184,108,0.08); --ob: rgba(255,184,108,0.25);
+    --purple: #bd93f9; --pg: rgba(189,147,249,0.08); --pb: rgba(189,147,249,0.25);
+    --pink: #ff79c6; --pkb: rgba(255,121,198,0.25);
+    --red: #ff5555; --rb: rgba(255,85,85,0.25);
+    --yellow: #f1fa8c;
+  }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--t1); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+
+  /* COMMAND BAR */
+  .cmd { background: var(--s1); border-bottom: 1px solid var(--b2); padding: 0 22px; height: 60px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .cmd-logo { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; letter-spacing: -.4px; flex-shrink: 0; }
+  .cmd-icon { width: 28px; height: 28px; background: linear-gradient(135deg, var(--purple), #6644ff); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .cmd-sep { width: 1px; height: 24px; background: var(--b2); flex-shrink: 0; }
+  .cmd-input-wrap { flex: 1; position: relative; }
+  .cmd-input { width: 100%; background: var(--s2); border: 1px solid var(--b2); border-radius: 9px; padding: 9px 44px 9px 13px; color: var(--t1); font-family: 'Inter', sans-serif; font-size: 14px; outline: none; transition: border-color .2s; }
+  .cmd-input:focus { border-color: var(--pb); }
+  .cmd-input::placeholder { color: var(--t4); }
+  .cmd-send { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border-radius: 7px; background: linear-gradient(135deg, var(--purple), #6644ff); border: none; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+  .cmd-stats { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .cmd-stat { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--t2); }
+  .cs-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .csd-g { background: var(--green); box-shadow: 0 0 5px var(--green); animation: pulse 2s infinite; }
+  .csd-o { background: var(--orange); }
+  .csd-m { background: var(--t4); }
+
+  /* MISSION TABS */
+  .tabs { background: var(--s1); border-bottom: 1px solid var(--b); padding: 0 22px; height: 38px; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+  .tab { height: 30px; padding: 0 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 5px; color: var(--t2); transition: all .15s; white-space: nowrap; }
+  .tab:hover { background: var(--s2); color: var(--t1); }
+  .tab.on { background: var(--pg); border: 1px solid var(--pb); color: var(--purple); }
+  .tab-dot { width: 5px; height: 5px; border-radius: 50%; }
+  .tdo { background: var(--orange); animation: pulse 1.5s infinite; }
+  .tdg { background: var(--green); }
+  .tab-spacer { flex: 1; }
+  .tab-new { border: 1px solid var(--b2); color: var(--t3); font-size: 12px; }
+
+  /* LAYOUT */
+  .layout { flex: 1; display: flex; overflow: hidden; }
+
+  /* PIPELINE */
+  .pipeline { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .stage-headers { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--b); background: var(--s1); flex-shrink: 0; }
+  .stage-hdr { padding: 10px 14px; border-right: 1px solid var(--b); display: flex; align-items: center; gap: 7px; }
+  .stage-hdr:last-child { border-right: none; }
+  .stage-icon { font-size: 13px; }
+  .stage-name { font-size: 11px; font-weight: 600; color: var(--t2); }
+  .stage-count { margin-left: auto; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+  .sc-c { background: var(--cg); color: var(--cyan); border: 1px solid var(--cb); }
+  .sc-o { background: var(--og); color: var(--orange); border: 1px solid var(--ob); }
+  .sc-p { background: var(--pg); color: var(--purple); border: 1px solid var(--pb); }
+  .sc-g { background: var(--gg); color: var(--green); border: 1px solid var(--gb); }
+
+  .stage-cols { display: grid; grid-template-columns: repeat(4, 1fr); flex: 1; overflow: hidden; }
+  .stage-col { border-right: 1px solid var(--b); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .stage-col:last-child { border-right: none; }
+
+  /* PIPE CARDS */
+  .pcard { background: var(--s1); border: 1px solid var(--b); border-radius: 9px; overflow: hidden; cursor: pointer; transition: all .15s; }
+  .pcard:hover { border-color: var(--b2); transform: translateY(-1px); }
+  .pcard.run { border-left: 3px solid var(--orange); }
+  .pcard.rev { border-left: 3px solid var(--purple); }
+  .pcard.done { border-left: 3px solid var(--green); opacity: .78; }
+  .pcard.plan { border-left: 3px solid var(--cyan); }
+  .pc-body { padding: 10px 11px 8px; }
+  .pc-name { font-size: 12px; font-weight: 500; line-height: 1.4; margin-bottom: 4px; }
+  .pc-branch { font-size: 10px; color: var(--t3); font-family: 'JetBrains Mono', monospace; margin-bottom: 7px; }
+  .pc-pips { display: flex; gap: 3px; margin-bottom: 5px; }
+  .ppip { height: 3px; flex: 1; border-radius: 2px; background: var(--s3); }
+  .ppip.done { background: var(--green); opacity: .6; }
+  .ppip.active { background: var(--orange); }
+  .ppip.purple { background: var(--purple); }
+  .pc-step { font-size: 10px; color: var(--t2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pc-step.run { color: var(--orange); }
+  .pc-step.done { color: var(--green); opacity: .75; }
+  .pc-step.muted { color: var(--t4); }
+  .pc-step.purple { color: var(--purple); }
+
+  /* DETAIL PANEL */
+  .detail { width: 308px; background: var(--s1); border-left: 1px solid var(--b2); display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
+  .detail-head { padding: 13px 15px; border-bottom: 1px solid var(--b); flex-shrink: 0; }
+  .detail-badge-row { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+  .detail-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .db-run { background: var(--og); color: var(--orange); border: 1px solid var(--ob); }
+  .db-done { background: var(--gg); color: var(--green); border: 1px solid var(--gb); }
+  .detail-worker { font-size: 10px; color: var(--t3); font-family: 'JetBrains Mono', monospace; }
+  .detail-title { font-size: 13px; font-weight: 600; letter-spacing: -.3px; line-height: 1.3; margin-bottom: 4px; }
+  .detail-meta { font-size: 11px; color: var(--t2); }
+  .detail-branch { font-size: 10px; color: var(--t4); font-family: 'JetBrains Mono', monospace; margin-top: 3px; }
+
+  /* TIMELINE */
+  .tl { padding: 12px 15px; border-bottom: 1px solid var(--b); flex-shrink: 0; }
+  .tl-label { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--t4); margin-bottom: 10px; }
+  .tl-item { display: flex; gap: 9px; margin-bottom: 8px; align-items: flex-start; }
+  .tl-item:last-child { margin-bottom: 0; }
+  .tl-left { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+  .tl-node { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; }
+  .tln-done { background: var(--gg); color: var(--green); border: 1px solid var(--gb); }
+  .tln-active { background: var(--og); color: var(--orange); border: 1px solid var(--ob); animation: pulse 1.5s infinite; }
+  .tln-pending { background: var(--s3); color: var(--t4); border: 1px solid var(--b); }
+  .tl-line { width: 1px; height: 10px; background: var(--b); margin-top: 2px; }
+  .tl-right { flex: 1; padding-top: 1px; }
+  .tl-name { font-size: 12px; font-weight: 500; line-height: 1.3; }
+  .tln-s-done { color: var(--t2); }
+  .tln-s-active { color: var(--orange); }
+  .tln-s-pending { color: var(--t4); }
+  .tl-detail { font-size: 10px; color: var(--t2); margin-top: 1px; font-family: 'JetBrains Mono', monospace; }
+
+  /* LOG */
+  .log { flex: 1; overflow-y: auto; padding: 10px 15px; }
+  .log-label { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--t4); margin-bottom: 8px; }
+  .log-entry { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--t2); line-height: 1.6; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,.02); }
+  .log-entry span { color: var(--t4); font-size: 10px; margin-right: 6px; }
+  .log-entry.hi { color: var(--orange); }
+  .log-entry.ok { color: var(--green); }
+
+  ::-webkit-scrollbar { width: 3px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- COMMAND BAR -->
+<div class="cmd">
+  <div class="cmd-logo"><div class="cmd-icon">⌘</div>cmux</div>
+  <div class="cmd-sep"></div>
+  <div class="cmd-input-wrap">
+    <input class="cmd-input" type="text" placeholder='Type a goal — e.g. "Refactor the payment module to use the new Stripe SDK"' />
+    <button class="cmd-send">↑</button>
+  </div>
+  <div class="cmd-stats">
+    <div class="cmd-stat"><div class="cs-dot csd-g"></div>2 running</div>
+    <div class="cmd-stat"><div class="cs-dot csd-o"></div>1 review</div>
+    <div class="cmd-stat"><div class="cs-dot csd-m"></div>1 queued</div>
+  </div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <div class="tab on"><div class="tab-dot tdo"></div>Fix token refresh · IOSDOX-24739</div>
+  <div class="tab"><div class="tab-dot tdg"></div>Add AuthCoordinator tests</div>
+  <div class="tab"><div class="tab-dot tdg"></div>Refactor FeedViewModel</div>
+  <div class="tab-spacer"></div>
+  <div class="tab tab-new">+ New goal</div>
+</div>
+
+<!-- LAYOUT -->
+<div class="layout">
+  <div class="pipeline">
+    <!-- STAGE HEADERS -->
+    <div class="stage-headers">
+      <div class="stage-hdr"><span class="stage-icon">🔍</span><span class="stage-name">Planning</span><span class="stage-count sc-c">1</span></div>
+      <div class="stage-hdr"><span class="stage-icon">⚡</span><span class="stage-name">In Progress</span><span class="stage-count sc-o">2</span></div>
+      <div class="stage-hdr"><span class="stage-icon">👁</span><span class="stage-name">Review</span><span class="stage-count sc-p">1</span></div>
+      <div class="stage-hdr"><span class="stage-icon">✓</span><span class="stage-name">Done</span><span class="stage-count sc-g">1</span></div>
+    </div>
+
+    <!-- STAGE COLUMNS -->
+    <div class="stage-cols">
+      <!-- PLANNING -->
+      <div class="stage-col">
+        <div class="pcard plan">
+          <div class="pc-body">
+            <div class="pc-name">Integration tests &amp; PR draft</div>
+            <div class="pc-branch">orchestrator/task-4-tests-pr</div>
+            <div class="pc-pips"><div class="ppip"></div><div class="ppip"></div><div class="ppip"></div></div>
+            <div class="pc-step muted">Queued · waiting on task-2, task-3</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- IN PROGRESS -->
+      <div class="stage-col">
+        <div class="pcard run">
+          <div class="pc-body">
+            <div class="pc-name">Fix expiry check in TokenManager.swift</div>
+            <div class="pc-branch">orchestrator/task-2-token-expiry</div>
+            <div class="pc-pips"><div class="ppip done"></div><div class="ppip done"></div><div class="ppip active"></div><div class="ppip"></div></div>
+            <div class="pc-step run">cp 3/4 · Implementing retry logic</div>
+          </div>
+        </div>
+        <div class="pcard run">
+          <div class="pc-body">
+            <div class="pc-name">Add concurrent request guard to AuthService</div>
+            <div class="pc-branch">orchestrator/task-3-concurrent-guard</div>
+            <div class="pc-pips"><div class="ppip done"></div><div class="ppip active"></div><div class="ppip"></div><div class="ppip"></div></div>
+            <div class="pc-step run">cp 2/4 · Writing AsyncLock actor</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- REVIEW -->
+      <div class="stage-col">
+        <div class="pcard rev">
+          <div class="pc-body">
+            <div class="pc-name">Add unit tests for AuthCoordinator</div>
+            <div class="pc-branch">orchestrator/task-1-auth-tests</div>
+            <div class="pc-pips"><div class="ppip purple"></div><div class="ppip purple"></div><div class="ppip purple"></div></div>
+            <div class="pc-step purple">Review running via claude --print</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DONE -->
+      <div class="stage-col">
+        <div class="pcard done">
+          <div class="pc-body">
+            <div class="pc-name">Audit token refresh flow &amp; write spec</div>
+            <div class="pc-branch">orchestrator/task-1-audit</div>
+            <div class="pc-pips"><div class="ppip done"></div><div class="ppip done"></div><div class="ppip done"></div></div>
+            <div class="pc-step done">✓ spec.md · 312 lines · done in 5m 12s</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DETAIL PANEL -->
+  <div class="detail">
+    <div class="detail-head">
+      <div class="detail-badge-row">
+        <span class="detail-badge db-run">● Running</span>
+        <span class="detail-worker">task-2</span>
+      </div>
+      <div class="detail-title">Fix expiry check in TokenManager.swift</div>
+      <div class="detail-meta">Started 11m 34s ago · checkpoint 3 of 4</div>
+      <div class="detail-branch">orchestrator/task-2-token-expiry</div>
+    </div>
+
+    <!-- CHECKPOINT TIMELINE -->
+    <div class="tl">
+      <div class="tl-label">Checkpoints</div>
+
+      <div class="tl-item">
+        <div class="tl-left"><div class="tl-node tln-done">✓</div><div class="tl-line"></div></div>
+        <div class="tl-right">
+          <div class="tl-name tln-s-done">Read and understand current implementation</div>
+          <div class="tl-detail">Read spec.md · context from task-1 audit</div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-left"><div class="tl-node tln-done">✓</div><div class="tl-line"></div></div>
+        <div class="tl-right">
+          <div class="tl-name tln-s-done">Implement expiry check fix</div>
+          <div class="tl-detail">isTokenExpired() off-by-one resolved</div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-left"><div class="tl-node tln-active">●</div><div class="tl-line"></div></div>
+        <div class="tl-right">
+          <div class="tl-name tln-s-active">Add retry logic</div>
+          <div class="tl-detail">refreshAccessToken() · 3-attempt retry loop</div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-left"><div class="tl-node tln-pending">4</div></div>
+        <div class="tl-right">
+          <div class="tl-name tln-s-pending">Run tests &amp; commit</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div class="log">
+      <div class="log-label">Agent log</div>
+      <div class="log-entry hi"><span>10:46:12</span>Adding retry loop · 3 attempts · exponential backoff</div>
+      <div class="log-entry"><span>10:46:01</span>refreshAccessToken() modified · wiring retry logic</div>
+      <div class="log-entry ok"><span>10:45:49</span>✓ Checkpoint 2 complete · expiry fix committed</div>
+      <div class="log-entry"><span>10:45:33</span>isTokenExpired() off-by-one found · 30s buffer was wrong</div>
+      <div class="log-entry"><span>10:45:18</span>Reading TokenManager.swift · understanding refresh flow</div>
+      <div class="log-entry ok"><span>10:45:05</span>✓ Checkpoint 1 complete · implementation understood</div>
+      <div class="log-entry"><span>10:44:50</span>Read context.md from task-1 audit · 312 lines</div>
+      <div class="log-entry"><span>10:44:38</span>Read spec.md · task scope confirmed</div>
+      <div class="log-entry"><span>10:44:25</span>Task started · reading spec</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

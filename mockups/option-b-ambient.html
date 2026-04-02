@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux — Option B: Ambient Intelligence</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0c0c10; --s1: #141418; --s2: #1a1a20; --s3: #212128;
+    --b: rgba(255,255,255,0.06); --b2: rgba(255,255,255,0.10);
+    --t1: #f0f0f8; --t2: #8888aa; --t3: #44445a; --t4: #26263a;
+    --amber: #e8a838; --ag: rgba(232,168,56,0.12); --ab: rgba(232,168,56,0.25);
+    --green: #4cd97c; --gg: rgba(76,217,124,0.10); --gb: rgba(76,217,124,0.25);
+    --blue: #5588ff; --bg2: rgba(85,136,255,0.10); --bb: rgba(85,136,255,0.25);
+    --purple: #9966ff; --pg: rgba(153,102,255,0.10); --pb: rgba(153,102,255,0.3);
+    --red: #ff5577; --rg: rgba(255,85,119,0.10);
+  }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--t1); height: 100vh; overflow: hidden; display: flex; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+
+  /* SIDEBAR */
+  .sidebar { width: 54px; background: var(--s1); border-right: 1px solid var(--b); display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 6px; flex-shrink: 0; }
+  .s-logo { width: 30px; height: 30px; background: linear-gradient(135deg, var(--amber), #cc7700); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; margin-bottom: 8px; }
+  .s-btn { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; color: var(--t4); transition: all .15s; }
+  .s-btn:hover { background: var(--s2); color: var(--t2); }
+  .s-btn.on { background: var(--ag); color: var(--amber); }
+  .s-sep { width: 28px; height: 1px; background: var(--b); margin: 4px 0; }
+  .s-spacer { flex: 1; }
+
+  /* MAIN */
+  .main { flex: 1; display: flex; overflow: hidden; }
+
+  /* CHAT PANEL */
+  .chat { width: 420px; display: flex; flex-direction: column; border-right: 1px solid var(--b); flex-shrink: 0; overflow: hidden; }
+  .chat-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--b); flex-shrink: 0; }
+  .chat-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--t2); margin-bottom: 2px; }
+  .chat-sub { font-size: 11px; color: var(--t3); }
+
+  /* MESSAGES */
+  .msgs { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { display: flex; flex-direction: column; gap: 4px; }
+  .msg-hdr { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--t3); }
+  .avatar { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+  .av-user { background: linear-gradient(135deg, var(--blue), #2244cc); color: white; }
+  .av-sys { background: linear-gradient(135deg, var(--amber), #cc7700); color: #000; }
+  .bubble { padding: 9px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6; max-width: 340px; margin-left: 29px; }
+  .bub-user { background: var(--bg2); border: 1px solid var(--bb); }
+  .bub-sys { background: var(--s2); border: 1px solid var(--b); }
+  code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+  /* PLAN BLOCK */
+  .plan-block { margin-left: 29px; background: var(--s2); border: 1px solid var(--b2); border-radius: 10px; overflow: hidden; max-width: 360px; }
+  .plan-head { padding: 8px 12px; background: var(--s3); font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--t2); display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--b); }
+  .plan-tasks { padding: 6px; display: flex; flex-direction: column; gap: 3px; }
+  .plan-task { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background .15s; }
+  .plan-task:hover { background: var(--s3); }
+  .pt-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0; }
+  .pti-done { background: var(--gg); color: var(--green); border: 1px solid var(--gb); }
+  .pti-run { background: var(--ag); color: var(--amber); border: 1px solid var(--ab); animation: pulse 1.5s infinite; }
+  .pti-wait { background: var(--s3); color: var(--t4); border: 1px solid var(--b); }
+  .pt-name { flex: 1; color: var(--t1); }
+  .pt-status { font-size: 10px; }
+  .pts-done { color: var(--green); } .pts-run { color: var(--amber); } .pts-wait { color: var(--t4); }
+
+  /* THREAD DIVIDER */
+  .thread-div { border-top: 1px solid var(--b); margin: 2px -18px; }
+
+  /* INPUT */
+  .chat-input { padding: 12px 18px; border-top: 1px solid var(--b); flex-shrink: 0; }
+  .input-row { display: flex; gap: 8px; align-items: flex-end; }
+  .inp { flex: 1; background: var(--s2); border: 1px solid var(--b2); border-radius: 10px; padding: 10px 14px; color: var(--t1); font-family: 'Inter', sans-serif; font-size: 13px; resize: none; outline: none; min-height: 42px; max-height: 100px; line-height: 1.5; transition: border-color .2s; }
+  .inp:focus { border-color: var(--ab); }
+  .inp::placeholder { color: var(--t4); }
+  .send-btn { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, var(--amber), #cc7700); border: none; color: #000; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-weight: 700; }
+
+  /* BOARD */
+  .board { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .board-head { padding: 18px 22px 14px; border-bottom: 1px solid var(--b); flex-shrink: 0; display: flex; align-items: center; gap: 12px; }
+  .board-title { font-size: 15px; font-weight: 600; flex: 1; letter-spacing: -.3px; line-height: 1.3; }
+  .progress-wrap { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .progress-bar { width: 110px; height: 5px; background: var(--s3); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 28%; background: linear-gradient(90deg, var(--amber), #ff9500); border-radius: 3px; }
+  .progress-pct { font-size: 12px; color: var(--t2); }
+
+  /* BOARD CARDS */
+  .board-cards { flex: 1; overflow-y: auto; padding: 16px 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-content: start; }
+  .bcard { background: var(--s1); border: 1px solid var(--b); border-radius: 11px; overflow: hidden; cursor: pointer; transition: all .15s; }
+  .bcard:hover { border-color: var(--b2); transform: translateY(-1px); }
+  .bcard.run { border-color: var(--ab); }
+  .bcard.done { border-color: var(--gb); opacity: .8; }
+  .bcard.queued { opacity: .6; }
+  .bc-head { padding: 11px 13px 8px; display: flex; align-items: flex-start; gap: 8px; }
+  .bc-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+  .bcd-run { background: var(--amber); box-shadow: 0 0 8px var(--amber); animation: pulse 1.5s infinite; }
+  .bcd-done { background: var(--green); }
+  .bcd-q { background: var(--t4); }
+  .bc-title { font-size: 12px; font-weight: 500; flex: 1; line-height: 1.4; }
+  .bc-agent { font-size: 10px; color: var(--t3); font-family: 'JetBrains Mono', monospace; flex-shrink: 0; }
+  .bc-cps { padding: 0 13px 10px; }
+  .cp-pips { display: flex; gap: 3px; margin-bottom: 5px; }
+  .pip { height: 3px; flex: 1; border-radius: 2px; background: var(--s3); }
+  .pip.done { background: var(--green); opacity: .7; }
+  .pip.active { background: var(--amber); }
+  .bc-step { font-size: 10px; color: var(--t2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bc-step.run { color: var(--amber); }
+  .bc-step.done { color: var(--green); opacity: .8; }
+  .bc-step.q { color: var(--t4); }
+
+  /* RESULTS */
+  .board-results { padding: 0 20px 16px; flex-shrink: 0; border-top: 1px solid var(--b); padding-top: 12px; }
+  .results-label { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--t4); margin-bottom: 8px; }
+  .result-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--s1); border: 1px solid var(--gb); border-radius: 8px; }
+  .result-title { font-size: 12px; font-weight: 500; flex: 1; }
+  .result-meta { font-size: 11px; color: var(--t2); }
+  .result-btn { padding: 5px 12px; background: var(--gg); border: 1px solid var(--gb); color: var(--green); border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; }
+
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="sidebar">
+  <div class="s-logo">⌘</div>
+  <div class="s-btn on">💬</div>
+  <div class="s-btn">📋</div>
+  <div class="s-sep"></div>
+  <div class="s-btn">📁</div>
+  <div class="s-btn">⚙</div>
+  <div class="s-spacer"></div>
+  <div class="s-btn">👤</div>
+</div>
+
+<div class="main">
+  <!-- CHAT -->
+  <div class="chat">
+    <div class="chat-head">
+      <div class="chat-title">Orchestrator</div>
+      <div class="chat-sub">Tell it what to build · it handles the rest</div>
+    </div>
+
+    <div class="msgs">
+      <!-- Older session -->
+      <div class="msg">
+        <div class="msg-hdr"><div class="avatar av-user">R</div><span>Ronnie · 2h ago</span></div>
+        <div class="bubble bub-user">Add unit tests for AuthCoordinator — the state machine needs coverage</div>
+      </div>
+      <div class="msg">
+        <div class="msg-hdr"><div class="avatar av-sys">⌘</div><span>cmux · 2h ago</span></div>
+        <div class="bubble bub-sys">Done. 18 tests across all state transitions in <code>AuthCoordinatorTests.swift</code>. All passing, no regressions. PR ready.</div>
+      </div>
+
+      <div class="thread-div"></div>
+
+      <!-- Current -->
+      <div class="msg">
+        <div class="msg-hdr"><div class="avatar av-user">R</div><span>Ronnie · 18m ago</span></div>
+        <div class="bubble bub-user">Fix the token refresh bug in IOSDOX-24739 — tokens are expiring too early and concurrent requests are causing duplicate refreshes</div>
+      </div>
+      <div class="msg">
+        <div class="msg-hdr"><div class="avatar av-sys">⌘</div><span>cmux · 18m ago</span></div>
+        <div class="bubble bub-sys">On it. Breaking this into 4 tasks — running the first three in parallel, the integration test waits for them to finish.</div>
+      </div>
+
+      <!-- Plan block -->
+      <div class="plan-block">
+        <div class="plan-head"><span>📋</span>Plan · 4 tasks</div>
+        <div class="plan-tasks">
+          <div class="plan-task">
+            <div class="pt-icon pti-done">✓</div>
+            <div class="pt-name">Audit token refresh flow &amp; write spec</div>
+            <div class="pt-status pts-done">5m</div>
+          </div>
+          <div class="plan-task">
+            <div class="pt-icon pti-run">●</div>
+            <div class="pt-name">Fix expiry check in TokenManager.swift</div>
+            <div class="pt-status pts-run">cp 3/4</div>
+          </div>
+          <div class="plan-task">
+            <div class="pt-icon pti-run">●</div>
+            <div class="pt-name">Add concurrent request guard to AuthService</div>
+            <div class="pt-status pts-run">cp 2/4</div>
+          </div>
+          <div class="plan-task">
+            <div class="pt-icon pti-wait">–</div>
+            <div class="pt-name">Integration tests &amp; PR draft</div>
+            <div class="pt-status pts-wait">waiting</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="msg-hdr"><div class="avatar av-sys">⌘</div><span>cmux · 11m ago</span></div>
+        <div class="bubble bub-sys">Audit's done. Found the off-by-one in <code>isTokenExpired()</code> and the missing lock on concurrent refreshes. Workers 2 and 3 are on it now.</div>
+      </div>
+    </div>
+
+    <div class="chat-input">
+      <div class="input-row">
+        <textarea class="inp" placeholder="Give it a goal…" rows="1"></textarea>
+        <button class="send-btn">↑</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOARD -->
+  <div class="board">
+    <div class="board-head">
+      <div class="board-title">Fix token refresh bug · IOSDOX-24739</div>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+        <span class="progress-pct">28%</span>
+      </div>
+    </div>
+
+    <div class="board-cards">
+      <div class="bcard done">
+        <div class="bc-head">
+          <div class="bc-dot bcd-done"></div>
+          <div class="bc-title">Audit token refresh flow &amp; write spec</div>
+          <div class="bc-agent">task-1</div>
+        </div>
+        <div class="bc-cps">
+          <div class="cp-pips"><div class="pip done"></div><div class="pip done"></div><div class="pip done"></div></div>
+          <div class="bc-step done">✓ spec.md · 312 lines · done in 5m</div>
+        </div>
+      </div>
+
+      <div class="bcard run">
+        <div class="bc-head">
+          <div class="bc-dot bcd-run"></div>
+          <div class="bc-title">Fix expiry check in TokenManager.swift</div>
+          <div class="bc-agent">task-2</div>
+        </div>
+        <div class="bc-cps">
+          <div class="cp-pips"><div class="pip done"></div><div class="pip done"></div><div class="pip active"></div><div class="pip"></div></div>
+          <div class="bc-step run">cp 3/4 · Implementing retry logic</div>
+        </div>
+      </div>
+
+      <div class="bcard run">
+        <div class="bc-head">
+          <div class="bc-dot bcd-run"></div>
+          <div class="bc-title">Add concurrent request guard to AuthService</div>
+          <div class="bc-agent">task-3</div>
+        </div>
+        <div class="bc-cps">
+          <div class="cp-pips"><div class="pip done"></div><div class="pip active"></div><div class="pip"></div><div class="pip"></div></div>
+          <div class="bc-step run">cp 2/4 · Writing AsyncLock actor</div>
+        </div>
+      </div>
+
+      <div class="bcard queued">
+        <div class="bc-head">
+          <div class="bc-dot bcd-q"></div>
+          <div class="bc-title">Integration tests &amp; PR draft</div>
+          <div class="bc-agent">task-4</div>
+        </div>
+        <div class="bc-cps">
+          <div class="cp-pips"><div class="pip"></div><div class="pip"></div><div class="pip"></div></div>
+          <div class="bc-step q">Waiting on task-2 and task-3</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="board-results">
+      <div class="results-label">Ready to review</div>
+      <div class="result-row">
+        <span>✅</span>
+        <div>
+          <div class="result-title">Add unit tests for AuthCoordinator</div>
+          <div class="result-meta">3 files · 18 tests passing</div>
+        </div>
+        <div class="result-btn">Review →</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

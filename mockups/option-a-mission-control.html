@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux — Option A: Mission Control</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #070b12; --surface: #0d1520; --surface-2: #121c2d; --surface-3: #1a2540;
+    --border: rgba(255,255,255,0.07); --border-2: rgba(255,255,255,0.12);
+    --text-1: #e8edf5; --text-2: #6b7a99; --text-3: #3d4d6b;
+    --accent: #00d4ff; --accent-dim: rgba(0,212,255,0.10); --accent-border: rgba(0,212,255,0.25); --accent-glow: rgba(0,212,255,0.4);
+    --green: #00e676; --green-dim: rgba(0,230,118,0.10); --green-border: rgba(0,230,118,0.3);
+    --amber: #ffb300; --amber-dim: rgba(255,179,0,0.10); --amber-border: rgba(255,179,0,0.3);
+    --red: #ff4444; --red-dim: rgba(255,68,68,0.10);
+    --purple: #b47cff; --purple-dim: rgba(180,124,255,0.10); --purple-border: rgba(180,124,255,0.3);
+  }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text-1); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* TOPBAR */
+  .topbar { height: 52px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; gap: 16px; flex-shrink: 0; }
+  .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
+  .logo-icon { width: 28px; height: 28px; background: linear-gradient(135deg, #00d4ff, #0066ff); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .topbar-sep { width: 1px; height: 20px; background: var(--border-2); }
+  .live-badge { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: blink 2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1}50%{opacity:.4} }
+  .topbar-spacer { flex: 1; }
+  .topbar-right { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-2); }
+  .model-badge { background: var(--accent-dim); border: 1px solid var(--accent-border); color: var(--accent); padding: 3px 9px; border-radius: 5px; font-size: 11px; font-weight: 500; }
+
+  /* LAYOUT */
+  .layout { flex: 1; display: grid; grid-template-columns: 272px 1fr 336px; overflow: hidden; }
+
+  /* LEFT */
+  .left { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .left-section { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+  .section-label { font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); margin-bottom: 10px; }
+
+  /* GOAL INPUT */
+  .goal-wrap { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .goal-textarea { width: 100%; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text-1); font-family: 'Inter', sans-serif; font-size: 13px; resize: none; outline: none; min-height: 68px; line-height: 1.5; transition: border-color .2s; }
+  .goal-textarea:focus { border-color: var(--accent-border); }
+  .goal-textarea::placeholder { color: var(--text-3); }
+  .goal-btn { margin-top: 8px; width: 100%; background: linear-gradient(135deg, #0088cc, #0044ff); border: none; border-radius: 7px; padding: 9px; color: white; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+
+  /* OBJECTIVE LIST */
+  .obj-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .obj-item { padding: 10px; border-radius: 7px; cursor: pointer; margin-bottom: 2px; transition: background .15s; border: 1px solid transparent; }
+  .obj-item:hover { background: var(--surface-2); }
+  .obj-item.active { background: var(--accent-dim); border-color: var(--accent-border); }
+  .obj-title { font-size: 13px; font-weight: 500; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .obj-item.active .obj-title { color: var(--accent); }
+  .obj-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }
+  .status-pill { padding: 1px 7px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .pill-running { background: var(--accent-dim); color: var(--accent); }
+  .pill-done { background: var(--green-dim); color: var(--green); }
+  .pill-planning { background: var(--amber-dim); color: var(--amber); }
+
+  /* CENTER */
+  .center { display: flex; flex-direction: column; overflow: hidden; }
+  .center-head { padding: 16px 20px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .center-goal { font-size: 17px; font-weight: 600; letter-spacing: -.4px; margin-bottom: 6px; }
+  .center-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-2); }
+  .center-meta-dot { color: var(--accent); }
+  .task-list { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+
+  /* TASK CARD */
+  .task { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; transition: border-color .2s; }
+  .task:hover { border-color: var(--border-2); }
+  .task.active { border-color: var(--accent-border); }
+  .task.done { border-color: var(--green-border); opacity: .85; }
+  .task.failed { border-color: rgba(255,68,68,.3); }
+  .task-head { padding: 11px 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .task-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .td-running { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); animation: blink 1.4s infinite; }
+  .td-done { background: var(--green); }
+  .td-queued { background: var(--text-3); }
+  .td-failed { background: var(--red); }
+  .td-planning { background: var(--amber); animation: blink 2s infinite; }
+  .task-name { font-size: 13px; font-weight: 500; flex: 1; }
+  .task-worker { font-size: 10px; color: var(--text-2); font-family: 'JetBrains Mono', monospace; }
+  .task-elapsed { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-3); }
+  .task-elapsed.done { color: var(--green); }
+  .task-branch { font-size: 10px; color: var(--text-3); font-family: 'JetBrains Mono', monospace; }
+
+  /* CHECKPOINTS */
+  .task-cps { padding: 0 14px 12px; }
+  .cp-track { display: flex; align-items: center; margin-bottom: 6px; }
+  .cp-node { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0; z-index: 1; }
+  .cpn-done { background: var(--green); color: #000; }
+  .cpn-active { background: var(--accent); color: #000; box-shadow: 0 0 10px var(--accent-glow); animation: blink 1.2s infinite; }
+  .cpn-pending { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-3); }
+  .cp-line { height: 2px; flex: 1; background: var(--border); }
+  .cp-line.done { background: var(--green); opacity: .4; }
+  .cp-labels { display: flex; margin-bottom: 5px; }
+  .cp-lbl { flex: 1; font-size: 9px; color: var(--text-3); text-align: center; padding: 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cp-lbl.done { color: var(--green); opacity: .7; }
+  .cp-lbl.active { color: var(--accent); }
+  .task-log { font-size: 11px; font-family: 'JetBrains Mono', monospace; background: var(--surface-2); border-radius: 5px; padding: 6px 10px; color: var(--text-2); border-left: 2px solid var(--accent-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+  .task-log.green { border-left-color: var(--green-border); color: var(--green); opacity: .85; }
+  .task-log.muted { color: var(--text-3); border-left-color: transparent; }
+  .task-log.amber { border-left-color: var(--amber-border); color: var(--amber); }
+
+  /* FEED */
+  .feed-bar { padding: 8px 18px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .feed-label { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); }
+  .feed-live { font-size: 10px; color: var(--green); font-weight: 600; }
+  .feed-scroll { height: 120px; overflow-y: auto; padding: 4px 18px 12px; flex-shrink: 0; }
+  .feed-row { display: flex; align-items: baseline; gap: 10px; font-size: 11px; font-family: 'JetBrains Mono', monospace; line-height: 1.7; }
+  .feed-time { color: var(--text-3); font-size: 10px; flex-shrink: 0; }
+  .feed-who { font-size: 10px; flex-shrink: 0; }
+  .fw-blue { color: var(--accent); }
+  .fw-green { color: var(--green); }
+  .fw-amber { color: var(--amber); }
+  .fw-purple { color: var(--purple); }
+  .feed-msg { color: var(--text-2); }
+  .feed-msg.hi { color: var(--text-1); }
+
+  /* RIGHT */
+  .right { background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .right-head { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); }
+  .right-scroll { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+
+  /* REVIEW CARD */
+  .review-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+  .review-card-head { padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+  .review-badge { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+  .rb-passed { background: var(--green-dim); color: var(--green); }
+  .rb-review { background: var(--purple-dim); color: var(--purple); }
+  .review-title-text { font-size: 12px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .review-body { padding: 10px 12px; }
+  .review-summary { font-size: 12px; color: var(--text-2); line-height: 1.6; margin-bottom: 10px; }
+  .review-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px; }
+  .rstat { background: var(--surface); border-radius: 5px; padding: 6px 9px; }
+  .rstat-label { font-size: 10px; color: var(--text-3); margin-bottom: 2px; }
+  .rstat-val { font-size: 14px; font-weight: 600; }
+  .rv-green { color: var(--green); } .rv-accent { color: var(--accent); } .rv-amber { color: var(--amber); }
+  .review-actions { display: flex; gap: 6px; }
+  .btn-accept { flex: 1; background: var(--green-dim); border: 1px solid var(--green-border); color: var(--green); padding: 7px; border-radius: 5px; font-size: 12px; font-weight: 500; cursor: pointer; font-family: 'Inter', sans-serif; text-align: center; }
+  .btn-reject { flex: 1; background: var(--red-dim); border: 1px solid rgba(255,68,68,.2); color: var(--red); padding: 7px; border-radius: 5px; font-size: 12px; font-weight: 500; cursor: pointer; font-family: 'Inter', sans-serif; text-align: center; }
+
+  /* STATS GRID */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 10px 12px; }
+  .stat-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 10px; }
+  .stat-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+  .stat-val { font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+  .stat-sub { font-size: 10px; color: var(--text-2); margin-top: 2px; }
+
+  /* ADVANCED */
+  .advanced-row { margin: 0 12px 10px; padding: 8px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-size: 12px; color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
+  .advanced-row:hover { background: var(--surface-3); }
+
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--text-3); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo"><div class="logo-icon">⌘</div>cmux</div>
+  <div class="topbar-sep"></div>
+  <div class="live-badge"><div class="live-dot"></div>Orchestrator live</div>
+  <div class="topbar-spacer"></div>
+  <div class="topbar-right">
+    <span>3 workers · 1 queued</span>
+    <span class="model-badge">claude-sonnet-4-5</span>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- LEFT -->
+  <div class="left">
+    <div class="goal-wrap">
+      <div class="section-label">New Objective</div>
+      <textarea class="goal-textarea" placeholder="Tell the orchestrator what to build or fix…&#10;e.g. Fix the token refresh bug in IOSDOX-24739"></textarea>
+      <button class="goal-btn">▶ &nbsp;Launch</button>
+    </div>
+    <div class="left-section"><div class="section-label">Active &amp; Recent</div></div>
+    <div class="obj-list">
+      <div class="obj-item active">
+        <div class="obj-title">Fix token refresh bug IOSDOX-24739</div>
+        <div class="obj-meta"><span class="status-pill pill-running">Running</span><span>3 tasks · 18m ago</span></div>
+      </div>
+      <div class="obj-item">
+        <div class="obj-title">Add unit tests for AuthCoordinator</div>
+        <div class="obj-meta"><span class="status-pill pill-done">Done</span><span>2 tasks · 2h ago</span></div>
+      </div>
+      <div class="obj-item">
+        <div class="obj-title">Refactor FeedViewModel pagination</div>
+        <div class="obj-meta"><span class="status-pill pill-done">Done</span><span>1 task · yesterday</span></div>
+      </div>
+      <div class="obj-item">
+        <div class="obj-title">Fix crash on empty state in ProfileView</div>
+        <div class="obj-meta"><span class="status-pill pill-done">Done</span><span>1 task · yesterday</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="center">
+    <div class="center-head">
+      <div class="center-goal">Fix token refresh bug · IOSDOX-24739</div>
+      <div class="center-meta">
+        <span class="center-meta-dot">●</span><span>Running</span>
+        <span>·</span><span>Started 18m ago</span>
+        <span>·</span><span>Planner: haiku-3-5 · Workers: sonnet-4-5</span>
+        <span>·</span><span>Branch base: main</span>
+      </div>
+    </div>
+
+    <div class="task-list">
+
+      <!-- Task 1: Done -->
+      <div class="task done">
+        <div class="task-head">
+          <div class="task-dot td-done"></div>
+          <div class="task-name">Audit token refresh flow &amp; write spec</div>
+          <div class="task-branch">orchestrator/task-1-audit</div>
+          <div class="task-elapsed done">✓ 5m 12s</div>
+        </div>
+        <div class="task-cps">
+          <div class="cp-track">
+            <div class="cp-node cpn-done">✓</div><div class="cp-line done"></div>
+            <div class="cp-node cpn-done">✓</div><div class="cp-line done"></div>
+            <div class="cp-node cpn-done">✓</div>
+          </div>
+          <div class="task-log green">✓ spec.md written to task-1/ · 312 lines · unblocked task-2 and task-3</div>
+        </div>
+      </div>
+
+      <!-- Task 2: Active, cp 3/4 -->
+      <div class="task active">
+        <div class="task-head">
+          <div class="task-dot td-running"></div>
+          <div class="task-name">Fix expiry check in TokenManager.swift</div>
+          <div class="task-branch">orchestrator/task-2-token-expiry</div>
+          <div class="task-elapsed">11m 34s</div>
+        </div>
+        <div class="task-cps">
+          <div class="cp-track">
+            <div class="cp-node cpn-done">✓</div><div class="cp-line done"></div>
+            <div class="cp-node cpn-done">✓</div><div class="cp-line done"></div>
+            <div class="cp-node cpn-active">3</div><div class="cp-line"></div>
+            <div class="cp-node cpn-pending">4</div>
+          </div>
+          <div class="cp-labels">
+            <div class="cp-lbl done">Read impl</div>
+            <div class="cp-lbl done">Fix expiry</div>
+            <div class="cp-lbl active">Add retry</div>
+            <div class="cp-lbl">Run tests</div>
+          </div>
+          <div class="task-log">Implementing retry logic in refreshAccessToken() · handling 401 edge case...</div>
+        </div>
+      </div>
+
+      <!-- Task 3: Active, cp 2/4 -->
+      <div class="task active">
+        <div class="task-head">
+          <div class="task-dot td-running"></div>
+          <div class="task-name">Add concurrent request guard to AuthService</div>
+          <div class="task-branch">orchestrator/task-3-concurrent-guard</div>
+          <div class="task-elapsed">9m 08s</div>
+        </div>
+        <div class="task-cps">
+          <div class="cp-track">
+            <div class="cp-node cpn-done">✓</div><div class="cp-line done"></div>
+            <div class="cp-node cpn-active">2</div><div class="cp-line"></div>
+            <div class="cp-node cpn-pending">3</div><div class="cp-line"></div>
+            <div class="cp-node cpn-pending">4</div>
+          </div>
+          <div class="cp-labels">
+            <div class="cp-lbl done">Read context</div>
+            <div class="cp-lbl active">AsyncLock impl</div>
+            <div class="cp-lbl">Queue logic</div>
+            <div class="cp-lbl">Tests</div>
+          </div>
+          <div class="task-log">Writing AsyncLock actor · withLock() implementation in progress...</div>
+        </div>
+      </div>
+
+      <!-- Task 4: Queued -->
+      <div class="task">
+        <div class="task-head">
+          <div class="task-dot td-queued"></div>
+          <div class="task-name">Integration tests &amp; PR draft</div>
+          <div class="task-branch">orchestrator/task-4-tests-pr</div>
+          <div class="task-elapsed" style="color:var(--amber)">waiting on task-2, task-3</div>
+        </div>
+        <div class="task-cps">
+          <div class="cp-track">
+            <div class="cp-node cpn-pending">1</div><div class="cp-line"></div>
+            <div class="cp-node cpn-pending">2</div><div class="cp-line"></div>
+            <div class="cp-node cpn-pending">3</div>
+          </div>
+          <div class="cp-labels">
+            <div class="cp-lbl">Write tests</div>
+            <div class="cp-lbl">Run suite</div>
+            <div class="cp-lbl">Draft PR</div>
+          </div>
+          <div class="task-log muted">Queued · will launch when task-2 and task-3 complete</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- FEED -->
+    <div class="feed-bar">
+      <span class="feed-label">Live Feed</span>
+      <span class="feed-live">● LIVE</span>
+    </div>
+    <div class="feed-scroll">
+      <div class="feed-row"><span class="feed-time">10:46:12</span><span class="feed-who fw-blue">task-2</span><span class="feed-msg">Implementing retry loop · 401 edge case handling · 3 attempts max</span></div>
+      <div class="feed-row"><span class="feed-time">10:46:01</span><span class="feed-who fw-amber">task-3</span><span class="feed-msg">AsyncLock actor · withLock() method · 38 lines written</span></div>
+      <div class="feed-row"><span class="feed-time">10:45:49</span><span class="feed-who fw-blue">task-2</span><span class="feed-msg hi">✓ Checkpoint 2 complete · expiry check fixed in TokenManager.swift</span></div>
+      <div class="feed-row"><span class="feed-time">10:45:33</span><span class="feed-who fw-amber">task-3</span><span class="feed-msg">Read context.md from task-1 · understood token flow · starting AsyncLock</span></div>
+      <div class="feed-row"><span class="feed-time">10:45:18</span><span class="feed-who fw-blue">task-2</span><span class="feed-msg">isTokenExpired() fixed · off-by-one on expiry buffer resolved</span></div>
+      <div class="feed-row"><span class="feed-time">10:44:55</span><span class="feed-who fw-green">task-1</span><span class="feed-msg hi">✓ Complete · spec.md written · task-2 and task-3 unblocked</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="right">
+    <div class="right-head">Review &amp; Results</div>
+    <div class="right-scroll">
+
+      <!-- Review ready -->
+      <div class="review-card">
+        <div class="review-card-head">
+          <span class="review-badge rb-passed">✓ Passed</span>
+          <div class="review-title-text">Add unit tests for AuthCoordinator</div>
+        </div>
+        <div class="review-body">
+          <div class="review-summary">18 new unit tests covering the coordinator state machine. All passing. No regressions detected in existing suite.</div>
+          <div class="review-stats">
+            <div class="rstat"><div class="rstat-label">Files changed</div><div class="rstat-val rv-accent">3</div></div>
+            <div class="rstat"><div class="rstat-label">Tests</div><div class="rstat-val rv-green">18 ✓</div></div>
+          </div>
+          <div class="review-actions">
+            <div class="btn-accept">Accept &amp; Merge</div>
+            <div class="btn-reject">Discard</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- In-review -->
+      <div class="review-card">
+        <div class="review-card-head">
+          <span class="review-badge rb-review">Reviewing</span>
+          <div class="review-title-text">Refactor FeedViewModel pagination</div>
+        </div>
+        <div class="review-body">
+          <div class="review-summary" style="color:var(--text-3)">Review running via claude --print…</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Done today</div><div class="stat-val rv-green">5</div><div class="stat-sub">1 in review</div></div>
+      <div class="stat-card"><div class="stat-label">Active</div><div class="stat-val rv-accent">3</div><div class="stat-sub">1 queued</div></div>
+      <div class="stat-card"><div class="stat-label">Files touched</div><div class="stat-val rv-amber">24</div><div class="stat-sub">this session</div></div>
+      <div class="stat-card"><div class="stat-label">Avg task</div><div class="stat-val" style="color:var(--text-1)">9m</div><div class="stat-sub">↓ 2m vs prior</div></div>
+    </div>
+
+    <div class="advanced-row"><span>⚙ Terminal sessions (advanced)</span><span>›</span></div>
+  </div>
+</div>
+</body>
+</html>
