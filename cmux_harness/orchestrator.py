@@ -235,10 +235,10 @@ class Orchestrator:
                     # If Claude is still running, wait for it to finish.
                     if not claude_running:
                         break
-                if not claude_running and seen_claude_active and attempt >= 6:
+                if not claude_running and seen_claude_active and attempt >= grace_polls:
                     # Claude was active but now appears to have exited.
-                    # Require at least 30s (6 polls * 5s) to avoid false positives
-                    # from screen detection flicker.
+                    # Require grace_polls (default 36 * 5s = 180s) to avoid false
+                    # positives from screen detection flicker during startup.
                     if plan_exists:
                         break
                     objectives.update_objective(objective_id, {"status": "failed"})
