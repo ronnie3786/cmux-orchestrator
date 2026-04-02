@@ -11,6 +11,7 @@ from . import cmux_api
 from . import detection
 from . import review as review_mod
 from . import storage
+from .orchestrator import Orchestrator
 
 
 class HarnessEngine(threading.Thread):
@@ -57,6 +58,7 @@ class HarnessEngine(threading.Thread):
             self.review_enabled = bool(review_settings.get("enabled", self.review_enabled))
             self.review_model = review_settings.get("model", self.review_model) or self.review_model
             self.review_backend = review_settings.get("backend", self.review_backend) or self.review_backend
+        self.orchestrator = Orchestrator(self)
 
     def _build_virtual_workspaces(self):
         """Expand workspaces into virtual entries, one per surface.
@@ -625,6 +627,8 @@ class HarnessEngine(threading.Thread):
 
     def check_workspace(self, ws):
         idx = ws.get("index", ws.get("id"))
+        if self.orchestrator.is_orchestrated_workspace(ws.get("uuid", "")):
+            return
         ws_name = ws.get("name", f"workspace-{idx}")
         surface_id = ws.get("_surface_id")
         real_idx = ws.get("_real_index", idx)
@@ -898,6 +902,13 @@ class HarnessEngine(threading.Thread):
                         if filter_is_useful and attention_uuids and ws_uuid not in attention_uuids:
                             continue
                         self.check_workspace(vws)
+                active_obj = self.orchestrator.get_active_objective_id()
+                if active_obj:
+                    try:
+                        if hasattr(self.orchestrator, "poll_tasks"):
+                            self.orchestrator.poll_tasks(active_obj)
+                    except Exception as exc:
+                        storage.debug_log({"event": "orchestrator_poll_error", "error": str(exc)})
             except Exception as exc:
                 print(f"[harness] error: {exc}")
             time.sleep(interval)
