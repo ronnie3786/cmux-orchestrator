@@ -7,8 +7,10 @@ import uuid
 from datetime import datetime, timezone
 
 from . import claude_cli
+from . import approval
 from . import cmux_api
 from . import detection
+from . import monitor
 from . import objectives
 from . import planner
 from . import worker
@@ -17,6 +19,17 @@ from .workspace_mutex import WorkspaceMutex
 
 def _utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _coerce_timestamp(value, default=0.0):
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return default
+    return default
 
 
 class Orchestrator:
@@ -382,6 +395,149 @@ class Orchestrator:
             )
 
         objectives.update_objective(objective_id, {"tasks": tasks})
+
+    def poll_tasks(self, objective_id):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return
+
+        for task in objective.get("tasks", []):
+            if task.get("status") not in ("executing", "rework"):
+                continue
+
+            task_id = task["id"]
+            ws_uuid = task.get("workspaceId")
+            worktree_path = task.get("worktreePath")
+            if not ws_uuid:
+                continue
+
+            screen_text = ""
+            try:
+                screen_text = cmux_api.cmux_read_workspace(
+                    0, 0, lines=200, workspace_uuid=ws_uuid
+                ) or ""
+            except Exception:
+                screen_text = ""
+
+            prompt_info = None
+            if screen_text:
+                prompt_info = detection.detect_prompt(screen_text)
+
+            prompt_detected = False
+            if isinstance(prompt_info, dict):
+                prompt_detected = prompt_info.get("type") != "none"
+            elif prompt_info:
+                prompt_detected = True
+
+            if prompt_detected:
+                spec_text = objectives.read_task_file(objective_id, task_id, "spec.md")
+                classification = approval.classify_approval(screen_text, spec_text)
+                if approval.should_auto_approve(classification):
+                    with self.mutex.context(ws_uuid):
+                        cmux_api.cmux_send_to_workspace(
+                            0, 0, text="y\n", workspace_uuid=ws_uuid
+                        )
+                    self._append_message(
+                        objective_id,
+                        "system",
+                        f"Task {task_id}: auto-approved ({classification.get('reason', 'routine')})",
+                        metadata={"task_id": task_id, "classification": classification},
+                    )
+                else:
+                    preview = screen_text[-500:] if len(screen_text) > 500 else screen_text
+                    self._append_message(
+                        objective_id,
+                        "approval",
+                        f"Task {task_id}: needs your input — {classification.get('reason', 'requires human judgment')}",
+                        metadata={
+                            "task_id": task_id,
+                            "classification": classification,
+                            "screen_preview": preview,
+                        },
+                    )
+
+            last_ts = self._task_last_progress.get(task_id, 0)
+            progress_state = monitor.check_progress(objective_id, task_id, last_ts)
+
+            if progress_state.get("has_result"):
+                has_claude = detection.detect_claude_session(screen_text) if screen_text else False
+                if not has_claude:
+                    task["status"] = "reviewing"
+                    objectives.update_objective(objective_id, {"tasks": objective["tasks"]})
+                    self._append_message(
+                        objective_id,
+                        "progress",
+                        f"Task {task_id}: completed, starting review...",
+                        metadata={"task_id": task_id},
+                    )
+                    if hasattr(self, "_run_review"):
+                        threading.Thread(
+                            target=self._run_review,
+                            args=(objective_id, task_id),
+                            daemon=True,
+                        ).start()
+                    continue
+
+            if progress_state.get("has_progress_update"):
+                self._task_last_progress[task_id] = progress_state.get("progress_mtime", time.time())
+                checkpoints = progress_state.get("checkpoints", [])
+                if checkpoints:
+                    task["checkpoints"] = [
+                        {"name": cp.get("name", ""), "status": cp.get("status", "pending")}
+                        for cp in checkpoints
+                    ]
+                    task["lastProgressAt"] = _utc_now_iso()
+                    objectives.update_objective(objective_id, {"tasks": objective["tasks"]})
+                    latest_cp = checkpoints[-1]
+                    self._append_message(
+                        objective_id,
+                        "progress",
+                        f"Task {task_id}: checkpoint '{latest_cp.get('name', '')}' — {latest_cp.get('status', '')}",
+                        metadata={"task_id": task_id, "checkpoints": checkpoints},
+                    )
+
+            last_progress_at = self._task_last_progress.get(task_id)
+            has_git = False
+            if worktree_path:
+                since_ts = last_progress_at
+                if since_ts is None:
+                    since_ts = _coerce_timestamp(task.get("startedAt"), 0.0)
+                has_git = monitor.check_git_activity(worktree_path, since_ts)
+
+            cached_screen = self._task_screen_cache.get(task_id, "")
+            has_terminal_change = screen_text != cached_screen
+            self._task_screen_cache[task_id] = screen_text
+
+            stuck_status = monitor.assess_stuck_status(
+                {
+                    "task_id": task_id,
+                    "status": task.get("status"),
+                    "last_progress_at": last_progress_at,
+                    "has_git_activity": has_git,
+                    "has_terminal_activity": has_terminal_change,
+                    "now": time.time(),
+                }
+            )
+
+            if stuck_status.get("level") == "stalled":
+                preview = screen_text[-500:] if len(screen_text) > 500 else screen_text
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task_id} appears stalled — {stuck_status.get('reason', 'no activity')} ({stuck_status.get('elapsed_minutes', 0):.1f} min)",
+                    metadata={
+                        "task_id": task_id,
+                        "stuck_status": stuck_status,
+                        "screen_preview": preview,
+                    },
+                )
+            elif stuck_status.get("level") == "amber":
+                self._append_message(
+                    objective_id,
+                    "system",
+                    f"Task {task_id}: terminal active but no progress updates ({stuck_status.get('elapsed_minutes', 0):.1f} min)",
+                    metadata={"task_id": task_id, "stuck_status": stuck_status},
+                )
 
     def get_active_objective_id(self):
         with self._lock:

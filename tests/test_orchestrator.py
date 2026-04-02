@@ -329,5 +329,138 @@ class TestTaskLauncher(unittest.TestCase):
         self.assertEqual(context, "")
 
 
+class TestPollTasks(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.project_dir = Path(self.tmpdir.name) / "project"
+        self.project_dir.mkdir()
+        self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
+        self.patch_objectives_dir.start()
+        self.addCleanup(self.patch_objectives_dir.stop)
+        self.orchestrator = Orchestrator(object())
+
+    def _create_objective(self, tasks):
+        objective = objectives.create_objective("Monitor tasks", str(self.project_dir))
+        objectives.update_objective(objective["id"], {"tasks": tasks, "status": "executing"})
+        return objective
+
+    def test_poll_tasks_auto_approves_routine_prompt(self):
+        task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
+        objective = self._create_objective([task])
+        objectives.write_task_file(objective["id"], "task-1", "spec.md", "Routine task")
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Allow write?"), \
+                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "yesno"}), \
+                patch("cmux_harness.orchestrator.approval.classify_approval", return_value={"decision": "APPROVE", "reason": "routine file write"}), \
+                patch("cmux_harness.orchestrator.approval.should_auto_approve", return_value=True), \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send, \
+                patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": False, "has_progress_update": False}), \
+                patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
+                patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "ok"}):
+            self.orchestrator.poll_tasks(objective["id"])
+
+        mock_send.assert_called_once_with(0, 0, text="y\n", workspace_uuid="ws-1")
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertTrue(any(msg["type"] == "system" and "auto-approved" in msg["content"] for msg in messages))
+
+    def test_poll_tasks_escalates_complex_prompt(self):
+        task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
+        objective = self._create_objective([task])
+        objectives.write_task_file(objective["id"], "task-1", "spec.md", "Complex task")
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Choose one option"), \
+                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "yesno"}), \
+                patch("cmux_harness.orchestrator.approval.classify_approval", return_value={"decision": "ESCALATE", "reason": "requires human judgment"}), \
+                patch("cmux_harness.orchestrator.approval.should_auto_approve", return_value=False), \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send, \
+                patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": False, "has_progress_update": False}), \
+                patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
+                patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "ok"}):
+            self.orchestrator.poll_tasks(objective["id"])
+
+        mock_send.assert_not_called()
+        messages = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "approval"]
+        self.assertEqual(len(messages), 1)
+        self.assertIn("needs your input", messages[0]["content"])
+        self.assertEqual(messages[0]["metadata"]["screen_preview"], "Choose one option")
+
+    def test_poll_tasks_detects_completion(self):
+        task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
+        objective = self._create_objective([task])
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value=""), \
+                patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": True, "has_progress_update": False}), \
+                patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
+            self.orchestrator.poll_tasks(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["tasks"][0]["status"], "reviewing")
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertTrue(any(msg["type"] == "progress" and "starting review" in msg["content"] for msg in messages))
+
+    def test_poll_tasks_updates_checkpoints(self):
+        task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
+        objective = self._create_objective([task])
+        checkpoints = [
+            {"name": "Investigate", "status": "done"},
+            {"name": "Implement", "status": "in_progress"},
+        ]
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="screen"), \
+                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "none"}), \
+                patch("cmux_harness.orchestrator.monitor.check_progress", return_value={
+                    "has_result": False,
+                    "has_progress_update": True,
+                    "progress_mtime": 123.0,
+                    "checkpoints": checkpoints,
+                }), \
+                patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
+                patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "ok"}):
+            self.orchestrator.poll_tasks(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(
+            updated["tasks"][0]["checkpoints"],
+            [{"name": "Investigate", "status": "done"}, {"name": "Implement", "status": "in_progress"}],
+        )
+        self.assertIn("lastProgressAt", updated["tasks"][0])
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertTrue(any(msg["type"] == "progress" and "checkpoint 'Implement'" in msg["content"] for msg in messages))
+
+    def test_poll_tasks_detects_stalled(self):
+        task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
+        objective = self._create_objective([task])
+        self.orchestrator._task_last_progress["task-1"] = 0.0
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="stalled screen"), \
+                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "none"}), \
+                patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": False, "has_progress_update": False}), \
+                patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
+                patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "stalled", "reason": "no activity", "elapsed_minutes": 10.0}):
+            self.orchestrator.poll_tasks(objective["id"])
+
+        messages = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "alert"]
+        self.assertEqual(len(messages), 1)
+        self.assertIn("appears stalled", messages[0]["content"])
+        self.assertEqual(messages[0]["metadata"]["screen_preview"], "stalled screen")
+
+    def test_poll_tasks_skips_non_executing_tasks(self):
+        tasks = [
+            {"id": "task-1", "status": "queued", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)},
+            {"id": "task-2", "status": "completed", "workspaceId": "ws-2", "worktreePath": str(self.project_dir)},
+        ]
+        objective = self._create_objective(tasks)
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace") as mock_read, \
+                patch("cmux_harness.orchestrator.monitor.check_progress") as mock_progress:
+            self.orchestrator.poll_tasks(objective["id"])
+
+        mock_read.assert_not_called()
+        mock_progress.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
