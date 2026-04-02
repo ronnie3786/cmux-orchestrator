@@ -429,10 +429,115 @@ If a worker dies mid-task:
 
 ---
 
+## UI Design
+
+**Chosen layout: Cowork-style minimal chat** (Option E)
+- Mockup: `mockups/option-e-cowork.html`
+- Narrow left sidebar (~240px) with objective list + progress indicators
+- Big centered chat (max-width ~720px) as the primary interface
+- No right panel, no dashboard grid, no stats
+- Everything shows inline in the chat: plan cards, progress updates, review results
+- Terminal sessions accessible via a link at the bottom of the sidebar
+
+**How the UI maps to the backend:**
+- Chat input → creates objective, launches planner
+- Inline plan card → rendered from `objective.json` task list after Haiku parses `plan.md`
+- Inline progress updates → derived from `progress.md` file changes detected by monitoring loop
+- Inline review cards → rendered from `review.json` after `claude --print` review completes
+- Sidebar objective list → reads from `~/.cmux-harness/objectives/` directory listing
+- Completion summary → Haiku-generated summary from all `result.md` files
+
+---
+
+## Known Implementation Challenges
+
+### Challenge 1: Streaming progress to the chat in real-time
+
+The chat needs new messages to appear as they happen, not on page refresh. The current harness HTTP server only handles simple request/response polling. For a chat UI, we need either Server-Sent Events (SSE) or WebSocket to push updates to the browser. SSE is simpler and sufficient for one-directional updates (server → browser). This is new plumbing that doesn't exist in the current server.
+
+**Mitigation:** SSE endpoint (`GET /api/events`) that streams new chat messages as they're generated. Browser JS opens an EventSource connection and appends messages to the chat. Fallback: polling `/api/objective/<id>/messages` every 2s for MVP.
+
+### Challenge 2: Parsing planner output reliably
+
+The entire pipeline depends on Haiku correctly parsing Claude Code's free-form conversational text into structured JSON (task titles, dependencies, checkpoint lists, file lists). Claude Code doesn't output structured data — it outputs markdown with natural language. If the parse fails or misinterprets dependencies, the execution order is wrong.
+
+**Mitigation:** 
+- Constrain the planner prompt to request a specific output format (numbered tasks with structured fields)
+- Haiku parsing prompt should include few-shot examples of expected input/output
+- Add a validation step: check that all dependency references are valid, checkpoint counts are reasonable (3-5), file lists are non-empty
+- If parse fails, retry once with a "reformat this plan" prompt before alerting the user
+- Test against 10+ real-world plans before shipping
+
+### Challenge 3: Workers actually updating progress.md
+
+The progress tracking system depends on Claude Code following the instruction to "update progress.md after each checkpoint." Claude Code is good at following instructions but not 100% reliable. It may get deep into coding and skip the update, causing false stuck-detection alarms and a silent chat.
+
+**Mitigation:**
+- Primary signal: `progress.md` file changes (filesystem watch)
+- Secondary signal: git commit activity in the worktree (new commits = progress even if progress.md wasn't updated)
+- Tertiary signal: `surface.read_text` screen content changes (terminal activity = not stuck)
+- Stuck detection should require ALL THREE signals to be absent before flagging, not just progress.md
+- Consider reinforcing the instruction: include "IMPORTANT: Update progress.md NOW before proceeding" at each checkpoint boundary in spec.md
+
+### Challenge 4: Chat history persistence
+
+If the browser is closed and reopened, the chat conversation needs to be reconstructable. The filesystem state (objective.json, progress.md, result.md, review.json) is all persisted, but the conversational messages ("Got it, analyzing codebase...", "Task 2 reached checkpoint 3/4") are not stored.
+
+**Mitigation:** Two options:
+- **Option A (reconstruct):** Derive chat messages from filesystem state on load. Walk through objective.json task statuses, progress.md checkpoints, and review.json results to rebuild the conversation timeline. Cleaner (single source of truth) but harder to implement.
+- **Option B (persist):** Store chat messages in a separate `messages.jsonl` file per objective. Append-only log of all messages with timestamps. Simpler but adds a second source of truth.
+- **Recommendation:** Start with Option B for MVP (simpler), migrate to Option A later if the dual-source-of-truth causes issues.
+
+### Challenge 5: Multiple objectives running simultaneously
+
+The sidebar shows a list of objectives. Clicking between them switches the chat view while workers continue running in the background. The orchestrator engine needs to manage multiple objectives with independent task queues, worker sessions, and monitoring states. The current harness engine is single-threaded with one poll loop.
+
+**Mitigation:**
+- Each objective is self-contained in its filesystem directory — this is already designed correctly
+- The monitoring loop iterates over all active objectives (not just one)
+- Chat view switching is purely frontend — load messages for the selected objective, keep all objectives updating in the background
+- MVP: support 1 active objective at a time, queue additional ones. Add parallelism later.
+
+### Challenge 6: Planner session screen-scraping
+
+The planner is a Claude Code session where we inject a prompt via `surface.send_text` and capture output via `surface.read_text --scrollback`. This is screen-scraping — the most fragile step. If the planner's output exceeds the scrollback buffer, we lose the end of the plan.
+
+**Mitigation:** Make the planner file-based, same as workers. The planner prompt should include: "Write your complete plan to ./plan.md when finished." The orchestrator watches for `plan.md` to appear instead of scraping the terminal. This eliminates the scrollback buffer risk entirely and makes the planner consistent with the worker pattern.
+
+### Challenge 7: Auto-approve and orchestrator input race condition
+
+Auto-approve sends keystrokes to worker terminals. The orchestrator also sends the initial task prompt via `surface.send_text`. If auto-approve fires at the exact moment the orchestrator is sending the task prompt, keystrokes can interleave and corrupt the input.
+
+**Mitigation:**
+- Add a per-workspace mutex in the engine that serializes all `surface.send_text` and `surface.send_key` calls to the same workspace
+- After workspace creation, add a 3-5 second delay before enabling auto-approve for that workspace (let Claude Code fully initialize)
+- The monitoring loop should skip newly-created workspaces for one poll cycle
+
+---
+
+## Implementation Priority Order
+
+Ordered by risk reduction — tackle the hardest/most fragile pieces first:
+
+| Priority | Challenge | Why first | Effort |
+|----------|-----------|-----------|--------|
+| **P0** | #6 — Planner file-based | Eliminates the most fragile part of the pipeline (screen-scraping planner output). Makes planner consistent with worker pattern. | Low |
+| **P0** | #2 — Plan parsing reliability | Everything downstream depends on this. If parsing is unreliable, nothing works. Need prompt engineering + validation + testing. | Medium |
+| **P0** | #3 — progress.md compliance | Core progress tracking depends on this. Need fallback signals (git commits, screen activity) for when workers don't update the file. | Medium |
+| **P1** | #7 — Race condition fix | Easy mutex. Prevents rare but hard-to-debug input corruption. | Low |
+| **P1** | #1 — SSE for live chat updates | Required for the chat UI to feel responsive. Can use polling as interim. | Medium |
+| **P2** | #4 — Chat history persistence | Nice-to-have for MVP. Can start with messages.jsonl append log. | Low |
+| **P2** | #5 — Multi-objective support | MVP works with 1 objective at a time. Add parallelism after core pipeline is proven. | Medium |
+
+**MVP scope:** P0 items + polling-based chat (skip SSE). Get the pipeline working end-to-end with one objective, prove it's reliable, then add polish.
+
+---
+
 ## Open Questions
 
 1. **Max concurrent workers:** How many parallel Claude Code sessions before subscription throttling? Need to test empirically. Start with 2-3 and increase.
-2. **Planner quality:** Does the planner consistently produce parseable output with the checkpoint format? May need prompt iteration.
-3. **progress.md compliance:** Will Claude Code reliably update progress.md after each checkpoint? Needs testing. Fallback: orchestrator watches git commits as a secondary progress signal.
-4. **Worktree branch naming:** Convention `orchestrator/task-N-[slug]`? Need to avoid conflicts with existing branches.
-5. **Objective lifecycle:** When does an objective "expire"? Auto-cleanup after merge? Manual dismissal?
+2. **Planner prompt iteration:** What format produces the most consistently parseable output from Claude Code? Need to test structured markdown, numbered lists, and explicit JSON blocks.
+3. **Worktree branch naming:** Convention `orchestrator/task-N-[slug]`? Need to avoid conflicts with existing branches.
+4. **Objective lifecycle:** When does an objective "expire"? Auto-cleanup after merge? Manual dismissal?
+5. **Chat message format:** What's the JSON schema for persisted chat messages? Need: timestamp, sender (user/orchestrator/system), type (text/plan-card/progress/review/error), and payload.
+6. **Error recovery UX:** When a task fails, what does the chat show? Options: auto-retry silently, show error and ask user, show error with "Retry" button.
