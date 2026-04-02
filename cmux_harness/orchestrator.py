@@ -195,12 +195,32 @@ class Orchestrator:
             # This prevents false "exited" detection during startup.
             seen_claude_active = False
             grace_polls = 6  # 6 * 5s = 30s grace period
+            # Pattern to detect Claude Code permission/approval prompts
+            permission_pattern = re.compile(
+                r"(Do you want to|Allow|Y/n|y/n|❯\s*1\.\s*Yes|Yes, allow all)",
+                re.IGNORECASE,
+            )
             for attempt in range(60):
                 plan_exists = os.path.isfile(plan_path)
                 screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=workspace_uuid) or ""
                 claude_running = detection.detect_claude_session(screen)
                 if claude_running:
                     seen_claude_active = True
+
+                # Auto-approve file write permissions during planning.
+                # Claude Code asks "Do you want to create plan.md?" etc.
+                # We always approve during planning since the planner needs
+                # to write files to fulfill its task.
+                if permission_pattern.search(screen) and claude_running:
+                    try:
+                        with self.mutex.context(workspace_uuid):
+                            cmux_api._v2_request("surface.send_key", {
+                                "workspace_id": workspace_uuid,
+                                "key": "enter",
+                            })
+                    except Exception:
+                        pass
+
                 if plan_exists:
                     # Plan file exists. If Claude has exited, proceed.
                     # If Claude is still running, wait for it to finish.
