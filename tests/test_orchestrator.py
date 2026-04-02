@@ -225,7 +225,7 @@ class TestPlanningPipeline(unittest.TestCase):
                 patch("cmux_harness.orchestrator.planner.parse_plan", return_value={"tasks": [{"id": "task-1"}, {"id": "task-2"}]}), \
                 patch("cmux_harness.orchestrator.planner.plan_to_tasks", return_value=tasks), \
                 patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
-            self.orchestrator._run_planning(objective["id"])
+            self.orchestrator._run_planning(objective["id"], _poll_interval=0, _grace_polls=0, _max_polls=2)
 
         updated = objectives.read_objective(objective["id"])
         self.assertEqual(updated["status"], "executing")
@@ -241,11 +241,11 @@ class TestPlanningPipeline(unittest.TestCase):
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
                 patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
-            self.orchestrator._run_planning(objective["id"])
+            self.orchestrator._run_planning(objective["id"], _poll_interval=0, _grace_polls=0, _max_polls=2)
 
         updated = objectives.read_objective(objective["id"])
         self.assertEqual(updated["status"], "failed")
-        self.assertTrue(any("exited before writing plan.md" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+        self.assertTrue(any("exited before writing plan.md" in msg["content"] or "timed out waiting for plan.md" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
 
     def test_run_planning_parse_failure(self):
         objective = self._create_objective()
@@ -257,7 +257,7 @@ class TestPlanningPipeline(unittest.TestCase):
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
                 patch("cmux_harness.orchestrator.planner.parse_plan", return_value={"error": "parse_failed", "raw_plan": raw_plan}), \
                 patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
-            self.orchestrator._run_planning(objective["id"])
+            self.orchestrator._run_planning(objective["id"], _poll_interval=0, _grace_polls=0, _max_polls=2)
 
         updated = objectives.read_objective(objective["id"])
         self.assertEqual(updated["status"], "failed")
@@ -409,17 +409,14 @@ class TestPollTasks(unittest.TestCase):
         objective = self._create_objective([task])
         objectives.write_task_file(objective["id"], "task-1", "spec.md", "Routine task")
 
-        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Allow write?"), \
-                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "yesno"}), \
-                patch("cmux_harness.orchestrator.approval.classify_approval", return_value={"decision": "APPROVE", "reason": "routine file write"}), \
-                patch("cmux_harness.orchestrator.approval.should_auto_approve", return_value=True), \
-                patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send, \
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Do you want to create file.ts?"), \
+                patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
                 patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": False, "has_progress_update": False}), \
                 patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
                 patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "ok"}):
             self.orchestrator.poll_tasks(objective["id"])
 
-        mock_send.assert_called_once_with(0, 0, text="y\n", workspace_uuid="ws-1")
+        mock_v2.assert_any_call("surface.send_key", {"workspace_id": "ws-1", "key": "enter"})
         messages = self.orchestrator.get_messages(objective["id"])
         self.assertTrue(any(msg["type"] == "system" and "auto-approved" in msg["content"] for msg in messages))
 

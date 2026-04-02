@@ -129,7 +129,7 @@ class Orchestrator:
         threading.Thread(target=self._run_planning, args=(objective_id,), daemon=True).start()
         return True
 
-    def _run_planning(self, objective_id):
+    def _run_planning(self, objective_id, _poll_interval=5, _grace_polls=36, _max_polls=60):
         workspace_uuid = None
         try:
             self._append_message(
@@ -194,13 +194,13 @@ class Orchestrator:
             # (a) seen Claude active at least once, or (b) waited 30+ seconds.
             # This prevents false "exited" detection during startup.
             seen_claude_active = False
-            grace_polls = 36  # 36 * 5s = 180s (3 min) grace period — Claude needs time to analyze codebase before writing
+            grace_polls = _grace_polls
             # Pattern to detect Claude Code permission/approval prompts
             permission_pattern = re.compile(
                 r"(Do you want to|Allow|Y/n|y/n|❯\s*1\.\s*Yes|Yes, allow all)",
                 re.IGNORECASE,
             )
-            for attempt in range(60):
+            for attempt in range(_max_polls):
                 plan_exists = os.path.isfile(plan_path)
                 screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=workspace_uuid) or ""
                 claude_running = detection.detect_claude_session(screen)
@@ -226,8 +226,8 @@ class Orchestrator:
                     except Exception:
                         pass
                     # Don't check exit status this cycle — we just approved
-                    if attempt < 59:
-                        time.sleep(5)
+                    if attempt < _max_polls - 1:
+                        time.sleep(_poll_interval)
                     continue
 
                 if plan_exists:
@@ -248,8 +248,8 @@ class Orchestrator:
                         "Planning failed: Claude Code exited before writing plan.md.",
                     )
                     return
-                if attempt < 59:
-                    time.sleep(5)
+                if attempt < _max_polls - 1:
+                    time.sleep(_poll_interval)
             else:
                 objectives.update_objective(objective_id, {"status": "failed"})
                 self._append_message(
@@ -490,36 +490,61 @@ class Orchestrator:
             except Exception:
                 screen_text = ""
 
-            prompt_info = None
-            if screen_text:
-                prompt_info = detection.detect_prompt(screen_text)
-
-            prompt_detected = False
-            if isinstance(prompt_info, dict):
-                prompt_detected = prompt_info.get("type") != "none"
-            elif prompt_info:
-                prompt_detected = True
-
-            if prompt_detected:
-                spec_text = objectives.read_task_file(objective_id, task_id, "spec.md")
-                classification = approval.classify_approval(screen_text, spec_text)
-                if approval.should_auto_approve(classification):
+            # Fast path: detect Claude Code permission prompts directly
+            # (don't depend on Ollama/local model which may not be running)
+            _perm_re = re.compile(
+                r"(Do you want to|❯\s*1\.\s*Yes|Allow\s+(Read|Write|Edit|Bash)|Yes, allow all|\(Y/n\)|\(y/n\))",
+                re.IGNORECASE,
+            )
+            if screen_text and _perm_re.search(screen_text):
+                # Auto-approve by sending Enter (option 1 "Yes" is pre-selected)
+                try:
                     with self.mutex.context(ws_uuid):
-                        cmux_api.cmux_send_to_workspace(
-                            0, 0, text="y\n", workspace_uuid=ws_uuid
-                        )
+                        cmux_api._v2_request("surface.send_key", {
+                            "workspace_id": ws_uuid,
+                            "key": "enter",
+                        })
                     self._append_message(
                         objective_id,
                         "system",
-                        f"Task {task_id}: auto-approved ({classification.get('reason', 'routine')})",
-                        metadata={"task_id": task_id, "classification": classification},
+                        f"Task {task_id}: auto-approved permission prompt",
+                        metadata={"task_id": task_id},
                     )
-                else:
-                    preview = screen_text[-500:] if len(screen_text) > 500 else screen_text
-                    self._append_message(
-                        objective_id,
-                        "approval",
-                        f"Task {task_id}: needs your input — {classification.get('reason', 'requires human judgment')}",
+                except Exception:
+                    pass
+            else:
+                # Fall back to Haiku classification for non-obvious prompts
+                prompt_info = None
+                if screen_text:
+                    prompt_info = detection.detect_prompt(screen_text)
+
+                prompt_detected = False
+                if isinstance(prompt_info, dict):
+                    prompt_detected = prompt_info.get("type") != "none"
+                elif prompt_info:
+                    prompt_detected = True
+
+                if prompt_detected:
+                    spec_text = objectives.read_task_file(objective_id, task_id, "spec.md")
+                    classification = approval.classify_approval(screen_text, spec_text)
+                    if approval.should_auto_approve(classification):
+                        with self.mutex.context(ws_uuid):
+                            cmux_api._v2_request("surface.send_key", {
+                                "workspace_id": ws_uuid,
+                                "key": "enter",
+                            })
+                        self._append_message(
+                            objective_id,
+                            "system",
+                            f"Task {task_id}: auto-approved ({classification.get('reason', 'routine')})",
+                            metadata={"task_id": task_id, "classification": classification},
+                        )
+                    else:
+                        preview = screen_text[-500:] if len(screen_text) > 500 else screen_text
+                        self._append_message(
+                            objective_id,
+                            "approval",
+                            f"Task {task_id}: needs your input — {classification.get('reason', 'requires human judgment')}",
                         metadata={
                             "task_id": task_id,
                             "classification": classification,
