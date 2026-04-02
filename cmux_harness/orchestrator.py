@@ -455,18 +455,18 @@ class Orchestrator:
             if not cmux_api.send_prompt_to_workspace(ws_uuid, worker.build_task_prompt(task["id"])):
                 continue
 
-            task["status"] = "executing"
-            task["workspaceId"] = ws_uuid
-            task["worktreePath"] = worktree_path
-            task["worktreeBranch"] = branch_name
-            task["startedAt"] = _utc_now_iso()
+            objectives.update_task(objective_id, task["id"], {
+                "status": "executing",
+                "workspaceId": ws_uuid,
+                "worktreePath": worktree_path,
+                "worktreeBranch": branch_name,
+                "startedAt": _utc_now_iso(),
+            })
             self._append_message(
                 objective_id,
                 "system",
                 f"Task {task['id']}: {task['title']} — launched",
             )
-
-        objectives.update_objective(objective_id, {"tasks": tasks})
 
     def poll_tasks(self, objective_id):
         objective = objectives.read_objective(objective_id)
