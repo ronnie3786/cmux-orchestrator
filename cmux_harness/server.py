@@ -50,19 +50,21 @@ def make_handler(engine):
                 return {}
 
         def do_GET(self):
-            if self.path == "/":
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            if path == "/":
                 body = DASHBOARD_HTML.encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            elif self.path == "/api/status":
+            elif path == "/api/status":
                 self._json_response(engine.get_status())
-            elif self.path == "/api/log":
+            elif path == "/api/log":
                 self._json_response(engine.get_log())
-            elif self.path.startswith("/api/git-status"):
-                qs = urllib.parse.urlparse(self.path).query
+            elif path.startswith("/api/git-status"):
+                qs = parsed.query
                 params = urllib.parse.parse_qs(qs)
                 idx_str = params.get("index", [None])[0]
                 if idx_str is None:
@@ -74,8 +76,8 @@ def make_handler(engine):
                     return
                 result["ok"] = True
                 self._json_response(result)
-            elif self.path.startswith("/api/screen"):
-                qs = urllib.parse.urlparse(self.path).query
+            elif path.startswith("/api/screen"):
+                qs = parsed.query
                 params = urllib.parse.parse_qs(qs)
                 idx_str = params.get("index", [None])[0]
                 lines_str = params.get("lines", ["200"])[0]
@@ -100,30 +102,55 @@ def make_handler(engine):
                         workspace_uuid=ws_uuid, surface_id=sid
                     ) or ""
                 self._json_response({"ok": True, "screen": screen, "lines": lines})
-            elif self.path == "/api/reviews":
+            elif path == "/api/reviews":
                 reviews = []
                 for review in storage.list_reviews():
                     item = dict(review)
                     item["gitDiff"] = (item.get("gitDiff") or "")[:500]
                     reviews.append(item)
                 self._json_response(reviews)
-            elif self.path == "/api/objectives":
+            elif path == "/api/objectives":
                 self._json_response(objectives.list_objectives())
-            elif self.path.startswith("/api/objectives/"):
-                objective_id = urllib.parse.unquote(self.path[len("/api/objectives/"):]).strip("/")
+            elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
+                parts = path.split("/")
+                objective_id = parts[3]
+                task_id = parts[5]
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "Not found"}, 404)
+                    return
+                task = next((t for t in objective.get("tasks", []) if t.get("id") == task_id), None)
+                if not task or not task.get("workspaceId"):
+                    self._json_response({"ok": False, "error": "Task not found"}, 404)
+                    return
+                try:
+                    screen = cmux_api.cmux_read_workspace(
+                        0, 0, lines=200, workspace_uuid=task["workspaceId"]
+                    ) or ""
+                except Exception:
+                    screen = ""
+                self._json_response({"ok": True, "screen": screen, "lines": 200})
+            elif path.startswith("/api/objectives/") and "/messages" in path:
+                objective_id = path.split("/")[3]
+                params = urllib.parse.parse_qs(parsed.query)
+                after = params.get("after", [None])[0]
+                messages = self.server.engine.orchestrator.get_messages(objective_id, after=after)
+                self._json_response(messages)
+            elif path.startswith("/api/objectives/"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
                 objective = objectives.read_objective(objective_id)
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 self._json_response(objective)
-            elif self.path.startswith("/api/reviews/"):
-                session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):])
+            elif path.startswith("/api/reviews/"):
+                session_id = urllib.parse.unquote(path[len("/api/reviews/"):])
                 review = storage.get_review(session_id)
                 if review is None:
                     self._json_response({"ok": False, "error": "review not found"}, 404)
                     return
                 self._json_response(review)
-            elif self.path == "/api/config":
+            elif path == "/api/config":
                 with engine._lock:
                     self._json_response({
                         "pollInterval": engine.poll_interval,
@@ -132,7 +159,7 @@ def make_handler(engine):
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
                     })
-            elif self.path == "/api/models":
+            elif path == "/api/models":
                 # Use cached availability — if already known unavailable, skip the connect attempt
                 with engine._lock:
                     cached = engine.ollama_available
@@ -181,11 +208,36 @@ def make_handler(engine):
                 self.send_error(404)
 
         def do_POST(self):
+            path = urllib.parse.urlparse(self.path).path
             data = self._read_body()
-            if self.path == "/api/toggle":
+            if path == "/api/toggle":
                 engine.set_enabled(data.get("enabled", False))
                 self._json_response({"ok": True, "enabled": engine.enabled})
-            elif self.path == "/api/objectives":
+            elif path.startswith("/api/objectives/") and path.endswith("/start"):
+                objective_id = path.split("/")[3]
+                started = self.server.engine.orchestrator.start_objective(objective_id)
+                if started:
+                    self._json_response({"ok": True, "status": "planning"})
+                else:
+                    self._json_response({"ok": False, "error": "Could not start objective"}, 400)
+            elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/approve"):
+                parts = path.split("/")
+                objective_id = parts[3]
+                task_id = parts[5]
+                action = data.get("action", "y\n")
+                self.server.engine.orchestrator.handle_human_input(
+                    objective_id,
+                    f"Approved: {action}",
+                    context={"task_id": task_id, "approval_action": action},
+                )
+                self._json_response({"ok": True})
+            elif path.startswith("/api/objectives/") and path.endswith("/message"):
+                objective_id = path.split("/")[3]
+                message = data.get("message", "")
+                context = data.get("context")
+                self.server.engine.orchestrator.handle_human_input(objective_id, message, context)
+                self._json_response({"ok": True})
+            elif path == "/api/objectives":
                 goal = data.get("goal", "")
                 project_dir = data.get("projectDir", "")
                 base_branch = data.get("baseBranch", "main")
@@ -198,7 +250,7 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": str(e)}, 500)
                     return
                 self._json_response(objective, 201)
-            elif self.path == "/api/workspace":
+            elif path == "/api/workspace":
                 idx = data.get("index")
                 enabled = data.get("enabled", True)
                 if idx is not None:
@@ -210,7 +262,7 @@ def make_handler(engine):
                     real_idx = vws.get("_real_index", idx) if vws else idx
                     engine.set_workspace_enabled(real_idx, enabled)
                 self._json_response({"ok": True})
-            elif self.path == "/api/config":
+            elif path == "/api/config":
                 pi = data.get("pollInterval")
                 if pi is not None:
                     engine.set_poll_interval(pi)
@@ -235,7 +287,7 @@ def make_handler(engine):
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
                     })
-            elif self.path == "/api/rename":
+            elif path == "/api/rename":
                 idx = data.get("index")
                 name = data.get("name", "")
                 if idx is None:
@@ -252,7 +304,7 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "workspace not found"}, 404)
                     return
                 self._json_response({"ok": True})
-            elif self.path == "/api/send":
+            elif path == "/api/send":
                 idx = data.get("index")
                 text = data.get("text", "")
                 surface_id = data.get("surfaceId")
@@ -283,8 +335,8 @@ def make_handler(engine):
                     with engine._lock:
                         engine.fingerprints.pop(idx, None)
                 self._json_response({"ok": ok})
-            elif self.path.startswith("/api/reviews/") and self.path.endswith("/rerun"):
-                session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):-len("/rerun")]).rstrip("/")
+            elif path.startswith("/api/reviews/") and path.endswith("/rerun"):
+                session_id = urllib.parse.unquote(path[len("/api/reviews/"):-len("/rerun")]).rstrip("/")
                 path = storage.get_review_path(session_id)
                 if path is None:
                     self._json_response({"ok": False, "error": "review not found"}, 404)
@@ -312,8 +364,8 @@ def make_handler(engine):
                     daemon=True,
                 ).start()
                 self._json_response({"ok": True})
-            elif self.path.startswith("/api/reviews/") and self.path.endswith("/dismiss"):
-                session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):-len("/dismiss")]).rstrip("/")
+            elif path.startswith("/api/reviews/") and path.endswith("/dismiss"):
+                session_id = urllib.parse.unquote(path[len("/api/reviews/"):-len("/dismiss")]).rstrip("/")
                 path = storage.get_review_path(session_id)
                 if path is None:
                     self._json_response({"ok": False, "error": "review not found"}, 404)
@@ -329,7 +381,7 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": str(e)}, 500)
                     return
                 self._json_response({"ok": True})
-            elif self.path == "/api/new-session":
+            elif path == "/api/new-session":
                 project_path = data.get("projectPath", "~/Documents/Development/Doximity-Claude")
                 branch_name = data.get("branchName", "")
                 jira_url = data.get("jiraUrl", "")

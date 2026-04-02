@@ -135,6 +135,63 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIsNone(self.orchestrator.get_active_objective_id())
         self.assertEqual(self.orchestrator.get_messages(objective["id"])[-1]["content"], "Objective stopped.")
 
+
+class TestAPIEndpoints(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
+        self.patch_objectives_dir.start()
+        self.addCleanup(self.patch_objectives_dir.stop)
+        self.engine = object()
+        self.orchestrator = Orchestrator(self.engine)
+
+    def test_start_objective_via_orchestrator(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+
+        with patch("cmux_harness.orchestrator.threading.Thread"):
+            started = self.orchestrator.start_objective(objective["id"])
+
+        self.assertTrue(started)
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "planning")
+
+    def test_get_messages_returns_messages(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+
+        with patch("cmux_harness.orchestrator.threading.Thread"):
+            self.orchestrator.start_objective(objective["id"])
+
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["type"], "system")
+        self.assertIn("Starting objective: Ship feature", messages[0]["content"])
+
+    def test_get_messages_filters_by_after(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+
+        with patch("cmux_harness.orchestrator.threading.Thread"):
+            self.orchestrator.start_objective(objective["id"])
+
+        first_message = self.orchestrator.get_messages(objective["id"])[0]
+        self.orchestrator._append_message(objective["id"], "system", "Second message")
+
+        messages = self.orchestrator.get_messages(objective["id"], after=first_message["timestamp"])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["content"], "Second message")
+
+    def test_handle_human_input_logs_message(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+
+        self.orchestrator.handle_human_input(objective["id"], "Need a change here")
+
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["type"], "user")
+        self.assertEqual(messages[0]["content"], "Need a change here")
+
 class TestPlanningPipeline(unittest.TestCase):
 
     def setUp(self):
