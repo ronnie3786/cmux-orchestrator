@@ -307,16 +307,78 @@ def make_handler(engine):
                     return
                 self._json_response({"ok": True})
             elif self.path == "/api/new-session":
-                name = data.get("name", "New Session")
-                cwd = data.get("cwd", "~/Documents/Development/Doximity-Claude")
+                project_path = data.get("projectPath", "~/Documents/Development/Doximity-Claude")
+                branch_name = data.get("branchName", "")
+                jira_url = data.get("jiraUrl", "")
+                prompt = data.get("prompt", "")
                 command = data.get("command", "claude")
 
+                # Expand ~ in project path
+                project_path = os.path.expanduser(project_path)
+
+                if not os.path.isdir(project_path):
+                    self._json_response({"ok": False, "error": f"Project directory not found: {project_path}"}, 400)
+                    return
+
+                cwd = project_path
+                session_name = branch_name or "New Session"
+
+                # Create git worktree if branch name provided
+                if branch_name:
+                    worktrees_dir = os.path.join(project_path, ".claude", "worktrees")
+                    os.makedirs(worktrees_dir, exist_ok=True)
+                    worktree_path = os.path.join(worktrees_dir, branch_name)
+
+                    if os.path.exists(worktree_path):
+                        self._json_response({"ok": False, "error": f"Worktree already exists: {branch_name}"}, 409)
+                        return
+
+                    try:
+                        result = subprocess.run(
+                            ["git", "worktree", "add", worktree_path, "-b", branch_name],
+                            cwd=project_path, capture_output=True, text=True, timeout=30,
+                        )
+                        if result.returncode != 0:
+                            err = (result.stderr or "").strip()
+                            # Branch already exists in git — try without -b to reuse it
+                            if "already exists" in err.lower():
+                                result = subprocess.run(
+                                    ["git", "worktree", "add", worktree_path, branch_name],
+                                    cwd=project_path, capture_output=True, text=True, timeout=30,
+                                )
+                                if result.returncode != 0:
+                                    self._json_response({"ok": False, "error": f"Worktree failed: {(result.stderr or '').strip()}"}, 500)
+                                    return
+                            else:
+                                self._json_response({"ok": False, "error": f"Worktree failed: {err}"}, 500)
+                                return
+                    except subprocess.TimeoutExpired:
+                        self._json_response({"ok": False, "error": "Worktree creation timed out"}, 500)
+                        return
+                    except OSError as e:
+                        self._json_response({"ok": False, "error": f"Worktree error: {e}"}, 500)
+                        return
+
+                    cwd = worktree_path
+
+                # Create cmux workspace
                 ws_uuid = None
                 ws_idx = None
+                cli_result = None
 
-                # Try single CLI call (handles name, cwd, and command in one shot)
+                def _ws_ids(list_result):
+                    """Return a set of workspace IDs from a workspace.list result."""
+                    if not list_result:
+                        return set()
+                    ws_list = list_result if isinstance(list_result, list) else list_result.get("workspaces", [])
+                    return {w.get("id") or w.get("uuid") for w in ws_list if w.get("id") or w.get("uuid")}
+
+                # Snapshot existing workspaces before creation so we can identify the new one
+                pre_list = cmux_api._v2_request("workspace.list", {})
+                existing_ids = _ws_ids(pre_list)
+
                 try:
-                    cli_args = ["cmux", "new-workspace", "--name", name]
+                    cli_args = ["cmux", "new-workspace", "--name", session_name]
                     if cwd:
                         cli_args += ["--cwd", cwd]
                     if command:
@@ -330,30 +392,38 @@ def make_handler(engine):
                     cli_result = None
 
                 if cli_result is None:
-                    # Fallback: v2 API create + send
                     create_result = cmux_api._v2_request("workspace.create", {})
                     if create_result is None:
                         self._json_response({"ok": False, "error": "Failed to create workspace"})
                         return
 
-                # Resolve UUID + index via workspace.list
+                # Resolve UUID + index: find the workspace that wasn't there before
                 list_result = cmux_api._v2_request("workspace.list", {})
                 if list_result:
                     ws_list = list_result if isinstance(list_result, list) else list_result.get("workspaces", [])
-                    if ws_list:
-                        newest = ws_list[-1]
-                        ws_uuid = newest.get("id") or newest.get("uuid")
-                        ws_idx = newest.get("index")
+                    # Prefer a workspace whose ID is new (wasn't in pre-creation snapshot)
+                    new_ws = next(
+                        (w for w in ws_list if (w.get("id") or w.get("uuid")) not in existing_ids),
+                        None,
+                    )
+                    # Fallback: find by matching session name
+                    if new_ws is None:
+                        new_ws = next(
+                            (w for w in reversed(ws_list) if w.get("title") == session_name or w.get("name") == session_name),
+                            None,
+                        )
+                    if new_ws:
+                        ws_uuid = new_ws.get("id") or new_ws.get("uuid")
+                        ws_idx = new_ws.get("index")
 
                 if not ws_uuid:
                     self._json_response({"ok": False, "error": "Failed to resolve new workspace"})
                     return
 
-                # If CLI failed, do rename + command send manually
                 if cli_result is None:
                     try:
                         cmux_api._v2_request("workspace.rename", {
-                            "workspace_id": ws_uuid, "title": name,
+                            "workspace_id": ws_uuid, "title": session_name,
                         })
                     except Exception:
                         pass
@@ -366,9 +436,74 @@ def make_handler(engine):
                         pass
 
                 # Save config
-                engine.ws_config.setdefault(ws_uuid, {})["customName"] = name
+                engine.ws_config.setdefault(ws_uuid, {})["customName"] = session_name
                 storage.save_config(engine.ws_config, engine.review_enabled, engine.review_model, engine.review_backend)
-                self._json_response({"ok": True, "workspace": {"index": ws_idx, "uuid": ws_uuid}})
+
+                # Deliver prompt in background — waits for Claude Code REPL to be ready
+                if prompt and ws_uuid:
+                    def _deliver_prompt(uuid, text):
+                        """Poll for Claude Code REPL readiness, then inject prompt.
+
+                        Uses cmux_api.send_prompt_to_workspace which mirrors WebMux's
+                        sendPrompt() pattern: tmux paste-buffer (atomic) first, then
+                        separate send_text + send_key("enter") fallback. Never embeds
+                        \\n in the text — cmux does not interpret it as Enter.
+                        """
+                        import re
+                        # Match Claude Code's status bar lines individually — they appear
+                        # on separate lines so we can't use a single cross-line pattern.
+                        # The REPL prompt char is ❯ (U+276F), not ASCII >.
+                        # Cost can be $0.00 (2 decimal digits).
+                        repl_ready = re.compile(
+                            r"(Model:|Cost:\s*\$\d|\u276f\s*$)",
+                            re.MULTILINE | re.IGNORECASE,
+                        )
+                        for attempt in range(20):  # up to ~50s
+                            time.sleep(2.5)
+                            try:
+                                screen = cmux_api.cmux_read_workspace(
+                                    0, 0, lines=30, workspace_uuid=uuid,
+                                )
+                                matched = bool(screen and repl_ready.search(screen))
+                                storage.debug_log({
+                                    "event": "deliver_prompt_poll",
+                                    "workspace_uuid": uuid,
+                                    "attempt": attempt,
+                                    "screen_len": len(screen) if screen else 0,
+                                    "ready": matched,
+                                })
+                                if matched:
+                                    ok = cmux_api.send_prompt_to_workspace(uuid, text)
+                                    storage.debug_log({
+                                        "event": "deliver_prompt_sent",
+                                        "workspace_uuid": uuid,
+                                        "ok": ok,
+                                        "text_preview": text[:80],
+                                    })
+                                    if ok:
+                                        return
+                                    # Send failed — wait and retry once
+                                    time.sleep(1.0)
+                                    cmux_api.send_prompt_to_workspace(uuid, text)
+                                    return
+                            except Exception as exc:
+                                storage.debug_log({
+                                    "event": "deliver_prompt_error",
+                                    "workspace_uuid": uuid,
+                                    "attempt": attempt,
+                                    "error": str(exc),
+                                })
+                    t = threading.Thread(
+                        target=_deliver_prompt, args=(ws_uuid, prompt), daemon=True,
+                    )
+                    t.start()
+
+                self._json_response({
+                    "ok": True,
+                    "workspace": {"index": ws_idx, "uuid": ws_uuid},
+                    "worktreePath": cwd,
+                    "branchName": branch_name,
+                })
             elif self.path == "/api/git-stage":
                 idx = data.get("index")
                 file = data.get("file")

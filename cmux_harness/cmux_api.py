@@ -5,6 +5,7 @@ import logging
 import os
 import socket
 import subprocess
+import time as _time
 
 log = logging.getLogger(__name__)
 
@@ -170,6 +171,83 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
         except OSError:
             pass
         sock.close()
+
+
+def _try_tmux_paste(pane_ref, text):
+    """Inject text via tmux load-buffer + paste-buffer + Enter.
+    This is more reliable than send-keys -l for long or multi-line text.
+    Returns True on success, False on any failure."""
+    buf_name = f"harness-{int(_time.time() * 1000)}"
+    try:
+        r = subprocess.run(
+            ["tmux", "load-buffer", "-b", buf_name, "-"],
+            input=text.encode(),
+            capture_output=True,
+            timeout=5,
+        )
+        if r.returncode != 0:
+            return False
+        r = subprocess.run(
+            ["tmux", "paste-buffer", "-b", buf_name, "-t", pane_ref, "-d"],
+            capture_output=True,
+            timeout=5,
+        )
+        if r.returncode != 0:
+            # Clean up buffer if paste failed
+            subprocess.run(["tmux", "delete-buffer", "-b", buf_name], capture_output=True, timeout=3)
+            return False
+        r = subprocess.run(
+            ["tmux", "send-keys", "-t", pane_ref, "Enter"],
+            capture_output=True,
+            timeout=5,
+        )
+        return r.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _find_pane_ref_for_workspace(workspace_uuid):
+    """Look up the first pane ref for a workspace UUID.
+    Returns a pane ref string if found, or None."""
+    data = _v2_request("system.tree", {"all": True})
+    if not data:
+        return None
+    for win in data.get("windows", []):
+        for ws in win.get("workspaces", []):
+            if ws.get("uuid") == workspace_uuid or ws.get("id") == workspace_uuid:
+                panes = ws.get("panes", [])
+                if panes:
+                    return panes[0].get("ref")
+    return None
+
+
+def send_prompt_to_workspace(workspace_uuid, text, surface_id=None):
+    """Send a prompt to a workspace and submit it.
+
+    Mirrors WebMux's sendPrompt() approach: try tmux paste-buffer for atomic,
+    reliable delivery of long/multi-line text; fall back to surface.send_text +
+    surface.send_key("enter") as separate calls. Never embeds newline in send_text
+    (cmux does not interpret \\n as Enter).
+
+    Returns True if the submit key was sent successfully.
+    """
+    # Attempt 1: tmux paste-buffer (atomic, handles long text)
+    pane_ref = _find_pane_ref_for_workspace(workspace_uuid)
+    if pane_ref:
+        if _try_tmux_paste(pane_ref, text):
+            return True
+
+    # Attempt 2: cmux v2 send_text + send_key("enter") — always separate calls
+    params = {"workspace_id": workspace_uuid, "text": text}
+    if surface_id:
+        params["surface_id"] = surface_id
+    _v2_request("surface.send_text", params)
+    _time.sleep(0.15)
+    key_params = {"workspace_id": workspace_uuid, "key": "enter"}
+    if surface_id:
+        key_params["surface_id"] = surface_id
+    result = _v2_request("surface.send_key", key_params)
+    return result is not None
 
 
 # Virtual index scheme: workspace idx 0 with 3 surfaces becomes idx 0, 10000, 10001.
