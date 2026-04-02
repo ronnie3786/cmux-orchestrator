@@ -190,13 +190,24 @@ class Orchestrator:
                 return
 
             plan_path = os.path.join(project_dir, "plan.md")
+            # Grace period: don't check for Claude exit until we've either
+            # (a) seen Claude active at least once, or (b) waited 30+ seconds.
+            # This prevents false "exited" detection during startup.
+            seen_claude_active = False
+            grace_polls = 6  # 6 * 5s = 30s grace period
             for attempt in range(60):
                 plan_exists = os.path.isfile(plan_path)
-                screen = cmux_api.cmux_read_workspace(0, 0, lines=30, workspace_uuid=workspace_uuid) or ""
+                screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=workspace_uuid) or ""
                 claude_running = detection.detect_claude_session(screen)
-                if plan_exists and not claude_running:
-                    break
-                if not claude_running:
+                if claude_running:
+                    seen_claude_active = True
+                if plan_exists:
+                    # Plan file exists. If Claude has exited, proceed.
+                    # If Claude is still running, wait for it to finish.
+                    if not claude_running:
+                        break
+                if not claude_running and (seen_claude_active or attempt >= grace_polls):
+                    # Claude has exited (or never started) and we're past the grace period
                     if plan_exists:
                         break
                     objectives.update_objective(objective_id, {"status": "failed"})
