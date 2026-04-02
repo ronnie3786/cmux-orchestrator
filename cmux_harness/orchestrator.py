@@ -211,7 +211,12 @@ class Orchestrator:
                 # Claude Code asks "Do you want to create plan.md?" etc.
                 # We always approve during planning since the planner needs
                 # to write files to fulfill its task.
-                if permission_pattern.search(screen) and claude_running:
+                # NOTE: detect_claude_session may return False while the
+                # permission prompt is showing, so check for permission
+                # prompts independently of claude_running.
+                if permission_pattern.search(screen):
+                    # The permission prompt IS proof Claude is running
+                    seen_claude_active = True
                     try:
                         with self.mutex.context(workspace_uuid):
                             cmux_api._v2_request("surface.send_key", {
@@ -220,6 +225,10 @@ class Orchestrator:
                             })
                     except Exception:
                         pass
+                    # Don't check exit status this cycle — we just approved
+                    if attempt < 59:
+                        time.sleep(5)
+                    continue
 
                 if plan_exists:
                     # Plan file exists. If Claude has exited, proceed.
