@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import re
 import subprocess
 import threading
@@ -472,6 +473,10 @@ class Orchestrator:
         if objective is None:
             return
 
+        # Track which tasks have active review threads to prevent duplicates
+        if not hasattr(self, "_review_in_progress"):
+            self._review_in_progress = set()
+
         for task in objective.get("tasks", []):
             if task.get("status") not in ("executing", "rework"):
                 continue
@@ -557,6 +562,9 @@ class Orchestrator:
             progress_state = monitor.check_progress(objective_id, task_id, last_ts, worktree_path=wt_path)
 
             if progress_state.get("has_result"):
+                # Skip if a review thread is already running for this task
+                if task_id in self._review_in_progress:
+                    continue
                 has_claude = detection.detect_claude_session(screen_text) if screen_text else False
                 if not has_claude:
                     task["status"] = "reviewing"
@@ -568,8 +576,9 @@ class Orchestrator:
                         metadata={"task_id": task_id},
                     )
                     if hasattr(self, "_run_review"):
+                        self._review_in_progress.add(task_id)
                         threading.Thread(
-                            target=self._run_review,
+                            target=self._run_review_wrapper,
                             args=(objective_id, task_id),
                             daemon=True,
                         ).start()
@@ -635,6 +644,13 @@ class Orchestrator:
                     f"Task {task_id}: terminal active but no progress updates ({stuck_status.get('elapsed_minutes', 0):.1f} min)",
                     metadata={"task_id": task_id, "stuck_status": stuck_status},
                 )
+
+    def _run_review_wrapper(self, objective_id, task_id):
+        """Wrapper that manages the review-in-progress flag."""
+        try:
+            self._run_review(objective_id, task_id)
+        finally:
+            self._review_in_progress.discard(task_id)
 
     def _run_review(self, objective_id, task_id):
         self._append_message(objective_id, "review", f"Reviewing Task {task_id}...")
@@ -744,6 +760,20 @@ class Orchestrator:
 
         if monitor.can_retry_review(task):
             task["status"] = "rework"
+            # Clear result.md so poll_tasks doesn't re-detect completion
+            # before the worker has a chance to rework
+            task_dir = objectives.get_objective_dir(objective_id) / "tasks" / task_id
+            for result_path in [task_dir / "result.md"]:
+                try:
+                    result_path.write_text("", encoding="utf-8")
+                except OSError:
+                    pass
+            wt_result = pathlib.Path(task.get("worktreePath", "")) / "result.md"
+            try:
+                if wt_result.is_file():
+                    wt_result.write_text("", encoding="utf-8")
+            except OSError:
+                pass
             issues, recommendation = monitor.build_review_rework_summary(review_json)
             rework_prompt = worker.build_rework_prompt(issues, recommendation)
             workspace_uuid = task.get("workspaceId")
