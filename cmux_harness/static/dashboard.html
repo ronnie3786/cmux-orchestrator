@@ -603,6 +603,7 @@ var expandedWsUuid = null;
 var expandedWsSurfaceId = null;
 var expandedReview = null;
 var expandedMode = 'workspace';
+var expandedScreen = null;
 var inlineDiffFile = null;
 var currentView = 'center';
 var prevWsStates = {};
@@ -1362,10 +1363,13 @@ window.openExpanded=function(idx){
   expandedWsUuid=ws?ws.uuid:null;
   expandedWsSurfaceId=ws?ws.surfaceId:null;
   expandedReview=null;
+  expandedScreen=null;
   document.getElementById('overlay').classList.add('visible');
   document.getElementById('escHint').style.display='block';
   document.body.style.overflow='hidden';
   updateExpanded();
+  var termEl=document.getElementById('expTerminal');
+  if(termEl)termEl.scrollTop=termEl.scrollHeight;
   fetchGitStatus();
   if(gitPollTimer)clearInterval(gitPollTimer);
   gitPollTimer=setInterval(fetchGitStatus,10000);
@@ -1376,6 +1380,7 @@ window.closeExpanded=function(){
   expandedWsUuid=null;
   expandedWsSurfaceId=null;
   expandedReview=null;
+  expandedScreen=null;
   expandedMode='workspace';
   inlineDiffFile=null;
   document.getElementById('overlay').classList.remove('visible');
@@ -1611,7 +1616,10 @@ function updateExpanded(){
   else autoEl.classList.remove('on');
 
   if(!inlineDiffFile){
-    document.getElementById('expTerminal').innerHTML=colorize(ws.screenFull||ws.screenTail);
+    var termEl=document.getElementById('expTerminal');
+    var wasAtBottom=termEl.scrollHeight-termEl.scrollTop-termEl.clientHeight<30;
+    termEl.innerHTML=colorize(expandedScreen||ws.screenFull||ws.screenTail);
+    if(wasAtBottom)termEl.scrollTop=termEl.scrollHeight;
   }
 
   // Activity feed for this workspace
@@ -2121,12 +2129,12 @@ function refresh(){
 refresh();
 refreshReviews();
 setInterval(refresh,2000);
-// Faster refresh for expanded view (500ms)
+// Faster refresh for expanded view (500ms) — reads extended scrollback
 setInterval(function(){
   if(expandedMode!=='workspace' || expandedWsIndex===null)return;
-  api('GET','/api/status').then(function(r){
-    if(!r)return;
-    state.workspaces=r.workspaces||[];
+  api('GET','/api/screen?index='+expandedWsIndex+'&lines=200').then(function(r){
+    if(!r||!r.ok)return;
+    expandedScreen=r.screen||null;
     var expFocused=document.activeElement&&document.activeElement.id==='expInput';
     updateExpanded();
     if(expFocused)document.getElementById('expInput').focus();

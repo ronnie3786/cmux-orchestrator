@@ -73,6 +73,32 @@ def make_handler(engine):
                     return
                 result["ok"] = True
                 self._json_response(result)
+            elif self.path.startswith("/api/screen"):
+                qs = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(qs)
+                idx_str = params.get("index", [None])[0]
+                lines_str = params.get("lines", ["200"])[0]
+                if idx_str is None:
+                    self._json_response({"ok": False, "error": "index required"}, 400)
+                    return
+                idx = int(idx_str)
+                lines = min(int(lines_str), 500)
+                with engine._lock:
+                    virtual_ws = engine._build_virtual_workspaces()
+                ws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
+                if ws is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                ws_uuid = ws.get("uuid", "")
+                sid = ws.get("_surface_id")
+                real_idx = ws.get("_real_index", idx)
+                screen = ""
+                if ws_uuid:
+                    screen = cmux_api.cmux_read_workspace(
+                        real_idx, 0, lines=lines,
+                        workspace_uuid=ws_uuid, surface_id=sid
+                    ) or ""
+                self._json_response({"ok": True, "screen": screen, "lines": lines})
             elif self.path == "/api/reviews":
                 reviews = []
                 for review in storage.list_reviews():
