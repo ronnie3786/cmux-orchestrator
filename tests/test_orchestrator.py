@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
@@ -83,7 +83,9 @@ class TestOrchestrator(unittest.TestCase):
         missing_goal = objectives.create_objective("placeholder", "/tmp/project")
         objectives.update_objective(missing_goal["id"], {"goal": ""})
 
-        self.assertTrue(self.orchestrator.start_objective(valid["id"]))
+        with patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
+            self.assertTrue(self.orchestrator.start_objective(valid["id"]))
+        mock_thread.assert_called_once()
         self.assertEqual(self.orchestrator.get_active_objective_id(), valid["id"])
 
         updated = objectives.read_objective(valid["id"])
@@ -100,7 +102,8 @@ class TestOrchestrator(unittest.TestCase):
     def test_get_active_objective_id_defaults_to_none(self):
         self.assertIsNone(self.orchestrator.get_active_objective_id())
         objective = objectives.create_objective("Ship feature", "/tmp/project")
-        self.orchestrator.start_objective(objective["id"])
+        with patch("cmux_harness.orchestrator.threading.Thread"):
+            self.orchestrator.start_objective(objective["id"])
         self.assertEqual(self.orchestrator.get_active_objective_id(), objective["id"])
 
     def test_is_orchestrated_workspace_checks_active_objective_tasks(self):
@@ -116,19 +119,133 @@ class TestOrchestrator(unittest.TestCase):
                 ]
             },
         )
-        self.orchestrator.start_objective(objective["id"])
+        with patch("cmux_harness.orchestrator.threading.Thread"):
+            self.orchestrator.start_objective(objective["id"])
 
         self.assertFalse(self.orchestrator.is_orchestrated_workspace("ws-999"))
         self.assertTrue(self.orchestrator.is_orchestrated_workspace("ws-123"))
 
     def test_stop_objective_clears_active_and_appends_message(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
-        self.orchestrator.start_objective(objective["id"])
+        with patch("cmux_harness.orchestrator.threading.Thread"):
+            self.orchestrator.start_objective(objective["id"])
 
         self.assertFalse(self.orchestrator.stop_objective("wrong-id"))
         self.assertTrue(self.orchestrator.stop_objective(objective["id"]))
         self.assertIsNone(self.orchestrator.get_active_objective_id())
         self.assertEqual(self.orchestrator.get_messages(objective["id"])[-1]["content"], "Objective stopped.")
+
+class TestPlanningPipeline(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.project_dir = Path(self.tmpdir.name) / "project"
+        self.project_dir.mkdir()
+        self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
+        self.patch_objectives_dir.start()
+        self.addCleanup(self.patch_objectives_dir.stop)
+        self.orchestrator = Orchestrator(object())
+
+    def _create_objective(self):
+        return objectives.create_objective("Implement orchestrator planning", str(self.project_dir))
+
+    def test_run_planning_success(self):
+        objective = self._create_objective()
+        plan_path = self.project_dir / "plan.md"
+        plan_path.write_text("## Task 1: First\n## Task 2: Second\n", encoding="utf-8")
+        tasks = [
+            {"id": "task-1", "title": "First", "status": "queued"},
+            {"id": "task-2", "title": "Second", "status": "queued"},
+        ]
+        launch_ready = Mock()
+        self.orchestrator._launch_ready_tasks = launch_ready
+
+        with patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Model: Sonnet\n"), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send_prompt, \
+                patch("cmux_harness.orchestrator.planner.parse_plan", return_value={"tasks": [{"id": "task-1"}, {"id": "task-2"}]}), \
+                patch("cmux_harness.orchestrator.planner.plan_to_tasks", return_value=tasks), \
+                patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
+            mock_v2.side_effect = [
+                {"workspaces": [{"id": "ws-existing", "title": "Existing"}]},
+                {},
+                {
+                    "workspaces": [
+                        {"id": "ws-existing", "title": "Existing"},
+                        {"id": "ws-planner", "title": "Planner"},
+                    ]
+                },
+                {},
+                {},
+                {},
+            ]
+
+            self.orchestrator._run_planning(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "executing")
+        self.assertEqual(updated["tasks"], tasks)
+        self.assertTrue(any("Plan ready: 2 tasks identified." in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+        mock_send_prompt.assert_called_once()
+        launch_ready.assert_called_once_with(objective["id"])
+
+    def test_run_planning_no_plan_file(self):
+        objective = self._create_objective()
+
+        with patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", side_effect=["Model: Sonnet\n", ""]), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
+                patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
+            mock_v2.side_effect = [
+                {"workspaces": [{"id": "ws-existing", "title": "Existing"}]},
+                {},
+                {
+                    "workspaces": [
+                        {"id": "ws-existing", "title": "Existing"},
+                        {"id": "ws-planner", "title": "Planner"},
+                    ]
+                },
+                {},
+                {},
+            ]
+
+            self.orchestrator._run_planning(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "failed")
+        self.assertTrue(any("exited before writing plan.md" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+
+    def test_run_planning_parse_failure(self):
+        objective = self._create_objective()
+        raw_plan = "## Task 1: Unparseable\n- Something odd\n"
+        (self.project_dir / "plan.md").write_text(raw_plan, encoding="utf-8")
+
+        with patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Model: Sonnet\n"), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
+                patch("cmux_harness.orchestrator.planner.parse_plan", return_value={"error": "parse_failed", "raw_plan": raw_plan}), \
+                patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
+            mock_v2.side_effect = [
+                {"workspaces": [{"id": "ws-existing", "title": "Existing"}]},
+                {},
+                {
+                    "workspaces": [
+                        {"id": "ws-existing", "title": "Existing"},
+                        {"id": "ws-planner", "title": "Planner"},
+                    ]
+                },
+                {},
+                {},
+                {},
+            ]
+
+            self.orchestrator._run_planning(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "failed")
+        self.assertTrue(any(raw_plan in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
 
 
 if __name__ == "__main__":
