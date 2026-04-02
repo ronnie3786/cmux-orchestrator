@@ -162,26 +162,12 @@ class TestPlanningPipeline(unittest.TestCase):
         launch_ready = Mock()
         self.orchestrator._launch_ready_tasks = launch_ready
 
-        with patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
-                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Model: Sonnet\n"), \
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-planner", True)), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send_prompt, \
                 patch("cmux_harness.orchestrator.planner.parse_plan", return_value={"tasks": [{"id": "task-1"}, {"id": "task-2"}]}), \
                 patch("cmux_harness.orchestrator.planner.plan_to_tasks", return_value=tasks), \
                 patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
-            mock_v2.side_effect = [
-                {"workspaces": [{"id": "ws-existing", "title": "Existing"}]},
-                {},
-                {
-                    "workspaces": [
-                        {"id": "ws-existing", "title": "Existing"},
-                        {"id": "ws-planner", "title": "Planner"},
-                    ]
-                },
-                {},
-                {},
-                {},
-            ]
-
             self.orchestrator._run_planning(objective["id"])
 
         updated = objectives.read_objective(objective["id"])
@@ -194,23 +180,10 @@ class TestPlanningPipeline(unittest.TestCase):
     def test_run_planning_no_plan_file(self):
         objective = self._create_objective()
 
-        with patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
-                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", side_effect=["Model: Sonnet\n", ""]), \
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-planner", True)), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
                 patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
-            mock_v2.side_effect = [
-                {"workspaces": [{"id": "ws-existing", "title": "Existing"}]},
-                {},
-                {
-                    "workspaces": [
-                        {"id": "ws-existing", "title": "Existing"},
-                        {"id": "ws-planner", "title": "Planner"},
-                    ]
-                },
-                {},
-                {},
-            ]
-
             self.orchestrator._run_planning(objective["id"])
 
         updated = objectives.read_objective(objective["id"])
@@ -222,30 +195,138 @@ class TestPlanningPipeline(unittest.TestCase):
         raw_plan = "## Task 1: Unparseable\n- Something odd\n"
         (self.project_dir / "plan.md").write_text(raw_plan, encoding="utf-8")
 
-        with patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
-                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Model: Sonnet\n"), \
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-planner", True)), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
                 patch("cmux_harness.orchestrator.planner.parse_plan", return_value={"error": "parse_failed", "raw_plan": raw_plan}), \
                 patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False):
-            mock_v2.side_effect = [
-                {"workspaces": [{"id": "ws-existing", "title": "Existing"}]},
-                {},
-                {
-                    "workspaces": [
-                        {"id": "ws-existing", "title": "Existing"},
-                        {"id": "ws-planner", "title": "Planner"},
-                    ]
-                },
-                {},
-                {},
-                {},
-            ]
-
             self.orchestrator._run_planning(objective["id"])
 
         updated = objectives.read_objective(objective["id"])
         self.assertEqual(updated["status"], "failed")
         self.assertTrue(any(raw_plan in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+
+
+class TestTaskLauncher(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.project_dir = Path(self.tmpdir.name) / "project"
+        self.project_dir.mkdir()
+        self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
+        self.patch_objectives_dir.start()
+        self.addCleanup(self.patch_objectives_dir.stop)
+        self.orchestrator = Orchestrator(object())
+
+    def _create_objective(self, tasks):
+        objective = objectives.create_objective("Launch tasks", str(self.project_dir))
+        objectives.update_objective(objective["id"], {"tasks": tasks, "status": "executing"})
+        return objective
+
+    def _create_task_files(self, objective_id, task_id, spec="spec", context=""):
+        objectives.write_task_file(objective_id, task_id, "spec.md", spec)
+        objectives.write_task_file(objective_id, task_id, "context.md", context)
+
+    def test_launch_ready_tasks_launches_independent_tasks(self):
+        tasks = [
+            {"id": "task-1", "title": "First task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+            {"id": "task-2", "title": "Second task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+        ]
+        objective = self._create_objective(tasks)
+        self._create_task_files(objective["id"], "task-1")
+        self._create_task_files(objective["id"], "task-2")
+        worktree_one = self.project_dir / "wt-1"
+        worktree_two = self.project_dir / "wt-2"
+        worktree_one.mkdir()
+        worktree_two.mkdir()
+
+        with patch("cmux_harness.orchestrator.worker.create_worktree", side_effect=[str(worktree_one), str(worktree_two)]), \
+                patch.object(self.orchestrator, "_create_worker_workspace", side_effect=[("fake-uuid-1", True), ("fake-uuid-2", True)]), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True):
+            self.orchestrator._launch_ready_tasks(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual([task["status"] for task in updated["tasks"]], ["executing", "executing"])
+        self.assertEqual(updated["tasks"][0]["workspaceId"], "fake-uuid-1")
+        self.assertEqual(updated["tasks"][1]["workspaceId"], "fake-uuid-2")
+        self.assertEqual(updated["tasks"][0]["worktreePath"], str(worktree_one))
+        self.assertEqual(updated["tasks"][1]["worktreePath"], str(worktree_two))
+        system_messages = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "system"]
+        self.assertEqual(len(system_messages), 2)
+
+    def test_launch_ready_tasks_skips_blocked_tasks(self):
+        tasks = [
+            {"id": "task-1", "title": "First task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+            {"id": "task-2", "title": "Second task", "status": "queued", "dependsOn": ["task-1"], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+        ]
+        objective = self._create_objective(tasks)
+        self._create_task_files(objective["id"], "task-1")
+        self._create_task_files(objective["id"], "task-2")
+        worktree_one = self.project_dir / "wt-1"
+        worktree_one.mkdir()
+
+        with patch("cmux_harness.orchestrator.worker.create_worktree", return_value=str(worktree_one)), \
+                patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-1", True)), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True):
+            self.orchestrator._launch_ready_tasks(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["tasks"][0]["status"], "executing")
+        self.assertEqual(updated["tasks"][1]["status"], "queued")
+
+    def test_launch_ready_tasks_launches_after_dependency_complete(self):
+        tasks = [
+            {"id": "task-1", "title": "Completed task", "status": "completed", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+            {"id": "task-2", "title": "Dependent task", "status": "queued", "dependsOn": ["task-1"], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+        ]
+        objective = self._create_objective(tasks)
+        self._create_task_files(objective["id"], "task-1")
+        self._create_task_files(objective["id"], "task-2")
+        objectives.write_task_file(objective["id"], "task-1", "result.md", "Task one result")
+        worktree_two = self.project_dir / "wt-2"
+        worktree_two.mkdir()
+
+        with patch("cmux_harness.orchestrator.worker.create_worktree", return_value=str(worktree_two)), \
+                patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-2", True)), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True):
+            self.orchestrator._launch_ready_tasks(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["tasks"][1]["status"], "executing")
+        context = objectives.read_task_file(objective["id"], "task-2", "context.md")
+        self.assertIn("Task one result", context)
+
+    def test_assemble_context_builds_from_dependencies(self):
+        tasks = [
+            {"id": "task-1", "title": "Completed task", "status": "completed", "dependsOn": []},
+            {"id": "task-2", "title": "Dependent task", "status": "queued", "dependsOn": ["task-1"]},
+        ]
+        objective = self._create_objective(tasks)
+        objectives.write_task_file(objective["id"], "task-1", "result.md", "Dependency result")
+
+        self.orchestrator._assemble_context(objective["id"], tasks[1])
+
+        context = objectives.read_task_file(objective["id"], "task-2", "context.md")
+        self.assertIn("# Context from completed tasks", context)
+        self.assertIn("## Task task-1: Completed task", context)
+        self.assertIn("Dependency result", context)
+
+    def test_assemble_context_handles_missing_result(self):
+        tasks = [
+            {"id": "task-1", "title": "Completed task", "status": "completed", "dependsOn": []},
+            {"id": "task-2", "title": "Dependent task", "status": "queued", "dependsOn": ["task-1"]},
+        ]
+        objective = self._create_objective(tasks)
+
+        self.orchestrator._assemble_context(objective["id"], tasks[1])
+
+        context = objectives.read_task_file(objective["id"], "task-2", "context.md")
+        self.assertEqual(context, "")
 
 
 if __name__ == "__main__":

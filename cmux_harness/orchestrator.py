@@ -11,6 +11,7 @@ from . import cmux_api
 from . import detection
 from . import objectives
 from . import planner
+from . import worker
 from .workspace_mutex import WorkspaceMutex
 
 
@@ -136,23 +137,11 @@ class Orchestrator:
                 )
                 return
 
-            def _workspaces_from_result(list_result):
-                if not list_result:
-                    return []
-                if isinstance(list_result, list):
-                    return [ws for ws in list_result if isinstance(ws, dict)]
-                workspaces = list_result.get("workspaces", [])
-                return [ws for ws in workspaces if isinstance(ws, dict)]
-
-            pre_list = cmux_api._v2_request("workspace.list", {})
-            existing_ids = {
-                ws.get("id") or ws.get("uuid")
-                for ws in _workspaces_from_result(pre_list)
-                if ws.get("id") or ws.get("uuid")
-            }
-
-            create_result = cmux_api._v2_request("workspace.create", {})
-            if create_result is None:
+            workspace_uuid, created = self._create_worker_workspace(
+                f"Planner: {goal[:40]}",
+                project_dir,
+            )
+            if not created or not workspace_uuid:
                 objectives.update_objective(objective_id, {"status": "failed"})
                 self._append_message(
                     objective_id,
@@ -161,54 +150,27 @@ class Orchestrator:
                 )
                 return
 
-            post_list = cmux_api._v2_request("workspace.list", {})
-            new_workspace = next(
-                (
-                    ws for ws in _workspaces_from_result(post_list)
-                    if (ws.get("id") or ws.get("uuid")) not in existing_ids
-                ),
-                None,
-            )
-            if new_workspace is None:
-                objectives.update_objective(objective_id, {"status": "failed"})
-                self._append_message(
-                    objective_id,
-                    "alert",
-                    "Planning failed: could not resolve planner workspace.",
-                )
-                return
-
-            workspace_uuid = new_workspace.get("id") or new_workspace.get("uuid")
-            cmux_api._v2_request(
-                "workspace.rename",
-                {"workspace_id": workspace_uuid, "title": f"Planner: {goal[:40]}"},
-            )
-            cmux_api._v2_request(
-                "surface.send_text",
-                {"workspace_id": workspace_uuid, "text": f"cd {project_dir} && claude\n"},
-            )
-            self.mutex.set_cooldown(workspace_uuid, 5.0)
-
-            repl_ready = re.compile(r"(Model:|Cost:\s*\$\d|\u276f\s*$)", re.MULTILINE | re.IGNORECASE)
-            prompt_sent = False
-            for attempt in range(20):
-                screen = cmux_api.cmux_read_workspace(0, 0, lines=30, workspace_uuid=workspace_uuid) or ""
-                if repl_ready.search(screen):
-                    prompt_sent = bool(
-                        cmux_api.send_prompt_to_workspace(
-                            workspace_uuid,
-                            planner.build_planning_prompt(goal),
-                        )
-                    )
-                    break
-                if attempt < 19:
-                    time.sleep(3)
-            if not prompt_sent:
+            if not self._wait_for_repl(workspace_uuid):
                 objectives.update_objective(objective_id, {"status": "failed"})
                 self._append_message(
                     objective_id,
                     "alert",
                     "Planning failed: Claude Code did not become ready in time.",
+                )
+                return
+
+            prompt_sent = bool(
+                cmux_api.send_prompt_to_workspace(
+                    workspace_uuid,
+                    planner.build_planning_prompt(goal),
+                )
+            )
+            if not prompt_sent:
+                objectives.update_objective(objective_id, {"status": "failed"})
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    "Planning failed: could not deliver planning prompt.",
                 )
                 return
 
@@ -281,6 +243,145 @@ class Orchestrator:
                 self._launch_ready_tasks(objective_id)
             except Exception:
                 pass
+
+    def _workspaces_from_result(self, list_result):
+        if not list_result:
+            return []
+        if isinstance(list_result, list):
+            return [ws for ws in list_result if isinstance(ws, dict)]
+        workspaces = list_result.get("workspaces", [])
+        return [ws for ws in workspaces if isinstance(ws, dict)]
+
+    def _create_worker_workspace(self, title, cwd):
+        pre_list = cmux_api._v2_request("workspace.list", {})
+        existing_ids = {
+            ws.get("id") or ws.get("uuid")
+            for ws in self._workspaces_from_result(pre_list)
+            if ws.get("id") or ws.get("uuid")
+        }
+
+        create_result = cmux_api._v2_request("workspace.create", {})
+        if create_result is None:
+            return None, False
+
+        post_list = cmux_api._v2_request("workspace.list", {})
+        new_workspace = next(
+            (
+                ws for ws in self._workspaces_from_result(post_list)
+                if (ws.get("id") or ws.get("uuid")) not in existing_ids
+            ),
+            None,
+        )
+        if new_workspace is None:
+            return None, False
+
+        workspace_uuid = new_workspace.get("id") or new_workspace.get("uuid")
+        cmux_api._v2_request(
+            "workspace.rename",
+            {"workspace_id": workspace_uuid, "title": title},
+        )
+        cmux_api._v2_request(
+            "surface.send_text",
+            {"workspace_id": workspace_uuid, "text": f"cd {cwd} && claude\n"},
+        )
+        self.mutex.set_cooldown(workspace_uuid, 5.0)
+        return workspace_uuid, True
+
+    def _wait_for_repl(self, ws_uuid, timeout_attempts=20, poll_interval=3.0):
+        repl_ready = re.compile(r"(Model:|Cost:\s*\$\d|\u276f\s*$)", re.MULTILINE | re.IGNORECASE)
+        for attempt in range(timeout_attempts):
+            screen = cmux_api.cmux_read_workspace(0, 0, lines=30, workspace_uuid=ws_uuid) or ""
+            if repl_ready.search(screen):
+                return True
+            if attempt < timeout_attempts - 1:
+                time.sleep(poll_interval)
+        return False
+
+    def _assemble_context(self, objective_id, task):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return
+        tasks = {item.get("id"): item for item in objective.get("tasks", []) if isinstance(item, dict)}
+        context_parts = []
+        for dep_id in task.get("dependsOn", []):
+            dep_task = tasks.get(dep_id)
+            if dep_task is None:
+                continue
+            result_content = objectives.read_task_file(objective_id, dep_id, "result.md")
+            if not result_content or not result_content.strip():
+                continue
+            context_parts.append(
+                f"## Task {dep_id}: {dep_task.get('title', '')}\n{result_content.strip()}"
+            )
+        if not context_parts:
+            objectives.write_task_file(objective_id, task["id"], "context.md", "")
+            return
+        combined_context = "# Context from completed tasks\n\n" + "\n\n".join(context_parts) + "\n"
+        objectives.write_task_file(objective_id, task["id"], "context.md", combined_context)
+
+    def _launch_ready_tasks(self, objective_id):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return
+
+        tasks = objective.get("tasks", [])
+        completed = {task["id"] for task in tasks if task.get("status") == "completed" and task.get("id")}
+        launchable_tasks = [
+            task for task in tasks
+            if task.get("status") == "queued"
+            and all(dep_id in completed for dep_id in task.get("dependsOn", []))
+        ]
+
+        if not launchable_tasks:
+            return
+
+        project_dir = objective.get("projectDir", "")
+        base_branch = objective.get("baseBranch", "main")
+
+        for task in launchable_tasks:
+            if task.get("dependsOn"):
+                self._assemble_context(objective_id, task)
+
+            title_slug = worker.slugify(task.get("title", ""))
+            branch_name = f"orchestrator/{task['id']}-{title_slug}" if title_slug else f"orchestrator/{task['id']}"
+            worktree_path = worker.create_worktree(
+                project_dir,
+                objective_id,
+                task["id"],
+                title_slug,
+                base_branch,
+            )
+
+            spec_content = objectives.read_task_file(objective_id, task["id"], "spec.md") or ""
+            context_content = objectives.read_task_file(objective_id, task["id"], "context.md") or ""
+            with open(os.path.join(worktree_path, "spec.md"), "w", encoding="utf-8") as f:
+                f.write(spec_content)
+            with open(os.path.join(worktree_path, "context.md"), "w", encoding="utf-8") as f:
+                f.write(context_content)
+
+            ws_uuid, created = self._create_worker_workspace(
+                f"Worker: {task['title'][:35]}",
+                worktree_path,
+            )
+            if not created or not ws_uuid:
+                continue
+            if not self._wait_for_repl(ws_uuid, timeout_attempts=10):
+                continue
+            if not cmux_api.send_prompt_to_workspace(ws_uuid, worker.build_task_prompt(task["id"])):
+                continue
+
+            task["status"] = "executing"
+            task["workspaceId"] = ws_uuid
+            task["worktreePath"] = worktree_path
+            task["worktreeBranch"] = branch_name
+            task["startedAt"] = _utc_now_iso()
+            self._append_message(
+                objective_id,
+                "system",
+                f"Task {task['id']}: {task['title']} — launched",
+            )
+
+        objectives.update_objective(objective_id, {"tasks": tasks})
 
     def get_active_objective_id(self):
         with self._lock:
