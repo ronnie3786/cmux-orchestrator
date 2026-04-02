@@ -194,7 +194,7 @@ class Orchestrator:
             # (a) seen Claude active at least once, or (b) waited 30+ seconds.
             # This prevents false "exited" detection during startup.
             seen_claude_active = False
-            grace_polls = 6  # 6 * 5s = 30s grace period
+            grace_polls = 12  # 12 * 5s = 60s grace period (Claude needs ~30s to start processing)
             # Pattern to detect Claude Code permission/approval prompts
             permission_pattern = re.compile(
                 r"(Do you want to|Allow|Y/n|y/n|❯\s*1\.\s*Yes|Yes, allow all)",
