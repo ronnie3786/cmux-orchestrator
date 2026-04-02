@@ -194,7 +194,7 @@ class Orchestrator:
             # (a) seen Claude active at least once, or (b) waited 30+ seconds.
             # This prevents false "exited" detection during startup.
             seen_claude_active = False
-            grace_polls = 12  # 12 * 5s = 60s grace period (Claude needs ~30s to start processing)
+            grace_polls = 36  # 36 * 5s = 180s (3 min) grace period — Claude needs time to analyze codebase before writing
             # Pattern to detect Claude Code permission/approval prompts
             permission_pattern = re.compile(
                 r"(Do you want to|Allow|Y/n|y/n|❯\s*1\.\s*Yes|Yes, allow all)",
@@ -278,12 +278,14 @@ class Orchestrator:
                 f"Plan ready: {len(tasks)} tasks identified.",
                 metadata={"tasks": tasks},
             )
-        except OSError as exc:
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
             objectives.update_objective(objective_id, {"status": "failed"})
             self._append_message(
                 objective_id,
                 "alert",
-                f"Planning failed: {exc}",
+                f"Planning failed: {exc}\n\n```\n{tb}\n```",
             )
             return
         finally:
