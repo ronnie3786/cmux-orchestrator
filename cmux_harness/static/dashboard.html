@@ -111,6 +111,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 .badge-active{background:rgba(63,185,80,.15);color:var(--green)}
 .badge-waiting{background:rgba(210,153,34,.15);color:var(--yellow)}
+.badge-clickable{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+.badge-clickable:hover{background:rgba(210,153,34,.28)}
+#needs-you-popup{display:none;position:fixed;z-index:9999;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;max-width:300px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:12px;line-height:1.5;color:var(--text)}
+#needs-you-popup .popup-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--yellow);margin-bottom:6px}
+#needs-you-popup .popup-reason{color:var(--text)}
 .badge-idle{background:rgba(139,148,158,.15);color:var(--text-muted)}
 
 /* Collapsed idle card */
@@ -298,6 +303,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .backend-status-dot.green{background:var(--green);opacity:1}
 .backend-status-dot.red{background:var(--red);opacity:1}
 .llm-unavail{font-size:11px;color:var(--red);opacity:.85;margin-left:4px}
+/* New Session modal */
+.ns-overlay{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.6);backdrop-filter:blur(3px)}
+.ns-overlay.visible{display:flex;align-items:center;justify-content:center}
+.ns-panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:500px;max-width:90vw;max-height:90vh;overflow-y:auto;box-shadow:0 16px 60px rgba(0,0,0,.5);animation:slideUp .2s ease}
+.ns-title{font-size:18px;font-weight:700;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between}
+.ns-row{display:flex;flex-direction:column;gap:6px;padding:14px 0;border-bottom:1px solid var(--border)}
+.ns-row:last-of-type{border-bottom:none}
+.ns-label{font-size:14px;color:var(--text);font-weight:600}
+.ns-sublabel{font-size:11px;color:var(--text-muted);margin-top:-2px}
+.ns-input{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;width:100%;box-sizing:border-box;font-family:inherit}
+.ns-input:focus{border-color:var(--accent)}
+.ns-input::placeholder{color:var(--text-muted);opacity:.6}
+.ns-textarea{min-height:80px;resize:vertical;font-family:inherit}
+.ns-select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;width:100%;box-sizing:border-box}
+.ns-select:focus{border-color:var(--accent)}
+.ns-error{font-size:12px;color:var(--red);padding:8px 0 0;display:none}
+.ns-actions{display:flex;gap:10px;justify-content:flex-end;padding-top:18px}
 
 /* Activity popover in topbar */
 .activity-btn-wrap{position:relative}
@@ -578,6 +600,58 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     </div>
     <div class="diff-panel-body" id="diffBody">
       <div class="diff-loading">Loading diff...</div>
+    </div>
+  </div>
+</div>
+
+<!-- New Session modal -->
+<div class="ns-overlay" id="nsOverlay" onclick="if(event.target===this)closeNewSession()">
+  <div class="ns-panel">
+    <div class="ns-title">
+      New Session
+      <button class="exp-close" onclick="closeNewSession()" style="width:32px;height:32px;font-size:14px">&#10005;</button>
+    </div>
+
+    <div class="ns-row">
+      <div class="ns-label">Project</div>
+      <select class="ns-select" id="nsProject">
+        <option value="~/Documents/Development/Doximity-Claude">Doximity-Claude</option>
+        <option value="~/Documents/Development/claude-code-tools">claude-code-tools</option>
+      </select>
+    </div>
+
+    <div class="ns-row">
+      <div class="ns-label">JIRA Ticket URL <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
+      <div class="ns-sublabel">Extracts ticket key for branch name</div>
+      <input class="ns-input" id="nsJiraUrl" type="text" placeholder="https://doximity.atlassian.net/browse/IOSDOX-..." oninput="onNsJiraInput()" autocomplete="off">
+    </div>
+
+    <div class="ns-row">
+      <div class="ns-label">Branch Name <span id="nsBranchReq" style="color:var(--red);font-weight:400;display:none">(required)</span></div>
+      <div class="ns-sublabel">Git worktree branch &mdash; auto-filled from JIRA key</div>
+      <input class="ns-input" id="nsBranchName" type="text" placeholder="e.g. IOSDOX-24180" oninput="onNsBranchInput()" autocomplete="off">
+    </div>
+
+    <div class="ns-row">
+      <div class="ns-label">Skill <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
+      <select class="ns-select" id="nsSkill">
+        <option value="">None</option>
+        <option value="/jira-to-pr-pipeline">JIRA to PR Pipeline</option>
+        <option value="/ticket-to-pr">Ticket to PR Pipeline</option>
+      </select>
+    </div>
+
+    <div class="ns-row" style="border-bottom:none">
+      <div class="ns-label">Prompt <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
+      <div class="ns-sublabel">Initial instructions for Claude Code</div>
+      <textarea class="ns-input ns-textarea" id="nsPrompt" placeholder="Enter instructions..."></textarea>
+    </div>
+
+    <div class="ns-error" id="nsError"></div>
+
+    <div class="ns-actions">
+      <button class="btn" onclick="closeNewSession()">Cancel</button>
+      <button class="btn btn-primary" id="nsCreateBtn" onclick="submitNewSession()">Create</button>
     </div>
   </div>
 </div>
@@ -1228,7 +1302,11 @@ function buildGrid(){
     html+='</div>';
     html+='</div>';
     html+='<div class="card-header-right">';
-    html+='<span class="'+badgeClass+'">'+badgeText+'</span>';
+    if(isWaiting){
+      html+='<span class="'+badgeClass+' badge-clickable" onclick="showNeedsYouReason(event,'+w.index+')" title="Click to see why">'+badgeText+'</span>';
+    }else{
+      html+='<span class="'+badgeClass+'">'+badgeText+'</span>';
+    }
     html+='<div class="'+autoClass+'" onclick="toggleWsAuto('+w.index+',this)"><span class="auto-toggle-label">Auto</span><div class="toggle-track"></div></div>';
     if(isIdle)html+='<button class="card-expand-caret" onclick="toggleInlineExpand('+w.index+')" title="Show details">&#9660;</button>';
     html+='<button class="expand-btn" onclick="openExpanded('+w.index+')">&#10530;</button>';
@@ -1317,6 +1395,46 @@ function classifyWs(w){
   // Idle = just a regular shell prompt, no Claude session
   return w.hasClaude ? 'active' : 'idle';
 }
+
+function getWaitReason(w){
+  var recent=logData.filter(function(e){return e.workspace===w.index});
+  if(recent.length>0){
+    var last=recent[0];
+    if(last.action&&last.action.indexOf('human')!==-1)
+      return last.reason||last.promptType||'Waiting for human input';
+  }
+  return 'Waiting for human input';
+}
+
+window.showNeedsYouReason=function(event,wsIndex){
+  event.stopPropagation();
+  var ws=(state.workspaces||[]).find(function(w){return w.index===wsIndex});
+  var reason=ws?getWaitReason(ws):'Waiting for human input';
+  var popup=document.getElementById('needs-you-popup');
+  if(!popup){
+    popup=document.createElement('div');
+    popup.id='needs-you-popup';
+    popup.innerHTML='<div class="popup-label">Why needs you</div><div class="popup-reason"></div>';
+    document.body.appendChild(popup);
+    document.addEventListener('click',function(){popup.style.display='none';});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')popup.style.display='none';});
+  }
+  popup.querySelector('.popup-reason').textContent=reason;
+  var rect=event.currentTarget.getBoundingClientRect();
+  popup.style.display='block';
+  // Position below the badge, aligned to its left edge
+  var top=rect.bottom+6;
+  var left=rect.left;
+  // Keep popup within viewport
+  popup.style.top=top+'px';
+  popup.style.left=left+'px';
+  // After render, nudge left if it overflows viewport
+  requestAnimationFrame(function(){
+    var pw=popup.offsetWidth;
+    if(left+pw>window.innerWidth-8)popup.style.left=Math.max(8,window.innerWidth-pw-8)+'px';
+    if(top+popup.offsetHeight>window.innerHeight-8)popup.style.top=(rect.top-popup.offsetHeight-6)+'px';
+  });
+};
 
 // ─── Inline expand for collapsed idle cards ───
 var inlineExpanded={};
@@ -1936,17 +2054,115 @@ window.saveSetting=function(key,val){
 // ─── New session ───
 var defaultCwd='~/Documents/Development/Doximity-Claude';
 window.newSession=function(){
-  var btn=document.querySelector('.btn-primary');
-  if(btn){btn.textContent='Creating...';btn.disabled=true;}
-  api('POST','/api/new-session',{cwd:defaultCwd,command:'claude'}).then(function(r){
-    if(btn){btn.textContent='+ New Session';btn.disabled=false;}
+  openNewSession();
+};
+
+// ─── New Session Modal ───
+
+function openNewSession(){
+  document.getElementById('nsProject').value=defaultCwd;
+  document.getElementById('nsJiraUrl').value='';
+  document.getElementById('nsBranchName').value='';
+  document.getElementById('nsSkill').value='';
+  document.getElementById('nsPrompt').value='';
+  var errEl=document.getElementById('nsError');
+  errEl.style.display='none';errEl.textContent='';
+  var btn=document.getElementById('nsCreateBtn');
+  btn.disabled=false;btn.textContent='Create';
+  updateBranchReq();
+  document.getElementById('nsOverlay').classList.add('visible');
+}
+window.openNewSession=openNewSession;
+
+window.closeNewSession=function(){
+  document.getElementById('nsOverlay').classList.remove('visible');
+};
+
+function extractJiraKey(url){
+  var m=url.match(/\/browse\/([A-Z]+-\d+)/i);
+  if(m)return m[1];
+  var parts=url.replace(/[?#].*$/,'').replace(/\/+$/,'').split('/');
+  var last=parts[parts.length-1];
+  if(/^[A-Z]+-\d+$/i.test(last))return last;
+  return null;
+}
+
+function updateBranchReq(){
+  var jira=document.getElementById('nsJiraUrl').value.trim();
+  var branch=document.getElementById('nsBranchName').value.trim();
+  var lbl=document.getElementById('nsBranchReq');
+  lbl.style.display=(!jira&&!branch)?'inline':'none';
+}
+
+window.onNsJiraInput=function(){
+  var url=document.getElementById('nsJiraUrl').value.trim();
+  if(url){
+    var key=extractJiraKey(url);
+    if(key)document.getElementById('nsBranchName').value=key;
+  }
+  updateBranchReq();
+};
+
+window.onNsBranchInput=function(){
+  updateBranchReq();
+};
+
+function validateNsForm(){
+  var branch=document.getElementById('nsBranchName').value.trim();
+  if(!branch)return 'Branch name is required (enter manually or provide a JIRA URL)';
+  if(!/^[a-zA-Z0-9._\/+-]+$/.test(branch))return 'Branch name contains invalid characters';
+  var jira=document.getElementById('nsJiraUrl').value.trim();
+  if(jira&&!jira.match(/atlassian\.net\/browse\/[A-Z]+-\d+/i))return 'Invalid JIRA URL format';
+  return null;
+}
+
+window.submitNewSession=function(){
+  var err=validateNsForm();
+  var errEl=document.getElementById('nsError');
+  if(err){errEl.textContent=err;errEl.style.display='block';return;}
+  errEl.style.display='none';
+
+  var projectPath=document.getElementById('nsProject').value;
+  var branchName=document.getElementById('nsBranchName').value.trim();
+  var skill=document.getElementById('nsSkill').value;
+  var prompt=document.getElementById('nsPrompt').value.trim();
+  var jiraUrl=document.getElementById('nsJiraUrl').value.trim();
+
+  // Compose prompt: skill prefix + user prompt
+  var fullPrompt='';
+  if(skill)fullPrompt=skill;
+  if(jiraUrl){
+    var key=extractJiraKey(jiraUrl);
+    if(key){
+      // Append JIRA URL to skill-based prompts so the skill can use it
+      if(fullPrompt)fullPrompt+=' '+jiraUrl;
+      else if(prompt)fullPrompt=prompt;
+    }
+  }
+  if(prompt)fullPrompt=fullPrompt?(fullPrompt+' '+prompt):prompt;
+
+  var btn=document.getElementById('nsCreateBtn');
+  btn.disabled=true;btn.textContent='Creating worktree...';
+
+  api('POST','/api/new-session',{
+    projectPath:projectPath,
+    branchName:branchName,
+    jiraUrl:jiraUrl,
+    prompt:fullPrompt,
+    command:'claude'
+  }).then(function(r){
     if(!r||!r.ok){
-      console.error('New session failed:',r&&r.error);
+      errEl.textContent=(r&&r.error)||'Failed to create session';
+      errEl.style.display='block';
+      btn.disabled=false;btn.textContent='Create';
       return;
     }
-    // New workspace will appear on next refresh cycle — nothing else needed
+    closeNewSession();
+    // Prompt delivery handled by backend (polls for REPL readiness)
   }).catch(function(){
-    if(btn){btn.textContent='+ New Session';btn.disabled=false;}
+    errEl.textContent='Network error';
+    errEl.style.display='block';
+    btn.disabled=false;btn.textContent='Create';
   });
 };
 
@@ -2067,6 +2283,7 @@ function updateActivityFeed(entries){
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){
     if(_activityOpen){_activityOpen=false;document.getElementById('activityPopover').classList.remove('visible')}
+    else if(document.getElementById('nsOverlay').classList.contains('visible'))closeNewSession();
     else if(document.getElementById('diffOverlay').classList.contains('visible'))closeDiff();
     else if(document.getElementById('settingsOverlay').classList.contains('visible'))closeSettings();
     else closeExpanded();
