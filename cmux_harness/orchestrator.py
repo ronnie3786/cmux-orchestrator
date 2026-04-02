@@ -304,10 +304,35 @@ class Orchestrator:
 
     def _wait_for_repl(self, ws_uuid, timeout_attempts=20, poll_interval=3.0):
         repl_ready = re.compile(r"(Model:|Cost:\s*\$\d|\u276f\s*$)", re.MULTILINE | re.IGNORECASE)
+        # Patterns for interactive prompts that need to be dismissed before REPL
+        trust_folder = re.compile(r"(trust this folder|Yes, I trust|Enter to confirm)", re.IGNORECASE)
+        compact_mode = re.compile(r"(compact|verbose|Enter to confirm.*mode)", re.IGNORECASE)
+        dismissed_trust = False
         for attempt in range(timeout_attempts):
-            screen = cmux_api.cmux_read_workspace(0, 0, lines=30, workspace_uuid=ws_uuid) or ""
+            screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=ws_uuid) or ""
             if repl_ready.search(screen):
                 return True
+            # Dismiss "trust this folder" prompt by sending Enter
+            if not dismissed_trust and trust_folder.search(screen):
+                try:
+                    with self.mutex.context(ws_uuid):
+                        cmux_api._v2_request("surface.send_key", {
+                            "workspace_id": ws_uuid,
+                            "key": "enter",
+                        })
+                    dismissed_trust = True
+                except Exception:
+                    pass
+            # Dismiss compact/verbose mode selection if it appears
+            if compact_mode.search(screen) and dismissed_trust:
+                try:
+                    with self.mutex.context(ws_uuid):
+                        cmux_api._v2_request("surface.send_key", {
+                            "workspace_id": ws_uuid,
+                            "key": "enter",
+                        })
+                except Exception:
+                    pass
             if attempt < timeout_attempts - 1:
                 time.sleep(poll_interval)
         return False
