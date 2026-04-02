@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from . import cmux_api
+from . import objectives
 from . import storage
 from . import review as review_mod
 from .detection import OLLAMA_URL
@@ -106,6 +107,15 @@ def make_handler(engine):
                     item["gitDiff"] = (item.get("gitDiff") or "")[:500]
                     reviews.append(item)
                 self._json_response(reviews)
+            elif self.path == "/api/objectives":
+                self._json_response(objectives.list_objectives())
+            elif self.path.startswith("/api/objectives/"):
+                objective_id = urllib.parse.unquote(self.path[len("/api/objectives/"):]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                self._json_response(objective)
             elif self.path.startswith("/api/reviews/"):
                 session_id = urllib.parse.unquote(self.path[len("/api/reviews/"):])
                 review = storage.get_review(session_id)
@@ -175,6 +185,19 @@ def make_handler(engine):
             if self.path == "/api/toggle":
                 engine.set_enabled(data.get("enabled", False))
                 self._json_response({"ok": True, "enabled": engine.enabled})
+            elif self.path == "/api/objectives":
+                goal = data.get("goal", "")
+                project_dir = data.get("projectDir", "")
+                base_branch = data.get("baseBranch", "main")
+                if not goal or not project_dir:
+                    self._json_response({"ok": False, "error": "goal and projectDir required"}, 400)
+                    return
+                try:
+                    objective = objectives.create_objective(goal, project_dir, base_branch=base_branch)
+                except OSError as e:
+                    self._json_response({"ok": False, "error": str(e)}, 500)
+                    return
+                self._json_response(objective, 201)
             elif self.path == "/api/workspace":
                 idx = data.get("index")
                 enabled = data.get("enabled", True)
