@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 import uuid
@@ -13,6 +14,7 @@ from . import detection
 from . import monitor
 from . import objectives
 from . import planner
+from . import review as review_mod
 from . import worker
 from .workspace_mutex import WorkspaceMutex
 
@@ -538,6 +540,256 @@ class Orchestrator:
                     f"Task {task_id}: terminal active but no progress updates ({stuck_status.get('elapsed_minutes', 0):.1f} min)",
                     metadata={"task_id": task_id, "stuck_status": stuck_status},
                 )
+
+    def _run_review(self, objective_id, task_id):
+        self._append_message(objective_id, "review", f"Reviewing Task {task_id}...")
+
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return
+
+        tasks = objective.get("tasks", [])
+        task = next((item for item in tasks if item.get("id") == task_id), None)
+        if task is None:
+            return
+
+        task["status"] = "reviewing"
+        result_text = objectives.read_task_file(objective_id, task_id, "result.md") or ""
+        spec_text = objectives.read_task_file(objective_id, task_id, "spec.md") or ""
+        worktree_path = task.get("worktreePath", "")
+
+        git_diff_stat = ""
+        if worktree_path:
+            diff_commands = [
+                ["git", "-C", worktree_path, "diff", "HEAD~1", "--stat"],
+                ["git", "-C", worktree_path, "diff", "--stat"],
+            ]
+            for cmd in diff_commands:
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                if result.returncode == 0:
+                    git_diff_stat = (result.stdout or "").strip()
+                    break
+
+        snapshot_text = "\n\n".join(
+            [
+                "=== result.md ===",
+                result_text.strip(),
+                "=== spec.md ===",
+                spec_text.strip(),
+                "=== git diff --stat ===",
+                git_diff_stat.strip(),
+            ]
+        ).strip()
+
+        try:
+            review_prompt = review_mod.build_review_prompt(snapshot_text, session_cost="")
+        except TypeError:
+            review_prompt = review_mod.build_review_prompt(
+                {
+                    "taskDescription": task.get("title", ""),
+                    "terminalSnapshot": snapshot_text,
+                    "gitDiffStat": git_diff_stat,
+                    "finalCost": "",
+                }
+            )
+
+        review_result = claude_cli.run_sonnet(review_prompt, timeout=120)
+        if isinstance(review_result, dict):
+            review_json = review_result
+        else:
+            try:
+                parsed = json.loads(review_result)
+            except (TypeError, json.JSONDecodeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                review_json = parsed
+            else:
+                review_json = {
+                    "summary": review_result,
+                    "issues": [],
+                    "confidence": "low",
+                    "readyForPR": False,
+                }
+
+        objectives.write_task_file(
+            objective_id,
+            task_id,
+            "review.json",
+            json.dumps(review_json, indent=2),
+        )
+
+        task["reviewCycles"] = task.get("reviewCycles", 0) + 1
+        review_cycle = task["reviewCycles"]
+        needs_rework = monitor.should_trigger_rework(review_json)
+
+        if not needs_rework:
+            task["status"] = "completed"
+            task["completedAt"] = _utc_now_iso()
+            objectives.update_objective(objective_id, {"tasks": tasks})
+            self._append_message(
+                objective_id,
+                "review",
+                f"Task {task_id}: review passed (cycle {review_cycle})",
+                metadata={"task_id": task_id, "review": review_json},
+            )
+            self._launch_ready_tasks(objective_id)
+            refreshed = objectives.read_objective(objective_id) or {}
+            refreshed_tasks = refreshed.get("tasks", [])
+            if refreshed_tasks and all(item.get("status") == "completed" for item in refreshed_tasks):
+                self._complete_objective(objective_id)
+            return
+
+        if monitor.can_retry_review(task):
+            task["status"] = "rework"
+            issues, recommendation = monitor.build_review_rework_summary(review_json)
+            rework_prompt = worker.build_rework_prompt(issues, recommendation)
+            workspace_uuid = task.get("workspaceId")
+            screen_text = ""
+            if workspace_uuid:
+                try:
+                    screen_text = cmux_api.cmux_read_workspace(
+                        0,
+                        0,
+                        lines=200,
+                        workspace_uuid=workspace_uuid,
+                    ) or ""
+                except Exception:
+                    screen_text = ""
+                if not detection.detect_claude_session(screen_text):
+                    launch_text = f"cd {worktree_path} && claude\n"
+                    with self.mutex.context(workspace_uuid):
+                        cmux_api.cmux_send_to_workspace(
+                            0,
+                            0,
+                            text=launch_text,
+                            workspace_uuid=workspace_uuid,
+                        )
+                    self._wait_for_repl(workspace_uuid)
+                cmux_api.send_prompt_to_workspace(workspace_uuid, rework_prompt)
+            task["status"] = "executing"
+            objectives.update_objective(objective_id, {"tasks": tasks})
+            self._append_message(
+                objective_id,
+                "review",
+                (
+                    f"Task {task_id}: review found issues, sending back for fixes "
+                    f"(cycle {review_cycle}/{task.get('maxReviewCycles', 5)})"
+                ),
+                metadata={"task_id": task_id, "issues": issues, "review": review_json},
+            )
+            return
+
+        task["status"] = "failed"
+        issues, _ = monitor.build_review_rework_summary(review_json)
+        objectives.update_objective(objective_id, {"tasks": tasks})
+        self._append_message(
+            objective_id,
+            "alert",
+            (
+                f"Task {task_id}: failed review "
+                f"{task.get('maxReviewCycles', 5)} times. Needs your attention."
+            ),
+            metadata={"task_id": task_id, "issues": issues, "review": review_json},
+        )
+
+    def _complete_objective(self, objective_id):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return
+
+        tasks = objective.get("tasks", [])
+        result_parts = []
+        total_review_cycles = 0
+        rework_count = 0
+        for task in tasks:
+            task_id = task.get("id")
+            if not task_id:
+                continue
+            result_text = objectives.read_task_file(objective_id, task_id, "result.md") or ""
+            if result_text.strip():
+                result_parts.append(result_text.strip())
+            cycles = task.get("reviewCycles", 0)
+            total_review_cycles += cycles
+            if cycles > 1:
+                rework_count += 1
+
+        objectives.update_objective(objective_id, {"status": "completed"})
+
+        summary_prompt = (
+            "Summarize the following completed task results into a brief project summary:\n\n"
+            + "\n\n".join(result_parts)
+        )
+        summary_result = claude_cli.run_haiku(summary_prompt)
+        if isinstance(summary_result, dict):
+            summary_text = summary_result.get("summary") or json.dumps(summary_result)
+        else:
+            summary_text = summary_result
+
+        self._append_message(
+            objective_id,
+            "completion",
+            f"Objective complete! {len(tasks)} tasks done. {rework_count} required rework.",
+            metadata={
+                "summary": summary_text,
+                "total_review_cycles": total_review_cycles,
+                "rework_count": rework_count,
+            },
+        )
+        with self._lock:
+            if self._active_objective_id == objective_id:
+                self._active_objective_id = None
+
+    def handle_human_input(self, objective_id, message, context=None):
+        self._append_message(objective_id, "user", message)
+
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return
+
+        context = context or {}
+        task_id = context.get("task_id")
+        if task_id and context.get("approval_action"):
+            task = next((item for item in objective.get("tasks", []) if item.get("id") == task_id), None)
+            workspace_uuid = task.get("workspaceId") if task else None
+            if workspace_uuid:
+                with self.mutex.context(workspace_uuid):
+                    cmux_api.cmux_send_to_workspace(
+                        0,
+                        0,
+                        text=context["approval_action"],
+                        workspace_uuid=workspace_uuid,
+                    )
+                self._append_message(
+                    objective_id,
+                    "system",
+                    f"Sent '{context['approval_action']}' to Task {task_id}",
+                    metadata={"task_id": task_id},
+                )
+            return
+
+        if context.get("take_over") and task_id:
+            tasks = objective.get("tasks", [])
+            task = next((item for item in tasks if item.get("id") == task_id), None)
+            if task is None:
+                return
+            task["status"] = "failed"
+            task["note"] = "Taken over by human"
+            objectives.update_objective(objective_id, {"tasks": tasks})
+            self._append_message(
+                objective_id,
+                "system",
+                f"Task {task_id}: taken over by human",
+                metadata={"task_id": task_id},
+            )
+            return
 
     def get_active_objective_id(self):
         with self._lock:

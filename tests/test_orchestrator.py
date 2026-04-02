@@ -462,5 +462,210 @@ class TestPollTasks(unittest.TestCase):
         mock_progress.assert_not_called()
 
 
+class TestReviewRework(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.project_dir = Path(self.tmpdir.name) / "project"
+        self.project_dir.mkdir()
+        self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
+        self.patch_objectives_dir.start()
+        self.addCleanup(self.patch_objectives_dir.stop)
+        self.orchestrator = Orchestrator(object())
+        self.orchestrator._active_objective_id = "active-objective"
+
+    def _create_objective(self, tasks, status="executing"):
+        objective = objectives.create_objective("Review tasks", str(self.project_dir))
+        objectives.update_objective(objective["id"], {"tasks": tasks, "status": status})
+        return objective
+
+    def _create_task_files(self, objective_id, task_id, result_text="task result", spec_text="task spec"):
+        objectives.write_task_file(objective_id, task_id, "result.md", result_text)
+        objectives.write_task_file(objective_id, task_id, "spec.md", spec_text)
+
+    def test_run_review_passes_clean_review(self):
+        worktree = self.project_dir / "wt-pass"
+        worktree.mkdir()
+        task = {
+            "id": "task-1",
+            "title": "Review me",
+            "status": "reviewing",
+            "workspaceId": "ws-1",
+            "worktreePath": str(worktree),
+            "reviewCycles": 0,
+            "maxReviewCycles": 5,
+        }
+        objective = self._create_objective([task])
+        self._create_task_files(objective["id"], "task-1")
+
+        mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
+        with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
+                patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
+                    "summary": "Good work",
+                    "issues": [],
+                    "confidence": "high",
+                    "readyForPR": True,
+                }), \
+                patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=False), \
+                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch_ready, \
+                patch.object(self.orchestrator, "_complete_objective") as mock_complete:
+            self.orchestrator._run_review(objective["id"], "task-1")
+
+        updated = objectives.read_objective(objective["id"])
+        updated_task = updated["tasks"][0]
+        self.assertEqual(updated_task["status"], "completed")
+        self.assertEqual(updated_task["reviewCycles"], 1)
+        self.assertIn("completedAt", updated_task)
+        self.assertEqual(
+            json.loads(objectives.read_task_file(objective["id"], "task-1", "review.json"))["summary"],
+            "Good work",
+        )
+        self.assertTrue(any("review passed" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+        mock_launch_ready.assert_called_once_with(objective["id"])
+        mock_complete.assert_called_once_with(objective["id"])
+
+    def test_run_review_triggers_rework(self):
+        worktree = self.project_dir / "wt-rework"
+        worktree.mkdir()
+        task = {
+            "id": "task-1",
+            "title": "Needs fixes",
+            "status": "reviewing",
+            "workspaceId": "ws-1",
+            "worktreePath": str(worktree),
+            "reviewCycles": 0,
+            "maxReviewCycles": 5,
+        }
+        objective = self._create_objective([task])
+        self._create_task_files(objective["id"], "task-1")
+
+        mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
+        with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
+                patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
+                    "summary": "Needs work",
+                    "issues": ["Fix formatting"],
+                    "confidence": "medium",
+                    "readyForPR": False,
+                }), \
+                patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=True), \
+                patch("cmux_harness.orchestrator.monitor.can_retry_review", return_value=True), \
+                patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")), \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="shell prompt"), \
+                patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False), \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send_text, \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True) as mock_wait, \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace") as mock_send_prompt:
+            self.orchestrator._run_review(objective["id"], "task-1")
+
+        updated = objectives.read_objective(objective["id"])
+        updated_task = updated["tasks"][0]
+        self.assertEqual(updated_task["status"], "executing")
+        self.assertEqual(updated_task["reviewCycles"], 1)
+        mock_send_text.assert_called_once_with(
+            0,
+            0,
+            text=f"cd {worktree} && claude\n",
+            workspace_uuid="ws-1",
+        )
+        mock_wait.assert_called_once_with("ws-1")
+        mock_send_prompt.assert_called_once()
+        self.assertTrue(
+            any("sending back for fixes" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"]))
+        )
+
+    def test_run_review_escalates_after_max_cycles(self):
+        worktree = self.project_dir / "wt-fail"
+        worktree.mkdir()
+        task = {
+            "id": "task-1",
+            "title": "Maxed out",
+            "status": "reviewing",
+            "workspaceId": "ws-1",
+            "worktreePath": str(worktree),
+            "reviewCycles": 4,
+            "maxReviewCycles": 5,
+        }
+        objective = self._create_objective([task])
+        self._create_task_files(objective["id"], "task-1")
+
+        mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
+        with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
+                patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
+                    "summary": "Still broken",
+                    "issues": ["Fix formatting"],
+                    "confidence": "low",
+                    "readyForPR": False,
+                }), \
+                patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=True), \
+                patch("cmux_harness.orchestrator.monitor.can_retry_review", return_value=False), \
+                patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")):
+            self.orchestrator._run_review(objective["id"], "task-1")
+
+        updated = objectives.read_objective(objective["id"])
+        updated_task = updated["tasks"][0]
+        self.assertEqual(updated_task["status"], "failed")
+        self.assertEqual(updated_task["reviewCycles"], 5)
+        alerts = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "alert"]
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("Needs your attention", alerts[0]["content"])
+        self.assertEqual(alerts[0]["metadata"]["issues"], ["Fix formatting"])
+
+    def test_complete_objective(self):
+        tasks = [
+            {"id": "task-1", "status": "completed", "reviewCycles": 1},
+            {"id": "task-2", "status": "completed", "reviewCycles": 2},
+        ]
+        objective = self._create_objective(tasks, status="executing")
+        self.orchestrator._active_objective_id = objective["id"]
+        objectives.write_task_file(objective["id"], "task-1", "result.md", "Task one done")
+        objectives.write_task_file(objective["id"], "task-2", "result.md", "Task two done")
+
+        with patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value="Project summary text"):
+            self.orchestrator._complete_objective(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "completed")
+        messages = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "completion"]
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["metadata"]["summary"], "Project summary text")
+        self.assertEqual(messages[0]["metadata"]["total_review_cycles"], 3)
+        self.assertEqual(messages[0]["metadata"]["rework_count"], 1)
+        self.assertIsNone(self.orchestrator.get_active_objective_id())
+
+    def test_handle_human_input_sends_approval(self):
+        task = {"id": "task-1", "status": "executing", "workspaceId": "ws-approve"}
+        objective = self._create_objective([task])
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send:
+            self.orchestrator.handle_human_input(
+                objective["id"],
+                "Approve it",
+                context={"task_id": "task-1", "approval_action": "y\n"},
+            )
+
+        mock_send.assert_called_once_with(0, 0, text="y\n", workspace_uuid="ws-approve")
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(messages[-1]["content"], "Sent 'y\n' to Task task-1")
+
+    def test_handle_human_input_takes_over(self):
+        task = {"id": "task-1", "status": "executing", "workspaceId": "ws-approve"}
+        objective = self._create_objective([task])
+
+        self.orchestrator.handle_human_input(
+            objective["id"],
+            "I will take this one",
+            context={"task_id": "task-1", "take_over": True},
+        )
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["tasks"][0]["status"], "failed")
+        self.assertEqual(updated["tasks"][0]["note"], "Taken over by human")
+        self.assertTrue(
+            any("taken over by human" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"]))
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
