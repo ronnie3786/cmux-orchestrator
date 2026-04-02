@@ -93,12 +93,12 @@ def llm_classify(screen_text, model=None, ollama_available_checker=None):
         safe = parsed.get("safe", False)
         reason = parsed.get("reason", "")
         if action == "skip" or not safe:
-            return ("needs_human", "skip")
+            return ("needs_human", "skip", reason)
         # Fix action mismatch: if the screen is a numbered menu (Enter to select),
         # always use "enter" even if the LLM said "y". Typing "y" in a menu does nothing.
         if action == "y" and re.search(r"Enter to select|Esc to cancel", tail):
             action = "enter"
-        return (f"llm:{reason[:40]}", action)
+        return (f"llm:{reason[:40]}", action, reason)
     except Exception as e:
         print(f"[harness] LLM error: {e}")
         debug_log({"event": "llm_error", "error": str(e)})
@@ -260,7 +260,7 @@ def detect_prompt(screen_text, model=None, ollama_available_checker=None):
         # Exception: if Claude asked the user a question above the REPL,
         # this always needs human input (free-form response, not a Y/n prompt)
         if _has_open_question(lines):
-            return ("needs_human", "skip")
+            return ("needs_human", "skip", "Claude asked an open-ended question and is waiting for your response")
         return None
 
     # SKIP: Plain shell prompt with no Claude Code indicators

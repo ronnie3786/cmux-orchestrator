@@ -676,7 +676,7 @@ class HarnessEngine(threading.Thread):
         if result is None:
             return
 
-        pattern_name, action = result
+        pattern_name, action, reason = result
 
         if action == "skip":
             print(f"[harness] ⚠ ws:{idx} ({ws_name}) needs human input: {pattern_name}")
@@ -693,6 +693,7 @@ class HarnessEngine(threading.Thread):
                 "workspaceName": ws_name,
                 "promptType": pattern_name,
                 "action": "⚠ needs human",
+                "reason": reason,
                 "surface": surface_index,
                 "surfaceId": surface_id,
             })
