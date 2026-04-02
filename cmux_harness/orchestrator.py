@@ -553,7 +553,8 @@ class Orchestrator:
                     )
 
             last_ts = self._task_last_progress.get(task_id, 0)
-            progress_state = monitor.check_progress(objective_id, task_id, last_ts)
+            wt_path = task.get("worktreePath")
+            progress_state = monitor.check_progress(objective_id, task_id, last_ts, worktree_path=wt_path)
 
             if progress_state.get("has_result"):
                 has_claude = detection.detect_claude_session(screen_text) if screen_text else False

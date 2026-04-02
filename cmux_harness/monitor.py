@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from pathlib import Path
 from datetime import datetime, timezone
 
 from .objectives import get_objective_dir, read_task_file
@@ -46,11 +47,22 @@ def parse_checkpoints(progress_text: str) -> list[dict]:
     return checkpoints
 
 
-def check_progress(objective_id: str, task_id: str, last_check_ts: float) -> dict:
+def check_progress(objective_id: str, task_id: str, last_check_ts: float, worktree_path: str = None) -> dict:
     task_dir = get_objective_dir(objective_id) / "tasks" / task_id
     progress_path = task_dir / "progress.md"
     progress_text = read_task_file(objective_id, task_id, "progress.md") or ""
     result_text = read_task_file(objective_id, task_id, "result.md") or ""
+
+    # Also check worktree for result.md (workers write there, not task dir)
+    if not result_text.strip() and worktree_path:
+        wt_result = Path(worktree_path) / "result.md"
+        if wt_result.is_file():
+            result_text = wt_result.read_text(encoding="utf-8", errors="replace")
+            # Copy to task dir so downstream consumers find it
+            try:
+                (task_dir / "result.md").write_text(result_text, encoding="utf-8")
+            except OSError:
+                pass
 
     progress_mtime = None
     try:
