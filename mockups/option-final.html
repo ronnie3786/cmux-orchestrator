@@ -3,849 +3,792 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>cmux harness — Command Center</title>
+<title>cmux orchestrator</title>
 <style>
-  :root {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --surface-hover: #1c2129;
-    --border: #30363d;
-    --text: #e6edf3;
-    --text-muted: #8b949e;
-    --accent: #58a6ff;
-    --green: #3fb950;
-    --yellow: #d29922;
-    --red: #f85149;
-    --purple: #bc8cff;
-    --orange: #f0883e;
-    --radius: 12px;
-  }
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  :root {
+    --bg:       #0a0d14;
+    --panel:    #0f1420;
+    --raised:   #141b28;
+    --hover:    #1a2235;
+    --border:   rgba(255,255,255,0.07);
+    --border2:  rgba(255,255,255,0.12);
+    --t1: #e6ecf8;
+    --t2: #7080a0;
+    --t3: #3a4a68;
+    --t4: #1e2a40;
+    --accent:   #3b82f6;
+    --accent-d: rgba(59,130,246,0.12);
+    --accent-b: rgba(59,130,246,0.3);
+    --green:    #22c55e;
+    --green-d:  rgba(34,197,94,0.10);
+    --green-b:  rgba(34,197,94,0.28);
+    --amber:    #f59e0b;
+    --amber-d:  rgba(245,158,11,0.10);
+    --amber-b:  rgba(245,158,11,0.28);
+    --purple:   #a78bfa;
+    --purple-d: rgba(167,139,250,0.10);
+    --purple-b: rgba(167,139,250,0.28);
+    --red:      #ef4444;
+    --red-d:    rgba(239,68,68,0.10);
+  }
+
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+    font-family: 'Inter', -apple-system, sans-serif;
     background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-  }
-
-  /* ─── Top Bar ─── */
-  .topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 28px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-  .topbar-left { display: flex; align-items: center; gap: 20px; }
-  .topbar-logo { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
-  .topbar-logo span { color: var(--accent); }
-  .topbar-stats { display: flex; gap: 20px; }
-  .stat { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
-  .stat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .topbar-actions { display: flex; gap: 10px; }
-  .btn {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .btn:hover { background: var(--surface-hover); border-color: var(--accent); }
-  .btn-primary { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
-  .btn-primary:hover { opacity: 0.9; }
-
-  /* ─── Grid View ─── */
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(540px, 1fr));
-    gap: 16px;
-    padding: 24px 28px;
-  }
-
-  /* ─── Card ─── */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    color: var(--t1);
+    height: 100vh;
     overflow: hidden;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .card:hover { border-color: #444c56; }
-  .card.needs-attention {
-    border-color: var(--yellow);
-    box-shadow: 0 0 16px rgba(210,153,34,0.1);
-    order: -1;
+    display: flex;
+    flex-direction: column;
   }
 
-  .card-header {
+  /* ── TOP BAR ── */
+  .topbar {
+    height: 48px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
+    padding: 0 18px;
+    gap: 14px;
+    flex-shrink: 0;
   }
-  .card-title-row { display: flex; align-items: center; gap: 10px; }
-  .card-status { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .card-status.active { background: var(--green); box-shadow: 0 0 8px rgba(63,185,80,0.4); }
-  .card-status.waiting { background: var(--yellow); animation: pulse 2s infinite; }
-  .card-status.idle { background: var(--text-muted); opacity: 0.5; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-  .card-name { font-size: 15px; font-weight: 600; }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: -.3px;
+    flex-shrink: 0;
+  }
+  .logo-mark {
+    width: 26px; height: 26px;
+    background: linear-gradient(135deg, var(--accent), #1d4ed8);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+  }
+  .topbar-sep { width: 1px; height: 18px; background: var(--border2); flex-shrink: 0; }
+  .obj-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--t1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .status-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--t2);
+    flex-shrink: 0;
+  }
+  .ss-item { display: flex; align-items: center; gap: 5px; }
+  .ss-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .ssd-running { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 2s infinite; }
+  .ssd-queued  { background: var(--t3); }
+  .ssd-done    { background: var(--green); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-  .card-header-right { display: flex; align-items: center; gap: 8px; }
-  .badge {
-    padding: 3px 10px;
-    border-radius: 20px;
+  /* ── BODY ── */
+  .body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── LEFT: CHAT ── */
+  .chat-panel {
+    width: 44%;
+    min-width: 320px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  /* message group */
+  .msg-group { display: flex; flex-direction: column; gap: 5px; }
+  .msg-row { display: flex; align-items: flex-start; gap: 9px; }
+  .msg-avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .av-user { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: white; }
+  .av-sys  { background: linear-gradient(135deg, #1e3a5f, #0f2240); color: var(--accent); border: 1px solid var(--accent-b); font-size: 11px; }
+  .msg-content { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+  .msg-meta { display: flex; align-items: center; gap: 7px; }
+  .msg-name { font-size: 12px; font-weight: 600; }
+  .msg-name.user { color: var(--t2); }
+  .msg-name.sys  { color: var(--accent); }
+  .msg-time { font-size: 11px; color: var(--t3); }
+  .msg-text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--t1);
+    padding: 9px 12px;
+    border-radius: 0 10px 10px 10px;
+    background: var(--raised);
+    border: 1px solid var(--border);
+    max-width: 100%;
+  }
+  .msg-group.user .msg-text {
+    background: var(--accent-d);
+    border-color: var(--accent-b);
+    border-radius: 10px 0 10px 10px;
+  }
+  .msg-group.user .msg-row { flex-direction: row-reverse; }
+  .msg-group.user .msg-meta { flex-direction: row-reverse; }
+  .msg-group.user .msg-content { align-items: flex-end; }
+  code {
+    background: rgba(255,255,255,.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+
+  /* plan inline block */
+  .plan-inline {
+    margin-top: 4px;
+    border: 1px solid var(--border2);
+    border-radius: 9px;
+    overflow: hidden;
+    font-size: 12px;
+  }
+  .plan-inline-head {
+    background: var(--hover);
+    padding: 7px 12px;
     font-size: 11px;
     font-weight: 600;
+    letter-spacing: .05em;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .badge-active { background: rgba(63,185,80,0.15); color: var(--green); }
-  .badge-waiting { background: rgba(210,153,34,0.15); color: var(--yellow); }
-  .badge-idle { background: rgba(139,148,158,0.15); color: var(--text-muted); }
-  .expand-btn {
-    width: 32px; height: 32px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text-muted);
-    font-size: 16px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-  }
-  .expand-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-  /* Auto-approve toggle */
-  .auto-toggle {
+    color: var(--t2);
     display: flex;
     align-items: center;
     gap: 6px;
-    cursor: pointer;
-    user-select: none;
+    border-bottom: 1px solid var(--border);
   }
-  .auto-toggle-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    color: var(--text-muted);
-    transition: color 0.2s;
-  }
-  .auto-toggle.on .auto-toggle-label { color: var(--green); }
-  .toggle-track {
-    width: 36px; height: 20px;
-    background: var(--border);
-    border-radius: 10px;
-    position: relative;
-    transition: background 0.2s;
-    flex-shrink: 0;
-  }
-  .auto-toggle.on .toggle-track { background: var(--green); }
-  .toggle-track::after {
-    content: '';
-    width: 16px; height: 16px;
-    background: white;
-    border-radius: 50%;
-    position: absolute;
-    top: 2px; left: 2px;
-    transition: transform 0.2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-  }
-  .auto-toggle.on .toggle-track::after { transform: translateX(16px); }
-
-  .card-meta {
-    display: flex;
-    gap: 14px;
-    padding: 10px 18px 0;
-    font-size: 12px;
-    color: var(--text-muted);
-    flex-wrap: wrap;
-  }
-
-  .card-terminal {
-    padding: 12px 18px;
-    font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--text-muted);
-    background: rgba(0,0,0,0.2);
-    min-height: 90px;
-    max-height: 120px;
-    overflow: hidden;
-    position: relative;
-  }
-  .card-terminal::after {
-    content: '';
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    height: 24px;
-    background: linear-gradient(transparent, rgba(0,0,0,0.3));
-  }
-  .t-prompt { color: var(--green); }
-  .t-tool { color: var(--purple); }
-  .t-file { color: var(--accent); }
-  .t-warn { color: var(--yellow); }
-
-  .card-footer {
+  .plan-task-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 18px;
-    border-top: 1px solid var(--border);
-  }
-  .card-input {
-    flex: 1;
-    padding: 9px 14px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    font-size: 13px;
-    outline: none;
-  }
-  .card-input:focus { border-color: var(--accent); }
-  .card-input::placeholder { color: var(--text-muted); }
-  .card-send {
-    padding: 9px 16px;
-    border-radius: 8px;
-    border: none;
-    background: var(--accent);
-    color: #000;
-    font-size: 13px;
-    font-weight: 600;
+    gap: 9px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
     cursor: pointer;
-    white-space: nowrap;
+    transition: background .12s;
   }
-
-  /* ═══════════════════════════════════════════════════════
-     EXPANDED OVERLAY
-     ═══════════════════════════════════════════════════════ */
-  .overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    background: rgba(0,0,0,0.7);
-    backdrop-filter: blur(4px);
-    animation: fadeIn 0.15s ease;
+  .plan-task-row:last-child { border-bottom: none; }
+  .plan-task-row:hover { background: var(--hover); }
+  .pti {
+    width: 17px; height: 17px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700;
+    flex-shrink: 0;
   }
-  .overlay.visible { display: flex; }
-  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+  .pti-done   { background: var(--green-d); color: var(--green); border: 1px solid var(--green-b); }
+  .pti-active { background: var(--accent-d); color: var(--accent); border: 1px solid var(--accent-b); animation: pulse 1.5s infinite; }
+  .pti-queue  { background: var(--t4); color: var(--t3); border: 1px solid var(--border); }
+  .plan-task-name { flex: 1; color: var(--t1); }
+  .plan-task-st { font-size: 10px; font-family: 'JetBrains Mono', monospace; }
+  .pts-done   { color: var(--green); }
+  .pts-active { color: var(--accent); }
+  .pts-queue  { color: var(--t3); }
 
-  .expanded-panel {
-    display: flex;
-    width: 92vw;
-    max-width: 1400px;
-    height: 85vh;
-    margin: auto;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
-    animation: slideUp 0.2s ease;
-  }
-  @keyframes slideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
-
-  /* Expanded: Main content */
-  .exp-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
+  /* inline review card */
+  .review-inline {
+    margin-top: 4px;
+    background: var(--raised);
+    border: 1px solid var(--green-b);
+    border-radius: 10px;
     overflow: hidden;
   }
-  .exp-header {
-    padding: 20px 24px;
+  .ri-head {
+    padding: 10px 13px;
     border-bottom: 1px solid var(--border);
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
+    align-items: center;
+    gap: 9px;
   }
-  .exp-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
-  .exp-meta { display: flex; gap: 20px; font-size: 13px; color: var(--text-muted); flex-wrap: wrap; }
-  .exp-header-actions { display: flex; gap: 8px; align-items: flex-start; }
-  .exp-close {
-    width: 36px; height: 36px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text-muted);
-    font-size: 18px;
+  .ri-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .rib-pass { background: var(--green-d); color: var(--green); }
+  .rib-fail { background: var(--red-d); color: var(--red); }
+  .ri-task-name { font-size: 12px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--t1); }
+  .ri-body { padding: 10px 13px; }
+  .ri-summary { font-size: 12px; color: var(--t2); line-height: 1.6; margin-bottom: 10px; }
+  .ri-stats { display: flex; gap: 14px; font-size: 11px; color: var(--t2); margin-bottom: 10px; }
+  .ri-actions { display: flex; gap: 7px; }
+  .ri-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    border: none;
+    transition: opacity .15s;
+  }
+  .ri-btn:hover { opacity: .85; }
+  .rib-accept { background: var(--green); color: #000; }
+  .rib-view   { background: var(--raised); border: 1px solid var(--border2); color: var(--t1); padding: 5px 13px; }
+
+  /* thread divider */
+  .thread-div {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--t3);
+    font-size: 11px;
+  }
+  .thread-div::before,
+  .thread-div::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* chat input */
+  .chat-input-wrap {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .chat-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    background: var(--raised);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 8px 8px 8px 13px;
+    transition: border-color .2s;
+  }
+  .chat-input-row:focus-within { border-color: var(--accent-b); }
+  .chat-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--t1);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    resize: none;
+    outline: none;
+    line-height: 1.5;
+    max-height: 120px;
+    min-height: 22px;
+  }
+  .chat-input::placeholder { color: var(--t3); }
+  .chat-send {
+    width: 32px; height: 32px;
+    border-radius: 7px;
+    background: var(--accent);
+    border: none;
+    color: white;
+    font-size: 14px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-  }
-  .exp-close:hover { border-color: var(--red); color: var(--red); }
-
-  .exp-terminal {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 24px;
-    font-family: 'JetBrains Mono', 'SF Mono', monospace;
-    font-size: 13px;
-    line-height: 1.8;
-    background: rgba(0,0,0,0.15);
-  }
-  .exp-terminal .t-line { padding: 1px 0; }
-  .t-section {
-    margin: 14px 0 8px;
-    padding: 6px 14px;
-    background: rgba(88,166,255,0.08);
-    border-left: 3px solid var(--accent);
-    border-radius: 0 6px 6px 0;
-    font-family: -apple-system, sans-serif;
-    font-size: 12px;
-    color: var(--accent);
-  }
-  .t-dim { color: var(--text-muted); }
-
-  .exp-input {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 16px 24px;
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .mode-toggle {
-    display: flex;
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid var(--border);
     flex-shrink: 0;
+    font-weight: 700;
   }
-  .mode-btn {
-    padding: 8px 14px;
-    font-size: 12px;
-    background: var(--bg);
-    color: var(--text-muted);
-    border: none;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .mode-btn.active { background: var(--accent); color: #000; font-weight: 600; }
-  .mode-btn:hover:not(.active) { background: var(--surface-hover); }
-  .exp-input-field {
-    flex: 1;
-    padding: 10px 16px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    font-size: 14px;
-    outline: none;
-  }
-  .exp-input-field:focus { border-color: var(--accent); }
-  .exp-input-field::placeholder { color: var(--text-muted); }
-  .exp-send {
-    padding: 10px 22px;
-    border-radius: 8px;
-    border: none;
-    background: var(--accent);
-    color: #000;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-  }
+  .chat-send:hover { background: #2563eb; }
 
-  /* Expanded: Activity Feed (right panel) */
-  .exp-activity {
-    width: 300px;
-    border-left: 1px solid var(--border);
-    background: var(--bg);
+  /* ── RIGHT: TASK LIST ── */
+  .task-panel {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    flex-shrink: 0;
+    overflow: hidden;
+    background: var(--bg);
   }
-  .exp-activity-header {
-    padding: 16px 18px;
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--text-muted);
+
+  .task-panel-head {
+    padding: 14px 18px 12px;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
-  .exp-activity-count {
-    padding: 2px 8px;
-    border-radius: 10px;
+  .tph-label {
     font-size: 11px;
-    background: rgba(88,166,255,0.1);
-    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--t3);
   }
-  .exp-activity-list {
+  .tph-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--t2);
+  }
+  .tph-bar {
+    width: 80px; height: 4px;
+    background: var(--raised);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .tph-fill {
+    height: 100%;
+    width: 30%;
+    background: linear-gradient(90deg, var(--accent), #1d4ed8);
+    border-radius: 2px;
+  }
+
+  .task-list {
     flex: 1;
     overflow-y: auto;
-    padding: 4px 0;
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
   }
-  .act-item {
-    padding: 12px 18px;
-    border-bottom: 1px solid rgba(48,54,61,0.4);
-    transition: background 0.1s;
-  }
-  .act-item:hover { background: rgba(88,166,255,0.03); }
-  .act-item:last-child { border-bottom: none; }
-  .act-time { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; }
-  .act-text { font-size: 12px; color: var(--text); line-height: 1.5; }
-  .act-type {
-    display: inline-block;
-    padding: 2px 7px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 700;
-    margin-right: 4px;
-  }
-  .act-type.approved { background: rgba(63,185,80,0.15); color: var(--green); }
-  .act-type.flagged { background: rgba(210,153,34,0.15); color: var(--yellow); }
-  .act-type.action { background: rgba(88,166,255,0.1); color: var(--accent); }
 
-  /* ─── Escape key hint ─── */
-  .esc-hint {
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    padding: 4px 10px;
-    border-radius: 6px;
-    background: rgba(0,0,0,0.5);
-    color: var(--text-muted);
-    font-size: 11px;
-    pointer-events: none;
+  /* ── TASK ITEM ── */
+  .task-item {
+    border-bottom: 1px solid var(--border);
+    padding: 12px 0;
   }
-  .esc-hint kbd {
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: rgba(255,255,255,0.1);
-    font-family: inherit;
+  .task-item:last-child { border-bottom: none; }
+
+  /* collapsed row (done/queued) */
+  .task-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+  .task-status-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tsd-running { background: var(--accent); box-shadow: 0 0 7px rgba(59,130,246,.6); animation: pulse 1.5s infinite; }
+  .tsd-done    { background: var(--green); }
+  .tsd-queued  { background: var(--t4); }
+  .tsd-failed  { background: var(--red); }
+  .task-name-text {
+    font-size: 13px;
+    font-weight: 500;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .task-item.queued .task-name-text { color: var(--t2); }
+  .task-item.done   .task-name-text { color: var(--t2); }
+  .task-branch-tag {
     font-size: 10px;
+    color: var(--t3);
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
   }
+  .task-elapsed {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+  }
+  .te-done    { color: var(--green); }
+  .te-running { color: var(--t2); }
+  .te-queued  { color: var(--t3); }
+
+  /* checkpoint track (only shown when expanded) */
+  .task-body {
+    margin-top: 10px;
+    padding-left: 19px; /* aligns under the task name */
+  }
+
+  .cp-track {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 6px;
+  }
+  .cp-node {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .cpn-done {
+    background: var(--green);
+    color: #000;
+  }
+  .cpn-active {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.2);
+    animation: pulse 1.4s infinite;
+  }
+  .cpn-pending {
+    background: var(--raised);
+    border: 1px solid var(--border2);
+    color: var(--t3);
+  }
+  .cp-connector {
+    height: 2px;
+    flex: 1;
+    background: var(--border);
+  }
+  .cp-connector.done { background: var(--green); opacity: .35; }
+
+  .cp-labels {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    margin-bottom: 8px;
+  }
+  .cp-label-item {
+    flex: 1;
+    font-size: 9px;
+    text-align: center;
+    padding: 0 3px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .cp-label-item.done    { color: var(--green); opacity: .7; }
+  .cp-label-item.active  { color: var(--accent); font-weight: 600; }
+  .cp-label-item.pending { color: var(--t3); }
+
+  /* current line */
+  .task-current-line {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--raised);
+    border-left: 2px solid var(--accent-b);
+    border-radius: 0 5px 5px 0;
+    padding: 5px 9px;
+    color: var(--t2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.5;
+  }
+  .task-current-line.green { border-left-color: var(--green-b); color: var(--green); opacity: .85; }
+  .task-current-line.muted { border-left-color: transparent; color: var(--t3); }
+  .task-current-line.amber { border-left-color: var(--amber-b); color: var(--amber); }
+
+  /* done task — mini pip strip instead of full track */
+  .mini-pips {
+    display: flex;
+    gap: 3px;
+    margin-top: 6px;
+  }
+  .mini-pip {
+    height: 3px;
+    width: 24px;
+    border-radius: 2px;
+  }
+  .mpip-done { background: var(--green); opacity: .45; }
+  .mpip-skip { background: var(--t4); }
+
+  /* queued dep info */
+  .task-dep-info {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--t3);
+    font-style: italic;
+  }
+
+  /* ── TERMINAL LINK ── */
+  .terminal-link {
+    padding: 10px 16px 12px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .terminal-link a {
+    font-size: 11px;
+    color: var(--t3);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: color .15s;
+  }
+  .terminal-link a:hover { color: var(--t2); }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--t4); border-radius: 2px; }
 </style>
 </head>
 <body>
 
-<!-- ════════ TOP BAR ════════ -->
+<!-- TOP BAR -->
 <div class="topbar">
-  <div class="topbar-left">
-    <div class="topbar-logo"><span>cmux</span> harness</div>
-    <div class="topbar-stats">
-      <div class="stat"><span class="stat-dot" style="background:var(--green)"></span> 3 active</div>
-      <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> 1 waiting</div>
-      <div class="stat"><span class="stat-dot" style="background:var(--text-muted);opacity:0.5"></span> 2 idle</div>
-    </div>
+  <div class="logo">
+    <div class="logo-mark">⌘</div>
+    cmux
   </div>
-  <div class="topbar-actions">
-    <button class="btn">⚙ Settings</button>
-    <button class="btn btn-primary">+ New Session</button>
+  <div class="topbar-sep"></div>
+  <div class="obj-title">Fix token refresh bug · IOSDOX-24739</div>
+  <div class="status-summary">
+    <div class="ss-item"><div class="ss-dot ssd-running"></div>2 running</div>
+    <div class="ss-item"><div class="ss-dot ssd-queued"></div>1 queued</div>
+    <div class="ss-item"><div class="ss-dot ssd-done"></div>1 done</div>
   </div>
 </div>
 
-<!-- ════════ CARD GRID ════════ -->
-<div class="grid">
+<!-- BODY -->
+<div class="body">
 
-  <!-- NEEDS ATTENTION (auto-sorts first via order:-1) -->
-  <div class="card needs-attention">
-    <div class="card-header">
-      <div class="card-title-row">
-        <div class="card-status waiting"></div>
-        <span class="card-name">IOSDOX-4819 — Fix Crash on Profile Load</span>
-      </div>
-      <div class="card-header-right">
-        <span class="badge badge-waiting">Needs You</span>
-        <div class="auto-toggle on" onclick="toggleAuto(this)">
-          <span class="auto-toggle-label">Auto</span>
-          <div class="toggle-track"></div>
+  <!-- LEFT: CHAT -->
+  <div class="chat-panel">
+    <div class="chat-messages">
+
+      <!-- older thread -->
+      <div class="thread-div">earlier</div>
+
+      <div class="msg-group user">
+        <div class="msg-row">
+          <div class="msg-avatar av-user">R</div>
+          <div class="msg-content">
+            <div class="msg-meta"><span class="msg-name user">Ronnie</span><span class="msg-time">2h ago</span></div>
+            <div class="msg-text">Add unit tests for AuthCoordinator — state machine needs coverage</div>
+          </div>
         </div>
-        <button class="expand-btn" onclick="openExpanded('4819')">⤢</button>
       </div>
+
+      <div class="msg-group">
+        <div class="msg-row">
+          <div class="msg-avatar av-sys">⌘</div>
+          <div class="msg-content">
+            <div class="msg-meta"><span class="msg-name sys">cmux</span><span class="msg-time">2h ago</span></div>
+            <div class="msg-text">Done. 18 tests across all state transitions in <code>AuthCoordinatorTests.swift</code>. All passing, no regressions in the existing suite.</div>
+            <!-- INLINE REVIEW CARD -->
+            <div class="review-inline">
+              <div class="ri-head">
+                <span class="ri-badge rib-pass">✓ Review passed</span>
+                <span class="ri-task-name">Add unit tests for AuthCoordinator</span>
+              </div>
+              <div class="ri-body">
+                <div class="ri-summary">18 new tests covering all AuthCoordinator state transitions. Clean diff, no regressions, ready to merge.</div>
+                <div class="ri-stats">
+                  <span>📁 3 files changed</span>
+                  <span>+214 / −0 lines</span>
+                  <span>18 tests ✓</span>
+                </div>
+                <div class="ri-actions">
+                  <button class="ri-btn rib-accept">Accept &amp; merge</button>
+                  <button class="ri-btn rib-view">View diff</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="thread-div">now</div>
+
+      <!-- current objective -->
+      <div class="msg-group user">
+        <div class="msg-row">
+          <div class="msg-avatar av-user">R</div>
+          <div class="msg-content">
+            <div class="msg-meta"><span class="msg-name user">Ronnie</span><span class="msg-time">18m ago</span></div>
+            <div class="msg-text">Fix the token refresh bug in IOSDOX-24739 — tokens are expiring too early and concurrent requests are causing duplicate refreshes</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="msg-group">
+        <div class="msg-row">
+          <div class="msg-avatar av-sys">⌘</div>
+          <div class="msg-content">
+            <div class="msg-meta"><span class="msg-name sys">cmux</span><span class="msg-time">18m ago</span></div>
+            <div class="msg-text">Got it. Breaking this into 4 tasks — running the first three in parallel since they don't depend on each other. The integration test waits for all three to finish.</div>
+            <div class="plan-inline">
+              <div class="plan-inline-head"><span>📋</span> Plan · 4 tasks</div>
+              <div class="plan-task-row">
+                <div class="pti pti-done">✓</div>
+                <span class="plan-task-name">Audit token refresh flow &amp; write spec</span>
+                <span class="plan-task-st pts-done">5m 12s</span>
+              </div>
+              <div class="plan-task-row">
+                <div class="pti pti-active">●</div>
+                <span class="plan-task-name">Fix expiry check in TokenManager.swift</span>
+                <span class="plan-task-st pts-active">cp 3/4</span>
+              </div>
+              <div class="plan-task-row">
+                <div class="pti pti-active">●</div>
+                <span class="plan-task-name">Add concurrent request guard to AuthService</span>
+                <span class="plan-task-st pts-active">cp 2/4</span>
+              </div>
+              <div class="plan-task-row">
+                <div class="pti pti-queue">–</div>
+                <span class="plan-task-name">Integration tests &amp; PR draft</span>
+                <span class="plan-task-st pts-queue">waiting</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="msg-group">
+        <div class="msg-row">
+          <div class="msg-avatar av-sys">⌘</div>
+          <div class="msg-content">
+            <div class="msg-meta"><span class="msg-name sys">cmux</span><span class="msg-time">13m ago</span></div>
+            <div class="msg-text">Audit complete. Found the off-by-one in <code>isTokenExpired()</code> — the 30s buffer was computed wrong. Also confirmed there's no lock on concurrent refreshes. Workers 2 and 3 are on both fixes now.</div>
+          </div>
+        </div>
+      </div>
+
     </div>
-    <div class="card-meta">
-      <span>📂 ~/Dev/Doximity-Cloud</span>
-      <span>🌿 worktree/IOSDOX-4819</span>
-      <span>⏱ 8m · Waiting 2m</span>
-    </div>
-    <div class="card-terminal">
-      <div>Which approach should I take?</div>
-      <div><span class="t-warn">❯ 1. Refactor ProfileViewModel to use async/await</span></div>
-      <div>  2. Add nil check guard at the call site</div>
-      <div>  3. Wrap in Result type with proper error handling</div>
-    </div>
-    <div class="card-footer">
-      <input class="card-input" placeholder="Send instruction or message..." />
-      <button class="card-send">Send</button>
+
+    <!-- INPUT -->
+    <div class="chat-input-wrap">
+      <div class="chat-input-row">
+        <textarea class="chat-input" rows="1" placeholder="Give it a goal, ask a question…"></textarea>
+        <button class="chat-send">↑</button>
+      </div>
     </div>
   </div>
 
-  <!-- ACTIVE -->
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title-row">
-        <div class="card-status active"></div>
-        <span class="card-name">IOSDOX-4821 — Auth Token Refresh</span>
-      </div>
-      <div class="card-header-right">
-        <span class="badge badge-active">Active</span>
-        <div class="auto-toggle on" onclick="toggleAuto(this)">
-          <span class="auto-toggle-label">Auto</span>
-          <div class="toggle-track"></div>
-        </div>
-        <button class="expand-btn" onclick="openExpanded('4821')">⤢</button>
-      </div>
-    </div>
-    <div class="card-meta">
-      <span>📂 ~/Dev/Doximity-Cloud</span>
-      <span>🌿 worktree/IOSDOX-4821</span>
-      <span>⏱ 12m</span>
-      <span>🤖 claude-sonnet-4</span>
-    </div>
-    <div class="card-terminal">
-      <div><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
-      <div>  Adding refresh token retry logic with exponential backoff...</div>
-      <div><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
-      <div>  Updating keychain wrapper to handle token rotation...</div>
-      <div><span class="t-prompt">Musing...</span></div>
-    </div>
-    <div class="card-footer">
-      <input class="card-input" placeholder="Send instruction or message..." />
-      <button class="card-send">Send</button>
-    </div>
-  </div>
+  <!-- RIGHT: TASK LIST -->
+  <div class="task-panel">
 
-  <!-- ACTIVE -->
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title-row">
-        <div class="card-status active"></div>
-        <span class="card-name">IOSDOX-4815 — Dark Mode Sidebar</span>
-      </div>
-      <div class="card-header-right">
-        <span class="badge badge-active">Active</span>
-        <div class="auto-toggle" onclick="toggleAuto(this)">
-          <span class="auto-toggle-label">Auto</span>
-          <div class="toggle-track"></div>
-        </div>
-        <button class="expand-btn" onclick="openExpanded('4815')">⤢</button>
+    <div class="task-panel-head">
+      <span class="tph-label">Tasks</span>
+      <div class="tph-progress">
+        <div class="tph-bar"><div class="tph-fill"></div></div>
+        <span>1 of 4 done</span>
       </div>
     </div>
-    <div class="card-meta">
-      <span>📂 ~/Dev/Doximity-Cloud</span>
-      <span>🌿 worktree/IOSDOX-4815</span>
-      <span>⏱ 22m</span>
-    </div>
-    <div class="card-terminal">
-      <div><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/UI/Sidebar/SidebarTheme.swift</span></div>
-      <div>  Updating color tokens for dark mode variant...</div>
-      <div><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/UI/Theme/ColorPalette.swift</span></div>
-      <div><span class="t-prompt">Thinking...</span></div>
-    </div>
-    <div class="card-footer">
-      <input class="card-input" placeholder="Send instruction or message..." />
-      <button class="card-send">Send</button>
-    </div>
-  </div>
 
-  <!-- ACTIVE (just finished build) -->
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title-row">
-        <div class="card-status active"></div>
-        <span class="card-name">IOSDOX-4812 — API Pagination</span>
-      </div>
-      <div class="card-header-right">
-        <span class="badge badge-active">Active</span>
-        <div class="auto-toggle on" onclick="toggleAuto(this)">
-          <span class="auto-toggle-label">Auto</span>
-          <div class="toggle-track"></div>
-        </div>
-        <button class="expand-btn" onclick="openExpanded('4812')">⤢</button>
-      </div>
-    </div>
-    <div class="card-meta">
-      <span>📂 ~/Dev/Doximity-Cloud</span>
-      <span>🌿 worktree/IOSDOX-4812</span>
-      <span>⏱ 5m</span>
-    </div>
-    <div class="card-terminal">
-      <div><span class="t-tool">⚡ Bash</span> swift build 2>&1 | tail -5</div>
-      <div>  Build complete! (42.3s)</div>
-      <div><span class="t-prompt">❯</span> Ready for next instruction</div>
-    </div>
-    <div class="card-footer">
-      <input class="card-input" placeholder="Send instruction or message..." />
-      <button class="card-send">Send</button>
-    </div>
-  </div>
+    <div class="task-list">
 
-  <!-- IDLE -->
-  <div class="card" style="opacity:0.6;">
-    <div class="card-header">
-      <div class="card-title-row">
-        <div class="card-status idle"></div>
-        <span class="card-name">Scratch — Playground</span>
-      </div>
-      <div class="card-header-right">
-        <span class="badge badge-idle">Idle</span>
-        <div class="auto-toggle" onclick="toggleAuto(this)">
-          <span class="auto-toggle-label">Auto</span>
-          <div class="toggle-track"></div>
+      <!-- TASK 1: Done (collapsed) -->
+      <div class="task-item done">
+        <div class="task-header">
+          <div class="task-status-dot tsd-done"></div>
+          <div class="task-name-text">Audit token refresh flow &amp; write spec</div>
+          <div class="task-branch-tag">task-1-audit</div>
+          <div class="task-elapsed te-done">✓ 5m 12s</div>
         </div>
-        <button class="expand-btn" onclick="openExpanded('scratch')">⤢</button>
+        <div class="mini-pips" style="padding-left:19px">
+          <div class="mini-pip mpip-done"></div>
+          <div class="mini-pip mpip-done"></div>
+          <div class="mini-pip mpip-done"></div>
+        </div>
       </div>
-    </div>
-    <div class="card-meta">
-      <span>📂 ~/projects/scratch</span>
-      <span>🌿 main</span>
-      <span>⏱ 1h ago</span>
-    </div>
-    <div class="card-terminal">
-      <div><span class="t-prompt">❯</span> claude</div>
-      <div>  Model: claude-sonnet-4-20250514</div>
-      <div>  Cost: $0.14 this session</div>
-      <div><span class="t-prompt">❯</span> <span style="opacity:0.4">_</span></div>
-    </div>
-    <div class="card-footer">
-      <input class="card-input" placeholder="Send instruction or message..." />
-      <button class="card-send">Send</button>
-    </div>
-  </div>
 
-  <!-- IDLE -->
-  <div class="card" style="opacity:0.6;">
-    <div class="card-header">
-      <div class="card-title-row">
-        <div class="card-status idle"></div>
-        <span class="card-name">cmux-harness — This project</span>
-      </div>
-      <div class="card-header-right">
-        <span class="badge badge-idle">Idle</span>
-        <div class="auto-toggle" onclick="toggleAuto(this)">
-          <span class="auto-toggle-label">Auto</span>
-          <div class="toggle-track"></div>
+      <!-- TASK 2: Running (expanded) -->
+      <div class="task-item running">
+        <div class="task-header">
+          <div class="task-status-dot tsd-running"></div>
+          <div class="task-name-text">Fix expiry check in TokenManager.swift</div>
+          <div class="task-branch-tag">task-2-token-expiry</div>
+          <div class="task-elapsed te-running">11m 34s</div>
         </div>
-        <button class="expand-btn" onclick="openExpanded('harness')">⤢</button>
+        <div class="task-body">
+          <div class="cp-track">
+            <div class="cp-node cpn-done">✓</div>
+            <div class="cp-connector done"></div>
+            <div class="cp-node cpn-done">✓</div>
+            <div class="cp-connector done"></div>
+            <div class="cp-node cpn-active">3</div>
+            <div class="cp-connector"></div>
+            <div class="cp-node cpn-pending">4</div>
+          </div>
+          <div class="cp-labels">
+            <div class="cp-label-item done">Read impl</div>
+            <div class="cp-label-item done">Fix expiry</div>
+            <div class="cp-label-item active">Add retry</div>
+            <div class="cp-label-item pending">Run tests</div>
+          </div>
+          <div class="task-current-line">Implementing retry loop in refreshAccessToken() · 3 attempts · exp backoff...</div>
+        </div>
       </div>
+
+      <!-- TASK 3: Running (expanded) -->
+      <div class="task-item running">
+        <div class="task-header">
+          <div class="task-status-dot tsd-running"></div>
+          <div class="task-name-text">Add concurrent request guard to AuthService</div>
+          <div class="task-branch-tag">task-3-concurrent-guard</div>
+          <div class="task-elapsed te-running">9m 08s</div>
+        </div>
+        <div class="task-body">
+          <div class="cp-track">
+            <div class="cp-node cpn-done">✓</div>
+            <div class="cp-connector done"></div>
+            <div class="cp-node cpn-active">2</div>
+            <div class="cp-connector"></div>
+            <div class="cp-node cpn-pending">3</div>
+            <div class="cp-connector"></div>
+            <div class="cp-node cpn-pending">4</div>
+          </div>
+          <div class="cp-labels">
+            <div class="cp-label-item done">Read context</div>
+            <div class="cp-label-item active">AsyncLock actor</div>
+            <div class="cp-label-item pending">Queue callers</div>
+            <div class="cp-label-item pending">Tests</div>
+          </div>
+          <div class="task-current-line">Writing AsyncLock actor · withLock() method · 42 lines...</div>
+        </div>
+      </div>
+
+      <!-- TASK 4: Queued (collapsed) -->
+      <div class="task-item queued">
+        <div class="task-header">
+          <div class="task-status-dot tsd-queued"></div>
+          <div class="task-name-text">Integration tests &amp; PR draft</div>
+          <div class="task-branch-tag">task-4-tests-pr</div>
+          <div class="task-elapsed te-queued">waiting</div>
+        </div>
+        <div class="task-dep-info" style="padding-left:19px">Waiting on task-2 and task-3</div>
+      </div>
+
     </div>
-    <div class="card-meta">
-      <span>📂 ~/projects/cmux-harness</span>
-      <span>🌿 main</span>
-      <span>⏱ 45m ago</span>
+
+    <div class="terminal-link">
+      <a href="#">⬡ View terminal sessions</a>
     </div>
-    <div class="card-terminal">
-      <div>$ git status</div>
-      <div>On branch main</div>
-      <div>nothing to commit, working tree clean</div>
-      <div>$ <span style="opacity:0.4">_</span></div>
-    </div>
-    <div class="card-footer">
-      <input class="card-input" placeholder="Send instruction or message..." />
-      <button class="card-send">Send</button>
-    </div>
+
   </div>
 
 </div>
-
-<!-- ════════ EXPANDED OVERLAY ════════ -->
-<div class="overlay" id="overlay" onclick="if(event.target===this)closeExpanded()">
-
-  <div class="expanded-panel">
-
-    <!-- Left: full terminal view -->
-    <div class="exp-main">
-      <div class="exp-header">
-        <div>
-          <div class="exp-title" id="exp-title">IOSDOX-4821 — Auth Token Refresh</div>
-          <div class="exp-meta" id="exp-meta">
-            <span>📂 ~/Documents/Development/Doximity-Cloud</span>
-            <span>🌿 worktree/IOSDOX-4821</span>
-            <span>⏱ 12 min</span>
-            <span>🤖 claude-sonnet-4</span>
-          </div>
-        </div>
-        <div class="exp-header-actions">
-          <div class="auto-toggle on" onclick="toggleAuto(this)" style="margin-right:4px;">
-            <span class="auto-toggle-label">Auto</span>
-            <div class="toggle-track"></div>
-          </div>
-          <button class="btn" style="font-size:12px;">⏸ Pause</button>
-          <button class="btn" style="font-size:12px;border-color:var(--red);color:var(--red);">✕ Stop</button>
-          <button class="exp-close" onclick="closeExpanded()">✕</button>
-        </div>
-      </div>
-
-      <div class="exp-terminal" id="exp-terminal">
-        <div class="t-section">Session started 12 minutes ago</div>
-
-        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
-        <div class="t-line"><span class="t-dim">  Reading 142 lines...</span></div>
-        <div class="t-line">&nbsp;</div>
-
-        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
-        <div class="t-line"><span class="t-dim">  Reading 89 lines...</span></div>
-        <div class="t-line">&nbsp;</div>
-
-        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Network/APIClient.swift</span></div>
-        <div class="t-line"><span class="t-dim">  Reading 210 lines...</span></div>
-        <div class="t-line">&nbsp;</div>
-
-        <div class="t-section">Auto-approved: Edit Sources/Auth/TokenManager.swift</div>
-
-        <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenManager.swift</span></div>
-        <div class="t-line">  Adding refresh token retry logic with exponential backoff.</div>
-        <div class="t-line">  Modified lines 45-78: added RetryPolicy struct and</div>
-        <div class="t-line">  refreshWithBackoff() method.</div>
-        <div class="t-line">&nbsp;</div>
-
-        <div class="t-section">Auto-approved: Edit Sources/Auth/TokenStorage.swift</div>
-
-        <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Auth/TokenStorage.swift</span></div>
-        <div class="t-line">  Updating keychain wrapper to handle token rotation.</div>
-        <div class="t-line">  Added rotateToken() and invalidateStale() methods.</div>
-        <div class="t-line">&nbsp;</div>
-
-        <div class="t-section">Auto-approved: Read Sources/Network/APIClient.swift</div>
-
-        <div class="t-line"><span class="t-tool">⚡ Read</span> <span class="t-file">Sources/Network/APIClient.swift</span></div>
-        <div class="t-line"><span class="t-dim">  Reviewing retry integration points in API layer...</span></div>
-        <div class="t-line">&nbsp;</div>
-
-        <div class="t-line"><span class="t-tool">⚡ Edit</span> <span class="t-file">Sources/Network/APIClient.swift</span></div>
-        <div class="t-line">  Wiring TokenManager.refreshWithBackoff() into the 401</div>
-        <div class="t-line">  response interceptor. Added automatic retry on token refresh.</div>
-        <div class="t-line">&nbsp;</div>
-
-        <div class="t-line"><span class="t-prompt">Musing...</span></div>
-      </div>
-
-      <div class="exp-input">
-        <div class="mode-toggle">
-          <button class="mode-btn active" onclick="setMode(this)">Raw</button>
-          <button class="mode-btn" onclick="setMode(this)">Intent</button>
-        </div>
-        <input class="exp-input-field" placeholder="Type a message or instruction for this session..." />
-        <button class="exp-send">Send ↵</button>
-      </div>
-    </div>
-
-    <!-- Right: activity feed -->
-    <div class="exp-activity">
-      <div class="exp-activity-header">
-        Activity
-        <span class="exp-activity-count" id="act-count">8 events</span>
-      </div>
-      <div class="exp-activity-list" id="exp-activity-list">
-
-        <div class="act-item">
-          <div class="act-time">17:36</div>
-          <div class="act-text">
-            <span class="act-type approved">✓ AUTO</span>
-            Edit Sources/Network/APIClient.swift
-          </div>
-        </div>
-
-        <div class="act-item">
-          <div class="act-time">17:35</div>
-          <div class="act-text">
-            <span class="act-type approved">✓ AUTO</span>
-            Read Sources/Network/APIClient.swift
-          </div>
-        </div>
-
-        <div class="act-item">
-          <div class="act-time">17:34</div>
-          <div class="act-text">
-            <span class="act-type approved">✓ AUTO</span>
-            Edit Sources/Auth/TokenStorage.swift
-          </div>
-        </div>
-
-        <div class="act-item">
-          <div class="act-time">17:33</div>
-          <div class="act-text">
-            <span class="act-type approved">✓ AUTO</span>
-            Edit Sources/Auth/TokenManager.swift
-          </div>
-        </div>
-
-        <div class="act-item">
-          <div class="act-time">17:31</div>
-          <div class="act-text">
-            <span class="act-type approved">✓ AUTO</span>
-            Read Sources/Auth/TokenStorage.swift
-          </div>
-        </div>
-
-        <div class="act-item">
-          <div class="act-time">17:31</div>
-          <div class="act-text">
-            <span class="act-type approved">✓ AUTO</span>
-            Read Sources/Auth/TokenManager.swift
-          </div>
-        </div>
-
-        <div class="act-item">
-          <div class="act-time">17:30</div>
-          <div class="act-text">
-            <span class="act-type action">→ START</span>
-            Session initialized
-          </div>
-        </div>
-
-        <div class="act-item">
-          <div class="act-time">17:30</div>
-          <div class="act-text">
-            <span class="act-type action">→ NEW</span>
-            Workspace created
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-  </div>
-
-  <div class="esc-hint"><kbd>esc</kbd> to close</div>
-</div>
-
-<script>
-function toggleAuto(el) {
-  el.classList.toggle('on');
-}
-
-function openExpanded(id) {
-  document.getElementById('overlay').classList.add('visible');
-  document.body.style.overflow = 'hidden';
-}
-
-function closeExpanded() {
-  document.getElementById('overlay').classList.remove('visible');
-  document.body.style.overflow = '';
-}
-
-function setMode(btn) {
-  btn.parentElement.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-}
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeExpanded();
-});
-</script>
-
 </body>
 </html>
