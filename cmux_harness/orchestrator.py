@@ -567,8 +567,8 @@ class Orchestrator:
                     continue
                 has_claude = detection.detect_claude_session(screen_text) if screen_text else False
                 if not has_claude:
-                    task["status"] = "reviewing"
-                    objectives.update_objective(objective_id, {"tasks": objective["tasks"]})
+                    objectives.update_task(objective_id, task_id, {"status": "reviewing"})
+                    task["status"] = "reviewing"  # update local copy too
                     self._append_message(
                         objective_id,
                         "progress",
@@ -737,14 +737,20 @@ class Orchestrator:
             json.dumps(review_json, indent=2),
         )
 
-        task["reviewCycles"] = task.get("reviewCycles", 0) + 1
-        review_cycle = task["reviewCycles"]
+        # Atomically increment reviewCycles on disk
+        updated_task = objectives.update_task(objective_id, task_id, {
+            "reviewCycles": task.get("reviewCycles", 0) + 1,
+        })
+        review_cycle = updated_task.get("reviewCycles", 1)
+        # Refresh local task with latest from disk
+        task.update(updated_task)
         needs_rework = monitor.should_trigger_rework(review_json)
 
         if not needs_rework:
-            task["status"] = "completed"
-            task["completedAt"] = _utc_now_iso()
-            objectives.update_objective(objective_id, {"tasks": tasks})
+            objectives.update_task(objective_id, task_id, {
+                "status": "completed",
+                "completedAt": _utc_now_iso(),
+            })
             self._append_message(
                 objective_id,
                 "review",
@@ -759,7 +765,6 @@ class Orchestrator:
             return
 
         if monitor.can_retry_review(task):
-            task["status"] = "rework"
             # Clear result.md so poll_tasks doesn't re-detect completion
             # before the worker has a chance to rework
             task_dir = objectives.get_objective_dir(objective_id) / "tasks" / task_id
@@ -774,6 +779,7 @@ class Orchestrator:
                     wt_result.write_text("", encoding="utf-8")
             except OSError:
                 pass
+            objectives.update_task(objective_id, task_id, {"status": "rework"})
             issues, recommendation = monitor.build_review_rework_summary(review_json)
             rework_prompt = worker.build_rework_prompt(issues, recommendation)
             workspace_uuid = task.get("workspaceId")
@@ -799,8 +805,7 @@ class Orchestrator:
                         )
                     self._wait_for_repl(workspace_uuid)
                 cmux_api.send_prompt_to_workspace(workspace_uuid, rework_prompt)
-            task["status"] = "executing"
-            objectives.update_objective(objective_id, {"tasks": tasks})
+            objectives.update_task(objective_id, task_id, {"status": "executing"})
             self._append_message(
                 objective_id,
                 "review",
@@ -812,9 +817,8 @@ class Orchestrator:
             )
             return
 
-        task["status"] = "failed"
+        objectives.update_task(objective_id, task_id, {"status": "failed"})
         issues, _ = monitor.build_review_rework_summary(review_json)
-        objectives.update_objective(objective_id, {"tasks": tasks})
         self._append_message(
             objective_id,
             "alert",
