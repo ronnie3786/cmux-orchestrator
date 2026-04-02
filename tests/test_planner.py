@@ -138,43 +138,44 @@ class TestParsePlan(unittest.TestCase):
 
     @patch("cmux_harness.planner.run_sonnet")
     @patch("cmux_harness.planner.run_haiku")
-    def test_parse_plan_succeeds_on_first_haiku_attempt(self, mock_haiku, mock_sonnet):
-        mock_haiku.return_value = _valid_parsed_plan()
-
-        result = planner.parse_plan("raw plan")
-
-        self.assertEqual(result, _valid_parsed_plan())
-        self.assertEqual(mock_haiku.call_count, 1)
-        mock_sonnet.assert_not_called()
-
-    @patch("cmux_harness.planner.run_sonnet")
-    @patch("cmux_harness.planner.run_haiku")
-    def test_parse_plan_succeeds_on_second_haiku_attempt(self, mock_haiku, mock_sonnet):
-        mock_haiku.side_effect = ["not json", _valid_parsed_plan()]
-
-        result = planner.parse_plan("raw plan")
-
-        self.assertEqual(result, _valid_parsed_plan())
-        self.assertEqual(mock_haiku.call_count, 2)
-        mock_sonnet.assert_not_called()
-
-    @patch("cmux_harness.planner.run_sonnet")
-    @patch("cmux_harness.planner.run_haiku")
-    def test_parse_plan_escalates_to_sonnet(self, mock_haiku, mock_sonnet):
-        mock_haiku.side_effect = ["not json", {"tasks": []}]
+    def test_parse_plan_succeeds_on_first_sonnet_attempt(self, mock_haiku, mock_sonnet):
         mock_sonnet.return_value = _valid_parsed_plan()
 
         result = planner.parse_plan("raw plan")
 
         self.assertEqual(result, _valid_parsed_plan())
-        self.assertEqual(mock_haiku.call_count, 2)
         mock_sonnet.assert_called_once()
+        mock_haiku.assert_not_called()
+
+    @patch("cmux_harness.planner.run_sonnet")
+    @patch("cmux_harness.planner.run_haiku")
+    def test_parse_plan_succeeds_on_first_haiku_fallback(self, mock_haiku, mock_sonnet):
+        mock_sonnet.return_value = "not json"
+        mock_haiku.side_effect = [_valid_parsed_plan()]
+
+        result = planner.parse_plan("raw plan")
+
+        self.assertEqual(result, _valid_parsed_plan())
+        mock_sonnet.assert_called_once()
+        self.assertEqual(mock_haiku.call_count, 1)
+
+    @patch("cmux_harness.planner.run_sonnet")
+    @patch("cmux_harness.planner.run_haiku")
+    def test_parse_plan_sonnet_first_then_haiku(self, mock_haiku, mock_sonnet):
+        mock_sonnet.return_value = "not json"
+        mock_haiku.side_effect = [_valid_parsed_plan(), {"tasks": []}]
+
+        result = planner.parse_plan("raw plan")
+
+        self.assertEqual(result, _valid_parsed_plan())
+        mock_sonnet.assert_called_once()
+        self.assertEqual(mock_haiku.call_count, 1)
 
     @patch("cmux_harness.planner.run_sonnet")
     @patch("cmux_harness.planner.run_haiku")
     def test_parse_plan_returns_error_after_all_failures(self, mock_haiku, mock_sonnet):
-        mock_haiku.side_effect = ["not json", {"tasks": []}]
         mock_sonnet.return_value = "still bad"
+        mock_haiku.side_effect = ["not json", {"tasks": []}]
 
         result = planner.parse_plan("raw plan")
 

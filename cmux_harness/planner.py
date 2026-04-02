@@ -291,9 +291,9 @@ def validate_plan(parsed: dict) -> tuple[bool, str]:
 
 def parse_plan(plan_text: str) -> dict:
     attempts = (
-        (run_haiku, 1),
+        (run_sonnet, 1),
         (run_haiku, 2),
-        (run_sonnet, 3),
+        (run_haiku, 3),
     )
     for runner, attempt in attempts:
         prompt = _build_parsing_prompt(plan_text, attempt)
