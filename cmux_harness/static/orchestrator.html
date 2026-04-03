@@ -1,0 +1,1794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux orchestrator</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg:      #111118;
+    --sidebar: #0d0d13;
+    --raised:  #1a1a24;
+    --hover:   #20202e;
+    --b:       rgba(255,255,255,0.07);
+    --b2:      rgba(255,255,255,0.12);
+    --t1: #eaeaf8;
+    --t2: #7878a0;
+    --t3: #3e3e58;
+    --t4: #22222e;
+    --blue:   #4f8ef7;
+    --blue-d: rgba(79,142,247,0.12);
+    --blue-b: rgba(79,142,247,0.28);
+    --green:  #34d399;
+    --green-d:rgba(52,211,153,0.10);
+    --green-b:rgba(52,211,153,0.25);
+    --amber:  #fbbf24;
+    --amber-d:rgba(251,191,36,0.10);
+    --amber-b:rgba(251,191,36,0.25);
+    --purple: #a78bfa;
+    --purple-d:rgba(167,139,250,0.10);
+    --purple-b:rgba(167,139,250,0.25);
+    --red:    #f87171;
+    --red-d:  rgba(248,113,113,0.10);
+  }
+
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--t1);
+    display: flex;
+  }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  /* ─── SIDEBAR ─── */
+  .sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: var(--sidebar);
+    border-right: 1px solid var(--b);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-top {
+    padding: 16px 14px 12px;
+    border-bottom: 1px solid var(--b);
+    flex-shrink: 0;
+  }
+  .sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -.3px;
+    margin-bottom: 14px;
+  }
+  .logo-mark {
+    width: 26px; height: 26px;
+    background: linear-gradient(135deg, var(--blue), #2563eb);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .new-obj-btn {
+    width: 100%;
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: var(--t2);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    transition: all .15s;
+    text-align: left;
+  }
+  .new-obj-btn:hover { background: var(--hover); color: var(--t1); }
+  .new-obj-btn .plus { font-size: 16px; color: var(--t3); line-height: 1; }
+
+  .sidebar-label {
+    padding: 14px 14px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--t3);
+    flex-shrink: 0;
+  }
+
+  .obj-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 8px 12px;
+  }
+
+  .obj-item {
+    padding: 9px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 1px;
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    transition: background .12s;
+    border: 1px solid transparent;
+  }
+  .obj-item:hover { background: var(--raised); }
+  .obj-item.active {
+    background: var(--blue-d);
+    border-color: var(--blue-b);
+  }
+
+  .obj-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-top: 5px;
+    flex-shrink: 0;
+  }
+  .od-running { background: var(--blue); box-shadow: 0 0 6px var(--blue); animation: pulse 2s infinite; }
+  .od-done    { background: var(--green); }
+  .od-queued  { background: var(--t3); }
+
+  .obj-info { flex: 1; min-width: 0; }
+  .obj-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--t1);
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    margin-bottom: 3px;
+  }
+  .obj-item.active .obj-name { color: var(--blue); }
+  .obj-item.done   .obj-name { color: var(--t2); }
+  .obj-progress {
+    font-size: 11px;
+    color: var(--t3);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .obj-prog-bar {
+    height: 3px;
+    width: 36px;
+    background: var(--t4);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .obj-prog-fill { height: 100%; border-radius: 2px; }
+  .opf-running { background: var(--blue); }
+  .opf-done    { background: var(--green); }
+
+  .sidebar-bottom {
+    padding: 10px 14px;
+    border-top: 1px solid var(--b);
+    flex-shrink: 0;
+  }
+  .terminal-link {
+    font-size: 11px;
+    color: var(--t3);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: color .15s;
+    background: none;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    padding: 0;
+  }
+  .terminal-link:hover { color: var(--t2); }
+
+  /* ─── MAIN ─── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  /* thin top strip — current objective context */
+  .obj-context {
+    height: 42px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .ctx-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .ctx-title { font-size: 13px; font-weight: 500; color: var(--t1); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctx-meta { font-size: 12px; color: var(--t3); flex-shrink: 0; }
+  .ctx-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--blue-d);
+    color: var(--blue);
+    border: 1px solid var(--blue-b);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    flex-shrink: 0;
+  }
+
+  /* messages scroll area */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 24px 16px;
+  }
+
+  /* centered column */
+  .msg-col {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* thread divider */
+  .thread-div {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--t3);
+    font-size: 11px;
+  }
+  .thread-div::before,
+  .thread-div::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--b);
+  }
+
+  /* ── message row ── */
+  .msg {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  /* user messages: flip direction */
+  .msg.user { flex-direction: row-reverse; }
+
+  .msg-av {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .av-r { background: linear-gradient(135deg, #6366f1, #4338ca); color: white; }
+  .av-c { background: var(--raised); border: 1px solid var(--b2); color: var(--blue); font-size: 12px; }
+
+  .msg-body { display: flex; flex-direction: column; gap: 6px; max-width: calc(100% - 40px); }
+  .msg.user .msg-body { align-items: flex-end; }
+
+  .msg-header { display: flex; align-items: baseline; gap: 8px; }
+  .msg.user .msg-header { flex-direction: row-reverse; }
+  .msg-name { font-size: 12px; font-weight: 600; }
+  .mn-user { color: var(--t2); }
+  .mn-sys  { color: var(--blue); }
+  .msg-time { font-size: 11px; color: var(--t3); }
+
+  .msg-bubble {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--t1);
+    padding: 10px 14px;
+    border-radius: 4px 14px 14px 14px;
+    background: var(--raised);
+    border: 1px solid var(--b);
+    max-width: 560px;
+  }
+  .msg.user .msg-bubble {
+    background: var(--blue-d);
+    border-color: var(--blue-b);
+    border-radius: 14px 4px 14px 14px;
+  }
+
+  code {
+    background: rgba(255,255,255,.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  /* ── plan card ── */
+  .card-plan {
+    width: 100%;
+    max-width: 480px;
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    border-radius: 12px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .card-head {
+    padding: 9px 14px;
+    background: var(--hover);
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--t2);
+  }
+  .plan-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--b);
+    transition: background .12s;
+    cursor: default;
+  }
+  .plan-row:last-child { border-bottom: none; }
+  .plan-row:hover { background: var(--hover); }
+  .pr-icon {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .pri-done   { background: var(--green-d); color: var(--green); border: 1px solid var(--green-b); }
+  .pri-active { background: var(--blue-d); color: var(--blue); border: 1px solid var(--blue-b); animation: pulse 1.5s infinite; }
+  .pri-queue  { background: var(--t4); color: var(--t3); border: 1px solid var(--b); }
+  .pri-failed { background: var(--red-d); color: var(--red); border: 1px solid rgba(248,113,113,.22); }
+  .pr-name { flex: 1; color: var(--t1); font-size: 12px; }
+  .pr-status { font-size: 10px; font-family: 'JetBrains Mono', monospace; }
+  .prs-done   { color: var(--green); }
+  .prs-active { color: var(--blue); }
+  .prs-queue  { color: var(--t3); }
+  .prs-failed { color: var(--red); }
+
+  /* ── progress update card ── */
+  .card-progress {
+    width: 100%;
+    max-width: 480px;
+    background: var(--raised);
+    border: 1px solid var(--b);
+    border-left: 3px solid var(--blue);
+    border-radius: 0 10px 10px 0;
+    padding: 10px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .cp-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cp-task-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--blue);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .cp-check-badge {
+    font-size: 10px;
+    background: var(--blue-d);
+    border: 1px solid var(--blue-b);
+    color: var(--blue);
+    padding: 1px 7px;
+    border-radius: 10px;
+  }
+  .cp-description {
+    font-size: 12px;
+    color: var(--t2);
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cp-pips {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .pip {
+    height: 4px;
+    width: 28px;
+    border-radius: 2px;
+    background: var(--t4);
+  }
+  .pip.done   { background: var(--green); opacity: .7; }
+  .pip.active { background: var(--blue); }
+  .cp-time { font-size: 10px; color: var(--t3); }
+
+  /* ── review card ── */
+  .card-review {
+    width: 100%;
+    max-width: 480px;
+    background: var(--raised);
+    border: 1px solid var(--green-b);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .cr-head {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .cr-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .crb-pass { background: var(--green-d); color: var(--green); }
+  .crb-issues { background: var(--amber-d); color: var(--amber); }
+  .cr-name { font-size: 12px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cr-body { padding: 10px 14px; display: flex; flex-direction: column; gap: 9px; }
+  .cr-summary { font-size: 13px; color: var(--t2); line-height: 1.6; }
+  .cr-stats { display: flex; gap: 16px; font-size: 11px; color: var(--t3); }
+  .cr-actions { display: flex; gap: 7px; }
+  .cr-btn {
+    padding: 6px 16px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    border: none;
+    transition: opacity .15s;
+  }
+  .cr-btn:hover { opacity: .85; }
+  .crb-accept { background: var(--green); color: #000; }
+  .crb-view   { background: transparent; border: 1px solid var(--b2); color: var(--t1); padding: 5px 15px; }
+
+  /* ── completion card ── */
+  .card-complete {
+    width: 100%;
+    max-width: 480px;
+    background: var(--green-d);
+    border: 1px solid var(--green-b);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .cc-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+  .cc-text { flex: 1; }
+  .cc-title { font-size: 14px; font-weight: 600; color: var(--green); margin-bottom: 4px; }
+  .cc-body { font-size: 12px; color: var(--t2); line-height: 1.6; }
+
+  /* ── input area ── */
+  .input-area {
+    padding: 14px 24px 20px;
+    display: flex;
+    justify-content: center;
+    flex-shrink: 0;
+    border-top: 1px solid var(--b);
+  }
+  .input-wrap {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .input-box {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    border-radius: 12px;
+    padding: 10px 10px 10px 16px;
+    transition: border-color .2s;
+  }
+  .input-box:focus-within { border-color: var(--blue-b); }
+  .chat-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--t1);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    resize: none;
+    outline: none;
+    line-height: 1.5;
+    min-height: 24px;
+    max-height: 140px;
+  }
+  .chat-input::placeholder { color: var(--t3); }
+  .send-btn {
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    background: var(--blue);
+    border: none;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-weight: 700;
+    transition: background .15s;
+  }
+  .send-btn:hover { background: #3b7de8; }
+  .input-hint { font-size: 11px; color: var(--t3); text-align: center; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--t4); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--t3); }
+
+  .od-failed { background: var(--red); box-shadow: 0 0 6px rgba(248,113,113,.3); }
+  .od-reviewing { background: var(--amber); box-shadow: 0 0 6px rgba(251,191,36,.25); animation: pulse 2s infinite; }
+  .opf-failed { background: var(--red); }
+  .opf-reviewing { background: var(--amber); }
+
+  .ctx-badge.badge-running { background: var(--blue-d); color: var(--blue); border-color: var(--blue-b); }
+  .ctx-badge.badge-done { background: var(--green-d); color: var(--green); border-color: var(--green-b); }
+  .ctx-badge.badge-failed { background: var(--red-d); color: var(--red); border-color: rgba(248,113,113,.25); }
+  .ctx-badge.badge-reviewing,
+  .ctx-badge.badge-planning { background: var(--amber-d); color: var(--amber); border-color: var(--amber-b); }
+  .ctx-badge.badge-queued { background: var(--t4); color: var(--t2); border-color: var(--b); }
+
+  .sidebar-form {
+    display: none;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--b);
+    gap: 8px;
+    flex-direction: column;
+  }
+  .sidebar-form.open { display: flex; }
+  .sf-input, .sf-textarea {
+    width: 100%;
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    color: var(--t1);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    outline: none;
+  }
+  .sf-input:focus, .sf-textarea:focus { border-color: var(--blue-b); }
+  .sf-textarea {
+    min-height: 68px;
+    resize: vertical;
+    line-height: 1.5;
+  }
+  .sf-row {
+    display: flex;
+    gap: 8px;
+  }
+  .sf-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .sf-submit, .sf-cancel {
+    flex: 1;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+  }
+  .sf-submit {
+    border: none;
+    background: var(--blue);
+    color: white;
+  }
+  .sf-cancel {
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+  }
+  .sf-hint {
+    font-size: 10px;
+    color: var(--t3);
+    line-height: 1.45;
+  }
+
+  .empty-state {
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+  .empty-card {
+    width: 100%;
+    max-width: 720px;
+    padding: 28px 32px;
+    border: 1px solid var(--b);
+    border-radius: 16px;
+    background:
+      radial-gradient(circle at top left, rgba(79,142,247,.11), transparent 34%),
+      radial-gradient(circle at bottom right, rgba(167,139,250,.08), transparent 30%),
+      var(--raised);
+  }
+  .empty-kicker {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 12px;
+  }
+  .empty-title {
+    font-size: 24px;
+    line-height: 1.3;
+    letter-spacing: -.03em;
+    margin-bottom: 10px;
+  }
+  .empty-copy {
+    font-size: 14px;
+    color: var(--t2);
+    line-height: 1.7;
+    max-width: 520px;
+  }
+
+  .approval-burst {
+    align-self: flex-start;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--t3);
+    background: rgba(255,255,255,.03);
+    border: 1px dashed var(--b);
+    border-radius: 999px;
+    padding: 4px 10px;
+  }
+
+  .card-alert, .card-approval {
+    width: 100%;
+    max-width: 480px;
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: var(--raised);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .card-alert {
+    border: 1px solid rgba(248,113,113,.22);
+    border-left: 3px solid var(--red);
+    background: linear-gradient(180deg, rgba(248,113,113,.08), rgba(248,113,113,.03));
+  }
+  .card-approval {
+    border: 1px solid var(--amber-b);
+    background: linear-gradient(180deg, rgba(251,191,36,.08), rgba(251,191,36,.03));
+  }
+  .alert-title, .approval-title {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .alert-title { color: var(--red); }
+  .approval-title { color: var(--amber); }
+  .alert-body, .approval-body {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--t2);
+  }
+  .screen-preview {
+    border-radius: 8px;
+    border: 1px solid var(--b);
+    background: rgba(0,0,0,.18);
+    color: var(--t2);
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    max-height: 180px;
+    overflow: auto;
+  }
+  .approval-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .approval-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+  }
+  .approval-btn.approve {
+    background: var(--amber);
+    color: #000;
+  }
+  .approval-btn.takeover {
+    background: transparent;
+    color: var(--t1);
+    border: 1px solid var(--b2);
+  }
+
+  .review-issues {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--t2);
+    line-height: 1.55;
+  }
+  .review-issue {
+    padding-left: 12px;
+    position: relative;
+  }
+  .review-issue::before {
+    content: '•';
+    position: absolute;
+    left: 0;
+    color: var(--amber);
+  }
+  .card-review.review-warning {
+    border-color: var(--amber-b);
+  }
+
+  .review-cycle {
+    font-size: 11px;
+    color: var(--amber);
+  }
+
+  .msg-muted {
+    font-size: 12px;
+    color: var(--t2);
+    line-height: 1.6;
+    max-width: 560px;
+  }
+
+  .mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .toast-wrap {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--t1);
+    box-shadow: 0 8px 24px rgba(0,0,0,.24);
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-top">
+    <div class="sidebar-logo">
+      <div class="logo-mark">⌘</div>
+      cmux
+    </div>
+    <button class="new-obj-btn" id="newObjectiveButton">
+      <span class="plus">+</span>
+      New objective
+    </button>
+    <div class="sidebar-form" id="sidebarForm"></div>
+  </div>
+
+  <div class="sidebar-label">Objectives</div>
+  <div class="obj-list" id="objectiveList"></div>
+
+  <div class="sidebar-bottom">
+    <button class="terminal-link" id="terminalLink">⬡ &nbsp;Terminal sessions</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="obj-context" id="contextStrip"></div>
+  <div class="messages" id="messagesPane">
+    <div class="msg-col" id="messageColumn"></div>
+  </div>
+  <div class="input-area">
+    <div class="input-wrap">
+      <div class="input-box">
+        <textarea class="chat-input" id="chatInput" placeholder="Give it a goal, ask what’s happening, or just wait…"></textarea>
+        <button class="send-btn" id="sendButton" aria-label="Send">↑</button>
+      </div>
+      <div class="input-hint" id="inputHint">cmux will update you as tasks complete</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+(() => {
+  const state = {
+    objectives: [],
+    activeObjectiveId: null,
+    activeObjective: null,
+    messages: [],
+    lastMessageTimestamp: null,
+    relativeTick: Date.now(),
+    sidebarFormOpen: false,
+    draftProjectDir: '',
+    draftBaseBranch: 'main',
+    draftGoal: '',
+    pendingCreate: false,
+    pendingSend: false,
+    pollers: {
+      objectives: null,
+      messages: null,
+      objective: null,
+      relative: null
+    }
+  };
+
+  const els = {
+    objectiveList: document.getElementById('objectiveList'),
+    contextStrip: document.getElementById('contextStrip'),
+    messagesPane: document.getElementById('messagesPane'),
+    messageColumn: document.getElementById('messageColumn'),
+    chatInput: document.getElementById('chatInput'),
+    sendButton: document.getElementById('sendButton'),
+    inputHint: document.getElementById('inputHint'),
+    sidebarForm: document.getElementById('sidebarForm'),
+    newObjectiveButton: document.getElementById('newObjectiveButton'),
+    terminalLink: document.getElementById('terminalLink'),
+    toastWrap: document.getElementById('toastWrap')
+  };
+
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function formatInlineCode(text) {
+    const safe = esc(text || '');
+    return safe.replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+
+  function parseIso(value) {
+    if (!value) return null;
+    const ts = Date.parse(value);
+    return Number.isNaN(ts) ? null : ts;
+  }
+
+  function relativeTime(value) {
+    const ts = parseIso(value);
+    if (!ts) return 'just now';
+    const diff = Math.max(0, Math.floor((state.relativeTick - ts) / 1000));
+    if (diff < 15) return 'just now';
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    if (diff < 172800) return 'yesterday';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  function durationFrom(start, end) {
+    const startTs = parseIso(start);
+    const endTs = parseIso(end) || Date.now();
+    if (!startTs || endTs <= startTs) return null;
+    let diff = Math.floor((endTs - startTs) / 1000);
+    const hours = Math.floor(diff / 3600);
+    diff -= hours * 3600;
+    const mins = Math.floor(diff / 60);
+    const secs = diff - mins * 60;
+    if (hours > 0) return hours + 'h ' + mins + 'm';
+    if (mins > 0) return mins + 'm ' + secs + 's';
+    return secs + 's';
+  }
+
+  function statusMeta(status) {
+    switch ((status || '').toLowerCase()) {
+      case 'completed':
+        return { dot: 'od-done', fill: 'opf-done', badge: 'badge-done', label: 'Done' };
+      case 'failed':
+        return { dot: 'od-failed', fill: 'opf-failed', badge: 'badge-failed', label: 'Failed' };
+      case 'planning':
+        return { dot: 'od-reviewing', fill: 'opf-reviewing', badge: 'badge-planning', label: 'Planning' };
+      case 'reviewing':
+      case 'rework':
+        return { dot: 'od-reviewing', fill: 'opf-reviewing', badge: 'badge-reviewing', label: 'Reviewing' };
+      case 'executing':
+      case 'running':
+        return { dot: 'od-running', fill: 'opf-running', badge: 'badge-running', label: 'Running' };
+      default:
+        return { dot: 'od-queued', fill: 'opf-running', badge: 'badge-queued', label: 'Queued' };
+    }
+  }
+
+  function sortedObjectives(list) {
+    return [...(list || [])].sort((a, b) => {
+      const aTs = parseIso(a.updatedAt || a.createdAt) || 0;
+      const bTs = parseIso(b.updatedAt || b.createdAt) || 0;
+      return bTs - aTs;
+    });
+  }
+
+  function getRecentProjects() {
+    const seen = new Set();
+    return sortedObjectives(state.objectives)
+      .map((item) => item.projectDir)
+      .filter((dir) => {
+        if (!dir || seen.has(dir)) return false;
+        seen.add(dir);
+        return true;
+      });
+  }
+
+  function defaultProjectDir() {
+    return state.draftProjectDir || getRecentProjects()[0] || '';
+  }
+
+  async function api(path, options) {
+    const response = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options
+    });
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const data = await response.json();
+        detail = data && data.error ? data.error : '';
+      } catch (err) {
+        detail = response.statusText || '';
+      }
+      throw new Error(detail || ('Request failed: ' + response.status));
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) : {};
+  }
+
+  function objectiveProgress(objective) {
+    const tasks = Array.isArray(objective && objective.tasks) ? objective.tasks : [];
+    const total = tasks.length;
+    const done = tasks.filter((task) => String(task.status).toLowerCase() === 'completed').length;
+    return { done, total, percent: total ? Math.round((done / total) * 100) : 0 };
+  }
+
+  function ensureSelection() {
+    const available = sortedObjectives(state.objectives);
+    if (!available.length) {
+      state.activeObjectiveId = null;
+      state.activeObjective = null;
+      state.messages = [];
+      state.lastMessageTimestamp = null;
+      return;
+    }
+    if (state.activeObjectiveId && available.some((item) => item.id === state.activeObjectiveId)) {
+      return;
+    }
+    const running = available.find((item) => ['planning', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase()));
+    state.activeObjectiveId = (running || available[0]).id;
+  }
+
+  function isNearBottom() {
+    const el = els.messagesPane;
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 100;
+  }
+
+  function scrollToBottom() {
+    els.messagesPane.scrollTop = els.messagesPane.scrollHeight;
+  }
+
+  function autoResizeTextarea() {
+    const el = els.chatInput;
+    el.style.height = '24px';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+
+  function showToast(text) {
+    const node = document.createElement('div');
+    node.className = 'toast';
+    node.textContent = text;
+    els.toastWrap.appendChild(node);
+    window.setTimeout(() => {
+      node.remove();
+    }, 2600);
+  }
+
+  function updateSidebarFormFromState() {
+    const recent = getRecentProjects();
+    const options = recent.map((dir) => '<option value="' + esc(dir) + '"></option>').join('');
+    const className = 'sidebar-form' + (state.sidebarFormOpen ? ' open' : '');
+    const nextHtml = [
+      '<input class="sf-input" id="projectDirInput" list="recentProjectDirs" placeholder="Project directory" value="' + esc(state.draftProjectDir) + '">',
+      '<datalist id="recentProjectDirs">' + options + '</datalist>',
+      '<div class="sf-row">',
+      '<input class="sf-input" id="baseBranchInput" placeholder="Base branch" value="' + esc(state.draftBaseBranch || 'main') + '">',
+      '</div>',
+      '<textarea class="sf-textarea" id="sidebarGoalInput" placeholder="Describe the objective">' + esc(state.draftGoal) + '</textarea>',
+      '<div class="sf-actions">',
+      '<button class="sf-submit" id="sidebarCreateButton">Create &amp; start</button>',
+      '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+      '</div>',
+      '<div class="sf-hint">Paste a project path, e.g. <span class="mono">~/projects/my-app</span>. The last project is prefilled when available.</div>'
+    ].join('');
+    if (els.sidebarForm.className === className && els.sidebarForm.innerHTML === nextHtml) return;
+    els.sidebarForm.className = className;
+    els.sidebarForm.innerHTML = nextHtml;
+    if (!state.sidebarFormOpen) return;
+    const projectDirInput = document.getElementById('projectDirInput');
+    const baseBranchInput = document.getElementById('baseBranchInput');
+    const sidebarGoalInput = document.getElementById('sidebarGoalInput');
+    document.getElementById('sidebarCreateButton').addEventListener('click', submitSidebarObjective);
+    document.getElementById('sidebarCancelButton').addEventListener('click', () => {
+      state.sidebarFormOpen = false;
+      updateSidebarFormFromState();
+    });
+    projectDirInput.addEventListener('input', (event) => {
+      state.draftProjectDir = event.target.value;
+    });
+    baseBranchInput.addEventListener('input', (event) => {
+      state.draftBaseBranch = event.target.value || 'main';
+    });
+    sidebarGoalInput.addEventListener('input', (event) => {
+      state.draftGoal = event.target.value;
+    });
+  }
+
+  function openSidebarForm(seedGoal) {
+    state.sidebarFormOpen = true;
+    state.draftProjectDir = state.draftProjectDir || defaultProjectDir();
+    state.draftBaseBranch = state.draftBaseBranch || 'main';
+    if (typeof seedGoal === 'string') state.draftGoal = seedGoal;
+    updateSidebarFormFromState();
+    window.setTimeout(() => {
+      const input = document.getElementById('projectDirInput');
+      if (input) input.focus();
+    }, 0);
+  }
+
+  function checkpointStatus(status) {
+    const value = String(status || '').toLowerCase();
+    if (value === 'done' || value === 'completed') return 'done';
+    if (value === 'in_progress' || value === 'active' || value === 'executing') return 'active';
+    return 'pending';
+  }
+
+  function taskMap() {
+    const map = {};
+    ((state.activeObjective && state.activeObjective.tasks) || []).forEach((task) => {
+      map[task.id] = task;
+    });
+    return map;
+  }
+
+  function findTask(taskId) {
+    return taskMap()[taskId] || null;
+  }
+
+  function taskTitle(taskId) {
+    const task = findTask(taskId);
+    return task ? task.title : taskId;
+  }
+
+  function renderSidebar() {
+    const items = sortedObjectives(state.objectives);
+    if (!items.length) {
+      els.objectiveList.innerHTML = '<div class="obj-item" style="cursor:default"><div class="obj-info"><div class="obj-name" style="color:var(--t2)">No objectives yet</div><div class="obj-progress">Create one to start the orchestrator.</div></div></div>';
+      return;
+    }
+    els.objectiveList.innerHTML = items.map((objective) => {
+      const meta = statusMeta(objective.status);
+      const progress = objectiveProgress(objective);
+      const active = objective.id === state.activeObjectiveId ? ' active' : '';
+      const doneClass = String(objective.status).toLowerCase() === 'completed' ? ' done' : '';
+      let progressText = progress.total ? (progress.done + ' of ' + progress.total + ' done') : meta.label.toLowerCase();
+      if (String(objective.status).toLowerCase() === 'completed') {
+        progressText = 'done · ' + relativeTime(objective.updatedAt || objective.createdAt);
+      } else if (String(objective.status).toLowerCase() === 'failed') {
+        progressText = 'failed · ' + relativeTime(objective.updatedAt || objective.createdAt);
+      }
+      return [
+        '<div class="obj-item' + active + doneClass + '" data-objective-id="' + esc(objective.id) + '">',
+        '<div class="obj-dot ' + meta.dot + '"></div>',
+        '<div class="obj-info">',
+        '<div class="obj-name">' + esc(objective.goal || 'Untitled objective') + '</div>',
+        '<div class="obj-progress">',
+        '<div class="obj-prog-bar"><div class="obj-prog-fill ' + meta.fill + '" style="width:' + progress.percent + '%"></div></div>',
+        '<span>' + esc(progressText) + '</span>',
+        '</div>',
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+    els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
+      node.addEventListener('click', () => {
+        const id = node.getAttribute('data-objective-id');
+        if (id && id !== state.activeObjectiveId) {
+          state.activeObjectiveId = id;
+          loadActiveObjective(true);
+        }
+      });
+    });
+  }
+
+  function renderContext() {
+    const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
+    if (!objective) {
+      els.contextStrip.innerHTML = [
+        '<div class="ctx-dot od-queued"></div>',
+        '<div class="ctx-title">No objective selected</div>',
+        '<div class="ctx-meta">waiting</div>',
+        '<div class="ctx-badge badge-queued">Idle</div>'
+      ].join('');
+      return;
+    }
+    const meta = statusMeta(objective.status);
+    const progress = objectiveProgress(objective);
+    const elapsed = durationFrom(objective.createdAt, String(objective.status).toLowerCase() === 'completed' ? objective.updatedAt : null) || relativeTime(objective.createdAt);
+    const taskCount = progress.total + ' task' + (progress.total === 1 ? '' : 's');
+    els.contextStrip.innerHTML = [
+      '<div class="ctx-dot ' + meta.dot + '"></div>',
+      '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
+      '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
+      '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>'
+    ].join('');
+  }
+
+  function shouldCollapseAutoApproval(message) {
+    if (!message || message.type !== 'system') return false;
+    return /auto-approved/i.test(message.content || '');
+  }
+
+  function extractTaskId(message) {
+    const metadataId = message && message.metadata && message.metadata.task_id;
+    if (metadataId) return metadataId;
+    const match = /Task\s+([A-Za-z0-9_-]+)/i.exec(message && message.content || '');
+    return match ? match[1] : null;
+  }
+
+  function normalizeMessages(messages) {
+    const items = [];
+    let insertedSyntheticPlan = false;
+    const tasks = (state.activeObjective && state.activeObjective.tasks) || [];
+    const hasPlanMessage = messages.some((message) => message.type === 'plan');
+
+    messages.forEach((message) => {
+      const taskId = extractTaskId(message);
+      if (shouldCollapseAutoApproval(message)) {
+        const previous = items[items.length - 1];
+        if (previous && previous.kind === 'approval-burst' && previous.taskId === taskId) {
+          previous.count += 1;
+          previous.lastTimestamp = message.timestamp;
+        } else {
+          items.push({
+            kind: 'approval-burst',
+            id: 'burst-' + message.id,
+            taskId,
+            count: 1,
+            firstTimestamp: message.timestamp,
+            lastTimestamp: message.timestamp
+          });
+        }
+        return;
+      }
+
+      items.push({
+        kind: message.type,
+        id: message.id,
+        message,
+        taskId
+      });
+
+      if (!insertedSyntheticPlan && !hasPlanMessage && tasks.length) {
+        const content = String(message.content || '');
+        if (message.type === 'system' && /plan ready|tasks identified|broken this into/i.test(content)) {
+          items.push({ kind: 'plan-synthetic', id: 'synthetic-plan', message });
+          insertedSyntheticPlan = true;
+        }
+      }
+    });
+
+    if (!insertedSyntheticPlan && !hasPlanMessage && tasks.length) {
+      const insertAt = items.findIndex((item) => item.kind === 'user');
+      const synthetic = { kind: 'plan-synthetic', id: 'synthetic-plan', message: { timestamp: state.activeObjective.updatedAt || state.activeObjective.createdAt } };
+      if (insertAt >= 0) {
+        items.splice(insertAt + 1, 0, synthetic);
+      } else {
+        items.unshift(synthetic);
+      }
+    }
+    return items;
+  }
+
+  function renderPlanCard() {
+    const tasks = (state.activeObjective && state.activeObjective.tasks) || [];
+    return [
+      '<div class="card-plan">',
+      '<div class="card-head"><span>📋</span> Plan · ' + tasks.length + ' tasks</div>',
+      tasks.map((task) => {
+        const status = String(task.status || '').toLowerCase();
+        let iconClass = 'pri-queue';
+        let icon = '–';
+        let statusClass = 'prs-queue';
+        let statusText = 'waiting';
+        if (status === 'completed') {
+          iconClass = 'pri-done';
+          icon = '✓';
+          statusClass = 'prs-done';
+          statusText = durationFrom(task.startedAt, task.completedAt) || 'done';
+        } else if (status === 'executing' || status === 'reviewing' || status === 'rework') {
+          iconClass = 'pri-active';
+          icon = '●';
+          statusClass = 'prs-active';
+          const checkpoints = Array.isArray(task.checkpoints) ? task.checkpoints : [];
+          const done = checkpoints.filter((cp) => checkpointStatus(cp.status) === 'done').length;
+          const active = checkpoints.find((cp) => checkpointStatus(cp.status) === 'active');
+          statusText = checkpoints.length ? ('cp ' + Math.min(done + (active ? 1 : 0), checkpoints.length) + '/' + checkpoints.length) : 'running';
+          if (status === 'reviewing') statusText = 'reviewing';
+          if (status === 'rework') statusText = 'rework';
+        } else if (status === 'failed') {
+          iconClass = 'pri-failed';
+          icon = '✕';
+          statusClass = 'prs-failed';
+          statusText = 'failed';
+        }
+        return [
+          '<div class="plan-row">',
+          '<div class="pr-icon ' + iconClass + '">' + icon + '</div>',
+          '<span class="pr-name">' + esc(task.title || task.id) + '</span>',
+          '<span class="pr-status ' + statusClass + '">' + esc(statusText) + '</span>',
+          '</div>'
+        ].join('');
+      }).join(''),
+      '</div>'
+    ].join('');
+  }
+
+  function renderProgressCard(message) {
+    const metadata = message.metadata || {};
+    const task = findTask(metadata.task_id);
+    const checkpoints = metadata.checkpoints || (task ? task.checkpoints : []) || [];
+    const total = checkpoints.length;
+    const done = checkpoints.filter((cp) => checkpointStatus(cp.status) === 'done').length;
+    const activeIndex = checkpoints.findIndex((cp) => checkpointStatus(cp.status) === 'active');
+    const current = activeIndex >= 0 ? activeIndex + 1 : (done || 1);
+    const elapsed = task ? (durationFrom(task.startedAt) || relativeTime(task.startedAt)) : relativeTime(message.timestamp);
+    return [
+      '<div class="card-progress">',
+      '<div class="cp-top">',
+      '<span class="cp-task-label">' + esc(task ? task.title : (metadata.task_id || 'Task')) + '</span>',
+      total ? '<span class="cp-check-badge">checkpoint ' + current + ' of ' + total + '</span>' : '',
+      '<span class="cp-time">' + esc(elapsed) + '</span>',
+      '</div>',
+      '<div class="cp-description">' + esc(message.content || '') + '</div>',
+      total ? '<div class="cp-pips">' + checkpoints.map((cp, index) => {
+        const status = checkpointStatus(cp.status);
+        const klass = status === 'done' ? ' done' : (status === 'active' ? ' active' : '');
+        return '<div class="pip' + klass + '" title="' + esc(cp.name || ('Checkpoint ' + (index + 1))) + '"></div>';
+      }).join('') + '</div>' : '',
+      '</div>'
+    ].join('');
+  }
+
+  function reviewData(message) {
+    const metadata = message.metadata || {};
+    return metadata.review || {};
+  }
+
+  function renderReviewCard(message) {
+    const metadata = message.metadata || {};
+    const review = reviewData(message);
+    const task = findTask(metadata.task_id);
+    const issues = metadata.issues || review.issues || [];
+    const verdict = String(review.verdict || '').toLowerCase();
+    const passed = verdict === 'pass' || /review passed/i.test(message.content || '');
+    const warningClass = passed ? '' : ' review-warning';
+    const badge = passed
+      ? '<span class="cr-badge crb-pass">✓ Review passed</span>'
+      : '<span class="cr-badge crb-issues">⚠ Issues found</span>';
+    const summary = passed
+      ? (review.recommendation || review.summary || message.content || 'Review completed.')
+      : (review.recommendation || message.content || 'Review requires changes.');
+    const fileStat = review.changesCommitted === false ? 'changes not committed' : 'changes committed';
+    const fileCount = review.scopeCompliant === false ? 'scope drift' : 'scope OK';
+    const checkpoints = review.checkpointsComplete === false ? 'checkpoints missing' : 'checkpoints OK';
+    return [
+      '<div class="card-review' + warningClass + '">',
+      '<div class="cr-head">',
+      badge,
+      '<span class="cr-name">' + esc(task ? task.title : (metadata.task_id || 'Review')) + '</span>',
+      '</div>',
+      '<div class="cr-body">',
+      '<div class="cr-summary">' + esc(summary) + '</div>',
+      issues.length ? '<div class="review-issues">' + issues.map((issue) => '<div class="review-issue">' + esc(issue) + '</div>').join('') + '</div>' : '',
+      '<div class="cr-stats"><span>' + esc(fileCount) + '</span><span>' + esc(checkpoints) + '</span><span>' + esc(fileStat) + '</span></div>',
+      !passed && task ? '<div class="review-cycle">Sending back for fixes (' + esc(String((task.reviewCycles || 0) || 1)) + '/' + esc(String(task.maxReviewCycles || 5)) + ')</div>' : '',
+      '<div class="cr-actions">',
+      '<button class="cr-btn crb-accept" data-review-action="accept" data-task-id="' + esc(metadata.task_id || '') + '">Accept &amp; merge</button>',
+      '<button class="cr-btn crb-view" data-review-action="diff" data-task-id="' + esc(metadata.task_id || '') + '">View diff</button>',
+      '</div>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderCompletionCard(message) {
+    const metadata = message.metadata || {};
+    const taskCount = ((state.activeObjective && state.activeObjective.tasks) || []).length;
+    return [
+      '<div class="card-complete">',
+      '<div class="cc-icon">✓</div>',
+      '<div class="cc-text">',
+      '<div class="cc-title">Objective complete!</div>',
+      '<div class="cc-body">' + esc(metadata.summary || message.content || '') + '</div>',
+      '<div class="cc-body" style="margin-top:6px">' + esc(taskCount + ' tasks · ' + (metadata.rework_count || 0) + ' rework cycles') + '</div>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderAlertCard(message) {
+    const metadata = message.metadata || {};
+    return [
+      '<div class="card-alert">',
+      '<div class="alert-title">Alert</div>',
+      '<div class="alert-body">' + esc(message.content || '') + '</div>',
+      metadata.screen_preview ? '<div class="screen-preview">' + esc(metadata.screen_preview) + '</div>' : '',
+      '</div>'
+    ].join('');
+  }
+
+  function renderApprovalCard(message) {
+    const metadata = message.metadata || {};
+    const taskId = metadata.task_id || '';
+    return [
+      '<div class="card-approval">',
+      '<div class="approval-title">Approval needed</div>',
+      '<div class="approval-body">' + esc(message.content || '') + '</div>',
+      metadata.screen_preview ? '<div class="screen-preview">' + esc(metadata.screen_preview) + '</div>' : '',
+      '<div class="approval-actions">',
+      '<button class="approval-btn approve" data-approval-action="approve" data-task-id="' + esc(taskId) + '">Approve</button>',
+      '<button class="approval-btn takeover" data-approval-action="takeover" data-task-id="' + esc(taskId) + '">Take over</button>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderBurst(item) {
+    const label = item.count === 1 ? 'permission' : 'permissions';
+    return '<div class="approval-burst">🔓 Task ' + esc(item.taskId || '?') + ': auto-approved ' + item.count + ' ' + label + '</div>';
+  }
+
+  function renderMessageItem(item) {
+    if (item.kind === 'approval-burst') return renderBurst(item);
+    if (item.kind === 'plan' || item.kind === 'plan-synthetic') {
+      const time = relativeTime(item.message.timestamp);
+      return [
+        '<div class="msg">',
+        '<div class="msg-av av-c">⌘</div>',
+        '<div class="msg-body">',
+        '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">' + esc(time) + '</span></div>',
+        renderPlanCard(),
+        '</div>',
+        '</div>'
+      ].join('');
+    }
+    const message = item.message;
+    const isUser = item.kind === 'user';
+    const header = [
+      '<div class="msg-header">',
+      '<span class="msg-name ' + (isUser ? 'mn-user' : 'mn-sys') + '">' + (isUser ? 'You' : 'cmux') + '</span>',
+      '<span class="msg-time">' + esc(relativeTime(message.timestamp)) + '</span>',
+      '</div>'
+    ].join('');
+
+    let content = '';
+    if (item.kind === 'system') {
+      content = '<div class="msg-bubble">' + formatInlineCode(message.content || '') + '</div>';
+    } else if (item.kind === 'user') {
+      content = '<div class="msg-bubble">' + esc(message.content || '') + '</div>';
+    } else if (item.kind === 'progress') {
+      content = renderProgressCard(message);
+    } else if (item.kind === 'review') {
+      const review = reviewData(message);
+      const hasStructuredReview = Object.keys(review).length || (message.metadata && message.metadata.issues);
+      content = hasStructuredReview
+        ? renderReviewCard(message)
+        : '<div class="msg-muted">' + esc(message.content || '') + '</div>';
+    } else if (item.kind === 'completion') {
+      content = renderCompletionCard(message);
+    } else if (item.kind === 'alert') {
+      content = renderAlertCard(message);
+    } else if (item.kind === 'approval') {
+      content = renderApprovalCard(message);
+    } else {
+      content = '<div class="msg-bubble">' + esc(message.content || '') + '</div>';
+    }
+
+    return [
+      '<div class="msg' + (isUser ? ' user' : '') + '">',
+      '<div class="msg-av ' + (isUser ? 'av-r">Y' : 'av-c">⌘') + '</div>',
+      '<div class="msg-body">',
+      header,
+      content,
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderEmptyState() {
+    return [
+      '<div class="empty-state">',
+      '<div class="empty-card">',
+      '<div class="empty-kicker">Orchestrator</div>',
+      '<div class="empty-title">Give me a goal and a codebase — I’ll break it down and build it.</div>',
+      '<div class="empty-copy">Start with the input below or open <span class="mono">New objective</span> to set the project directory first.</div>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderMessages() {
+    const beforeBottom = isNearBottom();
+    const oldScrollTop = els.messagesPane.scrollTop;
+    const items = normalizeMessages(state.messages);
+    if (!state.objectives.length && !state.activeObjectiveId) {
+      els.messageColumn.innerHTML = renderEmptyState();
+      return;
+    }
+    if (!items.length) {
+      els.messageColumn.innerHTML = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">Waiting for the objective to start.</div></div></div>';
+    } else {
+      els.messageColumn.innerHTML = '<div class="thread-div">now</div>' + items.map(renderMessageItem).join('');
+    }
+    els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {
+      node.addEventListener('click', async () => {
+        const taskId = node.getAttribute('data-task-id');
+        const action = node.getAttribute('data-approval-action');
+        if (!state.activeObjectiveId || !taskId) return;
+        try {
+          if (action === 'approve') {
+            await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/tasks/' + encodeURIComponent(taskId) + '/approve', {
+              method: 'POST',
+              body: JSON.stringify({ action: 'y\n' })
+            });
+          } else {
+            await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/message', {
+              method: 'POST',
+              body: JSON.stringify({ message: 'take over', context: { task_id: taskId, take_over: true } })
+            });
+            state.lastMessageTimestamp = null;
+          }
+          await pollMessages(true);
+          await pollActiveObjective(true);
+        } catch (error) {
+          showToast(error.message || 'Approval action failed');
+        }
+      });
+    });
+    els.messageColumn.querySelectorAll('[data-review-action]').forEach((node) => {
+      node.addEventListener('click', () => {
+        const action = node.getAttribute('data-review-action');
+        if (action === 'accept') {
+          showToast('Accept & merge is not wired yet');
+        } else {
+          showToast('Diff viewer is not wired yet');
+        }
+      });
+    });
+    if (beforeBottom) {
+      scrollToBottom();
+    } else {
+      els.messagesPane.scrollTop = oldScrollTop;
+    }
+  }
+
+  function renderInputState() {
+    const objective = state.activeObjective;
+    const active = objective && ['planning', 'executing', 'reviewing', 'rework'].includes(String(objective.status).toLowerCase());
+    els.inputHint.textContent = active
+      ? 'cmux will update you as tasks complete'
+      : 'No active run selected. Sending will create a new objective.';
+    els.sendButton.disabled = state.pendingCreate || state.pendingSend;
+  }
+
+  function render() {
+    renderSidebar();
+    renderContext();
+    updateSidebarFormFromState();
+    renderMessages();
+    renderInputState();
+    autoResizeTextarea();
+  }
+
+  async function pollObjectives() {
+    const previousActiveId = state.activeObjectiveId;
+    const data = await api('/api/objectives');
+    state.objectives = Array.isArray(data) ? data : [];
+    if (!state.draftProjectDir) {
+      state.draftProjectDir = defaultProjectDir();
+    }
+    ensureSelection();
+    if (state.activeObjectiveId && state.activeObjectiveId !== previousActiveId) {
+      await loadActiveObjective(false);
+    }
+    renderSidebar();
+    renderContext();
+    renderInputState();
+  }
+
+  async function pollActiveObjective(forceRender) {
+    if (!state.activeObjectiveId) {
+      state.activeObjective = null;
+      return;
+    }
+    const objective = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId));
+    state.activeObjective = objective;
+    const index = state.objectives.findIndex((item) => item.id === objective.id);
+    if (index >= 0) {
+      state.objectives[index] = objective;
+    }
+    if (forceRender) render();
+    else {
+      renderContext();
+      renderSidebar();
+      renderMessages();
+      renderInputState();
+    }
+  }
+
+  async function pollMessages(forceRender) {
+    if (!state.activeObjectiveId) {
+      state.messages = [];
+      state.lastMessageTimestamp = null;
+      if (forceRender) renderMessages();
+      return;
+    }
+    const query = state.lastMessageTimestamp ? ('?after=' + encodeURIComponent(state.lastMessageTimestamp)) : '';
+    const incoming = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/messages' + query);
+    const list = Array.isArray(incoming) ? incoming : [];
+    if (state.lastMessageTimestamp) {
+      if (list.length) {
+        state.messages = state.messages.concat(list);
+      }
+    } else {
+      state.messages = list;
+    }
+    const last = state.messages[state.messages.length - 1];
+    state.lastMessageTimestamp = last ? last.timestamp : null;
+    if (forceRender) renderMessages();
+    else renderMessages();
+  }
+
+  async function loadActiveObjective(forceAll) {
+    state.messages = [];
+    state.lastMessageTimestamp = null;
+    await Promise.all([
+      pollActiveObjective(false),
+      pollMessages(false)
+    ]);
+    if (forceAll) render();
+  }
+
+  async function createObjective(goal, projectDir, baseBranch) {
+    state.pendingCreate = true;
+    renderInputState();
+    try {
+      const objective = await api('/api/objectives', {
+        method: 'POST',
+        body: JSON.stringify({ goal, projectDir, baseBranch: baseBranch || 'main' })
+      });
+      await api('/api/objectives/' + encodeURIComponent(objective.id) + '/start', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      state.activeObjectiveId = objective.id;
+      state.sidebarFormOpen = false;
+      state.draftGoal = '';
+      els.chatInput.value = '';
+      autoResizeTextarea();
+      await pollObjectives();
+      await loadActiveObjective(true);
+    } finally {
+      state.pendingCreate = false;
+      renderInputState();
+    }
+  }
+
+  async function submitSidebarObjective() {
+    const projectDirInput = document.getElementById('projectDirInput');
+    const baseBranchInput = document.getElementById('baseBranchInput');
+    const sidebarGoalInput = document.getElementById('sidebarGoalInput');
+    state.draftProjectDir = projectDirInput ? projectDirInput.value.trim() : state.draftProjectDir;
+    state.draftBaseBranch = baseBranchInput ? (baseBranchInput.value.trim() || 'main') : (state.draftBaseBranch || 'main');
+    state.draftGoal = sidebarGoalInput ? sidebarGoalInput.value.trim() : state.draftGoal;
+    if (!state.draftProjectDir || !state.draftGoal) {
+      showToast('Project directory and goal are required');
+      return;
+    }
+    try {
+      await createObjective(state.draftGoal, state.draftProjectDir, state.draftBaseBranch);
+    } catch (error) {
+      showToast(error.message || 'Could not create objective');
+    }
+  }
+
+  async function sendMessage() {
+    const text = els.chatInput.value.trim();
+    if (!text) return;
+    if (!state.activeObjectiveId || !state.activeObjective || ['completed', 'failed'].includes(String(state.activeObjective.status).toLowerCase())) {
+      const projectDir = (state.draftProjectDir || defaultProjectDir()).trim();
+      const baseBranch = (state.draftBaseBranch || 'main').trim() || 'main';
+      if (projectDir) {
+        state.draftGoal = text;
+        try {
+          await createObjective(text, projectDir, baseBranch);
+        } catch (error) {
+          showToast(error.message || 'Could not create objective');
+        }
+      } else {
+        state.draftGoal = text;
+        openSidebarForm(text);
+        const sidebarGoalInput = document.getElementById('sidebarGoalInput');
+        if (sidebarGoalInput) sidebarGoalInput.focus();
+      }
+      return;
+    }
+    state.pendingSend = true;
+    renderInputState();
+    const optimistic = {
+      id: 'local-' + Math.random().toString(16).slice(2),
+      timestamp: new Date().toISOString(),
+      type: 'user',
+      content: text,
+      metadata: {}
+    };
+    state.messages.push(optimistic);
+    state.lastMessageTimestamp = optimistic.timestamp;
+    els.chatInput.value = '';
+    autoResizeTextarea();
+    renderMessages();
+    try {
+      await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/message', {
+        method: 'POST',
+        body: JSON.stringify({ message: text })
+      });
+      state.lastMessageTimestamp = null;
+      await pollMessages(true);
+    } catch (error) {
+      showToast(error.message || 'Could not send message');
+    } finally {
+      state.pendingSend = false;
+      renderInputState();
+    }
+  }
+
+  function installPollers() {
+    if (state.pollers.objectives) window.clearInterval(state.pollers.objectives);
+    if (state.pollers.messages) window.clearInterval(state.pollers.messages);
+    if (state.pollers.objective) window.clearInterval(state.pollers.objective);
+    if (state.pollers.relative) window.clearInterval(state.pollers.relative);
+
+    state.pollers.objectives = window.setInterval(async () => {
+      try {
+        await pollObjectives();
+      } catch (error) {
+        console.error(error);
+      }
+    }, 5000);
+
+    state.pollers.messages = window.setInterval(async () => {
+      try {
+        await pollMessages(false);
+      } catch (error) {
+        console.error(error);
+      }
+    }, 3000);
+
+    state.pollers.objective = window.setInterval(async () => {
+      try {
+        await pollActiveObjective(false);
+      } catch (error) {
+        console.error(error);
+      }
+    }, 5000);
+
+    state.pollers.relative = window.setInterval(() => {
+      state.relativeTick = Date.now();
+      renderSidebar();
+      renderContext();
+      renderMessages();
+    }, 30000);
+  }
+
+  function bindEvents() {
+    els.newObjectiveButton.addEventListener('click', () => {
+      openSidebarForm(state.draftGoal);
+    });
+    els.sendButton.addEventListener('click', sendMessage);
+    els.chatInput.addEventListener('input', () => {
+      autoResizeTextarea();
+    });
+    els.chatInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        openSidebarForm(state.draftGoal);
+      }
+    });
+    els.terminalLink.addEventListener('click', () => {
+      showToast('Terminal sessions view is not wired here yet');
+    });
+  }
+
+  async function boot() {
+    bindEvents();
+    state.relativeTick = Date.now();
+    state.draftProjectDir = defaultProjectDir();
+    render();
+    try {
+      await pollObjectives();
+      if (state.activeObjectiveId) {
+        await loadActiveObjective(true);
+      } else {
+        render();
+      }
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || 'Initial load failed');
+      render();
+    }
+    installPollers();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
