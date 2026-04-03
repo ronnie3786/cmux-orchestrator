@@ -774,14 +774,17 @@
 
   .od-failed { background: var(--red); box-shadow: 0 0 6px rgba(248,113,113,.3); }
   .od-reviewing { background: var(--amber); box-shadow: 0 0 6px rgba(251,191,36,.25); animation: pulse 2s infinite; }
+  .od-plan-review { background: var(--purple); box-shadow: 0 0 6px rgba(167,139,250,.3); animation: pulse 2s infinite; }
   .opf-failed { background: var(--red); }
   .opf-reviewing { background: var(--amber); }
+  .opf-plan-review { background: var(--purple); }
 
   .ctx-badge.badge-running { background: var(--blue-d); color: var(--blue); border-color: var(--blue-b); }
   .ctx-badge.badge-done { background: var(--green-d); color: var(--green); border-color: var(--green-b); }
   .ctx-badge.badge-failed { background: var(--red-d); color: var(--red); border-color: rgba(248,113,113,.25); }
   .ctx-badge.badge-reviewing,
   .ctx-badge.badge-planning { background: var(--amber-d); color: var(--amber); border-color: var(--amber-b); }
+  .ctx-badge.badge-plan-review { background: var(--purple-d); color: var(--purple); border-color: var(--purple-b); }
   .ctx-badge.badge-queued { background: var(--t4); color: var(--t2); border-color: var(--b); }
 
   .sidebar-form {
@@ -979,6 +982,126 @@
   }
   .card-review.review-warning {
     border-color: var(--amber-b);
+  }
+
+  .card-plan-review {
+    width: 100%;
+    max-width: 560px;
+    background:
+      radial-gradient(circle at top right, rgba(167,139,250,.14), transparent 34%),
+      var(--raised);
+    border: 1px solid var(--purple-b);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .plan-review-head {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .plan-review-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--t1);
+  }
+  .plan-review-count {
+    font-size: 11px;
+    color: var(--purple);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .plan-review-body {
+    padding: 14px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .plan-review-task {
+    border: 1px solid var(--b);
+    border-radius: 12px;
+    background: rgba(255,255,255,.03);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .plan-review-task-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .plan-review-task-number {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--purple);
+    font-weight: 700;
+  }
+  .plan-review-task-title {
+    font-size: 13px;
+    color: var(--t1);
+    font-weight: 600;
+    flex: 1;
+  }
+  .plan-review-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .plan-review-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--t3);
+    font-weight: 700;
+  }
+  .plan-review-list,
+  .plan-review-checkpoints {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .plan-review-chip {
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--b2);
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--t2);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .plan-review-checkpoint {
+    width: 100%;
+    font-size: 12px;
+    color: var(--t2);
+    line-height: 1.5;
+  }
+  .plan-review-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 4px;
+  }
+  .plan-review-approve {
+    border: none;
+    border-radius: 10px;
+    background: var(--green);
+    color: #08110d;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 14px;
+    cursor: pointer;
+  }
+  .plan-review-approve:hover {
+    opacity: .9;
+  }
+  .plan-review-hint {
+    font-size: 12px;
+    color: var(--t2);
+    line-height: 1.6;
   }
 
   .review-cycle {
@@ -2017,6 +2140,8 @@
         return { dot: 'od-done', fill: 'opf-done', badge: 'badge-done', label: 'Done' };
       case 'failed':
         return { dot: 'od-failed', fill: 'opf-failed', badge: 'badge-failed', label: 'Failed' };
+      case 'plan_review':
+        return { dot: 'od-plan-review', fill: 'opf-plan-review', badge: 'badge-plan-review', label: 'reviewing plan' };
       case 'planning':
         return { dot: 'od-reviewing', fill: 'opf-reviewing', badge: 'badge-planning', label: 'Planning' };
       case 'reviewing':
@@ -2273,7 +2398,7 @@
     if (state.activeObjectiveId && available.some((item) => item.id === state.activeObjectiveId)) {
       return;
     }
-    const running = available.find((item) => ['planning', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase()));
+    const running = available.find((item) => ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase()));
     state.activeObjectiveId = (running || available[0]).id;
   }
 
@@ -2770,7 +2895,7 @@
     const items = [];
     let insertedSyntheticPlan = false;
     const tasks = (state.activeObjective && state.activeObjective.tasks) || [];
-    const hasPlanMessage = messages.some((message) => message.type === 'plan');
+    const hasPlanMessage = messages.some((message) => message.type === 'plan' || message.type === 'plan_review');
 
     messages.forEach((message) => {
       if (isHiddenSystemMessage(message)) return;
@@ -2820,6 +2945,51 @@
       }
     }
     return items;
+  }
+
+  function renderPlanReviewCard(message) {
+    const metadata = message.metadata || {};
+    const tasks = Array.isArray(metadata.tasks) ? metadata.tasks : [];
+    return [
+      '<div class="card-plan-review">',
+      '<div class="plan-review-head">',
+      '<div class="plan-review-title">Plan Review</div>',
+      '<div class="plan-review-count">' + esc(tasks.length + ' task' + (tasks.length === 1 ? '' : 's')) + '</div>',
+      '</div>',
+      '<div class="plan-review-body">',
+      tasks.map((task, index) => [
+        '<div class="plan-review-task">',
+        '<div class="plan-review-task-head">',
+        '<div class="plan-review-task-number">Task ' + esc(String(index + 1)) + '</div>',
+        '<div class="plan-review-task-title">' + esc(task.title || task.id || ('Task ' + (index + 1))) + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Files</div>',
+        '<div class="plan-review-list">' + ((task.files || []).length
+          ? task.files.map((file) => '<span class="plan-review-chip">' + esc(file) + '</span>').join('')
+          : '<span class="plan-review-chip">none listed</span>') + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Dependencies</div>',
+        '<div class="plan-review-list">' + ((task.dependsOn || []).length
+          ? task.dependsOn.map((dep) => '<span class="plan-review-chip">' + esc(dep) + '</span>').join('')
+          : '<span class="plan-review-chip">none</span>') + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Checkpoints</div>',
+        '<div class="plan-review-checkpoints">' + ((task.checkpoints || []).length
+          ? task.checkpoints.map((cp, cpIndex) => '<div class="plan-review-checkpoint">' + esc((cpIndex + 1) + '. ' + cp) + '</div>').join('')
+          : '<div class="plan-review-checkpoint">No checkpoints listed.</div>') + '</div>',
+        '</div>',
+        '</div>'
+      ].join('')).join(''),
+      '<div class="plan-review-actions">',
+      '<button class="plan-review-approve" type="button" data-plan-action="approve">✅ Approve Plan</button>',
+      '<div class="plan-review-hint">Type feedback in the chat to request changes, or approve to start execution.</div>',
+      '</div>',
+      '</div>',
+      '</div>'
+    ].join('');
   }
 
   function renderPlanCard() {
@@ -3019,6 +3189,18 @@
   function renderMessageItem(item, grouped) {
     const groupClass = grouped ? ' msg-grouped' : '';
     if (item.kind === 'approval-burst') return renderBurst(item);
+    if (item.kind === 'plan_review') {
+      const time = relativeTime(item.message.timestamp);
+      return [
+        '<div class="msg' + groupClass + '">',
+        grouped ? '' : '<div class="msg-av av-c">⌘</div>',
+        '<div class="msg-body">',
+        grouped ? '' : '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">' + esc(time) + '</span></div>',
+        renderPlanReviewCard(item.message),
+        '</div>',
+        '</div>'
+      ].join('');
+    }
     if (item.kind === 'plan' || item.kind === 'plan-synthetic') {
       const time = relativeTime(item.message.timestamp);
       return [
@@ -3124,6 +3306,22 @@
         }
       });
     });
+    els.messageColumn.querySelectorAll('[data-plan-action="approve"]').forEach((node) => {
+      node.addEventListener('click', async () => {
+        if (!state.activeObjectiveId) return;
+        try {
+          await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/approve-plan', {
+            method: 'POST',
+            body: JSON.stringify({})
+          });
+          state.lastMessageTimestamp = null;
+          await pollMessages(true);
+          await pollActiveObjective(true);
+        } catch (error) {
+          showToast(error.message || 'Could not approve plan');
+        }
+      });
+    });
     els.messageColumn.querySelectorAll('[data-copy-path]').forEach((node) => {
       node.addEventListener('click', () => {
         copyText(node.getAttribute('data-copy-path'), 'Path');
@@ -3139,10 +3337,14 @@
 
   function renderInputState() {
     const objective = state.activeObjective;
-    const active = objective && ['planning', 'executing', 'reviewing', 'rework'].includes(String(objective.status).toLowerCase());
-    els.inputHint.textContent = active
-      ? 'cmux will update you as tasks complete'
-      : 'No active run selected. Sending will create a new objective.';
+    const status = String(objective && objective.status || '').toLowerCase();
+    const active = objective && ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(status);
+    els.inputHint.textContent = status === 'plan_review'
+      ? 'Type feedback in chat or approve the plan above.'
+      : (active ? 'cmux will update you as tasks complete' : 'No active run selected. Sending will create a new objective.');
+    els.chatInput.placeholder = status === 'plan_review'
+      ? 'Type plan feedback or approve above...'
+      : 'Give it a goal, ask what’s happening, or just wait…';
     els.sendButton.disabled = state.pendingCreate || state.pendingSend;
   }
 

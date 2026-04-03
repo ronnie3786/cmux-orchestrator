@@ -277,6 +277,13 @@ def make_handler(engine):
                     context={"task_id": task_id, "approval_action": action},
                 )
                 self._json_response({"ok": True})
+            elif path.startswith("/api/objectives/") and path.endswith("/approve-plan"):
+                objective_id = path.split("/")[3]
+                approved = self.server.engine.orchestrator.approve_plan(objective_id)
+                if approved:
+                    self._json_response({"ok": True})
+                else:
+                    self._json_response({"ok": False, "error": "Could not approve plan"}, 400)
             elif path.startswith("/api/objectives/") and path.endswith("/message"):
                 objective_id = path.split("/")[3]
                 message = data.get("message", "")

@@ -106,3 +106,17 @@ class TestServerResponses(unittest.TestCase):
 
         response = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(response["branchName"], "feature/api")
+
+    def test_approve_plan_endpoint_calls_orchestrator(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        engine = Mock()
+        engine.orchestrator.approve_plan.return_value = True
+        handler = self._make_handler(engine, "/api/objectives/" + objective["id"] + "/approve-plan")
+        handler.headers = {"Content-Length": "2"}
+        handler.rfile = io.BytesIO(b"{}")
+
+        handler.do_POST()
+
+        engine.orchestrator.approve_plan.assert_called_once_with(objective["id"])
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})

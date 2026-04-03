@@ -122,6 +122,69 @@ class Orchestrator:
         self._persist_message(objective_id, msg)
         return msg
 
+    def _close_workspace(self, objective_id, workspace_id, purpose, task_id=None):
+        if not workspace_id:
+            return
+        try:
+            cmux_api.send_prompt_to_workspace(workspace_id, "/exit")
+            time.sleep(1)
+        except Exception:
+            pass
+        try:
+            cmux_api._v2_request("workspace.close", {"workspace_id": workspace_id})
+            details = {"workspaceId": workspace_id, "purpose": purpose}
+            if task_id:
+                details["taskId"] = task_id
+            self._log_event(objective_id, "info", "workspace_closed", details)
+        except Exception as exc:
+            details = {
+                "phase": f"close_workspace_{purpose}",
+                "workspaceId": workspace_id,
+                "taskId": task_id,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+                "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
+            }
+            self._log_event(objective_id, "error", "exception", details)
+
+    def _plan_review_metadata(self, parsed):
+        tasks = []
+        for task in parsed.get("tasks", []):
+            if not isinstance(task, dict):
+                continue
+            tasks.append(
+                {
+                    "id": task.get("id"),
+                    "title": task.get("title"),
+                    "files": list(task.get("files", [])),
+                    "dependsOn": list(task.get("dependsOn", [])),
+                    "checkpoints": list(task.get("checkpoints", [])),
+                }
+            )
+        return {"tasks": tasks}
+
+    def _read_and_parse_plan(self, objective_id, plan_path):
+        with open(plan_path, "r", encoding="utf-8") as f:
+            plan_text = f.read()
+        parsed = planner.parse_plan(plan_text)
+        if "error" in parsed:
+            raw_plan = parsed.get("raw_plan", plan_text)
+            objectives.update_objective(objective_id, {"status": "failed"})
+            self._log_event(
+                objective_id,
+                "error",
+                "planning_failure",
+                {"reason": "plan_parse_failed", "rawPlanPreview": raw_plan[:2000]},
+            )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Planning parse failed. Raw plan for manual review:\n\n{raw_plan}",
+            )
+            return None, None
+        tasks = planner.plan_to_tasks(parsed, objective_id)
+        return parsed, tasks
+
     def _persist_message(self, objective_id, msg):
         objective_dir = objectives.get_objective_dir(objective_id)
         try:
@@ -206,6 +269,7 @@ class Orchestrator:
 
     def _run_planning(self, objective_id, _poll_interval=10, _grace_polls=36, _max_polls=90):
         workspace_uuid = None
+        keep_planner_workspace = False
         try:
             self._log_event(
                 objective_id,
@@ -432,27 +496,19 @@ class Orchestrator:
                 )
                 return
 
-            with open(plan_path, "r", encoding="utf-8") as f:
-                plan_text = f.read()
-            parsed = planner.parse_plan(plan_text)
-            if "error" in parsed:
-                objectives.update_objective(objective_id, {"status": "failed"})
-                raw_plan = parsed.get("raw_plan", plan_text)
-                self._log_event(
-                    objective_id,
-                    "error",
-                    "planning_failure",
-                    {"reason": "plan_parse_failed", "rawPlanPreview": raw_plan[:2000]},
-                )
-                self._append_message(
-                    objective_id,
-                    "alert",
-                    f"Planning parse failed. Raw plan for manual review:\n\n{raw_plan}",
-                )
+            parsed, tasks = self._read_and_parse_plan(objective_id, plan_path)
+            if parsed is None:
                 return
 
-            tasks = planner.plan_to_tasks(parsed, objective_id)
-            objectives.update_objective(objective_id, {"tasks": tasks, "status": "executing"})
+            objectives.update_objective(
+                objective_id,
+                {
+                    "tasks": tasks,
+                    "status": "plan_review",
+                    "plannerWorkspaceId": workspace_uuid,
+                },
+            )
+            keep_planner_workspace = True
             self._log_event(
                 objective_id,
                 "info",
@@ -461,9 +517,9 @@ class Orchestrator:
             )
             self._append_message(
                 objective_id,
-                "plan",
-                f"Plan ready: {len(tasks)} tasks identified.",
-                metadata={"tasks": tasks},
+                "plan_review",
+                f"Plan ready: {len(tasks)} tasks identified. Review before execution.",
+                metadata=self._plan_review_metadata(parsed),
             )
         except Exception as exc:
             tb = traceback.format_exc()
@@ -487,41 +543,8 @@ class Orchestrator:
             )
             return
         finally:
-            if workspace_uuid:
-                try:
-                    # Exit Claude Code before closing the workspace
-                    cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
-                    time.sleep(1)  # brief pause for clean exit
-                    cmux_api._v2_request("workspace.close", {"workspace_id": workspace_uuid})
-                    self._log_event(
-                        objective_id,
-                        "info",
-                        "workspace_closed",
-                        {"workspaceId": workspace_uuid, "purpose": "planning"},
-                    )
-                except Exception:
-                    pass
-
-        if hasattr(self, "_launch_ready_tasks"):
-            try:
-                self._launch_ready_tasks(objective_id)
-            except Exception as exc:
-                tb = traceback.format_exc()
-                self._log_event(
-                    objective_id,
-                    "error",
-                    "exception",
-                    {
-                        "phase": "launch_initial_tasks",
-                        "error": str(exc),
-                        "traceback": tb,
-                    },
-                )
-                self._append_message(
-                    objective_id,
-                    "alert",
-                    f"Failed to launch initial tasks: {exc}\n\n```\n{tb}\n```",
-                )
+            if workspace_uuid and not keep_planner_workspace:
+                self._close_workspace(objective_id, workspace_uuid, "planning")
 
     def _workspaces_from_result(self, list_result):
         if not list_result:
@@ -1455,6 +1478,43 @@ IMPORTANT:
             self.start_objective(objective_id)
             return
 
+        if objective_status == "plan_review":
+            planner_workspace_id = objective.get("plannerWorkspaceId")
+            worktree_path = objective.get("worktreePath", "")
+            plan_path = os.path.join(worktree_path, "plan.md")
+            if not planner_workspace_id or not os.path.isfile(plan_path):
+                objectives.update_objective(objective_id, {"status": "failed"})
+                if planner_workspace_id:
+                    self._close_workspace(objective_id, planner_workspace_id, "plan_revision_failed")
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    "Plan revision failed: planner workspace or plan.md is unavailable.",
+                )
+                return
+            current_plan = pathlib.Path(plan_path).read_text(encoding="utf-8")
+            revision_prompt = (
+                "The human reviewed your plan and has feedback:\n\n"
+                f"{message}\n\n"
+                "Current plan.md:\n\n"
+                f"{current_plan}\n\n"
+                "Please revise plan.md based on this feedback. Rewrite the entire plan.md file with your changes."
+            )
+            if not cmux_api.send_prompt_to_workspace(planner_workspace_id, revision_prompt):
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    "Plan revision failed: could not deliver feedback to the planner workspace.",
+                )
+                return
+            objectives.update_objective(objective_id, {"status": "planning"})
+            threading.Thread(
+                target=self._poll_for_plan_revision,
+                args=(objective_id, plan_path, pathlib.Path(plan_path).stat().st_mtime),
+                daemon=True,
+            ).start()
+            return
+
         if context.get("take_over") and task_id:
             tasks = objective.get("tasks", [])
             task = next((item for item in tasks if item.get("id") == task_id), None)
@@ -1476,6 +1536,65 @@ IMPORTANT:
                 {"taskId": task_id, "reason": "taken_over_by_human"},
             )
             return
+
+    def _poll_for_plan_revision(self, objective_id, plan_path, previous_mtime, _poll_interval=5, _max_seconds=600):
+        deadline = time.time() + _max_seconds
+        while time.time() < deadline:
+            objective = objectives.read_objective(objective_id)
+            if objective is None:
+                return
+            planner_workspace_id = objective.get("plannerWorkspaceId")
+            if not planner_workspace_id:
+                objectives.update_objective(objective_id, {"status": "failed"})
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    "Plan revision failed: planner workspace was lost.",
+                )
+                return
+            try:
+                current_mtime = pathlib.Path(plan_path).stat().st_mtime
+            except OSError:
+                current_mtime = None
+            if current_mtime and current_mtime > previous_mtime:
+                parsed, tasks = self._read_and_parse_plan(objective_id, plan_path)
+                if parsed is None:
+                    self._close_workspace(objective_id, planner_workspace_id, "plan_revision_parse_failed")
+                    objectives.update_objective(objective_id, {"plannerWorkspaceId": None})
+                    return
+                objectives.update_objective(
+                    objective_id,
+                    {
+                        "tasks": tasks,
+                        "status": "plan_review",
+                    },
+                )
+                self._append_message(
+                    objective_id,
+                    "plan_review",
+                    f"Plan updated: {len(tasks)} tasks ready for review.",
+                    metadata=self._plan_review_metadata(parsed),
+                )
+                self._log_event(
+                    objective_id,
+                    "info",
+                    "plan_revision_success",
+                    {"taskCount": len(tasks), "taskIds": [task.get("id") for task in tasks]},
+                )
+                return
+            time.sleep(_poll_interval)
+        objectives.update_objective(objective_id, {"status": "plan_review"})
+        self._append_message(
+            objective_id,
+            "alert",
+            "Plan revision timed out waiting for an updated plan.md.",
+        )
+        self._log_event(
+            objective_id,
+            "error",
+            "plan_revision_timeout",
+            {"planPath": plan_path, "maxSeconds": _max_seconds},
+        )
 
     def get_active_objective_id(self):
         with self._lock:
@@ -1514,36 +1633,16 @@ IMPORTANT:
         if objective is None:
             return False
         seen = set()
+        planner_workspace_id = objective.get("plannerWorkspaceId")
+        if planner_workspace_id:
+            seen.add(planner_workspace_id)
+            self._close_workspace(objective_id, planner_workspace_id, "cleanup_planner")
         for task in objective.get("tasks", []):
             workspace_id = task.get("workspaceId")
             if not workspace_id or workspace_id in seen:
                 continue
             seen.add(workspace_id)
-            try:
-                # Exit Claude Code before closing the workspace
-                cmux_api.send_prompt_to_workspace(workspace_id, "/exit")
-                time.sleep(1)
-                cmux_api._v2_request("workspace.close", {"workspace_id": workspace_id})
-                self._log_event(
-                    objective_id,
-                    "info",
-                    "workspace_closed",
-                    {"workspaceId": workspace_id, "purpose": "cleanup", "taskId": task.get("id")},
-                )
-            except Exception as exc:
-                self._log_event(
-                    objective_id,
-                    "error",
-                    "exception",
-                    {
-                        "phase": "stop_and_cleanup",
-                        "taskId": task.get("id"),
-                        "workspaceId": workspace_id,
-                        "error": str(exc),
-                        "traceback": traceback.format_exc(),
-                        "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
-                    },
-                )
+            self._close_workspace(objective_id, workspace_id, "cleanup", task_id=task.get("id"))
         project_dir = objective.get("projectDir", "")
         worktree_path = objective.get("worktreePath", "")
         if project_dir and worktree_path:
@@ -1572,4 +1671,39 @@ IMPORTANT:
                         "error": str(exc),
                     },
                 )
+        return True
+
+    def approve_plan(self, objective_id):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return False
+        if str(objective.get("status") or "").lower() != "plan_review":
+            return False
+        planner_workspace_id = objective.get("plannerWorkspaceId")
+        if planner_workspace_id:
+            self._close_workspace(objective_id, planner_workspace_id, "plan_approved")
+        objectives.update_objective(
+            objective_id,
+            {"status": "executing", "plannerWorkspaceId": None},
+        )
+        self._append_message(objective_id, "system", "Plan approved, launching tasks...")
+        try:
+            self._launch_ready_tasks(objective_id)
+        except Exception:
+            tb = traceback.format_exc()
+            self._log_event(
+                objective_id,
+                "error",
+                "exception",
+                {
+                    "phase": "approve_plan_launch_tasks",
+                    "traceback": tb,
+                },
+            )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Failed to launch tasks after plan approval.\n\n```\n{tb}\n```",
+            )
+            return False
         return True

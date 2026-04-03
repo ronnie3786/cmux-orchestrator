@@ -177,6 +177,7 @@ class TestOrchestrator(unittest.TestCase):
         objectives.update_objective(
             objective["id"],
             {
+                "plannerWorkspaceId": "ws-planner",
                 "tasks": [
                     {"id": "task-1", "workspaceId": "ws-1"},
                     {"id": "task-2", "workspaceId": "ws-2"},
@@ -196,6 +197,7 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(
             mock_send.call_args_list,
             [
+                unittest.mock.call("ws-planner", "/exit"),
                 unittest.mock.call("ws-1", "/exit"),
                 unittest.mock.call("ws-2", "/exit"),
             ],
@@ -203,6 +205,7 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(
             mock_request.call_args_list,
             [
+                unittest.mock.call("workspace.close", {"workspace_id": "ws-planner"}),
                 unittest.mock.call("workspace.close", {"workspace_id": "ws-1"}),
                 unittest.mock.call("workspace.close", {"workspace_id": "ws-2"}),
             ],
@@ -313,14 +316,15 @@ class TestPlanningPipeline(unittest.TestCase):
             self.orchestrator._run_planning(objective["id"], _poll_interval=0, _grace_polls=0, _max_polls=2)
 
         updated = objectives.read_objective(objective["id"])
-        self.assertEqual(updated["status"], "executing")
+        self.assertEqual(updated["status"], "plan_review")
         self.assertEqual(updated["tasks"], tasks)
-        self.assertTrue(any("Plan ready: 2 tasks identified." in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
-        # Called twice: planning prompt + /exit cleanup
-        self.assertEqual(mock_send_prompt.call_count, 2)
-        self.assertIn("/exit", mock_send_prompt.call_args_list[-1].args[1])
+        self.assertEqual(updated["plannerWorkspaceId"], "ws-planner")
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertTrue(any(msg["type"] == "plan_review" for msg in messages))
+        # Called once: planning prompt only. Planner workspace stays alive for review.
+        self.assertEqual(mock_send_prompt.call_count, 1)
         self.assertEqual(mock_create_workspace.call_args.args[1], objective["worktreePath"])
-        launch_ready.assert_called_once_with(objective["id"])
+        launch_ready.assert_not_called()
 
     def test_run_planning_no_plan_file(self):
         objective = self._create_objective()
@@ -351,6 +355,89 @@ class TestPlanningPipeline(unittest.TestCase):
         updated = objectives.read_objective(objective["id"])
         self.assertEqual(updated["status"], "failed")
         self.assertTrue(any(raw_plan in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+
+    def test_approve_plan_closes_planner_and_launches_tasks(self):
+        objective = self._create_objective()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "plan_review",
+                "plannerWorkspaceId": "ws-planner",
+                "tasks": [{"id": "task-1", "title": "First", "status": "queued"}],
+            },
+        )
+
+        with patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request, \
+                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch:
+            approved = self.orchestrator.approve_plan(objective["id"])
+
+        self.assertTrue(approved)
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "executing")
+        self.assertIsNone(updated["plannerWorkspaceId"])
+        mock_send.assert_called_once_with("ws-planner", "/exit")
+        mock_request.assert_called_once_with("workspace.close", {"workspace_id": "ws-planner"})
+        mock_launch.assert_called_once_with(objective["id"])
+        self.assertTrue(any("Plan approved, launching tasks..." in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+
+    def test_handle_human_input_revises_plan_during_plan_review(self):
+        objective = self._create_objective()
+        plan_path = Path(objective["worktreePath"]) / "plan.md"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text("original plan", encoding="utf-8")
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "plan_review",
+                "plannerWorkspaceId": "ws-planner",
+            },
+        )
+        revised_parsed = {
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "title": "Revised task",
+                    "files": ["a.py"],
+                    "dependsOn": [],
+                    "checkpoints": ["Revise plan"],
+                }
+            ]
+        }
+        revised_tasks = [
+            {
+                "id": "task-1",
+                "title": "Revised task",
+                "status": "queued",
+                "dependsOn": [],
+                "workspaceId": None,
+                "worktreePath": None,
+                "checkpoints": [{"name": "Revise plan", "status": "pending"}],
+                "reviewCycles": 0,
+                "maxReviewCycles": 3,
+                "startedAt": None,
+                "completedAt": None,
+                "lastProgressAt": None,
+            }
+        ]
+
+        with patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread, \
+                patch("cmux_harness.orchestrator.planner.parse_plan", return_value=revised_parsed), \
+                patch("cmux_harness.orchestrator.planner.plan_to_tasks", return_value=revised_tasks):
+            self.orchestrator.handle_human_input(objective["id"], "Please split task 1")
+            poll_target = mock_thread.call_args.kwargs["target"]
+            poll_args = mock_thread.call_args.kwargs["args"]
+            plan_path.write_text("revised plan", encoding="utf-8")
+            poll_target(*poll_args, _poll_interval=0, _max_seconds=1)
+
+        self.assertIn("Please split task 1", mock_send.call_args.args[1])
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "plan_review")
+        self.assertEqual(updated["tasks"], revised_tasks)
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(messages[0]["type"], "user")
+        self.assertTrue(any(msg["type"] == "plan_review" and "Plan updated" in msg["content"] for msg in messages))
 
 
 class TestTaskLauncher(unittest.TestCase):
