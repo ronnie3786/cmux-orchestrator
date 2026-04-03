@@ -120,3 +120,12 @@ class TestServerResponses(unittest.TestCase):
         engine.orchestrator.approve_plan.assert_called_once_with(objective["id"])
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
+
+    def test_debug_modal_static_markup_includes_rendering_regression_fix(self):
+        html = Path("cmux_harness/static/orchestrator.html").read_text(encoding="utf-8")
+
+        self.assertIn(".debug-entry {\n    border: 1px solid var(--b);\n    border-radius: 8px;", html)
+        self.assertNotIn(".debug-entry {\n    border: 1px solid var(--b);\n    border-radius: 12px;\n    background: var(--raised);\n    overflow: hidden;", html)
+        self.assertIn(".debug-entry-head {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    min-height: 36px;", html)
+        self.assertIn("'<div class=\"debug-entry-time\">' + esc(relativeTime(entry.timestamp)) + '</div>'", html)
+        self.assertIn("'<div class=\"debug-event\">' + esc(entry.event || 'unknown') + '</div>'", html)

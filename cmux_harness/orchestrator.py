@@ -1537,6 +1537,42 @@ IMPORTANT:
             )
             return
 
+        tasks = objective.get("tasks", [])
+        task_lines = []
+        for task in tasks:
+            task_lines.append(
+                "- {id}: {title} [{status}] reviewCycles={review_cycles}".format(
+                    id=task.get("id") or "unknown",
+                    title=task.get("title") or "Untitled task",
+                    status=task.get("status") or "unknown",
+                    review_cycles=task.get("reviewCycles", 0),
+                )
+            )
+        task_summary = "\n".join(task_lines) if task_lines else "- No tasks"
+        prompt = (
+            "Objective goal:\n"
+            f"{objective.get('goal') or ''}\n\n"
+            "Objective status:\n"
+            f"{objective_status or 'unknown'}\n\n"
+            "Tasks summary:\n"
+            f"{task_summary}\n\n"
+            "User message:\n"
+            f"{message}\n\n"
+            "Answer the user question about this objective concisely."
+        )
+        response = claude_cli.run_haiku(prompt)
+        if isinstance(response, dict):
+            response_text = response.get("summary") or response.get("response") or json.dumps(response)
+        else:
+            response_text = str(response or "").strip()
+        self._append_message(objective_id, "assistant", response_text)
+        self._log_event(
+            objective_id,
+            "info",
+            "chat_response",
+            {"status": objective_status or "unknown", "message": message},
+        )
+
     def _poll_for_plan_revision(self, objective_id, plan_path, previous_mtime, _poll_interval=5, _max_seconds=600):
         deadline = time.time() + _max_seconds
         while time.time() < deadline:

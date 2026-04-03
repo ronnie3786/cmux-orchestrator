@@ -268,12 +268,15 @@ class TestAPIEndpoints(unittest.TestCase):
     def test_handle_human_input_logs_message(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
 
-        self.orchestrator.handle_human_input(objective["id"], "Need a change here")
+        with patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value="Acknowledged."):
+            self.orchestrator.handle_human_input(objective["id"], "Need a change here")
 
         messages = self.orchestrator.get_messages(objective["id"])
-        self.assertEqual(len(messages), 1)
+        self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0]["type"], "user")
         self.assertEqual(messages[0]["content"], "Need a change here")
+        self.assertEqual(messages[1]["type"], "assistant")
+        self.assertEqual(messages[1]["content"], "Acknowledged.")
 
     def test_run_planning_defaults_to_ten_minute_timeout(self):
         self.assertEqual(Orchestrator._run_planning.__defaults__, (10, 36, 90))
@@ -919,6 +922,29 @@ class TestReviewRework(unittest.TestCase):
         self.assertEqual(messages[0]["type"], "user")
         self.assertEqual(messages[0]["content"], "Please retry this")
         self.assertEqual(objectives.read_objective(objective["id"])["status"], "planning")
+
+    def test_handle_human_input_responds_for_completed_objective_chat(self):
+        tasks = [
+            {"id": "task-1", "title": "First task", "status": "completed", "reviewCycles": 1},
+            {"id": "task-2", "title": "Second task", "status": "failed", "reviewCycles": 3},
+        ]
+        objective = self._create_objective(tasks, status="completed")
+
+        with patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value="Two tasks completed, one needed rework.") as mock_haiku:
+            self.orchestrator.handle_human_input(objective["id"], "Did all the tasks complete?")
+
+        prompt = mock_haiku.call_args.args[0]
+        self.assertIn("Objective goal:", prompt)
+        self.assertIn("Review tasks", prompt)
+        self.assertIn("Objective status:\ncompleted", prompt)
+        self.assertIn("task-1: First task [completed] reviewCycles=1", prompt)
+        self.assertIn("task-2: Second task [failed] reviewCycles=3", prompt)
+        self.assertIn("Did all the tasks complete?", prompt)
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(messages[-1]["type"], "assistant")
+        self.assertEqual(messages[-1]["content"], "Two tasks completed, one needed rework.")
+        entries = self.orchestrator.get_debug_entries(objective["id"])
+        self.assertTrue(any(entry["event"] == "chat_response" for entry in entries))
 
 
 if __name__ == "__main__":
