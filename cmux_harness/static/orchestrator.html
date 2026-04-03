@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>cmux orchestrator</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -1289,6 +1289,9 @@
     background: var(--hover);
     color: var(--t1);
   }
+  .git-panel-close {
+    display: none;
+  }
   .git-panel-path-row {
     display: flex;
     align-items: center;
@@ -1860,34 +1863,64 @@
       justify-content: center;
     }
     .sidebar-backdrop {
+      display: block;
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,.55);
+      background: rgba(0,0,0,0.5);
       z-index: 199;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
     }
     .sidebar-backdrop.visible {
       display: block;
+      opacity: 1;
+      pointer-events: auto;
     }
     .main {
       width: 100%;
+      padding-top: env(safe-area-inset-top, 0);
     }
     .obj-context {
       align-items: flex-start;
+      flex-wrap: wrap;
       padding: 10px 14px;
-      gap: 10px;
+      gap: 8px 10px;
     }
     .mobile-menu-btn {
       display: inline-flex;
+      order: 1;
     }
     .ctx-main {
       gap: 6px;
       padding-top: 1px;
+      order: 2;
+      flex: 1 1 calc(100% - 92px);
+      min-width: 0;
     }
     .ctx-title {
-      white-space: normal;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ctx-mobile-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .ctx-mobile-row.primary {
+      width: 100%;
+    }
+    .ctx-mobile-row.secondary {
+      width: 100%;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      padding-top: 2px;
+    }
+    .ctx-mobile-row.secondary .ctx-meta {
+      font-size: 11px;
+      flex-shrink: 0;
     }
     .ctx-secondary {
       flex-wrap: wrap;
@@ -1901,6 +1934,7 @@
       padding: 0 6px;
       font-size: 10px;
       gap: 5px;
+      max-width: 100%;
     }
     .ctx-session-dot {
       width: 6px;
@@ -1908,11 +1942,13 @@
     }
     .ctx-actions {
       gap: 6px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       justify-content: flex-end;
+      order: 3;
+      align-self: flex-start;
     }
     .ctx-git-button {
-      max-width: 160px;
+      max-width: 132px;
       font-size: 10px;
       padding: 5px 8px;
     }
@@ -1921,8 +1957,32 @@
       height: 30px;
     }
     .ctx-badge {
-      font-size: 9px;
-      padding: 2px 6px;
+      display: none;
+    }
+    .ctx-dot {
+      order: 4;
+      width: 8px;
+      height: 8px;
+      margin-top: 1px;
+    }
+    .sidebar-close {
+      min-width: 44px;
+      min-height: 44px;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+    }
+    .sidebar-bottom {
+      padding-bottom: env(safe-area-inset-bottom, 12px);
+    }
+    .plan-row {
+      gap: 8px;
+    }
+    .pr-main {
+      gap: 0;
+    }
+    .task-branch-badge {
+      display: none;
     }
     .messages {
       padding: 20px 12px 12px;
@@ -1968,6 +2028,7 @@
     }
     .input-area {
       padding: 10px 12px 12px;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
     }
     .input-wrap {
       max-width: none;
@@ -1991,10 +2052,30 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .git-panel {
+      top: calc(42px + env(safe-area-inset-top, 0));
+      width: min(100vw, 360px);
+      z-index: 205;
+    }
+    .git-panel-top {
+      align-items: center;
+    }
+    .git-panel-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 44px;
+      min-height: 44px;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      flex-shrink: 0;
+    }
     .debug-fab {
-      top: 12px;
-      right: 12px;
-      bottom: auto;
+      top: auto;
+      right: auto;
+      bottom: 70px;
+      left: 12px;
       width: 44px;
       height: 44px;
       font-size: 18px;
@@ -2055,7 +2136,10 @@
   <div class="git-panel-header">
     <div class="git-panel-top">
       <div class="git-panel-branch" id="gitPanelBranch">Git</div>
-      <button class="git-panel-refresh" id="gitPanelRefreshButton" aria-label="Refresh git status">↻</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="git-panel-refresh" id="gitPanelRefreshButton" aria-label="Refresh git status">↻</button>
+        <button class="settings-close git-panel-close" id="gitPanelCloseButton" type="button" aria-label="Close git panel">×</button>
+      </div>
     </div>
     <div class="git-panel-path-row">
       <div class="git-panel-path" id="gitPanelPath"></div>
@@ -2228,6 +2312,7 @@
     gitPanelBody: document.getElementById('gitPanelBody'),
     gitPanelCopyButton: document.getElementById('gitPanelCopyButton'),
     gitPanelRefreshButton: document.getElementById('gitPanelRefreshButton'),
+    gitPanelCloseButton: document.getElementById('gitPanelCloseButton'),
     gitContextMenu: document.getElementById('gitContextMenu'),
     diffOverlay: document.getElementById('diffOverlay'),
     diffPanelTitle: document.getElementById('diffPanelTitle'),
@@ -3018,6 +3103,14 @@
     }
   }
 
+  function closeGitPanel() {
+    state.gitPanelOpen = false;
+    renderContext();
+    renderGitPanel();
+    hideGitContextMenu();
+    closeDiffOverlay();
+  }
+
   function toggleGitPanel() {
     if (!activeGitPath()) return;
     state.gitPanelOpen = !state.gitPanelOpen;
@@ -3160,15 +3253,26 @@
   function renderContext() {
     const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
     if (!objective) {
-      els.contextStrip.innerHTML = [
-        state.isMobile ? '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>' : '',
-        '<div class="ctx-dot od-queued"></div>',
-        '<div class="ctx-main">',
-        '<div class="ctx-title">No objective selected</div>',
-        '<div class="ctx-secondary"><div class="ctx-meta">waiting</div></div>',
-        '</div>',
-        '<div class="ctx-actions"><div class="ctx-badge badge-queued">Idle</div></div>'
-      ].join('');
+      els.contextStrip.innerHTML = state.isMobile
+        ? [
+            '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>',
+            '<div class="ctx-main">',
+            '<div class="ctx-mobile-row primary"><div class="ctx-title">No objective selected</div></div>',
+            '<div class="ctx-mobile-row secondary">',
+            '<div class="ctx-dot od-queued" title="Idle" aria-label="Idle"></div>',
+            '<div class="ctx-meta">waiting</div>',
+            '</div>',
+            '</div>',
+            '<div class="ctx-actions"><div class="ctx-badge badge-queued">Idle</div></div>'
+          ].join('')
+        : [
+            '<div class="ctx-dot od-queued"></div>',
+            '<div class="ctx-main">',
+            '<div class="ctx-title">No objective selected</div>',
+            '<div class="ctx-secondary"><div class="ctx-meta">waiting</div></div>',
+            '</div>',
+            '<div class="ctx-actions"><div class="ctx-badge badge-queued">Idle</div></div>'
+          ].join('');
       const menuButton = document.getElementById('mobileMenuBtn');
       if (menuButton) {
         menuButton.addEventListener('click', toggleSidebar);
@@ -3182,23 +3286,42 @@
     const gitPath = activeGitPath();
     const branchName = objective.branchName ? String(objective.branchName) : '';
     const sessionActive = !!objective.orchestratorSessionActive;
-    els.contextStrip.innerHTML = [
-      state.isMobile ? '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>' : '',
-      '<div class="ctx-dot ' + meta.dot + '"></div>',
-      '<div class="ctx-main">',
-      '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
-      '<div class="ctx-secondary">',
-      '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
-      branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
-      '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
-      '</div>',
-      '</div>',
-      '<div class="ctx-actions">',
-      gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
-      '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
-      '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
-      '</div>'
-    ].join('');
+    els.contextStrip.innerHTML = state.isMobile
+      ? [
+          '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>',
+          '<div class="ctx-main">',
+          '<div class="ctx-mobile-row primary">',
+          '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
+          '</div>',
+          '<div class="ctx-mobile-row secondary">',
+          '<div class="ctx-dot ' + meta.dot + '" title="' + esc(meta.label) + '" aria-label="' + esc(meta.label) + '"></div>',
+          '<div class="ctx-meta">' + esc(taskCount) + '</div>',
+          '<div class="ctx-meta">' + esc(elapsed) + '</div>',
+          branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
+          '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
+          gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
+          '</div>',
+          '</div>',
+          '<div class="ctx-actions">',
+          '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
+          '</div>'
+        ].join('')
+      : [
+          '<div class="ctx-dot ' + meta.dot + '"></div>',
+          '<div class="ctx-main">',
+          '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
+          '<div class="ctx-secondary">',
+          '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
+          branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
+          '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
+          '</div>',
+          '</div>',
+          '<div class="ctx-actions">',
+          gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
+          '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
+          '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
+          '</div>'
+        ].join('');
     const gitButton = document.getElementById('gitPanelToggleButton');
     if (gitButton) {
       gitButton.addEventListener('click', toggleGitPanel);
@@ -4010,6 +4133,7 @@
     els.sidebarBackdrop.addEventListener('click', closeSidebar);
     els.sidebarCloseButton.addEventListener('click', closeSidebar);
     els.gitPanelRefreshButton.addEventListener('click', fetchGitStatus);
+    els.gitPanelCloseButton.addEventListener('click', closeGitPanel);
     els.gitPanelCopyButton.addEventListener('click', () => {
       copyText((state.gitStatus && state.gitStatus.cwd) || activeGitPath(), 'Path');
     });
