@@ -1561,9 +1561,6 @@
         : '',
       !passed && issues.length ? '<div class="review-issues">' + issues.map((issue) => '<div class="review-issue">' + esc(issue) + '</div>').join('') + '</div>' : '',
       !passed ? '<div class="cr-summary">' + renderMarkdown(recommendation) + '</div>' : '',
-      '<div class="cr-actions">',
-      '<button class="cr-btn crb-accept" data-review-action="accept" data-task-id="' + esc(metadata.task_id || '') + '">Accept &amp; merge</button>',
-      '<button class="cr-btn crb-view" data-review-action="diff" data-task-id="' + esc(metadata.task_id || '') + '">View diff</button>',
       '</div>',
       '</div>',
       '</div>'
@@ -1748,16 +1745,7 @@
         }
       });
     });
-    els.messageColumn.querySelectorAll('[data-review-action]').forEach((node) => {
-      node.addEventListener('click', () => {
-        const action = node.getAttribute('data-review-action');
-        if (action === 'accept') {
-          showToast('Accept & merge is not wired yet');
-        } else {
-          showToast('Diff viewer is not wired yet');
-        }
-      });
-    });
+
     if (beforeBottom) {
       scrollToBottom();
     } else {
