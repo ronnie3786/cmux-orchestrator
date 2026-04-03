@@ -19,18 +19,34 @@ Do not print the full plan to the terminal. The plan must be written to the file
 Use this exact task format for every task:
 
 ## Task N: [title]
-- Files: [list of files]
+- Files: [list of files to modify — be EXACT, no wildcards]
 - Depends on: [task numbers or "none"]
 - Checkpoints:
   1. [checkpoint]
   2. [checkpoint]
   3. [checkpoint]
 
-Requirements:
+CRITICAL PLANNING RULES:
+
+1. **MAXIMIZE PARALLELISM.** Most tasks should have NO dependencies.
+   - Bad: Task 1 → Task 2 → Task 3 → Task 4 (sequential chain)
+   - Good: Tasks 1, 2, 3 run in parallel; Task 4 depends on 1+2
+   - Each task modifies DIFFERENT files. If files don't overlap, there's no dependency.
+   - Only add a dependency when a task literally cannot start without another task's output.
+
+2. **NO dependency chains longer than 2.** If Task 3 depends on Task 2 which depends on Task 1, restructure. Either merge tasks or remove unnecessary dependencies.
+
+3. **SMALL, FOCUSED TASKS.** Each task should touch 1-3 files max. If a task lists 4+ files, split it.
+
+4. **EXPLICIT FILE OWNERSHIP.** Every file appears in exactly ONE task. No two tasks modify the same file.
+   - If two tasks need to touch the same file, merge them into one task.
+
+5. **SELF-CONTAINED TASKS.** Each task must be completable and testable in isolation. Don't create tasks that only make sense after another task runs (unless explicitly listed as a dependency).
+
+6. Keep checkpoints concrete, ordered, and verifiable.
 - Analyze the codebase before planning.
 - Make the plan complete enough to execute without guessing.
-- Maximize parallelism where safe. Independent tasks should not depend on each other.
-- Keep checkpoints concrete, ordered, and verifiable.
+- Aim for 3-6 tasks total. More than 6 usually means tasks are too granular.
 - When the plan is completely written to ./plan.md, exit.
 """
 
@@ -307,16 +323,47 @@ def parse_plan(plan_text: str) -> dict:
 def _build_spec_content(task: dict) -> str:
     files = task["files"] or []
     checkpoints = task["checkpoints"] or []
+    depends_on = task.get("dependsOn", [])
 
-    lines = [f"# {task['title']}", "", "## Files"]
+    lines = [f"# {task['title']}", ""]
+
+    lines.append("## Scope Boundary (MANDATORY)")
+    lines.append("")
     if files:
-        lines.extend(f"- {path}" for path in files)
+        lines.append("You may ONLY modify these files:")
+        lines.extend(f"- `{path}`" for path in files)
     else:
-        lines.append("- None specified")
+        lines.append("No specific files listed. Keep changes minimal and focused.")
+    lines.append("")
+    lines.append("**DO NOT:**")
+    lines.append("- Create or modify files not listed above")
+    lines.append("- Install new dependencies or packages")
+    lines.append("- Refactor code unrelated to this task")
+    lines.append("- Implement features beyond what this spec describes")
+    lines.append("- Modify configuration files unless listed above")
+    lines.append("")
+    lines.append("If you believe additional files need changes, note it in result.md")
+    lines.append("as a suggestion — do NOT make those changes yourself.")
+    lines.append("")
 
-    lines.extend(["", "## Checkpoints"])
+    if depends_on:
+        lines.append("## Dependencies")
+        lines.append("")
+        lines.append("This task depends on completed work from: " + ", ".join(depends_on))
+        lines.append("Read ./context.md for details on what was done in those tasks.")
+        lines.append("")
+
+    lines.append("## Checkpoints")
+    lines.append("")
     for index, checkpoint in enumerate(checkpoints, start=1):
         lines.append(f"{index}. {checkpoint}")
+    lines.append("")
+
+    lines.append("## Completion Criteria")
+    lines.append("")
+    lines.append("Your task is done when ALL checkpoints above are completed.")
+    lines.append("Commit ONLY the changes to files listed in the scope boundary.")
+    lines.append("Write result.md describing exactly what you changed and why.")
     lines.append("")
     return "\n".join(lines)
 
@@ -337,7 +384,7 @@ def plan_to_tasks(parsed: dict, objective_id: str) -> list[dict]:
                 "worktreeBranch": None,
                 "checkpoints": [{"name": cp, "status": "pending"} for cp in task["checkpoints"]],
                 "reviewCycles": 0,
-                "maxReviewCycles": 5,
+                "maxReviewCycles": 3,
                 "startedAt": None,
                 "completedAt": None,
                 "lastProgressAt": None,

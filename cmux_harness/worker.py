@@ -70,45 +70,60 @@ def remove_worktree(project_dir: str, worktree_path: str):
 def build_task_prompt(task_id: str) -> str:
     return f"""You have a specific task to complete: {task_id}
 
-Read ./spec.md for your full task description.
+Read ./spec.md CAREFULLY — it defines your EXACT scope.
+
+CRITICAL RULES:
+- ONLY modify files listed in the "Scope Boundary" section of spec.md
+- Do NOT create new files unless spec.md explicitly says to
+- Do NOT install packages, modify configs, or touch files outside your scope
+- Do NOT implement anything beyond what spec.md describes
+- If something seems needed but isn't in scope, note it in result.md — don't do it
+
 Read ./context.md for relevant context from prior completed tasks (if it exists).
 
-IMPORTANT - Progress tracking:
-As you work, update ./progress.md after completing each major step.
-Use this format:
+PROGRESS TRACKING — update ./progress.md after EACH checkpoint:
 
 ## Checkpoint: [name]
 **Status:** Done
 **What I did:** [2-3 sentence summary]
-**Files touched:** [list]
+**Files touched:** [list — must be within scope boundary]
 
-This lets the orchestrator track your progress. Update progress.md
-BEFORE moving to the next checkpoint, not all at the end.
+Update progress.md BEFORE moving to the next checkpoint.
 
-IMPORTANT: Update progress.md NOW before proceeding.
-
-When you are completely finished with everything in spec.md:
-1. Commit all changes to your branch.
-2. Write a final summary to ./result.md covering:
-   - What was accomplished
-   - Files changed and why
-   - Any issues encountered
-   - Suggestions for follow-up work
-3. Then exit.
+WHEN FINISHED with all checkpoints in spec.md:
+1. Run `git diff --stat` and verify EVERY changed file is in your scope boundary
+2. If you accidentally changed out-of-scope files, revert them with `git checkout`
+3. Commit all in-scope changes to your branch
+4. Write ./result.md covering:
+   - What was accomplished (match to spec checkpoints)
+   - Files changed (must match scope boundary)
+   - Any out-of-scope work that SHOULD be done (as suggestions only)
+5. Then exit.
 """
 
 
 def build_rework_prompt(issues: list[str], recommendation: str) -> str:
     issue_lines = "\n".join(f"{index}. {issue}" for index, issue in enumerate(issues, start=1))
-    return f"""Your previous work was reviewed and the following issues were found:
+    return f"""Your previous work was reviewed and needs fixes.
 
+ISSUES FOUND:
 {issue_lines}
 
 Reviewer's recommendation: {recommendation}
 
-Please address ALL of these issues. Your original task spec is in ./spec.md
-and your previous progress is in ./progress.md.
+RULES (same as before — re-read ./spec.md):
+- ONLY modify files listed in the scope boundary
+- Do NOT expand scope to fix issues — stay within your assigned files
+- If an issue can't be fixed within scope, note it in result.md as a limitation
 
-After fixing, add a new "Rework" checkpoint to ./progress.md and
-write an updated ./result.md covering what you changed.
+Re-read ./spec.md for your scope boundary.
+Check ./progress.md for what you already did.
+
+After fixing:
+1. Run `git diff --stat` and verify all changes are in-scope
+2. Revert any out-of-scope changes with `git checkout`
+3. Commit in-scope changes
+4. Add a "Rework" checkpoint to ./progress.md
+5. Write updated ./result.md
+6. Exit
 """

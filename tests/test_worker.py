@@ -45,7 +45,7 @@ class TestWorker(unittest.TestCase):
         self.assertIn("context.md", prompt)
         self.assertIn("progress.md", prompt)
         self.assertIn("result.md", prompt)
-        self.assertIn("IMPORTANT", prompt)
+        self.assertIn("CRITICAL RULES", prompt)
 
     def test_build_rework_prompt_mentions_issues_and_files(self):
         prompt = worker.build_rework_prompt(

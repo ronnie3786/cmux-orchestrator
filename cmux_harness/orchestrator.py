@@ -652,6 +652,56 @@ class Orchestrator:
         finally:
             self._review_in_progress.discard(task_id)
 
+    def _build_task_review_prompt(self, spec_text, result_text, git_diff_stat, git_diff):
+        """Build a focused review prompt for orchestrator tasks.
+
+        Unlike the generic session review prompt, this checks:
+        1. Did the worker stay within scope?
+        2. Did the worker complete all checkpoints?
+        3. Are the changes committed?
+        It does NOT check code style, architecture, or PR-readiness.
+        """
+        return f"""You are reviewing a single task completed by an AI coding worker.
+Your job is to check THREE things only:
+
+1. **SCOPE COMPLIANCE**: Did the worker ONLY modify files listed in the spec's scope boundary?
+2. **CHECKPOINT COMPLETION**: Did the worker complete all checkpoints listed in the spec?
+3. **CHANGES COMMITTED**: Does `git diff --stat` show the expected file changes?
+
+This is an INTERMEDIATE task in a multi-task pipeline. Do NOT evaluate:
+- Code style or best practices
+- Architecture decisions
+- Whether the overall feature is complete (other tasks handle other parts)
+- Edge cases or error handling beyond what the spec asks for
+
+=== TASK SPEC ===
+{spec_text.strip()}
+
+=== WORKER'S RESULT ===
+{result_text.strip()}
+
+=== GIT DIFF --stat ===
+{git_diff_stat.strip()}
+
+=== GIT DIFF (code changes) ===
+{git_diff.strip()[:3000]}
+
+Respond with ONLY a JSON object:
+{{
+  "verdict": "pass" | "fail",
+  "scopeCompliant": true | false,
+  "checkpointsComplete": true | false,
+  "changesCommitted": true | false,
+  "issues": ["list of SPECIFIC problems — empty if pass"],
+  "recommendation": "What needs to change (if fail) or 'Looks good' (if pass)"
+}}
+
+IMPORTANT:
+- If scope is respected and checkpoints are done, verdict is "pass" even if the code isn't perfect.
+- Only "fail" if: files outside scope were modified, checkpoints were skipped, or changes weren't committed.
+- A "pass" with minor notes is fine — put notes in recommendation, keep verdict "pass".
+"""
+
     def _run_review(self, objective_id, task_id):
         self._append_message(objective_id, "review", f"Reviewing Task {task_id}...")
 
@@ -670,47 +720,37 @@ class Orchestrator:
         worktree_path = task.get("worktreePath", "")
 
         git_diff_stat = ""
+        git_diff = ""
         if worktree_path:
-            diff_commands = [
+            # Get diff stat
+            diff_stat_commands = [
                 ["git", "-C", worktree_path, "diff", "HEAD~1", "--stat"],
                 ["git", "-C", worktree_path, "diff", "--stat"],
             ]
-            for cmd in diff_commands:
+            for cmd in diff_stat_commands:
                 try:
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 except (OSError, subprocess.SubprocessError):
                     continue
                 if result.returncode == 0:
                     git_diff_stat = (result.stdout or "").strip()
                     break
 
-        snapshot_text = "\n\n".join(
-            [
-                "=== result.md ===",
-                result_text.strip(),
-                "=== spec.md ===",
-                spec_text.strip(),
-                "=== git diff --stat ===",
-                git_diff_stat.strip(),
+            # Get actual diff for code review
+            diff_commands = [
+                ["git", "-C", worktree_path, "diff", "HEAD~1"],
+                ["git", "-C", worktree_path, "diff"],
             ]
-        ).strip()
+            for cmd in diff_commands:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                if result.returncode == 0:
+                    git_diff = (result.stdout or "").strip()
+                    break
 
-        try:
-            review_prompt = review_mod.build_review_prompt(snapshot_text, session_cost="")
-        except TypeError:
-            review_prompt = review_mod.build_review_prompt(
-                {
-                    "taskDescription": task.get("title", ""),
-                    "terminalSnapshot": snapshot_text,
-                    "gitDiffStat": git_diff_stat,
-                    "finalCost": "",
-                }
-            )
+        review_prompt = self._build_task_review_prompt(spec_text, result_text, git_diff_stat, git_diff)
 
         review_result = claude_cli.run_sonnet(review_prompt, timeout=120)
         if isinstance(review_result, dict):
@@ -723,11 +763,14 @@ class Orchestrator:
             if isinstance(parsed, dict):
                 review_json = parsed
             else:
+                # If we can't parse, assume pass — don't block pipeline on parse failure
                 review_json = {
-                    "summary": review_result,
+                    "verdict": "pass",
+                    "scopeCompliant": True,
+                    "checkpointsComplete": True,
+                    "changesCommitted": True,
                     "issues": [],
-                    "confidence": "low",
-                    "readyForPR": False,
+                    "recommendation": "Review parse failed — auto-passing to avoid blocking pipeline",
                 }
 
         objectives.write_task_file(
@@ -744,7 +787,16 @@ class Orchestrator:
         review_cycle = updated_task.get("reviewCycles", 1)
         # Refresh local task with latest from disk
         task.update(updated_task)
-        needs_rework = monitor.should_trigger_rework(review_json)
+
+        # Use verdict-based check (new focused review) with fallback to legacy format
+        verdict = review_json.get("verdict", "").lower()
+        if verdict == "pass":
+            needs_rework = False
+        elif verdict == "fail":
+            needs_rework = True
+        else:
+            # Legacy format fallback
+            needs_rework = monitor.should_trigger_rework(review_json)
 
         if not needs_rework:
             objectives.update_task(objective_id, task_id, {

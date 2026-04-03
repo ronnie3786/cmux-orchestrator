@@ -223,7 +223,7 @@ class TestPlanToTasks(unittest.TestCase):
             ],
         )
         self.assertEqual(tasks[0]["reviewCycles"], 0)
-        self.assertEqual(tasks[0]["maxReviewCycles"], 5)
+        self.assertEqual(tasks[0]["maxReviewCycles"], 3)
         self.assertIsNone(tasks[0]["startedAt"])
         self.assertIsNone(tasks[0]["completedAt"])
         self.assertIsNone(tasks[0]["lastProgressAt"])
@@ -232,7 +232,7 @@ class TestPlanToTasks(unittest.TestCase):
         self.assertTrue(spec_path.is_file())
         spec_text = spec_path.read_text(encoding="utf-8")
         self.assertIn("# Fix token expiry check", spec_text)
-        self.assertIn("- TokenManager.swift", spec_text)
+        self.assertIn("TokenManager.swift", spec_text)
         self.assertIn("1. Read current implementation", spec_text)
 
 
