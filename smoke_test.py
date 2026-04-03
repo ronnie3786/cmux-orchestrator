@@ -93,7 +93,7 @@ def main():
     log("  Polling messages every 10 seconds...\n", report)
 
     start_time = time.time()
-    max_duration = 1200  # 20 minutes
+    max_duration = 2400  # 40 minutes
     last_msg_count = 0
     poll_count = 0
     seen_statuses = set()
