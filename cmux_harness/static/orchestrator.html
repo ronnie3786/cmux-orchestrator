@@ -377,6 +377,26 @@
     border-color: var(--blue-b);
     border-radius: 14px 4px 14px 14px;
   }
+  .typing-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 16px;
+    min-width: 52px;
+  }
+  .typing-indicator .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--t3);
+    animation: typingDot 1.4s infinite both;
+  }
+  .typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typingDot {
+    0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
+    30% { opacity: 1; transform: scale(1); }
+  }
 
   .md-content {
     color: inherit;
@@ -1885,6 +1905,7 @@
     activeObjectiveId: null,
     activeObjective: null,
     messages: [],
+    typing: false,
     config: null,
     gitPanelOpen: false,
     gitStatus: null,
@@ -3227,6 +3248,8 @@
       content = '<div class="msg-bubble">' + renderMarkdown(message.content || '') + '</div>';
     } else if (item.kind === 'user') {
       content = '<div class="msg-bubble">' + esc(message.content || '') + '</div>';
+    } else if (item.kind === 'assistant') {
+      content = '<div class="msg-bubble">' + renderMarkdown(message.content || '') + '</div>';
     } else if (item.kind === 'progress') {
       content = renderProgressCard(message);
     } else if (item.kind === 'review') {
@@ -3272,15 +3295,20 @@
     const beforeBottom = isNearBottom();
     const oldScrollTop = els.messagesPane.scrollTop;
     const items = normalizeMessages(state.messages);
+    let html = '';
     if (!state.objectives.length && !state.activeObjectiveId) {
       els.messageColumn.innerHTML = renderEmptyState();
       return;
     }
     if (!items.length) {
-      els.messageColumn.innerHTML = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">Waiting for the objective to start.</div></div></div>';
+      html = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">Waiting for the objective to start.</div></div></div>';
     } else {
-      els.messageColumn.innerHTML = '<div class="thread-div">now</div>' + items.map((item, index) => renderMessageItem(item, shouldGroupSystemItem(items, index))).join('');
+      html = '<div class="thread-div">now</div>' + items.map((item, index) => renderMessageItem(item, shouldGroupSystemItem(items, index))).join('');
     }
+    if (state.typing) {
+      html += '<div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-bubble typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div>';
+    }
+    els.messageColumn.innerHTML = html;
     els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {
       node.addEventListener('click', async () => {
         const taskId = node.getAttribute('data-task-id');
@@ -3333,6 +3361,19 @@
     } else {
       els.messagesPane.scrollTop = oldScrollTop;
     }
+  }
+
+  function mergeIncomingMessages(existing, incoming) {
+    const serverUserSignatures = new Set(
+      incoming
+        .filter((message) => message && message.type === 'user')
+        .map((message) => String(message.content || ''))
+    );
+    const base = existing.filter((message) => {
+      if (!message || typeof message.id !== 'string' || !message.id.startsWith('local-')) return true;
+      return !serverUserSignatures.has(String(message.content || ''));
+    });
+    return base.concat(incoming);
   }
 
   function renderInputState() {
@@ -3440,10 +3481,12 @@
     const list = Array.isArray(incoming) ? incoming : [];
     if (state.lastMessageTimestamp) {
       if (list.length) {
-        state.messages = state.messages.concat(list);
+        state.messages = mergeIncomingMessages(state.messages, list);
+        state.typing = false;
       }
     } else {
       state.messages = list;
+      state.typing = false;
     }
     const last = state.messages[state.messages.length - 1];
     state.lastMessageTimestamp = last ? last.timestamp : null;
@@ -3532,15 +3575,16 @@
     state.lastMessageTimestamp = optimistic.timestamp;
     els.chatInput.value = '';
     autoResizeTextarea();
+    state.typing = true;
     renderMessages();
     try {
       await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/message', {
         method: 'POST',
         body: JSON.stringify({ message: text })
       });
-      state.lastMessageTimestamp = null;
-      await pollMessages(true);
     } catch (error) {
+      state.typing = false;
+      renderMessages();
       showToast(error.message || 'Could not send message');
     } finally {
       state.pendingSend = false;

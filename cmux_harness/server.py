@@ -288,7 +288,11 @@ def make_handler(engine):
                 objective_id = path.split("/")[3]
                 message = data.get("message", "")
                 context = data.get("context")
-                self.server.engine.orchestrator.handle_human_input(objective_id, message, context)
+                threading.Thread(
+                    target=self.server.engine.orchestrator.handle_human_input,
+                    args=(objective_id, message, context),
+                    daemon=True,
+                ).start()
                 self._json_response({"ok": True})
             elif path == "/api/objectives":
                 goal = data.get("goal", "")

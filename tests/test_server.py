@@ -121,6 +121,29 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
 
+    def test_message_endpoint_starts_background_thread_and_returns_ok(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        engine = Mock()
+        payload = {"message": "Need a change here", "context": {"source": "chat"}}
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(engine, "/api/objectives/" + objective["id"] + "/message")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        with patch("cmux_harness.server.threading.Thread") as mock_thread:
+            thread = mock_thread.return_value
+
+            handler.do_POST()
+
+        mock_thread.assert_called_once_with(
+            target=engine.orchestrator.handle_human_input,
+            args=(objective["id"], "Need a change here", {"source": "chat"}),
+            daemon=True,
+        )
+        thread.start.assert_called_once_with()
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+
     def test_debug_modal_static_markup_includes_rendering_regression_fix(self):
         html = Path("cmux_harness/static/orchestrator.html").read_text(encoding="utf-8")
 
