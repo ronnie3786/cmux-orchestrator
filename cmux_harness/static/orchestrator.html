@@ -57,6 +57,22 @@
     flex-direction: column;
     overflow: hidden;
   }
+  .sidebar-close {
+    display: none;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+    cursor: pointer;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .sidebar-close:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
 
   .sidebar-top {
     padding: 16px 14px 12px;
@@ -71,6 +87,15 @@
     font-size: 15px;
     letter-spacing: -.3px;
     margin-bottom: 14px;
+  }
+  .sidebar-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .sidebar-header .sidebar-logo {
+    margin-bottom: 0;
   }
   .logo-mark {
     width: 26px; height: 26px;
@@ -226,7 +251,7 @@
 
   /* thin top strip - current objective context */
   .obj-context {
-    height: 42px;
+    min-height: 42px;
     border-bottom: 1px solid var(--b);
     display: flex;
     align-items: center;
@@ -234,8 +259,39 @@
     gap: 12px;
     flex-shrink: 0;
   }
+  .mobile-menu-btn {
+    display: none;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t1);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .mobile-menu-btn:hover {
+    background: var(--hover);
+  }
+  .ctx-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+  }
   .ctx-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-  .ctx-title { font-size: 13px; font-weight: 500; color: var(--t1); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctx-title { font-size: 13px; font-weight: 500; color: var(--t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctx-secondary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
   .ctx-meta { font-size: 12px; color: var(--t3); flex-shrink: 0; }
   .ctx-session {
     display: flex;
@@ -809,6 +865,9 @@
   }
   .send-btn:hover { background: #3b7de8; }
   .input-hint { font-size: 11px; color: var(--t3); text-align: center; }
+  .sidebar-backdrop {
+    display: none;
+  }
 
   /* scrollbar */
   ::-webkit-scrollbar { width: 4px; }
@@ -1775,20 +1834,187 @@
       flex: 1;
       text-align: center;
     }
+  }
+  @media (max-width: 768px) {
+    body {
+      position: relative;
+    }
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: min(85vw, 320px);
+      min-width: 0;
+      z-index: 200;
+      transform: translateX(-100%);
+      transition: transform .25s ease;
+      box-shadow: 18px 0 40px rgba(0,0,0,.38);
+    }
+    .sidebar.open {
+      transform: translateX(0);
+    }
+    .sidebar-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sidebar-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.55);
+      z-index: 199;
+    }
+    .sidebar-backdrop.visible {
+      display: block;
+    }
+    .main {
+      width: 100%;
+    }
+    .obj-context {
+      align-items: flex-start;
+      padding: 10px 14px;
+      gap: 10px;
+    }
+    .mobile-menu-btn {
+      display: inline-flex;
+    }
+    .ctx-main {
+      gap: 6px;
+      padding-top: 1px;
+    }
+    .ctx-title {
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .ctx-secondary {
+      flex-wrap: wrap;
+      gap: 6px 8px;
+    }
+    .ctx-meta.mono {
+      display: none;
+    }
+    .ctx-session {
+      height: 22px;
+      padding: 0 6px;
+      font-size: 10px;
+      gap: 5px;
+    }
+    .ctx-session-dot {
+      width: 6px;
+      height: 6px;
+    }
+    .ctx-actions {
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .ctx-git-button {
+      max-width: 160px;
+      font-size: 10px;
+      padding: 5px 8px;
+    }
+    .ctx-icon-button {
+      width: 30px;
+      height: 30px;
+    }
+    .ctx-badge {
+      font-size: 9px;
+      padding: 2px 6px;
+    }
+    .messages {
+      padding: 20px 12px 12px;
+    }
+    .msg-col {
+      max-width: none;
+      gap: 16px;
+    }
+    .msg {
+      gap: 8px;
+    }
+    .msg.msg-grouped {
+      padding-left: 0;
+    }
+    .msg-av {
+      width: 24px;
+      height: 24px;
+      font-size: 10px;
+    }
+    .msg-body {
+      max-width: 100%;
+      width: 100%;
+    }
+    .msg.user .msg-body {
+      align-items: stretch;
+    }
+    .msg-bubble,
+    .msg-muted,
+    .card-plan,
+    .card-progress,
+    .card-review,
+    .card-complete,
+    .card-alert,
+    .card-approval,
+    .card-plan-review {
+      max-width: none;
+      width: 100%;
+    }
+    .msg-bubble {
+      padding: 9px 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .input-area {
+      padding: 10px 12px 12px;
+    }
+    .input-wrap {
+      max-width: none;
+      gap: 6px;
+    }
+    .input-box {
+      gap: 8px;
+      padding: 8px 8px 8px 12px;
+      border-radius: 10px;
+    }
+    .chat-input {
+      font-size: 13px;
+      line-height: 1.4;
+      min-height: 22px;
+      max-height: 108px;
+    }
+    .input-hint {
+      font-size: 10px;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .debug-fab {
-      right: 16px;
-      bottom: 16px;
+      top: 12px;
+      right: 12px;
+      bottom: auto;
+      width: 44px;
+      height: 44px;
+      font-size: 18px;
+      z-index: 210;
     }
   }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
+<div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+<div class="sidebar" id="sidebar">
   <div class="sidebar-top">
-    <div class="sidebar-logo">
-      <div class="logo-mark">⌘</div>
-      cmux
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <div class="logo-mark">⌘</div>
+        cmux
+      </div>
+      <button class="sidebar-close" id="sidebarCloseButton" type="button" aria-label="Close sidebar">×</button>
     </div>
     <button class="new-obj-btn" id="newObjectiveButton">
       <span class="plus">+</span>
@@ -1809,7 +2035,7 @@
   </div>
 </div>
 
-<div class="main">
+<div class="main" id="main">
   <div class="obj-context" id="contextStrip"></div>
   <div class="messages" id="messagesPane">
     <div class="msg-col" id="messageColumn"></div>
@@ -1939,6 +2165,8 @@
     gitContextSection: '',
     lastMessageTimestamp: null,
     relativeTick: Date.now(),
+    isMobile: null,
+    sidebarOpen: true,
     sidebarFormOpen: false,
     settingsOpen: false,
     settingsSaving: false,
@@ -1963,6 +2191,10 @@
   };
 
   const els = {
+    sidebar: document.getElementById('sidebar'),
+    sidebarBackdrop: document.getElementById('sidebarBackdrop'),
+    sidebarCloseButton: document.getElementById('sidebarCloseButton'),
+    main: document.getElementById('main'),
     objectiveList: document.getElementById('objectiveList'),
     contextStrip: document.getElementById('contextStrip'),
     messagesPane: document.getElementById('messagesPane'),
@@ -2227,6 +2459,54 @@
     return state.draftBaseBranch || (state.config && state.config.defaultBaseBranch) || 'main';
   }
 
+  function isMobileViewport() {
+    return window.innerWidth <= 768;
+  }
+
+  function openSidebar() {
+    if (!state.isMobile) return;
+    state.sidebarOpen = true;
+    renderSidebarChrome();
+  }
+
+  function closeSidebar() {
+    if (!state.isMobile) return;
+    state.sidebarOpen = false;
+    renderSidebarChrome();
+  }
+
+  function toggleSidebar() {
+    if (!state.isMobile) return;
+    state.sidebarOpen = !state.sidebarOpen;
+    renderSidebarChrome();
+  }
+
+  function syncResponsiveState(forceRender) {
+    const nextIsMobile = isMobileViewport();
+    const previousIsMobile = state.isMobile;
+    state.isMobile = nextIsMobile;
+    if (previousIsMobile === null) {
+      state.sidebarOpen = !nextIsMobile;
+    } else if (previousIsMobile !== nextIsMobile) {
+      state.sidebarOpen = !nextIsMobile;
+    }
+    if (forceRender) {
+      render();
+    } else {
+      renderSidebarChrome();
+      autoResizeTextarea();
+    }
+  }
+
+  function renderSidebarChrome() {
+    els.sidebar.className = 'sidebar' + ((state.isMobile && state.sidebarOpen) || !state.isMobile ? ' open' : '');
+    els.sidebarBackdrop.className = 'sidebar-backdrop' + (state.isMobile && state.sidebarOpen ? ' visible' : '');
+    const menuButton = document.getElementById('mobileMenuBtn');
+    if (menuButton) {
+      menuButton.setAttribute('aria-expanded', state.isMobile && state.sidebarOpen ? 'true' : 'false');
+    }
+  }
+
   async function api(path, options) {
     const response = await fetch(path, {
       headers: { 'Content-Type': 'application/json' },
@@ -2458,8 +2738,10 @@
 
   function autoResizeTextarea() {
     const el = els.chatInput;
-    el.style.height = '24px';
-    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+    const baseHeight = state.isMobile ? 22 : 24;
+    const maxHeight = state.isMobile ? 108 : 140;
+    el.style.height = baseHeight + 'px';
+    el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px';
   }
 
   function showToast(text) {
@@ -2795,6 +3077,7 @@
   }
 
   function openSidebarForm(seedGoal) {
+    openSidebar();
     state.sidebarFormOpen = true;
     state.draftProjectDir = state.draftProjectDir || defaultProjectDir();
     state.draftBaseBranch = defaultBaseBranch();
@@ -2864,10 +3147,12 @@
     els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
       node.addEventListener('click', () => {
         const id = node.getAttribute('data-objective-id');
-        if (id && id !== state.activeObjectiveId) {
+        if (!id) return;
+        if (id !== state.activeObjectiveId) {
           state.activeObjectiveId = id;
           loadActiveObjective(true);
         }
+        closeSidebar();
       });
     });
   }
@@ -2876,11 +3161,18 @@
     const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
     if (!objective) {
       els.contextStrip.innerHTML = [
+        state.isMobile ? '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>' : '',
         '<div class="ctx-dot od-queued"></div>',
+        '<div class="ctx-main">',
         '<div class="ctx-title">No objective selected</div>',
-        '<div class="ctx-meta">waiting</div>',
-        '<div class="ctx-badge badge-queued">Idle</div>'
+        '<div class="ctx-secondary"><div class="ctx-meta">waiting</div></div>',
+        '</div>',
+        '<div class="ctx-actions"><div class="ctx-badge badge-queued">Idle</div></div>'
       ].join('');
+      const menuButton = document.getElementById('mobileMenuBtn');
+      if (menuButton) {
+        menuButton.addEventListener('click', toggleSidebar);
+      }
       return;
     }
     const meta = statusMeta(objective.status);
@@ -2891,11 +3183,16 @@
     const branchName = objective.branchName ? String(objective.branchName) : '';
     const sessionActive = !!objective.orchestratorSessionActive;
     els.contextStrip.innerHTML = [
+      state.isMobile ? '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>' : '',
       '<div class="ctx-dot ' + meta.dot + '"></div>',
+      '<div class="ctx-main">',
       '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
+      '<div class="ctx-secondary">',
       '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
       branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
       '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
+      '</div>',
+      '</div>',
       '<div class="ctx-actions">',
       gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
       '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
@@ -2905,6 +3202,10 @@
     const gitButton = document.getElementById('gitPanelToggleButton');
     if (gitButton) {
       gitButton.addEventListener('click', toggleGitPanel);
+    }
+    const menuButton = document.getElementById('mobileMenuBtn');
+    if (menuButton) {
+      menuButton.addEventListener('click', toggleSidebar);
     }
     const clearButton = document.getElementById('clearObjectiveButton');
     if (clearButton) {
@@ -3433,6 +3734,7 @@
   function render() {
     renderSidebar();
     renderContext();
+    renderSidebarChrome();
     updateSidebarFormFromState();
     renderSettingsModal();
     renderDebugModal();
@@ -3548,6 +3850,7 @@
         body: JSON.stringify({})
       });
       state.activeObjectiveId = objective.id;
+      closeSidebar();
       state.sidebarFormOpen = false;
       state.draftGoal = '';
       state.draftBranchName = '';
@@ -3704,6 +4007,8 @@
     els.debugCopyLastButton.addEventListener('click', () => {
       copyText(debugJsonl(state.debugEntries.slice(-20)), 'Last 20 debug entries');
     });
+    els.sidebarBackdrop.addEventListener('click', closeSidebar);
+    els.sidebarCloseButton.addEventListener('click', closeSidebar);
     els.gitPanelRefreshButton.addEventListener('click', fetchGitStatus);
     els.gitPanelCopyButton.addEventListener('click', () => {
       copyText((state.gitStatus && state.gitStatus.cwd) || activeGitPath(), 'Path');
@@ -3756,6 +4061,9 @@
     document.addEventListener('click', (event) => {
       if (!els.gitContextMenu.contains(event.target)) hideGitContextMenu();
     });
+    window.addEventListener('resize', () => {
+      syncResponsiveState(true);
+    });
     els.terminalLink.addEventListener('click', () => {
       showToast('Terminal sessions view is not wired here yet');
     });
@@ -3764,6 +4072,7 @@
   async function boot() {
     bindEvents();
     state.relativeTick = Date.now();
+    syncResponsiveState(false);
     render();
     try {
       await loadConfig();
