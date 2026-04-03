@@ -227,25 +227,25 @@ class Orchestrator:
                 raise FileNotFoundError(f"objective not found: {objective_id}")
 
             goal = objective.get("goal", "")
-            project_dir = objective.get("projectDir", "")
-            if not goal or not project_dir:
+            worktree_path = objective.get("worktreePath", "")
+            if not goal or not worktree_path:
                 objectives.update_objective(objective_id, {"status": "failed"})
                 self._log_event(
                     objective_id,
                     "error",
                     "planning_failure",
-                    {"reason": "missing_goal_or_project_dir"},
+                    {"reason": "missing_goal_or_worktree_path"},
                 )
                 self._append_message(
                     objective_id,
                     "alert",
-                    "Planning failed: objective is missing goal or projectDir.",
+                    "Planning failed: objective is missing goal or worktreePath.",
                 )
                 return
 
             workspace_uuid, created = self._create_worker_workspace(
                 f"Planner: {goal[:40]}",
-                project_dir,
+                worktree_path,
                 objective_id=objective_id,
                 purpose="planning",
             )
@@ -308,7 +308,7 @@ class Orchestrator:
                 )
                 return
 
-            plan_path = os.path.join(project_dir, "plan.md")
+            plan_path = os.path.join(worktree_path, "plan.md")
             # Grace period: don't check for Claude exit until we've either
             # (a) seen Claude active at least once, or (b) waited 30+ seconds.
             # This prevents false "exited" detection during startup.
@@ -669,6 +669,13 @@ class Orchestrator:
 
         tasks = objective.get("tasks", [])
         completed = {task["id"] for task in tasks if task.get("status") == "completed" and task.get("id")}
+        active_tasks = [
+            task for task in tasks
+            if task.get("status") in ("executing", "reviewing", "rework")
+        ]
+        if active_tasks:
+            return
+
         launchable_tasks = [
             task for task in tasks
             if task.get("status") == "queued"
@@ -686,134 +693,122 @@ class Orchestrator:
         self._append_message(
             objective_id,
             "system",
-            f"Launching {len(launchable_tasks)} ready tasks: {[t['id'] for t in launchable_tasks]}",
+            f"Launching next ready task: {launchable_tasks[0]['id']}",
         )
 
-        project_dir = objective.get("projectDir", "")
-        base_branch = objective.get("baseBranch", "main")
+        task = launchable_tasks[0]
+        if task.get("dependsOn"):
+            self._assemble_context(objective_id, task)
 
-        for task in launchable_tasks:
-            if task.get("dependsOn"):
-                self._assemble_context(objective_id, task)
-
-            title_slug = worker.slugify(task.get("title", ""))
-            branch_name = f"orchestrator/{task['id']}-{title_slug}" if title_slug else f"orchestrator/{task['id']}"
-            try:
-                worktree_path = worker.create_worktree(
-                    project_dir,
-                    objective_id,
-                    task["id"],
-                    title_slug,
-                    base_branch,
-                )
-            except Exception as exc:
-                self._log_event(
-                    objective_id,
-                    "error",
-                    "task_failure",
-                    {"taskId": task["id"], "reason": "worktree_creation_failed", "error": str(exc)},
-                )
-                self._append_message(
-                    objective_id,
-                    "alert",
-                    f"Task {task['id']}: worktree creation failed: {exc}",
-                )
-                continue
-
-            spec_content = objectives.read_task_file(objective_id, task["id"], "spec.md") or ""
-            context_content = objectives.read_task_file(objective_id, task["id"], "context.md") or ""
-            with open(os.path.join(worktree_path, "spec.md"), "w", encoding="utf-8") as f:
-                f.write(spec_content)
-            with open(os.path.join(worktree_path, "context.md"), "w", encoding="utf-8") as f:
-                f.write(context_content)
-
-            ws_uuid, created = self._create_worker_workspace(
-                f"Worker: {task['title'][:35]}",
-                worktree_path,
-                objective_id=objective_id,
-                purpose="task",
-                task_id=task["id"],
-            )
-            if not created or not ws_uuid:
-                self._log_event(
-                    objective_id,
-                    "error",
-                    "task_failure",
-                    {"taskId": task["id"], "reason": "workspace_creation_failed"},
-                )
-                self._append_message(
-                    objective_id,
-                    "alert",
-                    f"Task {task['id']}: workspace creation failed (uuid={ws_uuid}, created={created})",
-                )
-                continue
-            if not self._wait_for_repl(
-                ws_uuid,
-                timeout_attempts=10,
-                objective_id=objective_id,
-                purpose="task",
-                task_id=task["id"],
-            ):
-                self._log_event(
-                    objective_id,
-                    "error",
-                    "task_failure",
-                    {
-                        "taskId": task["id"],
-                        "reason": "repl_not_ready",
-                        "workspaceId": ws_uuid,
-                        "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
-                    },
-                )
-                self._append_message(
-                    objective_id,
-                    "alert",
-                    f"Task {task['id']}: Claude Code REPL not ready in time (workspace {ws_uuid})",
-                )
-                continue
-            if not cmux_api.send_prompt_to_workspace(ws_uuid, worker.build_task_prompt(task["id"])):
-                self._log_event(
-                    objective_id,
-                    "error",
-                    "task_failure",
-                    {
-                        "taskId": task["id"],
-                        "reason": "prompt_delivery_failed",
-                        "workspaceId": ws_uuid,
-                        "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
-                    },
-                )
-                self._append_message(
-                    objective_id,
-                    "alert",
-                    f"Task {task['id']}: failed to send prompt to workspace {ws_uuid}",
-                )
-                continue
-
-            objectives.update_task(objective_id, task["id"], {
-                "status": "executing",
-                "workspaceId": ws_uuid,
-                "worktreePath": worktree_path,
-                "worktreeBranch": branch_name,
-                "startedAt": _utc_now_iso(),
-            })
-            self._append_message(
-                objective_id,
-                "system",
-                f"Task {task['id']}: {task['title']} — launched",
-            )
+        worktree_path = objective.get("worktreePath", "")
+        branch_name = objective.get("branchName")
+        if not worktree_path:
             self._log_event(
                 objective_id,
-                "info",
-                "task_launch",
+                "error",
+                "task_failure",
+                {"taskId": task["id"], "reason": "missing_objective_worktree"},
+            )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Task {task['id']}: objective worktree is missing.",
+            )
+            return
+
+        spec_content = objectives.read_task_file(objective_id, task["id"], "spec.md") or ""
+        context_content = objectives.read_task_file(objective_id, task["id"], "context.md") or ""
+        with open(os.path.join(worktree_path, "spec.md"), "w", encoding="utf-8") as f:
+            f.write(spec_content)
+        with open(os.path.join(worktree_path, "context.md"), "w", encoding="utf-8") as f:
+            f.write(context_content)
+
+        ws_uuid, created = self._create_worker_workspace(
+            f"Worker: {task['title'][:35]}",
+            worktree_path,
+            objective_id=objective_id,
+            purpose="task",
+            task_id=task["id"],
+        )
+        if not created or not ws_uuid:
+            self._log_event(
+                objective_id,
+                "error",
+                "task_failure",
+                {"taskId": task["id"], "reason": "workspace_creation_failed"},
+            )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Task {task['id']}: workspace creation failed (uuid={ws_uuid}, created={created})",
+            )
+            return
+        if not self._wait_for_repl(
+            ws_uuid,
+            timeout_attempts=10,
+            objective_id=objective_id,
+            purpose="task",
+            task_id=task["id"],
+        ):
+            self._log_event(
+                objective_id,
+                "error",
+                "task_failure",
                 {
                     "taskId": task["id"],
-                    "title": task.get("title"),
+                    "reason": "repl_not_ready",
                     "workspaceId": ws_uuid,
-                    "worktreePath": worktree_path,
-                    "worktreeBranch": branch_name,
+                    "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
                 },
             )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Task {task['id']}: Claude Code REPL not ready in time (workspace {ws_uuid})",
+            )
+            return
+        if not cmux_api.send_prompt_to_workspace(ws_uuid, worker.build_task_prompt(task["id"])):
+            self._log_event(
+                objective_id,
+                "error",
+                "task_failure",
+                {
+                    "taskId": task["id"],
+                    "reason": "prompt_delivery_failed",
+                    "workspaceId": ws_uuid,
+                    "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
+                },
+            )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Task {task['id']}: failed to send prompt to workspace {ws_uuid}",
+            )
+            return
+
+        objectives.update_task(objective_id, task["id"], {
+            "status": "executing",
+            "workspaceId": ws_uuid,
+            "worktreePath": worktree_path,
+            "startedAt": _utc_now_iso(),
+        })
+        self._append_message(
+            objective_id,
+            "system",
+            f"Task {task['id']}: {task['title']} — launched",
+        )
+        self._log_event(
+            objective_id,
+            "info",
+            "task_launch",
+            {
+                "taskId": task["id"],
+                "title": task.get("title"),
+                "workspaceId": ws_uuid,
+                "worktreePath": worktree_path,
+                "branchName": branch_name,
+            },
+        )
 
     def poll_tasks(self, objective_id):
         objective = objectives.read_objective(objective_id)
@@ -1506,6 +1501,34 @@ IMPORTANT:
                         "error": str(exc),
                         "traceback": traceback.format_exc(),
                         "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
+                    },
+                )
+        project_dir = objective.get("projectDir", "")
+        worktree_path = objective.get("worktreePath", "")
+        if project_dir and worktree_path:
+            try:
+                subprocess.run(
+                    ["git", "-C", project_dir, "worktree", "remove", worktree_path, "--force"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self._log_event(
+                    objective_id,
+                    "info",
+                    "worktree_removed",
+                    {"projectDir": project_dir, "worktreePath": worktree_path},
+                )
+            except (subprocess.CalledProcessError, OSError) as exc:
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "exception",
+                    {
+                        "phase": "stop_and_cleanup_worktree",
+                        "projectDir": project_dir,
+                        "worktreePath": worktree_path,
+                        "error": str(exc),
                     },
                 )
         return True

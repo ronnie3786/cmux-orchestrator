@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +7,14 @@ from unittest.mock import Mock, patch
 
 from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
+
+
+def _patch_objective_git(test_case):
+    patcher = patch("cmux_harness.objectives.subprocess.run")
+    mock_run = patcher.start()
+    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    test_case.addCleanup(patcher.stop)
+    return mock_run
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -17,6 +26,7 @@ class TestOrchestrator(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
         self.engine = object()
         self.orchestrator = Orchestrator(self.engine)
 
@@ -162,7 +172,7 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(len(self.orchestrator.get_debug_entries(objective["id"], limit=1)), 1)
         self.assertEqual(len(self.orchestrator.get_debug_entries(objective["id"], level="error")), 1)
 
-    def test_stop_and_cleanup_closes_task_workspaces(self):
+    def test_stop_and_cleanup_closes_task_workspaces_and_removes_worktree(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
         objectives.update_objective(
             objective["id"],
@@ -176,7 +186,9 @@ class TestOrchestrator(unittest.TestCase):
         )
         self.orchestrator._active_objective_id = objective["id"]
 
-        with patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request:
+        with patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request, \
+                patch("cmux_harness.orchestrator.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             self.assertTrue(self.orchestrator.stop_and_cleanup(objective["id"]))
 
         self.assertEqual(
@@ -185,6 +197,12 @@ class TestOrchestrator(unittest.TestCase):
                 unittest.mock.call("workspace.close", {"workspace_id": "ws-1"}),
                 unittest.mock.call("workspace.close", {"workspace_id": "ws-2"}),
             ],
+        )
+        mock_run.assert_called_once_with(
+            ["git", "-C", "/tmp/project", "worktree", "remove", objective["worktreePath"], "--force"],
+            capture_output=True,
+            text=True,
+            check=True,
         )
 
 
@@ -197,6 +215,7 @@ class TestAPIEndpoints(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
         self.engine = object()
         self.orchestrator = Orchestrator(self.engine)
 
@@ -258,6 +277,7 @@ class TestPlanningPipeline(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
         self.orchestrator = Orchestrator(object())
 
     def _create_objective(self):
@@ -265,7 +285,8 @@ class TestPlanningPipeline(unittest.TestCase):
 
     def test_run_planning_success(self):
         objective = self._create_objective()
-        plan_path = self.project_dir / "plan.md"
+        plan_path = Path(objective["worktreePath"]) / "plan.md"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
         plan_path.write_text("## Task 1: First\n## Task 2: Second\n", encoding="utf-8")
         tasks = [
             {"id": "task-1", "title": "First", "status": "queued"},
@@ -274,7 +295,7 @@ class TestPlanningPipeline(unittest.TestCase):
         launch_ready = Mock()
         self.orchestrator._launch_ready_tasks = launch_ready
 
-        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-planner", True)), \
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-planner", True)) as mock_create_workspace, \
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send_prompt, \
                 patch("cmux_harness.orchestrator.planner.parse_plan", return_value={"tasks": [{"id": "task-1"}, {"id": "task-2"}]}), \
@@ -289,6 +310,7 @@ class TestPlanningPipeline(unittest.TestCase):
         # Called twice: planning prompt + /exit cleanup
         self.assertEqual(mock_send_prompt.call_count, 2)
         self.assertIn("/exit", mock_send_prompt.call_args_list[-1].args[1])
+        self.assertEqual(mock_create_workspace.call_args.args[1], objective["worktreePath"])
         launch_ready.assert_called_once_with(objective["id"])
 
     def test_run_planning_no_plan_file(self):
@@ -307,7 +329,8 @@ class TestPlanningPipeline(unittest.TestCase):
     def test_run_planning_parse_failure(self):
         objective = self._create_objective()
         raw_plan = "## Task 1: Unparseable\n- Something odd\n"
-        (self.project_dir / "plan.md").write_text(raw_plan, encoding="utf-8")
+        Path(objective["worktreePath"]).mkdir(parents=True, exist_ok=True)
+        (Path(objective["worktreePath"]) / "plan.md").write_text(raw_plan, encoding="utf-8")
 
         with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-planner", True)), \
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
@@ -332,6 +355,7 @@ class TestTaskLauncher(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
         self.orchestrator = Orchestrator(object())
 
     def _create_objective(self, tasks):
@@ -343,48 +367,49 @@ class TestTaskLauncher(unittest.TestCase):
         objectives.write_task_file(objective_id, task_id, "spec.md", spec)
         objectives.write_task_file(objective_id, task_id, "context.md", context)
 
-    def test_launch_ready_tasks_launches_independent_tasks(self):
+    def test_launch_ready_tasks_uses_objective_worktree_and_launches_one_task_at_a_time(self):
         tasks = [
-            {"id": "task-1", "title": "First task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
-            {"id": "task-2", "title": "Second task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+            {"id": "task-1", "title": "First task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "startedAt": None},
+            {"id": "task-2", "title": "Second task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "startedAt": None},
         ]
         objective = self._create_objective(tasks)
         self._create_task_files(objective["id"], "task-1")
         self._create_task_files(objective["id"], "task-2")
-        worktree_one = self.project_dir / "wt-1"
-        worktree_two = self.project_dir / "wt-2"
-        worktree_one.mkdir()
-        worktree_two.mkdir()
+        Path(objective["worktreePath"]).mkdir(parents=True, exist_ok=True)
 
-        with patch("cmux_harness.orchestrator.worker.create_worktree", side_effect=[str(worktree_one), str(worktree_two)]), \
-                patch.object(self.orchestrator, "_create_worker_workspace", side_effect=[("fake-uuid-1", True), ("fake-uuid-2", True)]), \
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-1", True)) as mock_workspace, \
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True):
             self.orchestrator._launch_ready_tasks(objective["id"])
 
         updated = objectives.read_objective(objective["id"])
-        self.assertEqual([task["status"] for task in updated["tasks"]], ["executing", "executing"])
+        self.assertEqual([task["status"] for task in updated["tasks"]], ["executing", "queued"])
         self.assertEqual(updated["tasks"][0]["workspaceId"], "fake-uuid-1")
-        self.assertEqual(updated["tasks"][1]["workspaceId"], "fake-uuid-2")
-        self.assertEqual(updated["tasks"][0]["worktreePath"], str(worktree_one))
-        self.assertEqual(updated["tasks"][1]["worktreePath"], str(worktree_two))
+        self.assertIsNone(updated["tasks"][1]["workspaceId"])
+        self.assertEqual(updated["tasks"][0]["worktreePath"], objective["worktreePath"])
+        self.assertIsNone(updated["tasks"][1]["worktreePath"])
+        mock_workspace.assert_called_once_with(
+            "Worker: First task",
+            objective["worktreePath"],
+            objective_id=objective["id"],
+            purpose="task",
+            task_id="task-1",
+        )
         system_messages = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "system"]
-        # 1 "Launching N ready tasks" + 2 "Task X: launched" = 3 system messages
-        self.assertEqual(len(system_messages), 3)
+        self.assertEqual(len(system_messages), 2)
+        self.assertEqual((Path(objective["worktreePath"]) / "spec.md").read_text(encoding="utf-8"), "spec")
 
     def test_launch_ready_tasks_skips_blocked_tasks(self):
         tasks = [
-            {"id": "task-1", "title": "First task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
-            {"id": "task-2", "title": "Second task", "status": "queued", "dependsOn": ["task-1"], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+            {"id": "task-1", "title": "First task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "startedAt": None},
+            {"id": "task-2", "title": "Second task", "status": "queued", "dependsOn": ["task-1"], "workspaceId": None, "worktreePath": None, "startedAt": None},
         ]
         objective = self._create_objective(tasks)
         self._create_task_files(objective["id"], "task-1")
         self._create_task_files(objective["id"], "task-2")
-        worktree_one = self.project_dir / "wt-1"
-        worktree_one.mkdir()
+        Path(objective["worktreePath"]).mkdir(parents=True, exist_ok=True)
 
-        with patch("cmux_harness.orchestrator.worker.create_worktree", return_value=str(worktree_one)), \
-                patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-1", True)), \
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-1", True)), \
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True):
             self.orchestrator._launch_ready_tasks(objective["id"])
@@ -395,24 +420,23 @@ class TestTaskLauncher(unittest.TestCase):
 
     def test_launch_ready_tasks_launches_after_dependency_complete(self):
         tasks = [
-            {"id": "task-1", "title": "Completed task", "status": "completed", "dependsOn": [], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
-            {"id": "task-2", "title": "Dependent task", "status": "queued", "dependsOn": ["task-1"], "workspaceId": None, "worktreePath": None, "worktreeBranch": None, "startedAt": None},
+            {"id": "task-1", "title": "Completed task", "status": "completed", "dependsOn": [], "workspaceId": None, "worktreePath": None, "startedAt": None},
+            {"id": "task-2", "title": "Dependent task", "status": "queued", "dependsOn": ["task-1"], "workspaceId": None, "worktreePath": None, "startedAt": None},
         ]
         objective = self._create_objective(tasks)
         self._create_task_files(objective["id"], "task-1")
         self._create_task_files(objective["id"], "task-2")
         objectives.write_task_file(objective["id"], "task-1", "result.md", "Task one result")
-        worktree_two = self.project_dir / "wt-2"
-        worktree_two.mkdir()
+        Path(objective["worktreePath"]).mkdir(parents=True, exist_ok=True)
 
-        with patch("cmux_harness.orchestrator.worker.create_worktree", return_value=str(worktree_two)), \
-                patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-2", True)), \
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-2", True)), \
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
                 patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True):
             self.orchestrator._launch_ready_tasks(objective["id"])
 
         updated = objectives.read_objective(objective["id"])
         self.assertEqual(updated["tasks"][1]["status"], "executing")
+        self.assertEqual(updated["tasks"][1]["worktreePath"], objective["worktreePath"])
         context = objectives.read_task_file(objective["id"], "task-2", "context.md")
         self.assertIn("Task one result", context)
 
@@ -455,6 +479,7 @@ class TestPollTasks(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
         self.orchestrator = Orchestrator(object())
 
     def _create_objective(self, tasks):
@@ -585,6 +610,7 @@ class TestReviewRework(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
         self.orchestrator = Orchestrator(object())
         self.orchestrator._active_objective_id = "active-objective"
 

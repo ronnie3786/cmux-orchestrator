@@ -287,6 +287,7 @@ def make_handler(engine):
                 goal = data.get("goal", "")
                 project_dir = data.get("projectDir", "")
                 base_branch = data.get("baseBranch")
+                branch_name = data.get("branchName")
                 if not project_dir:
                     with engine._lock:
                         project_dir = engine.default_project_dir
@@ -297,7 +298,12 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "goal and projectDir required"}, 400)
                     return
                 try:
-                    objective = objectives.create_objective(goal, project_dir, base_branch=base_branch)
+                    objective = objectives.create_objective(
+                        goal,
+                        project_dir,
+                        base_branch=base_branch,
+                        branch_name=branch_name,
+                    )
                 except OSError as e:
                     self._json_response({"ok": False, "error": str(e)}, 500)
                     return

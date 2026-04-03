@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 from cmux_harness import objectives
@@ -202,6 +203,10 @@ class TestPlanToTasks(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.patch_subprocess_run = patch("cmux_harness.objectives.subprocess.run")
+        self.mock_run = self.patch_subprocess_run.start()
+        self.mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        self.addCleanup(self.patch_subprocess_run.stop)
 
     def test_plan_to_tasks_converts_plan_and_writes_specs(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")

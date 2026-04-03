@@ -1,5 +1,6 @@
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +24,10 @@ class TestServerResponses(unittest.TestCase):
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.patch_subprocess_run = patch("cmux_harness.objectives.subprocess.run")
+        self.mock_run = self.patch_subprocess_run.start()
+        self.mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        self.addCleanup(self.patch_subprocess_run.stop)
 
     def test_json_response_suppresses_broken_pipe(self):
         handler_cls = make_handler(Mock())
@@ -88,3 +93,16 @@ class TestServerResponses(unittest.TestCase):
         self.assertFalse((self.objectives_dir / objective["id"]).exists())
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
+
+    def test_create_objective_endpoint_passes_branch_name(self):
+        engine = Mock()
+        payload = {"goal": "Ship feature", "projectDir": "/tmp/project", "baseBranch": "develop", "branchName": "feature/api"}
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(engine, "/api/objectives")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response["branchName"], "feature/api")

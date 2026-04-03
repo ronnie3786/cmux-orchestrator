@@ -381,7 +381,6 @@ def plan_to_tasks(parsed: dict, objective_id: str) -> list[dict]:
                 "dependsOn": task["dependsOn"],
                 "workspaceId": None,
                 "worktreePath": None,
-                "worktreeBranch": None,
                 "checkpoints": [{"name": cp, "status": "pending"} for cp in task["checkpoints"]],
                 "reviewCycles": 0,
                 "maxReviewCycles": 3,

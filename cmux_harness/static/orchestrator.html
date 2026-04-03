@@ -1780,6 +1780,7 @@
     debugLoading: false,
     draftProjectDir: '',
     draftBaseBranch: 'main',
+    draftBranchName: '',
     draftGoal: '',
     pendingCreate: false,
     pendingSend: false,
@@ -2076,13 +2077,15 @@
   }
 
   function activeGitPath() {
-    return state.activeObjective && state.activeObjective.projectDir
-      ? String(state.activeObjective.projectDir).trim()
+    return state.activeObjective && (state.activeObjective.worktreePath || state.activeObjective.projectDir)
+      ? String(state.activeObjective.worktreePath || state.activeObjective.projectDir).trim()
       : '';
   }
 
   function gitButtonLabel() {
-    const branch = state.gitStatus && state.gitStatus.branch ? state.gitStatus.branch : '';
+    const branch = state.gitStatus && state.gitStatus.branch
+      ? state.gitStatus.branch
+      : (state.activeObjective && state.activeObjective.branchName ? state.activeObjective.branchName : '');
     return branch ? ('⎇ ' + branch) : '⎇ git';
   }
 
@@ -2480,13 +2483,13 @@
   function renderGitPanel() {
     const path = activeGitPath();
     els.gitPanel.className = 'git-panel' + (state.gitPanelOpen ? ' open' : '');
-    els.gitPanelBranch.textContent = (state.gitStatus && state.gitStatus.branch) || 'Git';
+    els.gitPanelBranch.textContent = (state.gitStatus && state.gitStatus.branch) || (state.activeObjective && state.activeObjective.branchName) || 'Git';
     els.gitPanelPath.textContent = (state.gitStatus && state.gitStatus.cwd) || path || 'No working directory';
     els.gitPanelCopyButton.disabled = !((state.gitStatus && state.gitStatus.cwd) || path);
     const data = state.gitStatus;
     if (!state.gitPanelOpen) return;
     if (!path) {
-      els.gitPanelBody.innerHTML = '<div class="git-empty">No active objective project directory</div>';
+      els.gitPanelBody.innerHTML = '<div class="git-empty">No active objective worktree</div>';
       return;
     }
     if (!data) {
@@ -2586,6 +2589,7 @@
       '<div class="sf-row">',
       '<input class="sf-input" id="baseBranchInput" placeholder="Base branch" value="' + esc(state.draftBaseBranch || 'main') + '">',
       '</div>',
+      '<input class="sf-input" id="branchNameInput" placeholder="Feature branch name (optional)" value="' + esc(state.draftBranchName || '') + '">',
       '<textarea class="sf-textarea" id="sidebarGoalInput" placeholder="Describe the objective">' + esc(state.draftGoal) + '</textarea>',
       '<div class="sf-actions">',
       '<button class="sf-submit" id="sidebarCreateButton">Create &amp; start</button>',
@@ -2599,6 +2603,7 @@
     if (!state.sidebarFormOpen) return;
     const projectDirInput = document.getElementById('projectDirInput');
     const baseBranchInput = document.getElementById('baseBranchInput');
+    const branchNameInput = document.getElementById('branchNameInput');
     const sidebarGoalInput = document.getElementById('sidebarGoalInput');
     document.getElementById('sidebarCreateButton').addEventListener('click', submitSidebarObjective);
     document.getElementById('sidebarCancelButton').addEventListener('click', () => {
@@ -2611,6 +2616,9 @@
     baseBranchInput.addEventListener('input', (event) => {
       state.draftBaseBranch = event.target.value || 'main';
     });
+    branchNameInput.addEventListener('input', (event) => {
+      state.draftBranchName = event.target.value;
+    });
     sidebarGoalInput.addEventListener('input', (event) => {
       state.draftGoal = event.target.value;
     });
@@ -2620,6 +2628,7 @@
     state.sidebarFormOpen = true;
     state.draftProjectDir = state.draftProjectDir || defaultProjectDir();
     state.draftBaseBranch = defaultBaseBranch();
+    state.draftBranchName = state.draftBranchName || '';
     if (typeof seedGoal === 'string') state.draftGoal = seedGoal;
     updateSidebarFormFromState();
     window.setTimeout(() => {
@@ -2709,10 +2718,12 @@
     const elapsed = durationFrom(objective.createdAt, String(objective.status).toLowerCase() === 'completed' ? objective.updatedAt : null) || relativeTime(objective.createdAt);
     const taskCount = progress.total + ' task' + (progress.total === 1 ? '' : 's');
     const gitPath = activeGitPath();
+    const branchName = objective.branchName ? String(objective.branchName) : '';
     els.contextStrip.innerHTML = [
       '<div class="ctx-dot ' + meta.dot + '"></div>',
       '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
       '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
+      branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
       '<div class="ctx-actions">',
       gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
       '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
@@ -2848,8 +2859,8 @@
           '<div class="pr-icon ' + iconClass + '">' + icon + '</div>',
           '<div class="pr-main">',
           '<span class="pr-name pr-name-text">' + esc(task.title || task.id) + '</span>',
-          ((status === 'completed' || status === 'executing' || status === 'reviewing' || status === 'rework') && task.worktreeBranch
-            ? '<span class="task-branch-badge" title="' + esc(task.worktreeBranch) + '">' + esc(task.worktreeBranch) + '</span>'
+          ((status === 'completed' || status === 'executing' || status === 'reviewing' || status === 'rework') && state.activeObjective && state.activeObjective.branchName
+            ? '<span class="task-branch-badge" title="' + esc(state.activeObjective.branchName) + '">' + esc(state.activeObjective.branchName) + '</span>'
             : ''),
           '</div>',
           '<span class="pr-status ' + statusClass + '">' + esc(statusText) + '</span>',
@@ -2871,12 +2882,12 @@
     const elapsed = task ? (durationFrom(task.startedAt) || relativeTime(task.startedAt)) : relativeTime(message.timestamp);
     return [
       '<div class="card-progress">',
-      task && (task.worktreePath || task.worktreeBranch) ? '<div class="cp-meta"><div class="cp-meta-main">' +
-        ((task.worktreePath || task.worktreeBranch) ? '<div class="cp-path-row">' : '') +
+      task && (task.worktreePath || (state.activeObjective && state.activeObjective.branchName)) ? '<div class="cp-meta"><div class="cp-meta-main">' +
+        ((task.worktreePath || (state.activeObjective && state.activeObjective.branchName)) ? '<div class="cp-path-row">' : '') +
         (task.worktreePath ? '<div class="cp-path-value" title="' + esc(task.worktreePath) + '">' + esc(task.worktreePath) + '</div>' : '') +
         (task.worktreePath ? '<button class="cp-copy-button" type="button" data-copy-path="' + esc(task.worktreePath) + '">Copy</button>' : '') +
-        (task.worktreeBranch ? '<span class="cp-branch">' + esc(task.worktreeBranch) + '</span>' : '') +
-        ((task.worktreePath || task.worktreeBranch) ? '</div>' : '') +
+        (state.activeObjective && state.activeObjective.branchName ? '<span class="cp-branch">' + esc(state.activeObjective.branchName) + '</span>' : '') +
+        ((task.worktreePath || (state.activeObjective && state.activeObjective.branchName)) ? '</div>' : '') +
         '</div></div>' : '',
       '<div class="cp-top">',
       '<span class="cp-task-label">' + esc(task ? task.title : (metadata.task_id || 'Task')) + '</span>',
@@ -3233,13 +3244,18 @@
     if (forceAll) render();
   }
 
-  async function createObjective(goal, projectDir, baseBranch) {
+  async function createObjective(goal, projectDir, baseBranch, branchName) {
     state.pendingCreate = true;
     renderInputState();
     try {
       const objective = await api('/api/objectives', {
         method: 'POST',
-        body: JSON.stringify({ goal, projectDir, baseBranch: baseBranch || 'main' })
+        body: JSON.stringify({
+          goal,
+          projectDir,
+          baseBranch: baseBranch || 'main',
+          branchName: branchName || ''
+        })
       });
       await api('/api/objectives/' + encodeURIComponent(objective.id) + '/start', {
         method: 'POST',
@@ -3248,6 +3264,7 @@
       state.activeObjectiveId = objective.id;
       state.sidebarFormOpen = false;
       state.draftGoal = '';
+      state.draftBranchName = '';
       els.chatInput.value = '';
       autoResizeTextarea();
       await pollObjectives();
@@ -3261,16 +3278,18 @@
   async function submitSidebarObjective() {
     const projectDirInput = document.getElementById('projectDirInput');
     const baseBranchInput = document.getElementById('baseBranchInput');
+    const branchNameInput = document.getElementById('branchNameInput');
     const sidebarGoalInput = document.getElementById('sidebarGoalInput');
     state.draftProjectDir = projectDirInput ? projectDirInput.value.trim() : state.draftProjectDir;
     state.draftBaseBranch = baseBranchInput ? (baseBranchInput.value.trim() || 'main') : (state.draftBaseBranch || 'main');
+    state.draftBranchName = branchNameInput ? branchNameInput.value.trim() : state.draftBranchName;
     state.draftGoal = sidebarGoalInput ? sidebarGoalInput.value.trim() : state.draftGoal;
     if (!state.draftProjectDir || !state.draftGoal) {
       showToast('Project directory and goal are required');
       return;
     }
     try {
-      await createObjective(state.draftGoal, state.draftProjectDir, state.draftBaseBranch);
+      await createObjective(state.draftGoal, state.draftProjectDir, state.draftBaseBranch, state.draftBranchName);
     } catch (error) {
       showToast(error.message || 'Could not create objective');
     }
@@ -3285,7 +3304,7 @@
       if (projectDir) {
         state.draftGoal = text;
         try {
-          await createObjective(text, projectDir, baseBranch);
+          await createObjective(text, projectDir, baseBranch, state.draftBranchName);
         } catch (error) {
           showToast(error.message || 'Could not create objective');
         }

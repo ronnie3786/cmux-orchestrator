@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,24 +24,121 @@ def get_objective_dir(objective_id: str) -> Path:
     return OBJECTIVES_DIR / objective_id
 
 
-def create_objective(goal: str, project_dir: str, base_branch: str = "main") -> dict:
+def _default_branch_name(objective_id: str) -> str:
+    return f"orchestrator/{objective_id[:8]}"
+
+
+def _slugify_branch_name(branch_name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", str(branch_name or "").strip())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "worktree"
+
+
+def _objective_worktree_path(project_dir: str, branch_name: str) -> Path:
+    return Path(project_dir) / ".cmux-harness" / "worktrees" / _slugify_branch_name(branch_name)
+
+
+def _create_objective_worktree(project_dir: str, worktree_path: Path, branch_name: str, base_branch: str):
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    add_new_branch_cmd = [
+        "git",
+        "-C",
+        project_dir,
+        "worktree",
+        "add",
+        str(worktree_path),
+        "-b",
+        branch_name,
+        base_branch,
+    ]
+    try:
+        subprocess.run(
+            add_new_branch_cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        message = stderr or stdout or f"git worktree add failed with exit code {exc.returncode}"
+        if "already exists" not in message.lower():
+            raise OSError(message) from exc
+    except OSError as exc:
+        raise OSError(str(exc)) from exc
+
+    reuse_branch_cmd = [
+        "git",
+        "-C",
+        project_dir,
+        "worktree",
+        "add",
+        str(worktree_path),
+        branch_name,
+    ]
+    try:
+        subprocess.run(
+            reuse_branch_cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        message = stderr or stdout or f"git worktree add failed with exit code {exc.returncode}"
+        raise OSError(message) from exc
+    except OSError as exc:
+        raise OSError(str(exc)) from exc
+
+
+def _remove_objective_worktree(project_dir: str, worktree_path: str | None):
+    if not project_dir or not worktree_path:
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", project_dir, "worktree", "remove", str(worktree_path), "--force"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return
+
+
+def create_objective(
+    goal: str,
+    project_dir: str,
+    base_branch: str = "main",
+    branch_name: str | None = None,
+) -> dict:
     OBJECTIVES_DIR.mkdir(parents=True, exist_ok=True)
     objective_id = str(uuid.uuid4())
     now = _now_iso()
+    resolved_branch_name = (branch_name or "").strip() or _default_branch_name(objective_id)
+    worktree_path = _objective_worktree_path(project_dir, resolved_branch_name)
     objective = {
         "id": objective_id,
         "goal": goal,
         "status": "planning",
         "projectDir": project_dir,
         "baseBranch": base_branch,
+        "branchName": resolved_branch_name,
+        "worktreePath": str(worktree_path),
         "createdAt": now,
         "updatedAt": now,
         "tasks": [],
     }
     objective_dir = get_objective_dir(objective_id)
     objective_dir.mkdir(parents=True, exist_ok=False)
-    with open(objective_dir / "objective.json", "w", encoding="utf-8") as f:
-        json.dump(objective, f, indent=2)
+    try:
+        with open(objective_dir / "objective.json", "w", encoding="utf-8") as f:
+            json.dump(objective, f, indent=2)
+        _create_objective_worktree(project_dir, worktree_path, resolved_branch_name, base_branch)
+    except Exception:
+        shutil.rmtree(objective_dir, ignore_errors=True)
+        raise
     return objective
 
 
@@ -113,6 +212,14 @@ def list_objectives() -> list[dict]:
     return objectives
 
 
+def get_objective_worktree_path(objective_id: str) -> str | None:
+    objective = read_objective(objective_id)
+    if objective is None:
+        return None
+    worktree_path = objective.get("worktreePath")
+    return str(worktree_path) if worktree_path else None
+
+
 def create_task_dir(objective_id: str, task_id: str) -> Path:
     task_dir = get_objective_dir(objective_id) / "tasks" / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
@@ -141,5 +248,7 @@ def delete_objective(objective_id: str) -> bool:
     objective_dir = get_objective_dir(objective_id)
     if not objective_dir.exists():
         return False
+    objective = read_objective(objective_id) or {}
+    _remove_objective_worktree(objective.get("projectDir", ""), objective.get("worktreePath"))
     shutil.rmtree(objective_dir)
     return True
