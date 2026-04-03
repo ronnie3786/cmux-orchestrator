@@ -18,10 +18,15 @@ from .detection import OLLAMA_URL
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _HTML_PATH = _STATIC_DIR / "dashboard.html"
+_ORCHESTRATOR_HTML_PATH = _STATIC_DIR / "orchestrator.html"
 try:
     DASHBOARD_HTML = _HTML_PATH.read_text(encoding="utf-8")
 except FileNotFoundError:
     DASHBOARD_HTML = "<html><body><h1>dashboard.html not found</h1></body></html>"
+try:
+    ORCHESTRATOR_HTML = _ORCHESTRATOR_HTML_PATH.read_text(encoding="utf-8")
+except FileNotFoundError:
+    ORCHESTRATOR_HTML = "<html><body><h1>orchestrator.html not found</h1></body></html>"
 
 
 def make_handler(engine):
@@ -54,6 +59,13 @@ def make_handler(engine):
             path = parsed.path
             if path == "/":
                 body = DASHBOARD_HTML.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif path == "/orchestrator":
+                body = ORCHESTRATOR_HTML.encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))

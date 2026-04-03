@@ -274,8 +274,10 @@ After building, verify with the smoke test workflow:
 
 ---
 
-## File to Edit
+## File to Create
 
-`cmux_harness/static/dashboard.html` — replace the entire contents with the new chat UI.
+`cmux_harness/static/orchestrator.html` — new file for the orchestrator chat UI.
 
-The server already serves this file at `/` — no server changes needed.
+The server serves this at `/orchestrator` (already wired up). The existing dashboard at `/` is untouched.
+
+**Do NOT modify `dashboard.html` or `server.py`** — they are already set up correctly.
