@@ -272,8 +272,8 @@ def validate_plan(parsed: dict) -> tuple[bool, str]:
             return False, f"task {task_id} checkpoints must be a list of strings"
         if not checkpoints:
             return False, f"task {task_id} must have at least 1 checkpoint"
-        if len(checkpoints) > 5:
-            return False, f"task {task_id} must have no more than 5 checkpoints"
+        if len(checkpoints) > 10:
+            return False, f"task {task_id} must have no more than 10 checkpoints"
         if task_id in task_map:
             return False, f"duplicate task id: {task_id}"
         task_map[task_id] = task

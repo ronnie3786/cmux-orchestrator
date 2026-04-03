@@ -117,12 +117,12 @@ class TestValidatePlan(unittest.TestCase):
 
     def test_too_many_checkpoints_fails(self):
         parsed = _valid_parsed_plan()
-        parsed["tasks"][0]["checkpoints"] = ["1", "2", "3", "4", "5", "6"]
+        parsed["tasks"][0]["checkpoints"] = [str(i) for i in range(11)]
 
         is_valid, error = planner.validate_plan(parsed)
 
         self.assertFalse(is_valid)
-        self.assertIn("no more than 5", error)
+        self.assertIn("no more than 10", error)
 
     def test_zero_checkpoints_fails(self):
         parsed = _valid_parsed_plan()
