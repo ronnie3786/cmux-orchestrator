@@ -1213,6 +1213,21 @@ IMPORTANT:
             needs_rework = monitor.should_trigger_rework(review_json)
 
         if not needs_rework:
+            # Clean up the worker's Claude session and workspace
+            workspace_uuid = task.get("workspaceId")
+            if workspace_uuid:
+                try:
+                    cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
+                    time.sleep(1)
+                    cmux_api._v2_request("workspace.close", {"workspace_id": workspace_uuid})
+                    self._log_event(
+                        objective_id,
+                        "info",
+                        "workspace_closed",
+                        {"workspaceId": workspace_uuid, "purpose": "task_completed", "taskId": task_id},
+                    )
+                except Exception:
+                    pass
             objectives.update_task(objective_id, task_id, {
                 "status": "completed",
                 "completedAt": _utc_now_iso(),
@@ -1266,16 +1281,24 @@ IMPORTANT:
                     ) or ""
                 except Exception:
                     screen_text = ""
-                if not detection.detect_claude_session(screen_text):
-                    launch_text = f"cd {worktree_path} && claude\n"
-                    with self.mutex.context(workspace_uuid):
-                        cmux_api.cmux_send_to_workspace(
-                            0,
-                            0,
-                            text=launch_text,
-                            workspace_uuid=workspace_uuid,
-                        )
-                    self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="rework", task_id=task_id)
+                # Ensure Claude is exited before relaunching for rework.
+                # We may have sent /exit when result.md was detected, but
+                # the session might still be shutting down.
+                if detection.detect_claude_session(screen_text):
+                    try:
+                        cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
+                        time.sleep(2)
+                    except Exception:
+                        pass
+                launch_text = f"cd {worktree_path} && claude\n"
+                with self.mutex.context(workspace_uuid):
+                    cmux_api.cmux_send_to_workspace(
+                        0,
+                        0,
+                        text=launch_text,
+                        workspace_uuid=workspace_uuid,
+                    )
+                self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="rework", task_id=task_id)
                 cmux_api.send_prompt_to_workspace(workspace_uuid, rework_prompt)
             objectives.update_task(objective_id, task_id, {"status": "executing"})
             self._log_event(
@@ -1301,6 +1324,21 @@ IMPORTANT:
             )
             return
 
+        # Clean up the worker's Claude session on permanent failure
+        workspace_uuid = task.get("workspaceId")
+        if workspace_uuid:
+            try:
+                cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
+                time.sleep(1)
+                cmux_api._v2_request("workspace.close", {"workspace_id": workspace_uuid})
+                self._log_event(
+                    objective_id,
+                    "info",
+                    "workspace_closed",
+                    {"workspaceId": workspace_uuid, "purpose": "task_failed", "taskId": task_id},
+                )
+            except Exception:
+                pass
         objectives.update_task(objective_id, task_id, {"status": "failed"})
         issues, _ = monitor.build_review_rework_summary(review_json)
         self._log_event(
@@ -1482,6 +1520,9 @@ IMPORTANT:
                 continue
             seen.add(workspace_id)
             try:
+                # Exit Claude Code before closing the workspace
+                cmux_api.send_prompt_to_workspace(workspace_id, "/exit")
+                time.sleep(1)
                 cmux_api._v2_request("workspace.close", {"workspace_id": workspace_id})
                 self._log_event(
                     objective_id,

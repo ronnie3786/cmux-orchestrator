@@ -187,10 +187,19 @@ class TestOrchestrator(unittest.TestCase):
         self.orchestrator._active_objective_id = objective["id"]
 
         with patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request, \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
                 patch("cmux_harness.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             self.assertTrue(self.orchestrator.stop_and_cleanup(objective["id"]))
 
+        # /exit sent to each unique workspace before closing
+        self.assertEqual(
+            mock_send.call_args_list,
+            [
+                unittest.mock.call("ws-1", "/exit"),
+                unittest.mock.call("ws-2", "/exit"),
+            ],
+        )
         self.assertEqual(
             mock_request.call_args_list,
             [
