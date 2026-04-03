@@ -489,6 +489,9 @@ class Orchestrator:
         finally:
             if workspace_uuid:
                 try:
+                    # Exit Claude Code before closing the workspace
+                    cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
+                    time.sleep(1)  # brief pause for clean exit
                     cmux_api._v2_request("workspace.close", {"workspace_id": workspace_uuid})
                     self._log_event(
                         objective_id,
@@ -938,30 +941,37 @@ class Orchestrator:
                 # Skip if a review thread is already running for this task
                 if task_id in self._review_in_progress:
                     continue
-                has_claude = detection.detect_claude_session(screen_text) if screen_text else False
-                if not has_claude:
-                    objectives.update_task(objective_id, task_id, {"status": "reviewing"})
-                    task["status"] = "reviewing"  # update local copy too
-                    self._append_message(
-                        objective_id,
-                        "progress",
-                        f"Task {task_id}: completed, starting review...",
-                        metadata={"task_id": task_id},
-                    )
-                    self._log_event(
-                        objective_id,
-                        "info",
-                        "task_completion",
-                        {"taskId": task_id, "workspaceId": ws_uuid},
-                    )
-                    if hasattr(self, "_run_review"):
-                        self._review_in_progress.add(task_id)
-                        threading.Thread(
-                            target=self._run_review_wrapper,
-                            args=(objective_id, task_id),
-                            daemon=True,
-                        ).start()
-                    continue
+                # result.md exists — the task deliverable is done.
+                # Proceed immediately regardless of whether Claude is
+                # still idle at the REPL (same fix as planner).
+                # Send /exit to clean up the Claude session.
+                try:
+                    with self.mutex.context(ws_uuid):
+                        cmux_api.send_prompt_to_workspace(ws_uuid, "/exit")
+                except Exception:
+                    pass
+                objectives.update_task(objective_id, task_id, {"status": "reviewing"})
+                task["status"] = "reviewing"  # update local copy too
+                self._append_message(
+                    objective_id,
+                    "progress",
+                    f"Task {task_id}: completed, starting review...",
+                    metadata={"task_id": task_id},
+                )
+                self._log_event(
+                    objective_id,
+                    "info",
+                    "task_completion",
+                    {"taskId": task_id, "workspaceId": ws_uuid},
+                )
+                if hasattr(self, "_run_review"):
+                    self._review_in_progress.add(task_id)
+                    threading.Thread(
+                        target=self._run_review_wrapper,
+                        args=(objective_id, task_id),
+                        daemon=True,
+                    ).start()
+                continue
 
             if progress_state.get("has_progress_update"):
                 self._task_last_progress[task_id] = progress_state.get("progress_mtime", time.time())

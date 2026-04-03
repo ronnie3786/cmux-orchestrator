@@ -286,7 +286,9 @@ class TestPlanningPipeline(unittest.TestCase):
         self.assertEqual(updated["status"], "executing")
         self.assertEqual(updated["tasks"], tasks)
         self.assertTrue(any("Plan ready: 2 tasks identified." in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
-        mock_send_prompt.assert_called_once()
+        # Called twice: planning prompt + /exit cleanup
+        self.assertEqual(mock_send_prompt.call_count, 2)
+        self.assertIn("/exit", mock_send_prompt.call_args_list[-1].args[1])
         launch_ready.assert_called_once_with(objective["id"])
 
     def test_run_planning_no_plan_file(self):
