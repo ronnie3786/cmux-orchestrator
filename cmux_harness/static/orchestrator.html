@@ -272,6 +272,7 @@
   }
   /* user messages: flip direction */
   .msg.user { flex-direction: row-reverse; }
+  .msg.msg-grouped { padding-left: 40px; }
 
   .msg-av {
     width: 28px; height: 28px;
@@ -1180,6 +1181,16 @@
     return /auto-approved/i.test(message.content || '');
   }
 
+  function isHiddenSystemMessage(message) {
+    if (!message || message.type !== 'system') return false;
+    const content = String(message.content || '').trim();
+    if (!content) return false;
+    if (/No launchable tasks found\. Task statuses:/i.test(content)) return true;
+    if (/terminal active but no progress updates/i.test(content)) return true;
+    if (/^\[\((?:\\x27|')[\s\S]*\)\]$/.test(content) && /(\\x27|')task-[A-Za-z0-9_-]+/.test(content)) return true;
+    return false;
+  }
+
   function extractTaskId(message) {
     const metadataId = message && message.metadata && message.metadata.task_id;
     if (metadataId) return metadataId;
@@ -1194,6 +1205,7 @@
     const hasPlanMessage = messages.some((message) => message.type === 'plan');
 
     messages.forEach((message) => {
+      if (isHiddenSystemMessage(message)) return;
       const taskId = extractTaskId(message);
       if (shouldCollapseAutoApproval(message)) {
         const previous = items[items.length - 1];
@@ -1316,6 +1328,10 @@
     return metadata.review || {};
   }
 
+  function reviewFilesChanged(review) {
+    return Array.isArray(review.filesChanged) ? review.filesChanged.length : 0;
+  }
+
   function renderReviewCard(message) {
     const metadata = message.metadata || {};
     const review = reviewData(message);
@@ -1327,12 +1343,10 @@
     const badge = passed
       ? '<span class="cr-badge crb-pass">✓ Review passed</span>'
       : '<span class="cr-badge crb-issues">⚠ Issues found</span>';
-    const summary = passed
-      ? (review.recommendation || review.summary || message.content || 'Review completed.')
-      : (review.recommendation || message.content || 'Review requires changes.');
-    const fileStat = review.changesCommitted === false ? 'changes not committed' : 'changes committed';
-    const fileCount = review.scopeCompliant === false ? 'scope drift' : 'scope OK';
-    const checkpoints = review.checkpointsComplete === false ? 'checkpoints missing' : 'checkpoints OK';
+    const recommendation = review.recommendation || review.summary || message.content || 'Review requires changes.';
+    const fileCount = reviewFilesChanged(review);
+    const linesAdded = Number(review.linesAdded || 0);
+    const linesRemoved = Number(review.linesRemoved || 0);
     return [
       '<div class="card-review' + warningClass + '">',
       '<div class="cr-head">',
@@ -1340,10 +1354,11 @@
       '<span class="cr-name">' + esc(task ? task.title : (metadata.task_id || 'Review')) + '</span>',
       '</div>',
       '<div class="cr-body">',
-      '<div class="cr-summary">' + esc(summary) + '</div>',
-      issues.length ? '<div class="review-issues">' + issues.map((issue) => '<div class="review-issue">' + esc(issue) + '</div>').join('') + '</div>' : '',
-      '<div class="cr-stats"><span>' + esc(fileCount) + '</span><span>' + esc(checkpoints) + '</span><span>' + esc(fileStat) + '</span></div>',
-      !passed && task ? '<div class="review-cycle">Sending back for fixes (' + esc(String((task.reviewCycles || 0) || 1)) + '/' + esc(String(task.maxReviewCycles || 5)) + ')</div>' : '',
+      passed
+        ? '<div class="cr-stats"><span>' + esc(String(fileCount) + ' file' + (fileCount === 1 ? '' : 's')) + '</span><span>+' + esc(String(linesAdded)) + '</span><span>-' + esc(String(linesRemoved)) + '</span></div>'
+        : '',
+      !passed && issues.length ? '<div class="review-issues">' + issues.map((issue) => '<div class="review-issue">' + esc(issue) + '</div>').join('') + '</div>' : '',
+      !passed ? '<div class="cr-summary">' + esc(recommendation) + '</div>' : '',
       '<div class="cr-actions">',
       '<button class="cr-btn crb-accept" data-review-action="accept" data-task-id="' + esc(metadata.task_id || '') + '">Accept &amp; merge</button>',
       '<button class="cr-btn crb-view" data-review-action="diff" data-task-id="' + esc(metadata.task_id || '') + '">View diff</button>',
@@ -1400,15 +1415,36 @@
     return '<div class="approval-burst">🔓 Task ' + esc(item.taskId || '?') + ': auto-approved ' + item.count + ' ' + label + '</div>';
   }
 
-  function renderMessageItem(item) {
+  function itemTimestamp(item) {
+    if (!item) return null;
+    if (item.kind === 'approval-burst') return item.lastTimestamp || item.firstTimestamp || null;
+    return item.message ? item.message.timestamp : null;
+  }
+
+  function isSystemTimelineItem(item) {
+    return !!item && item.kind !== 'user' && item.kind !== 'approval-burst';
+  }
+
+  function shouldGroupSystemItem(items, index) {
+    const item = items[index];
+    const previous = items[index - 1];
+    if (!isSystemTimelineItem(item) || !isSystemTimelineItem(previous)) return false;
+    const itemTs = parseIso(itemTimestamp(item));
+    const prevTs = parseIso(itemTimestamp(previous));
+    if (!itemTs || !prevTs) return false;
+    return (itemTs - prevTs) <= 30000;
+  }
+
+  function renderMessageItem(item, grouped) {
+    const groupClass = grouped ? ' msg-grouped' : '';
     if (item.kind === 'approval-burst') return renderBurst(item);
     if (item.kind === 'plan' || item.kind === 'plan-synthetic') {
       const time = relativeTime(item.message.timestamp);
       return [
-        '<div class="msg">',
-        '<div class="msg-av av-c">⌘</div>',
+        '<div class="msg' + groupClass + '">',
+        grouped ? '' : '<div class="msg-av av-c">⌘</div>',
         '<div class="msg-body">',
-        '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">' + esc(time) + '</span></div>',
+        grouped ? '' : '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">' + esc(time) + '</span></div>',
         renderPlanCard(),
         '</div>',
         '</div>'
@@ -1447,10 +1483,10 @@
     }
 
     return [
-      '<div class="msg' + (isUser ? ' user' : '') + '">',
-      '<div class="msg-av ' + (isUser ? 'av-r">Y' : 'av-c">⌘') + '</div>',
+      '<div class="msg' + (isUser ? ' user' : '') + groupClass + '">',
+      (grouped && !isUser) ? '' : '<div class="msg-av ' + (isUser ? 'av-r">Y' : 'av-c">⌘') + '</div>',
       '<div class="msg-body">',
-      header,
+      (grouped && !isUser) ? '' : header,
       content,
       '</div>',
       '</div>'
@@ -1480,7 +1516,7 @@
     if (!items.length) {
       els.messageColumn.innerHTML = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">Waiting for the objective to start.</div></div></div>';
     } else {
-      els.messageColumn.innerHTML = '<div class="thread-div">now</div>' + items.map(renderMessageItem).join('');
+      els.messageColumn.innerHTML = '<div class="thread-div">now</div>' + items.map((item, index) => renderMessageItem(item, shouldGroupSystemItem(items, index))).join('');
     }
     els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {
       node.addEventListener('click', async () => {
