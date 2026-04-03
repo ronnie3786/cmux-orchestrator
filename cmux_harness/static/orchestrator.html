@@ -393,7 +393,6 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--blue);
-    text-transform: uppercase;
     letter-spacing: .04em;
   }
   .cp-check-badge {
@@ -1187,6 +1186,10 @@
     if (!content) return false;
     if (/No launchable tasks found\. Task statuses:/i.test(content)) return true;
     if (/terminal active but no progress updates/i.test(content)) return true;
+    if (/Reviewing Task task-/i.test(content)) return true;
+    if (/Launching \d+ ready tasks:/i.test(content)) return true;
+    if (/^Task task-[A-Za-z0-9_-]+:.*[—-]\s*launched$/i.test(content)) return true;
+    if (/^Task task-[A-Za-z0-9_-]+: completed, starting review\.\.\.$/i.test(content)) return true;
     if (/^\[\((?:\\x27|')[\s\S]*\)\]$/.test(content) && /(\\x27|')task-[A-Za-z0-9_-]+/.test(content)) return true;
     return false;
   }
@@ -1209,14 +1212,15 @@
       const taskId = extractTaskId(message);
       if (shouldCollapseAutoApproval(message)) {
         const previous = items[items.length - 1];
-        if (previous && previous.kind === 'approval-burst' && previous.taskId === taskId) {
+        if (previous && previous.kind === 'approval-burst') {
           previous.count += 1;
           previous.lastTimestamp = message.timestamp;
+          if (taskId && !previous.taskIds.includes(taskId)) previous.taskIds.push(taskId);
         } else {
           items.push({
             kind: 'approval-burst',
             id: 'burst-' + message.id,
-            taskId,
+            taskIds: taskId ? [taskId] : [],
             count: 1,
             firstTimestamp: message.timestamp,
             lastTimestamp: message.timestamp
@@ -1412,7 +1416,10 @@
 
   function renderBurst(item) {
     const label = item.count === 1 ? 'permission' : 'permissions';
-    return '<div class="approval-burst">🔓 Task ' + esc(item.taskId || '?') + ': auto-approved ' + item.count + ' ' + label + '</div>';
+    const taskSuffix = item.taskIds && item.taskIds.length
+      ? ' (' + esc(item.taskIds.join(', ')) + ')'
+      : '';
+    return '<div class="approval-burst">🔓 Auto-approved ' + item.count + ' ' + label + taskSuffix + '</div>';
   }
 
   function itemTimestamp(item) {
