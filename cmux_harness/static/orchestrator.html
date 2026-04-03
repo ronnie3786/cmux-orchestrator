@@ -224,7 +224,7 @@
     min-width: 0;
   }
 
-  /* thin top strip — current objective context */
+  /* thin top strip - current objective context */
   .obj-context {
     height: 42px;
     border-bottom: 1px solid var(--b);
@@ -1773,7 +1773,7 @@
   <div class="input-area">
     <div class="input-wrap">
       <div class="input-box">
-        <textarea class="chat-input" id="chatInput" placeholder="Give it a goal, ask what’s happening, or just wait…"></textarea>
+        <textarea class="chat-input" id="chatInput" placeholder="Give it a goal, ask what's happening, or just wait…"></textarea>
         <button class="send-btn" id="sendButton" aria-label="Send">↑</button>
       </div>
       <div class="input-hint" id="inputHint">cmux will update you as tasks complete</div>
@@ -2878,7 +2878,7 @@
     if (/terminal active but no progress updates/i.test(content)) return true;
     if (/Reviewing Task task-/i.test(content)) return true;
     if (/Launching \d+ ready tasks:/i.test(content)) return true;
-    if (/^Task task-[A-Za-z0-9_-]+:.*[—-]\s*launched$/i.test(content)) return true;
+    if (/^Task task-[A-Za-z0-9_-]+:.*[--]\s*launched$/i.test(content)) return true;
     if (/^Task task-[A-Za-z0-9_-]+: completed, starting review\.\.\.$/i.test(content)) return true;
     if (/^\[\((?:\\x27|')[\s\S]*\)\]$/.test(content) && /(\\x27|')task-[A-Za-z0-9_-]+/.test(content)) return true;
     return false;
@@ -3000,7 +3000,7 @@
       tasks.map((task) => {
         const status = String(task.status || '').toLowerCase();
         let iconClass = 'pri-queue';
-        let icon = '–';
+        let icon = '-';
         let statusClass = 'prs-queue';
         let statusText = 'waiting';
         if (status === 'completed') {
@@ -3261,7 +3261,7 @@
       '<div class="empty-state">',
       '<div class="empty-card">',
       '<div class="empty-kicker">Orchestrator</div>',
-      '<div class="empty-title">Give me a goal and a codebase — I’ll break it down and build it.</div>',
+      '<div class="empty-title">Give me a goal and a codebase - I'll break it down and build it.</div>',
       '<div class="empty-copy">Start with the input below or open <span class="mono">New objective</span> to set the project directory first.</div>',
       '</div>',
       '</div>'
@@ -3338,13 +3338,28 @@
   function renderInputState() {
     const objective = state.activeObjective;
     const status = String(objective && objective.status || '').toLowerCase();
-    const active = objective && ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(status);
-    els.inputHint.textContent = status === 'plan_review'
-      ? 'Type feedback in chat or approve the plan above.'
-      : (active ? 'cmux will update you as tasks complete' : 'No active run selected. Sending will create a new objective.');
-    els.chatInput.placeholder = status === 'plan_review'
-      ? 'Type plan feedback or approve above...'
-      : 'Give it a goal, ask what’s happening, or just wait…';
+    const hasObjective = !!state.activeObjectiveId && !!objective;
+    if (!hasObjective) {
+      els.inputHint.textContent = 'Select or create an objective to start.';
+      els.chatInput.placeholder = 'No objective selected...';
+      els.chatInput.disabled = true;
+      els.sendButton.disabled = true;
+      return;
+    }
+    els.chatInput.disabled = false;
+    if (status === 'plan_review') {
+      els.inputHint.textContent = 'Type feedback in chat or approve the plan above.';
+      els.chatInput.placeholder = 'Type plan feedback or approve above...';
+    } else if (status === 'completed') {
+      els.inputHint.textContent = 'Objective complete. Ask questions about the work done.';
+      els.chatInput.placeholder = 'Ask about the completed work...';
+    } else if (status === 'failed') {
+      els.inputHint.textContent = 'Objective failed. Type "retry" to restart or ask what happened.';
+      els.chatInput.placeholder = 'Type retry or ask what went wrong...';
+    } else {
+      els.inputHint.textContent = 'Chat with the orchestrator about this objective.';
+      els.chatInput.placeholder = 'Ask about status, blockers, or give feedback...';
+    }
     els.sendButton.disabled = state.pendingCreate || state.pendingSend;
   }
 
@@ -3500,22 +3515,8 @@
   async function sendMessage() {
     const text = els.chatInput.value.trim();
     if (!text) return;
-    if (!state.activeObjectiveId || !state.activeObjective || ['completed'].includes(String(state.activeObjective.status).toLowerCase())) {
-      const projectDir = (state.draftProjectDir || defaultProjectDir()).trim();
-      const baseBranch = defaultBaseBranch().trim() || 'main';
-      if (projectDir) {
-        state.draftGoal = text;
-        try {
-          await createObjective(text, projectDir, baseBranch, state.draftBranchName);
-        } catch (error) {
-          showToast(error.message || 'Could not create objective');
-        }
-      } else {
-        state.draftGoal = text;
-        openSidebarForm(text);
-        const sidebarGoalInput = document.getElementById('sidebarGoalInput');
-        if (sidebarGoalInput) sidebarGoalInput.focus();
-      }
+    if (!state.activeObjectiveId || !state.activeObjective) {
+      showToast('No active objective selected. Use "New objective" to create one.');
       return;
     }
     state.pendingSend = true;
