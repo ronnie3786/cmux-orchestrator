@@ -78,6 +78,13 @@ class TestObjectives(unittest.TestCase):
         self.assertEqual(content, "done")
         self.assertIsNone(objectives.read_task_file(objective["id"], "task-1", "missing.md"))
 
+    def test_delete_objective_removes_directory(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+
+        self.assertTrue(objectives.delete_objective(objective["id"]))
+        self.assertFalse((self.objectives_dir / objective["id"]).exists())
+        self.assertFalse(objectives.delete_objective(objective["id"]))
+
 
 if __name__ == "__main__":
     unittest.main()

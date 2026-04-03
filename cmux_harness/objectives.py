@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,3 +135,11 @@ def write_task_file(objective_id: str, task_id: str, filename: str, content: str
     task_dir = get_objective_dir(objective_id) / "tasks" / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / filename).write_text(content, encoding="utf-8")
+
+
+def delete_objective(objective_id: str) -> bool:
+    objective_dir = get_objective_dir(objective_id)
+    if not objective_dir.exists():
+        return False
+    shutil.rmtree(objective_dir)
+    return True

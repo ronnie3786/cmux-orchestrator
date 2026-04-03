@@ -147,6 +147,46 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIsNone(self.orchestrator.get_active_objective_id())
         self.assertEqual(self.orchestrator.get_messages(objective["id"])[-1]["content"], "Objective stopped.")
 
+    def test_log_event_persists_jsonl_and_filters(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+
+        self.orchestrator._log_event(objective["id"], "info", "planning_start", {"attempt": 1})
+        self.orchestrator._log_event(objective["id"], "error", "planning_failure", {"reason": "timeout"})
+
+        debug_path = self.objectives_dir / objective["id"] / "debug.jsonl"
+        lines = debug_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        parsed = [json.loads(line) for line in lines]
+        self.assertEqual(parsed[0]["event"], "planning_start")
+        self.assertEqual(parsed[1]["level"], "error")
+        self.assertEqual(len(self.orchestrator.get_debug_entries(objective["id"], limit=1)), 1)
+        self.assertEqual(len(self.orchestrator.get_debug_entries(objective["id"], level="error")), 1)
+
+    def test_stop_and_cleanup_closes_task_workspaces(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        objectives.update_objective(
+            objective["id"],
+            {
+                "tasks": [
+                    {"id": "task-1", "workspaceId": "ws-1"},
+                    {"id": "task-2", "workspaceId": "ws-2"},
+                    {"id": "task-3", "workspaceId": "ws-1"},
+                ]
+            },
+        )
+        self.orchestrator._active_objective_id = objective["id"]
+
+        with patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request:
+            self.assertTrue(self.orchestrator.stop_and_cleanup(objective["id"]))
+
+        self.assertEqual(
+            mock_request.call_args_list,
+            [
+                unittest.mock.call("workspace.close", {"workspace_id": "ws-1"}),
+                unittest.mock.call("workspace.close", {"workspace_id": "ws-2"}),
+            ],
+        )
+
 
 class TestAPIEndpoints(unittest.TestCase):
 
@@ -205,7 +245,7 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(messages[0]["content"], "Need a change here")
 
     def test_run_planning_defaults_to_ten_minute_timeout(self):
-        self.assertEqual(Orchestrator._run_planning.__defaults__, (5, 36, 120))
+        self.assertEqual(Orchestrator._run_planning.__defaults__, (10, 36, 90))
 
 class TestPlanningPipeline(unittest.TestCase):
 
@@ -639,7 +679,12 @@ class TestReviewRework(unittest.TestCase):
             text=f"cd {worktree} && claude\n",
             workspace_uuid="ws-1",
         )
-        mock_wait.assert_called_once_with("ws-1")
+        mock_wait.assert_called_once_with(
+            "ws-1",
+            objective_id=objective["id"],
+            purpose="rework",
+            task_id="task-1",
+        )
         mock_send_prompt.assert_called_once()
         self.assertTrue(
             any("sending back for fixes" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"]))

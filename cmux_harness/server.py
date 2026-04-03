@@ -166,6 +166,20 @@ def make_handler(engine):
                 after = params.get("after", [None])[0]
                 messages = self.server.engine.orchestrator.get_messages(objective_id, after=after)
                 self._json_response(messages)
+            elif path.startswith("/api/objectives/") and path.endswith("/debug"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/debug")]).strip("/")
+                if objectives.read_objective(objective_id) is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                params = urllib.parse.parse_qs(parsed.query)
+                try:
+                    limit = int(params.get("limit", ["200"])[0])
+                except (TypeError, ValueError):
+                    limit = 200
+                limit = max(1, min(limit, 500))
+                level = params.get("level", [None])[0]
+                entries = self.server.engine.orchestrator.get_debug_entries(objective_id, limit=limit, level=level)
+                self._json_response(entries)
             elif path.startswith("/api/objectives/"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
                 objective = objectives.read_objective(objective_id)
@@ -765,5 +779,19 @@ def make_handler(engine):
                 self._json_response({"ok": True, "diff": result})
             else:
                 self.send_error(404)
+
+        def do_DELETE(self):
+            path = urllib.parse.urlparse(self.path).path
+            if path.startswith("/api/objectives/"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                self.server.engine.orchestrator.stop_and_cleanup(objective_id)
+                objectives.delete_objective(objective_id)
+                self._json_response({"ok": True})
+                return
+            self.send_error(404)
 
     return DashboardHandler

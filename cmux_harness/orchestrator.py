@@ -5,6 +5,7 @@ import re
 import subprocess
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime, timezone
 
@@ -50,6 +51,62 @@ class Orchestrator:
         self._task_screen_cache = {}
         self._task_last_progress = {}
         self._lock = threading.Lock()
+
+    def _debug_log_path(self, objective_id):
+        return objectives.get_objective_dir(objective_id) / "debug.jsonl"
+
+    def _capture_screen_snapshot(self, workspace_uuid=None, lines=20):
+        if not workspace_uuid:
+            return ""
+        try:
+            screen = cmux_api.cmux_read_workspace(0, 0, lines=max(lines, 20), workspace_uuid=workspace_uuid) or ""
+        except Exception:
+            return ""
+        if not screen:
+            return ""
+        chunks = screen.splitlines()
+        return "\n".join(chunks[-lines:])
+
+    def _log_event(self, objective_id, level, event, details=None):
+        if not objective_id:
+            return
+        payload = {
+            "timestamp": _utc_now_iso(),
+            "level": str(level or "info"),
+            "event": str(event or "unknown"),
+            "details": details if isinstance(details, dict) else {},
+        }
+        path = self._debug_log_path(objective_id)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload) + "\n")
+        except OSError:
+            pass
+
+    def get_debug_entries(self, objective_id, limit=200, level=None):
+        entries = []
+        path = self._debug_log_path(objective_id)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    if level and str(entry.get("level", "")).lower() != str(level).lower():
+                        continue
+                    entries.append(entry)
+        except OSError:
+            return []
+        if limit is not None and limit >= 0:
+            return entries[-limit:]
+        return entries
 
     def _append_message(self, objective_id, msg_type, content, metadata=None):
         msg = {
@@ -133,6 +190,12 @@ class Orchestrator:
                 return False
             self._active_objective_id = objective_id
         objectives.update_objective(objective_id, {"status": "planning"})
+        self._log_event(
+            objective_id,
+            "info",
+            "objective_start",
+            {"status": "planning", "goal": objective.get("goal"), "projectDir": objective.get("projectDir")},
+        )
         self._append_message(
             objective_id,
             "system",
@@ -141,9 +204,19 @@ class Orchestrator:
         threading.Thread(target=self._run_planning, args=(objective_id,), daemon=True).start()
         return True
 
-    def _run_planning(self, objective_id, _poll_interval=5, _grace_polls=36, _max_polls=120):
+    def _run_planning(self, objective_id, _poll_interval=10, _grace_polls=36, _max_polls=90):
         workspace_uuid = None
         try:
+            self._log_event(
+                objective_id,
+                "info",
+                "planning_start",
+                {
+                    "pollIntervalSeconds": _poll_interval,
+                    "gracePolls": _grace_polls,
+                    "maxPolls": _max_polls,
+                },
+            )
             self._append_message(
                 objective_id,
                 "system",
@@ -157,6 +230,12 @@ class Orchestrator:
             project_dir = objective.get("projectDir", "")
             if not goal or not project_dir:
                 objectives.update_objective(objective_id, {"status": "failed"})
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "planning_failure",
+                    {"reason": "missing_goal_or_project_dir"},
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -167,9 +246,17 @@ class Orchestrator:
             workspace_uuid, created = self._create_worker_workspace(
                 f"Planner: {goal[:40]}",
                 project_dir,
+                objective_id=objective_id,
+                purpose="planning",
             )
             if not created or not workspace_uuid:
                 objectives.update_objective(objective_id, {"status": "failed"})
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "planning_failure",
+                    {"reason": "workspace_create_failed"},
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -177,8 +264,18 @@ class Orchestrator:
                 )
                 return
 
-            if not self._wait_for_repl(workspace_uuid):
+            if not self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="planning"):
                 objectives.update_objective(objective_id, {"status": "failed"})
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "planning_failure",
+                    {
+                        "reason": "repl_timeout",
+                        "workspaceId": workspace_uuid,
+                        "screen_last_20_lines": self._capture_screen_snapshot(workspace_uuid),
+                    },
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -194,6 +291,16 @@ class Orchestrator:
             )
             if not prompt_sent:
                 objectives.update_objective(objective_id, {"status": "failed"})
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "planning_failure",
+                    {
+                        "reason": "prompt_delivery_failed",
+                        "workspaceId": workspace_uuid,
+                        "screen_last_20_lines": self._capture_screen_snapshot(workspace_uuid),
+                    },
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -216,6 +323,19 @@ class Orchestrator:
                 plan_exists = os.path.isfile(plan_path)
                 screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=workspace_uuid) or ""
                 claude_running = detection.detect_claude_session(screen)
+                if attempt == 0 or (attempt + 1) % 5 == 0:
+                    self._log_event(
+                        objective_id,
+                        "info",
+                        "planning_poll",
+                        {
+                            "attempt": attempt + 1,
+                            "maxPolls": _max_polls,
+                            "planExists": plan_exists,
+                            "claudeRunning": bool(claude_running),
+                            "seenClaudeActive": seen_claude_active,
+                        },
+                    )
                 if claude_running:
                     seen_claude_active = True
 
@@ -235,6 +355,16 @@ class Orchestrator:
                                 "workspace_id": workspace_uuid,
                                 "key": "enter",
                             })
+                        self._log_event(
+                            objective_id,
+                            "info",
+                            "task_approval",
+                            {
+                                "mode": "auto",
+                                "phase": "planning",
+                                "workspaceId": workspace_uuid,
+                            },
+                        )
                     except Exception:
                         pass
                     # Don't check exit status this cycle — we just approved
@@ -254,6 +384,16 @@ class Orchestrator:
                     if plan_exists:
                         break
                     objectives.update_objective(objective_id, {"status": "failed"})
+                    self._log_event(
+                        objective_id,
+                        "error",
+                        "planning_failure",
+                        {
+                            "reason": "claude_exited_before_plan",
+                            "workspaceId": workspace_uuid,
+                            "screen_last_20_lines": self._capture_screen_snapshot(workspace_uuid),
+                        },
+                    )
                     self._append_message(
                         objective_id,
                         "alert",
@@ -264,6 +404,16 @@ class Orchestrator:
                     time.sleep(_poll_interval)
             else:
                 objectives.update_objective(objective_id, {"status": "failed"})
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "planning_failure",
+                    {
+                        "reason": "timeout_waiting_for_plan",
+                        "workspaceId": workspace_uuid,
+                        "screen_last_20_lines": self._capture_screen_snapshot(workspace_uuid),
+                    },
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -277,6 +427,12 @@ class Orchestrator:
             if "error" in parsed:
                 objectives.update_objective(objective_id, {"status": "failed"})
                 raw_plan = parsed.get("raw_plan", plan_text)
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "planning_failure",
+                    {"reason": "plan_parse_failed", "rawPlanPreview": raw_plan[:2000]},
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -286,6 +442,12 @@ class Orchestrator:
 
             tasks = planner.plan_to_tasks(parsed, objective_id)
             objectives.update_objective(objective_id, {"tasks": tasks, "status": "executing"})
+            self._log_event(
+                objective_id,
+                "info",
+                "planning_success",
+                {"taskCount": len(tasks), "taskIds": [task.get("id") for task in tasks]},
+            )
             self._append_message(
                 objective_id,
                 "plan",
@@ -293,9 +455,20 @@ class Orchestrator:
                 metadata={"tasks": tasks},
             )
         except Exception as exc:
-            import traceback
             tb = traceback.format_exc()
             objectives.update_objective(objective_id, {"status": "failed"})
+            self._log_event(
+                objective_id,
+                "error",
+                "exception",
+                {
+                    "phase": "planning",
+                    "error": str(exc),
+                    "traceback": tb,
+                    "workspaceId": workspace_uuid,
+                    "screen_last_20_lines": self._capture_screen_snapshot(workspace_uuid),
+                },
+            )
             self._append_message(
                 objective_id,
                 "alert",
@@ -306,6 +479,12 @@ class Orchestrator:
             if workspace_uuid:
                 try:
                     cmux_api._v2_request("workspace.close", {"workspace_id": workspace_uuid})
+                    self._log_event(
+                        objective_id,
+                        "info",
+                        "workspace_closed",
+                        {"workspaceId": workspace_uuid, "purpose": "planning"},
+                    )
                 except Exception:
                     pass
 
@@ -313,8 +492,17 @@ class Orchestrator:
             try:
                 self._launch_ready_tasks(objective_id)
             except Exception as exc:
-                import traceback
                 tb = traceback.format_exc()
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "exception",
+                    {
+                        "phase": "launch_initial_tasks",
+                        "error": str(exc),
+                        "traceback": tb,
+                    },
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -329,9 +517,15 @@ class Orchestrator:
         workspaces = list_result.get("workspaces", [])
         return [ws for ws in workspaces if isinstance(ws, dict)]
 
-    def _create_worker_workspace(self, title, cwd):
+    def _create_worker_workspace(self, title, cwd, objective_id=None, purpose="task", task_id=None):
         create_result = cmux_api._v2_request("workspace.create", {})
         if create_result is None:
+            self._log_event(
+                objective_id,
+                "error",
+                "workspace_creation_failure",
+                {"purpose": purpose, "taskId": task_id, "cwd": cwd, "reason": "create_request_failed"},
+            )
             return None, False
 
         # Use workspace_id from create response (cmux 0.63+)
@@ -343,6 +537,12 @@ class Orchestrator:
             if all_ws:
                 workspace_uuid = all_ws[-1].get("id") or all_ws[-1].get("uuid")
             if not workspace_uuid:
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "workspace_creation_failure",
+                    {"purpose": purpose, "taskId": task_id, "cwd": cwd, "reason": "workspace_id_not_found"},
+                )
                 return None, False
 
         cmux_api._v2_request(
@@ -354,9 +554,21 @@ class Orchestrator:
             {"workspace_id": workspace_uuid, "text": f"cd {cwd} && claude\n"},
         )
         self.mutex.set_cooldown(workspace_uuid, 5.0)
+        self._log_event(
+            objective_id,
+            "info",
+            "workspace_creation_success",
+            {
+                "purpose": purpose,
+                "taskId": task_id,
+                "workspaceId": workspace_uuid,
+                "cwd": cwd,
+                "title": title,
+            },
+        )
         return workspace_uuid, True
 
-    def _wait_for_repl(self, ws_uuid, timeout_attempts=20, poll_interval=3.0):
+    def _wait_for_repl(self, ws_uuid, timeout_attempts=20, poll_interval=3.0, objective_id=None, purpose="task", task_id=None):
         repl_ready = re.compile(r"(Model:|Cost:\s*\$\d|\u276f\s*$)", re.MULTILINE | re.IGNORECASE)
         # Patterns for interactive prompts that need to be dismissed before REPL
         trust_folder = re.compile(r"(trust this folder|Yes, I trust|Enter to confirm)", re.IGNORECASE)
@@ -365,6 +577,17 @@ class Orchestrator:
         for attempt in range(timeout_attempts):
             screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=ws_uuid) or ""
             if repl_ready.search(screen):
+                self._log_event(
+                    objective_id,
+                    "info",
+                    "repl_ready",
+                    {
+                        "purpose": purpose,
+                        "taskId": task_id,
+                        "workspaceId": ws_uuid,
+                        "attempt": attempt + 1,
+                    },
+                )
                 return True
             # Dismiss "trust this folder" prompt by sending Enter
             if not dismissed_trust and trust_folder.search(screen):
@@ -389,6 +612,18 @@ class Orchestrator:
                     pass
             if attempt < timeout_attempts - 1:
                 time.sleep(poll_interval)
+        self._log_event(
+            objective_id,
+            "error",
+            "repl_timeout",
+            {
+                "purpose": purpose,
+                "taskId": task_id,
+                "workspaceId": ws_uuid,
+                "timeoutAttempts": timeout_attempts,
+                "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
+            },
+        )
         return False
 
     def _assemble_context(self, objective_id, task):
@@ -458,6 +693,12 @@ class Orchestrator:
                     base_branch,
                 )
             except Exception as exc:
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "task_failure",
+                    {"taskId": task["id"], "reason": "worktree_creation_failed", "error": str(exc)},
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -475,15 +716,41 @@ class Orchestrator:
             ws_uuid, created = self._create_worker_workspace(
                 f"Worker: {task['title'][:35]}",
                 worktree_path,
+                objective_id=objective_id,
+                purpose="task",
+                task_id=task["id"],
             )
             if not created or not ws_uuid:
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "task_failure",
+                    {"taskId": task["id"], "reason": "workspace_creation_failed"},
+                )
                 self._append_message(
                     objective_id,
                     "alert",
                     f"Task {task['id']}: workspace creation failed (uuid={ws_uuid}, created={created})",
                 )
                 continue
-            if not self._wait_for_repl(ws_uuid, timeout_attempts=10):
+            if not self._wait_for_repl(
+                ws_uuid,
+                timeout_attempts=10,
+                objective_id=objective_id,
+                purpose="task",
+                task_id=task["id"],
+            ):
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "task_failure",
+                    {
+                        "taskId": task["id"],
+                        "reason": "repl_not_ready",
+                        "workspaceId": ws_uuid,
+                        "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
+                    },
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -491,6 +758,17 @@ class Orchestrator:
                 )
                 continue
             if not cmux_api.send_prompt_to_workspace(ws_uuid, worker.build_task_prompt(task["id"])):
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "task_failure",
+                    {
+                        "taskId": task["id"],
+                        "reason": "prompt_delivery_failed",
+                        "workspaceId": ws_uuid,
+                        "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
+                    },
+                )
                 self._append_message(
                     objective_id,
                     "alert",
@@ -509,6 +787,18 @@ class Orchestrator:
                 objective_id,
                 "system",
                 f"Task {task['id']}: {task['title']} — launched",
+            )
+            self._log_event(
+                objective_id,
+                "info",
+                "task_launch",
+                {
+                    "taskId": task["id"],
+                    "title": task.get("title"),
+                    "workspaceId": ws_uuid,
+                    "worktreePath": worktree_path,
+                    "worktreeBranch": branch_name,
+                },
             )
 
     def poll_tasks(self, objective_id):
@@ -552,6 +842,12 @@ class Orchestrator:
                             "workspace_id": ws_uuid,
                             "key": "enter",
                         })
+                    self._log_event(
+                        objective_id,
+                        "info",
+                        "task_approval",
+                        {"taskId": task_id, "mode": "auto", "classification": "permission_prompt", "workspaceId": ws_uuid},
+                    )
                     self._append_message(
                         objective_id,
                         "system",
@@ -581,6 +877,17 @@ class Orchestrator:
                                 "workspace_id": ws_uuid,
                                 "key": "enter",
                             })
+                        self._log_event(
+                            objective_id,
+                            "info",
+                            "task_approval",
+                            {
+                                "taskId": task_id,
+                                "mode": "auto",
+                                "classification": classification,
+                                "workspaceId": ws_uuid,
+                            },
+                        )
                         self._append_message(
                             objective_id,
                             "system",
@@ -593,12 +900,24 @@ class Orchestrator:
                             objective_id,
                             "approval",
                             f"Task {task_id}: needs your input — {classification.get('reason', 'requires human judgment')}",
-                        metadata={
-                            "task_id": task_id,
-                            "classification": classification,
-                            "screen_preview": preview,
-                        },
-                    )
+                            metadata={
+                                "task_id": task_id,
+                                "classification": classification,
+                                "screen_preview": preview,
+                            },
+                        )
+                        self._log_event(
+                            objective_id,
+                            "warn",
+                            "task_approval",
+                            {
+                                "taskId": task_id,
+                                "mode": "manual_required",
+                                "classification": classification,
+                                "workspaceId": ws_uuid,
+                                "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
+                            },
+                        )
 
             last_ts = self._task_last_progress.get(task_id, 0)
             wt_path = task.get("worktreePath")
@@ -617,6 +936,12 @@ class Orchestrator:
                         "progress",
                         f"Task {task_id}: completed, starting review...",
                         metadata={"task_id": task_id},
+                    )
+                    self._log_event(
+                        objective_id,
+                        "info",
+                        "task_completion",
+                        {"taskId": task_id, "workspaceId": ws_uuid},
                     )
                     if hasattr(self, "_run_review"):
                         self._review_in_progress.add(task_id)
@@ -643,6 +968,17 @@ class Orchestrator:
                         "progress",
                         f"Task {task_id}: checkpoint '{latest_cp.get('name', '')}' — {latest_cp.get('status', '')}",
                         metadata={"task_id": task_id, "checkpoints": checkpoints},
+                    )
+                    self._log_event(
+                        objective_id,
+                        "info",
+                        "task_progress",
+                        {
+                            "taskId": task_id,
+                            "checkpoint": latest_cp.get("name", ""),
+                            "status": latest_cp.get("status", ""),
+                            "workspaceId": ws_uuid,
+                        },
                     )
 
             last_progress_at = self._task_last_progress.get(task_id)
@@ -680,12 +1016,30 @@ class Orchestrator:
                         "screen_preview": preview,
                     },
                 )
+                self._log_event(
+                    objective_id,
+                    "warn",
+                    "task_progress",
+                    {
+                        "taskId": task_id,
+                        "status": "stalled",
+                        "workspaceId": ws_uuid,
+                        "stuckStatus": stuck_status,
+                        "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
+                    },
+                )
             elif stuck_status.get("level") == "amber":
                 self._append_message(
                     objective_id,
                     "system",
                     f"Task {task_id}: terminal active but no progress updates ({stuck_status.get('elapsed_minutes', 0):.1f} min)",
                     metadata={"task_id": task_id, "stuck_status": stuck_status},
+                )
+                self._log_event(
+                    objective_id,
+                    "warn",
+                    "task_progress",
+                    {"taskId": task_id, "status": "amber", "workspaceId": ws_uuid, "stuckStatus": stuck_status},
                 )
 
     def _run_review_wrapper(self, objective_id, task_id):
@@ -747,6 +1101,7 @@ IMPORTANT:
 
     def _run_review(self, objective_id, task_id):
         self._append_message(objective_id, "review", f"Reviewing Task {task_id}...")
+        self._log_event(objective_id, "info", "review_start", {"taskId": task_id})
 
         objective = objectives.read_objective(objective_id)
         if objective is None:
@@ -846,6 +1201,12 @@ IMPORTANT:
                 "status": "completed",
                 "completedAt": _utc_now_iso(),
             })
+            self._log_event(
+                objective_id,
+                "info",
+                "review_result",
+                {"taskId": task_id, "verdict": "pass", "review": review_json, "cycle": review_cycle},
+            )
             self._append_message(
                 objective_id,
                 "review",
@@ -898,9 +1259,21 @@ IMPORTANT:
                             text=launch_text,
                             workspace_uuid=workspace_uuid,
                         )
-                    self._wait_for_repl(workspace_uuid)
+                    self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="rework", task_id=task_id)
                 cmux_api.send_prompt_to_workspace(workspace_uuid, rework_prompt)
             objectives.update_task(objective_id, task_id, {"status": "executing"})
+            self._log_event(
+                objective_id,
+                "warn",
+                "review_result",
+                {"taskId": task_id, "verdict": "fail", "review": review_json, "cycle": review_cycle},
+            )
+            self._log_event(
+                objective_id,
+                "warn",
+                "rework_triggered",
+                {"taskId": task_id, "issues": issues, "recommendation": recommendation, "workspaceId": workspace_uuid},
+            )
             self._append_message(
                 objective_id,
                 "review",
@@ -914,6 +1287,18 @@ IMPORTANT:
 
         objectives.update_task(objective_id, task_id, {"status": "failed"})
         issues, _ = monitor.build_review_rework_summary(review_json)
+        self._log_event(
+            objective_id,
+            "error",
+            "review_result",
+            {"taskId": task_id, "verdict": "fail", "review": review_json, "cycle": review_cycle, "failedPermanently": True},
+        )
+        self._log_event(
+            objective_id,
+            "error",
+            "task_failure",
+            {"taskId": task_id, "reason": "review_failed_max_cycles", "issues": issues},
+        )
         self._append_message(
             objective_id,
             "alert",
@@ -973,6 +1358,12 @@ IMPORTANT:
 
     def handle_human_input(self, objective_id, message, context=None):
         self._append_message(objective_id, "user", message)
+        self._log_event(
+            objective_id,
+            "info",
+            "human_input_received",
+            {"message": message, "context": context or {}},
+        )
 
         objective = objectives.read_objective(objective_id)
         if objective is None:
@@ -998,6 +1389,12 @@ IMPORTANT:
                     f"Sent '{context['approval_action']}' to Task {task_id}",
                     metadata={"task_id": task_id},
                 )
+                self._log_event(
+                    objective_id,
+                    "info",
+                    "task_approval",
+                    {"taskId": task_id, "mode": "manual", "action": context["approval_action"], "workspaceId": workspace_uuid},
+                )
             return
 
         if objective_status == "failed" and _RETRY_REQUEST_PATTERN.search(message or ""):
@@ -1017,6 +1414,12 @@ IMPORTANT:
                 "system",
                 f"Task {task_id}: taken over by human",
                 metadata={"task_id": task_id},
+            )
+            self._log_event(
+                objective_id,
+                "warn",
+                "task_failure",
+                {"taskId": task_id, "reason": "taken_over_by_human"},
             )
             return
 
@@ -1048,4 +1451,40 @@ IMPORTANT:
                 return False
             self._active_objective_id = None
         self._append_message(active_objective_id, "system", "Objective stopped.")
+        self._log_event(active_objective_id, "warn", "objective_stopped", {})
+        return True
+
+    def stop_and_cleanup(self, objective_id):
+        self.stop_objective(objective_id)
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return False
+        seen = set()
+        for task in objective.get("tasks", []):
+            workspace_id = task.get("workspaceId")
+            if not workspace_id or workspace_id in seen:
+                continue
+            seen.add(workspace_id)
+            try:
+                cmux_api._v2_request("workspace.close", {"workspace_id": workspace_id})
+                self._log_event(
+                    objective_id,
+                    "info",
+                    "workspace_closed",
+                    {"workspaceId": workspace_id, "purpose": "cleanup", "taskId": task.get("id")},
+                )
+            except Exception as exc:
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "exception",
+                    {
+                        "phase": "stop_and_cleanup",
+                        "taskId": task.get("id"),
+                        "workspaceId": workspace_id,
+                        "error": str(exc),
+                        "traceback": traceback.format_exc(),
+                        "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
+                    },
+                )
         return True

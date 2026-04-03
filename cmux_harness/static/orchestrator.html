@@ -276,6 +276,25 @@
     color: var(--t1);
     border-color: var(--purple-b);
   }
+  .ctx-icon-button {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t2);
+    cursor: pointer;
+    transition: all .15s;
+    font-size: 14px;
+  }
+  .ctx-icon-button:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
+  .ctx-icon-button.danger:hover {
+    color: var(--red);
+    border-color: rgba(248,113,113,.25);
+  }
 
   /* messages scroll area */
   .messages {
@@ -1400,6 +1419,200 @@
     opacity: .55;
     cursor: default;
   }
+  .debug-fab {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    width: 52px;
+    height: 52px;
+    border-radius: 999px;
+    border: 1px solid var(--b2);
+    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)), var(--raised);
+    color: var(--t1);
+    box-shadow: 0 12px 34px rgba(0,0,0,.38);
+    cursor: pointer;
+    z-index: 26;
+    font-size: 22px;
+  }
+  .debug-fab:hover {
+    background: var(--hover);
+  }
+  .debug-fab:disabled {
+    opacity: .45;
+    cursor: default;
+  }
+  .debug-fab-badge {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--red);
+    box-shadow: 0 0 0 3px rgba(17,17,24,.9);
+    display: none;
+  }
+  .debug-fab.has-errors .debug-fab-badge {
+    display: block;
+  }
+  .debug-modal {
+    width: min(880px, 94vw);
+    max-height: 82vh;
+    background: var(--sidebar);
+    border: 1px solid var(--b2);
+    border-radius: 16px;
+    box-shadow: 0 24px 80px rgba(0,0,0,.45);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .debug-head {
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .debug-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--t1);
+  }
+  .debug-subtitle {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--t2);
+  }
+  .debug-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .debug-copy-button {
+    border-radius: 8px;
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t2);
+    padding: 8px 10px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    cursor: pointer;
+  }
+  .debug-copy-button:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
+  .debug-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background:
+      linear-gradient(180deg, rgba(79,142,247,.05), transparent 20%),
+      var(--sidebar);
+  }
+  .debug-empty {
+    padding: 24px 10px;
+    text-align: center;
+    color: var(--t2);
+    font-size: 12px;
+  }
+  .debug-entry {
+    border: 1px solid var(--b);
+    border-radius: 12px;
+    background: var(--raised);
+    overflow: hidden;
+  }
+  .debug-entry-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .debug-entry-time {
+    font-size: 11px;
+    color: var(--t3);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+  }
+  .debug-level {
+    border-radius: 999px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .debug-level.info {
+    background: rgba(255,255,255,.05);
+    color: var(--t2);
+  }
+  .debug-level.warn {
+    background: var(--amber-d);
+    color: var(--amber);
+  }
+  .debug-level.error {
+    background: var(--red-d);
+    color: var(--red);
+  }
+  .debug-event {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--t1);
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+  }
+  .debug-entry details {
+    border-top: 1px solid var(--b);
+  }
+  .debug-entry summary {
+    padding: 9px 12px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 11px;
+    color: var(--t2);
+  }
+  .debug-entry summary::-webkit-details-marker {
+    display: none;
+  }
+  .debug-entry summary::before {
+    content: '▸';
+    margin-right: 6px;
+    color: var(--t3);
+  }
+  .debug-entry details[open] summary::before {
+    content: '▾';
+  }
+  .debug-details {
+    margin: 0;
+    padding: 0 12px 12px;
+    color: var(--t2);
+    font-size: 11px;
+    line-height: 1.65;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  @media (max-width: 760px) {
+    .debug-head {
+      flex-direction: column;
+    }
+    .debug-actions {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+    .debug-copy-button {
+      flex: 1;
+      text-align: center;
+    }
+    .debug-fab {
+      right: 16px;
+      bottom: 16px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -1518,6 +1731,28 @@
   </div>
 </div>
 
+<button class="debug-fab" id="debugFab" type="button" aria-label="Open debug log">
+  <span>🐛</span>
+  <span class="debug-fab-badge"></span>
+</button>
+
+<div class="modal-overlay" id="debugModal">
+  <div class="debug-modal" role="dialog" aria-modal="true" aria-labelledby="debugModalTitle">
+    <div class="debug-head">
+      <div>
+        <div class="debug-title" id="debugModalTitle">Debug Log</div>
+        <div class="debug-subtitle" id="debugModalSubtitle"></div>
+      </div>
+      <div class="debug-actions">
+        <button class="debug-copy-button" id="debugCopyAllButton" type="button">Copy All</button>
+        <button class="debug-copy-button" id="debugCopyLastButton" type="button">Copy Last 20</button>
+        <button class="settings-close" id="debugCloseButton" aria-label="Close debug log">×</button>
+      </div>
+    </div>
+    <div class="debug-body" id="debugLogBody"></div>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
@@ -1539,6 +1774,10 @@
     sidebarFormOpen: false,
     settingsOpen: false,
     settingsSaving: false,
+    debugOpen: false,
+    debugEntries: [],
+    debugHasErrors: false,
+    debugLoading: false,
     draftProjectDir: '',
     draftBaseBranch: 'main',
     draftGoal: '',
@@ -1549,7 +1788,8 @@
       messages: null,
       objective: null,
       git: null,
-      relative: null
+      relative: null,
+      debug: null
     }
   };
 
@@ -1574,6 +1814,13 @@
     settingsReviewEnabled: document.getElementById('settingsReviewEnabled'),
     settingsReviewModel: document.getElementById('settingsReviewModel'),
     settingsReviewBackend: document.getElementById('settingsReviewBackend'),
+    debugFab: document.getElementById('debugFab'),
+    debugModal: document.getElementById('debugModal'),
+    debugCloseButton: document.getElementById('debugCloseButton'),
+    debugCopyAllButton: document.getElementById('debugCopyAllButton'),
+    debugCopyLastButton: document.getElementById('debugCopyLastButton'),
+    debugModalSubtitle: document.getElementById('debugModalSubtitle'),
+    debugLogBody: document.getElementById('debugLogBody'),
     gitPanel: document.getElementById('gitPanel'),
     gitPanelBranch: document.getElementById('gitPanelBranch'),
     gitPanelPath: document.getElementById('gitPanelPath'),
@@ -1837,6 +2084,134 @@
   function gitButtonLabel() {
     const branch = state.gitStatus && state.gitStatus.branch ? state.gitStatus.branch : '';
     return branch ? ('⎇ ' + branch) : '⎇ git';
+  }
+
+  function currentObjectiveName() {
+    const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
+    return objective && objective.goal ? String(objective.goal) : 'No objective selected';
+  }
+
+  function debugJsonl(entries) {
+    return (entries || []).map((entry) => JSON.stringify(entry)).join('\n');
+  }
+
+  async function fetchDebugErrorState() {
+    if (!state.activeObjectiveId) {
+      state.debugHasErrors = false;
+      renderDebugChrome();
+      return;
+    }
+    try {
+      const errors = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/debug?level=error&limit=1');
+      state.debugHasErrors = Array.isArray(errors) && errors.length > 0;
+    } catch (error) {
+      state.debugHasErrors = false;
+    }
+    renderDebugChrome();
+  }
+
+  async function fetchDebugEntries() {
+    if (!state.activeObjectiveId) {
+      state.debugEntries = [];
+      renderDebugModal();
+      renderDebugChrome();
+      return;
+    }
+    state.debugLoading = true;
+    renderDebugModal();
+    try {
+      const entries = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/debug?limit=200');
+      state.debugEntries = Array.isArray(entries) ? entries : [];
+      state.debugHasErrors = state.debugEntries.some((entry) => String(entry.level || '').toLowerCase() === 'error');
+    } catch (error) {
+      state.debugEntries = [];
+      showToast(error.message || 'Could not load debug log');
+    } finally {
+      state.debugLoading = false;
+      renderDebugModal();
+      renderDebugChrome();
+      window.setTimeout(scrollDebugToBottom, 0);
+    }
+  }
+
+  function scrollDebugToBottom() {
+    if (!state.debugOpen) return;
+    els.debugLogBody.scrollTop = els.debugLogBody.scrollHeight;
+  }
+
+  function renderDebugChrome() {
+    els.debugFab.disabled = !state.activeObjectiveId;
+    els.debugFab.className = 'debug-fab' + (state.debugHasErrors ? ' has-errors' : '');
+    els.debugModal.className = 'modal-overlay' + (state.debugOpen ? ' open' : '');
+  }
+
+  function renderDebugModal() {
+    renderDebugChrome();
+    els.debugModalSubtitle.textContent = currentObjectiveName();
+    if (!state.debugOpen) return;
+    if (state.debugLoading && !state.debugEntries.length) {
+      els.debugLogBody.innerHTML = '<div class="debug-empty">Loading debug log…</div>';
+      return;
+    }
+    if (!state.debugEntries.length) {
+      els.debugLogBody.innerHTML = '<div class="debug-empty">No debug entries yet.</div>';
+      return;
+    }
+    els.debugLogBody.innerHTML = state.debugEntries.map((entry, index) => {
+      const level = String(entry.level || 'info').toLowerCase();
+      const details = entry.details && typeof entry.details === 'object' ? entry.details : {};
+      const detailsText = JSON.stringify(details, null, 2);
+      const detailsHtml = detailsText && detailsText !== '{}'
+        ? '<details' + (index === state.debugEntries.length - 1 ? ' open' : '') + '><summary>Details</summary><pre class="debug-details">' + esc(detailsText) + '</pre></details>'
+        : '';
+      return [
+        '<div class="debug-entry">',
+        '<div class="debug-entry-head">',
+        '<div class="debug-entry-time">' + esc(relativeTime(entry.timestamp)) + '</div>',
+        '<div class="debug-level ' + esc(level) + '">' + esc(level) + '</div>',
+        '<div class="debug-event">' + esc(entry.event || 'unknown') + '</div>',
+        '</div>',
+        detailsHtml,
+        '</div>'
+      ].join('');
+    }).join('');
+  }
+
+  async function openDebugModal() {
+    if (!state.activeObjectiveId) return;
+    state.debugOpen = true;
+    renderDebugModal();
+    await fetchDebugEntries();
+  }
+
+  function closeDebugModal() {
+    state.debugOpen = false;
+    renderDebugModal();
+  }
+
+  async function deleteActiveObjective() {
+    if (!state.activeObjectiveId) return;
+    const confirmed = window.confirm('Are you sure you want to clear this objective? This cannot be undone.');
+    if (!confirmed) return;
+    const deletingId = state.activeObjectiveId;
+    try {
+      await api('/api/objectives/' + encodeURIComponent(deletingId), { method: 'DELETE' });
+      if (state.activeObjectiveId === deletingId) {
+        state.activeObjectiveId = null;
+        state.activeObjective = null;
+        state.messages = [];
+        state.lastMessageTimestamp = null;
+        state.debugEntries = [];
+        state.debugHasErrors = false;
+        closeDebugModal();
+      }
+      await pollObjectives();
+      if (state.activeObjectiveId) await loadActiveObjective(true);
+      else render();
+      showToast('Objective cleared');
+    } catch (error) {
+      showToast(error.message || 'Could not clear objective');
+    }
   }
 
   function renderDiffView(diffText) {
@@ -2340,12 +2715,17 @@
       '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
       '<div class="ctx-actions">',
       gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
+      '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
       '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
       '</div>'
     ].join('');
     const gitButton = document.getElementById('gitPanelToggleButton');
     if (gitButton) {
       gitButton.addEventListener('click', toggleGitPanel);
+    }
+    const clearButton = document.getElementById('clearObjectiveButton');
+    if (clearButton) {
+      clearButton.addEventListener('click', deleteActiveObjective);
     }
   }
 
@@ -2760,6 +3140,7 @@
     renderContext();
     updateSidebarFormFromState();
     renderSettingsModal();
+    renderDebugModal();
     renderGitPanel();
     renderMessages();
     renderInputState();
@@ -2808,10 +3189,12 @@
     if (index >= 0) {
       state.objectives[index] = objective;
     }
+    await fetchDebugErrorState();
     if (forceRender) render();
     else {
       renderContext();
       renderSidebar();
+      renderDebugModal();
       renderMessages();
       renderInputState();
     }
@@ -2949,6 +3332,7 @@
     if (state.pollers.objective) window.clearInterval(state.pollers.objective);
     if (state.pollers.git) window.clearInterval(state.pollers.git);
     if (state.pollers.relative) window.clearInterval(state.pollers.relative);
+    if (state.pollers.debug) window.clearInterval(state.pollers.debug);
 
     state.pollers.objectives = window.setInterval(async () => {
       try {
@@ -2988,9 +3372,22 @@
       state.relativeTick = Date.now();
       renderSidebar();
       renderContext();
+      renderDebugModal();
       renderGitPanel();
       renderMessages();
     }, 30000);
+
+    state.pollers.debug = window.setInterval(async () => {
+      try {
+        if (state.debugOpen) {
+          await fetchDebugEntries();
+        } else if (state.activeObjectiveId) {
+          await fetchDebugErrorState();
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }, 5000);
   }
 
   function bindEvents() {
@@ -3003,6 +3400,17 @@
     els.settingsSaveButton.addEventListener('click', saveSettings);
     els.settingsModal.addEventListener('click', (event) => {
       if (event.target === els.settingsModal) closeSettingsModal();
+    });
+    els.debugFab.addEventListener('click', openDebugModal);
+    els.debugCloseButton.addEventListener('click', closeDebugModal);
+    els.debugModal.addEventListener('click', (event) => {
+      if (event.target === els.debugModal) closeDebugModal();
+    });
+    els.debugCopyAllButton.addEventListener('click', () => {
+      copyText(debugJsonl(state.debugEntries), 'Debug log');
+    });
+    els.debugCopyLastButton.addEventListener('click', () => {
+      copyText(debugJsonl(state.debugEntries.slice(-20)), 'Last 20 debug entries');
     });
     els.gitPanelRefreshButton.addEventListener('click', fetchGitStatus);
     els.gitPanelCopyButton.addEventListener('click', () => {
@@ -3031,6 +3439,11 @@
       if (event.key === 'Escape' && state.settingsOpen) {
         event.preventDefault();
         closeSettingsModal();
+        return;
+      }
+      if (event.key === 'Escape' && state.debugOpen) {
+        event.preventDefault();
+        closeDebugModal();
         return;
       }
       if (event.key === 'Escape' && els.diffOverlay.classList.contains('visible')) {
