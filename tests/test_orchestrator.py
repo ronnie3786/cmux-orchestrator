@@ -312,7 +312,8 @@ class TestTaskLauncher(unittest.TestCase):
         self.assertEqual(updated["tasks"][0]["worktreePath"], str(worktree_one))
         self.assertEqual(updated["tasks"][1]["worktreePath"], str(worktree_two))
         system_messages = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "system"]
-        self.assertEqual(len(system_messages), 2)
+        # 1 "Launching N ready tasks" + 2 "Task X: launched" = 3 system messages
+        self.assertEqual(len(system_messages), 3)
 
     def test_launch_ready_tasks_skips_blocked_tasks(self):
         tasks = [

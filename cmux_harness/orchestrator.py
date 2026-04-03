@@ -319,29 +319,21 @@ class Orchestrator:
         return [ws for ws in workspaces if isinstance(ws, dict)]
 
     def _create_worker_workspace(self, title, cwd):
-        pre_list = cmux_api._v2_request("workspace.list", {})
-        existing_ids = {
-            ws.get("id") or ws.get("uuid")
-            for ws in self._workspaces_from_result(pre_list)
-            if ws.get("id") or ws.get("uuid")
-        }
-
         create_result = cmux_api._v2_request("workspace.create", {})
         if create_result is None:
             return None, False
 
-        post_list = cmux_api._v2_request("workspace.list", {})
-        new_workspace = next(
-            (
-                ws for ws in self._workspaces_from_result(post_list)
-                if (ws.get("id") or ws.get("uuid")) not in existing_ids
-            ),
-            None,
-        )
-        if new_workspace is None:
-            return None, False
+        # Use workspace_id from create response (cmux 0.63+)
+        workspace_uuid = create_result.get("workspace_id")
+        if not workspace_uuid:
+            # Fallback: diff pre/post workspace lists
+            post_list = cmux_api._v2_request("workspace.list", {})
+            all_ws = self._workspaces_from_result(post_list)
+            if all_ws:
+                workspace_uuid = all_ws[-1].get("id") or all_ws[-1].get("uuid")
+            if not workspace_uuid:
+                return None, False
 
-        workspace_uuid = new_workspace.get("id") or new_workspace.get("uuid")
         cmux_api._v2_request(
             "workspace.rename",
             {"workspace_id": workspace_uuid, "title": title},
