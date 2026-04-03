@@ -51,6 +51,9 @@ class Orchestrator:
         self._task_screen_cache = {}
         self._task_last_progress = {}
         self._lock = threading.Lock()
+        self._orchestrator_response_pattern = re.compile(r"(?:^|\n)\s*(?:❯(?:\s|$)|[>›](?:\s|$)|Model:)", re.MULTILINE)
+        self._idle_sweep_thread = threading.Thread(target=self._idle_sweep, daemon=True)
+        self._idle_sweep_thread.start()
 
     def _debug_log_path(self, objective_id):
         return objectives.get_objective_dir(objective_id) / "debug.jsonl"
@@ -146,6 +149,183 @@ class Orchestrator:
                 "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
             }
             self._log_event(objective_id, "error", "exception", details)
+
+    def _build_orchestrator_context_prompt(self, objective):
+        task_lines = []
+        for task in objective.get("tasks", []):
+            if not isinstance(task, dict):
+                continue
+            task_lines.append(
+                "- {id}: {title} [{status}] (reviewCycles: {review_cycles})".format(
+                    id=task.get("id") or "unknown",
+                    title=task.get("title") or "Untitled task",
+                    status=task.get("status") or "unknown",
+                    review_cycles=task.get("reviewCycles", 0),
+                )
+            )
+        task_block = "\n".join(task_lines) if task_lines else "- No tasks"
+        return (
+            "You are the orchestrator assistant for this objective. Your role is to help the user understand "
+            "and interact with the work being done.\n\n"
+            f"Objective: {objective.get('goal') or ''}\n"
+            f"Status: {objective.get('status') or ''}\n"
+            f"Project: {objective.get('projectDir') or ''}\n"
+            f"Branch: {objective.get('branchName') or ''}\n"
+            f"Worktree: {objective.get('worktreePath') or ''}\n\n"
+            "You are running inside the objective's worktree. You can:\n"
+            "- Read files to answer questions about the code and work done\n"
+            "- Check objective.json for task statuses\n"
+            "- Run git commands (status, diff, log, commit, push)\n"
+            "- Open folders in Finder (open .)\n"
+            "- Check task progress in tasks/*/progress.md and tasks/*/result.md\n\n"
+            "The objective has these tasks:\n"
+            f"{task_block}\n\n"
+            "When answering questions, be concise and helpful. If the user asks about status, read objective.json "
+            "for the latest state."
+        )
+
+    def _extract_orchestrator_response(self, screen, baseline_screen="", user_message=""):
+        lines = [line.rstrip() for line in str(screen or "").splitlines()]
+        prompt_index = None
+        for idx in range(len(lines) - 1, -1, -1):
+            if self._orchestrator_response_pattern.search(lines[idx]):
+                prompt_index = idx
+                break
+        if prompt_index is not None:
+            lines = lines[:prompt_index]
+
+        baseline_lines = [line.rstrip() for line in str(baseline_screen or "").splitlines()]
+        common = 0
+        max_common = min(len(lines), len(baseline_lines))
+        while common < max_common and lines[common] == baseline_lines[common]:
+            common += 1
+        if common:
+            lines = lines[common:]
+
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and user_message and lines[0].strip() == user_message.strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        return "\n".join(lines).strip()
+
+    def _start_orchestrator_session(self, objective_id):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return None
+
+        goal = objective.get("goal") or ""
+        worktree_path = objective.get("worktreePath") or ""
+        if not goal or not worktree_path:
+            return None
+
+        previous_session_id = objective.get("orchestratorSessionId")
+        workspace_uuid, created = self._create_worker_workspace(
+            f"Orchestrator: {goal[:40]}",
+            worktree_path,
+            objective_id=objective_id,
+            purpose="orchestrator",
+        )
+        if not created or not workspace_uuid:
+            return None
+
+        if not self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="orchestrator"):
+            self._close_workspace(objective_id, workspace_uuid, "orchestrator_startup_failed")
+            return None
+
+        prompt = self._build_orchestrator_context_prompt(objective)
+        if not cmux_api.send_prompt_to_workspace(workspace_uuid, prompt):
+            self._close_workspace(objective_id, workspace_uuid, "orchestrator_context_failed")
+            return None
+
+        self._capture_orchestrator_response(
+            objective_id,
+            workspace_uuid,
+            append_message=False,
+            max_polls=90,
+        )
+
+        objectives.update_objective(
+            objective_id,
+            {
+                "orchestratorSessionId": workspace_uuid,
+                "orchestratorSessionActive": True,
+                "orchestratorLastActivityAt": _utc_now_iso(),
+            },
+        )
+        self._log_event(
+            objective_id,
+            "info",
+            "orchestrator_session_resumed" if previous_session_id else "orchestrator_session_started",
+            {"workspaceId": workspace_uuid},
+        )
+        return workspace_uuid
+
+    def _capture_orchestrator_response(
+        self,
+        objective_id,
+        workspace_uuid,
+        baseline_screen="",
+        user_message="",
+        append_message=True,
+        initial_delay=2.0,
+        poll_interval=2.0,
+        max_polls=90,
+    ):
+        time.sleep(initial_delay)
+        previous_screen = None
+        final_screen = ""
+        for attempt in range(max_polls):
+            screen = cmux_api.cmux_read_workspace(0, 0, lines=200, workspace_uuid=workspace_uuid) or ""
+            tail = "\n".join(screen.splitlines()[-5:])
+            if previous_screen is not None and screen == previous_screen and self._orchestrator_response_pattern.search(tail):
+                final_screen = screen
+                break
+            previous_screen = screen
+            if attempt < max_polls - 1:
+                time.sleep(poll_interval)
+        else:
+            final_screen = previous_screen or ""
+
+        response_text = self._extract_orchestrator_response(final_screen, baseline_screen, user_message)
+        if append_message and response_text:
+            self._append_message(objective_id, "assistant", response_text)
+            self._log_event(
+                objective_id,
+                "info",
+                "orchestrator_chat_response",
+                {"workspaceId": workspace_uuid, "message": user_message},
+            )
+        return response_text
+
+    def _idle_sweep(self):
+        while True:
+            time.sleep(60)
+            for objective in objectives.list_objectives():
+                if not objective.get("orchestratorSessionActive"):
+                    continue
+                if objective.get("status") not in ("completed", "failed"):
+                    continue
+                last_activity = objective.get("orchestratorLastActivityAt")
+                if not last_activity:
+                    continue
+                try:
+                    elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(last_activity)).total_seconds()
+                except ValueError:
+                    continue
+                if elapsed <= 3600:
+                    continue
+                workspace_uuid = objective.get("orchestratorSessionId")
+                if workspace_uuid:
+                    self._close_workspace(objective["id"], workspace_uuid, "idle_timeout")
+                objectives.update_objective(objective["id"], {"orchestratorSessionActive": False})
+                self._log_event(
+                    objective["id"],
+                    "info",
+                    "orchestrator_session_idle_shutdown",
+                    {"workspaceId": workspace_uuid},
+                )
 
     def _plan_review_metadata(self, parsed):
         tasks = []
@@ -1407,7 +1587,10 @@ IMPORTANT:
             if cycles > 1:
                 rework_count += 1
 
-        objectives.update_objective(objective_id, {"status": "completed"})
+        update_payload = {"status": "completed"}
+        if objective.get("orchestratorSessionActive"):
+            update_payload["orchestratorLastActivityAt"] = _utc_now_iso()
+        objectives.update_objective(objective_id, update_payload)
 
         summary_prompt = (
             "Summarize the following completed task results into a brief project summary:\n\n"
@@ -1537,41 +1720,33 @@ IMPORTANT:
             )
             return
 
-        tasks = objective.get("tasks", [])
-        task_lines = []
-        for task in tasks:
-            task_lines.append(
-                "- {id}: {title} [{status}] reviewCycles={review_cycles}".format(
-                    id=task.get("id") or "unknown",
-                    title=task.get("title") or "Untitled task",
-                    status=task.get("status") or "unknown",
-                    review_cycles=task.get("reviewCycles", 0),
-                )
-            )
-        task_summary = "\n".join(task_lines) if task_lines else "- No tasks"
-        prompt = (
-            "Objective goal:\n"
-            f"{objective.get('goal') or ''}\n\n"
-            "Objective status:\n"
-            f"{objective_status or 'unknown'}\n\n"
-            "Tasks summary:\n"
-            f"{task_summary}\n\n"
-            "User message:\n"
-            f"{message}\n\n"
-            "Answer the user question about this objective concisely."
-        )
-        response = claude_cli.run_haiku(prompt)
-        if isinstance(response, dict):
-            response_text = response.get("summary") or response.get("response") or json.dumps(response)
-        else:
-            response_text = str(response or "").strip()
-        self._append_message(objective_id, "assistant", response_text)
-        self._log_event(
+        orchestrator_ws = objective.get("orchestratorSessionId")
+        is_active = objective.get("orchestratorSessionActive", False)
+        if not orchestrator_ws or not is_active:
+            self._append_message(objective_id, "system", "Resuming orchestrator session...")
+            orchestrator_ws = self._start_orchestrator_session(objective_id)
+            if not orchestrator_ws:
+                self._append_message(objective_id, "alert", "Could not start orchestrator session.")
+                return
+
+        baseline_screen = cmux_api.cmux_read_workspace(0, 0, lines=200, workspace_uuid=orchestrator_ws) or ""
+        if not cmux_api.send_prompt_to_workspace(orchestrator_ws, message):
+            self._append_message(objective_id, "alert", "Could not deliver message to orchestrator session.")
+            return
+
+        objectives.update_objective(
             objective_id,
-            "info",
-            "chat_response",
-            {"status": objective_status or "unknown", "message": message},
+            {
+                "orchestratorLastActivityAt": _utc_now_iso(),
+                "orchestratorSessionId": orchestrator_ws,
+                "orchestratorSessionActive": True,
+            },
         )
+        threading.Thread(
+            target=self._capture_orchestrator_response,
+            args=(objective_id, orchestrator_ws, baseline_screen, message),
+            daemon=True,
+        ).start()
 
     def _poll_for_plan_revision(self, objective_id, plan_path, previous_mtime, _poll_interval=5, _max_seconds=600):
         deadline = time.time() + _max_seconds
@@ -1673,6 +1848,10 @@ IMPORTANT:
         if planner_workspace_id:
             seen.add(planner_workspace_id)
             self._close_workspace(objective_id, planner_workspace_id, "cleanup_planner")
+        orchestrator_workspace_id = objective.get("orchestratorSessionId")
+        if orchestrator_workspace_id and orchestrator_workspace_id not in seen:
+            seen.add(orchestrator_workspace_id)
+            self._close_workspace(objective_id, orchestrator_workspace_id, "cleanup_orchestrator")
         for task in objective.get("tasks", []):
             workspace_id = task.get("workspaceId")
             if not workspace_id or workspace_id in seen:

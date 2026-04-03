@@ -2,6 +2,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -265,18 +266,36 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0]["content"], "Second message")
 
-    def test_handle_human_input_logs_message(self):
+    def test_handle_human_input_routes_to_active_orchestrator_session(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "completed",
+                "orchestratorSessionId": "ws-orch",
+                "orchestratorSessionActive": True,
+            },
+        )
 
-        with patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value="Acknowledged."):
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="existing screen"), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
             self.orchestrator.handle_human_input(objective["id"], "Need a change here")
 
+        mock_send.assert_called_once_with("ws-orch", "Need a change here")
+        mock_thread.assert_called_once()
+        self.assertEqual(mock_thread.call_args.kwargs["target"], self.orchestrator._capture_orchestrator_response)
+        self.assertEqual(
+            mock_thread.call_args.kwargs["args"],
+            (objective["id"], "ws-orch", "existing screen", "Need a change here"),
+        )
         messages = self.orchestrator.get_messages(objective["id"])
-        self.assertEqual(len(messages), 2)
+        self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0]["type"], "user")
         self.assertEqual(messages[0]["content"], "Need a change here")
-        self.assertEqual(messages[1]["type"], "assistant")
-        self.assertEqual(messages[1]["content"], "Acknowledged.")
+        updated = objectives.read_objective(objective["id"])
+        self.assertTrue(updated["orchestratorSessionActive"])
+        self.assertEqual(updated["orchestratorSessionId"], "ws-orch")
 
     def test_run_planning_defaults_to_ten_minute_timeout(self):
         self.assertEqual(Orchestrator._run_planning.__defaults__, (10, 36, 90))
@@ -923,28 +942,153 @@ class TestReviewRework(unittest.TestCase):
         self.assertEqual(messages[0]["content"], "Please retry this")
         self.assertEqual(objectives.read_objective(objective["id"])["status"], "planning")
 
-    def test_handle_human_input_responds_for_completed_objective_chat(self):
+    def test_handle_human_input_resumes_inactive_orchestrator_session(self):
         tasks = [
             {"id": "task-1", "title": "First task", "status": "completed", "reviewCycles": 1},
             {"id": "task-2", "title": "Second task", "status": "failed", "reviewCycles": 3},
         ]
         objective = self._create_objective(tasks, status="completed")
+        objectives.update_objective(
+            objective["id"],
+            {
+                "orchestratorSessionId": "ws-old",
+                "orchestratorSessionActive": False,
+            },
+        )
 
-        with patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value="Two tasks completed, one needed rework.") as mock_haiku:
+        with patch.object(self.orchestrator, "_start_orchestrator_session", return_value="ws-new") as mock_start, \
+                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value=""), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
             self.orchestrator.handle_human_input(objective["id"], "Did all the tasks complete?")
 
-        prompt = mock_haiku.call_args.args[0]
-        self.assertIn("Objective goal:", prompt)
-        self.assertIn("Review tasks", prompt)
-        self.assertIn("Objective status:\ncompleted", prompt)
-        self.assertIn("task-1: First task [completed] reviewCycles=1", prompt)
-        self.assertIn("task-2: Second task [failed] reviewCycles=3", prompt)
-        self.assertIn("Did all the tasks complete?", prompt)
+        mock_start.assert_called_once_with(objective["id"])
+        mock_send.assert_called_once_with("ws-new", "Did all the tasks complete?")
+        mock_thread.assert_called_once()
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(messages[0]["type"], "user")
+        self.assertEqual(messages[1]["type"], "system")
+        self.assertEqual(messages[1]["content"], "Resuming orchestrator session...")
+
+
+class TestOrchestratorSessions(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.project_dir = Path(self.tmpdir.name) / "project"
+        self.project_dir.mkdir()
+        self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
+        self.patch_objectives_dir.start()
+        self.addCleanup(self.patch_objectives_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
+        self.orchestrator = Orchestrator(object())
+
+    def _create_objective(self, status="executing", tasks=None):
+        objective = objectives.create_objective("Session objective", str(self.project_dir))
+        objectives.update_objective(objective["id"], {"status": status, "tasks": tasks or []})
+        return objective
+
+    def test_start_orchestrator_session_creates_workspace_and_sets_fields(self):
+        objective = self._create_objective(
+            tasks=[{"id": "task-1", "title": "Inspect repo", "status": "queued", "reviewCycles": 0}]
+        )
+
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-orch", True)) as mock_create, \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True) as mock_wait, \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch.object(self.orchestrator, "_capture_orchestrator_response", return_value=""):
+            workspace_id = self.orchestrator._start_orchestrator_session(objective["id"])
+
+        self.assertEqual(workspace_id, "ws-orch")
+        mock_create.assert_called_once_with(
+            "Orchestrator: Session objective",
+            objective["worktreePath"],
+            objective_id=objective["id"],
+            purpose="orchestrator",
+        )
+        mock_wait.assert_called_once_with("ws-orch", objective_id=objective["id"], purpose="orchestrator")
+        prompt = mock_send.call_args.args[1]
+        self.assertIn("Objective: Session objective", prompt)
+        self.assertIn("Worktree: " + objective["worktreePath"], prompt)
+        self.assertIn("- task-1: Inspect repo [queued] (reviewCycles: 0)", prompt)
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["orchestratorSessionId"], "ws-orch")
+        self.assertTrue(updated["orchestratorSessionActive"])
+        self.assertIn("orchestratorLastActivityAt", updated)
+        entries = self.orchestrator.get_debug_entries(objective["id"])
+        self.assertTrue(any(entry["event"] == "orchestrator_session_started" for entry in entries))
+
+    def test_capture_orchestrator_response_waits_for_stable_prompt(self):
+        objective = self._create_objective()
+
+        with patch(
+            "cmux_harness.orchestrator.cmux_api.cmux_read_workspace",
+            side_effect=[
+                "User prompt\nWorking",
+                "User prompt\nFinal answer\n❯",
+                "User prompt\nFinal answer\n❯",
+            ],
+        ), patch("cmux_harness.orchestrator.time.sleep", return_value=None):
+            response = self.orchestrator._capture_orchestrator_response(
+                objective["id"],
+                "ws-orch",
+                baseline_screen="User prompt",
+                user_message="User prompt",
+                initial_delay=0,
+                poll_interval=0,
+                max_polls=3,
+            )
+
+        self.assertEqual(response, "Final answer")
         messages = self.orchestrator.get_messages(objective["id"])
         self.assertEqual(messages[-1]["type"], "assistant")
-        self.assertEqual(messages[-1]["content"], "Two tasks completed, one needed rework.")
+        self.assertEqual(messages[-1]["content"], "Final answer")
         entries = self.orchestrator.get_debug_entries(objective["id"])
-        self.assertTrue(any(entry["event"] == "chat_response" for entry in entries))
+        self.assertTrue(any(entry["event"] == "orchestrator_chat_response" for entry in entries))
+
+    def test_idle_sweep_shuts_down_old_completed_sessions(self):
+        objective = self._create_objective(status="completed")
+        old_timestamp = (datetime.now(timezone.utc) - timedelta(minutes=61)).isoformat()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "orchestratorSessionId": "ws-old",
+                "orchestratorSessionActive": True,
+                "orchestratorLastActivityAt": old_timestamp,
+            },
+        )
+
+        with patch.object(self.orchestrator, "_close_workspace") as mock_close, \
+                patch("cmux_harness.orchestrator.time.sleep", side_effect=[None, RuntimeError("stop")]):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                self.orchestrator._idle_sweep()
+
+        mock_close.assert_called_once_with(objective["id"], "ws-old", "idle_timeout")
+        updated = objectives.read_objective(objective["id"])
+        self.assertFalse(updated["orchestratorSessionActive"])
+
+    def test_idle_sweep_skips_active_execution_sessions(self):
+        objective = self._create_objective(status="executing")
+        old_timestamp = (datetime.now(timezone.utc) - timedelta(minutes=61)).isoformat()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "orchestratorSessionId": "ws-run",
+                "orchestratorSessionActive": True,
+                "orchestratorLastActivityAt": old_timestamp,
+            },
+        )
+
+        with patch.object(self.orchestrator, "_close_workspace") as mock_close, \
+                patch("cmux_harness.orchestrator.time.sleep", side_effect=[None, RuntimeError("stop")]):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                self.orchestrator._idle_sweep()
+
+        mock_close.assert_not_called()
+        updated = objectives.read_objective(objective["id"])
+        self.assertTrue(updated["orchestratorSessionActive"])
 
 
 if __name__ == "__main__":

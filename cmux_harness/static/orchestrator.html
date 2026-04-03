@@ -237,6 +237,30 @@
   .ctx-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .ctx-title { font-size: 13px; font-weight: 500; color: var(--t1); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ctx-meta { font-size: 12px; color: var(--t3); flex-shrink: 0; }
+  .ctx-session {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--t2);
+    flex-shrink: 0;
+    padding: 0 8px;
+    height: 24px;
+    border-radius: 999px;
+    border: 1px solid var(--b);
+    background: rgba(255,255,255,.03);
+  }
+  .ctx-session-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--t3);
+  }
+  .ctx-session.active .ctx-session-dot {
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(52,211,153,.45);
+  }
   .ctx-badge {
     font-size: 10px;
     font-weight: 600;
@@ -2865,11 +2889,13 @@
     const taskCount = progress.total + ' task' + (progress.total === 1 ? '' : 's');
     const gitPath = activeGitPath();
     const branchName = objective.branchName ? String(objective.branchName) : '';
+    const sessionActive = !!objective.orchestratorSessionActive;
     els.contextStrip.innerHTML = [
       '<div class="ctx-dot ' + meta.dot + '"></div>',
       '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
       '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
       branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
+      '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
       '<div class="ctx-actions">',
       gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
       '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
