@@ -54,6 +54,14 @@ def make_handler(engine):
             except (json.JSONDecodeError, TypeError):
                 return {}
 
+        def _resolve_git_path(self, path_value):
+            cwd = os.path.expanduser(str(path_value or "").strip())
+            if not cwd:
+                return None
+            if not os.path.isdir(cwd):
+                return None
+            return cwd
+
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
@@ -78,11 +86,18 @@ def make_handler(engine):
             elif path.startswith("/api/git-status"):
                 qs = parsed.query
                 params = urllib.parse.parse_qs(qs)
-                idx_str = params.get("index", [None])[0]
-                if idx_str is None:
-                    self._json_response({"ok": False, "error": "index required"}, 400)
-                    return
-                result = engine.get_git_status(int(idx_str))
+                if path == "/api/git-status-path":
+                    target_path = self._resolve_git_path(params.get("path", [None])[0])
+                    if target_path is None:
+                        self._json_response({"ok": False, "error": "path required"}, 400)
+                        return
+                    result = engine.get_git_status_for_path(target_path)
+                else:
+                    idx_str = params.get("index", [None])[0]
+                    if idx_str is None:
+                        self._json_response({"ok": False, "error": "index required"}, 400)
+                        return
+                    result = engine.get_git_status(int(idx_str))
                 if result is None:
                     self._json_response({"ok": False, "error": "workspace not found"}, 404)
                     return
@@ -170,6 +185,8 @@ def make_handler(engine):
                         "reviewEnabled": engine.review_enabled,
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
+                        "defaultProjectDir": engine.default_project_dir,
+                        "defaultBaseBranch": engine.default_base_branch,
                     })
             elif path == "/api/models":
                 # Use cached availability — if already known unavailable, skip the connect attempt
@@ -252,7 +269,13 @@ def make_handler(engine):
             elif path == "/api/objectives":
                 goal = data.get("goal", "")
                 project_dir = data.get("projectDir", "")
-                base_branch = data.get("baseBranch", "main")
+                base_branch = data.get("baseBranch")
+                if not project_dir:
+                    with engine._lock:
+                        project_dir = engine.default_project_dir
+                if not base_branch:
+                    with engine._lock:
+                        base_branch = engine.default_base_branch
                 if not goal or not project_dir:
                     self._json_response({"ok": False, "error": "goal and projectDir required"}, 400)
                     return
@@ -290,6 +313,13 @@ def make_handler(engine):
                         model=review_model,
                         backend=review_backend,
                     )
+                default_project_dir = data.get("defaultProjectDir")
+                default_base_branch = data.get("defaultBaseBranch")
+                if default_project_dir is not None or default_base_branch is not None:
+                    engine.set_default_objective_config(
+                        project_dir=default_project_dir,
+                        base_branch=default_base_branch,
+                    )
                 with engine._lock:
                     self._json_response({
                         "ok": True,
@@ -298,6 +328,8 @@ def make_handler(engine):
                         "reviewEnabled": engine.review_enabled,
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
+                        "defaultProjectDir": engine.default_project_dir,
+                        "defaultBaseBranch": engine.default_base_branch,
                     })
             elif path == "/api/rename":
                 idx = data.get("index")
@@ -524,7 +556,7 @@ def make_handler(engine):
 
                 # Save config
                 engine.ws_config.setdefault(ws_uuid, {})["customName"] = session_name
-                storage.save_config(engine.ws_config, engine.review_enabled, engine.review_model, engine.review_backend)
+                engine._save_config()
 
                 # Deliver prompt in background — waits for Claude Code REPL to be ready
                 if prompt and ws_uuid:
@@ -606,6 +638,17 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
                 self._json_response({"ok": True})
+            elif self.path == "/api/git-stage-path":
+                cwd = self._resolve_git_path(data.get("path"))
+                file = data.get("file")
+                if not cwd or not file:
+                    self._json_response({"ok": False, "error": "path and file required"}, 400)
+                    return
+                result = engine._run_git_command(cwd, ["add", "--", file])
+                if result.startswith("[error]"):
+                    self._json_response({"ok": False, "error": result}, 500)
+                    return
+                self._json_response({"ok": True})
             elif self.path == "/api/git-unstage":
                 idx = data.get("index")
                 file = data.get("file")
@@ -615,6 +658,17 @@ def make_handler(engine):
                 cwd = engine._get_workspace_cwd(int(idx))
                 if not cwd:
                     self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                    return
+                result = engine._run_git_command(cwd, ["reset", "HEAD", "--", file])
+                if result.startswith("[error]"):
+                    self._json_response({"ok": False, "error": result}, 500)
+                    return
+                self._json_response({"ok": True})
+            elif self.path == "/api/git-unstage-path":
+                cwd = self._resolve_git_path(data.get("path"))
+                file = data.get("file")
+                if not cwd or not file:
+                    self._json_response({"ok": False, "error": "path and file required"}, 400)
                     return
                 result = engine._run_git_command(cwd, ["reset", "HEAD", "--", file])
                 if result.startswith("[error]"):
@@ -657,6 +711,35 @@ def make_handler(engine):
                 full_path = os.path.join(cwd, file)
                 if section == "untracked" and os.path.isdir(full_path):
                     # Directory: collect diffs for all files inside
+                    parts = []
+                    for root, _dirs, files in os.walk(full_path):
+                        for fname in sorted(files):
+                            fpath = os.path.relpath(os.path.join(root, fname), cwd)
+                            part = engine._run_git_command(cwd, ["diff", "--no-index", "/dev/null", fpath], max_bytes=50 * 1024)
+                            if not part.startswith("[error]"):
+                                parts.append(part)
+                    result = "\n".join(parts) if parts else "(empty directory)"
+                else:
+                    if section == "staged":
+                        diff_args = ["diff", "--cached", "--", file]
+                    elif section == "untracked":
+                        diff_args = ["diff", "--no-index", "/dev/null", file]
+                    else:
+                        diff_args = ["diff", "--", file]
+                    result = engine._run_git_command(cwd, diff_args, max_bytes=50 * 1024)
+                if result.startswith("[error]"):
+                    self._json_response({"ok": False, "error": result}, 500)
+                    return
+                self._json_response({"ok": True, "diff": result})
+            elif self.path == "/api/git-diff-path":
+                cwd = self._resolve_git_path(data.get("path"))
+                file = data.get("file")
+                section = data.get("section", "unstaged")
+                if not cwd or not file:
+                    self._json_response({"ok": False, "error": "path and file required"}, 400)
+                    return
+                full_path = os.path.join(cwd, file)
+                if section == "untracked" and os.path.isdir(full_path):
                     parts = []
                     for root, _dirs, files in os.walk(full_path):
                         for fname in sorted(files):

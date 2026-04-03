@@ -178,6 +178,28 @@
     padding: 10px 14px;
     border-top: 1px solid var(--b);
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .sidebar-icon-button {
+    width: 100%;
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: var(--t2);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all .15s;
+  }
+  .sidebar-icon-button:hover {
+    background: var(--hover);
+    color: var(--t1);
   }
   .terminal-link {
     font-size: 11px;
@@ -193,7 +215,6 @@
     padding: 0;
   }
   .terminal-link:hover { color: var(--t2); }
-
   /* ─── MAIN ─── */
   .main {
     flex: 1;
@@ -227,6 +248,33 @@
     text-transform: uppercase;
     letter-spacing: .04em;
     flex-shrink: 0;
+  }
+  .ctx-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .ctx-git-button {
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t2);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    cursor: pointer;
+    transition: all .15s;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ctx-git-button:hover,
+  .ctx-git-button.open {
+    background: var(--hover);
+    color: var(--t1);
+    border-color: var(--purple-b);
   }
 
   /* messages scroll area */
@@ -439,11 +487,33 @@
   .pri-queue  { background: var(--t4); color: var(--t3); border: 1px solid var(--b); }
   .pri-failed { background: var(--red-d); color: var(--red); border: 1px solid rgba(248,113,113,.22); }
   .pr-name { flex: 1; color: var(--t1); font-size: 12px; }
+  .pr-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pr-name-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .pr-status { font-size: 10px; font-family: 'JetBrains Mono', monospace; }
   .prs-done   { color: var(--green); }
   .prs-active { color: var(--blue); }
   .prs-queue  { color: var(--t3); }
   .prs-failed { color: var(--red); }
+  .task-branch-badge {
+    font-family: 'JetBrains Mono';
+    font-size: 10px;
+    color: var(--t2);
+    background: var(--raised);
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
 
   /* ── progress update card ── */
   .card-progress {
@@ -462,6 +532,63 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .cp-meta {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 2px;
+  }
+  .cp-meta-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cp-path-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cp-path-value {
+    max-width: 100%;
+    background: rgba(255,255,255,.04);
+    color: var(--t1);
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid var(--b2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cp-copy-button {
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+    border-radius: 8px;
+    padding: 5px 9px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .cp-copy-button:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
+  .cp-branch {
+    width: fit-content;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--blue-b);
+    background: var(--blue-d);
+    color: var(--blue);
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
   }
   .cp-task-label {
     font-size: 11px;
@@ -870,6 +997,409 @@
     color: var(--t1);
     box-shadow: 0 8px 24px rgba(0,0,0,.24);
   }
+  .git-panel {
+    position: fixed;
+    top: 42px;
+    right: 0;
+    bottom: 0;
+    width: 340px;
+    background: var(--sidebar);
+    border-left: 1px solid var(--b);
+    box-shadow: -18px 0 40px rgba(0,0,0,.35);
+    transform: translateX(100%);
+    transition: transform .18s ease;
+    z-index: 18;
+    display: flex;
+    flex-direction: column;
+  }
+  .git-panel.open { transform: translateX(0); }
+  .git-panel-header {
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .git-panel-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .git-panel-branch {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--t1);
+  }
+  .git-panel-refresh {
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+  }
+  .git-panel-refresh:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
+  .git-panel-path-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .git-panel-path {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--t2);
+    font-family: 'JetBrains Mono', monospace;
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--b2);
+    border-radius: 8px;
+    padding: 7px 9px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .git-panel-copy {
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    cursor: pointer;
+  }
+  .git-panel-copy:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
+  .git-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0 16px;
+  }
+  .git-section {
+    padding: 8px 16px 4px;
+  }
+  .git-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .git-section-title.staged { color: var(--green); }
+  .git-section-title.unstaged { color: var(--amber); }
+  .git-section-title.untracked { color: var(--t2); }
+  .git-section-title.commits { color: var(--purple); }
+  .git-file {
+    display: flex;
+    align-items: center;
+    font-size: 11px;
+    font-family: 'JetBrains Mono','SF Mono',monospace;
+    padding: 4px;
+    margin: 1px -4px;
+    border-radius: 4px;
+    color: var(--t1);
+    overflow: hidden;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .1s;
+  }
+  .git-file:hover { background: rgba(255,255,255,.06); }
+  .git-file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .git-status {
+    display: inline-block;
+    min-width: 14px;
+    margin-right: 6px;
+    font-weight: 700;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .git-status.st-staged { color: var(--green); }
+  .git-status.st-unstaged { color: var(--amber); }
+  .git-status.st-untracked { color: var(--t2); }
+  .git-commit {
+    font-size: 11px;
+    font-family: 'JetBrains Mono','SF Mono',monospace;
+    padding: 4px;
+    margin: 1px -4px;
+    border-radius: 4px;
+    color: var(--t1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .git-commit:hover { background: rgba(255,255,255,.03); }
+  .git-hash { color: var(--purple); margin-right: 6px; }
+  .git-empty {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--t2);
+    font-size: 12px;
+  }
+  .git-ctx-menu {
+    position: fixed;
+    z-index: 40;
+    min-width: 160px;
+    background: var(--sidebar);
+    border: 1px solid var(--b2);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    padding: 4px 0;
+    font-size: 12px;
+    display: none;
+  }
+  .git-ctx-menu.visible { display: block; }
+  .git-ctx-item {
+    padding: 7px 14px;
+    color: var(--t1);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .git-ctx-item:hover { background: rgba(255,255,255,.08); }
+  .git-ctx-sep {
+    height: 1px;
+    background: var(--b);
+    margin: 4px 0;
+  }
+  .diff-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: rgba(0,0,0,.6);
+    backdrop-filter: blur(3px);
+  }
+  .diff-overlay.visible {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .diff-panel {
+    background: var(--sidebar);
+    border: 1px solid var(--b2);
+    border-radius: 16px;
+    width: 800px;
+    max-width: 92vw;
+    max-height: 80vh;
+    box-shadow: 0 16px 60px rgba(0,0,0,.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .diff-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--b);
+    flex-shrink: 0;
+  }
+  .diff-panel-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--t1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .diff-panel-body {
+    flex: 1;
+    overflow: auto;
+    padding: 0;
+  }
+  .diff-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono','SF Mono',monospace;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .diff-table td {
+    padding: 0;
+    vertical-align: top;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .diff-ln {
+    width: 1px;
+    min-width: 44px;
+    text-align: right;
+    color: var(--t3);
+    opacity: .4;
+    user-select: none;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+  .diff-ln-new { border-right: 1px solid rgba(255,255,255,.06); }
+  .diff-content { padding: 0 14px; }
+  .diff-row-del { background: rgba(248,113,113,.1); }
+  .diff-row-del .diff-ln { color: rgba(248,113,113,.65); }
+  .diff-row-add { background: rgba(52,211,153,.1); }
+  .diff-row-add .diff-ln { color: rgba(52,211,153,.7); }
+  .diff-row-hunk { background: rgba(79,142,247,.08); }
+  .diff-row-hunk td {
+    color: var(--purple);
+    font-weight: 700;
+    padding: 4px 14px;
+  }
+  .diff-row-hdr td {
+    color: var(--blue);
+    font-weight: 700;
+    padding: 2px 14px;
+  }
+  .diff-loading {
+    padding: 40px;
+    text-align: center;
+    color: var(--t2);
+    font-size: 13px;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(5,5,11,.72);
+    backdrop-filter: blur(6px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    padding: 24px;
+  }
+  .modal-overlay.open { display: flex; }
+  .settings-modal {
+    width: 100%;
+    max-width: 520px;
+    background:
+      radial-gradient(circle at top left, rgba(79,142,247,.12), transparent 38%),
+      radial-gradient(circle at bottom right, rgba(167,139,250,.08), transparent 32%),
+      var(--sidebar);
+    border: 1px solid var(--b2);
+    border-radius: 16px;
+    box-shadow: 0 24px 80px rgba(0,0,0,.45);
+    overflow: hidden;
+  }
+  .settings-head {
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .settings-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .settings-close {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+    cursor: pointer;
+    font-size: 16px;
+  }
+  .settings-close:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
+  .settings-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .settings-row {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .settings-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--t2);
+  }
+  .settings-input,
+  .settings-select {
+    width: 100%;
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    color: var(--t1);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    outline: none;
+  }
+  .settings-input:focus,
+  .settings-select:focus {
+    border-color: var(--blue-b);
+  }
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .settings-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t1);
+    font-size: 13px;
+  }
+  .settings-toggle input {
+    accent-color: var(--blue);
+  }
+  .settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 18px 18px;
+    border-top: 1px solid var(--b);
+  }
+  .modal-settings-btn {
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+  }
+  .modal-settings-btn.cancel {
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+  }
+  .modal-settings-btn.save {
+    border: none;
+    background: var(--blue);
+    color: white;
+  }
+  .modal-settings-btn:disabled {
+    opacity: .55;
+    cursor: default;
+  }
 </style>
 </head>
 <body>
@@ -891,6 +1421,10 @@
   <div class="obj-list" id="objectiveList"></div>
 
   <div class="sidebar-bottom">
+    <button class="sidebar-icon-button" id="settingsButton">
+      <span>⚙</span>
+      Settings
+    </button>
     <button class="terminal-link" id="terminalLink">⬡ &nbsp;Terminal sessions</button>
   </div>
 </div>
@@ -911,6 +1445,79 @@
   </div>
 </div>
 
+<aside class="git-panel" id="gitPanel">
+  <div class="git-panel-header">
+    <div class="git-panel-top">
+      <div class="git-panel-branch" id="gitPanelBranch">Git</div>
+      <button class="git-panel-refresh" id="gitPanelRefreshButton" aria-label="Refresh git status">↻</button>
+    </div>
+    <div class="git-panel-path-row">
+      <div class="git-panel-path" id="gitPanelPath"></div>
+      <button class="git-panel-copy" id="gitPanelCopyButton" type="button">Copy</button>
+    </div>
+  </div>
+  <div class="git-panel-body" id="gitPanelBody"></div>
+</aside>
+
+<div class="git-ctx-menu" id="gitContextMenu"></div>
+
+<div class="diff-overlay" id="diffOverlay">
+  <div class="diff-panel">
+    <div class="diff-panel-header">
+      <div class="diff-panel-title" id="diffPanelTitle">Diff</div>
+      <button class="settings-close" id="diffCloseButton" aria-label="Close diff">×</button>
+    </div>
+    <div class="diff-panel-body" id="diffPanelBody"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="settingsModal">
+  <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="settings-head">
+      <div class="settings-title" id="settingsModalTitle">Settings</div>
+      <button class="settings-close" id="settingsCloseButton" aria-label="Close settings">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-row">
+        <label class="settings-label" for="settingsProjectDir">Default Project Directory</label>
+        <input class="settings-input" id="settingsProjectDir" type="text" placeholder="~/projects/my-app">
+      </div>
+      <div class="settings-grid">
+        <div class="settings-row">
+          <label class="settings-label" for="settingsBaseBranch">Default Base Branch</label>
+          <input class="settings-input" id="settingsBaseBranch" type="text" placeholder="main">
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settingsPollInterval">Poll Interval (seconds)</label>
+          <input class="settings-input" id="settingsPollInterval" type="number" min="2" max="30" step="1">
+        </div>
+      </div>
+      <label class="settings-toggle" for="settingsReviewEnabled">
+        <input id="settingsReviewEnabled" type="checkbox">
+        <span>Review Enabled</span>
+      </label>
+      <div class="settings-grid">
+        <div class="settings-row">
+          <label class="settings-label" for="settingsReviewModel">Review Model</label>
+          <input class="settings-input" id="settingsReviewModel" type="text" placeholder="model name">
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settingsReviewBackend">Review Backend</label>
+          <select class="settings-select" id="settingsReviewBackend">
+            <option value="claude">claude</option>
+            <option value="lmstudio">lmstudio</option>
+            <option value="ollama">ollama</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="settings-actions">
+      <button class="modal-settings-btn cancel" id="settingsCancelButton">Cancel</button>
+      <button class="modal-settings-btn save" id="settingsSaveButton">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
@@ -920,9 +1527,18 @@
     activeObjectiveId: null,
     activeObjective: null,
     messages: [],
+    config: null,
+    gitPanelOpen: false,
+    gitStatus: null,
+    gitDiffFile: '',
+    gitDiffSection: 'unstaged',
+    gitContextFile: '',
+    gitContextSection: '',
     lastMessageTimestamp: null,
     relativeTick: Date.now(),
     sidebarFormOpen: false,
+    settingsOpen: false,
+    settingsSaving: false,
     draftProjectDir: '',
     draftBaseBranch: 'main',
     draftGoal: '',
@@ -932,6 +1548,7 @@
       objectives: null,
       messages: null,
       objective: null,
+      git: null,
       relative: null
     }
   };
@@ -946,6 +1563,28 @@
     inputHint: document.getElementById('inputHint'),
     sidebarForm: document.getElementById('sidebarForm'),
     newObjectiveButton: document.getElementById('newObjectiveButton'),
+    settingsButton: document.getElementById('settingsButton'),
+    settingsModal: document.getElementById('settingsModal'),
+    settingsCloseButton: document.getElementById('settingsCloseButton'),
+    settingsCancelButton: document.getElementById('settingsCancelButton'),
+    settingsSaveButton: document.getElementById('settingsSaveButton'),
+    settingsProjectDir: document.getElementById('settingsProjectDir'),
+    settingsBaseBranch: document.getElementById('settingsBaseBranch'),
+    settingsPollInterval: document.getElementById('settingsPollInterval'),
+    settingsReviewEnabled: document.getElementById('settingsReviewEnabled'),
+    settingsReviewModel: document.getElementById('settingsReviewModel'),
+    settingsReviewBackend: document.getElementById('settingsReviewBackend'),
+    gitPanel: document.getElementById('gitPanel'),
+    gitPanelBranch: document.getElementById('gitPanelBranch'),
+    gitPanelPath: document.getElementById('gitPanelPath'),
+    gitPanelBody: document.getElementById('gitPanelBody'),
+    gitPanelCopyButton: document.getElementById('gitPanelCopyButton'),
+    gitPanelRefreshButton: document.getElementById('gitPanelRefreshButton'),
+    gitContextMenu: document.getElementById('gitContextMenu'),
+    diffOverlay: document.getElementById('diffOverlay'),
+    diffPanelTitle: document.getElementById('diffPanelTitle'),
+    diffPanelBody: document.getElementById('diffPanelBody'),
+    diffCloseButton: document.getElementById('diffCloseButton'),
     terminalLink: document.getElementById('terminalLink'),
     toastWrap: document.getElementById('toastWrap')
   };
@@ -1163,7 +1802,11 @@
   }
 
   function defaultProjectDir() {
-    return state.draftProjectDir || getRecentProjects()[0] || '';
+    return state.draftProjectDir || (state.config && state.config.defaultProjectDir) || getRecentProjects()[0] || '';
+  }
+
+  function defaultBaseBranch() {
+    return state.draftBaseBranch || (state.config && state.config.defaultBaseBranch) || 'main';
   }
 
   async function api(path, options) {
@@ -1183,6 +1826,54 @@
     }
     const text = await response.text();
     return text ? JSON.parse(text) : {};
+  }
+
+  function activeGitPath() {
+    return state.activeObjective && state.activeObjective.projectDir
+      ? String(state.activeObjective.projectDir).trim()
+      : '';
+  }
+
+  function gitButtonLabel() {
+    const branch = state.gitStatus && state.gitStatus.branch ? state.gitStatus.branch : '';
+    return branch ? ('⎇ ' + branch) : '⎇ git';
+  }
+
+  function renderDiffView(diffText) {
+    const lines = String(diffText || '').split('\n');
+    if (!lines.length || (lines.length === 1 && !lines[0])) {
+      return '<div class="diff-loading">No diff output</div>';
+    }
+    let oldLine = 0;
+    let newLine = 0;
+    const rows = lines.map((line) => {
+      if (/^@@ /.test(line)) {
+        const match = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+        if (match) {
+          oldLine = Number(match[1]);
+          newLine = Number(match[2]);
+        }
+        return '<tr class="diff-row-hunk"><td colspan="3">' + esc(line) + '</td></tr>';
+      }
+      if (/^(diff --git|index |--- |\+\+\+ )/.test(line)) {
+        return '<tr class="diff-row-hdr"><td colspan="3">' + esc(line) + '</td></tr>';
+      }
+      if (line.startsWith('-')) {
+        const current = oldLine++;
+        return '<tr class="diff-row-del"><td class="diff-ln">' + current + '</td><td class="diff-ln diff-ln-new"></td><td class="diff-content">' + esc(line) + '</td></tr>';
+      }
+      if (line.startsWith('+')) {
+        const current = newLine++;
+        return '<tr class="diff-row-add"><td class="diff-ln"></td><td class="diff-ln diff-ln-new">' + current + '</td><td class="diff-content">' + esc(line) + '</td></tr>';
+      }
+      if (line.startsWith('\\')) {
+        return '<tr><td class="diff-ln"></td><td class="diff-ln diff-ln-new"></td><td class="diff-content">' + esc(line) + '</td></tr>';
+      }
+      const oldCurrent = oldLine ? oldLine++ : '';
+      const newCurrent = newLine ? newLine++ : '';
+      return '<tr><td class="diff-ln">' + oldCurrent + '</td><td class="diff-ln diff-ln-new">' + newCurrent + '</td><td class="diff-content">' + esc(line) + '</td></tr>';
+    }).join('');
+    return '<table class="diff-table"><tbody>' + rows + '</tbody></table>';
   }
 
   function objectiveProgress(objective) {
@@ -1233,6 +1924,283 @@
     }, 2600);
   }
 
+  async function copyText(value, label) {
+    const text = String(value || '').trim();
+    if (!text) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const input = document.createElement('textarea');
+        input.value = text;
+        input.setAttribute('readonly', 'readonly');
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+      }
+      showToast((label || 'Copied') + ' copied');
+    } catch (error) {
+      showToast('Copy failed');
+    }
+  }
+
+  function syncDraftsFromConfig() {
+    if (!state.config) return;
+    if (!state.draftProjectDir) state.draftProjectDir = state.config.defaultProjectDir || '';
+    if (!state.draftBaseBranch || state.draftBaseBranch === 'main') {
+      state.draftBaseBranch = state.config.defaultBaseBranch || 'main';
+    }
+  }
+
+  function populateSettingsForm() {
+    const cfg = state.config || {};
+    els.settingsProjectDir.value = cfg.defaultProjectDir || '';
+    els.settingsBaseBranch.value = cfg.defaultBaseBranch || 'main';
+    els.settingsPollInterval.value = cfg.pollInterval != null ? String(cfg.pollInterval) : '5';
+    els.settingsReviewEnabled.checked = !!cfg.reviewEnabled;
+    els.settingsReviewModel.value = cfg.reviewModel || '';
+    els.settingsReviewBackend.value = ['claude', 'lmstudio', 'ollama'].includes(cfg.reviewBackend) ? cfg.reviewBackend : 'ollama';
+  }
+
+  function renderSettingsModal() {
+    els.settingsModal.className = 'modal-overlay' + (state.settingsOpen ? ' open' : '');
+    els.settingsSaveButton.disabled = state.settingsSaving;
+    els.settingsCancelButton.disabled = state.settingsSaving;
+    els.settingsCloseButton.disabled = state.settingsSaving;
+  }
+
+  function openSettingsModal() {
+    populateSettingsForm();
+    state.settingsOpen = true;
+    renderSettingsModal();
+  }
+
+  function closeSettingsModal() {
+    if (state.settingsSaving) return;
+    state.settingsOpen = false;
+    renderSettingsModal();
+  }
+
+  async function loadConfig() {
+    const config = await api('/api/config');
+    state.config = config || {};
+    syncDraftsFromConfig();
+    return state.config;
+  }
+
+  async function saveSettings() {
+    state.settingsSaving = true;
+    renderSettingsModal();
+    try {
+      const payload = {
+        defaultProjectDir: els.settingsProjectDir.value.trim(),
+        defaultBaseBranch: els.settingsBaseBranch.value.trim() || 'main',
+        pollInterval: Number(els.settingsPollInterval.value || 5),
+        reviewEnabled: !!els.settingsReviewEnabled.checked,
+        reviewModel: els.settingsReviewModel.value.trim(),
+        reviewBackend: els.settingsReviewBackend.value || 'ollama'
+      };
+      const config = await api('/api/config', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      state.config = config || payload;
+      state.draftProjectDir = state.config.defaultProjectDir || '';
+      state.draftBaseBranch = state.config.defaultBaseBranch || 'main';
+      state.settingsOpen = false;
+      render();
+      showToast('Settings saved');
+      installPollers();
+    } catch (error) {
+      showToast(error.message || 'Could not save settings');
+    } finally {
+      state.settingsSaving = false;
+      renderSettingsModal();
+    }
+  }
+
+  function hideGitContextMenu() {
+    els.gitContextMenu.classList.remove('visible');
+    state.gitContextFile = '';
+    state.gitContextSection = '';
+  }
+
+  function closeDiffOverlay() {
+    state.gitDiffFile = '';
+    els.diffOverlay.classList.remove('visible');
+    els.diffPanelBody.innerHTML = '';
+  }
+
+  async function openGitDiff(file, section) {
+    const path = activeGitPath();
+    if (!path || !file) return;
+    state.gitDiffFile = file;
+    state.gitDiffSection = section || 'unstaged';
+    els.diffPanelTitle.textContent = file;
+    els.diffPanelBody.innerHTML = '<div class="diff-loading">Loading diff…</div>';
+    els.diffOverlay.classList.add('visible');
+    try {
+      const response = await api('/api/git-diff-path', {
+        method: 'POST',
+        body: JSON.stringify({ path, file, section: state.gitDiffSection })
+      });
+      if (state.gitDiffFile !== file) return;
+      els.diffPanelBody.innerHTML = response.ok
+        ? renderDiffView(response.diff || '')
+        : '<div class="diff-loading" style="color:var(--red)">' + esc(response.error || 'Failed to load diff') + '</div>';
+    } catch (error) {
+      if (state.gitDiffFile !== file) return;
+      els.diffPanelBody.innerHTML = '<div class="diff-loading" style="color:var(--red)">' + esc(error.message || 'Failed to load diff') + '</div>';
+    }
+  }
+
+  async function runGitContextAction(action) {
+    const path = activeGitPath();
+    const file = state.gitContextFile;
+    const section = state.gitContextSection;
+    hideGitContextMenu();
+    if (!path || !file) return;
+    if (action === 'diff') {
+      await openGitDiff(file, section);
+      return;
+    }
+    const endpoint = action === 'stage' ? '/api/git-stage-path' : '/api/git-unstage-path';
+    try {
+      await api(endpoint, {
+        method: 'POST',
+        body: JSON.stringify({ path, file })
+      });
+      await fetchGitStatus();
+    } catch (error) {
+      showToast(error.message || 'Git action failed');
+    }
+  }
+
+  function showGitContextMenu(event, file, section) {
+    if (!file || !section) return;
+    state.gitContextFile = file;
+    state.gitContextSection = section;
+    let html = '';
+    if (section === 'unstaged' || section === 'untracked') {
+      html += '<div class="git-ctx-item" data-git-action="stage">Stage file</div>';
+    }
+    if (section === 'staged') {
+      html += '<div class="git-ctx-item" data-git-action="unstage">Unstage file</div>';
+    }
+    html += '<div class="git-ctx-item" data-git-action="diff">View diff</div>';
+    els.gitContextMenu.innerHTML = html;
+    els.gitContextMenu.classList.add('visible');
+    let x = event.clientX;
+    let y = event.clientY;
+    const rect = els.gitContextMenu.getBoundingClientRect();
+    if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 4;
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 4;
+    els.gitContextMenu.style.left = x + 'px';
+    els.gitContextMenu.style.top = y + 'px';
+  }
+
+  function renderGitPanel() {
+    const path = activeGitPath();
+    els.gitPanel.className = 'git-panel' + (state.gitPanelOpen ? ' open' : '');
+    els.gitPanelBranch.textContent = (state.gitStatus && state.gitStatus.branch) || 'Git';
+    els.gitPanelPath.textContent = (state.gitStatus && state.gitStatus.cwd) || path || 'No working directory';
+    els.gitPanelCopyButton.disabled = !((state.gitStatus && state.gitStatus.cwd) || path);
+    const data = state.gitStatus;
+    if (!state.gitPanelOpen) return;
+    if (!path) {
+      els.gitPanelBody.innerHTML = '<div class="git-empty">No active objective project directory</div>';
+      return;
+    }
+    if (!data) {
+      els.gitPanelBody.innerHTML = '<div class="diff-loading">Loading git status…</div>';
+      return;
+    }
+    const staged = Array.isArray(data.staged) ? data.staged : [];
+    const unstaged = Array.isArray(data.unstaged) ? data.unstaged : [];
+    const untracked = Array.isArray(data.untracked) ? data.untracked : [];
+    const commits = Array.isArray(data.commits) ? data.commits : [];
+    if (!staged.length && !unstaged.length && !untracked.length && !commits.length) {
+      els.gitPanelBody.innerHTML = '<div class="git-empty">' + (data.cwd ? 'Working tree clean' : 'No git repo detected') + '</div>';
+      return;
+    }
+    function fileEl(status, file, cls, section) {
+      return '<div class="git-file" data-git-file="' + esc(file) + '" data-git-section="' + esc(section) + '" title="' + esc(file) + '"><span class="git-status ' + cls + '">' + esc(status) + '</span><span class="git-file-name">' + esc(file) + '</span></div>';
+    }
+    let html = '';
+    if (commits.length) {
+      html += '<div class="git-section"><div class="git-section-title commits">Commits</div>';
+      commits.forEach((commit) => {
+        html += '<div class="git-commit"><span class="git-hash">' + esc(commit.hash) + '</span>' + esc(commit.message) + '</div>';
+      });
+      html += '</div>';
+    }
+    if (staged.length) {
+      html += '<div class="git-section"><div class="git-section-title staged">Staged</div>';
+      staged.forEach((item) => {
+        html += fileEl(item.status, item.file, 'st-staged', 'staged');
+      });
+      html += '</div>';
+    }
+    if (unstaged.length) {
+      html += '<div class="git-section"><div class="git-section-title unstaged">Unstaged</div>';
+      unstaged.forEach((item) => {
+        html += fileEl(item.status, item.file, 'st-unstaged', 'unstaged');
+      });
+      html += '</div>';
+    }
+    if (untracked.length) {
+      html += '<div class="git-section"><div class="git-section-title untracked">Untracked</div>';
+      untracked.forEach((item) => {
+        html += fileEl('?', item, 'st-untracked', 'untracked');
+      });
+      html += '</div>';
+    }
+    els.gitPanelBody.innerHTML = html;
+    els.gitPanelBody.querySelectorAll('[data-git-file]').forEach((node) => {
+      node.addEventListener('click', () => {
+        openGitDiff(node.getAttribute('data-git-file'), node.getAttribute('data-git-section'));
+      });
+      node.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        showGitContextMenu(event, node.getAttribute('data-git-file'), node.getAttribute('data-git-section'));
+      });
+    });
+  }
+
+  async function fetchGitStatus() {
+    const path = activeGitPath();
+    if (!state.gitPanelOpen || !path) {
+      state.gitStatus = null;
+      renderGitPanel();
+      return;
+    }
+    try {
+      const response = await api('/api/git-status-path?path=' + encodeURIComponent(path));
+      state.gitStatus = response.ok ? response : null;
+      renderGitPanel();
+    } catch (error) {
+      state.gitStatus = null;
+      renderGitPanel();
+      showToast(error.message || 'Could not load git status');
+    }
+  }
+
+  function toggleGitPanel() {
+    if (!activeGitPath()) return;
+    state.gitPanelOpen = !state.gitPanelOpen;
+    renderContext();
+    renderGitPanel();
+    if (state.gitPanelOpen) {
+      fetchGitStatus();
+    } else {
+      hideGitContextMenu();
+      closeDiffOverlay();
+    }
+  }
+
   function updateSidebarFormFromState() {
     const recent = getRecentProjects();
     const options = recent.map((dir) => '<option value="' + esc(dir) + '"></option>').join('');
@@ -1276,7 +2244,7 @@
   function openSidebarForm(seedGoal) {
     state.sidebarFormOpen = true;
     state.draftProjectDir = state.draftProjectDir || defaultProjectDir();
-    state.draftBaseBranch = state.draftBaseBranch || 'main';
+    state.draftBaseBranch = defaultBaseBranch();
     if (typeof seedGoal === 'string') state.draftGoal = seedGoal;
     updateSidebarFormFromState();
     window.setTimeout(() => {
@@ -1365,12 +2333,20 @@
     const progress = objectiveProgress(objective);
     const elapsed = durationFrom(objective.createdAt, String(objective.status).toLowerCase() === 'completed' ? objective.updatedAt : null) || relativeTime(objective.createdAt);
     const taskCount = progress.total + ' task' + (progress.total === 1 ? '' : 's');
+    const gitPath = activeGitPath();
     els.contextStrip.innerHTML = [
       '<div class="ctx-dot ' + meta.dot + '"></div>',
       '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
       '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
-      '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>'
+      '<div class="ctx-actions">',
+      gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
+      '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
+      '</div>'
     ].join('');
+    const gitButton = document.getElementById('gitPanelToggleButton');
+    if (gitButton) {
+      gitButton.addEventListener('click', toggleGitPanel);
+    }
   }
 
   function shouldCollapseAutoApproval(message) {
@@ -1490,7 +2466,12 @@
         return [
           '<div class="plan-row">',
           '<div class="pr-icon ' + iconClass + '">' + icon + '</div>',
-          '<span class="pr-name">' + esc(task.title || task.id) + '</span>',
+          '<div class="pr-main">',
+          '<span class="pr-name pr-name-text">' + esc(task.title || task.id) + '</span>',
+          ((status === 'completed' || status === 'executing' || status === 'reviewing' || status === 'rework') && task.worktreeBranch
+            ? '<span class="task-branch-badge" title="' + esc(task.worktreeBranch) + '">' + esc(task.worktreeBranch) + '</span>'
+            : ''),
+          '</div>',
           '<span class="pr-status ' + statusClass + '">' + esc(statusText) + '</span>',
           '</div>'
         ].join('');
@@ -1510,6 +2491,13 @@
     const elapsed = task ? (durationFrom(task.startedAt) || relativeTime(task.startedAt)) : relativeTime(message.timestamp);
     return [
       '<div class="card-progress">',
+      task && (task.worktreePath || task.worktreeBranch) ? '<div class="cp-meta"><div class="cp-meta-main">' +
+        ((task.worktreePath || task.worktreeBranch) ? '<div class="cp-path-row">' : '') +
+        (task.worktreePath ? '<div class="cp-path-value" title="' + esc(task.worktreePath) + '">' + esc(task.worktreePath) + '</div>' : '') +
+        (task.worktreePath ? '<button class="cp-copy-button" type="button" data-copy-path="' + esc(task.worktreePath) + '">Copy</button>' : '') +
+        (task.worktreeBranch ? '<span class="cp-branch">' + esc(task.worktreeBranch) + '</span>' : '') +
+        ((task.worktreePath || task.worktreeBranch) ? '</div>' : '') +
+        '</div></div>' : '',
       '<div class="cp-top">',
       '<span class="cp-task-label">' + esc(task ? task.title : (metadata.task_id || 'Task')) + '</span>',
       total ? '<span class="cp-check-badge">checkpoint ' + current + ' of ' + total + '</span>' : '',
@@ -1745,6 +2733,11 @@
         }
       });
     });
+    els.messageColumn.querySelectorAll('[data-copy-path]').forEach((node) => {
+      node.addEventListener('click', () => {
+        copyText(node.getAttribute('data-copy-path'), 'Path');
+      });
+    });
 
     if (beforeBottom) {
       scrollToBottom();
@@ -1766,6 +2759,8 @@
     renderSidebar();
     renderContext();
     updateSidebarFormFromState();
+    renderSettingsModal();
+    renderGitPanel();
     renderMessages();
     renderInputState();
     autoResizeTextarea();
@@ -1777,6 +2772,9 @@
     state.objectives = Array.isArray(data) ? data : [];
     if (!state.draftProjectDir) {
       state.draftProjectDir = defaultProjectDir();
+    }
+    if (!state.draftBaseBranch) {
+      state.draftBaseBranch = defaultBaseBranch();
     }
     ensureSelection();
     if (state.activeObjectiveId && state.activeObjectiveId !== previousActiveId) {
@@ -1792,8 +2790,20 @@
       state.activeObjective = null;
       return;
     }
+    const previousPath = activeGitPath();
     const objective = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId));
     state.activeObjective = objective;
+    const nextPath = activeGitPath();
+    if (previousPath !== nextPath) {
+      state.gitStatus = null;
+      if (!nextPath) {
+        state.gitPanelOpen = false;
+        hideGitContextMenu();
+        closeDiffOverlay();
+      } else if (state.gitPanelOpen) {
+        await fetchGitStatus();
+      }
+    }
     const index = state.objectives.findIndex((item) => item.id === objective.id);
     if (index >= 0) {
       state.objectives[index] = objective;
@@ -1888,7 +2898,7 @@
     if (!text) return;
     if (!state.activeObjectiveId || !state.activeObjective || ['completed', 'failed'].includes(String(state.activeObjective.status).toLowerCase())) {
       const projectDir = (state.draftProjectDir || defaultProjectDir()).trim();
-      const baseBranch = (state.draftBaseBranch || 'main').trim() || 'main';
+      const baseBranch = defaultBaseBranch().trim() || 'main';
       if (projectDir) {
         state.draftGoal = text;
         try {
@@ -1937,6 +2947,7 @@
     if (state.pollers.objectives) window.clearInterval(state.pollers.objectives);
     if (state.pollers.messages) window.clearInterval(state.pollers.messages);
     if (state.pollers.objective) window.clearInterval(state.pollers.objective);
+    if (state.pollers.git) window.clearInterval(state.pollers.git);
     if (state.pollers.relative) window.clearInterval(state.pollers.relative);
 
     state.pollers.objectives = window.setInterval(async () => {
@@ -1963,10 +2974,21 @@
       }
     }, 5000);
 
+    state.pollers.git = window.setInterval(async () => {
+      try {
+        if (state.gitPanelOpen) {
+          await fetchGitStatus();
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }, 10000);
+
     state.pollers.relative = window.setInterval(() => {
       state.relativeTick = Date.now();
       renderSidebar();
       renderContext();
+      renderGitPanel();
       renderMessages();
     }, 30000);
   }
@@ -1974,6 +2996,26 @@
   function bindEvents() {
     els.newObjectiveButton.addEventListener('click', () => {
       openSidebarForm(state.draftGoal);
+    });
+    els.settingsButton.addEventListener('click', openSettingsModal);
+    els.settingsCloseButton.addEventListener('click', closeSettingsModal);
+    els.settingsCancelButton.addEventListener('click', closeSettingsModal);
+    els.settingsSaveButton.addEventListener('click', saveSettings);
+    els.settingsModal.addEventListener('click', (event) => {
+      if (event.target === els.settingsModal) closeSettingsModal();
+    });
+    els.gitPanelRefreshButton.addEventListener('click', fetchGitStatus);
+    els.gitPanelCopyButton.addEventListener('click', () => {
+      copyText((state.gitStatus && state.gitStatus.cwd) || activeGitPath(), 'Path');
+    });
+    els.gitContextMenu.addEventListener('click', (event) => {
+      const actionNode = event.target.closest('[data-git-action]');
+      if (!actionNode) return;
+      runGitContextAction(actionNode.getAttribute('data-git-action'));
+    });
+    els.diffCloseButton.addEventListener('click', closeDiffOverlay);
+    els.diffOverlay.addEventListener('click', (event) => {
+      if (event.target === els.diffOverlay) closeDiffOverlay();
     });
     els.sendButton.addEventListener('click', sendMessage);
     els.chatInput.addEventListener('input', () => {
@@ -1986,10 +3028,28 @@
       }
     });
     document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && state.settingsOpen) {
+        event.preventDefault();
+        closeSettingsModal();
+        return;
+      }
+      if (event.key === 'Escape' && els.diffOverlay.classList.contains('visible')) {
+        event.preventDefault();
+        closeDiffOverlay();
+        return;
+      }
+      if (event.key === 'Escape' && els.gitContextMenu.classList.contains('visible')) {
+        event.preventDefault();
+        hideGitContextMenu();
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
         event.preventDefault();
         openSidebarForm(state.draftGoal);
       }
+    });
+    document.addEventListener('click', (event) => {
+      if (!els.gitContextMenu.contains(event.target)) hideGitContextMenu();
     });
     els.terminalLink.addEventListener('click', () => {
       showToast('Terminal sessions view is not wired here yet');
@@ -1999,9 +3059,10 @@
   async function boot() {
     bindEvents();
     state.relativeTick = Date.now();
-    state.draftProjectDir = defaultProjectDir();
     render();
     try {
+      await loadConfig();
+      render();
       await pollObjectives();
       if (state.activeObjectiveId) {
         await loadActiveObjective(true);
