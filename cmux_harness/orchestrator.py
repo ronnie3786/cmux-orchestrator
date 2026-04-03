@@ -373,10 +373,21 @@ class Orchestrator:
                     continue
 
                 if plan_exists:
-                    # Plan file exists. If Claude has exited, proceed.
-                    # If Claude is still running, wait for it to finish.
-                    if not claude_running:
-                        break
+                    # Plan file exists — that's our deliverable. Proceed
+                    # immediately regardless of whether Claude is still
+                    # running (it may be idle at the REPL prompt, which
+                    # detect_claude_session still considers "running").
+                    self._log_event(
+                        objective_id,
+                        "info",
+                        "planning_plan_found",
+                        {
+                            "attempt": attempt + 1,
+                            "claudeRunning": bool(claude_running),
+                            "workspaceId": workspace_uuid,
+                        },
+                    )
+                    break
                 if not claude_running and seen_claude_active and attempt >= grace_polls:
                     # Claude was active but now appears to have exited.
                     # Require grace_polls (default 36 * 5s = 180s) to avoid false
