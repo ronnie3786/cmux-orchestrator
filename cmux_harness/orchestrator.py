@@ -301,8 +301,14 @@ class Orchestrator:
         if hasattr(self, "_launch_ready_tasks"):
             try:
                 self._launch_ready_tasks(objective_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                import traceback
+                tb = traceback.format_exc()
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Failed to launch initial tasks: {exc}\n\n```\n{tb}\n```",
+                )
 
     def _workspaces_from_result(self, list_result):
         if not list_result:
@@ -418,7 +424,18 @@ class Orchestrator:
         ]
 
         if not launchable_tasks:
+            self._append_message(
+                objective_id,
+                "system",
+                f"No launchable tasks found. Task statuses: {[(t['id'], t.get('status')) for t in tasks]}",
+            )
             return
+
+        self._append_message(
+            objective_id,
+            "system",
+            f"Launching {len(launchable_tasks)} ready tasks: {[t['id'] for t in launchable_tasks]}",
+        )
 
         project_dir = objective.get("projectDir", "")
         base_branch = objective.get("baseBranch", "main")
@@ -429,13 +446,21 @@ class Orchestrator:
 
             title_slug = worker.slugify(task.get("title", ""))
             branch_name = f"orchestrator/{task['id']}-{title_slug}" if title_slug else f"orchestrator/{task['id']}"
-            worktree_path = worker.create_worktree(
-                project_dir,
-                objective_id,
-                task["id"],
-                title_slug,
-                base_branch,
-            )
+            try:
+                worktree_path = worker.create_worktree(
+                    project_dir,
+                    objective_id,
+                    task["id"],
+                    title_slug,
+                    base_branch,
+                )
+            except Exception as exc:
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task['id']}: worktree creation failed: {exc}",
+                )
+                continue
 
             spec_content = objectives.read_task_file(objective_id, task["id"], "spec.md") or ""
             context_content = objectives.read_task_file(objective_id, task["id"], "context.md") or ""
@@ -449,10 +474,25 @@ class Orchestrator:
                 worktree_path,
             )
             if not created or not ws_uuid:
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task['id']}: workspace creation failed (uuid={ws_uuid}, created={created})",
+                )
                 continue
             if not self._wait_for_repl(ws_uuid, timeout_attempts=10):
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task['id']}: Claude Code REPL not ready in time (workspace {ws_uuid})",
+                )
                 continue
             if not cmux_api.send_prompt_to_workspace(ws_uuid, worker.build_task_prompt(task["id"])):
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task['id']}: failed to send prompt to workspace {ws_uuid}",
+                )
                 continue
 
             objectives.update_task(objective_id, task["id"], {
