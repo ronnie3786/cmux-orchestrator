@@ -2896,7 +2896,7 @@
   async function sendMessage() {
     const text = els.chatInput.value.trim();
     if (!text) return;
-    if (!state.activeObjectiveId || !state.activeObjective || ['completed', 'failed'].includes(String(state.activeObjective.status).toLowerCase())) {
+    if (!state.activeObjectiveId || !state.activeObjective || ['completed'].includes(String(state.activeObjective.status).toLowerCase())) {
       const projectDir = (state.draftProjectDir || defaultProjectDir()).trim();
       const baseBranch = defaultBaseBranch().trim() || 'main';
       if (projectDir) {

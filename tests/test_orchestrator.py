@@ -99,6 +99,18 @@ class TestOrchestrator(unittest.TestCase):
         another = objectives.create_objective("Another", "/tmp/project")
         self.assertFalse(self.orchestrator.start_objective(another["id"]))
 
+    def test_start_objective_restarts_failed_active_objective(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        objectives.update_objective(objective["id"], {"status": "failed"})
+        self.orchestrator._active_objective_id = objective["id"]
+
+        with patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
+            self.assertTrue(self.orchestrator.start_objective(objective["id"]))
+
+        mock_thread.assert_called_once()
+        self.assertEqual(self.orchestrator.get_active_objective_id(), objective["id"])
+        self.assertEqual(objectives.read_objective(objective["id"])["status"], "planning")
+
     def test_get_active_objective_id_defaults_to_none(self):
         self.assertIsNone(self.orchestrator.get_active_objective_id())
         objective = objectives.create_objective("Ship feature", "/tmp/project")
@@ -191,6 +203,9 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0]["type"], "user")
         self.assertEqual(messages[0]["content"], "Need a change here")
+
+    def test_run_planning_defaults_to_ten_minute_timeout(self):
+        self.assertEqual(Orchestrator._run_planning.__defaults__, (5, 36, 120))
 
 class TestPlanningPipeline(unittest.TestCase):
 
@@ -720,6 +735,21 @@ class TestReviewRework(unittest.TestCase):
         self.assertTrue(
             any("taken over by human" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"]))
         )
+
+    def test_handle_human_input_restarts_failed_objective_on_retry_request(self):
+        objective = self._create_objective([], status="failed")
+        self.orchestrator._active_objective_id = objective["id"]
+
+        with patch.object(self.orchestrator, "start_objective", wraps=self.orchestrator.start_objective) as mock_start, \
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
+            self.orchestrator.handle_human_input(objective["id"], "Please retry this")
+
+        mock_start.assert_called_once_with(objective["id"])
+        mock_thread.assert_called_once()
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(messages[0]["type"], "user")
+        self.assertEqual(messages[0]["content"], "Please retry this")
+        self.assertEqual(objectives.read_objective(objective["id"])["status"], "planning")
 
 
 if __name__ == "__main__":

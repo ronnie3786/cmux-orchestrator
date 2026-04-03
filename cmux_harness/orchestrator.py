@@ -35,6 +35,12 @@ def _coerce_timestamp(value, default=0.0):
     return default
 
 
+_RETRY_REQUEST_PATTERN = re.compile(
+    r"\b(retry|try again|restart|rerun|re-run|start over)\b",
+    re.IGNORECASE,
+)
+
+
 class Orchestrator:
     def __init__(self, engine):
         self.engine = engine
@@ -117,8 +123,13 @@ class Orchestrator:
             return False
         if not objective.get("goal") or not objective.get("projectDir"):
             return False
+        status = str(objective.get("status") or "").lower()
         with self._lock:
-            if self._active_objective_id is not None:
+            active_objective_id = self._active_objective_id
+            if status == "failed" and active_objective_id == objective_id:
+                self._active_objective_id = None
+                active_objective_id = None
+            if active_objective_id is not None:
                 return False
             self._active_objective_id = objective_id
         objectives.update_objective(objective_id, {"status": "planning"})
@@ -130,7 +141,7 @@ class Orchestrator:
         threading.Thread(target=self._run_planning, args=(objective_id,), daemon=True).start()
         return True
 
-    def _run_planning(self, objective_id, _poll_interval=5, _grace_polls=36, _max_polls=60):
+    def _run_planning(self, objective_id, _poll_interval=5, _grace_polls=36, _max_polls=120):
         workspace_uuid = None
         try:
             self._append_message(
@@ -968,6 +979,7 @@ IMPORTANT:
             return
 
         context = context or {}
+        objective_status = str(objective.get("status") or "").lower()
         task_id = context.get("task_id")
         if task_id and context.get("approval_action"):
             task = next((item for item in objective.get("tasks", []) if item.get("id") == task_id), None)
@@ -986,6 +998,10 @@ IMPORTANT:
                     f"Sent '{context['approval_action']}' to Task {task_id}",
                     metadata={"task_id": task_id},
                 )
+            return
+
+        if objective_status == "failed" and _RETRY_REQUEST_PATTERN.search(message or ""):
+            self.start_objective(objective_id)
             return
 
         if context.get("take_over") and task_id:

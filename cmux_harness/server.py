@@ -42,7 +42,10 @@ def make_handler(engine):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except BrokenPipeError:
+                return
 
         def _read_body(self):
             length = int(self.headers.get("Content-Length", 0))
