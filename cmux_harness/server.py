@@ -7,6 +7,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -70,6 +71,17 @@ def _action_task_title(task):
     if str(task.get("source") or "").lower() == "action-button":
         return f"Action: {title}"
     return title
+
+
+def _human_file_size(size):
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(max(0, int(size or 0)))
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
 
 
 def make_handler(engine):
@@ -191,6 +203,75 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 self._json_response({"buttons": _action_buttons_for_objective(objective)})
+            elif path.startswith("/api/objectives/") and path.endswith("/build-log"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/build-log")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                params = urllib.parse.parse_qs(parsed.query)
+                try:
+                    line_limit = int(params.get("lines", ["200"])[0])
+                except (TypeError, ValueError):
+                    line_limit = 200
+                try:
+                    offset = int(params.get("offset", ["0"])[0])
+                except (TypeError, ValueError):
+                    offset = 0
+                filename = str(params.get("file", ["build.log"])[0] or "build.log").strip()
+                if filename not in {"build.log", "prebuild.log"}:
+                    self._json_response({"ok": False, "error": "invalid file"}, 400)
+                    return
+                line_limit = max(1, min(line_limit, 1000))
+                offset = max(0, offset)
+                worktree_path = str(objective.get("worktreePath") or "").strip()
+                if not worktree_path:
+                    self._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
+                    return
+                log_path = Path(worktree_path) / ".build" / filename
+                if not log_path.exists() or not log_path.is_file():
+                    self._json_response({
+                        "exists": False,
+                        "lines": [],
+                        "fileSize": 0,
+                        "fileSizeHuman": "0 B",
+                        "totalLines": 0,
+                        "truncated": False,
+                    })
+                    return
+                try:
+                    file_size = log_path.stat().st_size
+                    if offset > 0:
+                        total_lines = 0
+                        lines = []
+                        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                            for line in handle:
+                                total_lines += 1
+                        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                            handle.seek(min(offset, file_size))
+                            for line in handle:
+                                lines.append(line.rstrip("\r\n"))
+                        truncated = False
+                    else:
+                        total_lines = 0
+                        tail = deque(maxlen=line_limit)
+                        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                            for line in handle:
+                                total_lines += 1
+                                tail.append(line.rstrip("\r\n"))
+                        lines = list(tail)
+                        truncated = total_lines > len(lines)
+                except OSError as exc:
+                    self._json_response({"ok": False, "error": str(exc)}, 500)
+                    return
+                self._json_response({
+                    "exists": True,
+                    "lines": lines,
+                    "fileSize": file_size,
+                    "fileSizeHuman": _human_file_size(file_size),
+                    "totalLines": total_lines,
+                    "truncated": truncated,
+                })
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
                 parts = path.split("/")
                 objective_id = parts[3]
