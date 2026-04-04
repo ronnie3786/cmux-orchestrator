@@ -67,6 +67,25 @@ class TestServerResponses(unittest.TestCase):
         handler.end_headers = Mock()
         return handler
 
+    def _create_objective_with_worktree(self, worktree_path=None):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        if worktree_path is not None:
+            objectives.update_objective(objective["id"], {"worktreePath": str(worktree_path)})
+            objective = objectives.read_objective(objective["id"])
+        return objective
+
+    def _write_build_log(self, objective, lines, filename="build.log"):
+        log_path = Path(objective["worktreePath"]) / ".build" / filename
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return log_path
+
+    def _write_console_log(self, objective, filename, lines):
+        log_path = Path(objective["worktreePath"]) / ".build" / "logs" / filename
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return log_path
+
     def test_get_objective_debug_endpoint_returns_filtered_entries(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
         engine = Mock()
@@ -143,6 +162,352 @@ class TestServerResponses(unittest.TestCase):
         thread.start.assert_called_once_with()
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
+
+    def test_get_build_log_returns_exists_false_when_file_is_missing(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-missing-build-log"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/build-log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], False)
+        self.assertEqual(body["lines"], [])
+        self.assertEqual(body["totalLines"], 0)
+        self.assertEqual(body["fileSize"], 0)
+        self.assertEqual(body["fileSizeHuman"], "0 B")
+        self.assertEqual(body["truncated"], False)
+
+    def test_get_build_log_returns_tail_lines_when_file_exists(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-build-log-tail"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        self._write_build_log(objective, ["line 1", "line 2", "line 3"])
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/build-log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["lines"], ["line 1", "line 2", "line 3"])
+        self.assertEqual(body["totalLines"], 3)
+        self.assertEqual(body["truncated"], False)
+        self.assertGreater(body["fileSize"], 0)
+
+    def test_get_build_log_respects_lines_param_default_and_maximum(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-build-log-limits"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        lines = [f"line {index}" for index in range(1105)]
+        self._write_build_log(objective, lines)
+
+        default_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/build-log")
+        default_handler.do_GET()
+        default_body = json.loads(default_handler.wfile.getvalue().decode("utf-8"))
+
+        capped_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/build-log?lines=5000")
+        capped_handler.do_GET()
+        capped_body = json.loads(capped_handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(len(default_body["lines"]), 200)
+        self.assertEqual(default_body["lines"][0], "line 905")
+        self.assertEqual(default_body["lines"][-1], "line 1104")
+        self.assertEqual(default_body["truncated"], True)
+        self.assertEqual(len(capped_body["lines"]), 1000)
+        self.assertEqual(capped_body["lines"][0], "line 105")
+        self.assertEqual(capped_body["lines"][-1], "line 1104")
+        self.assertEqual(capped_body["truncated"], True)
+
+    def test_get_build_log_supports_prebuild_log_file_selection(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-prebuild-log"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        self._write_build_log(objective, ["prebuild only"], filename="prebuild.log")
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/build-log?file=prebuild.log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["lines"], ["prebuild only"])
+
+    def test_get_build_log_rejects_invalid_filenames(self):
+        objective = self._create_objective_with_worktree(Path(self.tmpdir.name) / "worktree-invalid-build-file")
+        invalid_files = ["../etc/passwd", "foo/bar.log"]
+
+        for invalid_file in invalid_files:
+            handler = self._make_handler(
+                Mock(),
+                f"/api/objectives/{objective['id']}/build-log?file={invalid_file}",
+            )
+
+            handler.do_GET()
+
+            body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+            handler.send_response.assert_called_once_with(400)
+            self.assertEqual(body, {"ok": False, "error": "invalid file"})
+
+    def test_get_build_log_returns_404_for_nonexistent_objective(self):
+        handler = self._make_handler(Mock(), "/api/objectives/missing/build-log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(404)
+        self.assertEqual(body, {"ok": False, "error": "objective not found"})
+
+    def test_get_build_log_returns_400_when_objective_has_no_worktree_path(self):
+        objective = self._create_objective_with_worktree()
+        objectives.update_objective(objective["id"], {"worktreePath": ""})
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/build-log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(400)
+        self.assertEqual(body, {"ok": False, "error": "objective worktreePath required"})
+
+    def test_get_console_logs_returns_exists_false_when_logs_directory_is_missing(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-logs-missing"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/console-logs")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], False)
+        self.assertEqual(body["files"], [])
+        self.assertEqual(body["activeFile"], "")
+        self.assertEqual(body["lines"], [])
+        self.assertEqual(body["matchedLines"], 0)
+
+    def test_get_console_logs_returns_exists_false_when_no_log_files_exist(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-logs-empty"
+        (worktree_path / ".build" / "logs").mkdir(parents=True)
+        (worktree_path / ".build" / "logs" / "notes.txt").write_text("not a log\n", encoding="utf-8")
+        objective = self._create_objective_with_worktree(worktree_path)
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/console-logs")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], False)
+        self.assertEqual(body["files"], [])
+        self.assertEqual(body["lines"], [])
+
+    def test_get_console_logs_returns_unfiltered_tail_lines(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-tail"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        self._write_console_log(objective, "console.log", [f"line {index}" for index in range(6)])
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/console-logs?lines=3")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["files"], ["console.log"])
+        self.assertEqual(body["activeFile"], "console.log")
+        self.assertEqual(body["lines"], ["line 3", "line 4", "line 5"])
+        self.assertEqual(body["totalLines"], 6)
+        self.assertEqual(body["matchedLines"], 6)
+        self.assertEqual(body["truncated"], True)
+
+    def test_get_console_logs_applies_server_side_regex_filter(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-filter"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        self._write_console_log(objective, "console.log", ["INFO start", "error one", "INFO done", "ERROR two"])
+        handler = self._make_handler(
+            Mock(),
+            f"/api/objectives/{objective['id']}/console-logs?filter=error",
+        )
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["lines"], ["error one", "ERROR two"])
+        self.assertEqual(body["matchedLines"], 2)
+        self.assertEqual(body["totalLines"], 4)
+        self.assertEqual(body["filter"], "error")
+
+    def test_get_console_logs_returns_400_on_invalid_regex(self):
+        objective = self._create_objective_with_worktree(Path(self.tmpdir.name) / "worktree-console-invalid-regex")
+        handler = self._make_handler(
+            Mock(),
+            f"/api/objectives/{objective['id']}/console-logs?filter=[invalid",
+        )
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(400)
+        self.assertIn("invalid regex:", body["error"])
+        self.assertEqual(body["ok"], False)
+
+    def test_get_console_logs_includes_multiple_log_files_in_response(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-multiple"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        self._write_console_log(objective, "a.log", ["a1"])
+        self._write_console_log(objective, "b.log", ["b1"])
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/console-logs")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["files"], ["a.log", "b.log"])
+        self.assertEqual(body["activeFile"], "a.log")
+        self.assertEqual(body["lines"], ["a1"])
+
+    def test_get_console_logs_file_param_selects_specific_log_file(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-file-select"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        self._write_console_log(objective, "a.log", ["a1"])
+        self._write_console_log(objective, "b.log", ["b1", "b2"])
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/console-logs?file=b.log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["activeFile"], "b.log")
+        self.assertEqual(body["lines"], ["b1", "b2"])
+
+    def test_get_console_logs_rejects_invalid_filenames(self):
+        objective = self._create_objective_with_worktree(Path(self.tmpdir.name) / "worktree-console-invalid-file")
+        invalid_files = ["../etc/passwd", "foo/bar.log"]
+
+        for invalid_file in invalid_files:
+            handler = self._make_handler(
+                Mock(),
+                f"/api/objectives/{objective['id']}/console-logs?file={invalid_file}",
+            )
+
+            handler.do_GET()
+
+            body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+            handler.send_response.assert_called_once_with(400)
+            self.assertEqual(body, {"ok": False, "error": "invalid file"})
+
+    def test_get_console_logs_matched_lines_count_is_correct_with_filter(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-match-count"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        self._write_console_log(objective, "console.log", ["match 1", "skip", "match 2", "match 3"])
+        handler = self._make_handler(
+            Mock(),
+            f"/api/objectives/{objective['id']}/console-logs?filter=match&lines=2",
+        )
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["matchedLines"], 3)
+        self.assertEqual(body["lines"], ["match 2", "match 3"])
+        self.assertEqual(body["truncated"], True)
+
+    def test_get_console_logs_filter_applies_before_deque(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-console-filter-before-deque"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+        lines = ["match 1", "noise 1", "noise 2", "noise 3", "match 2", "noise 4", "match 3"]
+        self._write_console_log(objective, "console.log", lines)
+        handler = self._make_handler(
+            Mock(),
+            f"/api/objectives/{objective['id']}/console-logs?filter=match&lines=2",
+        )
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["lines"], ["match 2", "match 3"])
+        self.assertEqual(body["matchedLines"], 3)
+
+    def test_get_console_logs_returns_404_for_nonexistent_objective(self):
+        handler = self._make_handler(Mock(), "/api/objectives/missing/console-logs")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(404)
+        self.assertEqual(body, {"ok": False, "error": "objective not found"})
+
+    def test_get_action_buttons_returns_default_button(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/action-buttons")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(
+            body,
+            {
+                "buttons": [
+                    {
+                        "id": "default-build-run",
+                        "label": "Build & Run",
+                        "icon": "▶",
+                        "color": "#34d399",
+                        "prompt": "/exp-project-run",
+                        "isDefault": True,
+                        "order": 0,
+                    }
+                ]
+            },
+        )
+
+    def test_post_action_buttons_creates_new_button(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        payload = {
+            "label": "Ship It",
+            "prompt": "/ship-it",
+            "icon": "S",
+            "color": "#112233",
+        }
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/action-buttons")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response["ok"], True)
+        self.assertEqual(response["button"]["label"], "Ship It")
+        self.assertEqual(response["button"]["prompt"], "/ship-it")
+        self.assertEqual(response["button"]["icon"], "S")
+        self.assertEqual(response["button"]["color"], "#112233")
+        self.assertEqual(response["button"]["order"], 0)
+        self.assertTrue(response["button"]["id"])
+        stored = objectives.read_objective(objective["id"])
+        self.assertEqual(stored["actionButtons"], [response["button"]])
+
+    def test_delete_action_button_removes_button(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        objectives.set_action_buttons(
+            objective["id"],
+            [
+                {
+                    "id": "button-1",
+                    "label": "Ship It",
+                    "icon": "S",
+                    "color": "#112233",
+                    "prompt": "/ship-it",
+                    "order": 0,
+                }
+            ],
+        )
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/action-buttons/button-1")
+
+        handler.do_DELETE()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+        stored = objectives.read_objective(objective["id"])
+        self.assertEqual(stored["actionButtons"], [])
 
     def test_debug_modal_static_markup_includes_rendering_regression_fix(self):
         html = Path("cmux_harness/static/orchestrator.html").read_text(encoding="utf-8")
