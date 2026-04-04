@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from collections import deque
+from pathlib import Path
+
+
+def handle_get_build_log(handler, objective, parsed, *, human_file_size):
+    params = handler.parse_qs(parsed.query)
+    try:
+        line_limit = int(params.get("lines", ["200"])[0])
+    except (TypeError, ValueError):
+        line_limit = 200
+    try:
+        offset = int(params.get("offset", ["0"])[0])
+    except (TypeError, ValueError):
+        offset = 0
+    filename = str(params.get("file", ["build.log"])[0] or "build.log").strip()
+    if filename not in {"build.log", "prebuild.log"}:
+        handler._json_response({"ok": False, "error": "invalid file"}, 400)
+        return
+    line_limit = max(1, min(line_limit, 1000))
+    offset = max(0, offset)
+    worktree_path = str(objective.get("worktreePath") or "").strip()
+    if not worktree_path:
+        handler._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
+        return
+    log_path = Path(worktree_path) / ".build" / filename
+    if not log_path.exists() or not log_path.is_file():
+        handler._json_response({
+            "exists": False,
+            "lines": [],
+            "fileSize": 0,
+            "fileSizeHuman": "0 B",
+            "totalLines": 0,
+            "truncated": False,
+        })
+        return
+    try:
+        file_size = log_path.stat().st_size
+        if offset > 0:
+            total_lines = 0
+            lines = []
+            with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    total_lines += 1
+            with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(min(offset, file_size))
+                for line in handle:
+                    lines.append(line.rstrip("\r\n"))
+            truncated = False
+        else:
+            total_lines = 0
+            tail = deque(maxlen=line_limit)
+            with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    total_lines += 1
+                    tail.append(line.rstrip("\r\n"))
+            lines = list(tail)
+            truncated = total_lines > len(lines)
+    except OSError as exc:
+        handler._json_response({"ok": False, "error": str(exc)}, 500)
+        return
+    handler._json_response({
+        "exists": True,
+        "lines": lines,
+        "fileSize": file_size,
+        "fileSizeHuman": human_file_size(file_size),
+        "totalLines": total_lines,
+        "truncated": truncated,
+    })

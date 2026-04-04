@@ -511,9 +511,13 @@ class TestServerResponses(unittest.TestCase):
 
     def test_debug_modal_static_markup_includes_rendering_regression_fix(self):
         html = Path("cmux_harness/static/orchestrator.html").read_text(encoding="utf-8")
+        css = Path("cmux_harness/static/orchestrator.css").read_text(encoding="utf-8")
+        js = Path("cmux_harness/static/orchestrator.js").read_text(encoding="utf-8")
 
-        self.assertIn(".debug-entry {\n    border: 1px solid var(--b);\n    border-radius: 8px;", html)
-        self.assertNotIn(".debug-entry {\n    border: 1px solid var(--b);\n    border-radius: 12px;\n    background: var(--raised);\n    overflow: hidden;", html)
-        self.assertIn(".debug-entry-head {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    min-height: 36px;", html)
-        self.assertIn("'<div class=\"debug-entry-time\">' + esc(relativeTime(entry.timestamp)) + '</div>'", html)
-        self.assertIn("'<div class=\"debug-event\">' + esc(entry.event || 'unknown') + '</div>'", html)
+        self.assertIn('<link rel="stylesheet" href="/orchestrator.css">', html)
+        self.assertIn('<script src="/orchestrator.js"></script>', html)
+        self.assertIn(".debug-entry {\n    border: 1px solid var(--b);\n    border-radius: 8px;", css)
+        self.assertNotIn(".debug-entry {\n    border: 1px solid var(--b);\n    border-radius: 12px;\n    background: var(--raised);\n    overflow: hidden;", css)
+        self.assertIn(".debug-entry-head {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    min-height: 36px;", css)
+        self.assertIn("'<div class=\"debug-entry-time\">' + esc(relativeTime(entry.timestamp)) + '</div>'", js)
+        self.assertIn("'<div class=\"debug-event\">' + esc(entry.event || 'unknown') + '</div>'", js)

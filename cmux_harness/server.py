@@ -1,13 +1,11 @@
 import json
 import os
-import re
 import shutil
 import subprocess
 import threading
 import time
 import urllib.parse
 import urllib.request
-from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -15,62 +13,40 @@ import uuid
 
 from . import cmux_api
 from . import objectives
-from . import storage
 from . import review as review_mod
+from . import storage
 from .detection import OLLAMA_URL
+from .routes import action_buttons as action_buttons_routes
+from .routes import build_log as build_log_routes
+from .routes import console_logs as console_logs_routes
+from .routes import objectives as objective_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
-_HTML_PATH = _STATIC_DIR / "dashboard.html"
-_ORCHESTRATOR_HTML_PATH = _STATIC_DIR / "orchestrator.html"
-try:
-    DASHBOARD_HTML = _HTML_PATH.read_text(encoding="utf-8")
-except FileNotFoundError:
-    DASHBOARD_HTML = "<html><body><h1>dashboard.html not found</h1></body></html>"
-try:
-    ORCHESTRATOR_HTML = _ORCHESTRATOR_HTML_PATH.read_text(encoding="utf-8")
-except FileNotFoundError:
-    ORCHESTRATOR_HTML = "<html><body><h1>orchestrator.html not found</h1></body></html>"
+_STATIC_FILES = {
+    "/": ("dashboard.html", "text/html; charset=utf-8"),
+    "/orchestrator": ("orchestrator.html", "text/html; charset=utf-8"),
+    "/orchestrator.css": ("orchestrator.css", "text/css; charset=utf-8"),
+    "/orchestrator.js": ("orchestrator.js", "application/javascript; charset=utf-8"),
+}
 
 
-_DEFAULT_ACTION_BUTTONS = [
-    {
-        "id": "default-build-run",
-        "label": "Build & Run",
-        "icon": "▶",
-        "color": "#34d399",
-        "prompt": "/exp-project-run",
-        "isDefault": True,
-        "order": 0,
-    }
-]
-
-
-def _button_order(button, fallback=0):
+def _read_static_file(filename, fallback):
     try:
-        return int(button.get("order", fallback))
-    except (TypeError, ValueError, AttributeError):
+        return (_STATIC_DIR / filename).read_text(encoding="utf-8")
+    except FileNotFoundError:
         return fallback
 
 
-def _action_buttons_for_objective(objective):
-    buttons = objective.get("actionButtons")
-    if isinstance(buttons, list):
-        filtered = [button for button in buttons if isinstance(button, dict)]
-        return sorted(filtered, key=lambda button: _button_order(button, 0))
-    return [dict(button) for button in _DEFAULT_ACTION_BUTTONS]
-
-
-def _action_task_slug(label):
-    slug = re.sub(r"[^a-z0-9]+", "-", str(label or "").strip().lower())
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return slug or "action"
-
-
-def _action_task_title(task):
-    title = str(task.get("title") or "Action").strip() or "Action"
-    if str(task.get("source") or "").lower() == "action-button":
-        return f"Action: {title}"
-    return title
+DASHBOARD_HTML = _read_static_file("dashboard.html", "<html><body><h1>dashboard.html not found</h1></body></html>")
+ORCHESTRATOR_HTML = _read_static_file("orchestrator.html", "<html><body><h1>orchestrator.html not found</h1></body></html>")
+ORCHESTRATOR_CSS = _read_static_file("orchestrator.css", "/* orchestrator.css not found */\n")
+ORCHESTRATOR_JS = _read_static_file("orchestrator.js", "console.error('orchestrator.js not found');\n")
+_STATIC_CONTENT = {
+    "/": DASHBOARD_HTML,
+    "/orchestrator": ORCHESTRATOR_HTML,
+    "/orchestrator.css": ORCHESTRATOR_CSS,
+    "/orchestrator.js": ORCHESTRATOR_JS,
+}
 
 
 def _human_file_size(size):
@@ -88,6 +64,8 @@ def make_handler(engine):
     """Create a DashboardHandler class bound to the given engine instance."""
 
     class DashboardHandler(BaseHTTPRequestHandler):
+        parse_qs = staticmethod(urllib.parse.parse_qs)
+
         def log_message(self, fmt, *args):
             pass
 
@@ -120,30 +98,30 @@ def make_handler(engine):
                 return None
             return cwd
 
+        def _serve_static(self, path):
+            content = _STATIC_CONTENT.get(path)
+            meta = _STATIC_FILES.get(path)
+            if content is None or meta is None:
+                return False
+            body = content.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", meta[1])
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
-            if path == "/":
-                body = DASHBOARD_HTML.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            elif path == "/orchestrator":
-                body = ORCHESTRATOR_HTML.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            elif path == "/api/status":
+            if self._serve_static(path):
+                return
+            if path == "/api/status":
                 self._json_response(engine.get_status())
             elif path == "/api/log":
                 self._json_response(engine.get_log())
             elif path.startswith("/api/git-status"):
-                qs = parsed.query
-                params = urllib.parse.parse_qs(qs)
+                params = urllib.parse.parse_qs(parsed.query)
                 if path == "/api/git-status-path":
                     target_path = self._resolve_git_path(params.get("path", [None])[0])
                     if target_path is None:
@@ -162,8 +140,7 @@ def make_handler(engine):
                 result["ok"] = True
                 self._json_response(result)
             elif path.startswith("/api/screen"):
-                qs = parsed.query
-                params = urllib.parse.parse_qs(qs)
+                params = urllib.parse.parse_qs(parsed.query)
                 idx_str = params.get("index", [None])[0]
                 lines_str = params.get("lines", ["200"])[0]
                 if idx_str is None:
@@ -195,178 +172,39 @@ def make_handler(engine):
                     reviews.append(item)
                 self._json_response(reviews)
             elif path == "/api/objectives":
-                self._json_response(objectives.list_objectives())
+                objective_routes.handle_list_objectives(self)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
                 objective = objectives.read_objective(objective_id)
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                self._json_response({"buttons": _action_buttons_for_objective(objective)})
+                action_buttons_routes.handle_get_action_buttons(self, objective)
             elif path.startswith("/api/objectives/") and path.endswith("/build-log"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/build-log")]).strip("/")
                 objective = objectives.read_objective(objective_id)
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                params = urllib.parse.parse_qs(parsed.query)
-                try:
-                    line_limit = int(params.get("lines", ["200"])[0])
-                except (TypeError, ValueError):
-                    line_limit = 200
-                try:
-                    offset = int(params.get("offset", ["0"])[0])
-                except (TypeError, ValueError):
-                    offset = 0
-                filename = str(params.get("file", ["build.log"])[0] or "build.log").strip()
-                if filename not in {"build.log", "prebuild.log"}:
-                    self._json_response({"ok": False, "error": "invalid file"}, 400)
-                    return
-                line_limit = max(1, min(line_limit, 1000))
-                offset = max(0, offset)
-                worktree_path = str(objective.get("worktreePath") or "").strip()
-                if not worktree_path:
-                    self._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
-                    return
-                log_path = Path(worktree_path) / ".build" / filename
-                if not log_path.exists() or not log_path.is_file():
-                    self._json_response({
-                        "exists": False,
-                        "lines": [],
-                        "fileSize": 0,
-                        "fileSizeHuman": "0 B",
-                        "totalLines": 0,
-                        "truncated": False,
-                    })
-                    return
-                try:
-                    file_size = log_path.stat().st_size
-                    if offset > 0:
-                        total_lines = 0
-                        lines = []
-                        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
-                            for line in handle:
-                                total_lines += 1
-                        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
-                            handle.seek(min(offset, file_size))
-                            for line in handle:
-                                lines.append(line.rstrip("\r\n"))
-                        truncated = False
-                    else:
-                        total_lines = 0
-                        tail = deque(maxlen=line_limit)
-                        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
-                            for line in handle:
-                                total_lines += 1
-                                tail.append(line.rstrip("\r\n"))
-                        lines = list(tail)
-                        truncated = total_lines > len(lines)
-                except OSError as exc:
-                    self._json_response({"ok": False, "error": str(exc)}, 500)
-                    return
-                self._json_response({
-                    "exists": True,
-                    "lines": lines,
-                    "fileSize": file_size,
-                    "fileSizeHuman": _human_file_size(file_size),
-                    "totalLines": total_lines,
-                    "truncated": truncated,
-                })
+                build_log_routes.handle_get_build_log(
+                    self,
+                    objective,
+                    parsed,
+                    human_file_size=_human_file_size,
+                )
             elif path.startswith("/api/objectives/") and path.endswith("/console-logs"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/console-logs")]).strip("/")
                 objective = objectives.read_objective(objective_id)
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                params = urllib.parse.parse_qs(parsed.query)
-                try:
-                    line_limit = int(params.get("lines", ["500"])[0])
-                except (TypeError, ValueError):
-                    line_limit = 500
-                line_limit = max(1, min(line_limit, 2000))
-                filter_pattern = str(params.get("filter", [""])[0] or "").strip()
-                requested_file = str(params.get("file", [""])[0] or "").strip()
-                if requested_file:
-                    if (
-                        not requested_file.endswith(".log")
-                        or "/" in requested_file
-                        or "\\" in requested_file
-                        or ".." in requested_file
-                    ):
-                        self._json_response({"ok": False, "error": "invalid file"}, 400)
-                        return
-                matcher = None
-                if filter_pattern:
-                    try:
-                        matcher = re.compile(filter_pattern, re.IGNORECASE)
-                    except re.error as exc:
-                        self._json_response({"ok": False, "error": f"invalid regex: {exc}"}, 400)
-                        return
-                worktree_path = str(objective.get("worktreePath") or "").strip()
-                if not worktree_path:
-                    self._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
-                    return
-                logs_dir = Path(worktree_path) / ".build" / "logs"
-                try:
-                    files = sorted(
-                        entry.name for entry in logs_dir.glob("*.log")
-                        if entry.is_file()
-                    ) if logs_dir.exists() and logs_dir.is_dir() else []
-                except OSError as exc:
-                    self._json_response({"ok": False, "error": str(exc)}, 500)
-                    return
-                if not files:
-                    self._json_response({
-                        "exists": False,
-                        "files": [],
-                        "activeFile": "",
-                        "lines": [],
-                        "totalLines": 0,
-                        "matchedLines": 0,
-                        "fileSize": 0,
-                        "fileSizeHuman": "0 B",
-                        "truncated": False,
-                        "filter": filter_pattern,
-                    })
-                    return
-                active_file = requested_file or files[0]
-                if active_file not in files:
-                    self._json_response({"ok": False, "error": "invalid file"}, 400)
-                    return
-                log_path = logs_dir / active_file
-                try:
-                    file_size = log_path.stat().st_size
-                    total_lines = 0
-                    matched_lines = 0
-                    tail = deque(maxlen=line_limit)
-                    with log_path.open("r", encoding="utf-8", errors="replace") as handle:
-                        for line in handle:
-                            total_lines += 1
-                            cleaned = line.rstrip("\r\n")
-                            if matcher is not None:
-                                if not matcher.search(cleaned):
-                                    continue
-                                matched_lines += 1
-                            else:
-                                matched_lines = total_lines
-                            tail.append(cleaned)
-                    lines = list(tail)
-                    truncated = matched_lines > len(lines)
-                except OSError as exc:
-                    self._json_response({"ok": False, "error": str(exc)}, 500)
-                    return
-                self._json_response({
-                    "exists": True,
-                    "files": files,
-                    "activeFile": active_file,
-                    "lines": lines,
-                    "totalLines": total_lines,
-                    "matchedLines": matched_lines,
-                    "fileSize": file_size,
-                    "fileSizeHuman": _human_file_size(file_size),
-                    "truncated": truncated,
-                    "filter": filter_pattern,
-                })
+                console_logs_routes.handle_get_console_logs(
+                    self,
+                    objective,
+                    parsed,
+                    re_module=__import__("re"),
+                    human_file_size=_human_file_size,
+                )
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
                 parts = path.split("/")
                 objective_id = parts[3]
@@ -375,44 +213,23 @@ def make_handler(engine):
                 if objective is None:
                     self._json_response({"ok": False, "error": "Not found"}, 404)
                     return
-                task = next((t for t in objective.get("tasks", []) if t.get("id") == task_id), None)
-                if not task or not task.get("workspaceId"):
-                    self._json_response({"ok": False, "error": "Task not found"}, 404)
-                    return
-                try:
-                    screen = cmux_api.cmux_read_workspace(
-                        0, 0, lines=200, workspace_uuid=task["workspaceId"]
-                    ) or ""
-                except Exception:
-                    screen = ""
-                self._json_response({"ok": True, "screen": screen, "lines": 200})
+                objective_routes.handle_get_task_screen(self, objective, task_id)
             elif path.startswith("/api/objectives/") and "/messages" in path:
                 objective_id = path.split("/")[3]
-                params = urllib.parse.parse_qs(parsed.query)
-                after = params.get("after", [None])[0]
-                messages = self.server.engine.orchestrator.get_messages(objective_id, after=after)
-                self._json_response(messages)
+                objective_routes.handle_get_messages(self, objective_id, parsed, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and path.endswith("/debug"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/debug")]).strip("/")
                 if objectives.read_objective(objective_id) is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                params = urllib.parse.parse_qs(parsed.query)
-                try:
-                    limit = int(params.get("limit", ["200"])[0])
-                except (TypeError, ValueError):
-                    limit = 200
-                limit = max(1, min(limit, 500))
-                level = params.get("level", [None])[0]
-                entries = self.server.engine.orchestrator.get_debug_entries(objective_id, limit=limit, level=level)
-                self._json_response(entries)
+                objective_routes.handle_get_debug(self, objective_id, parsed, engine=self.server.engine)
             elif path.startswith("/api/objectives/"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
                 objective = objectives.read_objective(objective_id)
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                self._json_response(objective)
+                objective_routes.handle_get_objective(self, objective)
             elif path.startswith("/api/reviews/"):
                 session_id = urllib.parse.unquote(path[len("/api/reviews/"):])
                 review = storage.get_review(session_id)
@@ -432,7 +249,6 @@ def make_handler(engine):
                         "defaultBaseBranch": engine.default_base_branch,
                     })
             elif path == "/api/models":
-                # Use cached availability — if already known unavailable, skip the connect attempt
                 with engine._lock:
                     cached = engine.ollama_available
                 lmstudio_available = False
@@ -487,166 +303,67 @@ def make_handler(engine):
                 self._json_response({"ok": True, "enabled": engine.enabled})
             elif path.startswith("/api/objectives/") and path.endswith("/start"):
                 objective_id = path.split("/")[3]
-                started = self.server.engine.orchestrator.start_objective(objective_id)
-                if started:
-                    self._json_response({"ok": True, "status": "planning"})
-                else:
-                    self._json_response({"ok": False, "error": "Could not start objective"}, 400)
+                objective_routes.handle_post_start(self, objective_id, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/approve"):
                 parts = path.split("/")
                 objective_id = parts[3]
                 task_id = parts[5]
-                action = data.get("action", "y\n")
-                self.server.engine.orchestrator.handle_human_input(
+                objective_routes.handle_post_task_approve(
+                    self,
                     objective_id,
-                    f"Approved: {action}",
-                    context={"task_id": task_id, "approval_action": action},
+                    task_id,
+                    data,
+                    engine=self.server.engine,
                 )
-                self._json_response({"ok": True})
             elif path.startswith("/api/objectives/") and path.endswith("/approve-plan"):
                 objective_id = path.split("/")[3]
-                approved = self.server.engine.orchestrator.approve_plan(objective_id)
-                if approved:
-                    self._json_response({"ok": True})
-                else:
-                    self._json_response({"ok": False, "error": "Could not approve plan"}, 400)
+                objective_routes.handle_post_approve_plan(self, objective_id, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and path.endswith("/message"):
                 objective_id = path.split("/")[3]
-                message = data.get("message", "")
-                context = data.get("context")
-                threading.Thread(
-                    target=self.server.engine.orchestrator.handle_human_input,
-                    args=(objective_id, message, context),
-                    daemon=True,
-                ).start()
-                self._json_response({"ok": True})
+                objective_routes.handle_post_message(
+                    self,
+                    objective_id,
+                    data,
+                    engine=self.server.engine,
+                    threading_module=threading,
+                )
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
                 objective = objectives.read_objective(objective_id)
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                label = str(data.get("label") or "").strip()
-                prompt = str(data.get("prompt") or "").strip()
-                icon = str(data.get("icon") or "⚡").strip() or "⚡"
-                color = str(data.get("color") or "#4f8ef7").strip() or "#4f8ef7"
-                if not label or not prompt:
-                    self._json_response({"ok": False, "error": "label and prompt required"}, 400)
-                    return
-                buttons = objective.get("actionButtons")
-                if not isinstance(buttons, list):
-                    buttons = []
-                order = max(
-                    [_button_order(button, index) for index, button in enumerate(buttons) if isinstance(button, dict)]
-                    + [-1]
-                ) + 1
-                button = {
-                    "id": str(uuid.uuid4()),
-                    "label": label,
-                    "icon": icon,
-                    "color": color,
-                    "prompt": prompt,
-                    "order": order,
-                }
-                buttons.append(button)
-                objectives.set_action_buttons(objective_id, buttons)
-                self._json_response({"ok": True, "button": button})
+                action_buttons_routes.handle_post_action_buttons(
+                    self,
+                    objective_id,
+                    objective,
+                    data,
+                    uuid_module=uuid,
+                )
             elif path.startswith("/api/objectives/") and path.endswith("/action-inject"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-inject")]).strip("/")
                 objective = objectives.read_objective(objective_id)
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                worktree_path = str(objective.get("worktreePath") or "").strip()
-                if not worktree_path:
-                    self._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
-                    return
-                button_id = str(data.get("buttonId") or "").strip()
-                prompt_override = str(data.get("prompt") or "").strip()
-                button = None
-                if button_id:
-                    button = next((item for item in _action_buttons_for_objective(objective) if item.get("id") == button_id), None)
-                    if button is None:
-                        self._json_response({"ok": False, "error": "action button not found"}, 404)
-                        return
-                prompt = prompt_override or str((button or {}).get("prompt") or "").strip()
-                if not prompt:
-                    self._json_response({"ok": False, "error": "prompt required"}, 400)
-                    return
-                button_label = str((button or {}).get("label") or "Ad Hoc Action").strip() or "Ad Hoc Action"
-                workspace_title = _action_task_title({"title": button_label, "source": "action-button"})
-                workspace_uuid, created = self.server.engine.orchestrator._create_worker_workspace(
-                    workspace_title,
-                    worktree_path,
-                    objective_id=objective_id,
-                    purpose="action-button",
+                action_buttons_routes.handle_post_action_inject(
+                    self,
+                    objective_id,
+                    objective,
+                    data,
+                    engine=self.server.engine,
+                    cmux_api=cmux_api,
+                    datetime_cls=datetime,
+                    time_module=time,
+                    re_module=__import__("re"),
                 )
-                if not created or not workspace_uuid:
-                    self._json_response({"ok": False, "error": "workspace creation failed"}, 500)
-                    return
-                if not self.server.engine.orchestrator._wait_for_repl(
-                    workspace_uuid,
-                    objective_id=objective_id,
-                    purpose="action-button",
-                ):
-                    self.server.engine.orchestrator._close_workspace(objective_id, workspace_uuid, "action-button_repl_timeout")
-                    self._json_response({"ok": False, "error": "repl not ready"}, 500)
-                    return
-                if not cmux_api.send_prompt_to_workspace(workspace_uuid, prompt):
-                    self.server.engine.orchestrator._close_workspace(objective_id, workspace_uuid, "action-button_prompt_failed")
-                    self._json_response({"ok": False, "error": "prompt delivery failed"}, 500)
-                    return
-                timestamp = int(time.time())
-                task_id = f"action-{_action_task_slug(button_label)}-{timestamp}"
-                task = {
-                    "id": task_id,
-                    "title": button_label,
-                    "source": "action-button",
-                    "actionId": button.get("id") if button else None,
-                    "status": "executing",
-                    "workspaceId": workspace_uuid,
-                    "worktreePath": worktree_path,
-                    "startedAt": datetime.now(timezone.utc).isoformat(),
-                    "prompt": prompt,
-                    "dependsOn": [],
-                    "files": [],
-                    "checkpoints": [],
-                }
-                objectives.append_task(objective_id, task)
-                objectives.create_task_dir(objective_id, task_id)
-                objectives.write_task_file(objective_id, task_id, "spec.md", prompt + "\n")
-                self._json_response({"ok": True, "taskId": task_id, "workspaceId": workspace_uuid})
             elif path == "/api/objectives":
-                goal = data.get("goal", "")
-                project_dir = data.get("projectDir", "")
-                base_branch = data.get("baseBranch")
-                branch_name = data.get("branchName")
-                if not project_dir:
-                    with engine._lock:
-                        project_dir = engine.default_project_dir
-                if not base_branch:
-                    with engine._lock:
-                        base_branch = engine.default_base_branch
-                if not goal or not project_dir:
-                    self._json_response({"ok": False, "error": "goal and projectDir required"}, 400)
-                    return
-                try:
-                    objective = objectives.create_objective(
-                        goal,
-                        project_dir,
-                        base_branch=base_branch,
-                        branch_name=branch_name,
-                    )
-                except OSError as e:
-                    self._json_response({"ok": False, "error": str(e)}, 500)
-                    return
-                self._json_response(objective, 201)
+                objective_routes.handle_post_create_objective(self, data, engine=self.server.engine)
             elif path == "/api/workspace":
                 idx = data.get("index")
                 enabled = data.get("enabled", True)
                 if idx is not None:
                     idx = int(idx)
-                    # For virtual indices, resolve to real index for config
                     with engine._lock:
                         virtual_ws = engine._build_virtual_workspaces()
                     vws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
@@ -694,7 +411,6 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "index required"}, 400)
                     return
                 idx = int(idx)
-                # For virtual indices, resolve to real index for rename
                 with engine._lock:
                     virtual_ws = engine._build_virtual_workspaces()
                 vws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
@@ -712,7 +428,6 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "index and text required"}, 400)
                     return
                 idx = int(idx)
-                # Look up in virtual workspaces to resolve surface_id for multi-surface
                 with engine._lock:
                     virtual_ws = engine._build_virtual_workspaces()
                 ws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
@@ -723,7 +438,6 @@ def make_handler(engine):
                 real_idx = ws.get("_real_index", idx)
                 ok = cmux_api.cmux_send_to_workspace(real_idx, 0, text=text, workspace_uuid=ws.get("uuid"), surface_id=sid)
                 if ok:
-                    # Clear "needs human" state so the badge resets
                     engine._append_log({
                         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "workspace": idx,
@@ -737,11 +451,11 @@ def make_handler(engine):
                 self._json_response({"ok": ok})
             elif path.startswith("/api/reviews/") and path.endswith("/rerun"):
                 session_id = urllib.parse.unquote(path[len("/api/reviews/"):-len("/rerun")]).rstrip("/")
-                path = storage.get_review_path(session_id)
-                if path is None:
+                review_path = storage.get_review_path(session_id)
+                if review_path is None:
                     self._json_response({"ok": False, "error": "review not found"}, 404)
                     return
-                review = storage.read_review_file(path)
+                review = storage.read_review_file(review_path)
                 if review is None:
                     self._json_response({"ok": False, "error": "review not found"}, 404)
                     return
@@ -754,29 +468,29 @@ def make_handler(engine):
                 review.pop("reviewModel", None)
                 review.pop("review", None)
                 try:
-                    storage.write_review_file(path, review)
+                    storage.write_review_file(review_path, review)
                 except OSError as e:
                     self._json_response({"ok": False, "error": str(e)}, 500)
                     return
                 threading.Thread(
                     target=review_mod.run_review,
-                    args=(path, engine.review_model, engine.review_backend, model_override, backend_override),
+                    args=(review_path, engine.review_model, engine.review_backend, model_override, backend_override),
                     daemon=True,
                 ).start()
                 self._json_response({"ok": True})
             elif path.startswith("/api/reviews/") and path.endswith("/dismiss"):
                 session_id = urllib.parse.unquote(path[len("/api/reviews/"):-len("/dismiss")]).rstrip("/")
-                path = storage.get_review_path(session_id)
-                if path is None:
+                review_path = storage.get_review_path(session_id)
+                if review_path is None:
                     self._json_response({"ok": False, "error": "review not found"}, 404)
                     return
-                review = storage.read_review_file(path)
+                review = storage.read_review_file(review_path)
                 if review is None:
                     self._json_response({"ok": False, "error": "review not found"}, 404)
                     return
                 review["reviewStatus"] = "dismissed"
                 try:
-                    storage.write_review_file(path, review)
+                    storage.write_review_file(review_path, review)
                 except OSError as e:
                     self._json_response({"ok": False, "error": str(e)}, 500)
                     return
@@ -788,7 +502,6 @@ def make_handler(engine):
                 prompt = data.get("prompt", "")
                 command = data.get("command", "claude")
 
-                # Expand ~ in project path
                 project_path = os.path.expanduser(project_path)
 
                 if not os.path.isdir(project_path):
@@ -798,7 +511,6 @@ def make_handler(engine):
                 cwd = project_path
                 session_name = branch_name or "New Session"
 
-                # Create git worktree if branch name provided
                 if branch_name:
                     worktrees_dir = os.path.join(project_path, ".claude", "worktrees")
                     os.makedirs(worktrees_dir, exist_ok=True)
@@ -815,7 +527,6 @@ def make_handler(engine):
                         )
                         if result.returncode != 0:
                             err = (result.stderr or "").strip()
-                            # Branch already exists in git — try without -b to reuse it
                             if "already exists" in err.lower():
                                 result = subprocess.run(
                                     ["git", "worktree", "add", worktree_path, branch_name],
@@ -836,19 +547,16 @@ def make_handler(engine):
 
                     cwd = worktree_path
 
-                # Create cmux workspace
                 ws_uuid = None
                 ws_idx = None
                 cli_result = None
 
                 def _ws_ids(list_result):
-                    """Return a set of workspace IDs from a workspace.list result."""
                     if not list_result:
                         return set()
                     ws_list = list_result if isinstance(list_result, list) else list_result.get("workspaces", [])
                     return {w.get("id") or w.get("uuid") for w in ws_list if w.get("id") or w.get("uuid")}
 
-                # Snapshot existing workspaces before creation so we can identify the new one
                 pre_list = cmux_api._v2_request("workspace.list", {})
                 existing_ids = _ws_ids(pre_list)
 
@@ -872,16 +580,13 @@ def make_handler(engine):
                         self._json_response({"ok": False, "error": "Failed to create workspace"})
                         return
 
-                # Resolve UUID + index: find the workspace that wasn't there before
                 list_result = cmux_api._v2_request("workspace.list", {})
                 if list_result:
                     ws_list = list_result if isinstance(list_result, list) else list_result.get("workspaces", [])
-                    # Prefer a workspace whose ID is new (wasn't in pre-creation snapshot)
                     new_ws = next(
                         (w for w in ws_list if (w.get("id") or w.get("uuid")) not in existing_ids),
                         None,
                     )
-                    # Fallback: find by matching session name
                     if new_ws is None:
                         new_ws = next(
                             (w for w in reversed(ws_list) if w.get("title") == session_name or w.get("name") == session_name),
@@ -910,64 +615,52 @@ def make_handler(engine):
                     except Exception:
                         pass
 
-                # Save config
                 engine.ws_config.setdefault(ws_uuid, {})["customName"] = session_name
                 engine._save_config()
 
-                # Deliver prompt in background — waits for Claude Code REPL to be ready
                 if prompt and ws_uuid:
-                    def _deliver_prompt(uuid, text):
-                        """Poll for Claude Code REPL readiness, then inject prompt.
-
-                        Uses cmux_api.send_prompt_to_workspace which mirrors WebMux's
-                        sendPrompt() pattern: tmux paste-buffer (atomic) first, then
-                        separate send_text + send_key("enter") fallback. Never embeds
-                        \\n in the text — cmux does not interpret it as Enter.
-                        """
+                    def _deliver_prompt(workspace_uuid, text):
                         import re
-                        # Match Claude Code's status bar lines individually — they appear
-                        # on separate lines so we can't use a single cross-line pattern.
-                        # The REPL prompt char is ❯ (U+276F), not ASCII >.
-                        # Cost can be $0.00 (2 decimal digits).
+
                         repl_ready = re.compile(
                             r"(Model:|Cost:\s*\$\d|\u276f\s*$)",
                             re.MULTILINE | re.IGNORECASE,
                         )
-                        for attempt in range(20):  # up to ~50s
+                        for attempt in range(20):
                             time.sleep(2.5)
                             try:
                                 screen = cmux_api.cmux_read_workspace(
-                                    0, 0, lines=30, workspace_uuid=uuid,
+                                    0, 0, lines=30, workspace_uuid=workspace_uuid,
                                 )
                                 matched = bool(screen and repl_ready.search(screen))
                                 storage.debug_log({
                                     "event": "deliver_prompt_poll",
-                                    "workspace_uuid": uuid,
+                                    "workspace_uuid": workspace_uuid,
                                     "attempt": attempt,
                                     "screen_len": len(screen) if screen else 0,
                                     "ready": matched,
                                 })
                                 if matched:
-                                    ok = cmux_api.send_prompt_to_workspace(uuid, text)
+                                    ok = cmux_api.send_prompt_to_workspace(workspace_uuid, text)
                                     storage.debug_log({
                                         "event": "deliver_prompt_sent",
-                                        "workspace_uuid": uuid,
+                                        "workspace_uuid": workspace_uuid,
                                         "ok": ok,
                                         "text_preview": text[:80],
                                     })
                                     if ok:
                                         return
-                                    # Send failed — wait and retry once
                                     time.sleep(1.0)
-                                    cmux_api.send_prompt_to_workspace(uuid, text)
+                                    cmux_api.send_prompt_to_workspace(workspace_uuid, text)
                                     return
                             except Exception as exc:
                                 storage.debug_log({
                                     "event": "deliver_prompt_error",
-                                    "workspace_uuid": uuid,
+                                    "workspace_uuid": workspace_uuid,
                                     "attempt": attempt,
                                     "error": str(exc),
                                 })
+
                     t = threading.Thread(
                         target=_deliver_prompt, args=(ws_uuid, prompt), daemon=True,
                     )
@@ -1066,7 +759,6 @@ def make_handler(engine):
                     return
                 full_path = os.path.join(cwd, file)
                 if section == "untracked" and os.path.isdir(full_path):
-                    # Directory: collect diffs for all files inside
                     parts = []
                     for root, _dirs, files in os.walk(full_path):
                         for fname in sorted(files):
@@ -1132,16 +824,7 @@ def make_handler(engine):
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                buttons = objective.get("actionButtons")
-                if not isinstance(buttons, list):
-                    self._json_response({"ok": False, "error": "action button not found"}, 404)
-                    return
-                remaining = [button for button in buttons if isinstance(button, dict) and button.get("id") != button_id]
-                if len(remaining) == len(buttons):
-                    self._json_response({"ok": False, "error": "action button not found"}, 404)
-                    return
-                objectives.set_action_buttons(objective_id, remaining)
-                self._json_response({"ok": True})
+                action_buttons_routes.handle_delete_action_button(self, objective_id, objective, button_id)
                 return
             if path.startswith("/api/objectives/"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
@@ -1149,9 +832,7 @@ def make_handler(engine):
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                self.server.engine.orchestrator.stop_and_cleanup(objective_id)
-                objectives.delete_objective(objective_id)
-                self._json_response({"ok": True})
+                objective_routes.handle_delete_objective(self, objective_id, engine=self.server.engine)
                 return
             self.send_error(404)
 
