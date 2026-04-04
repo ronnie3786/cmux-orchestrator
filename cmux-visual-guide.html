@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CMUX Harness — Visual Architecture Guide</title>
+<style>
+:root {
+  --bg: #0a0e14;
+  --surface: #131920;
+  --surface2: #1a2230;
+  --border: #2a3545;
+  --text: #e6edf3;
+  --muted: #7a8899;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --orange: #f0883e;
+  --teal: #39d2c0;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow-x: hidden;
+}
+
+/* ===== HEADER ===== */
+.header {
+  padding: 32px 48px 24px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(88,166,255,.04) 0%, transparent 100%);
+}
+.header h1 { font-size: 28px; font-weight: 800; letter-spacing: -.5px; }
+.header h1 span { color: var(--accent); }
+.header p { color: var(--muted); font-size: 14px; margin-top: 6px; }
+
+/* ===== TABS ===== */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 16px 48px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all .2s;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ===== VIEWS ===== */
+.view { display: none; padding: 32px 48px 80px; }
+.view.active { display: block; }
+
+/* ===== ARCHITECTURE VIEW ===== */
+.arch-container {
+  position: relative;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+/* Layer Cards */
+.layer {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px;
+  background: var(--surface);
+  margin-bottom: 0;
+  transition: all .3s;
+  cursor: pointer;
+}
+.layer:hover { border-color: var(--accent); box-shadow: 0 0 20px rgba(88,166,255,.08); }
+.layer.expanded { border-color: var(--accent); }
+.layer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.layer-left { display: flex; align-items: center; gap: 14px; }
+.layer-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+}
+.layer-num.l1 { background: rgba(88,166,255,.15); color: var(--accent); }
+.layer-num.l2 { background: rgba(188,140,255,.15); color: var(--purple); }
+.layer-num.l3 { background: rgba(63,185,80,.15); color: var(--green); }
+.layer-num.l4 { background: rgba(240,136,62,.15); color: var(--orange); }
+.layer-title { font-size: 16px; font-weight: 700; }
+.layer-subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.layer-badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+.layer-expand {
+  font-size: 18px;
+  color: var(--muted);
+  transition: transform .3s;
+}
+.layer.expanded .layer-expand { transform: rotate(180deg); }
+
+/* Layer Detail */
+.layer-detail {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .4s ease, padding .3s;
+  padding: 0 4px;
+}
+.layer.expanded .layer-detail {
+  max-height: 1200px;
+  padding: 20px 4px 4px;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.detail-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--surface2);
+}
+.detail-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-card-body {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.detail-card-body code {
+  background: rgba(255,255,255,.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+}
+.detail-card-body strong { color: var(--text); }
+
+/* Connector Arrows */
+.connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 0;
+  position: relative;
+}
+.connector-line {
+  width: 2px;
+  height: 28px;
+  position: relative;
+}
+.connector-line::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+}
+.connector-label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* Animated particles on connectors */
+.connector.animated .connector-line::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  position: absolute;
+  left: -2px;
+  animation: particle-flow 1.5s ease-in-out infinite;
+}
+@keyframes particle-flow {
+  0% { top: -6px; opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { top: 28px; opacity: 0; }
+}
+.connector.c1 .connector-line { background: var(--accent); }
+.connector.c1 .connector-line::after { border-top: 6px solid var(--accent); }
+.connector.c1 .connector-line::before { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.connector.c1 .connector-label { background: rgba(88,166,255,.1); color: var(--accent); }
+.connector.c2 .connector-line { background: var(--purple); }
+.connector.c2 .connector-line::after { border-top: 6px solid var(--purple); }
+.connector.c2 .connector-line::before { background: var(--purple); box-shadow: 0 0 8px var(--purple); }
+.connector.c2 .connector-label { background: rgba(188,140,255,.1); color: var(--purple); }
+.connector.c3 .connector-line { background: var(--green); }
+.connector.c3 .connector-line::after { border-top: 6px solid var(--green); }
+.connector.c3 .connector-line::before { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.connector.c3 .connector-label { background: rgba(63,185,80,.1); color: var(--green); }
+
+/* ===== FLOW VIEW ===== */
+.flow-container { max-width: 900px; margin: 0 auto; }
+.flow-scenario {
+  margin-bottom: 48px;
+}
+.flow-scenario h3 {
+  font-size: 17px;
+  margin-bottom: 6px;
+}
+.flow-scenario .desc {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+.flow-timeline {
+  position: relative;
+  padding-left: 40px;
+}
+.flow-timeline::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.flow-step {
+  position: relative;
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: all .4s ease;
+}
+.flow-step.visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+.flow-step::before {
+  content: '';
+  position: absolute;
+  left: -29px;
+  top: 18px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg);
+}
+.flow-step.active::before { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 10px rgba(88,166,255,.5); }
+.flow-step.active { border-color: var(--accent); }
+.flow-step.done::before { border-color: var(--green); background: var(--green); }
+.flow-step .step-layer {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  margin-bottom: 4px;
+}
+.flow-step .step-layer.l1 { color: var(--accent); }
+.flow-step .step-layer.l2 { color: var(--purple); }
+.flow-step .step-layer.l3 { color: var(--green); }
+.flow-step .step-layer.l4 { color: var(--orange); }
+.flow-step .step-title { font-size: 14px; font-weight: 600; }
+.flow-step .step-detail { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.6; }
+.flow-step .step-detail code {
+  background: rgba(255,255,255,.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: 'SF Mono', monospace;
+  font-size: 11px;
+}
+
+/* Flow Controls */
+.flow-controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.flow-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all .15s;
+  font-weight: 600;
+}
+.flow-btn:hover { border-color: var(--accent); background: var(--surface2); }
+.flow-btn.active { background: rgba(88,166,255,.15); border-color: var(--accent); color: var(--accent); }
+.flow-btn.play { background: var(--green); border-color: var(--green); color: #000; }
+.flow-btn.play:hover { opacity: .9; }
+
+/* ===== GLOSSARY VIEW ===== */
+.glossary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.glossary-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  background: var(--surface);
+  transition: border-color .2s;
+}
+.glossary-card:hover { border-color: var(--accent); }
+.glossary-card .gc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.glossary-card .gc-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+.glossary-card .gc-name { font-size: 15px; font-weight: 700; }
+.glossary-card .gc-file { font-size: 11px; color: var(--muted); font-family: 'SF Mono', monospace; }
+.glossary-card .gc-desc { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.glossary-card .gc-desc strong { color: var(--text); }
+
+/* ===== INJECTION VIEW ===== */
+.injection-container { max-width: 900px; margin: 0 auto; }
+.injection-option {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  background: var(--surface);
+  margin-bottom: 16px;
+  transition: all .3s;
+  cursor: pointer;
+}
+.injection-option:hover { border-color: var(--yellow); }
+.injection-option.selected { border-color: var(--yellow); box-shadow: 0 0 20px rgba(210,153,34,.1); }
+.injection-header { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.injection-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+.injection-title { font-size: 16px; font-weight: 700; }
+.injection-use { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.injection-path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.path-node {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid;
+}
+.path-arrow { color: var(--muted); font-size: 16px; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .header, .tabs, .view { padding-left: 20px; padding-right: 20px; }
+  .detail-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>cmux</span> harness — visual architecture</h1>
+  <p>Interactive reference for how the system works, layer by layer</p>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-view="architecture">🏗️ Architecture</button>
+  <button class="tab" data-view="flows">⚡ Live Flows</button>
+  <button class="tab" data-view="injection">🎯 Action Buttons</button>
+  <button class="tab" data-view="glossary">📖 Component Glossary</button>
+</div>
+
+<!-- ===== ARCHITECTURE VIEW ===== -->
+<div class="view active" id="architecture">
+  <div class="arch-container">
+
+    <!-- Layer 1 -->
+    <div class="layer" data-layer="1">
+      <div class="layer-header">
+        <div class="layer-left">
+          <div class="layer-num l1">1</div>
+          <div>
+            <div class="layer-title">🧑‍💻 You — Dashboard UI</div>
+            <div class="layer-subtitle">Where you interact with the system</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="layer-badge" style="background:rgba(88,166,255,.1);color:var(--accent);">localhost:7779</span>
+          <span class="layer-expand">▼</span>
+        </div>
+      </div>
+      <div class="layer-detail">
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-card-title">📊 Command Center <code>/</code></div>
+            <div class="detail-card-body">
+              <strong>The monitoring dashboard.</strong> Shows every cmux workspace as a card with live screen previews.<br><br>
+              • Session status (active/idle/completed)<br>
+              • Auto-approval toggle per workspace<br>
+              • Review results from completed sessions<br>
+              • "New Session" button to create workspaces<br>
+              • Connection health indicator (socket status)
+            </div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-card-title">🎯 Orchestrator <code>/orchestrator</code></div>
+            <div class="detail-card-body">
+              <strong>The "Tech Lead" interface.</strong> Chat panel where you type high-level goals.<br><br>
+              • Text input → becomes an <strong>Objective</strong><br>
+              • Objective gets a project dir + git worktree<br>
+              • Orchestrator plans, decomposes, executes<br>
+              • Task cards show progress per worker<br>
+              • Review cycles catch bugs before merge
+            </div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-card-title">🔮 Action Buttons <span style="color:var(--green);font-size:10px;">FINALIZED</span></div>
+            <div class="detail-card-body">
+              <strong>Quick-fire saved prompts.</strong> Floating FAB rail on the right side.<br><br>
+              • One click → <strong>spawns NEW session</strong> in worktree<br>
+              • Registers as a task on the objective<br>
+              • Orchestrator maintains full visibility<br>
+              • Engine auto-monitors (approval, completion, review)<br>
+              • "Build & Run" is a built-in default per objective<br>
+              • Plus button to add custom actions
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connector 1→2 -->
+    <div class="connector animated c1">
+      <div class="connector-line"></div>
+      <span class="connector-label">HTTP API — POST /api/*</span>
+      <div class="connector-line"></div>
+    </div>
+
+    <!-- Layer 2 -->
+    <div class="layer" data-layer="2">
+      <div class="layer-header">
+        <div class="layer-left">
+          <div class="layer-num l2">2</div>
+          <div>
+            <div class="layer-title">🧠 Harness Server — Python Backend</div>
+            <div class="layer-subtitle">The brain: engine, orchestrator, planner, workers, monitor</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="layer-badge" style="background:rgba(188,140,255,.1);color:var(--purple);">server.py</span>
+          <span class="layer-expand">▼</span>
+        </div>
+      </div>
+      <div class="layer-detail">
+        <div class="detail-grid">
+          <div class="detail-card" style="border-color:rgba(188,140,255,.3);">
+            <div class="detail-card-title">⚙️ HarnessEngine <code>engine.py</code></div>
+            <div class="detail-card-body">
+              <strong>The main loop.</strong> A daemon thread polling every 5 seconds.<br><br>
+              • Reads all workspace screens via cmux<br>
+              • Detects Claude Code sessions (active/idle/exited)<br>
+              • Auto-approves permission prompts<br>
+              • Triggers reviews on session completion<br>
+              • Tracks costs, fingerprints, session IDs<br>
+              • <strong>Owns the Orchestrator instance</strong>
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(188,140,255,.3);">
+            <div class="detail-card-title">🎯 Orchestrator <code>orchestrator.py</code></div>
+            <div class="detail-card-body">
+              <strong>The "Tech Lead" brain.</strong> 1,900+ lines of orchestration logic.<br><br>
+              • Receives goals from chat UI<br>
+              • Creates Planner session → gets task plan<br>
+              • Parses plan via Haiku (cheapest LLM)<br>
+              • Launches workers respecting dependencies<br>
+              • Reviews results, manages rework cycles<br>
+              • Runs its own Claude Code session for Q&A<br>
+              • Idle sweep closes stale sessions after 1hr
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(188,140,255,.3);">
+            <div class="detail-card-title">📋 Planner <code>planner.py</code></div>
+            <div class="detail-card-body">
+              <strong>Goal → Task decomposition.</strong><br><br>
+              • Builds structured planning prompt<br>
+              • Rules: max parallelism, no chains >2 deep<br>
+              • Small tasks (1-3 files each), no overlap<br>
+              • Output: <code>plan.md</code> in worktree<br>
+              • Haiku parses plan → JSON task queue<br>
+              • 3-6 tasks per objective (sweet spot)
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(188,140,255,.3);">
+            <div class="detail-card-title">👷 Worker <code>worker.py</code></div>
+            <div class="detail-card-body">
+              <strong>Task execution setup.</strong><br><br>
+              • Creates git worktree per objective (shared branch)<br>
+              • Writes <code>spec.md</code> + <code>context.md</code> to worktree<br>
+              • Launches Claude Code workspace at worktree path<br>
+              • Prompt: "Read spec.md, implement, write result.md"<br>
+              • Context from completed deps piped to next worker
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(188,140,255,.3);">
+            <div class="detail-card-title">📡 Monitor <code>monitor.py</code></div>
+            <div class="detail-card-body">
+              <strong>Session health tracking.</strong><br><br>
+              • Checks if Claude Code is still running<br>
+              • Detects stuck/errored sessions<br>
+              • Reads terminal screen for progress signals<br>
+              • Triggers completion flow when session ends
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(188,140,255,.3);">
+            <div class="detail-card-title">🔍 Review <code>review.py</code></div>
+            <div class="detail-card-body">
+              <strong>Code quality gate.</strong><br><br>
+              • Runs <code>claude --print</code> on completed diffs<br>
+              • Sonnet reviews catch real bugs<br>
+              • Can trigger rework cycles (up to N retries)<br>
+              • Results displayed in task cards
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connector 2→3 -->
+    <div class="connector animated c2">
+      <div class="connector-line"></div>
+      <span class="connector-label">cmux Socket — JSON-RPC v2</span>
+      <div class="connector-line"></div>
+    </div>
+
+    <!-- Layer 3 -->
+    <div class="layer" data-layer="3">
+      <div class="layer-header">
+        <div class="layer-left">
+          <div class="layer-num l3">3</div>
+          <div>
+            <div class="layer-title">🔌 cmux — Terminal Multiplexer</div>
+            <div class="layer-subtitle">The bridge between your code and Claude Code's terminal</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="layer-badge" style="background:rgba(63,185,80,.1);color:var(--green);">Unix Socket</span>
+          <span class="layer-expand">▼</span>
+        </div>
+      </div>
+      <div class="layer-detail">
+        <div class="detail-grid">
+          <div class="detail-card" style="border-color:rgba(63,185,80,.3);">
+            <div class="detail-card-title">📡 Socket API <code>cmux_api.py</code></div>
+            <div class="detail-card-body">
+              <strong>The single transport layer.</strong> Every interaction with Claude Code goes through here.<br><br>
+              Socket: <code>~/Library/.../cmux.sock</code><br><br>
+              <strong>Key operations:</strong><br>
+              • <code>workspace.create</code> — new terminal workspace<br>
+              • <code>workspace.list</code> — enumerate all workspaces<br>
+              • <code>workspace.rename</code> — set workspace title<br>
+              • <code>workspace.close</code> — kill workspace<br>
+              • <code>surface.read_text</code> — read terminal screen<br>
+              • <code>surface.send_text</code> — type text into terminal<br>
+              • <code>surface.send_key</code> — send Enter, Ctrl-C, etc.
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(63,185,80,.3);background:rgba(63,185,80,.04);">
+            <div class="detail-card-title">⭐ send_prompt_to_workspace() <span style="color:var(--yellow);font-size:10px;">THE FUNNEL</span></div>
+            <div class="detail-card-body">
+              <strong>Every single prompt enters Claude Code through this function.</strong><br><br>
+              1. Try <code>tmux paste-buffer</code> (atomic, handles long text)<br>
+              2. Fallback: <code>surface.send_text()</code> + <code>surface.send_key("enter")</code><br><br>
+              Orchestrator goals, planner prompts, worker task specs, user messages, skill commands — <strong>all of them</strong> funnel through this one function. This is where action buttons would inject too.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connector 3→4 -->
+    <div class="connector animated c3">
+      <div class="connector-line"></div>
+      <span class="connector-label">tmux pane / terminal surface</span>
+      <div class="connector-line"></div>
+    </div>
+
+    <!-- Layer 4 -->
+    <div class="layer" data-layer="4">
+      <div class="layer-header">
+        <div class="layer-left">
+          <div class="layer-num l4">4</div>
+          <div>
+            <div class="layer-title">💻 Claude Code Sessions</div>
+            <div class="layer-subtitle">Interactive Claude Code instances doing the actual work</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="layer-badge" style="background:rgba(240,136,62,.1);color:var(--orange);">Subscription Auth</span>
+          <span class="layer-expand">▼</span>
+        </div>
+      </div>
+      <div class="layer-detail">
+        <div class="detail-grid">
+          <div class="detail-card" style="border-color:rgba(240,136,62,.3);">
+            <div class="detail-card-title">📋 Planner Session</div>
+            <div class="detail-card-body">
+              <strong>Reads the codebase, writes plan.md.</strong><br><br>
+              • Receives structured planning prompt<br>
+              • Analyzes repo structure and files<br>
+              • Outputs numbered task plan to <code>plan.md</code><br>
+              • Auto-approved for file writes<br>
+              • Closed after plan is captured
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(240,136,62,.3);">
+            <div class="detail-card-title">⚡ Worker Sessions (1 per task)</div>
+            <div class="detail-card-body">
+              <strong>Execute specific coding tasks.</strong><br><br>
+              • Receives <code>spec.md</code> + <code>context.md</code><br>
+              • Works in the objective's git worktree<br>
+              • Writes <code>result.md</code> when done<br>
+              • Auto-approved for file operations<br>
+              • Reviewed by Sonnet after completion<br>
+              • May enter rework cycle if issues found
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(240,136,62,.3);">
+            <div class="detail-card-title">💬 Orchestrator Chat Session</div>
+            <div class="detail-card-body">
+              <strong>Interactive Q&A about the objective.</strong><br><br>
+              • Launched after planning completes<br>
+              • Has full context of objective + tasks<br>
+              • Can read files, check git status, run commands<br>
+              • You chat with it via the orchestrator UI<br>
+              • Auto-closes after 1hr of inactivity
+            </div>
+          </div>
+          <div class="detail-card" style="border-color:rgba(240,136,62,.3);">
+            <div class="detail-card-title">🖥️ Manual Sessions</div>
+            <div class="detail-card-body">
+              <strong>Your own Claude Code sessions.</strong><br><br>
+              • Created via Command Center "New Session"<br>
+              • Or existing cmux workspaces you opened<br>
+              • Engine monitors + auto-approves these too<br>
+              • <strong>Action buttons would target these</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===== FLOWS VIEW ===== -->
+<div class="view" id="flows">
+  <div class="flow-container">
+
+    <div class="flow-controls">
+      <button class="flow-btn active" data-flow="orchestrator">🎯 Orchestrator Goal</button>
+      <button class="flow-btn" data-flow="direct">⚡ Direct Command</button>
+      <button class="flow-btn" data-flow="action-btn">🔘 Action Button</button>
+      <button class="flow-btn play" id="play-flow">▶ Play</button>
+    </div>
+
+    <!-- Orchestrator Flow -->
+    <div class="flow-scenario" id="flow-orchestrator">
+      <h3>Orchestrator Goal Flow</h3>
+      <p class="desc">What happens when you type "Fix the auth token refresh bug" in the orchestrator chat</p>
+      <div class="flow-timeline">
+        <div class="flow-step" data-delay="0">
+          <div class="step-layer l1">Layer 1 — Dashboard UI</div>
+          <div class="step-title">You type a goal in the orchestrator chat panel</div>
+          <div class="step-detail">"Fix the auth token refresh bug in IOSDOX-24739"</div>
+        </div>
+        <div class="flow-step" data-delay="300">
+          <div class="step-layer l2">Layer 2 — Server</div>
+          <div class="step-title">Server receives via <code>POST /api/orchestrator/message</code></div>
+          <div class="step-detail">Creates an <strong>Objective</strong> with goal, project dir, and creates a git worktree for isolation.</div>
+        </div>
+        <div class="flow-step" data-delay="600">
+          <div class="step-layer l2">Layer 2 — Orchestrator</div>
+          <div class="step-title">Orchestrator starts planning phase</div>
+          <div class="step-detail">Spawns a background thread <code>_run_planning()</code>. Status → <strong>"planning"</strong>.</div>
+        </div>
+        <div class="flow-step" data-delay="900">
+          <div class="step-layer l3">Layer 3 — cmux</div>
+          <div class="step-title">Creates Planner workspace via <code>workspace.create</code></div>
+          <div class="step-detail">New terminal workspace. Runs <code>cd /worktree && claude</code>. Waits for REPL ready (❯ prompt).</div>
+        </div>
+        <div class="flow-step" data-delay="1200">
+          <div class="step-layer l3">Layer 3 — cmux</div>
+          <div class="step-title"><code>send_prompt_to_workspace()</code> injects planning prompt</div>
+          <div class="step-detail">The structured prompt with rules: maximize parallelism, small tasks, explicit file ownership. Tells Claude to write <code>plan.md</code>.</div>
+        </div>
+        <div class="flow-step" data-delay="1500">
+          <div class="step-layer l4">Layer 4 — Claude Code</div>
+          <div class="step-title">Planner session analyzes codebase</div>
+          <div class="step-detail">Claude reads relevant files, understands the problem, writes a task plan to <code>plan.md</code>. Auto-approved for file writes.</div>
+        </div>
+        <div class="flow-step" data-delay="1800">
+          <div class="step-layer l2">Layer 2 — Orchestrator</div>
+          <div class="step-title">Detects <code>plan.md</code> exists → parses with Haiku</div>
+          <div class="step-detail">Polls every 10s for plan.md. Once found, sends to <code>claude --print --model haiku</code> to extract structured JSON: tasks, files, dependencies. Status → <strong>"plan_review"</strong>.</div>
+        </div>
+        <div class="flow-step" data-delay="2100">
+          <div class="step-layer l1">Layer 1 — Dashboard UI</div>
+          <div class="step-title">Plan displayed for your review</div>
+          <div class="step-detail">Task cards appear with titles, files, dependencies. You approve or edit. Click "Execute" to proceed.</div>
+        </div>
+        <div class="flow-step" data-delay="2400">
+          <div class="step-layer l2">Layer 2 — Orchestrator</div>
+          <div class="step-title">Launches ready tasks (respecting dependencies)</div>
+          <div class="step-detail"><code>_launch_ready_tasks()</code>: picks first queued task with all deps met. Writes <code>spec.md</code> + <code>context.md</code> to worktree. One worker at a time.</div>
+        </div>
+        <div class="flow-step" data-delay="2700">
+          <div class="step-layer l3">Layer 3 → Layer 4</div>
+          <div class="step-title">Worker workspace created, task prompt injected</div>
+          <div class="step-detail">Same path: <code>workspace.create</code> → <code>cd worktree && claude</code> → wait for REPL → <code>send_prompt_to_workspace()</code> with "Read spec.md, implement the task".</div>
+        </div>
+        <div class="flow-step" data-delay="3000">
+          <div class="step-layer l4">Layer 4 — Claude Code</div>
+          <div class="step-title">Worker implements the task</div>
+          <div class="step-detail">Claude reads spec, makes code changes, writes <code>result.md</code> with summary of what was done.</div>
+        </div>
+        <div class="flow-step" data-delay="3300">
+          <div class="step-layer l2">Layer 2 — Review</div>
+          <div class="step-title">Sonnet reviews the changes</div>
+          <div class="step-detail"><code>claude --print</code> runs a diff review. If issues found → rework cycle (new prompt, same worktree). If clean → task complete, next task launches.</div>
+        </div>
+        <div class="flow-step" data-delay="3600">
+          <div class="step-layer l1">Layer 1 — Dashboard</div>
+          <div class="step-title">All tasks done → Objective complete</div>
+          <div class="step-detail">Status → <strong>"completed"</strong>. Orchestrator chat session stays open for Q&A. You can review diffs, ask questions, merge when ready.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Direct Command Flow -->
+    <div class="flow-scenario" id="flow-direct" style="display:none;">
+      <h3>Direct Command Flow</h3>
+      <p class="desc">What happens when you type directly in a Command Center workspace</p>
+      <div class="flow-timeline">
+        <div class="flow-step" data-delay="0">
+          <div class="step-layer l1">Layer 1 — Dashboard</div>
+          <div class="step-title">You type a command in the workspace terminal card</div>
+          <div class="step-detail">Or use the "New Session" button to create a fresh workspace. You see the live terminal preview.</div>
+        </div>
+        <div class="flow-step" data-delay="300">
+          <div class="step-layer l2">Layer 2 — Server</div>
+          <div class="step-title">Server receives via <code>POST /api/send</code></div>
+          <div class="step-detail">Payload: workspace index/UUID + text. Server validates and forwards.</div>
+        </div>
+        <div class="flow-step" data-delay="600">
+          <div class="step-layer l3">Layer 3 — cmux</div>
+          <div class="step-title"><code>send_prompt_to_workspace()</code> delivers text</div>
+          <div class="step-detail">Same function as orchestrator uses. tmux paste-buffer or send_text + send_key("enter").</div>
+        </div>
+        <div class="flow-step" data-delay="900">
+          <div class="step-layer l4">Layer 4 — Claude Code</div>
+          <div class="step-title">Claude Code processes your input</div>
+          <div class="step-detail">Runs the command, makes changes, asks for permissions. Engine auto-approves if enabled for this workspace.</div>
+        </div>
+        <div class="flow-step" data-delay="1200">
+          <div class="step-layer l2">Layer 2 — Engine</div>
+          <div class="step-title">Engine detects completion → triggers review</div>
+          <div class="step-detail">5s polling loop detects session exit. Captures snapshot, runs review if enabled. Results shown in dashboard.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Button Flow -->
+    <div class="flow-scenario" id="flow-action-btn" style="display:none;">
+      <h3 style="color:var(--green);">🔘 Action Button Flow <span style="font-size:12px;color:var(--green);font-weight:400;">FINALIZED</span></h3>
+      <p class="desc">What happens when you click "Build & Run" — always spawns a new session, orchestrator keeps full visibility</p>
+      <div class="flow-timeline">
+        <div class="flow-step" data-delay="0">
+          <div class="step-layer l1">Layer 1 — Orchestrator UI</div>
+          <div class="step-title">You click the ▶ "Build & Run" button in the FAB rail</div>
+          <div class="step-detail">Button config: <code>{ prompt: "/exp-project-run", objectiveId: "uuid", label: "Build & Run" }</code></div>
+        </div>
+        <div class="flow-step" data-delay="400">
+          <div class="step-layer l2">Layer 2 — Server</div>
+          <div class="step-title">Server receives via <code>POST /api/action-inject</code></div>
+          <div class="step-detail">Looks up the objective's <strong>worktreePath</strong>. Calls <code>_create_worker_workspace()</code> — the same function the orchestrator already uses for planned workers.</div>
+        </div>
+        <div class="flow-step" data-delay="800">
+          <div class="step-layer l3">Layer 3 — cmux</div>
+          <div class="step-title">New workspace created in the worktree</div>
+          <div class="step-detail"><code>workspace.create</code> → <code>cd {worktree_path} && claude</code> → <code>_wait_for_repl()</code> polls until ❯ prompt appears.</div>
+        </div>
+        <div class="flow-step" data-delay="1200">
+          <div class="step-layer l3">Layer 3 — cmux</div>
+          <div class="step-title"><code>send_prompt_to_workspace()</code> injects the saved prompt</div>
+          <div class="step-detail">Same funnel point as everything else. <code>/exp-project-run</code> lands in the fresh Claude Code REPL.</div>
+        </div>
+        <div class="flow-step" data-delay="1600">
+          <div class="step-layer l2">Layer 2 — Orchestrator</div>
+          <div class="step-title">Task registered on the objective</div>
+          <div class="step-detail">New task added: <code>{ source: "action-button", status: "executing", workspaceId: "..." }</code>. Shows up in task cards alongside planned work. Engine auto-monitors it.</div>
+        </div>
+        <div class="flow-step" data-delay="2000">
+          <div class="step-layer l4">Layer 4 — Claude Code</div>
+          <div class="step-title">Claude Code executes the skill command</div>
+          <div class="step-detail"><code>/exp-project-run</code> triggers the skill. Builds, runs, reports. Engine auto-approves permissions. Takes ~7 min for a full build.</div>
+        </div>
+        <div class="flow-step" data-delay="2400">
+          <div class="step-layer l2">Layer 2 — Orchestrator (meanwhile)</div>
+          <div class="step-title">Orchestrator stays free for Q&A</div>
+          <div class="step-detail">You ask "How's the build going?" → Orchestrator reads the action-button task's workspace screen via cmux → reports back with live status. <strong>Never blocked.</strong></div>
+        </div>
+        <div class="flow-step" data-delay="2800">
+          <div class="step-layer l2">Layer 2 — Engine</div>
+          <div class="step-title">Session completes → review pipeline</div>
+          <div class="step-detail">Engine detects Claude exited. Captures snapshot, runs Sonnet review, updates task status to "completed". Orchestrator can report final results.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===== INJECTION VIEW ===== -->
+<div class="view" id="injection">
+  <div class="injection-container">
+    <h2 style="font-size:20px;margin-bottom:6px;">Action Button Injection — Finalized Design</h2>
+    <p style="color:var(--muted);font-size:14px;margin-bottom:28px;">Always spawn a new session. Orchestrator keeps full visibility. Never blocked.</p>
+
+    <div class="injection-option selected" data-option="final" style="border-color:var(--green);">
+      <div class="injection-header">
+        <div class="injection-icon" style="background:rgba(63,185,80,.15);">🚀</div>
+        <div>
+          <div class="injection-title">Spawn New Session in Worktree <span style="font-size:11px;padding:2px 8px;border-radius:6px;background:rgba(63,185,80,.15);color:var(--green);margin-left:8px;">DECIDED</span></div>
+          <div class="injection-use">Every action button spawns a fresh Claude Code workspace. Orchestrator monitors it like any worker.</div>
+        </div>
+      </div>
+      <div class="injection-path">
+        <span class="path-node" style="border-color:var(--accent);color:var(--accent);">🔘 Click FAB</span>
+        <span class="path-arrow">→</span>
+        <span class="path-node" style="border-color:var(--purple);color:var(--purple);">_create_worker_workspace()</span>
+        <span class="path-arrow">→</span>
+        <span class="path-node" style="border-color:var(--green);color:var(--green);">cd worktree && claude</span>
+        <span class="path-arrow">→</span>
+        <span class="path-node" style="border-color:var(--green);color:var(--green);">wait for REPL ❯</span>
+        <span class="path-arrow">→</span>
+        <span class="path-node" style="border-color:var(--green);color:var(--green);">send_prompt_to_workspace()</span>
+        <span class="path-arrow">→</span>
+        <span class="path-node" style="border-color:var(--orange);color:var(--orange);">Claude executes</span>
+      </div>
+    </div>
+
+    <div style="margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div style="border:1px solid var(--border);border-radius:14px;padding:20px;background:var(--surface);">
+        <div style="font-size:14px;font-weight:700;margin-bottom:10px;">✅ Why This Works</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">
+          • <strong style="color:var(--text);">Orchestrator never blocked</strong> — stays free for Q&A<br>
+          • <strong style="color:var(--text);">Full visibility</strong> — task registered on objective, shows in task cards<br>
+          • <strong style="color:var(--text);">Engine auto-monitors</strong> — approval, screen reads, completion detection<br>
+          • <strong style="color:var(--text);">Review pipeline</strong> — Sonnet reviews on completion, same as planned work<br>
+          • <strong style="color:var(--text);">Reuses existing code</strong> — _create_worker_workspace(), _wait_for_repl(), send_prompt_to_workspace()
+        </div>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:14px;padding:20px;background:var(--surface);">
+        <div style="font-size:14px;font-weight:700;margin-bottom:10px;">💬 Orchestrator Awareness</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">
+          You: <em>"How's the build going?"</em><br><br>
+          Orchestrator reads the action-button task's workspace screen via cmux, sees the live terminal output, and reports:<br><br>
+          <em>"Build is at 4/7 modules compiled. ~3 min remaining based on current pace."</em><br><br>
+          This works because the task is registered on the objective with a <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;">workspaceId</code> the orchestrator can read.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:24px;border:1px solid var(--border);border-radius:14px;padding:20px;background:var(--surface);">
+      <div style="font-size:14px;font-weight:700;margin-bottom:10px;">📦 Task Registration</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.7;">
+        Action-button sessions get added to the objective's task array with <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;">"source": "action-button"</code> so they're distinguishable from planned tasks but tracked identically:<br><br>
+        <code style="background:rgba(255,255,255,.06);padding:4px 8px;border-radius:4px;display:inline-block;line-height:1.6;">{ "id": "action-build-run-1712249040", "title": "Build & Run", "source": "action-button", "status": "executing", "workspaceId": "uuid", "prompt": "/exp-project-run" }</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== GLOSSARY VIEW ===== -->
+<div class="view" id="glossary">
+  <div class="glossary-grid">
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(188,140,255,.15);">⚙️</div>
+        <div>
+          <div class="gc-name">HarnessEngine</div>
+          <div class="gc-file">engine.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">The main daemon thread. Polls every <strong>5 seconds</strong>, reads all workspace screens, detects Claude sessions, auto-approves permissions, triggers reviews. <strong>Owns the Orchestrator instance.</strong></div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(188,140,255,.15);">🎯</div>
+        <div>
+          <div class="gc-name">Orchestrator</div>
+          <div class="gc-file">orchestrator.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">The "Tech Lead" brain. Takes high-level goals, decomposes into tasks via Planner, launches Workers, manages reviews and rework cycles. <strong>~1,900 lines.</strong> Has its own Claude Code session for Q&A.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(188,140,255,.15);">📋</div>
+        <div>
+          <div class="gc-name">Planner</div>
+          <div class="gc-file">planner.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">Builds the planning prompt with constraints (max parallelism, small tasks, no file overlap). Parses Claude's output via <strong>Haiku</strong> (cheapest LLM) into a structured task queue.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(188,140,255,.15);">👷</div>
+        <div>
+          <div class="gc-name">Worker</div>
+          <div class="gc-file">worker.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">Creates <strong>git worktrees</strong> for task isolation. Each objective gets a shared branch + worktree. Workers receive <code>spec.md</code> + <code>context.md</code> from completed dependencies.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(63,185,80,.15);">🔌</div>
+        <div>
+          <div class="gc-name">cmux Socket API</div>
+          <div class="gc-file">cmux_api.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">Low-level bridge to cmux. JSON-RPC v2 over Unix socket. Handles workspace CRUD, screen reading, text input. <strong>send_prompt_to_workspace()</strong> is the single funnel for all prompt injection.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(63,185,80,.15);">📨</div>
+        <div>
+          <div class="gc-name">send_prompt_to_workspace()</div>
+          <div class="gc-file">cmux_api.py:226</div>
+        </div>
+      </div>
+      <div class="gc-desc"><strong>THE funnel point.</strong> Every prompt enters Claude Code through this. Tries tmux paste-buffer first (atomic), falls back to send_text + send_key("enter"). Never embeds newlines in send_text.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(240,136,62,.15);">📡</div>
+        <div>
+          <div class="gc-name">Monitor</div>
+          <div class="gc-file">monitor.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">Watches session screens for completion signals. <strong>detect_claude_session()</strong> checks if Claude Code is still active. Triggers the completion → review pipeline when sessions end.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(240,136,62,.15);">🔍</div>
+        <div>
+          <div class="gc-name">Review System</div>
+          <div class="gc-file">review.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">Code quality gate. Uses <code>claude --print</code> (Sonnet) to review diffs. Can trigger <strong>rework cycles</strong>. Backends: Sonnet (best), Haiku (fast), Ollama (free/local).</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(88,166,255,.15);">🌐</div>
+        <div>
+          <div class="gc-name">Dashboard Server</div>
+          <div class="gc-file">server.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">HTTP server on <strong>port 7779</strong>. Serves dashboard.html + orchestrator.html. REST API for all UI interactions. Routes to Engine and Orchestrator methods.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(210,153,34,.15);">📦</div>
+        <div>
+          <div class="gc-name">Objective</div>
+          <div class="gc-file">objectives.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">A high-level goal + its task queue. Stored as JSON in <code>~/.cmux-harness/objectives/[uuid]/</code>. Has status lifecycle: <strong>planning → plan_review → executing → completed/failed</strong>.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(210,153,34,.15);">🔒</div>
+        <div>
+          <div class="gc-name">WorkspaceMutex</div>
+          <div class="gc-file">workspace_mutex.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">Prevents race conditions when multiple parts of the system try to send keys/text to the same workspace simultaneously. Uses cooldown timers per workspace UUID.</div>
+    </div>
+    <div class="glossary-card">
+      <div class="gc-header">
+        <div class="gc-icon" style="background:rgba(248,81,73,.15);">✅</div>
+        <div>
+          <div class="gc-name">Auto-Approval</div>
+          <div class="gc-file">approval.py + engine.py</div>
+        </div>
+      </div>
+      <div class="gc-desc">Detects Claude Code permission prompts ("Do you want to...") and auto-sends Enter. Configurable per workspace. Also handles trust-folder and compact-mode prompts during REPL startup.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== TAB SWITCHING =====
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.view).classList.add('active');
+  });
+});
+
+// ===== LAYER EXPAND/COLLAPSE =====
+document.querySelectorAll('.layer').forEach(layer => {
+  layer.addEventListener('click', () => {
+    layer.classList.toggle('expanded');
+  });
+});
+
+// ===== FLOW SWITCHING =====
+document.querySelectorAll('.flow-btn[data-flow]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.flow-btn[data-flow]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.flow-scenario').forEach(s => s.style.display = 'none');
+    const target = document.getElementById('flow-' + btn.dataset.flow);
+    if (target) {
+      target.style.display = 'block';
+      // Reset animation
+      target.querySelectorAll('.flow-step').forEach(step => {
+        step.classList.remove('visible', 'active', 'done');
+      });
+    }
+  });
+});
+
+// ===== FLOW ANIMATION =====
+document.getElementById('play-flow').addEventListener('click', function() {
+  const activeScenario = document.querySelector('.flow-scenario[style*="block"], .flow-scenario:not([style*="none"])');
+  if (!activeScenario) return;
+  
+  const steps = activeScenario.querySelectorAll('.flow-step');
+  // Reset all
+  steps.forEach(step => step.classList.remove('visible', 'active', 'done'));
+  
+  steps.forEach((step, i) => {
+    const delay = parseInt(step.dataset.delay) || (i * 400);
+    
+    // Appear
+    setTimeout(() => {
+      step.classList.add('visible', 'active');
+      // Scroll into view
+      step.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, delay);
+    
+    // Transition to "done" when next step appears
+    if (i < steps.length - 1) {
+      const nextDelay = parseInt(steps[i+1].dataset.delay) || ((i+1) * 400);
+      setTimeout(() => {
+        step.classList.remove('active');
+        step.classList.add('done');
+      }, nextDelay);
+    }
+  });
+});
+
+// ===== INJECTION OPTION SELECTION =====
+document.querySelectorAll('.injection-option').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.injection-option').forEach(o => o.classList.remove('selected'));
+    opt.classList.add('selected');
+  });
+});
+
+// Auto-expand first layer for visual impact
+setTimeout(() => {
+  document.querySelector('.layer[data-layer="1"]')?.classList.add('expanded');
+}, 300);
+</script>
+
+</body>
+</html>

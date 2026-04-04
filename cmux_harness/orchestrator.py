@@ -180,6 +180,8 @@ class Orchestrator:
             "- Check task progress in tasks/*/progress.md and tasks/*/result.md\n\n"
             "The objective has these tasks:\n"
             f"{task_block}\n\n"
+            "Tasks with source 'action-button' were spawned from saved UI action buttons. Treat them like any other "
+            "objective task when reporting status or checking progress.\n\n"
             "When answering questions, be concise and helpful. If the user asks about status, read objective.json "
             "for the latest state."
         )

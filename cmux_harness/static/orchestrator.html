@@ -1242,6 +1242,202 @@
     color: var(--t1);
     box-shadow: 0 8px 24px rgba(0,0,0,.24);
   }
+  .fab-rail {
+    position: fixed;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 24;
+  }
+  .fab-rail.visible {
+    display: flex;
+  }
+  .fab-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(0,0,0,.4);
+    transition: transform .15s, box-shadow .15s, opacity .15s;
+    color: #000;
+    position: relative;
+    font-family: 'Inter', sans-serif;
+  }
+  .fab-btn:hover {
+    transform: scale(1.08);
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  }
+  .fab-btn:active { transform: scale(0.95); }
+  .fab-btn:disabled {
+    opacity: .6;
+    cursor: default;
+  }
+  .fab-btn.launching {
+    animation: pulse 1s ease-in-out 2;
+  }
+  .fab-btn.success {
+    box-shadow: 0 0 0 2px rgba(52,211,153,.28), 0 6px 18px rgba(52,211,153,.24);
+  }
+  .fab-add {
+    background: var(--raised);
+    border: 2px dashed var(--b2);
+    color: var(--t2);
+    font-size: 22px;
+  }
+  .fab-btn::after {
+    content: attr(title);
+    position: absolute;
+    right: 56px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    color: var(--t1);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s;
+    font-family: 'Inter', sans-serif;
+  }
+  .fab-btn:hover::after { opacity: 1; }
+  .fab-modal {
+    width: 100%;
+    max-width: 520px;
+    background:
+      radial-gradient(circle at top left, rgba(79,142,247,.12), transparent 38%),
+      radial-gradient(circle at bottom right, rgba(167,139,250,.08), transparent 32%),
+      var(--sidebar);
+    border: 1px solid var(--b2);
+    border-radius: 16px;
+    box-shadow: 0 24px 80px rgba(0,0,0,.45);
+    overflow: hidden;
+  }
+  .fab-modal-head {
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .fab-modal-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .fab-modal-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .fab-modal-grid {
+    display: grid;
+    grid-template-columns: 1fr 110px 110px;
+    gap: 12px;
+  }
+  .fab-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 4px;
+  }
+  .fab-list-empty {
+    font-size: 12px;
+    color: var(--t3);
+    padding: 8px 0 2px;
+  }
+  .fab-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--b);
+    border-radius: 12px;
+    background: rgba(255,255,255,.03);
+  }
+  .fab-list-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: #000;
+    flex-shrink: 0;
+  }
+  .fab-list-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .fab-list-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--t1);
+  }
+  .fab-list-prompt {
+    font-size: 11px;
+    color: var(--t2);
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fab-list-badge {
+    width: fit-content;
+    font-size: 10px;
+    color: var(--purple);
+    background: var(--purple-d);
+    border: 1px solid var(--purple-b);
+    border-radius: 999px;
+    padding: 2px 7px;
+  }
+  .fab-delete {
+    border: 1px solid rgba(248,113,113,.22);
+    background: transparent;
+    color: var(--red);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 11px;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+  }
+  .fab-delete:hover {
+    background: var(--red-d);
+  }
+  .fab-delete:disabled {
+    opacity: .5;
+    cursor: default;
+  }
+  .action-chip {
+    font-size: 10px;
+    color: var(--purple);
+    background: var(--purple-d);
+    border: 1px solid var(--purple-b);
+    border-radius: 999px;
+    padding: 2px 7px;
+    flex-shrink: 0;
+  }
+  .pr-icon.pri-action {
+    background: var(--purple-d);
+    color: var(--purple);
+    border: 1px solid var(--purple-b);
+    font-size: 10px;
+  }
   .git-panel {
     position: fixed;
     top: 42px;
@@ -2081,6 +2277,22 @@
       font-size: 18px;
       z-index: 210;
     }
+    .fab-rail {
+      right: 12px;
+      top: auto;
+      bottom: 126px;
+      transform: none;
+    }
+    .fab-btn {
+      width: 44px;
+      height: 44px;
+    }
+    .fab-btn::after {
+      display: none;
+    }
+    .fab-modal-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
 </head>
@@ -2131,6 +2343,8 @@
     </div>
   </div>
 </div>
+
+<div class="fab-rail" id="fabRail"></div>
 
 <aside class="git-panel" id="gitPanel">
   <div class="git-panel-header">
@@ -2208,6 +2422,43 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="fabModal">
+  <div class="fab-modal" role="dialog" aria-modal="true" aria-labelledby="fabModalTitle">
+    <div class="fab-modal-head">
+      <div class="fab-modal-title" id="fabModalTitle">Add Action Button</div>
+      <button class="settings-close" id="fabCloseButton" aria-label="Close action button modal">×</button>
+    </div>
+    <div class="fab-modal-body">
+      <div class="settings-row">
+        <label class="settings-label" for="fabLabel">Label</label>
+        <input class="settings-input" id="fabLabel" type="text" placeholder="Run Tests">
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="fabPrompt">Prompt</label>
+        <textarea class="settings-input" id="fabPrompt" rows="4" placeholder="Run the test suite and report failures"></textarea>
+      </div>
+      <div class="fab-modal-grid">
+        <div class="settings-row">
+          <label class="settings-label" for="fabIcon">Icon</label>
+          <input class="settings-input" id="fabIcon" type="text" maxlength="4" placeholder="🧪">
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="fabColor">Color</label>
+          <input class="settings-input" id="fabColor" type="color" value="#4f8ef7">
+        </div>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label">Existing Actions</label>
+        <div class="fab-list" id="fabList"></div>
+      </div>
+    </div>
+    <div class="settings-actions">
+      <button class="modal-settings-btn cancel" id="fabCancelButton">Cancel</button>
+      <button class="modal-settings-btn save" id="fabSaveButton">Save</button>
+    </div>
+  </div>
+</div>
+
 <button class="debug-fab" id="debugFab" type="button" aria-label="Open debug log">
   <span>🐛</span>
   <span class="debug-fab-badge"></span>
@@ -2238,6 +2489,8 @@
     objectives: [],
     activeObjectiveId: null,
     activeObjective: null,
+    actionButtons: [],
+    actionButtonState: {},
     messages: [],
     typing: false,
     config: null,
@@ -2254,6 +2507,9 @@
     sidebarFormOpen: false,
     settingsOpen: false,
     settingsSaving: false,
+    fabModalOpen: false,
+    fabSaving: false,
+    fabDeletingId: null,
     debugOpen: false,
     debugEntries: [],
     debugHasErrors: false,
@@ -2299,6 +2555,16 @@
     settingsReviewEnabled: document.getElementById('settingsReviewEnabled'),
     settingsReviewModel: document.getElementById('settingsReviewModel'),
     settingsReviewBackend: document.getElementById('settingsReviewBackend'),
+    fabRail: document.getElementById('fabRail'),
+    fabModal: document.getElementById('fabModal'),
+    fabCloseButton: document.getElementById('fabCloseButton'),
+    fabCancelButton: document.getElementById('fabCancelButton'),
+    fabSaveButton: document.getElementById('fabSaveButton'),
+    fabLabel: document.getElementById('fabLabel'),
+    fabPrompt: document.getElementById('fabPrompt'),
+    fabIcon: document.getElementById('fabIcon'),
+    fabColor: document.getElementById('fabColor'),
+    fabList: document.getElementById('fabList'),
     debugFab: document.getElementById('debugFab'),
     debugModal: document.getElementById('debugModal'),
     debugCloseButton: document.getElementById('debugCloseButton'),
@@ -2517,6 +2783,46 @@
     }
   }
 
+  function getCurrentObjectiveId() {
+    return state.activeObjectiveId;
+  }
+
+  function isActionTask(task) {
+    return String(task && task.source || '').toLowerCase() === 'action-button';
+  }
+
+  function taskDisplayTitle(task) {
+    if (!task) return 'Task';
+    const title = String(task.title || task.id || 'Task');
+    return isActionTask(task) ? ('Action: ' + title) : title;
+  }
+
+  function taskDisplayIcon(task) {
+    return isActionTask(task) ? '🔘' : null;
+  }
+
+  function buttonStateClass(buttonId) {
+    const value = state.actionButtonState[buttonId];
+    if (value === 'launching') return ' launching';
+    if (value === 'success') return ' success';
+    return '';
+  }
+
+  function setActionButtonState(buttonId, value, clearMs) {
+    if (!buttonId) return;
+    state.actionButtonState = Object.assign({}, state.actionButtonState, { [buttonId]: value });
+    renderFabRail();
+    if (clearMs) {
+      window.setTimeout(() => {
+        if (state.actionButtonState[buttonId] !== value) return;
+        const next = Object.assign({}, state.actionButtonState);
+        delete next[buttonId];
+        state.actionButtonState = next;
+        renderFabRail();
+      }, clearMs);
+    }
+  }
+
   function sortedObjectives(list) {
     return [...(list || [])].sort((a, b) => {
       const aTs = parseIso(a.updatedAt || a.createdAt) || 0;
@@ -2609,6 +2915,181 @@
     }
     const text = await response.text();
     return text ? JSON.parse(text) : {};
+  }
+
+  async function loadActionButtons(objectiveId) {
+    if (!objectiveId) {
+      state.actionButtons = [];
+      state.actionButtonState = {};
+      renderFabRail();
+      renderFabModal();
+      return;
+    }
+    const data = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/action-buttons');
+    if (state.activeObjectiveId !== objectiveId) return;
+    state.actionButtons = Array.isArray(data.buttons) ? data.buttons : [];
+    renderFabRail();
+    renderFabModal();
+  }
+
+  function showAddModal() {
+    if (!state.activeObjectiveId) return;
+    els.fabLabel.value = '';
+    els.fabPrompt.value = '';
+    els.fabIcon.value = '';
+    els.fabColor.value = '#4f8ef7';
+    state.fabModalOpen = true;
+    renderFabModal();
+    window.setTimeout(() => {
+      if (els.fabLabel) els.fabLabel.focus();
+    }, 0);
+  }
+
+  function hideAddModal() {
+    state.fabModalOpen = false;
+    state.fabSaving = false;
+    state.fabDeletingId = null;
+    renderFabModal();
+  }
+
+  function renderFabRail() {
+    const objectiveId = getCurrentObjectiveId();
+    const hasObjective = !!objectiveId && !!state.activeObjective;
+    els.fabRail.className = 'fab-rail' + (hasObjective ? ' visible' : '');
+    if (!hasObjective) {
+      els.fabRail.innerHTML = '';
+      return;
+    }
+    const buttons = Array.isArray(state.actionButtons) ? state.actionButtons : [];
+    els.fabRail.innerHTML = '';
+    buttons.forEach((button) => {
+      const el = document.createElement('button');
+      el.className = 'fab-btn' + buttonStateClass(button.id);
+      el.type = 'button';
+      el.dataset.buttonId = button.id;
+      el.style.background = button.color || '#4f8ef7';
+      el.title = button.label || 'Action';
+      el.textContent = button.icon || '⚡';
+      el.disabled = state.fabSaving;
+      el.addEventListener('click', () => {
+        executeAction(button);
+      });
+      els.fabRail.appendChild(el);
+    });
+    const addButton = document.createElement('button');
+    addButton.className = 'fab-btn fab-add';
+    addButton.type = 'button';
+    addButton.id = 'fabAdd';
+    addButton.title = 'Add Action...';
+    addButton.textContent = '+';
+    addButton.disabled = state.fabSaving;
+    addButton.addEventListener('click', showAddModal);
+    els.fabRail.appendChild(addButton);
+  }
+
+  function renderFabModal() {
+    const visible = state.fabModalOpen && !!state.activeObjectiveId;
+    els.fabModal.className = 'modal-overlay' + (visible ? ' open' : '');
+    els.fabSaveButton.disabled = state.fabSaving;
+    const buttons = Array.isArray(state.actionButtons) ? state.actionButtons : [];
+    els.fabList.innerHTML = buttons.length ? buttons.map((button) => [
+      '<div class="fab-list-item">',
+      '<div class="fab-list-icon" style="background:' + esc(button.color || '#4f8ef7') + ';">' + esc(button.icon || '⚡') + '</div>',
+      '<div class="fab-list-main">',
+      '<div class="fab-list-label">' + esc(button.label || 'Action') + '</div>',
+      '<div class="fab-list-prompt">' + esc(button.prompt || '') + '</div>',
+      (button.isDefault ? '<div class="fab-list-badge">Default</div>' : ''),
+      '</div>',
+      (button.isDefault
+        ? ''
+        : '<button class="fab-delete" type="button" data-action-button-delete="' + esc(button.id) + '"' + (state.fabDeletingId === button.id ? ' disabled' : '') + '>Delete</button>'),
+      '</div>'
+    ].join('')).join('') : '<div class="fab-list-empty">No saved action buttons yet.</div>';
+    els.fabList.querySelectorAll('[data-action-button-delete]').forEach((node) => {
+      node.addEventListener('click', () => {
+        deleteActionButton(node.getAttribute('data-action-button-delete'));
+      });
+    });
+  }
+
+  async function saveActionButton() {
+    if (!state.activeObjectiveId) return;
+    const label = els.fabLabel.value.trim();
+    const prompt = els.fabPrompt.value.trim();
+    const icon = (els.fabIcon.value || '').trim() || '⚡';
+    const color = (els.fabColor.value || '').trim() || '#4f8ef7';
+    if (!label || !prompt) {
+      showToast('Action label and prompt are required');
+      return;
+    }
+    state.fabSaving = true;
+    renderFabModal();
+    renderFabRail();
+    try {
+      await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/action-buttons', {
+        method: 'POST',
+        body: JSON.stringify({ label, prompt, icon, color })
+      });
+      els.fabLabel.value = '';
+      els.fabPrompt.value = '';
+      els.fabIcon.value = '';
+      els.fabColor.value = '#4f8ef7';
+      await loadActionButtons(state.activeObjectiveId);
+      hideAddModal();
+      showToast('Action button saved');
+    } catch (error) {
+      showToast(error.message || 'Could not save action button');
+      state.fabSaving = false;
+      renderFabModal();
+      renderFabRail();
+    }
+  }
+
+  async function deleteActionButton(buttonId) {
+    if (!state.activeObjectiveId || !buttonId) return;
+    state.fabDeletingId = buttonId;
+    renderFabModal();
+    try {
+      await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/action-buttons/' + encodeURIComponent(buttonId), {
+        method: 'DELETE'
+      });
+      await loadActionButtons(state.activeObjectiveId);
+      state.fabDeletingId = null;
+      renderFabModal();
+      showToast('Action button removed');
+    } catch (error) {
+      state.fabDeletingId = null;
+      renderFabModal();
+      showToast(error.message || 'Could not remove action button');
+    }
+  }
+
+  async function executeAction(button) {
+    const objectiveId = getCurrentObjectiveId();
+    if (!objectiveId) return;
+    setActionButtonState(button.id, 'launching');
+    showToast('Spawning ' + (button.label || 'action') + ' session...');
+    try {
+      const data = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/action-inject', {
+        method: 'POST',
+        body: JSON.stringify({ buttonId: button.id })
+      });
+      if (data && data.ok) {
+        setActionButtonState(button.id, 'success', 1800);
+        await Promise.all([
+          pollActiveObjective(true),
+          pollMessages(false)
+        ]);
+        return;
+      }
+      throw new Error('Action spawn failed');
+    } catch (error) {
+      const next = Object.assign({}, state.actionButtonState);
+      delete next[button.id];
+      state.actionButtonState = next;
+      renderFabRail();
+      showToast(error.message || 'Could not launch action');
+    }
   }
 
   function activeGitPath() {
@@ -2737,6 +3218,9 @@
       if (state.activeObjectiveId === deletingId) {
         state.activeObjectiveId = null;
         state.activeObjective = null;
+        state.actionButtons = [];
+        state.actionButtonState = {};
+        state.fabModalOpen = false;
         state.messages = [];
         state.lastMessageTimestamp = null;
         state.debugEntries = [];
@@ -2801,6 +3285,9 @@
     if (!available.length) {
       state.activeObjectiveId = null;
       state.activeObjective = null;
+      state.actionButtons = [];
+      state.actionButtonState = {};
+      state.fabModalOpen = false;
       state.messages = [];
       state.lastMessageTimestamp = null;
       return;
@@ -3470,18 +3957,18 @@
       '<div class="card-head"><span>📋</span> Plan · ' + tasks.length + ' tasks</div>',
       tasks.map((task) => {
         const status = String(task.status || '').toLowerCase();
-        let iconClass = 'pri-queue';
-        let icon = '-';
+        let iconClass = isActionTask(task) ? 'pri-action' : 'pri-queue';
+        let icon = taskDisplayIcon(task) || '-';
         let statusClass = 'prs-queue';
         let statusText = 'waiting';
         if (status === 'completed') {
-          iconClass = 'pri-done';
-          icon = '✓';
+          iconClass = isActionTask(task) ? 'pri-action pri-done' : 'pri-done';
+          icon = taskDisplayIcon(task) || '✓';
           statusClass = 'prs-done';
           statusText = durationFrom(task.startedAt, task.completedAt) || 'done';
         } else if (status === 'executing' || status === 'reviewing' || status === 'rework') {
-          iconClass = 'pri-active';
-          icon = '●';
+          iconClass = isActionTask(task) ? 'pri-action pri-active' : 'pri-active';
+          icon = taskDisplayIcon(task) || '●';
           statusClass = 'prs-active';
           const checkpoints = Array.isArray(task.checkpoints) ? task.checkpoints : [];
           const done = checkpoints.filter((cp) => checkpointStatus(cp.status) === 'done').length;
@@ -3490,8 +3977,8 @@
           if (status === 'reviewing') statusText = 'reviewing';
           if (status === 'rework') statusText = 'rework';
         } else if (status === 'failed') {
-          iconClass = 'pri-failed';
-          icon = '✕';
+          iconClass = isActionTask(task) ? 'pri-action pri-failed' : 'pri-failed';
+          icon = taskDisplayIcon(task) || '✕';
           statusClass = 'prs-failed';
           statusText = 'failed';
         }
@@ -3499,7 +3986,8 @@
           '<div class="plan-row">',
           '<div class="pr-icon ' + iconClass + '">' + icon + '</div>',
           '<div class="pr-main">',
-          '<span class="pr-name pr-name-text">' + esc(task.title || task.id) + '</span>',
+          '<span class="pr-name pr-name-text">' + esc(taskDisplayTitle(task)) + '</span>',
+          (isActionTask(task) ? '<span class="action-chip">action</span>' : ''),
           ((status === 'completed' || status === 'executing' || status === 'reviewing' || status === 'rework') && state.activeObjective && state.activeObjective.branchName
             ? '<span class="task-branch-badge" title="' + esc(state.activeObjective.branchName) + '">' + esc(state.activeObjective.branchName) + '</span>'
             : ''),
@@ -3531,7 +4019,8 @@
         ((task.worktreePath || (state.activeObjective && state.activeObjective.branchName)) ? '</div>' : '') +
         '</div></div>' : '',
       '<div class="cp-top">',
-      '<span class="cp-task-label">' + esc(task ? task.title : (metadata.task_id || 'Task')) + '</span>',
+      '<span class="cp-task-label">' + esc(task ? taskDisplayTitle(task) : (metadata.task_id || 'Task')) + '</span>',
+      (task && isActionTask(task) ? '<span class="action-chip">action</span>' : ''),
       total ? '<span class="cp-check-badge">checkpoint ' + current + ' of ' + total + '</span>' : '',
       '<span class="cp-time">' + esc(elapsed) + '</span>',
       '</div>',
@@ -3573,7 +4062,8 @@
       '<div class="card-review' + warningClass + '">',
       '<div class="cr-head">',
       badge,
-      '<span class="cr-name">' + esc(task ? task.title : (metadata.task_id || 'Review')) + '</span>',
+      '<span class="cr-name">' + esc(task ? taskDisplayTitle(task) : (metadata.task_id || 'Review')) + '</span>',
+      (task && isActionTask(task) ? '<span class="action-chip">action</span>' : ''),
       '</div>',
       '<div class="cr-body">',
       passed
@@ -3857,8 +4347,10 @@
   function render() {
     renderSidebar();
     renderContext();
+    renderFabRail();
     renderSidebarChrome();
     updateSidebarFormFromState();
+    renderFabModal();
     renderSettingsModal();
     renderDebugModal();
     renderGitPanel();
@@ -3879,6 +4371,7 @@
     }
     ensureSelection();
     if (state.activeObjectiveId && state.activeObjectiveId !== previousActiveId) {
+      state.actionButtonState = {};
       await loadActiveObjective(false);
     }
     renderSidebar();
@@ -3889,11 +4382,17 @@
   async function pollActiveObjective(forceRender) {
     if (!state.activeObjectiveId) {
       state.activeObjective = null;
+      state.actionButtons = [];
+      state.actionButtonState = {};
+      state.fabModalOpen = false;
+      renderFabRail();
+      renderFabModal();
       return;
     }
     const previousPath = activeGitPath();
     const objective = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId));
     state.activeObjective = objective;
+    await loadActionButtons(state.activeObjectiveId);
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
       state.gitStatus = null;
@@ -4119,6 +4618,12 @@
     els.settingsModal.addEventListener('click', (event) => {
       if (event.target === els.settingsModal) closeSettingsModal();
     });
+    els.fabCloseButton.addEventListener('click', hideAddModal);
+    els.fabCancelButton.addEventListener('click', hideAddModal);
+    els.fabSaveButton.addEventListener('click', saveActionButton);
+    els.fabModal.addEventListener('click', (event) => {
+      if (event.target === els.fabModal) hideAddModal();
+    });
     els.debugFab.addEventListener('click', openDebugModal);
     els.debugCloseButton.addEventListener('click', closeDebugModal);
     els.debugModal.addEventListener('click', (event) => {
@@ -4157,6 +4662,11 @@
       }
     });
     document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && state.fabModalOpen) {
+        event.preventDefault();
+        hideAddModal();
+        return;
+      }
       if (event.key === 'Escape' && state.settingsOpen) {
         event.preventDefault();
         closeSettingsModal();

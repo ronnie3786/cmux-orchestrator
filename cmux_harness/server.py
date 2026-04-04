@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -9,6 +10,7 @@ import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+import uuid
 
 from . import cmux_api
 from . import objectives
@@ -27,6 +29,47 @@ try:
     ORCHESTRATOR_HTML = _ORCHESTRATOR_HTML_PATH.read_text(encoding="utf-8")
 except FileNotFoundError:
     ORCHESTRATOR_HTML = "<html><body><h1>orchestrator.html not found</h1></body></html>"
+
+
+_DEFAULT_ACTION_BUTTONS = [
+    {
+        "id": "default-build-run",
+        "label": "Build & Run",
+        "icon": "▶",
+        "color": "#34d399",
+        "prompt": "/exp-project-run",
+        "isDefault": True,
+        "order": 0,
+    }
+]
+
+
+def _button_order(button, fallback=0):
+    try:
+        return int(button.get("order", fallback))
+    except (TypeError, ValueError, AttributeError):
+        return fallback
+
+
+def _action_buttons_for_objective(objective):
+    buttons = objective.get("actionButtons")
+    if isinstance(buttons, list):
+        filtered = [button for button in buttons if isinstance(button, dict)]
+        return sorted(filtered, key=lambda button: _button_order(button, 0))
+    return [dict(button) for button in _DEFAULT_ACTION_BUTTONS]
+
+
+def _action_task_slug(label):
+    slug = re.sub(r"[^a-z0-9]+", "-", str(label or "").strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "action"
+
+
+def _action_task_title(task):
+    title = str(task.get("title") or "Action").strip() or "Action"
+    if str(task.get("source") or "").lower() == "action-button":
+        return f"Action: {title}"
+    return title
 
 
 def make_handler(engine):
@@ -141,6 +184,13 @@ def make_handler(engine):
                 self._json_response(reviews)
             elif path == "/api/objectives":
                 self._json_response(objectives.list_objectives())
+            elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                self._json_response({"buttons": _action_buttons_for_objective(objective)})
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
                 parts = path.split("/")
                 objective_id = parts[3]
@@ -294,6 +344,102 @@ def make_handler(engine):
                     daemon=True,
                 ).start()
                 self._json_response({"ok": True})
+            elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                label = str(data.get("label") or "").strip()
+                prompt = str(data.get("prompt") or "").strip()
+                icon = str(data.get("icon") or "⚡").strip() or "⚡"
+                color = str(data.get("color") or "#4f8ef7").strip() or "#4f8ef7"
+                if not label or not prompt:
+                    self._json_response({"ok": False, "error": "label and prompt required"}, 400)
+                    return
+                buttons = objective.get("actionButtons")
+                if not isinstance(buttons, list):
+                    buttons = []
+                order = max(
+                    [_button_order(button, index) for index, button in enumerate(buttons) if isinstance(button, dict)]
+                    + [-1]
+                ) + 1
+                button = {
+                    "id": str(uuid.uuid4()),
+                    "label": label,
+                    "icon": icon,
+                    "color": color,
+                    "prompt": prompt,
+                    "order": order,
+                }
+                buttons.append(button)
+                objectives.set_action_buttons(objective_id, buttons)
+                self._json_response({"ok": True, "button": button})
+            elif path.startswith("/api/objectives/") and path.endswith("/action-inject"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-inject")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                worktree_path = str(objective.get("worktreePath") or "").strip()
+                if not worktree_path:
+                    self._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
+                    return
+                button_id = str(data.get("buttonId") or "").strip()
+                prompt_override = str(data.get("prompt") or "").strip()
+                button = None
+                if button_id:
+                    button = next((item for item in _action_buttons_for_objective(objective) if item.get("id") == button_id), None)
+                    if button is None:
+                        self._json_response({"ok": False, "error": "action button not found"}, 404)
+                        return
+                prompt = prompt_override or str((button or {}).get("prompt") or "").strip()
+                if not prompt:
+                    self._json_response({"ok": False, "error": "prompt required"}, 400)
+                    return
+                button_label = str((button or {}).get("label") or "Ad Hoc Action").strip() or "Ad Hoc Action"
+                workspace_title = _action_task_title({"title": button_label, "source": "action-button"})
+                workspace_uuid, created = self.server.engine.orchestrator._create_worker_workspace(
+                    workspace_title,
+                    worktree_path,
+                    objective_id=objective_id,
+                    purpose="action-button",
+                )
+                if not created or not workspace_uuid:
+                    self._json_response({"ok": False, "error": "workspace creation failed"}, 500)
+                    return
+                if not self.server.engine.orchestrator._wait_for_repl(
+                    workspace_uuid,
+                    objective_id=objective_id,
+                    purpose="action-button",
+                ):
+                    self.server.engine.orchestrator._close_workspace(objective_id, workspace_uuid, "action-button_repl_timeout")
+                    self._json_response({"ok": False, "error": "repl not ready"}, 500)
+                    return
+                if not cmux_api.send_prompt_to_workspace(workspace_uuid, prompt):
+                    self.server.engine.orchestrator._close_workspace(objective_id, workspace_uuid, "action-button_prompt_failed")
+                    self._json_response({"ok": False, "error": "prompt delivery failed"}, 500)
+                    return
+                timestamp = int(time.time())
+                task_id = f"action-{_action_task_slug(button_label)}-{timestamp}"
+                task = {
+                    "id": task_id,
+                    "title": button_label,
+                    "source": "action-button",
+                    "actionId": button.get("id") if button else None,
+                    "status": "executing",
+                    "workspaceId": workspace_uuid,
+                    "worktreePath": worktree_path,
+                    "startedAt": datetime.now(timezone.utc).isoformat(),
+                    "prompt": prompt,
+                    "dependsOn": [],
+                    "files": [],
+                    "checkpoints": [],
+                }
+                objectives.append_task(objective_id, task)
+                objectives.create_task_dir(objective_id, task_id)
+                objectives.write_task_file(objective_id, task_id, "spec.md", prompt + "\n")
+                self._json_response({"ok": True, "taskId": task_id, "workspaceId": workspace_uuid})
             elif path == "/api/objectives":
                 goal = data.get("goal", "")
                 project_dir = data.get("projectDir", "")
@@ -799,6 +945,28 @@ def make_handler(engine):
 
         def do_DELETE(self):
             path = urllib.parse.urlparse(self.path).path
+            if path.startswith("/api/objectives/") and "/action-buttons/" in path:
+                parts = path.split("/")
+                if len(parts) != 6 or parts[1] != "api" or parts[2] != "objectives" or parts[4] != "action-buttons":
+                    self.send_error(404)
+                    return
+                objective_id = urllib.parse.unquote(parts[3])
+                button_id = urllib.parse.unquote(parts[5])
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                buttons = objective.get("actionButtons")
+                if not isinstance(buttons, list):
+                    self._json_response({"ok": False, "error": "action button not found"}, 404)
+                    return
+                remaining = [button for button in buttons if isinstance(button, dict) and button.get("id") != button_id]
+                if len(remaining) == len(buttons):
+                    self._json_response({"ok": False, "error": "action button not found"}, 404)
+                    return
+                objectives.set_action_buttons(objective_id, remaining)
+                self._json_response({"ok": True})
+                return
             if path.startswith("/api/objectives/"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
                 objective = objectives.read_objective(objective_id)

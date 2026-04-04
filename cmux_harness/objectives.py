@@ -198,6 +198,36 @@ def update_task(objective_id: str, task_id: str, task_updates: dict) -> dict:
         return task
 
 
+def append_task(objective_id: str, task: dict) -> dict:
+    lock = _get_objective_lock(objective_id)
+    with lock:
+        objective = read_objective(objective_id)
+        if objective is None:
+            raise FileNotFoundError(f"objective not found: {objective_id}")
+        tasks = objective.setdefault("tasks", [])
+        if not isinstance(tasks, list):
+            tasks = []
+            objective["tasks"] = tasks
+        tasks.append(task)
+        objective["updatedAt"] = _now_iso()
+        with open(_objective_path(objective_id), "w", encoding="utf-8") as f:
+            json.dump(objective, f, indent=2)
+        return task
+
+
+def set_action_buttons(objective_id: str, buttons: list[dict]) -> list[dict]:
+    lock = _get_objective_lock(objective_id)
+    with lock:
+        objective = read_objective(objective_id)
+        if objective is None:
+            raise FileNotFoundError(f"objective not found: {objective_id}")
+        objective["actionButtons"] = buttons
+        objective["updatedAt"] = _now_iso()
+        with open(_objective_path(objective_id), "w", encoding="utf-8") as f:
+            json.dump(objective, f, indent=2)
+        return buttons
+
+
 def list_objectives() -> list[dict]:
     try:
         OBJECTIVES_DIR.mkdir(parents=True, exist_ok=True)
