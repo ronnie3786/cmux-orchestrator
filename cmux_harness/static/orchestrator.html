@@ -608,6 +608,50 @@
     align-items: center;
     gap: 6px;
   }
+  .console-log-match {
+    background: rgba(59, 130, 246, 0.2);
+    border-radius: 4px;
+    color: var(--t1);
+  }
+  .console-log-filter-bar {
+    min-height: 46px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--b);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: rgba(255,255,255,.015);
+  }
+  .console-log-custom {
+    min-width: 220px;
+    flex: 1;
+    background: var(--raised);
+    border: 1px solid var(--b2);
+    color: var(--t1);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    outline: none;
+  }
+  .console-log-custom:focus {
+    border-color: var(--blue-b);
+  }
+  .console-log-apply {
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t1);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 11px;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .console-log-apply:hover {
+    background: var(--hover);
+  }
 
   /* thread divider */
   .thread-div {
@@ -2407,6 +2451,12 @@
       flex-wrap: wrap;
       justify-content: flex-start;
     }
+    .console-log-filter-bar {
+      padding: 10px 12px;
+    }
+    .console-log-custom {
+      min-width: 100%;
+    }
     .build-log-body {
       padding: 12px 12px 16px;
       max-height: calc(40vh - 72px);
@@ -2585,6 +2635,34 @@
       <button class="build-log-badge" id="buildLogNewOutputBadge" type="button">⬇ New output</button>
     </div>
   </section>
+  <section class="build-log-panel" id="consoleLogPanel" aria-label="Console log panel">
+    <div class="build-log-header">
+      <div class="build-log-title-wrap">
+        <div class="build-log-title" id="consoleLogTitle">Console Logs</div>
+        <div class="build-log-meta" id="consoleLogMeta">Select an objective to view logs.</div>
+      </div>
+      <div class="build-log-actions">
+        <select class="build-log-select" id="consoleLogFileSelect" aria-label="Console log file">
+          <option value="">No files</option>
+        </select>
+        <button class="build-log-toggle" id="consoleLogAutoButton" type="button" aria-pressed="false">
+          <span>Auto</span>
+          <span class="build-log-dot"></span>
+        </button>
+        <button class="build-log-icon-button" id="consoleLogRefreshButton" type="button" aria-label="Refresh console log">↻</button>
+        <button class="build-log-icon-button" id="consoleLogCloseButton" type="button" aria-label="Close console log">×</button>
+      </div>
+    </div>
+    <div class="console-log-filter-bar">
+      <select class="build-log-select" id="consoleLogPresetSelect" aria-label="Console log filter preset"></select>
+      <input class="console-log-custom" id="consoleLogCustomInput" type="text" placeholder="Custom regex filter">
+      <button class="console-log-apply" id="consoleLogApplyButton" type="button">Apply</button>
+    </div>
+    <div class="build-log-body" id="consoleLogBody">
+      <div class="build-log-content" id="consoleLogContent"></div>
+      <button class="build-log-badge" id="consoleLogNewOutputBadge" type="button">⬇ New output</button>
+    </div>
+  </section>
   <div class="input-area">
     <div class="input-wrap">
       <div class="input-box">
@@ -2737,6 +2815,16 @@
 
 <script>
 (() => {
+  const CONSOLE_LOG_PRESETS = [
+    { id: 'all', label: 'All', pattern: '' },
+    { id: 'analytics', label: 'Analytics', pattern: 'analytics event:' },
+    { id: 'analytics_names', label: 'Analytics names only', pattern: 'Track analytics event:|Screen analytics event:' },
+    { id: 'network', label: 'Network', pattern: 'Starting fetch|Starting mutation|Result of fetch|Result of mutation' },
+    { id: 'errors', label: 'Errors', pattern: ' E ' },
+    { id: 'graphql', label: 'GraphQL', pattern: '\\(doxx:GraphQL\\)' },
+    { id: 'messaging', label: 'Messaging', pattern: 'MessagingConversation:' },
+    { id: 'custom', label: 'Custom', pattern: null }
+  ];
   const state = {
     objectives: [],
     activeObjectiveId: null,
@@ -2776,6 +2864,19 @@
     buildLogPinned: true,
     buildLogHasNewOutput: false,
     buildLogLastSignature: '',
+    consoleLogOpen: false,
+    consoleLogAuto: false,
+    consoleLogFile: null,
+    consoleLogFilter: '',
+    consoleLogDraftFilter: '',
+    consoleLogPreset: 'all',
+    consoleLogData: null,
+    consoleLogLoading: false,
+    consoleLogError: '',
+    consoleLogInterval: null,
+    consoleLogPinned: true,
+    consoleLogHasNewOutput: false,
+    consoleLogLastSignature: '',
     draftProjectDir: '',
     draftBaseBranch: 'main',
     draftBranchName: '',
@@ -2844,6 +2945,19 @@
     buildLogBody: document.getElementById('buildLogBody'),
     buildLogContent: document.getElementById('buildLogContent'),
     buildLogNewOutputBadge: document.getElementById('buildLogNewOutputBadge'),
+    consoleLogPanel: document.getElementById('consoleLogPanel'),
+    consoleLogTitle: document.getElementById('consoleLogTitle'),
+    consoleLogMeta: document.getElementById('consoleLogMeta'),
+    consoleLogFileSelect: document.getElementById('consoleLogFileSelect'),
+    consoleLogPresetSelect: document.getElementById('consoleLogPresetSelect'),
+    consoleLogCustomInput: document.getElementById('consoleLogCustomInput'),
+    consoleLogApplyButton: document.getElementById('consoleLogApplyButton'),
+    consoleLogAutoButton: document.getElementById('consoleLogAutoButton'),
+    consoleLogRefreshButton: document.getElementById('consoleLogRefreshButton'),
+    consoleLogCloseButton: document.getElementById('consoleLogCloseButton'),
+    consoleLogBody: document.getElementById('consoleLogBody'),
+    consoleLogContent: document.getElementById('consoleLogContent'),
+    consoleLogNewOutputBadge: document.getElementById('consoleLogNewOutputBadge'),
     gitPanel: document.getElementById('gitPanel'),
     gitPanelBranch: document.getElementById('gitPanelBranch'),
     gitPanelPath: document.getElementById('gitPanelPath'),
@@ -3391,6 +3505,26 @@
     ].join('::');
   }
 
+  function consoleLogSignature(data) {
+    if (!data || !data.exists) return '';
+    return [
+      data.activeFile || '',
+      data.fileSize || 0,
+      data.totalLines || 0,
+      data.matchedLines || 0,
+      Array.isArray(data.lines) ? data.lines.join('\n') : ''
+    ].join('::');
+  }
+
+  function consoleLogPresetById(id) {
+    return CONSOLE_LOG_PRESETS.find((preset) => preset.id === id) || CONSOLE_LOG_PRESETS[0];
+  }
+
+  function consoleLogPresetForPattern(pattern) {
+    const value = String(pattern || '');
+    return CONSOLE_LOG_PRESETS.find((preset) => preset.pattern === value && preset.pattern !== null) || consoleLogPresetById('custom');
+  }
+
   function isBuildLogPinned() {
     const el = els.buildLogBody;
     return (el.scrollTop + el.clientHeight) >= (el.scrollHeight - 20);
@@ -3405,6 +3539,56 @@
 
   function renderBuildLogBadge() {
     els.buildLogNewOutputBadge.className = 'build-log-badge' + (state.buildLogHasNewOutput ? ' visible' : '');
+  }
+
+  function isConsoleLogPinned() {
+    const el = els.consoleLogBody;
+    return (el.scrollTop + el.clientHeight) >= (el.scrollHeight - 20);
+  }
+
+  function scrollConsoleLogToBottom() {
+    els.consoleLogBody.scrollTop = els.consoleLogBody.scrollHeight;
+    state.consoleLogPinned = true;
+    state.consoleLogHasNewOutput = false;
+    renderConsoleLogBadge();
+  }
+
+  function renderConsoleLogBadge() {
+    els.consoleLogNewOutputBadge.className = 'build-log-badge' + (state.consoleLogHasNewOutput ? ' visible' : '');
+  }
+
+  function renderConsoleLogLine(line, pattern) {
+    const text = String(line == null ? '' : line);
+    if (!pattern) return '<div class="build-log-line">' + esc(text) + '</div>';
+    let matcher;
+    try {
+      matcher = new RegExp(pattern, 'ig');
+    } catch (error) {
+      return '<div class="build-log-line">' + esc(text) + '</div>';
+    }
+    let html = '';
+    let cursor = 0;
+    let matched = false;
+    let guard = 0;
+    while (guard < 5000) {
+      const match = matcher.exec(text);
+      if (!match) break;
+      const value = String(match[0] || '');
+      const index = Number(match.index || 0);
+      if (!value) {
+        matcher.lastIndex = index + 1;
+        guard += 1;
+        continue;
+      }
+      matched = true;
+      html += esc(text.slice(cursor, index));
+      html += '<mark class="console-log-match">' + esc(value) + '</mark>';
+      cursor = index + value.length;
+      guard += 1;
+    }
+    if (!matched) return '<div class="build-log-line">' + esc(text) + '</div>';
+    html += esc(text.slice(cursor));
+    return '<div class="build-log-line">' + html + '</div>';
   }
 
   function renderBuildLog() {
@@ -3463,6 +3647,77 @@
     renderBuildLogBadge();
   }
 
+  function renderConsoleLog() {
+    const objectiveName = currentObjectiveName();
+    const data = state.consoleLogData;
+    const files = data && Array.isArray(data.files) ? data.files : [];
+    const activeFile = state.consoleLogFile || (data && data.activeFile) || (files[0] || '');
+    const preset = consoleLogPresetById(state.consoleLogPreset);
+
+    els.consoleLogPanel.className = 'build-log-panel' + (state.consoleLogOpen ? ' open' : '');
+    els.consoleLogTitle.textContent = activeFile ? ('Console Logs - ' + activeFile) : 'Console Logs';
+    els.consoleLogAutoButton.className = 'build-log-toggle' + (state.consoleLogAuto ? ' active' : '');
+    els.consoleLogAutoButton.setAttribute('aria-pressed', state.consoleLogAuto ? 'true' : 'false');
+    els.consoleLogRefreshButton.disabled = !state.activeObjectiveId || state.consoleLogLoading;
+    els.consoleLogCloseButton.disabled = !state.consoleLogOpen;
+    els.consoleLogPresetSelect.innerHTML = CONSOLE_LOG_PRESETS.map((item) => (
+      '<option value="' + esc(item.id) + '">' + esc(item.label) + '</option>'
+    )).join('');
+    els.consoleLogPresetSelect.value = preset.id;
+    els.consoleLogCustomInput.value = state.consoleLogDraftFilter;
+    els.consoleLogCustomInput.disabled = !state.activeObjectiveId;
+    els.consoleLogApplyButton.disabled = !state.activeObjectiveId;
+    els.consoleLogFileSelect.disabled = !state.activeObjectiveId || files.length <= 1;
+    els.consoleLogFileSelect.innerHTML = files.length
+      ? files.map((file) => '<option value="' + esc(file) + '">' + esc(file) + '</option>').join('')
+      : '<option value="">No files</option>';
+    els.consoleLogFileSelect.value = activeFile;
+
+    if (!state.activeObjectiveId) {
+      els.consoleLogMeta.textContent = 'Select an objective to view logs.';
+      els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">📟</div><div>No active objective selected.</div></div>';
+      state.consoleLogHasNewOutput = false;
+      renderConsoleLogBadge();
+      return;
+    }
+
+    if (state.consoleLogLoading && !data) {
+      els.consoleLogMeta.textContent = objectiveName + (activeFile ? (' · ' + activeFile) : '');
+      els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-spinner"></div><div>Loading console logs…</div></div>';
+      state.consoleLogHasNewOutput = false;
+      renderConsoleLogBadge();
+      return;
+    }
+
+    if (state.consoleLogError) {
+      els.consoleLogMeta.textContent = objectiveName + (activeFile ? (' · ' + activeFile) : '');
+      els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">⚠</div><div>Failed to read console logs.</div><button class="build-log-retry" id="consoleLogRetryButton" type="button">Retry</button></div>';
+      const retryButton = document.getElementById('consoleLogRetryButton');
+      if (retryButton) retryButton.addEventListener('click', () => fetchConsoleLog(true));
+      renderConsoleLogBadge();
+      return;
+    }
+
+    if (!data || !data.exists) {
+      els.consoleLogMeta.textContent = objectiveName + ' · waiting for .build/logs/*.log';
+      els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">📟</div><div>No console logs yet. Run the app to see runtime output here.</div></div>';
+      state.consoleLogHasNewOutput = false;
+      renderConsoleLogBadge();
+      return;
+    }
+
+    const totalLines = Number(data.totalLines || 0);
+    const matchedLines = Number(data.matchedLines || 0);
+    const fileSizeHuman = data.fileSizeHuman || '0 B';
+    const filterLabel = state.consoleLogFilter ? (' · ' + matchedLines + ' matches') : '';
+    els.consoleLogMeta.textContent = (data.activeFile || activeFile) + ' · ' + fileSizeHuman + ' · ' + totalLines + ' lines' + filterLabel;
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+    els.consoleLogContent.innerHTML = lines.length
+      ? lines.map((line) => renderConsoleLogLine(line, state.consoleLogFilter)).join('')
+      : '<div class="build-log-state"><div class="build-log-state-icon">📟</div><div>' + (state.consoleLogFilter ? 'No lines matched the current filter.' : 'Log file is empty.') + '</div></div>';
+    renderConsoleLogBadge();
+  }
+
   async function fetchBuildLog(forceRender) {
     if (!state.activeObjectiveId) {
       state.buildLogData = null;
@@ -3511,6 +3766,62 @@
     }
   }
 
+  async function fetchConsoleLog(forceRender) {
+    if (!state.activeObjectiveId) {
+      state.consoleLogData = null;
+      state.consoleLogError = '';
+      state.consoleLogLoading = false;
+      state.consoleLogLastSignature = '';
+      state.consoleLogHasNewOutput = false;
+      renderContext();
+      if (forceRender) renderConsoleLog();
+      return;
+    }
+
+    const objectiveId = state.activeObjectiveId;
+    const wasPinned = isConsoleLogPinned();
+    state.consoleLogPinned = wasPinned;
+    if (!state.consoleLogData) state.consoleLogLoading = true;
+    state.consoleLogError = '';
+    if (forceRender) renderConsoleLog();
+
+    try {
+      let path = '/api/objectives/' + encodeURIComponent(objectiveId) + '/console-logs?lines=500';
+      if (state.consoleLogFile) {
+        path += '&file=' + encodeURIComponent(state.consoleLogFile);
+      }
+      if (state.consoleLogFilter) {
+        path += '&filter=' + encodeURIComponent(state.consoleLogFilter);
+      }
+      const data = await api(path);
+      if (state.activeObjectiveId !== objectiveId) return;
+      const nextSignature = consoleLogSignature(data);
+      const changed = state.consoleLogLastSignature && state.consoleLogLastSignature !== nextSignature;
+      state.consoleLogData = data;
+      state.consoleLogLastSignature = nextSignature;
+      state.consoleLogError = '';
+      state.consoleLogLoading = false;
+      if (!state.consoleLogFile && data.activeFile) state.consoleLogFile = data.activeFile;
+      if (state.consoleLogFile && data.files && !data.files.includes(state.consoleLogFile)) {
+        state.consoleLogFile = data.activeFile || data.files[0] || null;
+      }
+      renderContext();
+      renderConsoleLog();
+      if (changed && !wasPinned) {
+        state.consoleLogHasNewOutput = true;
+        renderConsoleLogBadge();
+      } else if (wasPinned) {
+        window.setTimeout(scrollConsoleLogToBottom, 0);
+      }
+    } catch (error) {
+      if (state.activeObjectiveId !== objectiveId) return;
+      state.consoleLogLoading = false;
+      state.consoleLogError = error.message || 'Failed to read console logs';
+      renderContext();
+      renderConsoleLog();
+    }
+  }
+
   function stopBuildLogPoll() {
     if (state.buildLogInterval) {
       window.clearInterval(state.buildLogInterval);
@@ -3528,6 +3839,23 @@
     }, 3000);
   }
 
+  function stopConsoleLogPoll() {
+    if (state.consoleLogInterval) {
+      window.clearInterval(state.consoleLogInterval);
+      state.consoleLogInterval = null;
+    }
+  }
+
+  function startConsoleLogPoll() {
+    stopConsoleLogPoll();
+    if (!state.consoleLogOpen || !state.consoleLogAuto || !state.activeObjectiveId) return;
+    state.consoleLogInterval = window.setInterval(() => {
+      fetchConsoleLog(false).catch((error) => {
+        console.error(error);
+      });
+    }, 3000);
+  }
+
   function toggleBuildLog() {
     state.buildLogOpen = !state.buildLogOpen;
     if (!state.buildLogOpen) {
@@ -3537,6 +3865,13 @@
       renderContext();
       renderBuildLog();
       return;
+    }
+    if (state.consoleLogOpen) {
+      state.consoleLogOpen = false;
+      state.consoleLogAuto = false;
+      state.consoleLogHasNewOutput = false;
+      stopConsoleLogPoll();
+      renderConsoleLog();
     }
     renderContext();
     renderBuildLog();
@@ -3573,6 +3908,90 @@
     }
   }
 
+  function setConsoleLogFilter(pattern, presetName) {
+    const nextPattern = String(pattern || '');
+    const nextPreset = presetName || consoleLogPresetForPattern(nextPattern).id;
+    if (state.consoleLogFilter === nextPattern && state.consoleLogPreset === nextPreset) {
+      renderConsoleLog();
+      return;
+    }
+    state.consoleLogFilter = nextPattern;
+    state.consoleLogDraftFilter = nextPattern;
+    state.consoleLogPreset = nextPreset;
+    state.consoleLogData = null;
+    state.consoleLogError = '';
+    state.consoleLogLastSignature = '';
+    state.consoleLogHasNewOutput = false;
+    renderContext();
+    renderConsoleLog();
+    if (state.consoleLogOpen) {
+      fetchConsoleLog(true);
+      startConsoleLogPoll();
+    }
+  }
+
+  function applyConsoleLogPreset(presetName) {
+    const preset = consoleLogPresetById(presetName);
+    if (preset.id === 'custom') {
+      const pattern = String(els.consoleLogCustomInput.value || '').trim();
+      setConsoleLogFilter(pattern, consoleLogPresetForPattern(pattern).id);
+      return;
+    }
+    setConsoleLogFilter(preset.pattern || '', preset.id);
+  }
+
+  function setConsoleLogFile(filename) {
+    const nextFile = String(filename || '').trim() || null;
+    if (state.consoleLogFile === nextFile) return;
+    state.consoleLogFile = nextFile;
+    state.consoleLogData = null;
+    state.consoleLogError = '';
+    state.consoleLogLastSignature = '';
+    state.consoleLogHasNewOutput = false;
+    renderContext();
+    renderConsoleLog();
+    if (state.consoleLogOpen) {
+      fetchConsoleLog(true);
+      startConsoleLogPoll();
+    }
+  }
+
+  function toggleConsoleLog() {
+    state.consoleLogOpen = !state.consoleLogOpen;
+    if (!state.consoleLogOpen) {
+      state.consoleLogAuto = false;
+      state.consoleLogHasNewOutput = false;
+      stopConsoleLogPoll();
+      renderContext();
+      renderConsoleLog();
+      return;
+    }
+    if (state.buildLogOpen) {
+      state.buildLogOpen = false;
+      state.buildLogAuto = false;
+      state.buildLogHasNewOutput = false;
+      stopBuildLogPoll();
+      renderBuildLog();
+    }
+    renderContext();
+    renderConsoleLog();
+    fetchConsoleLog(true);
+    startConsoleLogPoll();
+  }
+
+  function toggleConsoleLogAuto() {
+    if (!state.activeObjectiveId) return;
+    state.consoleLogAuto = !state.consoleLogAuto;
+    renderContext();
+    renderConsoleLog();
+    if (state.consoleLogAuto) {
+      fetchConsoleLog(false);
+      startConsoleLogPoll();
+    } else {
+      stopConsoleLogPoll();
+    }
+  }
+
   function resetBuildLogState() {
     stopBuildLogPoll();
     state.buildLogOpen = false;
@@ -3585,6 +4004,23 @@
     state.buildLogHasNewOutput = false;
     state.buildLogLastSignature = '';
     state.buildLogFile = 'build.log';
+  }
+
+  function resetConsoleLogState() {
+    stopConsoleLogPoll();
+    state.consoleLogOpen = false;
+    state.consoleLogAuto = false;
+    state.consoleLogData = null;
+    state.consoleLogLoading = false;
+    state.consoleLogError = '';
+    state.consoleLogInterval = null;
+    state.consoleLogPinned = true;
+    state.consoleLogHasNewOutput = false;
+    state.consoleLogLastSignature = '';
+    state.consoleLogFile = null;
+    state.consoleLogFilter = '';
+    state.consoleLogDraftFilter = '';
+    state.consoleLogPreset = 'all';
   }
 
   function debugJsonl(entries) {
@@ -3703,6 +4139,7 @@
         state.debugEntries = [];
         state.debugHasErrors = false;
         resetBuildLogState();
+        resetConsoleLogState();
         closeDebugModal();
       }
       await pollObjectives();
@@ -3769,6 +4206,7 @@
       state.messages = [];
       state.lastMessageTimestamp = null;
       resetBuildLogState();
+      resetConsoleLogState();
       return;
     }
     if (state.activeObjectiveId && available.some((item) => item.id === state.activeObjectiveId)) {
@@ -4255,7 +4693,11 @@
     const logIndicator = state.buildLogAuto && state.buildLogData && state.buildLogData.exists
       ? '<span class="ctx-icon-indicator"></span>'
       : '';
+    const consoleLogIndicator = state.consoleLogData && state.consoleLogData.exists
+      ? '<span class="ctx-icon-indicator"></span>'
+      : '';
     const logButtonClass = 'ctx-icon-button has-indicator' + (state.buildLogOpen ? ' log-active' : '');
+    const consoleLogButtonClass = 'ctx-icon-button has-indicator' + (state.consoleLogOpen ? ' log-active' : '');
     els.contextStrip.innerHTML = state.isMobile
       ? [
           '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>',
@@ -4273,6 +4715,7 @@
           '</div>',
           '</div>',
           '<div class="ctx-actions">',
+          '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
           '<button class="' + logButtonClass + '" id="buildLogToggleButton" type="button" title="Toggle build log" aria-label="Toggle build log">⎔' + logIndicator + '</button>',
           '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
           '</div>'
@@ -4289,6 +4732,7 @@
           '</div>',
           '<div class="ctx-actions">',
           gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
+          '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
           '<button class="' + logButtonClass + '" id="buildLogToggleButton" type="button" title="Toggle build log" aria-label="Toggle build log">⎔' + logIndicator + '</button>',
           '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
           '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
@@ -4309,6 +4753,10 @@
     const buildLogButton = document.getElementById('buildLogToggleButton');
     if (buildLogButton) {
       buildLogButton.addEventListener('click', toggleBuildLog);
+    }
+    const consoleLogButton = document.getElementById('consoleLogToggleButton');
+    if (consoleLogButton) {
+      consoleLogButton.addEventListener('click', toggleConsoleLog);
     }
   }
 
@@ -4837,6 +5285,7 @@
     renderSidebar();
     renderContext();
     renderBuildLog();
+    renderConsoleLog();
     renderFabRail();
     renderSidebarChrome();
     updateSidebarFormFromState();
@@ -4876,7 +5325,9 @@
       state.actionButtonState = {};
       state.fabModalOpen = false;
       resetBuildLogState();
+      resetConsoleLogState();
       renderBuildLog();
+      renderConsoleLog();
       renderFabRail();
       renderFabModal();
       return;
@@ -4905,6 +5356,7 @@
     else {
       renderContext();
       renderBuildLog();
+      renderConsoleLog();
       renderSidebar();
       renderDebugModal();
       renderMessages();
@@ -4941,6 +5393,7 @@
     state.messages = [];
     state.lastMessageTimestamp = null;
     resetBuildLogState();
+    resetConsoleLogState();
     await Promise.all([
       pollActiveObjective(false),
       pollMessages(false)
@@ -5147,6 +5600,51 @@
       }
     });
     els.buildLogNewOutputBadge.addEventListener('click', scrollBuildLogToBottom);
+    els.consoleLogFileSelect.addEventListener('change', (event) => {
+      setConsoleLogFile(event.target.value);
+    });
+    els.consoleLogPresetSelect.addEventListener('change', (event) => {
+      const preset = event.target.value;
+      if (preset === 'custom') {
+        state.consoleLogPreset = 'custom';
+        state.consoleLogDraftFilter = String(els.consoleLogCustomInput.value || '');
+        renderConsoleLog();
+        els.consoleLogCustomInput.focus();
+        return;
+      }
+      applyConsoleLogPreset(preset);
+    });
+    els.consoleLogCustomInput.addEventListener('input', () => {
+      const pattern = String(els.consoleLogCustomInput.value || '');
+      state.consoleLogDraftFilter = pattern;
+      state.consoleLogPreset = consoleLogPresetForPattern(pattern).id;
+      els.consoleLogPresetSelect.value = state.consoleLogPreset;
+    });
+    els.consoleLogCustomInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const pattern = String(els.consoleLogCustomInput.value || '').trim();
+      setConsoleLogFilter(pattern, consoleLogPresetForPattern(pattern).id);
+    });
+    els.consoleLogApplyButton.addEventListener('click', () => {
+      const pattern = String(els.consoleLogCustomInput.value || '').trim();
+      setConsoleLogFilter(pattern, consoleLogPresetForPattern(pattern).id);
+    });
+    els.consoleLogAutoButton.addEventListener('click', toggleConsoleLogAuto);
+    els.consoleLogRefreshButton.addEventListener('click', () => {
+      fetchConsoleLog(true);
+    });
+    els.consoleLogCloseButton.addEventListener('click', () => {
+      if (state.consoleLogOpen) toggleConsoleLog();
+    });
+    els.consoleLogBody.addEventListener('scroll', () => {
+      state.consoleLogPinned = isConsoleLogPinned();
+      if (state.consoleLogPinned && state.consoleLogHasNewOutput) {
+        state.consoleLogHasNewOutput = false;
+        renderConsoleLogBadge();
+      }
+    });
+    els.consoleLogNewOutputBadge.addEventListener('click', scrollConsoleLogToBottom);
     els.sidebarBackdrop.addEventListener('click', closeSidebar);
     els.sidebarCloseButton.addEventListener('click', closeSidebar);
     els.gitPanelRefreshButton.addEventListener('click', fetchGitStatus);

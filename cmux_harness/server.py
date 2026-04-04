@@ -272,6 +272,101 @@ def make_handler(engine):
                     "totalLines": total_lines,
                     "truncated": truncated,
                 })
+            elif path.startswith("/api/objectives/") and path.endswith("/console-logs"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/console-logs")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                params = urllib.parse.parse_qs(parsed.query)
+                try:
+                    line_limit = int(params.get("lines", ["500"])[0])
+                except (TypeError, ValueError):
+                    line_limit = 500
+                line_limit = max(1, min(line_limit, 2000))
+                filter_pattern = str(params.get("filter", [""])[0] or "").strip()
+                requested_file = str(params.get("file", [""])[0] or "").strip()
+                if requested_file:
+                    if (
+                        not requested_file.endswith(".log")
+                        or "/" in requested_file
+                        or "\\" in requested_file
+                        or ".." in requested_file
+                    ):
+                        self._json_response({"ok": False, "error": "invalid file"}, 400)
+                        return
+                matcher = None
+                if filter_pattern:
+                    try:
+                        matcher = re.compile(filter_pattern, re.IGNORECASE)
+                    except re.error as exc:
+                        self._json_response({"ok": False, "error": f"invalid regex: {exc}"}, 400)
+                        return
+                worktree_path = str(objective.get("worktreePath") or "").strip()
+                if not worktree_path:
+                    self._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
+                    return
+                logs_dir = Path(worktree_path) / ".build" / "logs"
+                try:
+                    files = sorted(
+                        entry.name for entry in logs_dir.glob("*.log")
+                        if entry.is_file()
+                    ) if logs_dir.exists() and logs_dir.is_dir() else []
+                except OSError as exc:
+                    self._json_response({"ok": False, "error": str(exc)}, 500)
+                    return
+                if not files:
+                    self._json_response({
+                        "exists": False,
+                        "files": [],
+                        "activeFile": "",
+                        "lines": [],
+                        "totalLines": 0,
+                        "matchedLines": 0,
+                        "fileSize": 0,
+                        "fileSizeHuman": "0 B",
+                        "truncated": False,
+                        "filter": filter_pattern,
+                    })
+                    return
+                active_file = requested_file or files[0]
+                if active_file not in files:
+                    self._json_response({"ok": False, "error": "invalid file"}, 400)
+                    return
+                log_path = logs_dir / active_file
+                try:
+                    file_size = log_path.stat().st_size
+                    total_lines = 0
+                    matched_lines = 0
+                    tail = deque(maxlen=line_limit)
+                    with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                        for line in handle:
+                            total_lines += 1
+                            cleaned = line.rstrip("\r\n")
+                            if matcher is not None:
+                                if not matcher.search(cleaned):
+                                    continue
+                                matched_lines += 1
+                            else:
+                                matched_lines = total_lines
+                            tail.append(cleaned)
+                    lines = list(tail)
+                    truncated = matched_lines > len(lines)
+                except OSError as exc:
+                    self._json_response({"ok": False, "error": str(exc)}, 500)
+                    return
+                self._json_response({
+                    "exists": True,
+                    "files": files,
+                    "activeFile": active_file,
+                    "lines": lines,
+                    "totalLines": total_lines,
+                    "matchedLines": matched_lines,
+                    "fileSize": file_size,
+                    "fileSizeHuman": _human_file_size(file_size),
+                    "truncated": truncated,
+                    "filter": filter_pattern,
+                })
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
                 parts = path.split("/")
                 objective_id = parts[3]
