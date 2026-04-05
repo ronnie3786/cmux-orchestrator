@@ -1507,20 +1507,30 @@
     display: flex;
   }
   .fab-btn {
-    width: 48px;
-    height: 48px;
-    border-radius: 14px;
+    height: 40px;
+    padding: 0 14px 0 10px;
+    border-radius: 12px;
     border: none;
     display: flex;
     align-items: center;
-    justify-content: center;
-    font-size: 18px;
+    gap: 6px;
+    font-size: 14px;
     cursor: pointer;
     box-shadow: 0 2px 12px rgba(0,0,0,.4);
     transition: transform .15s, box-shadow .15s, opacity .15s;
     color: #000;
     position: relative;
     font-family: 'Inter', sans-serif;
+    white-space: nowrap;
+  }
+  .fab-btn-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .fab-btn-label {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
   }
   .fab-btn:hover {
     transform: scale(1.08);
@@ -1541,27 +1551,9 @@
     background: var(--raised);
     border: 2px dashed var(--b2);
     color: var(--t2);
-    font-size: 22px;
+    font-size: 18px;
+    padding: 0 12px;
   }
-  .fab-btn::after {
-    content: attr(title);
-    position: absolute;
-    right: 56px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: var(--raised);
-    border: 1px solid var(--b2);
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    white-space: nowrap;
-    color: var(--t1);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .15s;
-    font-family: 'Inter', sans-serif;
-  }
-  .fab-btn:hover::after { opacity: 1; }
   .fab-modal {
     width: 100%;
     max-width: 520px;
@@ -2555,10 +2547,10 @@
       transform: none;
     }
     .fab-btn {
-      width: 44px;
-      height: 44px;
+      height: 36px;
+      padding: 0 10px 0 8px;
     }
-    .fab-btn::after {
+    .fab-btn-label {
       display: none;
     }
     .fab-modal-grid {

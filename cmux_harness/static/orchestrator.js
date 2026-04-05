@@ -539,7 +539,14 @@
       el.dataset.buttonId = button.id;
       el.style.background = button.color || '#4f8ef7';
       el.title = button.label || 'Action';
-      el.textContent = button.icon || '⚡';
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'fab-btn-icon';
+      iconSpan.textContent = button.icon || '⚡';
+      el.appendChild(iconSpan);
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'fab-btn-label';
+      labelSpan.textContent = button.label || 'Action';
+      el.appendChild(labelSpan);
       el.disabled = state.fabSaving;
       el.addEventListener('click', () => {
         executeAction(button);
