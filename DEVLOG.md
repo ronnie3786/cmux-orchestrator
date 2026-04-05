@@ -2,6 +2,73 @@
 
 ## How this project was built
 
+### Phase 8: Build Log Viewer (2026-04-04)
+
+**Feature:** Real-time build log viewer panel in the orchestrator UI. When the user triggers a build (e.g. via the "Build & Run" action button), the Xcode project compiles and writes output to `.build/build.log` in the worktree. This file can be 2.4MB+ (593 build targets for the Doximity iOS app). The viewer gives visibility into build progress without leaving the orchestrator.
+
+**Backend** (`server.py`):
+- New endpoint: `GET /api/objectives/{id}/build-log?lines=200&file=build.log`
+- Tails the log file using `collections.deque(maxlen=N)` to avoid loading the full file into memory
+- Supports `build.log` (default) and `prebuild.log` via `file` query param
+- Filename validated against allowlist (no path traversal)
+- Returns: `exists`, `lines[]`, `fileSize`, `fileSizeHuman`, `totalLines`, `truncated`
+- Also supports `offset` param for byte-offset reads (future "load more" feature)
+
+**Frontend** (`orchestrator.html`, 512 lines added):
+- Terminal icon button in objective header area with green indicator dot when log exists
+- Bottom slide-out panel (max 40vh) with monospace terminal display
+- Auto-refresh toggle: 3s `setInterval` polling, OFF by default, stops when panel closes
+- File switcher dropdown between `build.log` and `prebuild.log`
+- Smart scroll: auto-pins to bottom when user is at bottom; shows floating "⬇ New output" badge when user scrolls up to read earlier output
+- States: empty ("No build log yet"), loading spinner, content, error + retry
+- Styled to match existing dark theme (CSS variables, Inter font, JetBrains Mono for log content)
+
+**Commit:** `fb3800c` on `feature/orchestrator-v2`
+
+---
+
+### Phase 7: Action Buttons / FAB Rail (2026-04-04)
+
+**Feature:** Custom floating action buttons (FABs) on the orchestrator UI that spawn new Claude Code sessions in the objective's worktree, inject saved prompts, and register as tasks visible to the orchestrator.
+
+**Design decision:** Action buttons always spawn a NEW Claude Code session (never inject into the orchestrator's own session). This keeps the orchestrator free for Q&A while action-button tasks run independently. The engine's existing 5-second polling loop handles approval detection, completion, and review for free.
+
+**Backend** (`server.py`, 168 lines added):
+- `GET /api/objectives/{id}/action-buttons` — returns per-objective buttons (defaults to "Build & Run")
+- `POST /api/objectives/{id}/action-buttons` — create custom button (label, prompt, icon, color)
+- `DELETE /api/objectives/{id}/action-buttons/{buttonId}` — remove a button
+- `POST /api/objectives/{id}/action-inject` — the main endpoint: spawns workspace via `_create_worker_workspace()`, waits for REPL via `_wait_for_repl()`, injects prompt via `send_prompt_to_workspace()`, registers task on objective with `source: "action-button"`
+
+**Data layer** (`objectives.py`, 30 lines added):
+- `append_task()` — thread-safe task append to objective
+- `set_action_buttons()` — persist button config on objective JSON
+
+**Orchestrator context** (`orchestrator.py`, 2 lines):
+- `_build_orchestrator_context_prompt()` updated to mention action-button tasks so orchestrator chat can report on them
+
+**Frontend** (`orchestrator.html`, 532 lines added):
+- FAB rail on right side of the orchestrator view (vertical button strip)
+- "Add Action" modal with label, prompt, icon picker, color picker
+- Click-to-launch: button shows launching animation → success flash → task appears in task list
+- Keyboard shortcut: Escape closes the add-action modal
+- Per-button state tracking (idle/launching/success/error)
+- Default "Build & Run" button with prompt `/exp-project-run`
+
+**Task registration:** Action-button tasks appear alongside planned tasks in the task card list with `source: "action-button"`. The orchestrator can report status when asked. Task model:
+```json
+{
+  "id": "action-{slug}-{timestamp}",
+  "source": "action-button",
+  "status": "executing",
+  "workspaceId": "...",
+  "prompt": "..."
+}
+```
+
+**Commit:** `2ec60e9` on `feature/orchestrator-v2`
+
+---
+
 ### Phase 6b: Review System Fix — Always Review (2026-03-31)
 
 **Problem:** Sessions with no uncommitted git diff were being skipped entirely. The reviewer's only job was "review the diff," so sessions involving exploration, debugging, planning, Q&A, or already-committed changes all got "Skipped — no diff captured." That defeats the purpose. The reviewer should always tell you what happened.

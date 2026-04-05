@@ -21,6 +21,7 @@ def main():
     webbrowser.open(f"http://localhost:{port}")
 
     server = HTTPServer(("0.0.0.0", port), handler_class)
+    server.engine = engine
     try:
         server.serve_forever()
     except KeyboardInterrupt:

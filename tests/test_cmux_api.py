@@ -1,9 +1,12 @@
+import json
 import unittest
+from unittest.mock import Mock, patch
 
 from cmux_harness.cmux_api import (
     _parse_tree_data,
     _parse_notifications,
     _parse_debug_terminals,
+    _v2_request,
 )
 
 
@@ -200,3 +203,36 @@ class TestParseDebugTerminals(unittest.TestCase):
         result = [{"surface_id": "UUID-1", "surface_title": "test"}]
         parsed = _parse_debug_terminals(result)
         self.assertEqual(len(parsed), 1)
+
+
+class TestV2Request(unittest.TestCase):
+
+    def test_surface_read_text_suppresses_not_terminal_warning(self):
+        fake_socket = Mock()
+        fake_socket.recv.side_effect = [json.dumps({
+            "ok": False,
+            "error": "Surface is not a terminal",
+        }).encode() + b"\n", b""]
+
+        with patch("cmux_harness.cmux_api._find_socket_path", return_value="/tmp/cmux.sock"), \
+                patch("cmux_harness.cmux_api.socket.socket", return_value=fake_socket), \
+                patch("cmux_harness.cmux_api.log.warning") as mock_warning:
+            result = _v2_request("surface.read_text", {"workspace_id": "ws-1"})
+
+        self.assertIsNone(result)
+        mock_warning.assert_not_called()
+
+    def test_other_v2_errors_still_log_warning(self):
+        fake_socket = Mock()
+        fake_socket.recv.side_effect = [json.dumps({
+            "ok": False,
+            "error": "permission denied",
+        }).encode() + b"\n", b""]
+
+        with patch("cmux_harness.cmux_api._find_socket_path", return_value="/tmp/cmux.sock"), \
+                patch("cmux_harness.cmux_api.socket.socket", return_value=fake_socket), \
+                patch("cmux_harness.cmux_api.log.warning") as mock_warning:
+            result = _v2_request("workspace.list", {})
+
+        self.assertIsNone(result)
+        mock_warning.assert_called_once()

@@ -2,6 +2,7 @@
 
 *Combined approach: Woz's filesystem coordination core + Ashley's orchestration layer*
 *Approved by Ronnie: 2026-04-02*
+*Updated: 2026-04-02 — incorporated Ronnie's feedback on parsing, stuck detection, approvals, and review-rework cycle*
 
 ---
 
@@ -79,6 +80,7 @@ An orchestrator layer on top of cmux-harness that manages Claude Code sessions a
 | Role | Method | Model | Job |
 |------|--------|-------|-----|
 | **Orchestrator brain** | `claude --print --model haiku` | Haiku | Parse plans, manage queue, generate progress summaries |
+| **Approval classifier** | `claude --print --model haiku` | Haiku | Classify every worker approval prompt: auto-approve or escalate to human |
 | **Planner** | Claude Code session (interactive) | Sonnet (default) | Read codebase, decompose goals into task plans with checkpoints |
 | **Workers** | Claude Code sessions (interactive) | Sonnet (default) | Execute coding tasks, write progress updates, produce results |
 | **Session reviews** | `claude --print` | Sonnet (default) | Review completed work, assess quality, flag issues |
@@ -131,6 +133,8 @@ Every objective gets a self-contained directory. This is the source of truth for
         { "name": "Add retry logic", "status": "done" },
         { "name": "Run tests", "status": "done" }
       ],
+      "reviewCycles": 0,
+      "maxReviewCycles": 5,
       "startedAt": "ISO timestamp",
       "completedAt": "ISO timestamp",
       "lastProgressAt": "ISO timestamp"
@@ -156,7 +160,9 @@ Every objective gets a self-contained directory. This is the source of truth for
 - `queued` — waiting for dependencies or capacity
 - `launching` — workspace + worktree being created
 - `executing` — Claude Code running
-- `completed` — finished, review pending or done
+- `reviewing` — work done, LLM review in progress
+- `rework` — review found issues, sent back to worker for fixes
+- `completed` — finished, review passed (or max cycles reached and human-approved)
 - `failed` — session died or stuck, needs intervention
 - `blocked` — dependency not met
 
@@ -265,48 +271,122 @@ Every objective gets a self-contained directory. This is the source of truth for
 
 ### Phase 4: Monitoring (Safety Loop)
 
-The existing harness polling loop continues running. On top of Claude detection and auto-approve, it now also checks orchestrated tasks:
+The existing harness polling loop continues running. On top of Claude detection and approval classification, it now also checks orchestrated tasks.
+
+#### Approval Classification (Haiku-powered)
+
+**Every approval prompt is classified by Haiku, not regex or local models.** Claude Code's prompt formats are too dynamic for pattern matching. Haiku is fast, cheap, and smart enough to make contextual decisions.
+
+When the monitoring loop detects a prompt (screen shows approval-waiting state):
+1. Read the terminal screen via `surface.read_text`
+2. Send to Haiku with the task's `spec.md` as context:
+   ```
+   claude --print --model haiku -p "You are an approval classifier for an AI coding agent.
+   
+   The agent is working on this task:
+   [spec.md contents]
+   
+   The agent is now asking for approval:
+   [terminal screen text]
+   
+   Classify this as:
+   - APPROVE: Routine action clearly aligned with the task (file read/write/edit, 
+     bash commands for building/testing, standard Yes/No permission prompts)
+   - ESCALATE: Needs human judgment (design decisions, multi-option selections 
+     where the right choice isn't obvious, destructive actions like deleting files 
+     or dropping tables, anything ambiguous or outside the task scope)
+   
+   Respond with JSON: {\"decision\": \"APPROVE\" or \"ESCALATE\", \"reason\": \"brief explanation\"}"
+   ```
+3. If `APPROVE` → send approval keystroke, log the decision
+4. If `ESCALATE` → surface in the chat as an inline approval card with terminal context + Haiku's reason. Wait for human input.
+
+**Why Haiku and not regex/local models:**
+- Regex can't keep up with Claude Code's evolving prompt formats (proven through 5 iterations of detection.py)
+- Local models (qwen3.5 2B-9B) were inconsistent in classification quality
+- Haiku is cheap enough ($0.25/MTok input) to run on every prompt without cost concern
+- Haiku + task spec context = understanding of what SHOULD be approved vs what's a genuine decision point
+- **Future optimization:** Once we have a corpus of Haiku decisions, we can train a local model or introduce regex for the most common patterns. But that's v2+.
+
+#### Progress Monitoring (Tiered Stuck Detection)
 
 **Every 30 seconds for executing tasks:**
 1. Read `progress.md` via filesystem (NOT terminal scraping)
 2. Compare last checkpoint timestamp to now
-3. If progress.md was updated recently → worker is making progress, all good
-4. If progress.md hasn't been updated in >5 minutes:
-   - Read terminal screen via `surface.read_text`
-   - Check if Claude Code is stuck on a prompt (waiting for user input)
-   - If stuck on prompt → auto-approve handles it (already built)
-   - If idle/no Claude → session may have crashed, mark as `failed`
-   - If actively processing → just slow, extend the timer
-5. Parse checkpoints from progress.md, update `objective.json` checkpoint statuses
-6. Push status updates to dashboard UI
+3. Parse checkpoints from progress.md, update `objective.json` checkpoint statuses
+4. Push status updates to dashboard UI
 
-**Stuck detection thresholds:**
-- 5 min no progress update → yellow warning in dashboard
-- 10 min no progress update → check terminal for stuck prompt
-- 15 min no progress update + no terminal activity → mark failed, alert Ronnie
+**Also every 30 seconds:** Check terminal for approval prompts (feeds into approval classification above). This is critical — a worker waiting for approval is the most common "false stall" and must be caught immediately, not after a 5-minute timer.
 
-### Phase 5: Completion + Review
+**Stuck detection — tiered escalation:**
+
+| Elapsed (no progress.md update) | Action |
+|---|---|
+| **T+5 min** | Internal flag only. No UI change. Begin secondary monitoring. |
+| **T+7 min** | **Secondary check:** Look for new git commits in the worktree since last check. If new commits found → worker is progressing, reset timer. |
+| **T+7 min** (no new commits) | **Tertiary check:** Compare terminal screen to last cached screen via `surface.read_text`. If screen content changed → worker is active but not updating progress.md. Amber indicator in UI, but not stalled. |
+| **T+7 min** (no commits AND no terminal change) | **Stalled.** Surface to human in chat: "Task N appears stalled — no progress updates, no git activity, no terminal changes for 7 minutes." Include last known checkpoint and terminal snapshot. |
+
+**Key principle:** Approval prompt detection runs independently of stuck detection. A worker waiting for approval is caught within 30 seconds by the regular poll, not after 5-7 minutes by the stall timer.
+
+### Phase 5: Completion + Review-Rework Cycle
 13. Worker completes → writes `result.md` → exits Claude Code
 14. Harness detects `hasClaude: true → false` (existing detection)
 15. Orchestrator checks for `result.md` existence as confirmation
-16. Run review via `claude --print`:
+16. Update task status to `reviewing`
+17. Run review via `claude --print` (Sonnet):
     - Input: `spec.md` + `result.md` + `git diff` from worktree
-    - Output: `review.json`
-17. Update task status to `completed`
-18. Assemble `context.md` for dependent tasks:
-    - Haiku reads `result.md` + `review.json` from completed dependency
-    - Writes a summary into dependent task's `context.md`
-19. Check if newly unblocked tasks exist → launch them (back to Phase 3)
+    - Output: `review.json` with structured assessment (summary, issues, confidence, readyForPR)
+
+**Review outcome routing:**
+
+18a. **Review passes** (no issues, confidence high/medium, readyForPR: true):
+   - Update task status to `completed`
+   - Increment `reviewCycles` in objective.json
+   - Assemble `context.md` for dependent tasks:
+     - Haiku reads `result.md` + `review.json` from completed dependency
+     - Writes a summary into dependent task's `context.md`
+   - Check if newly unblocked tasks exist → launch them (back to Phase 3)
+
+18b. **Review finds issues** (issues list non-empty OR confidence low OR readyForPR: false):
+   - Increment `reviewCycles` in objective.json
+   - If `reviewCycles < maxReviewCycles` (default 5):
+     - Update task status to `rework`
+     - Chat shows: "Task N review found {count} issues → sending back for fixes (cycle {n}/{max})"
+     - Create rework prompt from review feedback:
+       ```
+       Your previous work was reviewed and the following issues were found:
+       
+       [review.json issues, formatted as a numbered list]
+       
+       Reviewer's recommendation: [review.json recommendation]
+       
+       Please address ALL of these issues. Your original task spec is in ./spec.md
+       and your previous progress is in ./progress.md.
+       
+       After fixing, update ./progress.md with a new "Rework" checkpoint and
+       write an updated ./result.md covering what you changed.
+       ```
+     - Send rework prompt to the same worktree (new Claude Code session if previous exited, or same session if still alive)
+     - Update task status back to `executing`
+     - When worker completes again → back to step 16 (review again)
+   - If `reviewCycles >= maxReviewCycles`:
+     - Update task status to `failed`
+     - Escalate to human in chat: "Task N failed review {max} times. Latest issues: [list]. Needs your attention."
+     - Include a "Take Over" action in the chat card
+     - **Do NOT unblock dependent tasks** — pipeline pauses here until human resolves it
 
 ### Phase 6: Reporting
-20. Dashboard shows objective status board:
-    - Task list with checkpoint progress bars
+19. Dashboard shows objective status board:
+    - Task list with checkpoint progress bars + review cycle indicators
     - Active worker session cards (existing UI)
-    - Completed task reviews
+    - Completed task reviews (with cycle count if >1)
+    - Rework history visible per task (collapsed by default)
     - Overall objective progress
-21. When all tasks complete:
+20. When all tasks complete:
     - Final summary generated by Haiku from all `result.md` files
-    - Notification to Ronnie: "Objective complete. N tasks done. Review pending."
+    - Include review cycle stats: "N tasks completed. M required rework. 0 escalated."
+    - Notification to Ronnie: "Objective complete. Review summary ready."
     - Ronnie merges worktree branches at his discretion
 
 ---
@@ -369,25 +449,28 @@ If a worker dies mid-task:
 |-----------|-------------|-----------|----------|
 | Objective manager | Create/track objectives, filesystem structure | Medium | P0 |
 | Planner session manager | Launch planner, capture output to plan.md | Medium | P0 |
-| Plan parser | Haiku prompt to extract structured tasks from plan.md | Medium | P0 |
+| Plan parser | Haiku → Sonnet escalation ladder to extract structured tasks from plan.md | Medium | P0 |
+| Haiku approval classifier | Replace regex + local model with Haiku for all approval decisions | Medium | P0 |
 | Task launcher | Create worktree + workspace, send task prompt | Medium | P0 |
 | Progress watcher | Poll progress.md files, update objective.json | Low | P0 |
-| Stuck detection | Timer-based alerts when progress stalls | Low | P0 |
+| Tiered stuck detection | 5 min → 7 min escalation with secondary/tertiary signal checks | Low | P0 |
+| Review-rework cycle | Worker ↔ reviewer loop (up to 5 rounds), escalate on failure | Medium | P0 |
 | Context assembler | Build context.md from completed dependency results | Low | P1 |
 | Crash recovery | Detect failed tasks, relaunch with progress context | Medium | P1 |
 | Chat UI | Goal input panel in dashboard | Medium | P1 |
-| Objective status board | Task list with progress bars in dashboard | Medium | P1 |
+| Objective status board | Task list with progress bars + review cycle indicators | Medium | P1 |
 | Worktree cleanup | Remove worktrees after objective completes | Low | P2 |
 
 ---
 
 ## Implementation Chunks (for Codex)
 
-### Chunk 1: Objective + Filesystem Foundation
-- Objective data model (objective.json schema)
+### Chunk 1: Objective + Filesystem Foundation + Claude CLI Wrapper
+- Objective data model (objective.json schema, including reviewCycles/maxReviewCycles per task)
 - Filesystem structure creation (`objectives/<uuid>/tasks/<id>/`)
 - Objective CRUD (create, read, update, list)
-- `claude --print --model haiku` subprocess wrapper with JSON parsing
+- `claude --print --model haiku` subprocess wrapper with JSON parsing (used by orchestrator brain + approval classifier)
+- `claude --print` (Sonnet) subprocess wrapper for reviews + parsing escalation
 - New API endpoints: `POST /api/objectives`, `GET /api/objectives`, `GET /api/objectives/<id>`
 
 ### Chunk 2: Planner Pipeline
@@ -461,23 +544,39 @@ The chat needs new messages to appear as they happen, not on page refresh. The c
 
 The entire pipeline depends on Haiku correctly parsing Claude Code's free-form conversational text into structured JSON (task titles, dependencies, checkpoint lists, file lists). Claude Code doesn't output structured data — it outputs markdown with natural language. If the parse fails or misinterprets dependencies, the execution order is wrong.
 
-**Mitigation:** 
+**Mitigation — Escalation ladder:**
+1. **Haiku attempt 1:** Parse plan.md with few-shot examples of expected input/output
+2. **Haiku attempt 2:** If first attempt fails validation, retry with a "reformat this plan" prompt
+3. **Sonnet attempt:** If Haiku fails twice, escalate to `claude --print` (Sonnet) for one attempt. Sonnet is more expensive but significantly better at structured extraction from messy text.
+4. **Human fallback:** If all three attempts fail, show the raw `plan.md` in the chat for manual review/editing.
+
+**Validation rules (applied after every parse attempt):**
+- All dependency references point to valid task IDs (no circular dependencies)
+- Every task has 1-5 checkpoints
+- File lists are non-empty
+- Task IDs are unique
+- Dependency graph is a valid DAG (topological sort succeeds)
+
+**Additional mitigations:**
 - Constrain the planner prompt to request a specific output format (numbered tasks with structured fields)
-- Haiku parsing prompt should include few-shot examples of expected input/output
-- Add a validation step: check that all dependency references are valid, checkpoint counts are reasonable (3-5), file lists are non-empty
-- If parse fails, retry once with a "reformat this plan" prompt before alerting the user
+- Haiku parsing prompt should include 3-4 diverse few-shot examples (simple 2-task plan, complex 5-task plan with dependencies, plan with slightly different formatting)
 - Test against 10+ real-world plans before shipping
 
 ### Challenge 3: Workers actually updating progress.md
 
 The progress tracking system depends on Claude Code following the instruction to "update progress.md after each checkpoint." Claude Code is good at following instructions but not 100% reliable. It may get deep into coding and skip the update, causing false stuck-detection alarms and a silent chat.
 
-**Mitigation:**
-- Primary signal: `progress.md` file changes (filesystem watch)
-- Secondary signal: git commit activity in the worktree (new commits = progress even if progress.md wasn't updated)
-- Tertiary signal: `surface.read_text` screen content changes (terminal activity = not stuck)
-- Stuck detection should require ALL THREE signals to be absent before flagging, not just progress.md
-- Consider reinforcing the instruction: include "IMPORTANT: Update progress.md NOW before proceeding" at each checkpoint boundary in spec.md
+**Mitigation — Tiered stuck detection (see Phase 4 for full detail):**
+- **T+5 min** (no progress.md update): Internal flag only. Begin secondary monitoring.
+- **T+7 min**: Check for new git commits → if found, reset timer.
+- **T+7 min** (no commits): Check terminal screen changes → if active, amber indicator but not stalled.
+- **T+7 min** (no commits AND no terminal change): Flag as stalled, escalate to human.
+- **Independently:** Approval prompts are detected every 30 seconds and classified by Haiku immediately. A worker waiting for approval never triggers the stall timer.
+
+**Additional mitigations:**
+- Reinforce the instruction in spec.md: include "IMPORTANT: Update progress.md NOW before proceeding" at each checkpoint boundary
+- Git commit activity (new commits, not just dirty flag) is the strongest fallback signal
+- Terminal screen change is the weakest signal (worker could be spinning) — only used to distinguish "active but not updating" from "completely dead"
 
 ### Challenge 4: Chat history persistence
 
@@ -504,13 +603,13 @@ The planner is a Claude Code session where we inject a prompt via `surface.send_
 
 **Mitigation:** Make the planner file-based, same as workers. The planner prompt should include: "Write your complete plan to ./plan.md when finished." The orchestrator watches for `plan.md` to appear instead of scraping the terminal. This eliminates the scrollback buffer risk entirely and makes the planner consistent with the worker pattern.
 
-### Challenge 7: Auto-approve and orchestrator input race condition
+### Challenge 7: Approval classification and orchestrator input race condition
 
-Auto-approve sends keystrokes to worker terminals. The orchestrator also sends the initial task prompt via `surface.send_text`. If auto-approve fires at the exact moment the orchestrator is sending the task prompt, keystrokes can interleave and corrupt the input.
+The Haiku-powered approval classifier sends keystrokes to worker terminals. The orchestrator also sends the initial task prompt via `surface.send_text`. If approval classification fires at the exact moment the orchestrator is sending the task prompt, keystrokes can interleave and corrupt the input.
 
 **Mitigation:**
 - Add a per-workspace mutex in the engine that serializes all `surface.send_text` and `surface.send_key` calls to the same workspace
-- After workspace creation, add a 3-5 second delay before enabling auto-approve for that workspace (let Claude Code fully initialize)
+- After workspace creation, add a 3-5 second delay before enabling approval monitoring for that workspace (let Claude Code fully initialize)
 - The monitoring loop should skip newly-created workspaces for one poll cycle
 
 ---

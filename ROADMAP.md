@@ -17,12 +17,33 @@ When there's no uncommitted diff but there ARE new commits since session start, 
 
 ---
 
-## Open TODOs (existing)
+## Recently Shipped
+
+### Action Buttons / FAB Rail (v3.2, 2026-04-04)
+- [x] Per-objective custom action buttons (CRUD API + UI)
+- [x] FAB rail on right side of orchestrator with "Add Action" modal
+- [x] Click-to-launch: spawns new Claude Code session in worktree, injects prompt
+- [x] Tasks registered on objective with `source: "action-button"`, visible in task list
+- [x] Default "Build & Run" button with `/exp-project-run` prompt
+- [x] Orchestrator context updated to know about action-button tasks
+
+### Build Log Viewer (v3.2, 2026-04-04)
+- [x] `GET /api/objectives/{id}/build-log` endpoint (tails with deque, handles 2.4MB+ files)
+- [x] Bottom slide-out panel with monospace terminal display
+- [x] Auto-refresh toggle (3s polling, off by default)
+- [x] File switcher (build.log / prebuild.log)
+- [x] Smart scroll (auto-pin + "New output" badge)
+
+## Open TODOs
 
 - [ ] Filter/sort controls in Command Center (show only active, only needs-you)
 - [ ] "Pause for 5 minutes" button
 - [ ] Favicon for tab identification *(low priority)*
 - [ ] Mobile-responsive layout *(low priority)*
+- [ ] Allow "soft" dependencies (context sharing without hard blocking)
+- [ ] Fix worker scope creep (tighter worker prompts)
+- [ ] Review calibration (softer review for intermediate tasks)
+- [ ] Build/test gate (`swift build` / `swift test` as real signal after worker completion)
 
 ---
 

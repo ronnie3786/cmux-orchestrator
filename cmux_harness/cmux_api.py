@@ -81,6 +81,8 @@ def _v2_request(method, params):
         if parsed.get("ok"):
             return parsed.get("result", {})
         err = parsed.get("error", raw[:200])
+        if method == "surface.read_text" and "not a terminal" in str(err).lower():
+            return None
         log.warning("cmux v2 %s failed: %s", method, err)
         return None
     except (OSError, json.JSONDecodeError) as exc:

@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CMUX Architecture — Command Flow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --orange: #f0883e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 40px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 40px; }
+
+  .diagram {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* Layers */
+  .layer {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    background: var(--surface);
+    position: relative;
+  }
+  .layer + .layer { margin-top: 20px; }
+  .layer-label {
+    position: absolute;
+    top: -11px;
+    left: 24px;
+    background: var(--surface);
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+  }
+
+  /* Boxes */
+  .box {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    background: rgba(255,255,255,.02);
+    min-width: 160px;
+  }
+  .box-title {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .box-desc {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* Color-coded borders */
+  .box.user { border-color: var(--accent); }
+  .box.orchestrator { border-color: var(--purple); }
+  .box.cmux { border-color: var(--green); }
+  .box.claude { border-color: var(--orange); }
+  .box.new-feature { border-color: var(--yellow); border-style: dashed; background: rgba(210,153,34,.04); }
+
+  /* Flex rows */
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row.center { justify-content: center; }
+
+  /* Arrows */
+  .arrow-down {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 0;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .arrow-down .line {
+    width: 2px;
+    height: 20px;
+    background: var(--muted);
+  }
+  .arrow-down .head {
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid var(--muted);
+  }
+  .arrow-down .label {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .arrow-down.highlight .line { background: var(--yellow); }
+  .arrow-down.highlight .head { border-top-color: var(--yellow); }
+  .arrow-down.highlight .label { color: var(--yellow); }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .badge.current { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge.proposed { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .badge.api { background: rgba(88,166,255,.15); color: var(--accent); }
+
+  /* Flow sections */
+  .flow-section {
+    margin-top: 48px;
+    border-top: 1px solid var(--border);
+    padding-top: 32px;
+  }
+  .flow-section h2 {
+    font-size: 18px;
+    margin-bottom: 6px;
+  }
+  .flow-section .subtitle { margin-bottom: 24px; }
+
+  /* Two column layout */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-top: 16px;
+  }
+
+  /* Steps */
+  .step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 16px;
+  }
+  .step-num {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .step-num.blue { background: rgba(88,166,255,.15); color: var(--accent); }
+  .step-num.purple { background: rgba(188,140,255,.15); color: var(--purple); }
+  .step-num.green { background: rgba(63,185,80,.15); color: var(--green); }
+  .step-num.orange { background: rgba(240,136,62,.15); color: var(--orange); }
+  .step-num.yellow { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .step-text { font-size: 13px; line-height: 1.5; }
+  .step-text strong { color: var(--text); }
+  .step-text code {
+    background: rgba(255,255,255,.06);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'SF Mono', monospace;
+  }
+
+  /* FAB mockup */
+  .fab-mockup {
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    height: 320px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--bg);
+    overflow: hidden;
+    margin: 24px auto 0;
+  }
+  .fab-mockup .mock-topbar {
+    height: 40px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .fab-mockup .mock-content {
+    padding: 20px;
+    color: var(--muted);
+    font-size: 12px;
+    font-family: 'SF Mono', monospace;
+    line-height: 1.8;
+  }
+  .fab-rail {
+    position: absolute;
+    right: 16px;
+    top: 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 10;
+  }
+  .fab-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    transition: transform .15s;
+    position: relative;
+  }
+  .fab-btn:hover { transform: scale(1.08); }
+  .fab-btn.run { background: var(--green); color: #000; }
+  .fab-btn.test { background: var(--accent); color: #000; }
+  .fab-btn.lint { background: var(--purple); color: #fff; }
+  .fab-btn.custom { background: var(--orange); color: #000; }
+  .fab-btn.add { background: var(--surface); border: 2px dashed var(--border); color: var(--muted); font-size: 20px; }
+  .fab-tooltip {
+    position: absolute;
+    right: 52px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--text);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .15s;
+  }
+  .fab-btn:hover .fab-tooltip { opacity: 1; }
+
+  /* Injection point callout */
+  .callout {
+    border: 2px solid var(--yellow);
+    border-radius: 12px;
+    padding: 16px 20px;
+    background: rgba(210,153,34,.06);
+    margin-top: 24px;
+  }
+  .callout-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--yellow);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .callout-body {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .callout-body strong { color: var(--text); }
+</style>
+</head>
+<body>
+
+<h1>CMUX Harness Architecture</h1>
+<p class="subtitle">How commands flow from you → through the system → into Claude Code sessions</p>
+
+<!-- ===== CURRENT ARCHITECTURE ===== -->
+<div class="diagram">
+
+  <!-- Layer 1: User Input -->
+  <div class="layer">
+    <div class="layer-label">Layer 1 — User Input</div>
+    <div class="row center">
+      <div class="box user" style="flex:1;max-width:500px;">
+        <div class="box-title">🧑‍💻 Ronnie <span class="badge current">Today</span></div>
+        <div class="box-desc">
+          <strong>Dashboard UI</strong> (<code>localhost:7779</code>) — Two views:<br>
+          • <strong>Command Center</strong> (<code>/</code>) — workspace cards, session monitoring, reviews<br>
+          • <strong>Orchestrator</strong> (<code>/orchestrator</code>) — chat panel for high-level goals
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="arrow-down">
+    <div class="line"></div>
+    <div class="head"></div>
+    <div class="label">HTTP API (POST /api/*)</div>
+  </div>
+
+  <!-- Layer 2: Harness Server -->
+  <div class="layer">
+    <div class="layer-label">Layer 2 — Harness Server (Python)</div>
+    <div class="row">
+      <div class="box orchestrator" style="flex:1;">
+        <div class="box-title">🧠 HarnessEngine <span class="badge api">engine.py</span></div>
+        <div class="box-desc">
+          Main loop thread. Polls workspaces every 5s. Manages:<br>
+          • Session lifecycle (start/complete/idle detection)<br>
+          • Auto-approval of permission prompts<br>
+          • Review pipeline (Sonnet/Haiku/Ollama)<br>
+          • Screen cache + fingerprinting<br>
+          • Houses the <strong>Orchestrator</strong> instance
+        </div>
+      </div>
+      <div class="box orchestrator" style="flex:1;">
+        <div class="box-title">🎯 Orchestrator <span class="badge api">orchestrator.py</span></div>
+        <div class="box-desc">
+          The "Tech Lead" brain. When you send a goal:<br>
+          1. Creates <strong>Planner session</strong> (Claude Code)<br>
+          2. Planner outputs task plan → parsed by Haiku<br>
+          3. Spawns <strong>Worker sessions</strong> per task<br>
+          4. Monitors, reviews, reports back<br>
+          Uses <code>_append_message()</code> for chat history
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div class="box orchestrator" style="flex:1;">
+        <div class="box-title">📋 Planner <span class="badge api">planner.py</span></div>
+        <div class="box-desc">
+          Builds planning prompts, parses task output via Haiku.<br>
+          Output: structured task list with dependencies, files, checkpoints.
+        </div>
+      </div>
+      <div class="box orchestrator" style="flex:1;">
+        <div class="box-title">👷 Worker <span class="badge api">worker.py</span></div>
+        <div class="box-desc">
+          Creates git worktrees per task.<br>
+          Each worker = isolated branch + directory.<br>
+          <code>orchestrator/{task-id}-{slug}</code>
+        </div>
+      </div>
+      <div class="box orchestrator" style="flex:1;">
+        <div class="box-title">📡 Monitor <span class="badge api">monitor.py</span></div>
+        <div class="box-desc">
+          Watches session screens for completion signals, errors, stuck states.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="arrow-down">
+    <div class="line"></div>
+    <div class="head"></div>
+    <div class="label">cmux Socket API (JSON-RPC v2)</div>
+  </div>
+
+  <!-- Layer 3: cmux -->
+  <div class="layer">
+    <div class="layer-label">Layer 3 — cmux (Multiplexer)</div>
+    <div class="row">
+      <div class="box cmux" style="flex:1;">
+        <div class="box-title">🔌 cmux Socket <span class="badge api">cmux_api.py</span></div>
+        <div class="box-desc">
+          Unix socket at <code>~/Library/.../cmux.sock</code><br>
+          Key operations the harness uses:<br>
+          • <code>workspace.list</code> — enumerate sessions<br>
+          • <code>workspace.new</code> — create new workspace<br>
+          • <code>surface.read_text</code> — read terminal screen<br>
+          • <code>surface.send_text</code> — type text into terminal<br>
+          • <code>surface.send_key</code> — send Enter, Ctrl-C, etc.<br>
+          • <code>workspace.close</code> — kill workspace
+        </div>
+      </div>
+      <div class="box cmux" style="flex:1;">
+        <div class="box-title">📨 send_prompt_to_workspace() <span class="badge current">The Injection Point</span></div>
+        <div class="box-desc">
+          <strong>This is how ALL text gets into Claude Code:</strong><br><br>
+          1. Try <code>tmux paste-buffer</code> (atomic, handles long text)<br>
+          2. Fallback: <code>surface.send_text</code> + <code>surface.send_key("enter")</code><br><br>
+          Every orchestrator task, every planner prompt, every user message — all funnels through this function.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="arrow-down">
+    <div class="line"></div>
+    <div class="head"></div>
+    <div class="label">tmux pane / terminal surface</div>
+  </div>
+
+  <!-- Layer 4: Claude Code Sessions -->
+  <div class="layer">
+    <div class="layer-label">Layer 4 — Claude Code Sessions (Interactive)</div>
+    <div class="row">
+      <div class="box claude">
+        <div class="box-title">🔧 Planner Session</div>
+        <div class="box-desc">Reads codebase, writes plan.md</div>
+      </div>
+      <div class="box claude">
+        <div class="box-title">⚡ Worker 1</div>
+        <div class="box-desc">Task implementation</div>
+      </div>
+      <div class="box claude">
+        <div class="box-title">⚡ Worker 2</div>
+        <div class="box-desc">Task implementation</div>
+      </div>
+      <div class="box claude">
+        <div class="box-title">💬 Orchestrator CC</div>
+        <div class="box-desc">Interactive Q&A session in worktree</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ===== COMMAND FLOW COMPARISON ===== -->
+<div class="flow-section">
+  <h2>Command Flow: Today vs. Action Buttons</h2>
+  <p class="subtitle">Where do action buttons fit in this stack?</p>
+
+  <div class="two-col">
+    <!-- Current flow -->
+    <div>
+      <h3 style="font-size:15px;margin-bottom:16px;color:var(--green);">✅ Current: Orchestrator Chat</h3>
+      <div class="step">
+        <div class="step-num blue">1</div>
+        <div class="step-text">You type a goal in the <strong>Orchestrator chat panel</strong></div>
+      </div>
+      <div class="step">
+        <div class="step-num purple">2</div>
+        <div class="step-text"><strong>Orchestrator</strong> receives via <code>POST /api/orchestrator/message</code></div>
+      </div>
+      <div class="step">
+        <div class="step-num purple">3</div>
+        <div class="step-text">Orchestrator creates a <strong>Planner workspace</strong> via cmux API</div>
+      </div>
+      <div class="step">
+        <div class="step-num green">4</div>
+        <div class="step-text"><code>send_prompt_to_workspace()</code> injects goal into Planner's Claude Code</div>
+      </div>
+      <div class="step">
+        <div class="step-num purple">5</div>
+        <div class="step-text">Orchestrator parses plan → spawns Worker sessions → same injection path</div>
+      </div>
+      <div class="step">
+        <div class="step-num orange">6</div>
+        <div class="step-text">Claude Code sessions execute, monitored by engine loop</div>
+      </div>
+    </div>
+
+    <!-- Direct injection (Build and Run pattern) -->
+    <div>
+      <h3 style="font-size:15px;margin-bottom:16px;color:var(--yellow);">⚡ Proposed: Action Button (Direct)</h3>
+      <div class="step">
+        <div class="step-num yellow">1</div>
+        <div class="step-text">You click <strong>"Build and Run"</strong> FAB button</div>
+      </div>
+      <div class="step">
+        <div class="step-num yellow">2</div>
+        <div class="step-text">UI sends <code>POST /api/inject-action</code> with saved prompt text + target workspace</div>
+      </div>
+      <div class="step">
+        <div class="step-num green">3</div>
+        <div class="step-text"><code>send_prompt_to_workspace()</code> injects prompt <strong>directly</strong> into the target Claude Code session</div>
+      </div>
+      <div class="step">
+        <div class="step-num orange">4</div>
+        <div class="step-text">Claude Code executes the skill/command. Done.</div>
+      </div>
+      <div class="step">
+        <div class="step-num muted" style="background:rgba(255,255,255,.04);color:var(--muted);">—</div>
+        <div class="step-text" style="color:var(--muted);">No planner, no task decomposition, no orchestrator brain. Just a direct prompt injection into an existing session.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== INJECTION POINT DECISION ===== -->
+<div class="flow-section">
+  <h2>🎯 The Key Question: Where to Inject?</h2>
+  <p class="subtitle">Three options, depending on the action button's intent</p>
+
+  <div class="row" style="gap:16px;margin-top:20px;">
+    <div class="box new-feature" style="flex:1;">
+      <div class="box-title">Option A: Existing Workspace <span class="badge proposed">Direct</span></div>
+      <div class="box-desc">
+        Inject into <strong>whichever Claude Code session is currently active</strong> for the project.<br><br>
+        <strong>Best for:</strong> <code>/exp-project-run</code>, quick commands, skill invocations<br>
+        <strong>Target:</strong> The active workspace's Claude Code REPL<br>
+        <strong>Path:</strong> FAB → <code>send_prompt_to_workspace(existing_uuid, prompt)</code><br><br>
+        ⚠️ Requires an active Claude Code session to inject into
+      </div>
+    </div>
+    <div class="box new-feature" style="flex:1;">
+      <div class="box-title">Option B: New Session <span class="badge proposed">Spawn</span></div>
+      <div class="box-desc">
+        <strong>Create a fresh Claude Code workspace</strong>, then inject the prompt.<br><br>
+        <strong>Best for:</strong> "Build and Run" where you want a clean session at the project worktree<br>
+        <strong>Target:</strong> New workspace via <code>workspace.new</code> → then inject<br>
+        <strong>Path:</strong> FAB → create workspace → <code>send_prompt_to_workspace(new_uuid, prompt)</code><br><br>
+        ✅ Always works, no dependency on existing session state
+      </div>
+    </div>
+    <div class="box new-feature" style="flex:1;">
+      <div class="box-title">Option C: Orchestrator <span class="badge proposed">Orchestrated</span></div>
+      <div class="box-desc">
+        Feed the prompt <strong>through the orchestrator</strong> as if it were a chat message / goal.<br><br>
+        <strong>Best for:</strong> Complex multi-step actions that benefit from planning<br>
+        <strong>Target:</strong> Orchestrator's message handler<br>
+        <strong>Path:</strong> FAB → <code>POST /api/orchestrator/message</code> → full planning flow<br><br>
+        🧠 Gets planner decomposition, worker isolation, reviews
+      </div>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:24px;">
+    <div class="callout-title">💡 Recommendation</div>
+    <div class="callout-body">
+      Most action buttons should be <strong>Option A or B</strong> (direct injection). The whole point is speed: one click, done.<br><br>
+      Each button could store a <code>mode</code> field: <code>"inject"</code> (into active session), <code>"spawn"</code> (new session), or <code>"orchestrate"</code> (full planning).<br><br>
+      <strong>"Build and Run"</strong> = Option B (spawn a fresh session at project dir, inject <code>/exp-project-run</code>)<br>
+      <strong>"Run Tests"</strong> = Option A (inject into active session)<br>
+      <strong>"Refactor module X"</strong> = Option C (let orchestrator plan it out)
+    </div>
+  </div>
+</div>
+
+<!-- ===== FAB MOCKUP ===== -->
+<div class="flow-section">
+  <h2>FAB Rail Mockup</h2>
+  <p class="subtitle">Right-side floating buttons, always visible</p>
+
+  <div class="fab-mockup">
+    <div class="mock-topbar">⚡ cmux harness — my-ios-project (worktree)</div>
+    <div class="mock-content">
+      <span style="color:var(--green);">❯</span> Claude Code session active...<br>
+      <span style="color:var(--muted);">  Reading TokenManager.swift...</span><br>
+      <span style="color:var(--muted);">  Analyzing auth flow...</span><br>
+      <span style="color:var(--muted);">  ✓ Found 3 issues with token refresh</span><br>
+      <span style="color:var(--green);">❯</span> <span style="opacity:.4">_</span>
+    </div>
+    <div class="fab-rail">
+      <div class="fab-btn run">
+        ▶
+        <div class="fab-tooltip">Build & Run</div>
+      </div>
+      <div class="fab-btn test">
+        🧪
+        <div class="fab-tooltip">Run Tests</div>
+      </div>
+      <div class="fab-btn lint">
+        ✨
+        <div class="fab-tooltip">Lint & Fix</div>
+      </div>
+      <div class="fab-btn custom">
+        📝
+        <div class="fab-tooltip">Review Changes</div>
+      </div>
+      <div class="fab-btn add">
+        +
+        <div class="fab-tooltip">Add Action...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== DATA MODEL ===== -->
+<div class="flow-section">
+  <h2>Proposed Action Button Data Model</h2>
+  <p class="subtitle">What gets stored per button</p>
+
+  <div class="box" style="max-width:600px;margin-top:16px;font-family:'SF Mono',monospace;font-size:12px;line-height:1.8;color:var(--muted);">
+    <pre style="white-space:pre-wrap;">{
+  <span style="color:var(--accent)">"id"</span>: <span style="color:var(--green)">"uuid"</span>,
+  <span style="color:var(--accent)">"label"</span>: <span style="color:var(--green)">"Build & Run"</span>,
+  <span style="color:var(--accent)">"icon"</span>: <span style="color:var(--green)">"▶"</span>,
+  <span style="color:var(--accent)">"color"</span>: <span style="color:var(--green)">"#3fb950"</span>,
+  <span style="color:var(--accent)">"prompt"</span>: <span style="color:var(--green)">"/exp-project-run"</span>,
+  <span style="color:var(--accent)">"mode"</span>: <span style="color:var(--green)">"spawn"</span>,       <span style="color:var(--muted)">// "inject" | "spawn" | "orchestrate"</span>
+  <span style="color:var(--accent)">"scope"</span>: <span style="color:var(--green)">"project"</span>,     <span style="color:var(--muted)">// "project" | "global"</span>
+  <span style="color:var(--accent)">"projectDir"</span>: <span style="color:var(--green)">"/path/to/project"</span>,  <span style="color:var(--muted)">// for spawn mode</span>
+  <span style="color:var(--accent)">"order"</span>: <span style="color:var(--purple)">0</span>
+}</pre>
+  </div>
+</div>
+
+</body>
+</html>

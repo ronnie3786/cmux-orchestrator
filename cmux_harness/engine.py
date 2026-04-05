@@ -11,6 +11,7 @@ from . import cmux_api
 from . import detection
 from . import review as review_mod
 from . import storage
+from .orchestrator import Orchestrator
 
 
 class HarnessEngine(threading.Thread):
@@ -41,6 +42,8 @@ class HarnessEngine(threading.Thread):
         self.review_enabled = True
         self.review_model = detection.OLLAMA_MODEL
         self.review_backend = "ollama"
+        self.default_project_dir = ""
+        self.default_base_branch = "main"
         self.ollama_available = None   # None=unknown, True=available, False=unavailable
         self.ollama_last_check = 0     # timestamp of last Ollama health check
         self.ollama_retry_interval = 60  # seconds between retries after failure
@@ -57,6 +60,40 @@ class HarnessEngine(threading.Thread):
             self.review_enabled = bool(review_settings.get("enabled", self.review_enabled))
             self.review_model = review_settings.get("model", self.review_model) or self.review_model
             self.review_backend = review_settings.get("backend", self.review_backend) or self.review_backend
+        extra_config = self._load_engine_config()
+        self.default_project_dir = extra_config.get("defaultProjectDir", self.default_project_dir) or ""
+        self.default_base_branch = extra_config.get("defaultBaseBranch", self.default_base_branch) or "main"
+        self.orchestrator = Orchestrator(self)
+
+    def _load_engine_config(self):
+        try:
+            with open(storage.CONFIG_FILE, "r") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            "defaultProjectDir": data.get("defaultProjectDir", ""),
+            "defaultBaseBranch": data.get("defaultBaseBranch", "main"),
+        }
+
+    def _save_config(self):
+        payload = {
+            "workspaces": self.ws_config,
+            "reviewSettings": {
+                "enabled": self.review_enabled,
+                "model": self.review_model,
+                "backend": self.review_backend,
+            },
+            "defaultProjectDir": self.default_project_dir,
+            "defaultBaseBranch": self.default_base_branch,
+        }
+        try:
+            with open(storage.CONFIG_FILE, "w") as f:
+                json.dump(payload, f, indent=2)
+        except OSError as e:
+            print(f"[harness] config save error: {e}")
 
     def _build_virtual_workspaces(self):
         """Expand workspaces into virtual entries, one per surface.
@@ -162,7 +199,7 @@ class HarnessEngine(threading.Thread):
                 if ws_uuid not in self.ws_config:
                     self.ws_config[ws_uuid] = {}
                 self.ws_config[ws_uuid]["autoEnabled"] = bool(val)
-                storage.save_config(self.ws_config, self.review_enabled, self.review_model, self.review_backend)
+                self._save_config()
 
     def set_poll_interval(self, val):
         with self._lock:
@@ -182,7 +219,15 @@ class HarnessEngine(threading.Thread):
                 backend_name = str(backend).strip().lower()
                 if backend_name in {"ollama", "lmstudio", "claude"}:
                     self.review_backend = backend_name
-            storage.save_config(self.ws_config, self.review_enabled, self.review_model, self.review_backend)
+            self._save_config()
+
+    def set_default_objective_config(self, project_dir=None, base_branch=None):
+        with self._lock:
+            if project_dir is not None:
+                self.default_project_dir = str(project_dir).strip()
+            if base_branch is not None:
+                self.default_base_branch = str(base_branch).strip() or "main"
+            self._save_config()
 
     def set_custom_name(self, index, name):
         """Set a custom display name for the workspace at the given index.
@@ -199,7 +244,7 @@ class HarnessEngine(threading.Thread):
             if ws_uuid not in self.ws_config:
                 self.ws_config[ws_uuid] = {}
             self.ws_config[ws_uuid]["customName"] = name
-            storage.save_config(self.ws_config, self.review_enabled, self.review_model, self.review_backend)
+            self._save_config()
 
         # Rename in cmux so the sidebar name stays in sync
         result = cmux_api._v2_request("workspace.rename", {"workspace_id": ws_uuid, "title": name})
@@ -374,6 +419,15 @@ class HarnessEngine(threading.Thread):
         # Get branch from git if not known
         if not branch:
             branch = self._run_git_command(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+        return self._get_git_status_payload(cwd, branch)
+
+    def _get_git_status_payload(self, cwd, branch=""):
+        if not cwd or not os.path.isdir(cwd):
+            return {"branch": branch, "cwd": cwd, "staged": [], "unstaged": [], "untracked": [], "commits": []}
+        if not branch:
+            branch = self._run_git_command(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+            if branch.startswith("[error]"):
+                branch = ""
         # Run git status directly — _run_git_command's strip() destroys
         # the leading whitespace that porcelain format depends on.
         try:
@@ -409,6 +463,13 @@ class HarnessEngine(threading.Thread):
             if len(parts) == 2:
                 commits.append({"hash": parts[0], "message": parts[1]})
         return {"branch": branch, "cwd": cwd, "staged": staged, "unstaged": unstaged, "untracked": untracked, "commits": commits}
+
+    def get_git_status_for_path(self, path):
+        """Return parsed git status for an arbitrary filesystem path."""
+        cwd = str(path or "").strip()
+        if not cwd or not os.path.isdir(cwd):
+            return {"branch": "", "cwd": cwd, "staged": [], "unstaged": [], "untracked": [], "commits": []}
+        return self._get_git_status_payload(cwd)
 
     def _get_session_approval_log(self, idx, session_id, start_ts, end_ts):
         entries = []
@@ -625,6 +686,8 @@ class HarnessEngine(threading.Thread):
 
     def check_workspace(self, ws):
         idx = ws.get("index", ws.get("id"))
+        if self.orchestrator.is_orchestrated_workspace(ws.get("uuid", "")):
+            return
         ws_name = ws.get("name", f"workspace-{idx}")
         surface_id = ws.get("_surface_id")
         real_idx = ws.get("_real_index", idx)
@@ -898,6 +961,13 @@ class HarnessEngine(threading.Thread):
                         if filter_is_useful and attention_uuids and ws_uuid not in attention_uuids:
                             continue
                         self.check_workspace(vws)
+                active_obj = self.orchestrator.get_active_objective_id()
+                if active_obj:
+                    try:
+                        if hasattr(self.orchestrator, "poll_tasks"):
+                            self.orchestrator.poll_tasks(active_obj)
+                    except Exception as exc:
+                        storage.debug_log({"event": "orchestrator_poll_error", "error": str(exc)})
             except Exception as exc:
                 print(f"[harness] error: {exc}")
             time.sleep(interval)

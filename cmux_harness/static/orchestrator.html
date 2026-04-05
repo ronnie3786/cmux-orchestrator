@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>cmux orchestrator</title>
+<link rel="stylesheet" href="/orchestrator.css">
+
+</head>
+<body>
+
+<div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <div class="logo-mark">⌘</div>
+        cmux
+      </div>
+      <button class="sidebar-close" id="sidebarCloseButton" type="button" aria-label="Close sidebar">×</button>
+    </div>
+    <button class="new-obj-btn" id="newObjectiveButton">
+      <span class="plus">+</span>
+      New objective
+    </button>
+    <div class="sidebar-form" id="sidebarForm"></div>
+  </div>
+
+  <div class="sidebar-label">Objectives</div>
+  <div class="obj-list" id="objectiveList"></div>
+
+  <div class="sidebar-bottom">
+    <button class="sidebar-icon-button" id="settingsButton">
+      <span>⚙</span>
+      Settings
+    </button>
+    <button class="terminal-link" id="terminalLink">⬡ &nbsp;Terminal sessions</button>
+  </div>
+</div>
+
+<div class="main" id="main">
+  <div class="obj-context" id="contextStrip"></div>
+  <div class="messages" id="messagesPane">
+    <div class="msg-col" id="messageColumn"></div>
+  </div>
+  <section class="build-log-panel" id="buildLogPanel" aria-label="Build log panel">
+    <div class="build-log-header">
+      <div class="build-log-title-wrap">
+        <div class="build-log-title" id="buildLogTitle">Build Log</div>
+        <div class="build-log-meta" id="buildLogMeta">Select an objective to view logs.</div>
+      </div>
+      <div class="build-log-actions">
+        <select class="build-log-select" id="buildLogFileSelect" aria-label="Build log file">
+          <option value="build.log">build.log</option>
+          <option value="prebuild.log">prebuild.log</option>
+        </select>
+        <button class="build-log-toggle" id="buildLogAutoButton" type="button" aria-pressed="false">
+          <span>Auto</span>
+          <span class="build-log-dot"></span>
+        </button>
+        <button class="build-log-icon-button" id="buildLogRefreshButton" type="button" aria-label="Refresh build log">↻</button>
+        <button class="build-log-icon-button" id="buildLogCloseButton" type="button" aria-label="Close build log">×</button>
+      </div>
+    </div>
+    <div class="build-log-body" id="buildLogBody">
+      <div class="build-log-content" id="buildLogContent"></div>
+      <button class="build-log-badge" id="buildLogNewOutputBadge" type="button">⬇ New output</button>
+    </div>
+  </section>
+  <section class="build-log-panel" id="consoleLogPanel" aria-label="Console log panel">
+    <div class="build-log-header">
+      <div class="build-log-title-wrap">
+        <div class="build-log-title" id="consoleLogTitle">Console Logs</div>
+        <div class="build-log-meta" id="consoleLogMeta">Select an objective to view logs.</div>
+      </div>
+      <div class="build-log-actions">
+        <select class="build-log-select" id="consoleLogFileSelect" aria-label="Console log file">
+          <option value="">No files</option>
+        </select>
+        <button class="build-log-toggle" id="consoleLogAutoButton" type="button" aria-pressed="false">
+          <span>Auto</span>
+          <span class="build-log-dot"></span>
+        </button>
+        <button class="build-log-icon-button" id="consoleLogRefreshButton" type="button" aria-label="Refresh console log">↻</button>
+        <button class="build-log-icon-button" id="consoleLogCloseButton" type="button" aria-label="Close console log">×</button>
+      </div>
+    </div>
+    <div class="console-log-filter-bar">
+      <select class="build-log-select" id="consoleLogPresetSelect" aria-label="Console log filter preset"></select>
+      <input class="console-log-custom" id="consoleLogCustomInput" type="text" placeholder="Custom regex filter">
+      <button class="console-log-apply" id="consoleLogApplyButton" type="button">Apply</button>
+    </div>
+    <div class="build-log-body" id="consoleLogBody">
+      <div class="build-log-content" id="consoleLogContent"></div>
+      <button class="build-log-badge" id="consoleLogNewOutputBadge" type="button">⬇ New output</button>
+    </div>
+  </section>
+  <div class="input-area">
+    <div class="input-wrap">
+      <div class="input-box">
+        <textarea class="chat-input" id="chatInput" placeholder="Give it a goal, ask what's happening, or just wait…"></textarea>
+        <button class="send-btn" id="sendButton" aria-label="Send">↑</button>
+      </div>
+      <div class="input-hint" id="inputHint">cmux will update you as tasks complete</div>
+    </div>
+  </div>
+</div>
+
+<div class="fab-rail" id="fabRail"></div>
+
+<aside class="git-panel" id="gitPanel">
+  <div class="git-panel-header">
+    <div class="git-panel-top">
+      <div class="git-panel-branch" id="gitPanelBranch">Git</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="git-panel-refresh" id="gitPanelRefreshButton" aria-label="Refresh git status">↻</button>
+        <button class="settings-close git-panel-close" id="gitPanelCloseButton" type="button" aria-label="Close git panel">×</button>
+      </div>
+    </div>
+    <div class="git-panel-path-row">
+      <div class="git-panel-path" id="gitPanelPath"></div>
+      <button class="git-panel-copy" id="gitPanelCopyButton" type="button">Copy</button>
+    </div>
+  </div>
+  <div class="git-panel-body" id="gitPanelBody"></div>
+</aside>
+
+<div class="git-ctx-menu" id="gitContextMenu"></div>
+
+<div class="diff-overlay" id="diffOverlay">
+  <div class="diff-panel">
+    <div class="diff-panel-header">
+      <div class="diff-panel-title" id="diffPanelTitle">Diff</div>
+      <button class="settings-close" id="diffCloseButton" aria-label="Close diff">×</button>
+    </div>
+    <div class="diff-panel-body" id="diffPanelBody"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="settingsModal">
+  <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="settings-head">
+      <div class="settings-title" id="settingsModalTitle">Settings</div>
+      <button class="settings-close" id="settingsCloseButton" aria-label="Close settings">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-row">
+        <label class="settings-label" for="settingsProjectDir">Default Project Directory</label>
+        <input class="settings-input" id="settingsProjectDir" type="text" placeholder="~/projects/my-app">
+      </div>
+      <div class="settings-grid">
+        <div class="settings-row">
+          <label class="settings-label" for="settingsBaseBranch">Default Base Branch</label>
+          <input class="settings-input" id="settingsBaseBranch" type="text" placeholder="main">
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settingsPollInterval">Poll Interval (seconds)</label>
+          <input class="settings-input" id="settingsPollInterval" type="number" min="2" max="30" step="1">
+        </div>
+      </div>
+      <label class="settings-toggle" for="settingsReviewEnabled">
+        <input id="settingsReviewEnabled" type="checkbox">
+        <span>Review Enabled</span>
+      </label>
+      <div class="settings-grid">
+        <div class="settings-row">
+          <label class="settings-label" for="settingsReviewModel">Review Model</label>
+          <input class="settings-input" id="settingsReviewModel" type="text" placeholder="model name">
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settingsReviewBackend">Review Backend</label>
+          <select class="settings-select" id="settingsReviewBackend">
+            <option value="claude">claude</option>
+            <option value="lmstudio">lmstudio</option>
+            <option value="ollama">ollama</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="settings-actions">
+      <button class="modal-settings-btn cancel" id="settingsCancelButton">Cancel</button>
+      <button class="modal-settings-btn save" id="settingsSaveButton">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="fabModal">
+  <div class="fab-modal" role="dialog" aria-modal="true" aria-labelledby="fabModalTitle">
+    <div class="fab-modal-head">
+      <div class="fab-modal-title" id="fabModalTitle">Add Action Button</div>
+      <button class="settings-close" id="fabCloseButton" aria-label="Close action button modal">×</button>
+    </div>
+    <div class="fab-modal-body">
+      <div class="settings-row">
+        <label class="settings-label" for="fabLabel">Label</label>
+        <input class="settings-input" id="fabLabel" type="text" placeholder="Run Tests">
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="fabPrompt">Prompt</label>
+        <textarea class="settings-input" id="fabPrompt" rows="4" placeholder="Run the test suite and report failures"></textarea>
+      </div>
+      <div class="fab-modal-grid">
+        <div class="settings-row">
+          <label class="settings-label" for="fabIcon">Icon</label>
+          <input class="settings-input" id="fabIcon" type="text" maxlength="4" placeholder="🧪">
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="fabColor">Color</label>
+          <input class="settings-input" id="fabColor" type="color" value="#4f8ef7">
+        </div>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label">Existing Actions</label>
+        <div class="fab-list" id="fabList"></div>
+      </div>
+    </div>
+    <div class="settings-actions">
+      <button class="modal-settings-btn cancel" id="fabCancelButton">Cancel</button>
+      <button class="modal-settings-btn save" id="fabSaveButton">Save</button>
+    </div>
+  </div>
+</div>
+
+<button class="debug-fab" id="debugFab" type="button" aria-label="Open debug log">
+  <span>🐛</span>
+  <span class="debug-fab-badge"></span>
+</button>
+
+<div class="modal-overlay" id="debugModal">
+  <div class="debug-modal" role="dialog" aria-modal="true" aria-labelledby="debugModalTitle">
+    <div class="debug-head">
+      <div>
+        <div class="debug-title" id="debugModalTitle">Debug Log</div>
+        <div class="debug-subtitle" id="debugModalSubtitle"></div>
+      </div>
+      <div class="debug-actions">
+        <button class="debug-copy-button" id="debugCopyAllButton" type="button">Copy All</button>
+        <button class="debug-copy-button" id="debugCopyLastButton" type="button">Copy Last 20</button>
+        <button class="settings-close" id="debugCloseButton" aria-label="Close debug log">×</button>
+      </div>
+    </div>
+    <div class="debug-body" id="debugLogBody"></div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="/orchestrator.js"></script>
+</body>
+</html>
