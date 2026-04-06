@@ -86,6 +86,14 @@ class TestServerResponses(unittest.TestCase):
         log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return log_path
 
+    def _post_json(self, path, payload, engine=None):
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(engine or Mock(), path)
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+        handler.do_POST()
+        return handler
+
     def test_get_objective_debug_endpoint_returns_filtered_entries(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
         engine = Mock()
@@ -176,6 +184,59 @@ class TestServerResponses(unittest.TestCase):
         thread.start.assert_called_once_with()
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
+
+    def test_file_content_endpoint_returns_repo_file_contents(self):
+        repo_path = Path(self.tmpdir.name) / "repo-file-content"
+        repo_path.mkdir(parents=True)
+        (repo_path / "docs").mkdir()
+        (repo_path / "docs" / "guide.md").write_text("# Guide\n\nHello\n", encoding="utf-8")
+
+        handler = self._post_json(
+            "/api/file-content",
+            {"path": str(repo_path), "file": "docs/guide.md"},
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "content": "# Guide\n\nHello\n"})
+
+    def test_file_content_endpoint_rejects_path_traversal(self):
+        repo_path = Path(self.tmpdir.name) / "repo-file-traversal"
+        repo_path.mkdir(parents=True)
+        handler = self._post_json(
+            "/api/file-content",
+            {"path": str(repo_path), "file": "../secret.txt"},
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(400)
+        self.assertEqual(body, {"ok": False, "error": "invalid file path"})
+
+    def test_file_content_endpoint_rejects_files_over_limit(self):
+        repo_path = Path(self.tmpdir.name) / "repo-file-too-large"
+        repo_path.mkdir(parents=True)
+        (repo_path / "large.md").write_text("a" * (500 * 1024 + 1), encoding="utf-8")
+
+        handler = self._post_json(
+            "/api/file-content",
+            {"path": str(repo_path), "file": "large.md"},
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(413)
+        self.assertEqual(body, {"ok": False, "error": "file too large"})
+
+    def test_file_content_endpoint_returns_404_for_missing_file(self):
+        repo_path = Path(self.tmpdir.name) / "repo-file-missing"
+        repo_path.mkdir(parents=True)
+
+        handler = self._post_json(
+            "/api/file-content",
+            {"path": str(repo_path), "file": "missing.md"},
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(404)
+        self.assertEqual(body, {"ok": False, "error": "file not found"})
 
     def test_get_build_log_returns_exists_false_when_file_is_missing(self):
         worktree_path = Path(self.tmpdir.name) / "worktree-missing-build-log"

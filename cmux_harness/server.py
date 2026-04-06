@@ -494,7 +494,7 @@ def make_handler(engine):
                 review["reviewStatus"] = "dismissed"
                 try:
                     storage.write_review_file(review_path, review)
-                except OSError as e:
+                except (OSError, UnicodeDecodeError) as e:
                     self._json_response({"ok": False, "error": str(e)}, 500)
                     return
                 self._json_response({"ok": True})
@@ -811,6 +811,35 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
                 self._json_response({"ok": True, "diff": result})
+            elif self.path == "/api/file-content":
+                cwd = self._resolve_git_path(data.get("path"))
+                file = str(data.get("file") or "").strip()
+                if not cwd or not file:
+                    self._json_response({"ok": False, "error": "path and file required"}, 400)
+                    return
+                repo_root = os.path.realpath(cwd)
+                full_path = os.path.realpath(os.path.join(repo_root, file))
+                try:
+                    if os.path.commonpath([repo_root, full_path]) != repo_root:
+                        self._json_response({"ok": False, "error": "invalid file path"}, 400)
+                        return
+                except ValueError:
+                    self._json_response({"ok": False, "error": "invalid file path"}, 400)
+                    return
+                if not os.path.isfile(full_path):
+                    self._json_response({"ok": False, "error": "file not found"}, 404)
+                    return
+                try:
+                    size = os.path.getsize(full_path)
+                    if size > 500 * 1024:
+                        self._json_response({"ok": False, "error": "file too large"}, 413)
+                        return
+                    with open(full_path, "r", encoding="utf-8") as handle:
+                        content = handle.read()
+                except OSError as e:
+                    self._json_response({"ok": False, "error": str(e)}, 500)
+                    return
+                self._json_response({"ok": True, "content": content})
             else:
                 self.send_error(404)
 

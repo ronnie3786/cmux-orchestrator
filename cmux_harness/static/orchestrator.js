@@ -22,6 +22,12 @@
     gitStatus: null,
     gitDiffFile: '',
     gitDiffSection: 'unstaged',
+    gitDiffTab: 'diff',
+    gitDiffIsMarkdown: false,
+    gitDiffCache: {
+      diffHtml: '',
+      previewHtml: ''
+    },
     gitContextFile: '',
     gitContextSection: '',
     lastMessageTimestamp: null,
@@ -152,6 +158,9 @@
     gitContextMenu: document.getElementById('gitContextMenu'),
     diffOverlay: document.getElementById('diffOverlay'),
     diffPanelTitle: document.getElementById('diffPanelTitle'),
+    diffTabs: document.getElementById('diffTabs'),
+    diffTabDiff: document.getElementById('diffTabDiff'),
+    diffTabPreview: document.getElementById('diffTabPreview'),
     diffPanelBody: document.getElementById('diffPanelBody'),
     diffCloseButton: document.getElementById('diffCloseButton'),
     terminalLink: document.getElementById('terminalLink'),
@@ -189,6 +198,10 @@
       return token;
     }
 
+    html = html.replace(/!\[([^\]]*)\]\(([^)\s]+(?:\s+[^)]*)?)\)/g, (_, alt, src) => {
+      const safeSrc = sanitizeHref(src);
+      return safeSrc ? store('<img src="' + safeSrc + '" alt="' + alt + '">') : alt;
+    });
     html = html.replace(/`([^`\n]+)`/g, (_, code) => store('<code>' + code + '</code>'));
     html = html.replace(/\[([^\]]+)\]\(([^)\s]+(?:\s+[^)]*)?)\)/g, (_, label, href) => {
       const safeHref = sanitizeHref(href);
@@ -197,24 +210,23 @@
         : label;
     });
     html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+    html = html.replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
 
     placeholders.forEach((replacement, index) => {
-      html = html.replace('%%MD_TOKEN_' + index + '%%', replacement);
+      html = html.replaceAll('%%MD_TOKEN_' + index + '%%', replacement);
     });
 
     return html;
   }
 
-  function renderMarkdown(text) {
+  function renderMarkdown(text, wrapperClass = 'md-content') {
     const safe = esc(text || '').replace(/\r\n?/g, '\n');
-    if (!safe) return '<div class="md-content"></div>';
-
     const lines = safe.split('\n');
     const parts = [];
     let paragraph = [];
     let listType = null;
     let listItems = [];
+    let tableLines = [];
     let inCodeBlock = false;
     let codeLines = [];
 
@@ -231,6 +243,23 @@
       listItems = [];
     }
 
+    function flushTable() {
+      if (!tableLines.length) return;
+      const rows = tableLines.map((line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim()));
+      if (rows.length >= 2 && rows[1].every((cell) => /^:?-{3,}:?$/.test(cell))) {
+        const header = rows[0];
+        const bodyRows = rows.slice(2);
+        const headHtml = '<thead><tr>' + header.map((cell) => '<th>' + renderMarkdownInline(cell) + '</th>').join('') + '</tr></thead>';
+        const bodyHtml = bodyRows.length
+          ? '<tbody>' + bodyRows.map((row) => '<tr>' + row.map((cell) => '<td>' + renderMarkdownInline(cell) + '</td>').join('') + '</tr>').join('') + '</tbody>'
+          : '';
+        parts.push('<table>' + headHtml + bodyHtml + '</table>');
+      } else {
+        paragraph.push(...tableLines);
+      }
+      tableLines = [];
+    }
+
     function flushCodeBlock() {
       if (!inCodeBlock) return;
       parts.push('<pre><code>' + codeLines.join('\n') + '</code></pre>');
@@ -238,9 +267,17 @@
       codeLines = [];
     }
 
+    function flushBlocks() {
+      flushParagraph();
+      flushList();
+      flushTable();
+    }
+
     lines.forEach((line) => {
+      const trimmed = line.trim();
+
       if (inCodeBlock) {
-        if (/^```/.test(line.trim())) {
+        if (/^```/.test(trimmed)) {
           flushCodeBlock();
         } else {
           codeLines.push(line);
@@ -248,24 +285,43 @@
         return;
       }
 
-      if (/^```/.test(line.trim())) {
-        flushParagraph();
-        flushList();
+      if (/^```/.test(trimmed)) {
+        flushBlocks();
         inCodeBlock = true;
         codeLines = [];
         return;
       }
 
-      const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
-      if (headingMatch) {
+      if (trimmed.includes('|')) {
         flushParagraph();
         flushList();
+        tableLines.push(line);
+        return;
+      }
+      flushTable();
+
+      const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        flushBlocks();
         const level = headingMatch[1].length;
         parts.push('<h' + level + '>' + renderMarkdownInline(headingMatch[2]) + '</h' + level + '>');
         return;
       }
 
-      const ulMatch = line.match(/^\s*-\s+(.*)$/);
+      if (/^---+$/.test(trimmed)) {
+        flushBlocks();
+        parts.push('<hr>');
+        return;
+      }
+
+      const blockquoteMatch = line.match(/^>\s?(.*)$/);
+      if (blockquoteMatch) {
+        flushBlocks();
+        parts.push('<blockquote>' + renderMarkdownInline(blockquoteMatch[1]) + '</blockquote>');
+        return;
+      }
+
+      const ulMatch = line.match(/^\s*[-*]\s+(.*)$/);
       if (ulMatch) {
         flushParagraph();
         if (listType && listType !== 'ul') flushList();
@@ -283,9 +339,8 @@
         return;
       }
 
-      if (!line.trim()) {
-        flushParagraph();
-        flushList();
+      if (!trimmed) {
+        flushBlocks();
         return;
       }
 
@@ -293,11 +348,10 @@
       paragraph.push(line);
     });
 
-    flushParagraph();
-    flushList();
+    flushBlocks();
     flushCodeBlock();
 
-    return '<div class="md-content">' + parts.join('') + '</div>';
+    return '<div class="' + wrapperClass + '">' + parts.join('') + '</div>';
   }
 
   function parseIso(value) {
@@ -1538,8 +1592,54 @@
     state.gitContextSection = '';
   }
 
+  function setDiffTabState(tab) {
+    state.gitDiffTab = tab === 'preview' ? 'preview' : 'diff';
+    els.diffTabDiff.classList.toggle('active', state.gitDiffTab === 'diff');
+    els.diffTabPreview.classList.toggle('active', state.gitDiffTab === 'preview');
+  }
+
+  async function switchDiffTab(tab) {
+    if (tab === 'preview' && !state.gitDiffIsMarkdown) return;
+    const path = activeGitPath();
+    const file = state.gitDiffFile;
+    if (!path || !file) return;
+    setDiffTabState(tab);
+
+    if (state.gitDiffTab === 'diff') {
+      els.diffPanelBody.innerHTML = state.gitDiffCache.diffHtml || '<div class="diff-loading">Loading diff…</div>';
+      return;
+    }
+
+    if (state.gitDiffCache.previewHtml) {
+      els.diffPanelBody.innerHTML = state.gitDiffCache.previewHtml;
+      return;
+    }
+
+    els.diffPanelBody.innerHTML = '<div class="diff-loading">Loading preview…</div>';
+    try {
+      const response = await api('/api/file-content', {
+        method: 'POST',
+        body: JSON.stringify({ path, file })
+      });
+      if (state.gitDiffFile !== file || state.gitDiffTab !== 'preview') return;
+      state.gitDiffCache.previewHtml = response.ok
+        ? renderMarkdown(response.content || '', 'md-preview')
+        : '<div class="diff-loading" style="color:var(--red)">' + esc(response.error || 'Failed to load preview') + '</div>';
+      els.diffPanelBody.innerHTML = state.gitDiffCache.previewHtml;
+    } catch (error) {
+      if (state.gitDiffFile !== file || state.gitDiffTab !== 'preview') return;
+      state.gitDiffCache.previewHtml = '<div class="diff-loading" style="color:var(--red)">' + esc(error.message || 'Failed to load preview') + '</div>';
+      els.diffPanelBody.innerHTML = state.gitDiffCache.previewHtml;
+    }
+  }
+
   function closeDiffOverlay() {
     state.gitDiffFile = '';
+    state.gitDiffSection = 'unstaged';
+    state.gitDiffIsMarkdown = false;
+    state.gitDiffCache = { diffHtml: '', previewHtml: '' };
+    if (els.diffTabs) els.diffTabs.style.display = 'none';
+    setDiffTabState('diff');
     els.diffOverlay.classList.remove('visible');
     els.diffPanelBody.innerHTML = '';
   }
@@ -1549,6 +1649,10 @@
     if (!path || !file) return;
     state.gitDiffFile = file;
     state.gitDiffSection = section || 'unstaged';
+    state.gitDiffIsMarkdown = /\.md$/i.test(file);
+    state.gitDiffCache = { diffHtml: '', previewHtml: '' };
+    if (els.diffTabs) els.diffTabs.style.display = state.gitDiffIsMarkdown ? 'flex' : 'none';
+    setDiffTabState('diff');
     els.diffPanelTitle.textContent = file;
     els.diffPanelBody.innerHTML = '<div class="diff-loading">Loading diff…</div>';
     els.diffOverlay.classList.add('visible');
@@ -1558,12 +1662,18 @@
         body: JSON.stringify({ path, file, section: state.gitDiffSection })
       });
       if (state.gitDiffFile !== file) return;
-      els.diffPanelBody.innerHTML = response.ok
+      state.gitDiffCache.diffHtml = response.ok
         ? renderDiffView(response.diff || '')
         : '<div class="diff-loading" style="color:var(--red)">' + esc(response.error || 'Failed to load diff') + '</div>';
+      if (state.gitDiffTab === 'diff') {
+        els.diffPanelBody.innerHTML = state.gitDiffCache.diffHtml;
+      }
     } catch (error) {
       if (state.gitDiffFile !== file) return;
-      els.diffPanelBody.innerHTML = '<div class="diff-loading" style="color:var(--red)">' + esc(error.message || 'Failed to load diff') + '</div>';
+      state.gitDiffCache.diffHtml = '<div class="diff-loading" style="color:var(--red)">' + esc(error.message || 'Failed to load diff') + '</div>';
+      if (state.gitDiffTab === 'diff') {
+        els.diffPanelBody.innerHTML = state.gitDiffCache.diffHtml;
+      }
     }
   }
 
@@ -2853,6 +2963,11 @@
       const actionNode = event.target.closest('[data-git-action]');
       if (!actionNode) return;
       runGitContextAction(actionNode.getAttribute('data-git-action'));
+    });
+    els.diffTabs.addEventListener('click', (event) => {
+      const tabNode = event.target.closest('[data-tab]');
+      if (!tabNode) return;
+      switchDiffTab(tabNode.getAttribute('data-tab'));
     });
     els.diffCloseButton.addEventListener('click', closeDiffOverlay);
     els.diffOverlay.addEventListener('click', (event) => {
