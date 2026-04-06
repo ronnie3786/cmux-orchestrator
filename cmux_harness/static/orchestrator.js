@@ -31,6 +31,9 @@
     gitExpandedCommit: null,
     gitCommitFiles: [],
     gitCommitFilesLoading: false,
+    workerOutputTaskId: null,
+    workerOutputContent: '',
+    workerOutputPolling: false,
     gitContextFile: '',
     gitContextSection: '',
     lastMessageTimestamp: null,
@@ -166,6 +169,11 @@
     diffTabPreview: document.getElementById('diffTabPreview'),
     diffPanelBody: document.getElementById('diffPanelBody'),
     diffCloseButton: document.getElementById('diffCloseButton'),
+    workerOutputOverlay: document.getElementById('workerOutputOverlay'),
+    workerOutputTitle: document.getElementById('workerOutputTitle'),
+    workerOutputBody: document.getElementById('workerOutputBody'),
+    workerOutputClose: document.getElementById('workerOutputClose'),
+    workerOutputRefresh: document.getElementById('workerOutputRefresh'),
     terminalLink: document.getElementById('terminalLink'),
     toastWrap: document.getElementById('toastWrap')
   };
@@ -1820,6 +1828,46 @@
     });
   }
 
+  async function openWorkerOutput(taskId) {
+    if (!state.activeObjectiveId || !taskId) return;
+    state.workerOutputTaskId = taskId;
+    state.workerOutputContent = '';
+    const task = findTask(taskId);
+    els.workerOutputTitle.textContent = 'Worker Output' + (task ? ' \u2014 ' + taskDisplayTitle(task) : '');
+    els.workerOutputBody.innerHTML = '<div class="diff-loading">Loading output\u2026</div>';
+    els.workerOutputOverlay.classList.add('visible');
+    await refreshWorkerOutput();
+  }
+
+  async function refreshWorkerOutput() {
+    const taskId = state.workerOutputTaskId;
+    if (!taskId || !state.activeObjectiveId) return;
+    try {
+      const response = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/tasks/' + encodeURIComponent(taskId) + '/screen');
+      if (state.workerOutputTaskId !== taskId) return;
+      if (response.ok) {
+        state.workerOutputContent = response.screen || '';
+        const lines = state.workerOutputContent.split('\n');
+        const html = lines.map((line) => '<div class="wo-line">' + esc(line) + '</div>').join('');
+        els.workerOutputBody.innerHTML = '<div class="worker-output-content">' + html + '</div>';
+        els.workerOutputBody.scrollTop = els.workerOutputBody.scrollHeight;
+      } else {
+        els.workerOutputBody.innerHTML = '<div class="diff-loading" style="color:var(--red)">' + esc(response.error || 'Failed to load output') + '</div>';
+      }
+    } catch (error) {
+      if (state.workerOutputTaskId !== taskId) return;
+      els.workerOutputBody.innerHTML = '<div class="diff-loading" style="color:var(--red)">' + esc(error.message || 'Failed to load output') + '</div>';
+    }
+  }
+
+  function closeWorkerOutput() {
+    state.workerOutputTaskId = null;
+    state.workerOutputContent = '';
+    state.workerOutputPolling = false;
+    els.workerOutputOverlay.classList.remove('visible');
+    els.workerOutputBody.innerHTML = '';
+  }
+
   async function toggleCommitExpansion(hash) {
     if (state.gitExpandedCommit === hash) {
       state.gitExpandedCommit = null;
@@ -2326,6 +2374,9 @@
           ((status === 'completed' || status === 'executing' || status === 'reviewing' || status === 'rework') && state.activeObjective && state.activeObjective.branchName
             ? '<span class="task-branch-badge" title="' + esc(state.activeObjective.branchName) + '">' + esc(state.activeObjective.branchName) + '</span>'
             : ''),
+          ((status === 'executing' || status === 'reviewing' || status === 'rework') && task.workspaceId
+            ? '<button class="worker-output-btn" data-worker-task-id="' + esc(task.id) + '" title="View worker output">⌘</button>'
+            : ''),
           '</div>',
           '<span class="pr-status ' + statusClass + '">' + esc(statusText) + '</span>',
           '</div>'
@@ -2584,6 +2635,12 @@
       html += '<div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-bubble typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div>';
     }
     els.messageColumn.innerHTML = html;
+    els.messageColumn.querySelectorAll('[data-worker-task-id]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openWorkerOutput(node.getAttribute('data-worker-task-id'));
+      });
+    });
     els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {
       node.addEventListener('click', async () => {
         const taskId = node.getAttribute('data-task-id');
@@ -3064,6 +3121,11 @@
     els.diffOverlay.addEventListener('click', (event) => {
       if (event.target === els.diffOverlay) closeDiffOverlay();
     });
+    els.workerOutputClose.addEventListener('click', closeWorkerOutput);
+    els.workerOutputRefresh.addEventListener('click', refreshWorkerOutput);
+    els.workerOutputOverlay.addEventListener('click', (event) => {
+      if (event.target === els.workerOutputOverlay) closeWorkerOutput();
+    });
     els.sendButton.addEventListener('click', sendMessage);
     els.chatInput.addEventListener('input', () => {
       autoResizeTextarea();
@@ -3088,6 +3150,11 @@
       if (event.key === 'Escape' && state.debugOpen) {
         event.preventDefault();
         closeDebugModal();
+        return;
+      }
+      if (event.key === 'Escape' && els.workerOutputOverlay.classList.contains('visible')) {
+        event.preventDefault();
+        closeWorkerOutput();
         return;
       }
       if (event.key === 'Escape' && els.diffOverlay.classList.contains('visible')) {
