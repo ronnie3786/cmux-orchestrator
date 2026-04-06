@@ -71,6 +71,11 @@ def handle_post_approve_plan(handler, objective_id, *, engine):
         handler._json_response({"ok": False, "error": "Could not approve plan"}, 400)
 
 
+def handle_approve_contracts(handler, objective_id, engine):
+    approved = engine.orchestrator.approve_contracts(objective_id)
+    handler._json_response({"ok": approved})
+
+
 def handle_post_message(handler, objective_id, data, *, engine, threading_module):
     message = data.get("message", "")
     context = data.get("context")

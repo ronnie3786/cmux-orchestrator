@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import claude_cli
+from . import contracts
 from . import approval
 from . import cmux_api
 from . import detection
@@ -1902,9 +1903,78 @@ IMPORTANT:
             self._close_workspace(objective_id, planner_workspace_id, "plan_approved")
         objectives.update_objective(
             objective_id,
-            {"status": "executing", "plannerWorkspaceId": None},
+            {"status": "negotiating_contracts", "plannerWorkspaceId": None},
         )
-        self._append_message(objective_id, "system", "Plan approved, launching tasks...")
+        self._append_message(objective_id, "system", "Plan approved, negotiating sprint contracts...")
+        try:
+            threading.Thread(target=self._negotiate_contracts, args=(objective_id,), daemon=True).start()
+        except Exception:
+            tb = traceback.format_exc()
+            self._log_event(
+                objective_id,
+                "error",
+                "exception",
+                {
+                    "phase": "approve_plan_negotiate_contracts",
+                    "traceback": tb,
+                },
+            )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Failed to start contract negotiation after plan approval.\n\n```\n{tb}\n```",
+            )
+            return False
+        return True
+
+    def _negotiate_contracts(self, objective_id):
+        try:
+            objective = objectives.read_objective(objective_id)
+            if objective is None:
+                raise FileNotFoundError(f"objective not found: {objective_id}")
+
+            tasks = [task for task in objective.get("tasks", []) if isinstance(task, dict)]
+            for task in tasks:
+                task_id = task.get("id")
+                if not task_id:
+                    continue
+                result = claude_cli.run_sonnet(contracts.build_contract_prompt(task))
+                content = result if isinstance(result, str) else json.dumps(result, indent=2)
+                objectives.write_task_file(objective_id, task_id, "contract.md", content)
+
+            objectives.update_objective(objective_id, {"status": "contract_review"})
+            self._append_message(
+                objective_id,
+                "system",
+                "Sprint contracts are ready for review.",
+            )
+        except Exception as exc:
+            tb = traceback.format_exc()
+            objectives.update_objective(objective_id, {"status": "failed"})
+            self._log_event(
+                objective_id,
+                "error",
+                "exception",
+                {
+                    "phase": "negotiate_contracts",
+                    "error": str(exc),
+                    "traceback": tb,
+                },
+            )
+            self._append_message(
+                objective_id,
+                "alert",
+                f"Contract negotiation failed: {exc}\n\n```\n{tb}\n```",
+            )
+
+    def approve_contracts(self, objective_id):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return False
+        if str(objective.get("status") or "").lower() != "contract_review":
+            return False
+        objectives.update_objective(objective_id, {"status": "executing"})
+        self._append_message(objective_id, "system", "Contracts approved, launching tasks...")
         try:
             self._launch_ready_tasks(objective_id)
         except Exception:
@@ -1914,14 +1984,14 @@ IMPORTANT:
                 "error",
                 "exception",
                 {
-                    "phase": "approve_plan_launch_tasks",
+                    "phase": "approve_contracts_launch_tasks",
                     "traceback": tb,
                 },
             )
             self._append_message(
                 objective_id,
                 "alert",
-                f"Failed to launch tasks after plan approval.\n\n```\n{tb}\n```",
+                f"Failed to launch tasks after contract approval.\n\n```\n{tb}\n```",
             )
             return False
         return True

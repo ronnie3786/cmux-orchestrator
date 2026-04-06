@@ -140,6 +140,20 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
 
+    def test_approve_contracts_endpoint_calls_orchestrator(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        engine = Mock()
+        engine.orchestrator.approve_contracts.return_value = True
+        handler = self._make_handler(engine, "/api/objectives/" + objective["id"] + "/approve-contracts")
+        handler.headers = {"Content-Length": "2"}
+        handler.rfile = io.BytesIO(b"{}")
+
+        handler.do_POST()
+
+        engine.orchestrator.approve_contracts.assert_called_once_with(objective["id"])
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+
     def test_message_endpoint_starts_background_thread_and_returns_ok(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
         engine = Mock()

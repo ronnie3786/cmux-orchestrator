@@ -378,7 +378,7 @@ class TestPlanningPipeline(unittest.TestCase):
         self.assertEqual(updated["status"], "failed")
         self.assertTrue(any(raw_plan in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
 
-    def test_approve_plan_closes_planner_and_launches_tasks(self):
+    def test_approve_plan_closes_planner_and_starts_contract_negotiation(self):
         objective = self._create_objective()
         objectives.update_objective(
             objective["id"],
@@ -391,17 +391,51 @@ class TestPlanningPipeline(unittest.TestCase):
 
         with patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
                 patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request, \
-                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch:
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
             approved = self.orchestrator.approve_plan(objective["id"])
 
         self.assertTrue(approved)
         updated = objectives.read_objective(objective["id"])
-        self.assertEqual(updated["status"], "executing")
+        self.assertEqual(updated["status"], "negotiating_contracts")
         self.assertIsNone(updated["plannerWorkspaceId"])
         mock_send.assert_called_once_with("ws-planner", "/exit")
         mock_request.assert_called_once_with("workspace.close", {"workspace_id": "ws-planner"})
+        mock_thread.assert_called_once_with(
+            target=self.orchestrator._negotiate_contracts,
+            args=(objective["id"],),
+            daemon=True,
+        )
+        mock_thread.return_value.start.assert_called_once_with()
+        self.assertTrue(
+            any(
+                "Plan approved, negotiating sprint contracts..." in msg["content"]
+                for msg in self.orchestrator.get_messages(objective["id"])
+            )
+        )
+
+    def test_approve_contracts_transitions_to_executing(self):
+        objective = self._create_objective()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "contract_review",
+                "tasks": [{"id": "task-1", "title": "First", "status": "queued"}],
+            },
+        )
+
+        with patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch:
+            approved = self.orchestrator.approve_contracts(objective["id"])
+
+        self.assertTrue(approved)
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "executing")
         mock_launch.assert_called_once_with(objective["id"])
-        self.assertTrue(any("Plan approved, launching tasks..." in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+        self.assertTrue(
+            any(
+                "Contracts approved, launching tasks..." in msg["content"]
+                for msg in self.orchestrator.get_messages(objective["id"])
+            )
+        )
 
     def test_handle_human_input_revises_plan_during_plan_review(self):
         objective = self._create_objective()
