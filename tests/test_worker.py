@@ -38,7 +38,7 @@ class TestWorker(unittest.TestCase):
     def test_slugify_empty_string(self):
         self.assertEqual(worker.slugify(""), "")
 
-    def test_build_task_prompt_mentions_required_files(self):
+    def test_build_task_prompt_mentions_deliverables_and_required_files(self):
         prompt = worker.build_task_prompt("task-1")
 
         self.assertIn("spec.md", prompt)
@@ -46,8 +46,10 @@ class TestWorker(unittest.TestCase):
         self.assertIn("progress.md", prompt)
         self.assertIn("result.md", prompt)
         self.assertIn("CRITICAL RULES", prompt)
+        self.assertIn("Implement the deliverables described in spec.md. Focus on the user story.", prompt)
+        self.assertNotIn("Scope Boundary", prompt)
 
-    def test_build_rework_prompt_mentions_issues_and_files(self):
+    def test_build_rework_prompt_mentions_issues_and_deliverables(self):
         prompt = worker.build_rework_prompt(
             ["Fix the failing unit test", "Update the error handling"],
             "Re-run the targeted tests after the fix.",
@@ -59,6 +61,8 @@ class TestWorker(unittest.TestCase):
         self.assertIn("spec.md", prompt)
         self.assertIn("progress.md", prompt)
         self.assertIn("result.md", prompt)
+        self.assertIn("Implement the deliverables described in spec.md. Focus on the user story.", prompt)
+        self.assertNotIn("scope boundary", prompt.lower())
 
     @patch("cmux_harness.worker.subprocess.run")
     def test_create_worktree_constructs_expected_git_command(self, mock_run):

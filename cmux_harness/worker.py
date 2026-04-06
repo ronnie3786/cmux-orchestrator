@@ -73,8 +73,7 @@ def build_task_prompt(task_id: str) -> str:
 Read ./spec.md CAREFULLY — it defines your EXACT scope.
 
 CRITICAL RULES:
-- ONLY modify files listed in the "Scope Boundary" section of spec.md
-- Do NOT create new files unless spec.md explicitly says to
+- Implement the deliverables described in spec.md. Focus on the user story.
 - Do NOT install packages, modify configs, or touch files outside your scope
 - Do NOT implement anything beyond what spec.md describes
 - If something seems needed but isn't in scope, note it in result.md — don't do it
@@ -86,17 +85,17 @@ PROGRESS TRACKING — update ./progress.md after EACH checkpoint:
 ## Checkpoint: [name]
 **Status:** Done
 **What I did:** [2-3 sentence summary]
-**Files touched:** [list — must be within scope boundary]
+**Files touched:** [list of files changed]
 
 Update progress.md BEFORE moving to the next checkpoint.
 
 WHEN FINISHED with all checkpoints in spec.md:
-1. Run `git diff --stat` and verify EVERY changed file is in your scope boundary
-2. If you accidentally changed out-of-scope files, revert them with `git checkout`
+1. Run `git diff --stat` and verify the changes align with the deliverables in spec.md
+2. If you accidentally changed unrelated files, revert them with `git checkout`
 3. Commit all in-scope changes to your branch
 4. Write ./result.md covering:
    - What was accomplished (match to spec checkpoints)
-   - Files changed (must match scope boundary)
+   - Files changed
    - Any out-of-scope work that SHOULD be done (as suggestions only)
 5. Then exit.
 """
@@ -112,16 +111,16 @@ ISSUES FOUND:
 Reviewer's recommendation: {recommendation}
 
 RULES (same as before — re-read ./spec.md):
-- ONLY modify files listed in the scope boundary
-- Do NOT expand scope to fix issues — stay within your assigned files
+- Implement the deliverables described in spec.md. Focus on the user story.
+- Do NOT expand scope to fix issues beyond the assigned deliverables
 - If an issue can't be fixed within scope, note it in result.md as a limitation
 
-Re-read ./spec.md for your scope boundary.
+Re-read ./spec.md for the user story and deliverables.
 Check ./progress.md for what you already did.
 
 After fixing:
-1. Run `git diff --stat` and verify all changes are in-scope
-2. Revert any out-of-scope changes with `git checkout`
+1. Run `git diff --stat` and verify the changes match the deliverables
+2. Revert any unrelated changes with `git checkout`
 3. Commit in-scope changes
 4. Add a "Rework" checkpoint to ./progress.md
 5. Write updated ./result.md

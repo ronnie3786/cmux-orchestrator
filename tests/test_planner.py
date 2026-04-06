@@ -14,14 +14,16 @@ def _valid_parsed_plan():
             {
                 "id": "task-1",
                 "title": "Fix token expiry check",
-                "files": ["TokenManager.swift", "TokenStorage.swift"],
+                "userStory": "Users stay signed in until their token actually expires.",
+                "deliverables": ["Accurate token expiry handling", "Stable token refresh behavior"],
                 "dependsOn": [],
                 "checkpoints": ["Read current implementation", "Implement fix", "Run tests"],
             },
             {
                 "id": "task-2",
                 "title": "Add regression tests",
-                "files": ["TokenManagerTests.swift"],
+                "userStory": "Users are protected from future token expiry regressions.",
+                "deliverables": ["Regression coverage for token expiry edge cases"],
                 "dependsOn": ["task-1"],
                 "checkpoints": ["Review changes", "Add tests"],
             },
@@ -63,14 +65,16 @@ class TestValidatePlan(unittest.TestCase):
                 {
                     "id": "task-1",
                     "title": "First",
-                    "files": ["a.py"],
+                    "userStory": "First user story",
+                    "deliverables": ["First deliverable"],
                     "dependsOn": [],
                     "checkpoints": ["Do it"],
                 },
                 {
                     "id": "task-1",
                     "title": "Second",
-                    "files": ["b.py"],
+                    "userStory": "Second user story",
+                    "deliverables": ["Second deliverable"],
                     "dependsOn": [],
                     "checkpoints": ["Do it"],
                 },
@@ -97,14 +101,16 @@ class TestValidatePlan(unittest.TestCase):
                 {
                     "id": "task-a",
                     "title": "A",
-                    "files": ["a.py"],
+                    "userStory": "A story",
+                    "deliverables": ["A deliverable"],
                     "dependsOn": ["task-b"],
                     "checkpoints": ["Do A"],
                 },
                 {
                     "id": "task-b",
                     "title": "B",
-                    "files": ["b.py"],
+                    "userStory": "B story",
+                    "deliverables": ["B deliverable"],
                     "dependsOn": ["task-a"],
                     "checkpoints": ["Do B"],
                 },
@@ -191,7 +197,10 @@ class TestBuildPlanningPrompt(unittest.TestCase):
         self.assertIn("Ship planner pipeline", prompt)
         self.assertIn("./plan.md", prompt)
         self.assertIn("## Task N: [title]", prompt)
+        self.assertIn("- User Story:", prompt)
+        self.assertIn("- Deliverables:", prompt)
         self.assertIn("- Depends on:", prompt)
+        self.assertIn("Stay focused on WHAT should be built, not HOW", prompt)
 
 
 class TestPlanToTasks(unittest.TestCase):
@@ -217,6 +226,11 @@ class TestPlanToTasks(unittest.TestCase):
         self.assertEqual(len(tasks), 2)
         self.assertEqual(tasks[0]["id"], "task-1")
         self.assertEqual(tasks[0]["status"], "queued")
+        self.assertEqual(tasks[0]["userStory"], "Users stay signed in until their token actually expires.")
+        self.assertEqual(
+            tasks[0]["deliverables"],
+            ["Accurate token expiry handling", "Stable token refresh behavior"],
+        )
         self.assertEqual(tasks[0]["dependsOn"], [])
         self.assertIsNone(tasks[0]["workspaceId"])
         self.assertEqual(
@@ -237,7 +251,10 @@ class TestPlanToTasks(unittest.TestCase):
         self.assertTrue(spec_path.is_file())
         spec_text = spec_path.read_text(encoding="utf-8")
         self.assertIn("# Fix token expiry check", spec_text)
-        self.assertIn("TokenManager.swift", spec_text)
+        self.assertIn("## User Story", spec_text)
+        self.assertIn("Users stay signed in until their token actually expires.", spec_text)
+        self.assertIn("## Deliverables", spec_text)
+        self.assertIn("Accurate token expiry handling", spec_text)
         self.assertIn("1. Read current implementation", spec_text)
 
 

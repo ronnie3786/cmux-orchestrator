@@ -420,7 +420,8 @@ class TestPlanningPipeline(unittest.TestCase):
                 {
                     "id": "task-1",
                     "title": "Revised task",
-                    "files": ["a.py"],
+                    "userStory": "Users can complete the revised flow.",
+                    "deliverables": ["Revised flow behavior"],
                     "dependsOn": [],
                     "checkpoints": ["Revise plan"],
                 }
@@ -430,6 +431,8 @@ class TestPlanningPipeline(unittest.TestCase):
             {
                 "id": "task-1",
                 "title": "Revised task",
+                "userStory": "Users can complete the revised flow.",
+                "deliverables": ["Revised flow behavior"],
                 "status": "queued",
                 "dependsOn": [],
                 "workspaceId": None,

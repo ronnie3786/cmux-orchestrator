@@ -19,31 +19,33 @@ Do not print the full plan to the terminal. The plan must be written to the file
 Use this exact task format for every task:
 
 ## Task N: [title]
-- Files: [list of files to modify — be EXACT, no wildcards]
+- User Story: [what the user can do after this task]
+- Deliverables: [screens, features, behaviors this task produces]
 - Depends on: [task numbers or "none"]
 - Checkpoints:
-  1. [checkpoint]
-  2. [checkpoint]
-  3. [checkpoint]
+  1. [checkpoint focused on WHAT not HOW]
+  2. [checkpoint focused on WHAT not HOW]
+  3. [checkpoint focused on WHAT not HOW]
 
 CRITICAL PLANNING RULES:
 
 1. **MAXIMIZE PARALLELISM.** Most tasks should have NO dependencies.
    - Bad: Task 1 → Task 2 → Task 3 → Task 4 (sequential chain)
    - Good: Tasks 1, 2, 3 run in parallel; Task 4 depends on 1+2
-   - Each task modifies DIFFERENT files. If files don't overlap, there's no dependency.
    - Only add a dependency when a task literally cannot start without another task's output.
+   - Split tasks around independent deliverables so parallel work is obvious.
 
 2. **NO dependency chains longer than 2.** If Task 3 depends on Task 2 which depends on Task 1, restructure. Either merge tasks or remove unnecessary dependencies.
 
-3. **SMALL, FOCUSED TASKS.** Each task should touch 1-3 files max. If a task lists 4+ files, split it.
+3. **SMALL, FOCUSED TASKS.** Each task should produce a clear user-facing outcome. If a task bundles too many features or behaviors, split it.
 
-4. **EXPLICIT FILE OWNERSHIP.** Every file appears in exactly ONE task. No two tasks modify the same file.
-   - If two tasks need to touch the same file, merge them into one task.
+4. **STAY HIGH-LEVEL.** Stay focused on WHAT should be built, not HOW.
+   - Do not specify file paths, function names, or implementation details.
+   - The worker will figure out the implementation.
 
 5. **SELF-CONTAINED TASKS.** Each task must be completable and testable in isolation. Don't create tasks that only make sense after another task runs (unless explicitly listed as a dependency).
 
-6. Keep checkpoints concrete, ordered, and verifiable.
+6. Keep checkpoints concrete, ordered, verifiable, and focused on outcomes rather than code changes.
 - Analyze the codebase before planning.
 - Make the plan complete enough to execute without guessing.
 - Aim for 3-6 tasks total. More than 6 usually means tasks are too granular.
@@ -70,7 +72,8 @@ Output format:
     {{
       "id": "task-1",
       "title": "Fix token expiry check",
-      "files": ["TokenManager.swift", "TokenStorage.swift"],
+      "userStory": "Users stay signed in until their token actually expires.",
+      "deliverables": ["Accurate token expiry handling", "Stable token refresh behavior"],
       "dependsOn": [],
       "checkpoints": ["Read current implementation", "Implement fix", "Run tests"]
     }}
@@ -79,20 +82,22 @@ Output format:
 
 Example 1 input:
 ## Task 1: Fix token expiry check
-- Files: TokenManager.swift, TokenStorage.swift
+- User Story: Users stay signed in until their token actually expires.
+- Deliverables: Accurate token expiry handling, Stable token refresh behavior
 - Depends on: none
 - Checkpoints:
-  1. Read current implementation
-  2. Implement fix
-  3. Run tests
+  1. Token expiry is evaluated correctly
+  2. Token refresh behavior stays reliable
+  3. Regression coverage confirms the flow
 
 ## Task 2: Add regression tests
-- Files: TokenManagerTests.swift
+- User Story: Users are protected from future token expiry regressions.
+- Deliverables: Regression test coverage for token expiry edge cases
 - Depends on: 1
 - Checkpoints:
-  1. Review token expiry changes
-  2. Add happy path tests
-  3. Add expiry edge case tests
+  1. Happy path token expiry coverage exists
+  2. Expiry edge cases are covered
+  3. The regression suite documents expected behavior
 
 Example 1 output:
 {{
@@ -100,19 +105,25 @@ Example 1 output:
     {{
       "id": "task-1",
       "title": "Fix token expiry check",
-      "files": ["TokenManager.swift", "TokenStorage.swift"],
+      "userStory": "Users stay signed in until their token actually expires.",
+      "deliverables": ["Accurate token expiry handling", "Stable token refresh behavior"],
       "dependsOn": [],
-      "checkpoints": ["Read current implementation", "Implement fix", "Run tests"]
+      "checkpoints": [
+        "Token expiry is evaluated correctly",
+        "Token refresh behavior stays reliable",
+        "Regression coverage confirms the flow"
+      ]
     }},
     {{
       "id": "task-2",
       "title": "Add regression tests",
-      "files": ["TokenManagerTests.swift"],
+      "userStory": "Users are protected from future token expiry regressions.",
+      "deliverables": ["Regression test coverage for token expiry edge cases"],
       "dependsOn": ["task-1"],
       "checkpoints": [
-        "Review token expiry changes",
-        "Add happy path tests",
-        "Add expiry edge case tests"
+        "Happy path token expiry coverage exists",
+        "Expiry edge cases are covered",
+        "The regression suite documents expected behavior"
       ]
     }}
   ]
@@ -120,24 +131,27 @@ Example 1 output:
 
 Example 2 input:
 ## Task 1: Refactor auth config loading
-- Files: auth.py
+- User Story: Authentication settings load consistently across environments.
+- Deliverables: Reliable auth config loading behavior
 - Depends on: none
 - Checkpoints:
-  1. Inspect current loading path
-  2. Extract shared helper
+  1. Auth config loads consistently
+  2. Shared loading behavior is unified
 
 ## Task 2: Update CLI entrypoint
-- Files: cli.py, main.py
+- User Story: CLI users can start the app with the updated auth loading flow.
+- Deliverables: CLI startup works with the new auth config flow
 - Depends on: Task 1
 - Checkpoints:
-  1. Switch CLI to helper
-  2. Verify argument handling
+  1. CLI startup uses the updated auth flow
+  2. Argument handling still behaves correctly
 
 ## Task 3: Document new flow
-- Files: README.md
+- User Story: Developers understand how auth config now loads.
+- Deliverables: Updated documentation for auth config behavior
 - Depends on: none
 - Checkpoints:
-  1. Describe new config behavior
+  1. Documentation explains the new auth config behavior
 
 Example 2 output:
 {{
@@ -145,23 +159,26 @@ Example 2 output:
     {{
       "id": "task-1",
       "title": "Refactor auth config loading",
-      "files": ["auth.py"],
+      "userStory": "Authentication settings load consistently across environments.",
+      "deliverables": ["Reliable auth config loading behavior"],
       "dependsOn": [],
-      "checkpoints": ["Inspect current loading path", "Extract shared helper"]
+      "checkpoints": ["Auth config loads consistently", "Shared loading behavior is unified"]
     }},
     {{
       "id": "task-2",
       "title": "Update CLI entrypoint",
-      "files": ["cli.py", "main.py"],
+      "userStory": "CLI users can start the app with the updated auth loading flow.",
+      "deliverables": ["CLI startup works with the new auth config flow"],
       "dependsOn": ["task-1"],
-      "checkpoints": ["Switch CLI to helper", "Verify argument handling"]
+      "checkpoints": ["CLI startup uses the updated auth flow", "Argument handling still behaves correctly"]
     }},
     {{
       "id": "task-3",
       "title": "Document new flow",
-      "files": ["README.md"],
+      "userStory": "Developers understand how auth config now loads.",
+      "deliverables": ["Updated documentation for auth config behavior"],
       "dependsOn": [],
-      "checkpoints": ["Describe new config behavior"]
+      "checkpoints": ["Documentation explains the new auth config behavior"]
     }}
   ]
 }}
@@ -170,19 +187,21 @@ Example 3 input:
 Plan:
 
 ## Task 1: Build parser
-- Files: parser.py
+- User Story: Users get structured data from parser input.
+- Deliverables: Parser behavior that extracts headings and lists
 - Depends on: none
 - Checkpoints:
-  1. Parse headings
-  2. Parse lists
+  1. Headings are parsed into structured output
+  2. Lists are parsed into structured output
 
 ## Task 2: Wire API
-- Files: api.py, server.py
+- User Story: API clients receive parsed output through the service.
+- Deliverables: API endpoint that returns parser results with error handling
 - Depends on: 1
 - Checkpoints:
-  1. Call parser from API
-  2. Return structured response
-  3. Add error handling
+  1. API responses include parsed output
+  2. Structured responses are returned to clients
+  3. Error handling covers parser failures
 
 Example 3 output:
 {{
@@ -190,19 +209,21 @@ Example 3 output:
     {{
       "id": "task-1",
       "title": "Build parser",
-      "files": ["parser.py"],
+      "userStory": "Users get structured data from parser input.",
+      "deliverables": ["Parser behavior that extracts headings and lists"],
       "dependsOn": [],
-      "checkpoints": ["Parse headings", "Parse lists"]
+      "checkpoints": ["Headings are parsed into structured output", "Lists are parsed into structured output"]
     }},
     {{
       "id": "task-2",
       "title": "Wire API",
-      "files": ["api.py", "server.py"],
+      "userStory": "API clients receive parsed output through the service.",
+      "deliverables": ["API endpoint that returns parser results with error handling"],
       "dependsOn": ["task-1"],
       "checkpoints": [
-        "Call parser from API",
-        "Return structured response",
-        "Add error handling"
+        "API responses include parsed output",
+        "Structured responses are returned to clients",
+        "Error handling covers parser failures"
       ]
     }}
   ]
@@ -260,7 +281,7 @@ def validate_plan(parsed: dict) -> tuple[bool, str]:
     if not tasks:
         return False, '"tasks" must not be empty'
 
-    required_fields = {"id", "title", "files", "dependsOn", "checkpoints"}
+    required_fields = {"id", "title", "userStory", "deliverables", "dependsOn", "checkpoints"}
     task_map = {}
     for index, task in enumerate(tasks, start=1):
         if not isinstance(task, dict):
@@ -272,7 +293,8 @@ def validate_plan(parsed: dict) -> tuple[bool, str]:
 
         task_id = task["id"]
         title = task["title"]
-        files = task["files"]
+        user_story = task["userStory"]
+        deliverables = task["deliverables"]
         depends_on = task["dependsOn"]
         checkpoints = task["checkpoints"]
 
@@ -280,8 +302,12 @@ def validate_plan(parsed: dict) -> tuple[bool, str]:
             return False, f"task {index} id must be a string"
         if not isinstance(title, str):
             return False, f"task {task_id} title must be a string"
-        if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
-            return False, f"task {task_id} files must be a list of strings"
+        if not isinstance(user_story, str) or not user_story.strip():
+            return False, f"task {task_id} userStory must be a non-empty string"
+        if not isinstance(deliverables, list) or not deliverables or not all(
+            isinstance(item, str) and item.strip() for item in deliverables
+        ):
+            return False, f"task {task_id} deliverables must be a non-empty list of strings"
         if not isinstance(depends_on, list) or not all(isinstance(item, str) for item in depends_on):
             return False, f"task {task_id} dependsOn must be a list of strings"
         if not isinstance(checkpoints, list) or not all(isinstance(item, str) for item in checkpoints):
@@ -321,29 +347,30 @@ def parse_plan(plan_text: str) -> dict:
 
 
 def _build_spec_content(task: dict) -> str:
-    files = task["files"] or []
+    deliverables = task["deliverables"] or []
+    user_story = task["userStory"]
     checkpoints = task["checkpoints"] or []
     depends_on = task.get("dependsOn", [])
 
     lines = [f"# {task['title']}", ""]
 
-    lines.append("## Scope Boundary (MANDATORY)")
+    lines.append("## User Story")
     lines.append("")
-    if files:
-        lines.append("You may ONLY modify these files:")
-        lines.extend(f"- `{path}`" for path in files)
-    else:
-        lines.append("No specific files listed. Keep changes minimal and focused.")
+    lines.append(user_story)
     lines.append("")
+
+    lines.append("## Deliverables")
+    lines.append("")
+    lines.extend(f"- {item}" for item in deliverables)
+    lines.append("")
+
     lines.append("**DO NOT:**")
-    lines.append("- Create or modify files not listed above")
     lines.append("- Install new dependencies or packages")
     lines.append("- Refactor code unrelated to this task")
     lines.append("- Implement features beyond what this spec describes")
-    lines.append("- Modify configuration files unless listed above")
+    lines.append("- Drift into implementation details that do not serve the user story")
     lines.append("")
-    lines.append("If you believe additional files need changes, note it in result.md")
-    lines.append("as a suggestion — do NOT make those changes yourself.")
+    lines.append("Your task is to implement these deliverables. Stay focused on the user story.")
     lines.append("")
 
     if depends_on:
@@ -361,8 +388,7 @@ def _build_spec_content(task: dict) -> str:
 
     lines.append("## Completion Criteria")
     lines.append("")
-    lines.append("Your task is done when ALL checkpoints above are completed.")
-    lines.append("Commit ONLY the changes to files listed in the scope boundary.")
+    lines.append("Your task is done when ALL deliverables and checkpoints above are completed.")
     lines.append("Write result.md describing exactly what you changed and why.")
     lines.append("")
     return "\n".join(lines)
@@ -377,6 +403,8 @@ def plan_to_tasks(parsed: dict, objective_id: str) -> list[dict]:
             {
                 "id": task["id"],
                 "title": task["title"],
+                "userStory": task["userStory"],
+                "deliverables": list(task["deliverables"]),
                 "status": "queued",
                 "dependsOn": task["dependsOn"],
                 "workspaceId": None,

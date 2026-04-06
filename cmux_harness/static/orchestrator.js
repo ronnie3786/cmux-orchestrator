@@ -2050,9 +2050,15 @@
         '<div class="plan-review-task-title">' + esc(task.title || task.id || ('Task ' + (index + 1))) + '</div>',
         '</div>',
         '<div class="plan-review-row">',
-        '<div class="plan-review-label">Files</div>',
-        '<div class="plan-review-list">' + ((task.files || []).length
-          ? task.files.map((file) => '<span class="plan-review-chip">' + esc(file) + '</span>').join('')
+        '<div class="plan-review-label">User Story</div>',
+        '<div class="plan-review-list">' + (task.userStory
+          ? '<span class="plan-review-chip">' + esc(task.userStory) + '</span>'
+          : '<span class="plan-review-chip">none listed</span>') + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Deliverables</div>',
+        '<div class="plan-review-list">' + ((task.deliverables || []).length
+          ? task.deliverables.map((item) => '<span class="plan-review-chip">' + esc(item) + '</span>').join('')
           : '<span class="plan-review-chip">none listed</span>') + '</div>',
         '</div>',
         '<div class="plan-review-row">',

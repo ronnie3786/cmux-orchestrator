@@ -338,7 +338,8 @@ class Orchestrator:
                 {
                     "id": task.get("id"),
                     "title": task.get("title"),
-                    "files": list(task.get("files", [])),
+                    "userStory": task.get("userStory"),
+                    "deliverables": list(task.get("deliverables", [])),
                     "dependsOn": list(task.get("dependsOn", [])),
                     "checkpoints": list(task.get("checkpoints", [])),
                 }
