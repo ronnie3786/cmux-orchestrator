@@ -1826,8 +1826,44 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    cursor: pointer;
   }
   .git-commit:hover { background: rgba(255,255,255,.03); }
+  .git-commit.expanded { background: rgba(255,255,255,.06); }
+  .git-commit-chevron {
+    display: inline-block;
+    width: 12px;
+    font-size: 9px;
+    color: var(--t3);
+    transition: transform 0.15s;
+    margin-right: 4px;
+  }
+  .git-commit.expanded .git-commit-chevron { transform: rotate(90deg); }
+  .git-commit-files { padding: 2px 0 4px 18px; }
+  .git-commit-file {
+    font-size: 11px;
+    font-family: 'JetBrains Mono','SF Mono',monospace;
+    padding: 3px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--t2);
+  }
+  .git-commit-file:hover { background: rgba(255,255,255,.04); color: var(--t1); }
+  .git-cf-status {
+    display: inline-block;
+    width: 16px;
+    text-align: center;
+    font-weight: 600;
+    margin-right: 4px;
+    font-size: 10px;
+  }
+  .git-cf-status.cf-A { color: var(--green); }
+  .git-cf-status.cf-D { color: #f87171; }
+  .git-cf-status.cf-M { color: #fbbf24; }
+  .git-cf-status.cf-R { color: var(--blue); }
   .git-hash { color: var(--purple); margin-right: 6px; }
   .git-empty {
     padding: 24px 16px;

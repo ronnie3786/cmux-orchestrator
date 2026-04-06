@@ -28,6 +28,9 @@
       diffHtml: '',
       previewHtml: ''
     },
+    gitExpandedCommit: null,
+    gitCommitFiles: [],
+    gitCommitFilesLoading: false,
     gitContextFile: '',
     gitContextSection: '',
     lastMessageTimestamp: null,
@@ -1753,7 +1756,23 @@
     if (commits.length) {
       html += '<div class="git-section"><div class="git-section-title commits">Commits</div>';
       commits.forEach((commit) => {
-        html += '<div class="git-commit"><span class="git-hash">' + esc(commit.hash) + '</span>' + esc(commit.message) + '</div>';
+        const isExpanded = state.gitExpandedCommit === commit.hash;
+        const chevron = '<span class="git-commit-chevron">' + (isExpanded ? '▼' : '►') + '</span>';
+        html += '<div class="git-commit' + (isExpanded ? ' expanded' : '') + '" data-commit-hash="' + esc(commit.hash) + '">' + chevron + '<span class="git-hash">' + esc(commit.hash) + '</span>' + esc(commit.message) + '</div>';
+        if (isExpanded) {
+          if (state.gitCommitFilesLoading) {
+            html += '<div class="git-commit-files"><div class="diff-loading">Loading files…</div></div>';
+          } else if (state.gitCommitFiles.length) {
+            html += '<div class="git-commit-files">';
+            state.gitCommitFiles.forEach((cf) => {
+              const statusCls = 'cf-' + (cf.status || 'M').charAt(0);
+              html += '<div class="git-commit-file" data-commit-file="' + esc(cf.file) + '" data-commit-hash="' + esc(commit.hash) + '"><span class="git-cf-status ' + statusCls + '">' + esc(cf.status) + '</span><span class="git-file-name">' + esc(cf.file) + '</span></div>';
+            });
+            html += '</div>';
+          } else {
+            html += '<div class="git-commit-files"><div class="git-empty" style="padding:4px 0;font-size:11px">No files changed</div></div>';
+          }
+        }
       });
       html += '</div>';
     }
@@ -1788,6 +1807,78 @@
         showGitContextMenu(event, node.getAttribute('data-git-file'), node.getAttribute('data-git-section'));
       });
     });
+    els.gitPanelBody.querySelectorAll('[data-commit-hash].git-commit').forEach((node) => {
+      node.addEventListener('click', () => {
+        toggleCommitExpansion(node.getAttribute('data-commit-hash'));
+      });
+    });
+    els.gitPanelBody.querySelectorAll('[data-commit-file]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openCommitDiff(node.getAttribute('data-commit-hash'), node.getAttribute('data-commit-file'));
+      });
+    });
+  }
+
+  async function toggleCommitExpansion(hash) {
+    if (state.gitExpandedCommit === hash) {
+      state.gitExpandedCommit = null;
+      state.gitCommitFiles = [];
+      state.gitCommitFilesLoading = false;
+      renderGitPanel();
+      return;
+    }
+    state.gitExpandedCommit = hash;
+    state.gitCommitFiles = [];
+    state.gitCommitFilesLoading = true;
+    renderGitPanel();
+    try {
+      const response = await api('/api/git-commit-files', {
+        method: 'POST',
+        body: JSON.stringify({ path: activeGitPath(), hash })
+      });
+      if (state.gitExpandedCommit !== hash) return;
+      state.gitCommitFiles = response.ok ? (response.files || []) : [];
+    } catch (error) {
+      if (state.gitExpandedCommit !== hash) return;
+      state.gitCommitFiles = [];
+    }
+    state.gitCommitFilesLoading = false;
+    renderGitPanel();
+  }
+
+  async function openCommitDiff(hash, file) {
+    const path = activeGitPath();
+    if (!path || !hash || !file) return;
+    const shortHash = hash.substring(0, 7);
+    state.gitDiffFile = file;
+    state.gitDiffSection = 'commit';
+    state.gitDiffIsMarkdown = /\.md$/i.test(file);
+    state.gitDiffCache = { diffHtml: '', previewHtml: '' };
+    if (els.diffTabs) els.diffTabs.style.display = state.gitDiffIsMarkdown ? 'flex' : 'none';
+    setDiffTabState('diff');
+    els.diffPanelTitle.textContent = file + ' @ ' + shortHash;
+    els.diffPanelBody.innerHTML = '<div class="diff-loading">Loading diff\u2026</div>';
+    els.diffOverlay.classList.add('visible');
+    try {
+      const response = await api('/api/git-commit-diff', {
+        method: 'POST',
+        body: JSON.stringify({ path, hash, file })
+      });
+      if (state.gitDiffFile !== file) return;
+      state.gitDiffCache.diffHtml = response.ok
+        ? renderDiffView(response.diff || '')
+        : '<div class="diff-loading" style="color:var(--red)">' + esc(response.error || 'Failed to load diff') + '</div>';
+      if (state.gitDiffTab === 'diff') {
+        els.diffPanelBody.innerHTML = state.gitDiffCache.diffHtml;
+      }
+    } catch (error) {
+      if (state.gitDiffFile !== file) return;
+      state.gitDiffCache.diffHtml = '<div class="diff-loading" style="color:var(--red)">' + esc(error.message || 'Failed to load diff') + '</div>';
+      if (state.gitDiffTab === 'diff') {
+        els.diffPanelBody.innerHTML = state.gitDiffCache.diffHtml;
+      }
+    }
   }
 
   async function fetchGitStatus() {
