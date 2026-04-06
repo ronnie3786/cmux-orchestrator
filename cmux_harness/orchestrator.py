@@ -14,6 +14,7 @@ from . import contracts
 from . import approval
 from . import cmux_api
 from . import detection
+from . import evaluator
 from . import monitor
 from . import objectives
 from . import planner
@@ -1444,6 +1445,19 @@ Verdict rules:
                 for item in failed_criteria
             ]
 
+        tier2_failed = False
+        # Tier 2: Maestro functional test (if available and contract exists)
+        if contract_text and evaluator.is_maestro_available():
+            flow_yaml = evaluator.generate_maestro_flow(contract_text)
+            tier2_passed, tier2_output = evaluator.run_tier2_maestro(flow_yaml)
+            review_json["tier2_maestro"] = "pass" if tier2_passed else "fail"
+            if not tier2_passed:
+                if not isinstance(review_json.get("issues"), list):
+                    review_json["issues"] = []
+                review_json["issues"].append(f"Maestro test failed: {tier2_output[:200]}")
+                tier2_failed = True
+                needs_rework = True
+
         objectives.write_task_file(
             objective_id,
             task_id,
@@ -1461,7 +1475,7 @@ Verdict rules:
 
         # Use verdict-based check (new focused review) with fallback to legacy format
         verdict = review_json.get("verdict", "").lower()
-        if failed_criteria:
+        if failed_criteria or tier2_failed:
             needs_rework = True
         elif verdict == "pass":
             needs_rework = False
