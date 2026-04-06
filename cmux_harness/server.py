@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -840,6 +841,56 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": str(e)}, 500)
                     return
                 self._json_response({"ok": True, "content": content})
+            elif self.path == "/api/git-commit-files":
+                cwd = self._resolve_git_path(data.get("path"))
+                commit_hash = str(data.get("hash") or "").strip()
+                if not cwd or not commit_hash:
+                    self._json_response({"ok": False, "error": "path and hash required"}, 400)
+                    return
+                if not re.fullmatch(r"[0-9a-f]{4,40}", commit_hash, flags=re.IGNORECASE):
+                    self._json_response({"ok": False, "error": "invalid hash"}, 400)
+                    return
+                result = engine._run_git_command(
+                    cwd,
+                    ["diff-tree", "--no-commit-id", "--name-status", "-r", commit_hash],
+                )
+                if result.startswith("[error]"):
+                    self._json_response({"ok": False, "error": result}, 500)
+                    return
+                files = []
+                for line in result.splitlines():
+                    parts = line.split("\t", 1)
+                    if len(parts) != 2:
+                        continue
+                    status, file = parts
+                    if status and file:
+                        files.append({"status": status, "file": file})
+                self._json_response({"ok": True, "files": files})
+            elif self.path == "/api/git-commit-diff":
+                cwd = self._resolve_git_path(data.get("path"))
+                commit_hash = str(data.get("hash") or "").strip()
+                file = str(data.get("file") or "").strip()
+                if not cwd or not commit_hash or not file:
+                    self._json_response({"ok": False, "error": "path, hash and file required"}, 400)
+                    return
+                if not re.fullmatch(r"[0-9a-f]{4,40}", commit_hash, flags=re.IGNORECASE):
+                    self._json_response({"ok": False, "error": "invalid hash"}, 400)
+                    return
+                result = engine._run_git_command(
+                    cwd,
+                    ["diff", commit_hash + "~1", commit_hash, "--", file],
+                    max_bytes=50 * 1024,
+                )
+                if result.startswith("[error]"):
+                    result = engine._run_git_command(
+                        cwd,
+                        ["show", commit_hash, "--", file],
+                        max_bytes=50 * 1024,
+                    )
+                if result.startswith("[error]"):
+                    self._json_response({"ok": False, "error": result}, 500)
+                    return
+                self._json_response({"ok": True, "diff": result})
             else:
                 self.send_error(404)
 

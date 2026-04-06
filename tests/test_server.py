@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -8,6 +9,8 @@ from unittest.mock import Mock, patch
 
 from cmux_harness import objectives
 from cmux_harness.server import make_handler
+
+REAL_SUBPROCESS_RUN = subprocess.run
 
 
 class _BrokenPipeStream:
@@ -93,6 +96,67 @@ class TestServerResponses(unittest.TestCase):
         handler.rfile = io.BytesIO(body)
         handler.do_POST()
         return handler
+
+    def _run_git_command(self, cwd, args, max_bytes=None):
+        if not cwd:
+            return ""
+        try:
+            if not os.path.isdir(cwd):
+                return f"[error] cwd not found: {cwd}"
+            result = REAL_SUBPROCESS_RUN(
+                ["git"] + args,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            return f"[error] git {' '.join(args)} timed out after 10s"
+        except OSError as exc:
+            return f"[error] git {' '.join(args)} failed: {exc}"
+
+        output = result.stdout or ""
+        if result.returncode != 0:
+            err = (result.stderr or "").strip()
+            if err:
+                output = err if not output.strip() else f"{output.rstrip()}\n{err}"
+        if max_bytes is not None:
+            raw = output.encode("utf-8", errors="replace")
+            if len(raw) > max_bytes:
+                marker = b"\n...[truncated]..."
+                output = (raw[: max_bytes - len(marker)] + marker).decode("utf-8", errors="replace")
+        return output.strip()
+
+    def _make_git_engine(self):
+        engine = Mock()
+        engine._run_git_command.side_effect = self._run_git_command
+        return engine
+
+    def _git(self, cwd, *args):
+        return REAL_SUBPROCESS_RUN(
+            ["git", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _create_git_repo_with_history(self, name):
+        repo_path = Path(self.tmpdir.name) / name
+        (repo_path / "src").mkdir(parents=True)
+        self._git(repo_path.parent, "init", repo_path.name)
+        self._git(repo_path, "config", "user.name", "Test User")
+        self._git(repo_path, "config", "user.email", "test@example.com")
+        target = repo_path / "src" / "app.py"
+        target.write_text("print('one')\n", encoding="utf-8")
+        self._git(repo_path, "add", "src/app.py")
+        self._git(repo_path, "commit", "-m", "initial commit")
+        first_hash = self._git(repo_path, "rev-parse", "HEAD").stdout.strip()
+        target.write_text("print('two')\n", encoding="utf-8")
+        self._git(repo_path, "add", "src/app.py")
+        self._git(repo_path, "commit", "-m", "update app")
+        second_hash = self._git(repo_path, "rev-parse", "HEAD").stdout.strip()
+        return repo_path, first_hash, second_hash
 
     def test_get_objective_debug_endpoint_returns_filtered_entries(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
@@ -237,6 +301,47 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         handler.send_response.assert_called_once_with(404)
         self.assertEqual(body, {"ok": False, "error": "file not found"})
+
+    def test_git_commit_files_returns_changed_files(self):
+        repo_path, _first_hash, second_hash = self._create_git_repo_with_history("repo-commit-files")
+
+        handler = self._post_json(
+            "/api/git-commit-files",
+            {"path": str(repo_path), "hash": second_hash},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "files": [{"status": "M", "file": "src/app.py"}]})
+
+    def test_git_commit_files_rejects_invalid_hash(self):
+        repo_path = Path(self.tmpdir.name) / "repo-invalid-hash"
+        repo_path.mkdir(parents=True)
+
+        handler = self._post_json(
+            "/api/git-commit-files",
+            {"path": str(repo_path), "hash": "not-a-hash"},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(400)
+        self.assertEqual(body, {"ok": False, "error": "invalid hash"})
+
+    def test_git_commit_diff_returns_diff_for_commit(self):
+        repo_path, _first_hash, second_hash = self._create_git_repo_with_history("repo-commit-diff")
+
+        handler = self._post_json(
+            "/api/git-commit-diff",
+            {"path": str(repo_path), "hash": second_hash, "file": "src/app.py"},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertIn("diff --git a/src/app.py b/src/app.py", body["diff"])
+        self.assertIn("-print('one')", body["diff"])
+        self.assertIn("+print('two')", body["diff"])
 
     def test_get_build_log_returns_exists_false_when_file_is_missing(self):
         worktree_path = Path(self.tmpdir.name) / "worktree-missing-build-log"

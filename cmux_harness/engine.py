@@ -454,7 +454,7 @@ class HarnessEngine(threading.Thread):
                     staged.append({"status": x, "file": fpath})
                 if y not in (" ", "?"):
                     unstaged.append({"status": y, "file": fpath})
-        log_raw = self._run_git_command(cwd, ["log", "--oneline", "-3"])
+        log_raw = self._run_git_command(cwd, ["log", "--oneline", "-10"])
         commits = []
         for line in log_raw.splitlines():
             if line.startswith("[error]"):
