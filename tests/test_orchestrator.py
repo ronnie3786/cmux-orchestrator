@@ -774,9 +774,31 @@ class TestReviewRework(unittest.TestCase):
         objectives.update_objective(objective["id"], {"tasks": tasks, "status": status})
         return objective
 
-    def _create_task_files(self, objective_id, task_id, result_text="task result", spec_text="task spec"):
+    def _create_task_files(
+        self,
+        objective_id,
+        task_id,
+        result_text="task result",
+        spec_text="task spec",
+        contract_text=None,
+    ):
         objectives.write_task_file(objective_id, task_id, "result.md", result_text)
         objectives.write_task_file(objective_id, task_id, "spec.md", spec_text)
+        if contract_text is not None:
+            objectives.write_task_file(objective_id, task_id, "contract.md", contract_text)
+
+    def test_build_task_review_prompt_accepts_contract_text(self):
+        prompt = self.orchestrator._build_task_review_prompt(
+            "task spec",
+            "task result",
+            "1 file changed",
+            "diff --git a/foo b/foo",
+            "AC1: saves data",
+        )
+
+        self.assertIn("=== CONTRACT ACCEPTANCE CRITERIA ===", prompt)
+        self.assertIn("AC1: saves data", prompt)
+        self.assertIn("criteria_results", prompt)
 
     def test_run_review_passes_clean_review(self):
         worktree = self.project_dir / "wt-pass"
@@ -796,10 +818,18 @@ class TestReviewRework(unittest.TestCase):
         mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
         with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
                 patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
-                    "summary": "Good work",
+                    "verdict": "pass",
+                    "tier1_build": "skipped",
+                    "tier2_maestro": "skipped",
+                    "criteria_results": [
+                        {
+                            "criterion": "Contract is satisfied",
+                            "result": "pass",
+                            "evidence": "Implementation and diff match the requirement",
+                        }
+                    ],
                     "issues": [],
-                    "confidence": "high",
-                    "readyForPR": True,
+                    "recommendation": "Looks good",
                 }), \
                 patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=False), \
                 patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch_ready, \
@@ -812,8 +842,8 @@ class TestReviewRework(unittest.TestCase):
         self.assertEqual(updated_task["reviewCycles"], 1)
         self.assertIn("completedAt", updated_task)
         self.assertEqual(
-            json.loads(objectives.read_task_file(objective["id"], "task-1", "review.json"))["summary"],
-            "Good work",
+            json.loads(objectives.read_task_file(objective["id"], "task-1", "review.json"))["criteria_results"][0]["result"],
+            "pass",
         )
         self.assertTrue(any("review passed" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
         mock_launch_ready.assert_called_once_with(objective["id"])
@@ -832,19 +862,27 @@ class TestReviewRework(unittest.TestCase):
             "maxReviewCycles": 5,
         }
         objective = self._create_objective([task])
-        self._create_task_files(objective["id"], "task-1")
+        self._create_task_files(objective["id"], "task-1", contract_text="AC1: Feature works end-to-end")
 
         mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
         with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
                 patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
-                    "summary": "Needs work",
-                    "issues": ["Fix formatting"],
-                    "confidence": "medium",
-                    "readyForPR": False,
+                    "verdict": "pass",
+                    "tier1_build": "skipped",
+                    "tier2_maestro": "skipped",
+                    "criteria_results": [
+                        {
+                            "criterion": "Feature works end-to-end",
+                            "result": "fail",
+                            "evidence": "Only UI wiring is present; no functional backend behavior",
+                        }
+                    ],
+                    "issues": [],
+                    "recommendation": "Implement the missing backend behavior",
                 }), \
                 patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=True), \
                 patch("cmux_harness.orchestrator.monitor.can_retry_review", return_value=True), \
-                patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")), \
+                patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")) as mock_rework_summary, \
                 patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="shell prompt"), \
                 patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False), \
                 patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send_text, \
@@ -868,6 +906,7 @@ class TestReviewRework(unittest.TestCase):
             purpose="rework",
             task_id="task-1",
         )
+        self.assertIn("Feature works end-to-end", mock_rework_summary.call_args.args[0]["issues"][0])
         mock_send_prompt.assert_called_once()
         self.assertTrue(
             any("sending back for fixes" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"]))
@@ -891,10 +930,18 @@ class TestReviewRework(unittest.TestCase):
         mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
         with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
                 patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
-                    "summary": "Still broken",
+                    "verdict": "fail",
+                    "tier1_build": "skipped",
+                    "tier2_maestro": "skipped",
+                    "criteria_results": [
+                        {
+                            "criterion": "Feature works end-to-end",
+                            "result": "fail",
+                            "evidence": "Implementation is still incomplete",
+                        }
+                    ],
                     "issues": ["Fix formatting"],
-                    "confidence": "low",
-                    "readyForPR": False,
+                    "recommendation": "Clean up code",
                 }), \
                 patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=True), \
                 patch("cmux_harness.orchestrator.monitor.can_retry_review", return_value=False), \

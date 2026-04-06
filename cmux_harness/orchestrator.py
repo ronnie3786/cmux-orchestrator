@@ -1272,7 +1272,7 @@ class Orchestrator:
         finally:
             self._review_in_progress.discard(task_id)
 
-    def _build_task_review_prompt(self, spec_text, result_text, git_diff_stat, git_diff):
+    def _build_task_review_prompt(self, spec_text, result_text, git_diff_stat, git_diff, contract_text=""):
         """Build a focused review prompt for orchestrator tasks.
 
         Unlike the generic session review prompt, this checks:
@@ -1282,20 +1282,43 @@ class Orchestrator:
         It does NOT check code style, architecture, or PR-readiness.
         """
         return f"""You are reviewing a single task completed by an AI coding worker.
-Your job is to check THREE things only:
+Grade the task against the sprint contract, not against effort or intent. Be skeptical.
+
+Your job is to check FOUR things:
 
 1. **SCOPE COMPLIANCE**: Did the worker ONLY modify files listed in the spec's scope boundary?
 2. **CHECKPOINT COMPLETION**: Did the worker complete all checkpoints listed in the spec?
-3. **CHANGES COMMITTED**: Does `git diff --stat` show the expected file changes?
+3. **CONTRACT ACCEPTANCE CRITERIA**: Grade EACH acceptance criterion from the contract as pass/fail with concrete evidence from the result text or diff.
+4. **CHANGES COMMITTED**: Does `git diff --stat` / `git diff` show the expected functional changes?
+
+Anti-leniency rules:
+- Stubbed, UI-only, or non-functional features FAIL. Do not give credit for partial implementations.
+- If any acceptance criterion is not satisfied end-to-end, mark that criterion as "fail".
+- If evidence is missing, treat it as a fail rather than assuming the feature works.
 
 This is an INTERMEDIATE task in a multi-task pipeline. Do NOT evaluate:
 - Code style or best practices
-- Architecture decisions
-- Whether the overall feature is complete (other tasks handle other parts)
-- Edge cases or error handling beyond what the spec asks for
+- Architecture decisions beyond whether the contract/spec is met
+- Unrelated future work
+
+Few-shot FAIL examples:
+Example 1:
+- Criterion: "User can submit the form and the data is persisted"
+- Evidence: "Diff only adds button styling and a click handler that logs to console"
+- Result: FAIL
+- Why: UI exists, but there is no persistence. Stubbed or UI-only work does not satisfy the criterion.
+
+Example 2:
+- Criterion: "API returns filtered results for status=active"
+- Evidence: "Result mentions endpoint added, but diff only updates docs and test fixtures"
+- Result: FAIL
+- Why: There is no functional implementation proving the endpoint behavior. Claimed completion without working code fails.
 
 === TASK SPEC ===
 {spec_text.strip()}
+
+=== CONTRACT ACCEPTANCE CRITERIA ===
+{contract_text.strip()}
 
 === WORKER'S RESULT ===
 {result_text.strip()}
@@ -1306,20 +1329,25 @@ This is an INTERMEDIATE task in a multi-task pipeline. Do NOT evaluate:
 === GIT DIFF (code changes) ===
 {git_diff.strip()[:3000]}
 
-Respond with ONLY a JSON object:
+Respond with ONLY a JSON object in this exact shape:
 {{
   "verdict": "pass" | "fail",
-  "scopeCompliant": true | false,
-  "checkpointsComplete": true | false,
-  "changesCommitted": true | false,
-  "issues": ["list of SPECIFIC problems — empty if pass"],
-  "recommendation": "What needs to change (if fail) or 'Looks good' (if pass)"
+  "tier1_build": "skipped",
+  "tier2_maestro": "skipped",
+  "criteria_results": [
+    {{
+      "criterion": "desc",
+      "result": "pass" | "fail",
+      "evidence": "why"
+    }}
+  ],
+  "issues": ["list of SPECIFIC problems"],
+  "recommendation": "text"
 }}
 
-IMPORTANT:
-- If scope is respected and checkpoints are done, verdict is "pass" even if the code isn't perfect.
-- Only "fail" if: files outside scope were modified, checkpoints were skipped, or changes weren't committed.
-- A "pass" with minor notes is fine — put notes in recommendation, keep verdict "pass".
+Verdict rules:
+- "pass" only if scope is respected, checkpoints are complete, changes are functional, and every acceptance criterion passes.
+- "fail" if any acceptance criterion fails, if the implementation is stubbed/partial/non-functional, if required changes are missing, or if scope is violated.
 """
 
     def _run_review(self, objective_id, task_id):
@@ -1338,6 +1366,7 @@ IMPORTANT:
         task["status"] = "reviewing"
         result_text = objectives.read_task_file(objective_id, task_id, "result.md") or ""
         spec_text = objectives.read_task_file(objective_id, task_id, "spec.md") or ""
+        contract_text = objectives.read_task_file(objective_id, task_id, "contract.md") or ""
         worktree_path = task.get("worktreePath", "")
 
         git_diff_stat = ""
@@ -1371,7 +1400,13 @@ IMPORTANT:
                     git_diff = (result.stdout or "").strip()
                     break
 
-        review_prompt = self._build_task_review_prompt(spec_text, result_text, git_diff_stat, git_diff)
+        review_prompt = self._build_task_review_prompt(
+            spec_text,
+            result_text,
+            git_diff_stat,
+            git_diff,
+            contract_text,
+        )
 
         review_result = claude_cli.run_sonnet(review_prompt, timeout=120)
         if isinstance(review_result, dict):
@@ -1387,12 +1422,27 @@ IMPORTANT:
                 # If we can't parse, assume pass — don't block pipeline on parse failure
                 review_json = {
                     "verdict": "pass",
-                    "scopeCompliant": True,
-                    "checkpointsComplete": True,
-                    "changesCommitted": True,
+                    "tier1_build": "skipped",
+                    "tier2_maestro": "skipped",
+                    "criteria_results": [],
                     "issues": [],
                     "recommendation": "Review parse failed — auto-passing to avoid blocking pipeline",
                 }
+
+        criteria_results = review_json.get("criteria_results")
+        failed_criteria = []
+        if isinstance(criteria_results, list):
+            failed_criteria = [
+                item for item in criteria_results
+                if isinstance(item, dict) and str(item.get("result", "")).lower() == "fail"
+            ]
+
+        issues = review_json.get("issues")
+        if failed_criteria and not (isinstance(issues, list) and any(str(issue).strip() for issue in issues)):
+            review_json["issues"] = [
+                f"{item.get('criterion', 'Acceptance criterion failed')}: {item.get('evidence', 'No evidence provided')}"
+                for item in failed_criteria
+            ]
 
         objectives.write_task_file(
             objective_id,
@@ -1411,7 +1461,9 @@ IMPORTANT:
 
         # Use verdict-based check (new focused review) with fallback to legacy format
         verdict = review_json.get("verdict", "").lower()
-        if verdict == "pass":
+        if failed_criteria:
+            needs_rework = True
+        elif verdict == "pass":
             needs_rework = False
         elif verdict == "fail":
             needs_rework = True
