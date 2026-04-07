@@ -19,6 +19,7 @@ from . import monitor
 from . import objectives
 from . import planner
 from . import review as review_mod
+from . import workspaces
 from . import worker
 from .workspace_mutex import WorkspaceMutex
 
@@ -50,6 +51,7 @@ class Orchestrator:
         self.mutex = WorkspaceMutex()
         self._active_objective_id = None
         self._messages = {}
+        self._workspace_messages = {}
         self._task_screen_cache = {}
         self._task_last_progress = {}
         self._lock = threading.Lock()
@@ -127,6 +129,20 @@ class Orchestrator:
         self._persist_message(objective_id, msg)
         return msg
 
+    def _append_workspace_message(self, workspace_id, msg_type, content, metadata=None):
+        msg = {
+            "id": str(uuid.uuid4()),
+            "timestamp": _utc_now_iso(),
+            "type": msg_type,
+            "content": content,
+            "metadata": metadata or {},
+        }
+        with self._lock:
+            messages = self._workspace_messages.setdefault(workspace_id, [])
+            messages.append(msg)
+        workspaces.append_workspace_message(workspace_id, msg)
+        return msg
+
     def _close_workspace(self, objective_id, workspace_id, purpose, task_id=None):
         if not workspace_id:
             return
@@ -151,6 +167,18 @@ class Orchestrator:
                 "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
             }
             self._log_event(objective_id, "error", "exception", details)
+
+    def _build_workspace_context_prompt(self, workspace):
+        return (
+            "You are the workspace assistant for this repo context.\n\n"
+            f"Project: {workspace.get('projectId') or ''}\n"
+            f"Workspace path: {workspace.get('rootPath') or ''}\n"
+            f"Session name: {workspace.get('name') or ''}\n\n"
+            "You are running inside this workspace path. Help the user inspect the codebase, answer questions, make edits, run git commands, and support open-ended development work.\n\n"
+            "This is NOT a tracked objective unless the user explicitly creates one later.\n"
+            "Do not refer to objective.json, plan.md, or task files unless they actually exist in this workspace.\n"
+            "Be concise and practical."
+        )
 
     def _build_orchestrator_context_prompt(self, objective):
         task_lines = []
@@ -277,6 +305,37 @@ class Orchestrator:
         poll_interval=2.0,
         max_polls=90,
     ):
+        return self._capture_workspace_like_response(
+            objective_id,
+            workspace_uuid,
+            baseline_screen=baseline_screen,
+            user_message=user_message,
+            append_message=append_message,
+            initial_delay=initial_delay,
+            poll_interval=poll_interval,
+            max_polls=max_polls,
+            append_fn=self._append_message,
+            log_fn=lambda record_id, ws_id, msg: self._log_event(
+                record_id,
+                "info",
+                "orchestrator_chat_response",
+                {"workspaceId": ws_id, "message": msg},
+            ),
+        )
+
+    def _capture_workspace_like_response(
+        self,
+        record_id,
+        workspace_uuid,
+        baseline_screen="",
+        user_message="",
+        append_message=True,
+        initial_delay=2.0,
+        poll_interval=2.0,
+        max_polls=90,
+        append_fn=None,
+        log_fn=None,
+    ):
         time.sleep(initial_delay)
         previous_screen = None
         final_screen = ""
@@ -293,14 +352,10 @@ class Orchestrator:
             final_screen = previous_screen or ""
 
         response_text = self._extract_orchestrator_response(final_screen, baseline_screen, user_message)
-        if append_message and response_text:
-            self._append_message(objective_id, "assistant", response_text)
-            self._log_event(
-                objective_id,
-                "info",
-                "orchestrator_chat_response",
-                {"workspaceId": workspace_uuid, "message": user_message},
-            )
+        if append_message and response_text and append_fn:
+            append_fn(record_id, "assistant", response_text)
+            if log_fn:
+                log_fn(record_id, workspace_uuid, user_message)
         return response_text
 
     def _idle_sweep(self):
@@ -330,6 +385,22 @@ class Orchestrator:
                     "orchestrator_session_idle_shutdown",
                     {"workspaceId": workspace_uuid},
                 )
+            for workspace in workspaces.list_workspace_sessions():
+                if not workspace.get("sessionActive"):
+                    continue
+                last_activity = workspace.get("lastActivityAt")
+                if not last_activity:
+                    continue
+                try:
+                    elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(last_activity)).total_seconds()
+                except ValueError:
+                    continue
+                if elapsed <= 3600:
+                    continue
+                workspace_uuid = workspace.get("cmuxWorkspaceId")
+                if workspace_uuid:
+                    self._close_workspace(workspace.get("id"), workspace_uuid, "workspace_idle_timeout")
+                workspaces.update_workspace_session(workspace["id"], {"sessionActive": False, "status": "idle"})
 
     def _plan_review_metadata(self, parsed):
         tasks = []
@@ -398,11 +469,7 @@ class Orchestrator:
             return []
         return messages
 
-    def get_messages(self, objective_id, after=None):
-        with self._lock:
-            if objective_id not in self._messages:
-                self._messages[objective_id] = self._load_messages(objective_id)
-            messages = list(self._messages[objective_id])
+    def _filter_messages_after(self, messages, after=None):
         if after is None:
             return messages
         try:
@@ -421,6 +488,110 @@ class Orchestrator:
             if msg_dt > after_dt:
                 filtered.append(msg)
         return filtered
+
+    def get_messages(self, objective_id, after=None):
+        with self._lock:
+            if objective_id not in self._messages:
+                self._messages[objective_id] = self._load_messages(objective_id)
+            messages = list(self._messages[objective_id])
+        return self._filter_messages_after(messages, after=after)
+
+    def get_workspace_messages(self, workspace_id, after=None):
+        with self._lock:
+            if workspace_id not in self._workspace_messages:
+                self._workspace_messages[workspace_id] = workspaces.load_workspace_messages(workspace_id)
+            messages = list(self._workspace_messages[workspace_id])
+        return self._filter_messages_after(messages, after=after)
+
+    def start_workspace_session(self, workspace_id):
+        workspace = workspaces.read_workspace_session(workspace_id)
+        if workspace is None:
+            return None
+        root_path = workspace.get("rootPath") or ""
+        if not root_path:
+            return None
+        workspace_uuid, created = self._create_worker_workspace(
+            f"Workspace: {(workspace.get('name') or '')[:40]}",
+            root_path,
+            objective_id=workspace_id,
+            purpose="workspace",
+        )
+        if not created or not workspace_uuid:
+            return None
+        if not self._wait_for_repl(workspace_uuid, objective_id=workspace_id, purpose="workspace"):
+            self._close_workspace(workspace_id, workspace_uuid, "workspace_startup_failed")
+            return None
+        prompt = self._build_workspace_context_prompt(workspace)
+        if not cmux_api.send_prompt_to_workspace(workspace_uuid, prompt):
+            self._close_workspace(workspace_id, workspace_uuid, "workspace_context_failed")
+            return None
+        self._capture_workspace_like_response(
+            workspace_id,
+            workspace_uuid,
+            append_message=False,
+            max_polls=90,
+        )
+        workspaces.update_workspace_session(
+            workspace_id,
+            {
+                "cmuxWorkspaceId": workspace_uuid,
+                "sessionActive": True,
+                "status": "active",
+                "lastActivityAt": _utc_now_iso(),
+            },
+        )
+        return workspace_uuid
+
+    def close_workspace_session(self, workspace_id, reason="manual"):
+        workspace = workspaces.read_workspace_session(workspace_id)
+        if workspace is None:
+            return False
+        workspace_uuid = workspace.get("cmuxWorkspaceId")
+        if workspace_uuid:
+            self._close_workspace(workspace_id, workspace_uuid, f"workspace_{reason}")
+        workspaces.update_workspace_session(
+            workspace_id,
+            {"sessionActive": False, "status": "closed" if reason == "delete" else "idle"},
+        )
+        return True
+
+    def handle_workspace_input(self, workspace_id, message):
+        self._append_workspace_message(workspace_id, "user", message)
+        workspace = workspaces.read_workspace_session(workspace_id)
+        if workspace is None:
+            return
+        workspace_uuid = workspace.get("cmuxWorkspaceId")
+        is_active = workspace.get("sessionActive", False)
+        if not workspace_uuid or not is_active:
+            self._append_workspace_message(workspace_id, "system", "Resuming workspace session...")
+            workspace_uuid = self.start_workspace_session(workspace_id)
+            if not workspace_uuid:
+                self._append_workspace_message(workspace_id, "alert", "Could not start workspace session.")
+                return
+        baseline_screen = cmux_api.cmux_read_workspace(0, 0, lines=200, workspace_uuid=workspace_uuid) or ""
+        if not cmux_api.send_prompt_to_workspace(workspace_uuid, message):
+            self._append_workspace_message(workspace_id, "alert", "Could not deliver message to workspace session.")
+            return
+        workspaces.update_workspace_session(
+            workspace_id,
+            {
+                "lastActivityAt": _utc_now_iso(),
+                "cmuxWorkspaceId": workspace_uuid,
+                "sessionActive": True,
+                "status": "active",
+            },
+        )
+        threading.Thread(
+            target=self._capture_workspace_like_response,
+            args=(workspace_id, workspace_uuid),
+            kwargs={
+                "baseline_screen": baseline_screen,
+                "user_message": message,
+                "append_message": True,
+                "append_fn": self._append_workspace_message,
+            },
+            daemon=True,
+        ).start()
 
     def start_objective(self, objective_id):
         objective = objectives.read_objective(objective_id)

@@ -12,8 +12,12 @@
   const state = {
     projects: [],
     objectives: [],
+    workspaces: [],
+    activeTargetType: null,
     activeObjectiveId: null,
     activeObjective: null,
+    activeWorkspaceId: null,
+    activeWorkspace: null,
     actionButtons: [],
     actionButtonState: {},
     messages: [],
@@ -46,6 +50,8 @@
     sidebarOpen: true,
     sidebarFormOpen: false,
     sidebarFormMode: 'objective',
+    draftWorkspaceName: '',
+    draftWorkspaceRootPath: '',
     projectExpansion: {},
     settingsOpen: false,
     settingsSaving: false,
@@ -519,6 +525,18 @@
     return sortedObjectives((state.objectives || []).filter((objective) => objective.projectId === projectId));
   }
 
+  function sortedWorkspaces(list) {
+    return [...(list || [])].sort((a, b) => {
+      const aTs = parseIso(a.updatedAt || a.createdAt) || 0;
+      const bTs = parseIso(b.updatedAt || b.createdAt) || 0;
+      return bTs - aTs;
+    });
+  }
+
+  function projectWorkspaces(projectId) {
+    return sortedWorkspaces((state.workspaces || []).filter((workspace) => workspace.projectId === projectId));
+  }
+
   function findProject(projectId) {
     return (state.projects || []).find((project) => project.id === projectId) || null;
   }
@@ -526,6 +544,7 @@
   function selectedProjectId() {
     if (state.draftProjectId && findProject(state.draftProjectId)) return state.draftProjectId;
     if (state.activeObjective && state.activeObjective.projectId && findProject(state.activeObjective.projectId)) return state.activeObjective.projectId;
+    if (state.activeWorkspace && state.activeWorkspace.projectId && findProject(state.activeWorkspace.projectId)) return state.activeWorkspace.projectId;
     return (sortedProjects(state.projects)[0] || {}).id || '';
   }
 
@@ -538,6 +557,9 @@
     });
     if (state.activeObjective) {
       next[state.activeObjective.projectId] = true;
+    }
+    if (state.activeWorkspace) {
+      next[state.activeWorkspace.projectId] = true;
     }
     state.projectExpansion = next;
   }
@@ -819,12 +841,14 @@
   }
 
   function activeGitPath() {
+    if (state.activeWorkspace && state.activeWorkspace.rootPath) return String(state.activeWorkspace.rootPath).trim();
     return state.activeObjective && (state.activeObjective.worktreePath || state.activeObjective.projectDir)
       ? String(state.activeObjective.worktreePath || state.activeObjective.projectDir).trim()
       : '';
   }
 
   function activeFilesRoot() {
+    if (state.activeWorkspace && state.activeWorkspace.rootPath) return String(state.activeWorkspace.rootPath).trim();
     return state.activeObjective && state.activeObjective.worktreePath
       ? String(state.activeObjective.worktreePath).trim()
       : '';
@@ -837,14 +861,28 @@
     return branch ? ('⎇ ' + branch) : '⎇ git';
   }
 
-  function currentObjectiveName() {
+  function currentTargetName() {
+    if (state.activeWorkspace) return String(state.activeWorkspace.name || state.activeWorkspace.rootPath || 'Workspace');
     const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
-    return objective && objective.goal ? String(objective.goal) : 'No objective selected';
+    return objective && objective.goal ? String(objective.goal) : 'Nothing selected';
   }
 
-  async function openObjectiveWorktreeInVSCode() {
+  async function openActiveRootInVSCode() {
+    if (state.activeWorkspaceId) {
+      try {
+        await api('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId) + '/open-root', {
+          method: 'POST',
+          body: JSON.stringify({})
+        });
+        showToast('Opened workspace in VS Code');
+      } catch (error) {
+        console.error('open-workspace failed', error);
+        showToast(error.message || 'Could not open workspace in VS Code');
+      }
+      return;
+    }
     if (!state.activeObjectiveId) {
-      showToast('No active objective worktree');
+      showToast('No active workspace or objective');
       return;
     }
     try {
@@ -1582,10 +1620,14 @@
   }
 
   function ensureSelection() {
-    const available = sortedObjectives(state.objectives);
-    if (!available.length) {
+    const availableObjectives = sortedObjectives(state.objectives);
+    const availableWorkspaces = sortedWorkspaces(state.workspaces);
+    if (!availableObjectives.length && !availableWorkspaces.length) {
+      state.activeTargetType = null;
       state.activeObjectiveId = null;
       state.activeObjective = null;
+      state.activeWorkspaceId = null;
+      state.activeWorkspace = null;
       state.actionButtons = [];
       state.actionButtonState = {};
       state.fabModalOpen = false;
@@ -1595,11 +1637,22 @@
       resetConsoleLogState();
       return;
     }
-    if (state.activeObjectiveId && available.some((item) => item.id === state.activeObjectiveId)) {
+    if (state.activeTargetType === 'workspace' && state.activeWorkspaceId && availableWorkspaces.some((item) => item.id === state.activeWorkspaceId)) {
       return;
     }
-    const running = available.find((item) => ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase()));
-    state.activeObjectiveId = (running || available[0]).id;
+    if (state.activeTargetType === 'objective' && state.activeObjectiveId && availableObjectives.some((item) => item.id === state.activeObjectiveId)) {
+      return;
+    }
+    if (availableWorkspaces.length) {
+      state.activeTargetType = 'workspace';
+      state.activeWorkspaceId = availableWorkspaces[0].id;
+      state.activeObjectiveId = null;
+      return;
+    }
+    const running = availableObjectives.find((item) => ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase()));
+    state.activeTargetType = 'objective';
+    state.activeObjectiveId = (running || availableObjectives[0]).id;
+    state.activeWorkspaceId = null;
   }
 
   function isNearBottom() {
@@ -1904,6 +1957,9 @@
     els.main.classList.toggle('panel-overlay-open', panelOverlayOpen);
     document.body.classList.toggle('right-panel-open', panelOverlayOpen);
     const isStatusMode = state.rightPanelMode === 'status';
+    if (state.activeWorkspace && isStatusMode) {
+      state.rightPanelMode = 'git';
+    }
     const panelPath = isStatusMode
       ? activeFilesRoot() || path
       : ((state.gitStatus && state.gitStatus.cwd) || path);
@@ -1919,7 +1975,7 @@
       return;
     }
     if (!path) {
-      els.gitPanelBody.innerHTML = '<div class="git-empty">No active objective worktree</div>';
+      els.gitPanelBody.innerHTML = '<div class="git-empty">No active workspace or objective root</div>';
       return;
     }
     if (!data) {
@@ -2249,6 +2305,21 @@
           '</div>',
           '<div class="sf-hint">Point this at an existing git repo. A lightweight project record is all we need for now.</div>'
         ].join('')
+      : state.sidebarFormMode === 'workspace'
+        ? [
+          '<div class="sf-mode-title">Open workspace</div>',
+          '<label class="sf-field-label" for="workspaceProjectSelectInput">Project</label>',
+          '<select class="sf-input" id="workspaceProjectSelectInput">' + projectOptions + '</select>',
+          '<label class="sf-field-label" for="workspaceRootPathInput">Workspace path</label>',
+          '<input class="sf-input" id="workspaceRootPathInput" placeholder="/path/to/repo/or/worktree" value="' + esc(state.draftWorkspaceRootPath || state.draftProjectDir || '') + '">',
+          '<label class="sf-field-label" for="workspaceNameInput">Name (optional)</label>',
+          '<input class="sf-input" id="workspaceNameInput" placeholder="Main workspace" value="' + esc(state.draftWorkspaceName || '') + '">',
+          '<div class="sf-actions">',
+          '<button class="sf-submit" id="sidebarCreateWorkspaceButton">Open workspace</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '</div>',
+          '<div class="sf-hint">Open an existing repo or worktree without creating an objective first.</div>'
+        ].join('')
       : [
           '<div class="sf-mode-title">New objective</div>',
           '<label class="sf-field-label" for="projectSelectInput">Project</label>',
@@ -2320,6 +2391,26 @@
       });
       return;
     }
+    if (state.sidebarFormMode === 'workspace') {
+      const workspaceProjectSelectInput = document.getElementById('workspaceProjectSelectInput');
+      const workspaceRootPathInput = document.getElementById('workspaceRootPathInput');
+      const workspaceNameInput = document.getElementById('workspaceNameInput');
+      document.getElementById('sidebarCreateWorkspaceButton').addEventListener('click', submitSidebarWorkspace);
+      workspaceProjectSelectInput.addEventListener('change', (event) => {
+        const project = setDraftProject(event.target.value);
+        if ((!state.draftWorkspaceRootPath || state.draftWorkspaceRootPath === state.draftProjectDir) && project && project.rootPath) {
+          state.draftWorkspaceRootPath = project.rootPath;
+          updateSidebarFormFromState();
+        }
+      });
+      workspaceRootPathInput.addEventListener('input', (event) => {
+        state.draftWorkspaceRootPath = event.target.value;
+      });
+      workspaceNameInput.addEventListener('input', (event) => {
+        state.draftWorkspaceName = event.target.value;
+      });
+      return;
+    }
     const projectSelectInput = document.getElementById('projectSelectInput');
     const baseBranchInput = document.getElementById('baseBranchInput');
     const branchNameInput = document.getElementById('branchNameInput');
@@ -2368,6 +2459,26 @@
     updateSidebarFormFromState();
     window.setTimeout(() => {
       const input = document.getElementById('sidebarGoalInput') || document.getElementById('projectSelectInput');
+      if (input) input.focus();
+    }, 0);
+  }
+
+  function openWorkspaceForm(projectId) {
+    openSidebar();
+    state.sidebarFormMode = 'workspace';
+    state.sidebarFormOpen = true;
+    const projects = sortedProjects(state.projects);
+    if (!projects.length) {
+      showToast('Add a project first, then open a workspace.');
+      openProjectForm();
+      return;
+    }
+    const nextProjectId = projectId || state.draftProjectId || selectedProjectId() || (projects[0] && projects[0].id) || '';
+    const project = setDraftProject(nextProjectId, { updateBaseBranch: false });
+    state.draftWorkspaceRootPath = state.draftWorkspaceRootPath || ((project && project.rootPath) || '');
+    updateSidebarFormFromState();
+    window.setTimeout(() => {
+      const input = document.getElementById('workspaceRootPathInput') || document.getElementById('workspaceProjectSelectInput');
       if (input) input.focus();
     }, 0);
   }
@@ -2458,6 +2569,19 @@
       return;
     }
     ensureProjectExpansion();
+    const workspaceCards = (items) => items.map((workspace) => {
+      const active = workspace.id === state.activeWorkspaceId ? ' active' : '';
+      const statusClass = workspace.sessionActive ? 'badge-running' : 'badge-queued';
+      return [
+        '<div class="obj-item nested workspace' + active + '" data-workspace-id="' + esc(workspace.id) + '">',
+        '<div class="obj-status-pill ' + statusClass + '">WS</div>',
+        '<div class="obj-info">',
+        '<div class="obj-name">' + esc(workspace.name || 'Workspace') + '</div>',
+        '<div class="obj-progress"><span>' + esc(compactPath(workspace.rootPath || '')) + '</span></div>',
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
     const objectiveCards = (objectives) => objectives.map((objective) => {
       const meta = statusMeta(objective.status);
       const progress = objectiveProgress(objective);
@@ -2484,6 +2608,7 @@
     }).join('');
     els.objectiveList.innerHTML = projects.map((project) => {
       const objectives = projectObjectives(project.id);
+      const workspaces = projectWorkspaces(project.id);
       const expanded = state.projectExpansion[project.id] !== false;
       const pathHint = compactPath(project.rootPath || '');
       return [
@@ -2494,9 +2619,15 @@
         '<div class="project-name-row"><div class="project-name">' + esc(project.name || 'Untitled project') + '</div><div class="project-count">' + objectives.length + '</div></div>',
         pathHint ? '<div class="project-path">' + esc(pathHint) + '</div>' : '',
         '</div>',
+        '<div class="project-row-actions">',
+        '<button class="project-open-workspace" type="button" data-project-open-workspace="' + esc(project.id) + '">Open workspace</button>',
         '<button class="project-add-objective" type="button" data-project-new-objective="' + esc(project.id) + '" aria-label="New objective in ' + esc(project.name || 'project') + '">+</button>',
         '</div>',
-        expanded ? '<div class="project-objectives">' + (objectives.length ? objectiveCards(objectives) : '<div class="project-empty">No objectives yet</div>') + '</div>' : '',
+        '</div>',
+        expanded ? '<div class="project-objectives">'
+          + '<div class="project-subsection"><div class="project-subsection-label">Workspaces</div>' + (workspaces.length ? workspaceCards(workspaces) : '<div class="project-empty">No workspaces yet</div>') + '</div>'
+          + '<div class="project-subsection"><div class="project-subsection-label">Objectives</div>' + (objectives.length ? objectiveCards(objectives) : '<div class="project-empty">No objectives yet</div>') + '</div>'
+          + '</div>' : '',
         '</div>'
       ].join('');
     }).join('');
@@ -2515,6 +2646,13 @@
         openSidebarForm('', projectId);
       });
     });
+    els.objectiveList.querySelectorAll('[data-project-open-workspace]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const projectId = node.getAttribute('data-project-open-workspace');
+        openWorkspaceForm(projectId);
+      });
+    });
     els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
       node.addEventListener('click', () => {
         const id = node.getAttribute('data-objective-id');
@@ -2526,9 +2664,60 @@
         closeSidebar();
       });
     });
+    els.objectiveList.querySelectorAll('[data-workspace-id]').forEach((node) => {
+      node.addEventListener('click', () => {
+        const id = node.getAttribute('data-workspace-id');
+        if (!id) return;
+        if (id !== state.activeWorkspaceId) {
+          state.activeWorkspaceId = id;
+          state.activeTargetType = 'workspace';
+          loadActiveWorkspace(true);
+        }
+        closeSidebar();
+      });
+    });
   }
 
   function renderContext() {
+    if (state.activeWorkspace) {
+      const workspace = state.activeWorkspace;
+      const gitPath = activeGitPath();
+      const filesRoot = activeFilesRoot();
+      const sessionActive = !!workspace.sessionActive;
+      els.contextStrip.innerHTML = state.isMobile
+        ? [
+            '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>',
+            '<div class="ctx-main">',
+            '<div class="ctx-mobile-row primary"><div class="ctx-title">' + esc(workspace.name || 'Workspace') + '</div></div>',
+            '<div class="ctx-mobile-row secondary">',
+            '<div class="ctx-dot od-' + (sessionActive ? 'running' : 'queued') + '" title="' + esc(sessionActive ? 'Session active' : 'Session idle') + '" aria-label="' + esc(sessionActive ? 'Session active' : 'Session idle') + '"></div>',
+            '<div class="ctx-meta">' + esc(compactPath(workspace.rootPath || '')) + '</div>',
+            '</div>',
+            '</div>',
+            '<div class="ctx-actions">' +
+              (gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '') +
+              (filesRoot ? '<button class="ctx-icon-button" id="filesButton" type="button" title="Open in VS Code">📂</button>' : '') +
+            '</div>'
+          ].join('')
+        : [
+            '<div class="ctx-dot od-' + (sessionActive ? 'running' : 'queued') + '"></div>',
+            '<div class="ctx-main">',
+            '<div class="ctx-title">' + esc(workspace.name || 'Workspace') + '</div>',
+            '<div class="ctx-secondary"><div class="ctx-meta">' + esc(compactPath(workspace.rootPath || '')) + '</div></div>',
+            '</div>',
+            '<div class="ctx-actions">' +
+              (gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '') +
+              (filesRoot ? '<button class="ctx-icon-button" id="filesButton" type="button" title="Open in VS Code">📂</button>' : '') +
+            '</div>'
+          ].join('');
+      const menuButton = document.getElementById('mobileMenuBtn');
+      if (menuButton) menuButton.addEventListener('click', toggleSidebar);
+      const gitButton = document.getElementById('gitPanelToggleButton');
+      if (gitButton) gitButton.addEventListener('click', () => toggleRightPanel('git'));
+      const filesButton = document.getElementById('filesButton');
+      if (filesButton) filesButton.addEventListener('click', openActiveRootInVSCode);
+      return;
+    }
     const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
     if (!objective) {
       els.contextStrip.innerHTML = state.isMobile
@@ -3227,6 +3416,13 @@
   }
 
   function renderInputState() {
+    if (state.activeWorkspace && state.activeWorkspaceId) {
+      els.chatInput.disabled = false;
+      els.inputHint.textContent = 'Chat with the workspace assistant about this repo.';
+      els.chatInput.placeholder = 'Ask about files, code, git status, or make a change...';
+      els.sendButton.disabled = state.pendingCreate || state.pendingSend;
+      return;
+    }
     const objective = state.activeObjective;
     const status = String(objective && objective.status || '').toLowerCase();
     const hasObjective = !!state.activeObjectiveId && !!objective;
@@ -3273,12 +3469,15 @@
 
   async function pollObjectives() {
     const previousActiveId = state.activeObjectiveId;
-    const [objectivesData, projectsData] = await Promise.all([
+    const previousWorkspaceId = state.activeWorkspaceId;
+    const [objectivesData, projectsData, workspacesData] = await Promise.all([
       api('/api/objectives'),
-      api('/api/projects')
+      api('/api/projects'),
+      api('/api/workspaces')
     ]);
     state.objectives = Array.isArray(objectivesData) ? objectivesData : [];
     state.projects = Array.isArray(projectsData) ? projectsData : [];
+    state.workspaces = Array.isArray(workspacesData) ? workspacesData : [];
     ensureProjectExpansion();
     if (!findProject(state.draftProjectId)) {
       setDraftProject(selectedProjectId());
@@ -3298,6 +3497,9 @@
     if (state.activeObjectiveId && state.activeObjectiveId !== previousActiveId) {
       state.actionButtonState = {};
       await loadActiveObjective(false);
+    }
+    if (state.activeWorkspaceId && state.activeWorkspaceId !== previousWorkspaceId) {
+      await loadActiveWorkspace(false);
     }
     renderSidebar();
     renderContext();
@@ -3357,14 +3559,17 @@
   }
 
   async function pollMessages(forceRender) {
-    if (!state.activeObjectiveId) {
+    if (!state.activeObjectiveId && !state.activeWorkspaceId) {
       state.messages = [];
       state.lastMessageTimestamp = null;
       if (forceRender) renderMessages();
       return;
     }
     const query = state.lastMessageTimestamp ? ('?after=' + encodeURIComponent(state.lastMessageTimestamp)) : '';
-    const incoming = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/messages' + query);
+    const basePath = state.activeWorkspaceId
+      ? ('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId) + '/messages')
+      : ('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/messages');
+    const incoming = await api(basePath + query);
     const list = Array.isArray(incoming) ? incoming : [];
     if (state.lastMessageTimestamp) {
       if (list.length) {
@@ -3382,6 +3587,9 @@
   }
 
   async function loadActiveObjective(forceAll) {
+    state.activeTargetType = 'objective';
+    state.activeWorkspaceId = null;
+    state.activeWorkspace = null;
     state.messages = [];
     state.lastMessageTimestamp = null;
     resetBuildLogState();
@@ -3434,6 +3642,61 @@
     }
   }
 
+  async function loadActiveWorkspace(forceAll) {
+    state.activeTargetType = 'workspace';
+    state.activeObjectiveId = null;
+    state.activeObjective = null;
+    state.actionButtons = [];
+    state.actionButtonState = {};
+    state.messages = [];
+    state.lastMessageTimestamp = null;
+    resetBuildLogState();
+    resetConsoleLogState();
+    resetStatusSummaryState();
+    if (!state.activeWorkspaceId) {
+      state.activeWorkspace = null;
+      if (forceAll) render();
+      return;
+    }
+    state.activeWorkspace = await api('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId));
+    await pollMessages(false);
+    if (forceAll) render();
+  }
+
+  async function createWorkspace(options) {
+    const payload = {
+      projectId: options.projectId || undefined,
+      rootPath: options.rootPath,
+      name: options.name || '',
+      source: options.source || 'manual-path'
+    };
+    state.pendingCreate = true;
+    renderInputState();
+    try {
+      const workspace = await api('/api/workspaces', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      await api('/api/workspaces/' + encodeURIComponent(workspace.id) + '/start', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      state.activeWorkspaceId = workspace.id;
+      state.activeTargetType = 'workspace';
+      closeSidebar();
+      state.sidebarFormOpen = false;
+      state.draftWorkspaceName = '';
+      state.draftWorkspaceRootPath = '';
+      els.chatInput.value = '';
+      autoResizeTextarea();
+      await pollObjectives();
+      await loadActiveWorkspace(true);
+    } finally {
+      state.pendingCreate = false;
+      renderInputState();
+    }
+  }
+
   async function submitSidebarObjective() {
     const projectSelectInput = document.getElementById('projectSelectInput');
     const baseBranchInput = document.getElementById('baseBranchInput');
@@ -3457,6 +3720,29 @@
       });
     } catch (error) {
       showToast(error.message || 'Could not create objective');
+    }
+  }
+
+  async function submitSidebarWorkspace() {
+    const projectSelectInput = document.getElementById('workspaceProjectSelectInput');
+    const workspaceRootPathInput = document.getElementById('workspaceRootPathInput');
+    const workspaceNameInput = document.getElementById('workspaceNameInput');
+    setDraftProject(projectSelectInput ? projectSelectInput.value.trim() : state.draftProjectId, { updateBaseBranch: false });
+    state.draftWorkspaceRootPath = workspaceRootPathInput ? workspaceRootPathInput.value.trim() : state.draftWorkspaceRootPath;
+    state.draftWorkspaceName = workspaceNameInput ? workspaceNameInput.value.trim() : state.draftWorkspaceName;
+    if (!state.draftProjectId || !state.draftWorkspaceRootPath) {
+      showToast('Choose a project and workspace path');
+      return;
+    }
+    try {
+      await createWorkspace({
+        projectId: state.draftProjectId,
+        rootPath: state.draftWorkspaceRootPath,
+        name: state.draftWorkspaceName,
+        source: 'manual-path'
+      });
+    } catch (error) {
+      showToast(error.message || 'Could not open workspace');
     }
   }
 
@@ -3498,8 +3784,39 @@
   async function sendMessage() {
     const text = els.chatInput.value.trim();
     if (!text) return;
+    if (state.activeWorkspaceId && state.activeWorkspace) {
+      state.pendingSend = true;
+      renderInputState();
+      const optimistic = {
+        id: 'local-' + Math.random().toString(16).slice(2),
+        timestamp: new Date().toISOString(),
+        type: 'user',
+        content: text,
+        metadata: {}
+      };
+      state.messages.push(optimistic);
+      state.lastMessageTimestamp = optimistic.timestamp;
+      els.chatInput.value = '';
+      autoResizeTextarea();
+      state.typing = true;
+      renderMessages();
+      try {
+        await api('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId) + '/message', {
+          method: 'POST',
+          body: JSON.stringify({ message: text })
+        });
+      } catch (error) {
+        state.typing = false;
+        renderMessages();
+        showToast(error.message || 'Could not send message');
+      } finally {
+        state.pendingSend = false;
+        renderInputState();
+      }
+      return;
+    }
     if (!state.activeObjectiveId || !state.activeObjective) {
-      showToast(state.projects.length ? 'No active objective selected. Create one from a project in the sidebar.' : 'No projects yet. Add a project first.');
+      showToast(state.projects.length ? 'No active workspace or objective selected.' : 'No projects yet. Add a project first.');
       return;
     }
     state.pendingSend = true;
@@ -3599,8 +3916,12 @@
   }
 
   function bindEvents() {
-    els.newObjectiveButton.addEventListener('click', () => {
-      openSidebarForm(state.draftGoal);
+els.newObjectiveButton.addEventListener('click', () => {
+      if (state.activeTargetType === 'workspace') {
+        openWorkspaceForm(selectedProjectId());
+      } else {
+        openSidebarForm(state.draftGoal);
+      }
     });
     els.addProjectButton.addEventListener('click', openProjectForm);
     els.settingsButton.addEventListener('click', openSettingsModal);

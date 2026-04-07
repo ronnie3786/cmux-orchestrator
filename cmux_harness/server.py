@@ -14,6 +14,7 @@ import uuid
 
 from . import cmux_api
 from . import objectives
+from . import workspaces
 from . import review as review_mod
 from . import storage
 from .detection import OLLAMA_URL
@@ -24,6 +25,7 @@ from .routes import file_browser as file_browser_routes
 from .routes import objectives as objective_routes
 from .routes import projects as project_routes
 from .routes import status_summary as status_summary_routes
+from .routes import workspaces as workspace_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_FILES = {
@@ -209,6 +211,8 @@ def make_handler(engine):
                 project_routes.handle_get_project(self, project)
             elif path == "/api/objectives":
                 objective_routes.handle_list_objectives(self)
+            elif path == "/api/workspaces":
+                workspace_routes.handle_list_workspaces(self)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
                 objective = objectives.read_objective(objective_id)
@@ -266,6 +270,12 @@ def make_handler(engine):
             elif path.startswith("/api/objectives/") and "/messages" in path:
                 objective_id = path.split("/")[3]
                 objective_routes.handle_get_messages(self, objective_id, parsed, engine=self.server.engine)
+            elif path.startswith("/api/workspaces/") and path.endswith("/messages"):
+                workspace_id = path.split("/")[3]
+                if workspaces.read_workspace_session(workspace_id) is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_get_messages(self, workspace_id, parsed, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and path.endswith("/debug"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/debug")]).strip("/")
                 if objectives.read_objective(objective_id) is None:
@@ -279,6 +289,13 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 objective_routes.handle_get_objective(self, objective)
+            elif path.startswith("/api/workspaces/"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_get_workspace(self, workspace)
             elif path.startswith("/api/reviews/"):
                 session_id = urllib.parse.unquote(path[len("/api/reviews/"):])
                 review = storage.get_review(session_id)
@@ -416,12 +433,33 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 file_browser_routes.handle_open_worktree(self, objective)
+            elif path.startswith("/api/workspaces/") and path.endswith("/start"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/start")]).strip("/")
+                if workspaces.read_workspace_session(workspace_id) is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_post_start(self, workspace_id, engine=self.server.engine)
+            elif path.startswith("/api/workspaces/") and path.endswith("/message"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/message")]).strip("/")
+                if workspaces.read_workspace_session(workspace_id) is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_post_message(self, workspace_id, data, engine=self.server.engine, threading_module=threading)
+            elif path.startswith("/api/workspaces/") and path.endswith("/open-root"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/open-root")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                file_browser_routes.handle_open_workspace_root(self, workspace)
             elif path == "/api/projects/pick-root":
                 project_routes.handle_post_pick_project_root(self)
             elif path == "/api/projects":
                 project_routes.handle_post_create_project(self, data)
             elif path == "/api/objectives":
                 objective_routes.handle_post_create_objective(self, data, engine=self.server.engine)
+            elif path == "/api/workspaces":
+                workspace_routes.handle_post_create_workspace(self, data)
             elif path == "/api/workspace":
                 idx = data.get("index")
                 enabled = data.get("enabled", True)
@@ -1009,6 +1047,14 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 objective_routes.handle_delete_objective(self, objective_id, engine=self.server.engine)
+                return
+            if path.startswith("/api/workspaces/"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_delete_workspace(self, workspace_id, engine=self.server.engine)
                 return
             self.send_error(404)
 
