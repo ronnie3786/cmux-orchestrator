@@ -2523,7 +2523,7 @@
     }
     const nextProjectId = projectId || state.draftProjectId || selectedProjectId() || (projects[0] && projects[0].id) || '';
     const project = setDraftProject(nextProjectId, { updateBaseBranch: false });
-    state.draftWorkspaceRootPath = state.draftWorkspaceRootPath || ((project && project.rootPath) || '');
+    state.draftWorkspaceRootPath = (project && project.rootPath) || state.draftWorkspaceRootPath || '';
     updateSidebarFormFromState();
     window.setTimeout(() => {
       const input = document.getElementById('workspaceRootPathInput') || document.getElementById('workspaceProjectSelectInput');
@@ -2632,7 +2632,7 @@
           const statusClass = item.sessionActive ? 'badge-running' : 'badge-queued';
           return [
             '<div class="obj-item nested workspace' + active + '" data-workspace-id="' + esc(item.id) + '">',
-            '<div class="obj-status-pill ' + statusClass + '">WS</div>',
+            '<div class="obj-dot ' + (item.sessionActive ? 'od-running' : 'od-queued') + '"></div>',
             '<div class="obj-info">',
             '<div class="obj-name">' + esc(item.name || 'Workspace') + '</div>',
             '<div class="obj-progress"><span>' + esc(compactPath(item.rootPath || '')) + '</span></div>',
@@ -2654,7 +2654,7 @@
           '<div class="obj-item nested' + active + doneClass + '" data-objective-id="' + esc(item.id) + '">',
           '<div class="obj-dot ' + meta.dot + '"></div>',
           '<div class="obj-info">',
-          '<div class="obj-name-row"><div class="obj-name">' + esc(item.goal || 'Untitled objective') + '</div><div class="obj-inline-tag">OBJ</div></div>',
+          '<div class="obj-name">' + esc(item.goal || 'Untitled objective') + '</div>',
           '<div class="obj-progress">',
           '<div class="obj-prog-bar"><div class="obj-prog-fill ' + meta.fill + '" style="width:' + progress.percent + '%"></div></div>',
           '<span>' + esc(progressText) + '</span>',
