@@ -21,6 +21,7 @@ from .routes import action_buttons as action_buttons_routes
 from .routes import build_log as build_log_routes
 from .routes import console_logs as console_logs_routes
 from .routes import objectives as objective_routes
+from .routes import projects as project_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_FILES = {
@@ -172,6 +173,15 @@ def make_handler(engine):
                     item["gitDiff"] = (item.get("gitDiff") or "")[:500]
                     reviews.append(item)
                 self._json_response(reviews)
+            elif path == "/api/projects":
+                project_routes.handle_list_projects(self)
+            elif path.startswith("/api/projects/"):
+                project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
+                project = objectives.read_project(project_id)
+                if project is None:
+                    self._json_response({"ok": False, "error": "project not found"}, 404)
+                    return
+                project_routes.handle_get_project(self, project)
             elif path == "/api/objectives":
                 objective_routes.handle_list_objectives(self)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
@@ -361,6 +371,8 @@ def make_handler(engine):
                     time_module=time,
                     re_module=__import__("re"),
                 )
+            elif path == "/api/projects":
+                project_routes.handle_post_create_project(self, data)
             elif path == "/api/objectives":
                 objective_routes.handle_post_create_objective(self, data, engine=self.server.engine)
             elif path == "/api/workspace":
@@ -894,8 +906,21 @@ def make_handler(engine):
             else:
                 self.send_error(404)
 
+        def do_PATCH(self):
+            path = urllib.parse.urlparse(self.path).path
+            data = self._read_body()
+            if path.startswith("/api/projects/"):
+                project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
+                project_routes.handle_patch_project(self, project_id, data)
+                return
+            self.send_error(404)
+
         def do_DELETE(self):
             path = urllib.parse.urlparse(self.path).path
+            if path.startswith("/api/projects/"):
+                project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
+                project_routes.handle_delete_project(self, project_id)
+                return
             if path.startswith("/api/objectives/") and "/action-buttons/" in path:
                 parts = path.split("/")
                 if len(parts) != 6 or parts[1] != "api" or parts[2] != "objectives" or parts[4] != "action-buttons":

@@ -32,6 +32,8 @@ class TestObjectives(unittest.TestCase):
         self.assertEqual(objective["projectDir"], str(project_dir))
         self.assertEqual(objective["baseBranch"], "develop")
         self.assertEqual(objective["status"], "planning")
+        self.assertEqual(objective["workflowMode"], "structured")
+        self.assertTrue(objective["projectId"])
         self.assertEqual(objective["tasks"], [])
         self.assertEqual(objective["branchName"], f"orchestrator/{objective['id'][:8]}")
         self.assertEqual(
@@ -42,21 +44,25 @@ class TestObjectives(unittest.TestCase):
         on_disk = json.loads((objective_dir / "objective.json").read_text(encoding="utf-8"))
         self.assertEqual(on_disk["id"], objective["id"])
         self.assertEqual(on_disk["branchName"], objective["branchName"])
-        self.mock_run.assert_called_once_with(
-            [
-                "git",
-                "-C",
-                str(project_dir),
-                "worktree",
-                "add",
-                objective["worktreePath"],
-                "-b",
-                objective["branchName"],
-                "develop",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
+        self.assertEqual(objectives.read_project(objective["projectId"])["rootPath"], str(project_dir))
+        self.assertEqual(
+            self.mock_run.call_args_list[-1],
+            unittest.mock.call(
+                [
+                    "git",
+                    "-C",
+                    str(project_dir),
+                    "worktree",
+                    "add",
+                    objective["worktreePath"],
+                    "-b",
+                    objective["branchName"],
+                    "develop",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
         )
 
     def test_create_objective_uses_supplied_branch_name(self):
@@ -164,6 +170,107 @@ class TestObjectives(unittest.TestCase):
         self.assertFalse((self.objectives_dir / objective["id"]).exists())
         self.assertFalse(objectives.delete_objective(objective["id"]))
         self.assertEqual(self.mock_run.call_args_list[-1][0][0][:4], ["git", "-C", "/tmp/project", "worktree"])
+
+    def test_create_project_requires_existing_git_repo_root(self):
+        root_path = Path(self.tmpdir.name) / "manual-project"
+        root_path.mkdir()
+
+        project = objectives.create_project("Manual Project", str(root_path), "develop")
+
+        self.assertEqual(project["name"], "Manual Project")
+        self.assertEqual(project["rootPath"], str(root_path))
+        self.assertEqual(project["defaultBaseBranch"], "develop")
+        self.assertEqual(
+            self.mock_run.call_args_list[-1],
+            unittest.mock.call(
+                ["git", "-C", str(root_path), "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
+        )
+
+    def test_create_project_rejects_duplicate_root_path(self):
+        root_path = Path(self.tmpdir.name) / "duplicate-project"
+        root_path.mkdir()
+        objectives.create_project("One", str(root_path), "main")
+
+        with self.assertRaises(ValueError):
+            objectives.create_project("Two", str(root_path), "main")
+
+    def test_delete_project_requires_no_objectives(self):
+        root_path = Path(self.tmpdir.name) / "delete-guard-project"
+        root_path.mkdir()
+        project = objectives.create_project("Guarded", str(root_path), "main")
+        objectives.create_objective("Ship feature", project_id=project["id"])
+
+        with self.assertRaises(ValueError):
+            objectives.delete_project(project["id"])
+
+    def test_create_objective_uses_project_default_branch_and_workflow_mode(self):
+        root_path = Path(self.tmpdir.name) / "configured-project"
+        root_path.mkdir()
+        project = objectives.create_project("Configured", str(root_path), "develop")
+
+        objective = objectives.create_objective(
+            "Ship feature",
+            project_id=project["id"],
+            workflow_mode="direct",
+        )
+
+        self.assertEqual(objective["projectId"], project["id"])
+        self.assertEqual(objective["projectDir"], str(root_path))
+        self.assertEqual(objective["baseBranch"], "develop")
+        self.assertEqual(objective["workflowMode"], "direct")
+        self.assertEqual(
+            self.mock_run.call_args_list[-1],
+            unittest.mock.call(
+                [
+                    "git",
+                    "-C",
+                    str(root_path),
+                    "worktree",
+                    "add",
+                    objective["worktreePath"],
+                    "-b",
+                    objective["branchName"],
+                    "develop",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
+        )
+
+    def test_read_objective_migrates_legacy_objective_to_project_and_workflow_mode(self):
+        objective_id = "legacy-objective"
+        objective_dir = self.objectives_dir / objective_id
+        objective_dir.mkdir(parents=True)
+        legacy_root = Path(self.tmpdir.name) / "legacy-project"
+        legacy_root.mkdir()
+        legacy = {
+            "id": objective_id,
+            "goal": "Legacy goal",
+            "status": "planning",
+            "projectDir": str(legacy_root),
+            "baseBranch": "release",
+            "branchName": "orchestrator/legacy",
+            "worktreePath": str(legacy_root / ".cmux-harness" / "worktrees" / "orchestrator-legacy"),
+            "createdAt": "2026-04-07T00:00:00+00:00",
+            "updatedAt": "2026-04-07T00:00:00+00:00",
+            "tasks": [],
+        }
+        (objective_dir / "objective.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+        loaded = objectives.read_objective(objective_id)
+
+        self.assertTrue(loaded["projectId"])
+        self.assertEqual(loaded["workflowMode"], "structured")
+        project = objectives.read_project(loaded["projectId"])
+        self.assertEqual(project["rootPath"], str(legacy_root))
+        on_disk = json.loads((objective_dir / "objective.json").read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["projectId"], loaded["projectId"])
+        self.assertEqual(on_disk["workflowMode"], "structured")
 
 
 if __name__ == "__main__":

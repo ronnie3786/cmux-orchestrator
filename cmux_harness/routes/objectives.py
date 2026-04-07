@@ -89,17 +89,19 @@ def handle_post_message(handler, objective_id, data, *, engine, threading_module
 
 def handle_post_create_objective(handler, data, *, engine):
     goal = data.get("goal", "")
+    project_id = data.get("projectId")
     project_dir = data.get("projectDir", "")
     base_branch = data.get("baseBranch")
     branch_name = data.get("branchName")
-    if not project_dir:
+    workflow_mode = data.get("workflowMode", "structured")
+    if not project_id and not project_dir:
         with engine._lock:
             project_dir = engine.default_project_dir
-    if not base_branch:
+    if not base_branch and not project_id:
         with engine._lock:
             base_branch = engine.default_base_branch
-    if not goal or not project_dir:
-        handler._json_response({"ok": False, "error": "goal and projectDir required"}, 400)
+    if not goal or (not project_id and not project_dir):
+        handler._json_response({"ok": False, "error": "goal and projectId or projectDir required"}, 400)
         return
     try:
         objective = objectives.create_objective(
@@ -107,7 +109,15 @@ def handle_post_create_objective(handler, data, *, engine):
             project_dir,
             base_branch=base_branch,
             branch_name=branch_name,
+            project_id=project_id,
+            workflow_mode=workflow_mode,
         )
+    except FileNotFoundError:
+        handler._json_response({"ok": False, "error": "project not found"}, 404)
+        return
+    except ValueError as exc:
+        handler._json_response({"ok": False, "error": str(exc)}, 400)
+        return
     except OSError as exc:
         handler._json_response({"ok": False, "error": str(exc)}, 500)
         return

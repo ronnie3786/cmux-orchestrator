@@ -185,6 +185,77 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
 
+    def test_projects_crud_endpoints(self):
+        root_path = Path(self.tmpdir.name) / "server-project"
+        root_path.mkdir()
+        create_payload = {
+            "name": "Server Project",
+            "rootPath": str(root_path),
+            "defaultBaseBranch": "develop",
+        }
+        create_body = json.dumps(create_payload).encode("utf-8")
+        create_handler = self._make_handler(Mock(), "/api/projects")
+        create_handler.headers = {"Content-Length": str(len(create_body))}
+        create_handler.rfile = io.BytesIO(create_body)
+
+        create_handler.do_POST()
+
+        created = json.loads(create_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(created["name"], "Server Project")
+        self.assertEqual(created["rootPath"], str(root_path))
+        self.assertEqual(created["defaultBaseBranch"], "develop")
+
+        list_handler = self._make_handler(Mock(), "/api/projects")
+        list_handler.do_GET()
+        listed = json.loads(list_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual([item["id"] for item in listed], [created["id"]])
+
+        patch_payload = {"name": "Renamed Project", "defaultBaseBranch": "main"}
+        patch_body = json.dumps(patch_payload).encode("utf-8")
+        patch_handler = self._make_handler(Mock(), f"/api/projects/{created['id']}")
+        patch_handler.headers = {"Content-Length": str(len(patch_body))}
+        patch_handler.rfile = io.BytesIO(patch_body)
+
+        patch_handler.do_PATCH()
+
+        patched = json.loads(patch_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(patched["name"], "Renamed Project")
+        self.assertEqual(patched["defaultBaseBranch"], "main")
+
+        delete_handler = self._make_handler(Mock(), f"/api/projects/{created['id']}")
+        delete_handler.do_DELETE()
+        deleted = json.loads(delete_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(deleted, {"ok": True})
+
+    def test_create_project_endpoint_rejects_duplicate_root_path(self):
+        root_path = Path(self.tmpdir.name) / "duplicate-server-project"
+        root_path.mkdir()
+        objectives.create_project("Existing", str(root_path), "main")
+        payload = {"name": "Duplicate", "rootPath": str(root_path), "defaultBaseBranch": "develop"}
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(Mock(), "/api/projects")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        handler.send_response.assert_called_once_with(409)
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response["ok"], False)
+
+    def test_delete_project_endpoint_rejects_when_objectives_exist(self):
+        root_path = Path(self.tmpdir.name) / "guarded-server-project"
+        root_path.mkdir()
+        project = objectives.create_project("Guarded", str(root_path), "main")
+        objectives.create_objective("Ship feature", project_id=project["id"])
+        handler = self._make_handler(Mock(), f"/api/projects/{project['id']}")
+
+        handler.do_DELETE()
+
+        handler.send_response.assert_called_once_with(409)
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response, {"ok": False, "error": "cannot delete project with existing objectives"})
+
     def test_create_objective_endpoint_passes_branch_name(self):
         engine = Mock()
         payload = {"goal": "Ship feature", "projectDir": "/tmp/project", "baseBranch": "develop", "branchName": "feature/api"}
@@ -197,6 +268,24 @@ class TestServerResponses(unittest.TestCase):
 
         response = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(response["branchName"], "feature/api")
+
+    def test_create_objective_endpoint_uses_project_defaults_and_workflow_mode(self):
+        root_path = Path(self.tmpdir.name) / "objective-project"
+        root_path.mkdir()
+        project = objectives.create_project("Objective Project", str(root_path), "develop")
+        engine = Mock()
+        payload = {"goal": "Ship feature", "projectId": project["id"], "workflowMode": "direct"}
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(engine, "/api/objectives")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response["projectId"], project["id"])
+        self.assertEqual(response["baseBranch"], "develop")
+        self.assertEqual(response["workflowMode"], "direct")
 
     def test_approve_plan_endpoint_calls_orchestrator(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
