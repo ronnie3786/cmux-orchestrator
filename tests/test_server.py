@@ -793,6 +793,76 @@ class TestServerResponses(unittest.TestCase):
         stored = objectives.read_objective(objective["id"])
         self.assertEqual(stored["actionButtons"], [])
 
+    def test_objective_files_endpoint_lists_and_filters_worktree_files(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-list"
+        worktree_path.mkdir(parents=True)
+        (worktree_path / "src").mkdir()
+        (worktree_path / ".git").mkdir()
+        (worktree_path / "README.md").write_text("hello\n", encoding="utf-8")
+        (worktree_path / "src" / "app.ts").write_text("export const ok = true;\n", encoding="utf-8")
+        (worktree_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        objective = self._create_objective_with_worktree(worktree_path)
+
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files?query=app")
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["rootPath"], str(worktree_path.resolve()))
+        self.assertEqual([item["path"] for item in body["items"]], ["src/app.ts"])
+
+    def test_objective_file_preview_endpoint_returns_text_preview(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-preview"
+        worktree_path.mkdir(parents=True)
+        preview_file = worktree_path / "notes.txt"
+        preview_file.write_text("line 1\nline 2\n", encoding="utf-8")
+        objective = self._create_objective_with_worktree(worktree_path)
+
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=notes.txt")
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["path"], "notes.txt")
+        self.assertEqual(body["previewable"], True)
+        self.assertIn("line 1", body["content"])
+
+    def test_objective_file_preview_endpoint_rejects_binary_and_traversal(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-binary"
+        worktree_path.mkdir(parents=True)
+        (worktree_path / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00binary")
+        objective = self._create_objective_with_worktree(worktree_path)
+
+        binary_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=image.png")
+        binary_handler.do_GET()
+        binary_body = json.loads(binary_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(binary_body["ok"], True)
+        self.assertEqual(binary_body["previewable"], False)
+
+        traversal_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=../secret.txt")
+        traversal_handler.do_GET()
+        traversal_handler.send_response.assert_called_once_with(400)
+        traversal_body = json.loads(traversal_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(traversal_body["ok"], False)
+
+    def test_objective_files_open_endpoint_uses_native_open(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-open"
+        worktree_path.mkdir(parents=True)
+        opened_file = worktree_path / "docs.md"
+        opened_file.write_text("# docs\n", encoding="utf-8")
+        objective = self._create_objective_with_worktree(worktree_path)
+        body = json.dumps({"path": "docs.md"}).encode("utf-8")
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/open")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        with patch("cmux_harness.routes.file_browser.subprocess.Popen") as mock_popen:
+            handler.do_POST()
+
+        mock_popen.assert_called_once_with(["open", str(opened_file.resolve())])
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response, {"ok": True})
+
     def test_debug_modal_static_markup_includes_rendering_regression_fix(self):
         html = Path("cmux_harness/static/orchestrator.html").read_text(encoding="utf-8")
         css = Path("cmux_harness/static/orchestrator.css").read_text(encoding="utf-8")

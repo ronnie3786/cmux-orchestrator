@@ -20,6 +20,7 @@ from .detection import OLLAMA_URL
 from .routes import action_buttons as action_buttons_routes
 from .routes import build_log as build_log_routes
 from .routes import console_logs as console_logs_routes
+from .routes import file_browser as file_browser_routes
 from .routes import objectives as objective_routes
 from .routes import projects as project_routes
 
@@ -216,6 +217,30 @@ def make_handler(engine):
                     re_module=__import__("re"),
                     human_file_size=_human_file_size,
                 )
+            elif path.startswith("/api/objectives/") and path.endswith("/files/content"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/files/content")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                file_browser_routes.handle_get_file_preview(
+                    self,
+                    objective,
+                    parsed,
+                    human_file_size=_human_file_size,
+                )
+            elif path.startswith("/api/objectives/") and path.endswith("/files"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/files")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                file_browser_routes.handle_list_files(
+                    self,
+                    objective,
+                    parsed,
+                    human_file_size=_human_file_size,
+                )
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
                 parts = path.split("/")
                 objective_id = parts[3]
@@ -371,6 +396,13 @@ def make_handler(engine):
                     time_module=time,
                     re_module=__import__("re"),
                 )
+            elif path.startswith("/api/objectives/") and path.endswith("/files/open"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/files/open")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                file_browser_routes.handle_open_file(self, objective, data)
             elif path == "/api/projects":
                 project_routes.handle_post_create_project(self, data)
             elif path == "/api/objectives":
