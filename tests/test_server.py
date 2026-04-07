@@ -287,6 +287,21 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(response["baseBranch"], "develop")
         self.assertEqual(response["workflowMode"], "direct")
 
+    def test_create_objective_endpoint_requires_project_selection(self):
+        engine = Mock()
+        engine.default_project_dir = "/tmp/legacy-default"
+        payload = {"goal": "Ship feature", "baseBranch": "main"}
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(engine, "/api/objectives")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        handler.send_response.assert_called_once_with(400)
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response, {"ok": False, "error": "goal and projectId or projectDir required"})
+
     def test_approve_plan_endpoint_calls_orchestrator(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
         engine = Mock()

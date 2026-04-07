@@ -94,9 +94,6 @@ def handle_post_create_objective(handler, data, *, engine):
     base_branch = data.get("baseBranch")
     branch_name = data.get("branchName")
     workflow_mode = data.get("workflowMode", "structured")
-    if not project_id and not project_dir:
-        with engine._lock:
-            project_dir = engine.default_project_dir
     if not base_branch and not project_id:
         with engine._lock:
             base_branch = engine.default_base_branch

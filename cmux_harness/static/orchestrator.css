@@ -1291,6 +1291,19 @@
     outline: none;
   }
   .sf-input:focus, .sf-textarea:focus { border-color: var(--blue-b); }
+  .sf-field-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--t3);
+  }
+  .sf-field-optional {
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    color: var(--t4);
+  }
   .sf-textarea {
     min-height: 68px;
     resize: vertical;
@@ -1303,6 +1316,32 @@
   .sf-actions {
     display: flex;
     gap: 8px;
+  }
+  .sf-toggle-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .sf-toggle {
+    border-radius: 8px;
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t2);
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .sf-toggle:hover {
+    background: var(--hover);
+    color: var(--t1);
+  }
+  .sf-toggle.active {
+    background: var(--blue-d);
+    border-color: var(--blue-b);
+    color: var(--blue);
   }
   .sf-submit, .sf-cancel {
     flex: 1;

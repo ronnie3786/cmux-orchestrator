@@ -81,6 +81,7 @@
     draftProjectName: '',
     draftProjectRootPath: '',
     draftProjectBaseBranch: 'main',
+    draftWorkflowMode: 'structured',
     draftBaseBranch: 'main',
     draftBranchName: '',
     draftGoal: '',
@@ -116,7 +117,6 @@
     settingsCloseButton: document.getElementById('settingsCloseButton'),
     settingsCancelButton: document.getElementById('settingsCancelButton'),
     settingsSaveButton: document.getElementById('settingsSaveButton'),
-    settingsProjectDir: document.getElementById('settingsProjectDir'),
     settingsBaseBranch: document.getElementById('settingsBaseBranch'),
     settingsPollInterval: document.getElementById('settingsPollInterval'),
     settingsReviewEnabled: document.getElementById('settingsReviewEnabled'),
@@ -518,23 +518,24 @@
     state.projectExpansion = next;
   }
 
-  function getRecentProjects() {
-    const seen = new Set();
-    return sortedProjects(state.projects)
-      .map((item) => item.rootPath)
-      .filter((dir) => {
-        if (!dir || seen.has(dir)) return false;
-        seen.add(dir);
-        return true;
-      });
-  }
-
-  function defaultProjectDir() {
-    return state.draftProjectDir || (state.config && state.config.defaultProjectDir) || getRecentProjects()[0] || '';
-  }
-
   function defaultBaseBranch() {
     return state.draftBaseBranch || (state.config && state.config.defaultBaseBranch) || 'main';
+  }
+
+  function defaultWorkflowMode() {
+    return state.draftWorkflowMode || 'structured';
+  }
+
+  function setDraftProject(projectId, options) {
+    const settings = options || {};
+    const nextProjectId = String(projectId || '').trim();
+    const project = findProject(nextProjectId);
+    state.draftProjectId = project ? project.id : '';
+    state.draftProjectDir = (project && project.rootPath) || '';
+    if (settings.updateBaseBranch !== false) {
+      state.draftBaseBranch = (project && project.defaultBaseBranch) || (state.config && state.config.defaultBaseBranch) || 'main';
+    }
+    return project;
   }
 
   function isMobileViewport() {
@@ -1576,15 +1577,16 @@
 
   function syncDraftsFromConfig() {
     if (!state.config) return;
-    if (!state.draftProjectDir) state.draftProjectDir = state.config.defaultProjectDir || '';
     if (!state.draftBaseBranch || state.draftBaseBranch === 'main') {
       state.draftBaseBranch = state.config.defaultBaseBranch || 'main';
+    }
+    if (!state.draftWorkflowMode) {
+      state.draftWorkflowMode = 'structured';
     }
   }
 
   function populateSettingsForm() {
     const cfg = state.config || {};
-    els.settingsProjectDir.value = cfg.defaultProjectDir || '';
     els.settingsBaseBranch.value = cfg.defaultBaseBranch || 'main';
     els.settingsPollInterval.value = cfg.pollInterval != null ? String(cfg.pollInterval) : '5';
     els.settingsReviewEnabled.checked = !!cfg.reviewEnabled;
@@ -1623,7 +1625,6 @@
     renderSettingsModal();
     try {
       const payload = {
-        defaultProjectDir: els.settingsProjectDir.value.trim(),
         defaultBaseBranch: els.settingsBaseBranch.value.trim() || 'main',
         pollInterval: Number(els.settingsPollInterval.value || 5),
         reviewEnabled: !!els.settingsReviewEnabled.checked,
@@ -1635,7 +1636,6 @@
         body: JSON.stringify(payload)
       });
       state.config = config || payload;
-      state.draftProjectDir = state.config.defaultProjectDir || '';
       state.draftBaseBranch = state.config.defaultBaseBranch || 'main';
       state.settingsOpen = false;
       render();
@@ -2022,8 +2022,9 @@
 
   function updateSidebarFormFromState() {
     const className = 'sidebar-form' + (state.sidebarFormOpen ? ' open' : '');
+    const projects = sortedProjects(state.projects);
     const projectOptions = sortedProjects(state.projects).map((project) => {
-      const selected = project.id === selectedProjectId() ? ' selected' : '';
+      const selected = project.id === state.draftProjectId ? ' selected' : '';
       const hint = compactPath(project.rootPath || '');
       return '<option value="' + esc(project.id) + '"' + selected + '>' + esc(project.name || 'Untitled project') + (hint ? ' · ' + esc(hint) : '') + '</option>';
     }).join('');
@@ -2041,11 +2042,20 @@
         ].join('')
       : [
           '<div class="sf-mode-title">New objective</div>',
+          '<label class="sf-field-label" for="projectSelectInput">Project</label>',
           '<select class="sf-input" id="projectSelectInput">' + projectOptions + '</select>',
+          '<div class="sf-field-label">Workflow</div>',
+          '<div class="sf-toggle-group" role="group" aria-label="Workflow mode">',
+          '<button class="sf-toggle' + (defaultWorkflowMode() === 'structured' ? ' active' : '') + '" id="workflowStructuredButton" type="button" data-workflow-mode="structured" aria-pressed="' + (defaultWorkflowMode() === 'structured' ? 'true' : 'false') + '">Structured</button>',
+          '<button class="sf-toggle' + (defaultWorkflowMode() === 'direct' ? ' active' : '') + '" id="workflowDirectButton" type="button" data-workflow-mode="direct" aria-pressed="' + (defaultWorkflowMode() === 'direct' ? 'true' : 'false') + '">Direct</button>',
+          '</div>',
+          '<label class="sf-field-label" for="baseBranchInput">Base branch</label>',
           '<div class="sf-row">',
           '<input class="sf-input" id="baseBranchInput" placeholder="Base branch" value="' + esc(defaultBaseBranch()) + '">',
           '</div>',
+          '<label class="sf-field-label" for="branchNameInput">Branch name <span class="sf-field-optional">optional</span></label>',
           '<input class="sf-input" id="branchNameInput" placeholder="Feature branch name (optional)" value="' + esc(state.draftBranchName || '') + '">',
+          '<label class="sf-field-label" for="sidebarGoalInput">Goal</label>',
           '<textarea class="sf-textarea" id="sidebarGoalInput" placeholder="Describe the objective">' + esc(state.draftGoal) + '</textarea>',
           '<div class="sf-actions">',
           '<button class="sf-submit" id="sidebarCreateButton">Create &amp; start</button>',
@@ -2081,13 +2091,17 @@
     const baseBranchInput = document.getElementById('baseBranchInput');
     const branchNameInput = document.getElementById('branchNameInput');
     const sidebarGoalInput = document.getElementById('sidebarGoalInput');
+    const workflowButtons = Array.from(document.querySelectorAll('[data-workflow-mode]'));
     document.getElementById('sidebarCreateButton').addEventListener('click', submitSidebarObjective);
     projectSelectInput.addEventListener('change', (event) => {
-      state.draftProjectId = event.target.value;
-      const project = findProject(state.draftProjectId);
-      state.draftProjectDir = (project && project.rootPath) || '';
-      state.draftBaseBranch = (project && project.defaultBaseBranch) || 'main';
+      setDraftProject(event.target.value);
       updateSidebarFormFromState();
+    });
+    workflowButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        state.draftWorkflowMode = button.getAttribute('data-workflow-mode') === 'direct' ? 'direct' : 'structured';
+        updateSidebarFormFromState();
+      });
     });
     baseBranchInput.addEventListener('input', (event) => {
       state.draftBaseBranch = event.target.value || 'main';
@@ -2104,15 +2118,18 @@
     openSidebar();
     state.sidebarFormMode = 'objective';
     state.sidebarFormOpen = true;
-    if (!state.projects.length) {
+    const projects = sortedProjects(state.projects);
+    if (!projects.length) {
       showToast('Add a project first, then create an objective.');
       openProjectForm();
       return;
     }
-    state.draftProjectId = projectId || selectedProjectId();
-    const project = findProject(state.draftProjectId);
-    state.draftProjectDir = (project && project.rootPath) || defaultProjectDir();
-    state.draftBaseBranch = (project && project.defaultBaseBranch) || defaultBaseBranch();
+    const nextProjectId = projectId || state.draftProjectId || selectedProjectId() || (projects[0] && projects[0].id) || '';
+    setDraftProject(nextProjectId, { updateBaseBranch: !state.draftProjectId || state.draftProjectId !== nextProjectId });
+    if (!state.draftProjectId) {
+      setDraftProject((projects[0] && projects[0].id) || '');
+    }
+    state.draftWorkflowMode = defaultWorkflowMode();
     state.draftBranchName = state.draftBranchName || '';
     if (typeof seedGoal === 'string') state.draftGoal = seedGoal;
     updateSidebarFormFromState();
@@ -2126,7 +2143,7 @@
     openSidebar();
     state.sidebarFormMode = 'project';
     state.sidebarFormOpen = true;
-    state.draftProjectRootPath = state.draftProjectRootPath || state.draftProjectDir || defaultProjectDir();
+    state.draftProjectRootPath = state.draftProjectRootPath || state.draftProjectDir || '';
     state.draftProjectBaseBranch = state.draftProjectBaseBranch || defaultBaseBranch();
     updateSidebarFormFromState();
     window.setTimeout(() => {
@@ -2916,15 +2933,18 @@
     state.projects = Array.isArray(projectsData) ? projectsData : [];
     ensureProjectExpansion();
     if (!findProject(state.draftProjectId)) {
-      state.draftProjectId = selectedProjectId();
+      setDraftProject(selectedProjectId());
     }
-    if (!state.draftProjectDir) {
-      const project = findProject(state.draftProjectId);
-      state.draftProjectDir = (project && project.rootPath) || defaultProjectDir();
+    if (!state.draftProjectId && state.projects.length) {
+      setDraftProject(selectedProjectId() || (sortedProjects(state.projects)[0] || {}).id || '');
     }
-    if (!state.draftBaseBranch) {
-      const project = findProject(state.draftProjectId);
-      state.draftBaseBranch = (project && project.defaultBaseBranch) || defaultBaseBranch();
+    if (!state.draftProjectDir || !state.draftBaseBranch) {
+      setDraftProject(state.draftProjectId || selectedProjectId(), {
+        updateBaseBranch: !state.draftBaseBranch
+      });
+    }
+    if (!state.draftWorkflowMode) {
+      state.draftWorkflowMode = 'structured';
     }
     ensureSelection();
     if (state.activeObjectiveId && state.activeObjectiveId !== previousActiveId) {
@@ -3022,19 +3042,23 @@
     if (forceAll) render();
   }
 
-  async function createObjective(goal, projectDir, baseBranch, branchName) {
+  async function createObjective(options) {
+    const payload = {
+      goal: options.goal,
+      projectId: options.projectId || undefined,
+      baseBranch: options.baseBranch || 'main',
+      branchName: options.branchName || '',
+      workflowMode: options.workflowMode || 'structured'
+    };
+    if (options.projectDir) {
+      payload.projectDir = options.projectDir;
+    }
     state.pendingCreate = true;
     renderInputState();
     try {
       const objective = await api('/api/objectives', {
         method: 'POST',
-        body: JSON.stringify({
-          goal,
-          projectId: state.draftProjectId || undefined,
-          projectDir,
-          baseBranch: baseBranch || 'main',
-          branchName: branchName || ''
-        })
+        body: JSON.stringify(payload)
       });
       await api('/api/objectives/' + encodeURIComponent(objective.id) + '/start', {
         method: 'POST',
@@ -3060,9 +3084,7 @@
     const baseBranchInput = document.getElementById('baseBranchInput');
     const branchNameInput = document.getElementById('branchNameInput');
     const sidebarGoalInput = document.getElementById('sidebarGoalInput');
-    state.draftProjectId = projectSelectInput ? projectSelectInput.value.trim() : state.draftProjectId;
-    const project = findProject(state.draftProjectId);
-    state.draftProjectDir = (project && project.rootPath) || state.draftProjectDir;
+    setDraftProject(projectSelectInput ? projectSelectInput.value.trim() : state.draftProjectId, { updateBaseBranch: false });
     state.draftBaseBranch = baseBranchInput ? (baseBranchInput.value.trim() || 'main') : (state.draftBaseBranch || 'main');
     state.draftBranchName = branchNameInput ? branchNameInput.value.trim() : state.draftBranchName;
     state.draftGoal = sidebarGoalInput ? sidebarGoalInput.value.trim() : state.draftGoal;
@@ -3071,7 +3093,13 @@
       return;
     }
     try {
-      await createObjective(state.draftGoal, state.draftProjectDir, state.draftBaseBranch, state.draftBranchName);
+      await createObjective({
+        goal: state.draftGoal,
+        projectId: state.draftProjectId,
+        baseBranch: state.draftBaseBranch,
+        branchName: state.draftBranchName,
+        workflowMode: state.draftWorkflowMode
+      });
     } catch (error) {
       showToast(error.message || 'Could not create objective');
     }
@@ -3097,12 +3125,10 @@
           defaultBaseBranch: state.draftProjectBaseBranch || 'main'
         })
       });
-      state.draftProjectId = project.id;
-      state.draftProjectDir = project.rootPath || '';
-      state.draftBaseBranch = project.defaultBaseBranch || 'main';
+      setDraftProject(project.id);
       state.draftProjectName = '';
       state.draftProjectRootPath = '';
-      state.draftProjectBaseBranch = state.draftBaseBranch;
+      state.draftProjectBaseBranch = state.draftBaseBranch || 'main';
       await pollObjectives();
       openSidebarForm(state.draftGoal, project.id);
       showToast('Project added');
