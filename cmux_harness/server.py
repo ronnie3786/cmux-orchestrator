@@ -253,6 +253,7 @@ def make_handler(engine):
                     objective_id,
                     objective,
                     engine=self.server.engine,
+                    parsed=parsed,
                 )
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
                 parts = path.split("/")

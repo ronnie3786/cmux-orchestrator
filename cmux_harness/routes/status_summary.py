@@ -5,6 +5,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
+from .. import claude_cli
 from .. import objectives
 
 
@@ -333,6 +334,139 @@ def _tldr(objective: dict, stage_label: str, task_counts: dict, blockers: list[s
     return ". ".join(pieces) + "."
 
 
+def _summary_source(kind: str, *, fallback_reason: str = "") -> dict[str, Any]:
+    display = "Haiku" if kind == "haiku" else "Deterministic"
+    return {
+        "kind": kind,
+        "display": display,
+        "fallbackReason": fallback_reason,
+    }
+
+
+def _recent_events(messages: list[dict], limit: int = 4) -> list[dict[str, str]]:
+    interesting = [
+        message
+        for message in messages
+        if str(message.get("type") or "") in {"progress", "review", "alert", "approval", "completion", "plan_review", "system", "assistant"}
+    ]
+    interesting.sort(key=_message_time)
+    events: list[dict[str, str]] = []
+    for message in interesting[-limit:]:
+        events.append(
+            {
+                "type": str(message.get("type") or ""),
+                "timestamp": str(message.get("timestamp") or ""),
+                "content": _clean_message_text(message),
+            }
+        )
+    return events
+
+
+def _task_summary_payload(tasks: list[dict], limit: int = 6) -> list[dict[str, Any]]:
+    payload = []
+    for task in tasks[:limit]:
+        payload.append(
+            {
+                "id": str(task.get("id") or ""),
+                "title": str(task.get("title") or task.get("id") or "Untitled task"),
+                "status": str(task.get("status") or ""),
+                "reviewCycles": int(task.get("reviewCycles") or 0),
+            }
+        )
+    return payload
+
+
+def _build_haiku_prompt(summary: dict[str, Any], objective: dict, messages: list[dict]) -> str:
+    payload = {
+        "objective": {
+            "goal": str(objective.get("goal") or ""),
+            "status": str(objective.get("status") or ""),
+            "branchName": str(objective.get("branchName") or ""),
+        },
+        "deterministicDraft": {
+            "tldr": summary.get("tldr") or "",
+            "justHappened": summary.get("justHappened") or "",
+            "now": summary.get("now") or "",
+            "next": summary.get("next") or "",
+            "blockers": summary.get("blockers") or [],
+        },
+        "signals": {
+            "tasks": summary.get("signals", {}).get("tasks") or {},
+            "approvals": summary.get("signals", {}).get("approvals") or {},
+            "reviews": summary.get("signals", {}).get("reviews") or {},
+            "git": summary.get("signals", {}).get("git") or {},
+        },
+        "tasks": _task_summary_payload(objective.get("tasks") or []),
+        "recentEvents": _recent_events(messages),
+    }
+    return "\n".join(
+        [
+            "You turn deterministic orchestration signals into a compact, human-useful objective status summary.",
+            "Stay faithful to the facts in the payload. Do not invent work, progress, blockers, or certainty.",
+            "Write short, plain-English updates for a busy human checking progress.",
+            "If there is no blocker, return an empty blockers array.",
+            "Return JSON only with exactly these keys:",
+            '{"tldr":"...","justHappened":"...","now":"...","next":"...","blockers":["..."]}',
+            "Keep tldr to one sentence. Keep the other strings under 140 characters each.",
+            "",
+            "Payload:",
+            json.dumps(payload, separators=(",", ":")),
+        ]
+    )
+
+
+def _normalize_enriched_fields(result: Any) -> dict[str, Any] | None:
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    text_fields = {}
+    for key in ("tldr", "justHappened", "now", "next"):
+        value = result.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        text_fields[key] = value.strip()
+    blockers = result.get("blockers")
+    if blockers is None:
+        blockers = []
+    if not isinstance(blockers, list):
+        return None
+    clean_blockers = []
+    for item in blockers:
+        if not isinstance(item, str):
+            return None
+        value = item.strip()
+        if value:
+            clean_blockers.append(value)
+    text_fields["blockers"] = clean_blockers[:4]
+    return text_fields
+
+
+def maybe_enrich_status_summary(
+    summary: dict[str, Any],
+    objective: dict,
+    messages: list[dict],
+    *,
+    enrich: str | None = None,
+    timeout: int = 12,
+) -> dict[str, Any]:
+    enriched = dict(summary)
+    if str(enrich or "").lower() != "haiku":
+        enriched["summarySource"] = _summary_source("deterministic")
+        return enriched
+
+    result = claude_cli.run_haiku(_build_haiku_prompt(summary, objective, messages), timeout=timeout)
+    fields = _normalize_enriched_fields(result)
+    if not fields:
+        fallback_reason = "Haiku unavailable or returned invalid output"
+        if isinstance(result, dict) and result.get("error"):
+            fallback_reason = str(result.get("error") or fallback_reason)
+        enriched["summarySource"] = _summary_source("deterministic", fallback_reason=fallback_reason)
+        return enriched
+
+    enriched.update(fields)
+    enriched["summarySource"] = _summary_source("haiku")
+    return enriched
+
+
 def build_status_summary(objective_id: str, objective: dict, messages: list[dict]) -> dict[str, Any]:
     tasks = [task for task in (objective.get("tasks") or []) if isinstance(task, dict)]
     stage = str(objective.get("status") or "unknown").lower()
@@ -359,10 +493,17 @@ def build_status_summary(objective_id: str, objective: dict, messages: list[dict
             "reviews": review_summary,
             "git": git_summary,
         },
+        "summarySource": _summary_source("deterministic"),
     }
     return summary
 
 
-def handle_get_status_summary(handler, objective_id: str, objective: dict, *, engine):
+def handle_get_status_summary(handler, objective_id: str, objective: dict, *, engine, parsed=None):
     messages = engine.orchestrator.get_messages(objective_id)
-    handler._json_response(build_status_summary(objective_id, objective, messages))
+    enrich = None
+    if parsed is not None:
+        query = getattr(handler, "parse_qs", None)
+        params = query(parsed.query) if callable(query) else {}
+        enrich = (params.get("enrich", [None])[0] or "").strip().lower() or None
+    summary = build_status_summary(objective_id, objective, messages)
+    handler._json_response(maybe_enrich_status_summary(summary, objective, messages, enrich=enrich))

@@ -57,6 +57,7 @@ class TestStatusSummary(unittest.TestCase):
         self.assertIn('queued task', summary['next'])
         self.assertEqual(summary['signals']['git']['changedFiles'], 3)
         self.assertEqual(summary['signals']['reviews']['passed'], 1)
+        self.assertEqual(summary['summarySource']['kind'], 'deterministic')
 
     def test_surfaces_blockers_for_plan_review_and_failed_tasks(self):
         objective = {
@@ -86,6 +87,64 @@ class TestStatusSummary(unittest.TestCase):
         self.assertTrue(summary['blockers'])
         self.assertIn('Missing refresh button on the status card', ' '.join(summary['blockers']))
         self.assertIn('blocker', summary['tldr'])
+
+    def test_haiku_enrichment_overrides_human_facing_copy_when_valid(self):
+        base_summary = {
+            'objectiveId': 'objective-3',
+            'generatedAt': '2026-04-07T08:00:00+00:00',
+            'objective': 'Make the status card smarter',
+            'stage': {'code': 'executing', 'label': 'Executing'},
+            'tldr': 'Executing: 1/2 tasks complete.',
+            'justHappened': 'Built the deterministic version.',
+            'now': 'Active work is in flight on Add Haiku enrichment.',
+            'next': 'Let the active task finish and review the next update when it lands.',
+            'blockers': [],
+            'signals': {'tasks': {'total': 2, 'completed': 1}, 'approvals': {}, 'reviews': {}, 'git': {}},
+            'summarySource': {'kind': 'deterministic', 'display': 'Deterministic', 'fallbackReason': ''},
+        }
+        objective = {
+            'id': 'objective-3',
+            'goal': 'Make the status card smarter',
+            'status': 'executing',
+            'tasks': [{'id': 'task-1', 'title': 'Add Haiku enrichment', 'status': 'executing', 'reviewCycles': 0}],
+        }
+        messages = [{'timestamp': '2026-04-07T08:00:00+00:00', 'type': 'progress', 'content': 'Built the deterministic version.', 'metadata': {}}]
+
+        with patch('cmux_harness.routes.status_summary.claude_cli.run_haiku', return_value={
+            'tldr': 'Execution is moving, the smart summary layer is now being wired in.',
+            'justHappened': 'The deterministic summary shipped and the Haiku hook is being added.',
+            'now': 'The endpoint is composing a compact payload for Haiku.',
+            'next': 'Validate fallback behavior, then ship the polish.',
+            'blockers': [],
+        }):
+            enriched = status_summary.maybe_enrich_status_summary(base_summary, objective, messages, enrich='haiku')
+
+        self.assertEqual(enriched['summarySource']['kind'], 'haiku')
+        self.assertIn('smart summary layer', enriched['tldr'])
+        self.assertEqual(enriched['signals'], base_summary['signals'])
+
+    def test_haiku_enrichment_falls_back_when_response_is_malformed(self):
+        base_summary = {
+            'objectiveId': 'objective-4',
+            'generatedAt': '2026-04-07T08:00:00+00:00',
+            'objective': 'Keep deterministic fallback',
+            'stage': {'code': 'executing', 'label': 'Executing'},
+            'tldr': 'Executing: 1/2 tasks complete.',
+            'justHappened': 'Built the deterministic version.',
+            'now': 'Active work is in flight.',
+            'next': 'Let the active task finish.',
+            'blockers': [],
+            'signals': {'tasks': {}, 'approvals': {}, 'reviews': {}, 'git': {}},
+            'summarySource': {'kind': 'deterministic', 'display': 'Deterministic', 'fallbackReason': ''},
+        }
+        objective = {'id': 'objective-4', 'goal': 'Keep deterministic fallback', 'status': 'executing', 'tasks': []}
+
+        with patch('cmux_harness.routes.status_summary.claude_cli.run_haiku', return_value={'tldr': 'missing required fields'}):
+            enriched = status_summary.maybe_enrich_status_summary(base_summary, objective, [], enrich='haiku')
+
+        self.assertEqual(enriched['tldr'], base_summary['tldr'])
+        self.assertEqual(enriched['summarySource']['kind'], 'deterministic')
+        self.assertTrue(enriched['summarySource']['fallbackReason'])
 
 
 if __name__ == '__main__':

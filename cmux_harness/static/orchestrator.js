@@ -2250,7 +2250,7 @@
     }
     renderMessages();
     try {
-      const summary = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/status-summary');
+      const summary = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/status-summary?enrich=haiku');
       if (state.activeObjectiveId !== objectiveId) return;
       state.statusSummary = summary;
       state.statusSummaryObjectiveId = objectiveId;
@@ -2978,8 +2978,10 @@
     const approvals = signals.approvals || {};
     const git = signals.git || {};
     const blockers = Array.isArray(summary.blockers) ? summary.blockers : [];
+    const summarySource = summary.summarySource || {};
     const refreshedLabel = formatDateTime(summary.generatedAt) || 'just now';
     const refreshedAgo = relativeTime(summary.generatedAt) || 'just now';
+    const sourceLabel = summarySource.display ? ' · ' + summarySource.display : '';
     const taskStats = [];
     if (tasks.total) taskStats.push(tasks.completed + '/' + tasks.total + ' tasks done');
     if (tasks.active) taskStats.push(tasks.active + ' active');
@@ -2990,7 +2992,7 @@
       '<div class="status-summary-head">',
       '<div>',
       '<div class="status-summary-title">Objective status</div>',
-      '<div class="status-summary-meta" title="' + esc(summary.generatedAt || '') + '">Refreshed ' + esc(refreshedAgo) + ' · ' + esc(refreshedLabel) + '</div>',
+      '<div class="status-summary-meta" title="' + esc(summary.generatedAt || '') + '">Refreshed ' + esc(refreshedAgo) + ' · ' + esc(refreshedLabel) + esc(sourceLabel) + '</div>',
       '</div>',
       '<div class="status-summary-head-actions">',
       loading ? '<span class="status-summary-inline">Refreshing…</span>' : '',
