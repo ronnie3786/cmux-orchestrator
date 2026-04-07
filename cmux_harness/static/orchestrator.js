@@ -993,7 +993,7 @@
   }
 
   function renderBuildLog() {
-    const objectiveName = currentObjectiveName();
+    const objectiveName = currentTargetName();
     const fileLabel = state.buildLogFile || 'build.log';
     const data = state.buildLogData;
     els.buildLogPanel.className = 'build-log-panel' + (state.buildLogOpen ? ' open' : '');
@@ -1049,7 +1049,7 @@
   }
 
   function renderConsoleLog() {
-    const objectiveName = currentObjectiveName();
+    const objectiveName = currentTargetName();
     const data = state.consoleLogData;
     const files = data && Array.isArray(data.files) ? data.files : [];
     const activeFile = state.consoleLogFile || (data && data.activeFile) || (files[0] || '');
@@ -1503,7 +1503,7 @@
 
   function renderDebugModal() {
     renderDebugChrome();
-    els.debugModalSubtitle.textContent = currentObjectiveName();
+    els.debugModalSubtitle.textContent = currentTargetName();
     if (!state.debugOpen) return;
     if (state.debugLoading && !state.debugEntries.length) {
       els.debugLogBody.innerHTML = '<div class="debug-empty">Loading debug log…</div>';
