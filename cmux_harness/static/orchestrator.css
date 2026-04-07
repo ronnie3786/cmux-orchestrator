@@ -116,6 +116,10 @@
   }
   .new-obj-btn:hover { background: var(--hover); color: var(--t1); }
   .new-obj-btn .plus { font-size: 16px; color: var(--t3); line-height: 1; }
+  .new-obj-btn.secondary {
+    margin-top: 8px;
+    background: transparent;
+  }
 
   .sidebar-label {
     padding: 14px 14px 6px;
@@ -133,6 +137,120 @@
     padding: 2px 8px 12px;
   }
 
+  .sidebar-empty-state {
+    margin: 8px 6px;
+    padding: 14px 12px;
+    border: 1px dashed var(--b2);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.02);
+  }
+  .sidebar-empty-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--t1);
+  }
+  .sidebar-empty-copy {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--t2);
+  }
+  .sidebar-empty-button {
+    margin-top: 12px;
+    width: 100%;
+    border: 1px solid var(--b2);
+    border-radius: 8px;
+    background: var(--raised);
+    color: var(--t1);
+    padding: 8px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .sidebar-empty-button:hover { background: var(--hover); }
+
+  .project-group {
+    margin-bottom: 10px;
+  }
+  .project-row {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) 26px;
+    align-items: start;
+    gap: 6px;
+    padding: 8px 6px;
+    border-radius: 10px;
+  }
+  .project-row:hover {
+    background: rgba(255,255,255,0.03);
+  }
+  .project-toggle,
+  .project-add-objective {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    border: 1px solid var(--b2);
+    background: transparent;
+    color: var(--t2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+  }
+  .project-row.expanded .project-toggle {
+    background: var(--raised);
+    color: var(--t1);
+  }
+  .project-toggle:hover,
+  .project-add-objective:hover {
+    background: var(--raised);
+    color: var(--t1);
+  }
+  .project-info {
+    min-width: 0;
+    cursor: pointer;
+  }
+  .project-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .project-name {
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--t1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .project-count {
+    font-size: 10px;
+    color: var(--t2);
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--b);
+    flex-shrink: 0;
+  }
+  .project-path {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--t3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .project-objectives {
+    margin-top: 2px;
+    padding-left: 14px;
+    border-left: 1px solid rgba(255,255,255,0.06);
+    margin-left: 17px;
+  }
+  .project-empty {
+    padding: 8px 10px 10px;
+    font-size: 11px;
+    color: var(--t3);
+  }
+
   .obj-item {
     padding: 9px 8px;
     border-radius: 8px;
@@ -143,6 +261,9 @@
     gap: 9px;
     transition: background .12s;
     border: 1px solid transparent;
+  }
+  .obj-item.nested {
+    margin-left: 6px;
   }
   .obj-item:hover { background: var(--raised); }
   .obj-item.active {
@@ -1150,6 +1271,14 @@
     flex-direction: column;
   }
   .sidebar-form.open { display: flex; }
+  .sf-mode-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--t3);
+    margin-bottom: 2px;
+  }
   .sf-input, .sf-textarea {
     width: 100%;
     background: var(--raised);

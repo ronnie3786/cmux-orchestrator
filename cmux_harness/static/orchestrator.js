@@ -10,6 +10,7 @@
     { id: 'custom', label: 'Custom', pattern: null }
   ];
   const state = {
+    projects: [],
     objectives: [],
     activeObjectiveId: null,
     activeObjective: null,
@@ -41,6 +42,8 @@
     isMobile: null,
     sidebarOpen: true,
     sidebarFormOpen: false,
+    sidebarFormMode: 'objective',
+    projectExpansion: {},
     settingsOpen: false,
     settingsSaving: false,
     fabModalOpen: false,
@@ -74,6 +77,10 @@
     consoleLogHasNewOutput: false,
     consoleLogLastSignature: '',
     draftProjectDir: '',
+    draftProjectId: '',
+    draftProjectName: '',
+    draftProjectRootPath: '',
+    draftProjectBaseBranch: 'main',
     draftBaseBranch: 'main',
     draftBranchName: '',
     draftGoal: '',
@@ -103,6 +110,7 @@
     inputHint: document.getElementById('inputHint'),
     sidebarForm: document.getElementById('sidebarForm'),
     newObjectiveButton: document.getElementById('newObjectiveButton'),
+    addProjectButton: document.getElementById('addProjectButton'),
     settingsButton: document.getElementById('settingsButton'),
     settingsModal: document.getElementById('settingsModal'),
     settingsCloseButton: document.getElementById('settingsCloseButton'),
@@ -466,10 +474,54 @@
     });
   }
 
+  function sortedProjects(list) {
+    return [...(list || [])].sort((a, b) => {
+      const aTs = parseIso(a.updatedAt || a.createdAt) || 0;
+      const bTs = parseIso(b.updatedAt || b.createdAt) || 0;
+      if (bTs !== aTs) return bTs - aTs;
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+  }
+
+  function compactPath(path) {
+    const value = String(path || '').trim();
+    if (!value) return '';
+    const home = (window.HOME || '').trim();
+    if (home && value.startsWith(home)) return '~' + value.slice(home.length);
+    return value.replace(/^\/Users\/[^/]+/, '~');
+  }
+
+  function projectObjectives(projectId) {
+    return sortedObjectives((state.objectives || []).filter((objective) => objective.projectId === projectId));
+  }
+
+  function findProject(projectId) {
+    return (state.projects || []).find((project) => project.id === projectId) || null;
+  }
+
+  function selectedProjectId() {
+    if (state.draftProjectId && findProject(state.draftProjectId)) return state.draftProjectId;
+    if (state.activeObjective && state.activeObjective.projectId && findProject(state.activeObjective.projectId)) return state.activeObjective.projectId;
+    return (sortedProjects(state.projects)[0] || {}).id || '';
+  }
+
+  function ensureProjectExpansion() {
+    const next = Object.assign({}, state.projectExpansion);
+    sortedProjects(state.projects).forEach((project) => {
+      if (typeof next[project.id] !== 'boolean') {
+        next[project.id] = true;
+      }
+    });
+    if (state.activeObjective) {
+      next[state.activeObjective.projectId] = true;
+    }
+    state.projectExpansion = next;
+  }
+
   function getRecentProjects() {
     const seen = new Set();
-    return sortedObjectives(state.objectives)
-      .map((item) => item.projectDir)
+    return sortedProjects(state.projects)
+      .map((item) => item.rootPath)
       .filter((dir) => {
         if (!dir || seen.has(dir)) return false;
         seen.add(dir);
@@ -1969,38 +2021,73 @@
   }
 
   function updateSidebarFormFromState() {
-    const recent = getRecentProjects();
-    const options = recent.map((dir) => '<option value="' + esc(dir) + '"></option>').join('');
     const className = 'sidebar-form' + (state.sidebarFormOpen ? ' open' : '');
-    const nextHtml = [
-      '<input class="sf-input" id="projectDirInput" list="recentProjectDirs" placeholder="Project directory" value="' + esc(state.draftProjectDir) + '">',
-      '<datalist id="recentProjectDirs">' + options + '</datalist>',
-      '<div class="sf-row">',
-      '<input class="sf-input" id="baseBranchInput" placeholder="Base branch" value="' + esc(state.draftBaseBranch || 'main') + '">',
-      '</div>',
-      '<input class="sf-input" id="branchNameInput" placeholder="Feature branch name (optional)" value="' + esc(state.draftBranchName || '') + '">',
-      '<textarea class="sf-textarea" id="sidebarGoalInput" placeholder="Describe the objective">' + esc(state.draftGoal) + '</textarea>',
-      '<div class="sf-actions">',
-      '<button class="sf-submit" id="sidebarCreateButton">Create &amp; start</button>',
-      '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
-      '</div>',
-      '<div class="sf-hint">Paste a project path, e.g. <span class="mono">~/projects/my-app</span>. The last project is prefilled when available.</div>'
-    ].join('');
+    const projectOptions = sortedProjects(state.projects).map((project) => {
+      const selected = project.id === selectedProjectId() ? ' selected' : '';
+      const hint = compactPath(project.rootPath || '');
+      return '<option value="' + esc(project.id) + '"' + selected + '>' + esc(project.name || 'Untitled project') + (hint ? ' · ' + esc(hint) : '') + '</option>';
+    }).join('');
+    const nextHtml = state.sidebarFormMode === 'project'
+      ? [
+          '<div class="sf-mode-title">Add project</div>',
+          '<input class="sf-input" id="projectNameInput" placeholder="Project name" value="' + esc(state.draftProjectName || '') + '">',
+          '<input class="sf-input" id="projectRootPathInput" placeholder="Project root path" value="' + esc(state.draftProjectRootPath || state.draftProjectDir || '') + '">',
+          '<input class="sf-input" id="projectBaseBranchInput" placeholder="Default base branch" value="' + esc(state.draftProjectBaseBranch || 'main') + '">',
+          '<div class="sf-actions">',
+          '<button class="sf-submit" id="sidebarCreateProjectButton">Save project</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '</div>',
+          '<div class="sf-hint">Point this at an existing git repo. A lightweight project record is all we need for now.</div>'
+        ].join('')
+      : [
+          '<div class="sf-mode-title">New objective</div>',
+          '<select class="sf-input" id="projectSelectInput">' + projectOptions + '</select>',
+          '<div class="sf-row">',
+          '<input class="sf-input" id="baseBranchInput" placeholder="Base branch" value="' + esc(defaultBaseBranch()) + '">',
+          '</div>',
+          '<input class="sf-input" id="branchNameInput" placeholder="Feature branch name (optional)" value="' + esc(state.draftBranchName || '') + '">',
+          '<textarea class="sf-textarea" id="sidebarGoalInput" placeholder="Describe the objective">' + esc(state.draftGoal) + '</textarea>',
+          '<div class="sf-actions">',
+          '<button class="sf-submit" id="sidebarCreateButton">Create &amp; start</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '</div>',
+          '<div class="sf-hint">Objectives run inside a project. Pick a project, then describe the work.</div>'
+        ].join('');
     if (els.sidebarForm.className === className && els.sidebarForm.innerHTML === nextHtml) return;
     els.sidebarForm.className = className;
     els.sidebarForm.innerHTML = nextHtml;
     if (!state.sidebarFormOpen) return;
-    const projectDirInput = document.getElementById('projectDirInput');
-    const baseBranchInput = document.getElementById('baseBranchInput');
-    const branchNameInput = document.getElementById('branchNameInput');
-    const sidebarGoalInput = document.getElementById('sidebarGoalInput');
-    document.getElementById('sidebarCreateButton').addEventListener('click', submitSidebarObjective);
     document.getElementById('sidebarCancelButton').addEventListener('click', () => {
       state.sidebarFormOpen = false;
       updateSidebarFormFromState();
     });
-    projectDirInput.addEventListener('input', (event) => {
-      state.draftProjectDir = event.target.value;
+    if (state.sidebarFormMode === 'project') {
+      const projectNameInput = document.getElementById('projectNameInput');
+      const projectRootPathInput = document.getElementById('projectRootPathInput');
+      const projectBaseBranchInput = document.getElementById('projectBaseBranchInput');
+      document.getElementById('sidebarCreateProjectButton').addEventListener('click', submitSidebarProject);
+      projectNameInput.addEventListener('input', (event) => {
+        state.draftProjectName = event.target.value;
+      });
+      projectRootPathInput.addEventListener('input', (event) => {
+        state.draftProjectRootPath = event.target.value;
+      });
+      projectBaseBranchInput.addEventListener('input', (event) => {
+        state.draftProjectBaseBranch = event.target.value || 'main';
+      });
+      return;
+    }
+    const projectSelectInput = document.getElementById('projectSelectInput');
+    const baseBranchInput = document.getElementById('baseBranchInput');
+    const branchNameInput = document.getElementById('branchNameInput');
+    const sidebarGoalInput = document.getElementById('sidebarGoalInput');
+    document.getElementById('sidebarCreateButton').addEventListener('click', submitSidebarObjective);
+    projectSelectInput.addEventListener('change', (event) => {
+      state.draftProjectId = event.target.value;
+      const project = findProject(state.draftProjectId);
+      state.draftProjectDir = (project && project.rootPath) || '';
+      state.draftBaseBranch = (project && project.defaultBaseBranch) || 'main';
+      updateSidebarFormFromState();
     });
     baseBranchInput.addEventListener('input', (event) => {
       state.draftBaseBranch = event.target.value || 'main';
@@ -2013,16 +2100,37 @@
     });
   }
 
-  function openSidebarForm(seedGoal) {
+  function openSidebarForm(seedGoal, projectId) {
     openSidebar();
+    state.sidebarFormMode = 'objective';
     state.sidebarFormOpen = true;
-    state.draftProjectDir = state.draftProjectDir || defaultProjectDir();
-    state.draftBaseBranch = defaultBaseBranch();
+    if (!state.projects.length) {
+      showToast('Add a project first, then create an objective.');
+      openProjectForm();
+      return;
+    }
+    state.draftProjectId = projectId || selectedProjectId();
+    const project = findProject(state.draftProjectId);
+    state.draftProjectDir = (project && project.rootPath) || defaultProjectDir();
+    state.draftBaseBranch = (project && project.defaultBaseBranch) || defaultBaseBranch();
     state.draftBranchName = state.draftBranchName || '';
     if (typeof seedGoal === 'string') state.draftGoal = seedGoal;
     updateSidebarFormFromState();
     window.setTimeout(() => {
-      const input = document.getElementById('projectDirInput');
+      const input = document.getElementById('sidebarGoalInput') || document.getElementById('projectSelectInput');
+      if (input) input.focus();
+    }, 0);
+  }
+
+  function openProjectForm() {
+    openSidebar();
+    state.sidebarFormMode = 'project';
+    state.sidebarFormOpen = true;
+    state.draftProjectRootPath = state.draftProjectRootPath || state.draftProjectDir || defaultProjectDir();
+    state.draftProjectBaseBranch = state.draftProjectBaseBranch || defaultBaseBranch();
+    updateSidebarFormFromState();
+    window.setTimeout(() => {
+      const input = document.getElementById('projectRootPathInput') || document.getElementById('projectNameInput');
       if (input) input.focus();
     }, 0);
   }
@@ -2052,12 +2160,21 @@
   }
 
   function renderSidebar() {
-    const items = sortedObjectives(state.objectives);
-    if (!items.length) {
-      els.objectiveList.innerHTML = '<div class="obj-item" style="cursor:default"><div class="obj-info"><div class="obj-name" style="color:var(--t2)">No objectives yet</div><div class="obj-progress">Create one to start the orchestrator.</div></div></div>';
+    const projects = sortedProjects(state.projects);
+    if (!projects.length) {
+      els.objectiveList.innerHTML = [
+        '<div class="sidebar-empty-state">',
+        '<div class="sidebar-empty-title">No projects yet</div>',
+        '<div class="sidebar-empty-copy">Add your first project to organize objectives here.</div>',
+        '<button class="sidebar-empty-button" id="sidebarEmptyAddProjectButton" type="button">+ Add project</button>',
+        '</div>'
+      ].join('');
+      const button = document.getElementById('sidebarEmptyAddProjectButton');
+      if (button) button.addEventListener('click', openProjectForm);
       return;
     }
-    els.objectiveList.innerHTML = items.map((objective) => {
+    ensureProjectExpansion();
+    const objectiveCards = (objectives) => objectives.map((objective) => {
       const meta = statusMeta(objective.status);
       const progress = objectiveProgress(objective);
       const active = objective.id === state.activeObjectiveId ? ' active' : '';
@@ -2069,7 +2186,7 @@
         progressText = 'failed · ' + relativeTime(objective.updatedAt || objective.createdAt);
       }
       return [
-        '<div class="obj-item' + active + doneClass + '" data-objective-id="' + esc(objective.id) + '">',
+        '<div class="obj-item nested' + active + doneClass + '" data-objective-id="' + esc(objective.id) + '">',
         '<div class="obj-dot ' + meta.dot + '"></div>',
         '<div class="obj-info">',
         '<div class="obj-name">' + esc(objective.goal || 'Untitled objective') + '</div>',
@@ -2081,6 +2198,39 @@
         '</div>'
       ].join('');
     }).join('');
+    els.objectiveList.innerHTML = projects.map((project) => {
+      const objectives = projectObjectives(project.id);
+      const expanded = state.projectExpansion[project.id] !== false;
+      const pathHint = compactPath(project.rootPath || '');
+      return [
+        '<div class="project-group" data-project-id="' + esc(project.id) + '">',
+        '<div class="project-row' + (expanded ? ' expanded' : '') + '">',
+        '<button class="project-toggle" type="button" data-project-toggle="' + esc(project.id) + '" aria-label="Toggle ' + esc(project.name || 'project') + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">▾</button>',
+        '<div class="project-info" data-project-toggle="' + esc(project.id) + '">',
+        '<div class="project-name-row"><div class="project-name">' + esc(project.name || 'Untitled project') + '</div><div class="project-count">' + objectives.length + '</div></div>',
+        pathHint ? '<div class="project-path">' + esc(pathHint) + '</div>' : '',
+        '</div>',
+        '<button class="project-add-objective" type="button" data-project-new-objective="' + esc(project.id) + '" aria-label="New objective in ' + esc(project.name || 'project') + '">+</button>',
+        '</div>',
+        expanded ? '<div class="project-objectives">' + (objectives.length ? objectiveCards(objectives) : '<div class="project-empty">No objectives yet</div>') + '</div>' : '',
+        '</div>'
+      ].join('');
+    }).join('');
+    els.objectiveList.querySelectorAll('[data-project-toggle]').forEach((node) => {
+      node.addEventListener('click', () => {
+        const projectId = node.getAttribute('data-project-toggle');
+        if (!projectId) return;
+        state.projectExpansion = Object.assign({}, state.projectExpansion, { [projectId]: !(state.projectExpansion[projectId] !== false) });
+        renderSidebar();
+      });
+    });
+    els.objectiveList.querySelectorAll('[data-project-new-objective]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const projectId = node.getAttribute('data-project-new-objective');
+        openSidebarForm('', projectId);
+      });
+    });
     els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
       node.addEventListener('click', () => {
         const id = node.getAttribute('data-objective-id');
@@ -2606,12 +2756,15 @@
   }
 
   function renderEmptyState() {
+    const copy = state.projects.length
+      ? 'Pick a project in the sidebar, then create an objective to get started.'
+      : 'Add a project first, then create an objective inside it.';
     return [
       '<div class="empty-state">',
       '<div class="empty-card">',
       '<div class="empty-kicker">Orchestrator</div>',
       '<div class="empty-title">Give me a goal and a codebase - I\u2019ll break it down and build it.</div>',
-      '<div class="empty-copy">Start with the input below or open <span class="mono">New objective</span> to set the project directory first.</div>',
+      '<div class="empty-copy">' + copy + '</div>',
       '</div>',
       '</div>'
     ].join('');
@@ -2755,13 +2908,23 @@
 
   async function pollObjectives() {
     const previousActiveId = state.activeObjectiveId;
-    const data = await api('/api/objectives');
-    state.objectives = Array.isArray(data) ? data : [];
+    const [objectivesData, projectsData] = await Promise.all([
+      api('/api/objectives'),
+      api('/api/projects')
+    ]);
+    state.objectives = Array.isArray(objectivesData) ? objectivesData : [];
+    state.projects = Array.isArray(projectsData) ? projectsData : [];
+    ensureProjectExpansion();
+    if (!findProject(state.draftProjectId)) {
+      state.draftProjectId = selectedProjectId();
+    }
     if (!state.draftProjectDir) {
-      state.draftProjectDir = defaultProjectDir();
+      const project = findProject(state.draftProjectId);
+      state.draftProjectDir = (project && project.rootPath) || defaultProjectDir();
     }
     if (!state.draftBaseBranch) {
-      state.draftBaseBranch = defaultBaseBranch();
+      const project = findProject(state.draftProjectId);
+      state.draftBaseBranch = (project && project.defaultBaseBranch) || defaultBaseBranch();
     }
     ensureSelection();
     if (state.activeObjectiveId && state.activeObjectiveId !== previousActiveId) {
@@ -2790,6 +2953,9 @@
     const previousPath = activeGitPath();
     const objective = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId));
     state.activeObjective = objective;
+    if (objective && objective.projectId) {
+      state.projectExpansion = Object.assign({}, state.projectExpansion, { [objective.projectId]: true });
+    }
     await loadActionButtons(state.activeObjectiveId);
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
@@ -2864,6 +3030,7 @@
         method: 'POST',
         body: JSON.stringify({
           goal,
+          projectId: state.draftProjectId || undefined,
           projectDir,
           baseBranch: baseBranch || 'main',
           branchName: branchName || ''
@@ -2889,16 +3056,18 @@
   }
 
   async function submitSidebarObjective() {
-    const projectDirInput = document.getElementById('projectDirInput');
+    const projectSelectInput = document.getElementById('projectSelectInput');
     const baseBranchInput = document.getElementById('baseBranchInput');
     const branchNameInput = document.getElementById('branchNameInput');
     const sidebarGoalInput = document.getElementById('sidebarGoalInput');
-    state.draftProjectDir = projectDirInput ? projectDirInput.value.trim() : state.draftProjectDir;
+    state.draftProjectId = projectSelectInput ? projectSelectInput.value.trim() : state.draftProjectId;
+    const project = findProject(state.draftProjectId);
+    state.draftProjectDir = (project && project.rootPath) || state.draftProjectDir;
     state.draftBaseBranch = baseBranchInput ? (baseBranchInput.value.trim() || 'main') : (state.draftBaseBranch || 'main');
     state.draftBranchName = branchNameInput ? branchNameInput.value.trim() : state.draftBranchName;
     state.draftGoal = sidebarGoalInput ? sidebarGoalInput.value.trim() : state.draftGoal;
-    if (!state.draftProjectDir || !state.draftGoal) {
-      showToast('Project directory and goal are required');
+    if (!state.draftProjectId || !state.draftGoal) {
+      showToast('Project and goal are required');
       return;
     }
     try {
@@ -2908,11 +3077,45 @@
     }
   }
 
+  async function submitSidebarProject() {
+    const projectNameInput = document.getElementById('projectNameInput');
+    const projectRootPathInput = document.getElementById('projectRootPathInput');
+    const projectBaseBranchInput = document.getElementById('projectBaseBranchInput');
+    state.draftProjectName = projectNameInput ? projectNameInput.value.trim() : state.draftProjectName;
+    state.draftProjectRootPath = projectRootPathInput ? projectRootPathInput.value.trim() : state.draftProjectRootPath;
+    state.draftProjectBaseBranch = projectBaseBranchInput ? (projectBaseBranchInput.value.trim() || 'main') : (state.draftProjectBaseBranch || 'main');
+    if (!state.draftProjectRootPath) {
+      showToast('Project root path is required');
+      return;
+    }
+    try {
+      const project = await api('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: state.draftProjectName,
+          rootPath: state.draftProjectRootPath,
+          defaultBaseBranch: state.draftProjectBaseBranch || 'main'
+        })
+      });
+      state.draftProjectId = project.id;
+      state.draftProjectDir = project.rootPath || '';
+      state.draftBaseBranch = project.defaultBaseBranch || 'main';
+      state.draftProjectName = '';
+      state.draftProjectRootPath = '';
+      state.draftProjectBaseBranch = state.draftBaseBranch;
+      await pollObjectives();
+      openSidebarForm(state.draftGoal, project.id);
+      showToast('Project added');
+    } catch (error) {
+      showToast(error.message || 'Could not add project');
+    }
+  }
+
   async function sendMessage() {
     const text = els.chatInput.value.trim();
     if (!text) return;
     if (!state.activeObjectiveId || !state.activeObjective) {
-      showToast('No active objective selected. Use "New objective" to create one.');
+      showToast(state.projects.length ? 'No active objective selected. Create one from a project in the sidebar.' : 'No projects yet. Add a project first.');
       return;
     }
     state.pendingSend = true;
@@ -3013,6 +3216,7 @@
     els.newObjectiveButton.addEventListener('click', () => {
       openSidebarForm(state.draftGoal);
     });
+    els.addProjectButton.addEventListener('click', openProjectForm);
     els.settingsButton.addEventListener('click', openSettingsModal);
     els.settingsCloseButton.addEventListener('click', closeSettingsModal);
     els.settingsCancelButton.addEventListener('click', closeSettingsModal);
