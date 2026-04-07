@@ -499,7 +499,9 @@ def build_status_summary(objective_id: str, objective: dict, messages: list[dict
 
 
 def handle_get_status_summary(handler, objective_id: str, objective: dict, *, engine, parsed=None):
-    messages = engine.orchestrator.get_messages(objective_id)
+    orchestrator = getattr(engine, "orchestrator", None)
+    get_messages = getattr(orchestrator, "get_messages", None)
+    messages = get_messages(objective_id) if callable(get_messages) else []
     enrich = None
     if parsed is not None:
         query = getattr(handler, "parse_qs", None)

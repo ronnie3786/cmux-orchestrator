@@ -1781,6 +1781,11 @@
   .fab-rail.visible {
     display: flex;
   }
+  .main.panel-overlay-open .fab-rail,
+  .main.panel-overlay-open .debug-fab {
+    opacity: 0;
+    pointer-events: none;
+  }
   .fab-btn {
     height: 40px;
     padding: 0 14px 0 10px;

@@ -49,6 +49,8 @@
     fileBrowserPreview: null,
     fileBrowserPreviewLoading: false,
     fileBrowserPreviewError: '',
+    fileBrowserFetchToken: 0,
+    fileBrowserSearchDebounce: null,
     lastMessageTimestamp: null,
     relativeTick: Date.now(),
     isMobile: null,
@@ -1390,6 +1392,22 @@
     return (entries || []).map((entry) => JSON.stringify(entry)).join('\n');
   }
 
+  function addLocalDebugEntry(level, event, details) {
+    const entry = {
+      ts: new Date().toISOString(),
+      level: level || 'info',
+      event: event || 'ui',
+      details: details || {}
+    };
+    state.debugEntries = [entry].concat(state.debugEntries || []).slice(0, 500);
+    state.debugHasErrors = state.debugHasErrors || level === 'error';
+    if (state.debugOpen) renderDebugModal();
+    try {
+      const fn = level === 'error' ? console.error : console.log;
+      fn('[orchestrator]', event, details || {});
+    } catch (_) {}
+  }
+
   async function fetchDebugErrorState() {
     if (!state.activeObjectiveId) {
       state.debugHasErrors = false;
@@ -1826,6 +1844,22 @@
       await openGitDiff(file, section);
       return;
     }
+    if (action === 'copy-path') {
+      copyText(absolutePath || (path + '/' + file), 'Path');
+      return;
+    }
+    if (action === 'open-native') {
+      try {
+        await api('/api/open-in-native', {
+          method: 'POST',
+          body: JSON.stringify({ path: absolutePath || (path + '/' + file) })
+        });
+        showToast('Opened in native app');
+      } catch (error) {
+        showToast(error.message || 'Could not open file');
+      }
+      return;
+    }
     const endpoint = action === 'stage' ? '/api/git-stage-path' : '/api/git-unstage-path';
     try {
       await api(endpoint, {
@@ -1857,6 +1891,8 @@
         html += '<div class="git-ctx-item" data-git-action="unstage">Unstage file</div>';
       }
       html += '<div class="git-ctx-item" data-git-action="diff">View diff</div>';
+      html += '<div class="git-ctx-item" data-git-action="open-native">Open in native app</div>';
+      html += '<div class="git-ctx-item" data-git-action="copy-path">Copy path</div>';
     }
     els.gitContextMenu.innerHTML = html;
     els.gitContextMenu.classList.add('visible');
@@ -1897,6 +1933,7 @@
     if (!state.gitPanelOpen || state.rightPanelMode !== 'files' || !state.activeObjectiveId) {
       return;
     }
+    const requestToken = ++state.fileBrowserFetchToken;
     state.fileBrowserLoading = true;
     state.fileBrowserError = '';
     renderGitPanel();
@@ -1905,9 +1942,12 @@
         ? ('?query=' + encodeURIComponent(state.fileBrowserQuery))
         : '';
       const data = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/files' + suffix);
-      if (!state.gitPanelOpen || state.rightPanelMode !== 'files') return;
+      if (!state.gitPanelOpen || state.rightPanelMode !== 'files' || requestToken !== state.fileBrowserFetchToken) return;
       state.fileBrowserItems = Array.isArray(data.items) ? data.items : [];
       state.fileBrowserRootPath = data.rootPath || activeFilesRoot();
+      if (!state.fileBrowserQuery && data.truncated) {
+        showToast('File list truncated for performance');
+      }
       const previousSelection = state.fileBrowserSelectedPath;
       const existing = selectedFileItem();
       if (!existing) {
@@ -1924,14 +1964,17 @@
         return;
       }
     } catch (error) {
+      if (requestToken !== state.fileBrowserFetchToken) return;
       state.fileBrowserError = error.message || 'Could not load files';
       state.fileBrowserItems = [];
       state.fileBrowserRootPath = activeFilesRoot();
       state.fileBrowserSelectedPath = '';
       state.fileBrowserPreview = null;
     } finally {
-      state.fileBrowserLoading = false;
-      renderGitPanel();
+      if (requestToken === state.fileBrowserFetchToken) {
+        state.fileBrowserLoading = false;
+        renderGitPanel();
+      }
     }
   }
 
@@ -2006,6 +2049,7 @@
   function renderGitPanel() {
     const path = activeGitPath();
     els.gitPanel.className = 'git-panel' + (state.gitPanelOpen ? ' open' : '');
+    els.main.classList.toggle('panel-overlay-open', !!(state.gitPanelOpen || state.diffOpen));
     const isFilesMode = state.rightPanelMode === 'files';
     const panelPath = isFilesMode
       ? (selectedFileItem() && selectedFileItem().absolutePath) || state.fileBrowserRootPath || activeFilesRoot()
@@ -2236,9 +2280,18 @@
   }
 
   async function fetchStatusSummary(force) {
-    if (!state.activeObjectiveId) return;
+    if (!state.activeObjectiveId) {
+      addLocalDebugEntry('warn', 'status-click-ignored', { reason: 'no-active-objective' });
+      return;
+    }
     const objectiveId = state.activeObjectiveId;
+    addLocalDebugEntry('info', 'status-clicked', {
+      objectiveId,
+      force: !!force,
+      objectiveStatus: state.activeObjective && state.activeObjective.status
+    });
     if (!force && state.statusSummary && state.statusSummaryObjectiveId === objectiveId) {
+      addLocalDebugEntry('info', 'status-using-cached-summary', { objectiveId });
       renderMessages();
       return;
     }
@@ -2250,14 +2303,26 @@
     }
     renderMessages();
     try {
-      const summary = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/status-summary?enrich=haiku');
+      const url = '/api/objectives/' + encodeURIComponent(objectiveId) + '/status-summary?enrich=haiku';
+      addLocalDebugEntry('info', 'status-fetch-start', { objectiveId, url });
+      const summary = await api(url);
       if (state.activeObjectiveId !== objectiveId) return;
       state.statusSummary = summary;
       state.statusSummaryObjectiveId = objectiveId;
       state.statusSummaryError = '';
+      addLocalDebugEntry('info', 'status-fetch-success', {
+        objectiveId,
+        source: summary && summary.summarySource && summary.summarySource.kind,
+        display: summary && summary.summarySource && summary.summarySource.display
+      });
     } catch (error) {
       if (state.activeObjectiveId !== objectiveId) return;
       state.statusSummaryError = error.message || 'Could not load status summary';
+      addLocalDebugEntry('error', 'status-fetch-failed', {
+        objectiveId,
+        message: state.statusSummaryError
+      });
+      showToast(state.statusSummaryError);
     } finally {
       if (state.activeObjectiveId === objectiveId) {
         state.statusSummaryLoading = false;
@@ -2966,7 +3031,7 @@
     const error = state.statusSummaryError;
     const summary = state.statusSummary;
     if (loading && !summary) {
-      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Objective status</div><div class="status-summary-meta">Refreshing…</div></div></div><div class="build-log-state"><div class="build-log-spinner"></div><div>Building a quick status snapshot…</div></div></div>';
+      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Objective status</div><div class="status-summary-meta">Refreshing…</div></div></div><div class="build-log-state"><div class="build-log-spinner"></div><div>Getting the latest status. Give me a min.</div></div></div>';
     }
     if (error && !summary) {
       return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Objective status</div><div class="status-summary-meta">Could not refresh</div></div><button class="status-summary-refresh" type="button" data-status-summary-refresh="true">Retry</button></div><div class="status-summary-error">' + esc(error) + '</div></div>';
@@ -3732,13 +3797,17 @@
     });
     els.filePanelSearchInput.addEventListener('input', () => {
       state.fileBrowserQuery = String(els.filePanelSearchInput.value || '').trim();
-      fetchFileBrowser(false);
+      if (state.fileBrowserSearchDebounce) window.clearTimeout(state.fileBrowserSearchDebounce);
+      state.fileBrowserSearchDebounce = window.setTimeout(() => {
+        fetchFileBrowser(false);
+      }, 250);
     });
     els.filePanelSearchInput.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
+      if (state.fileBrowserSearchDebounce) window.clearTimeout(state.fileBrowserSearchDebounce);
       state.fileBrowserQuery = String(els.filePanelSearchInput.value || '').trim();
-      fetchFileBrowser(true);
+      fetchFileBrowser(false);
     });
     els.gitContextMenu.addEventListener('click', (event) => {
       const actionNode = event.target.closest('[data-git-action]');
