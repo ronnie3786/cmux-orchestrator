@@ -1407,6 +1407,113 @@
     max-width: 520px;
   }
 
+  .card-status-summary {
+    width: 100%;
+    max-width: 680px;
+    background: linear-gradient(180deg, rgba(79,142,247,0.08), rgba(26,26,36,0.96));
+    border: 1px solid var(--blue-b);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+  }
+  .status-summary-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .status-summary-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .status-summary-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--t1);
+  }
+  .status-summary-meta,
+  .status-summary-inline,
+  .status-summary-stats {
+    font-size: 11px;
+    color: var(--t2);
+  }
+  .status-summary-refresh {
+    border: 1px solid var(--blue-b);
+    background: rgba(79,142,247,0.12);
+    color: var(--blue);
+    border-radius: 999px;
+    padding: 7px 12px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .status-summary-refresh:hover {
+    background: rgba(79,142,247,0.18);
+  }
+  .status-summary-stage-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .status-summary-stage {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: rgba(79,142,247,0.14);
+    border: 1px solid var(--blue-b);
+    color: var(--blue);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .status-summary-tldr {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--t1);
+  }
+  .status-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .status-summary-block {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--b);
+    border-radius: 12px;
+    padding: 12px;
+    min-width: 0;
+  }
+  .status-summary-block.blockers {
+    border-color: var(--amber-b);
+    background: rgba(251,191,36,0.06);
+  }
+  .status-summary-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--t3);
+    margin-bottom: 8px;
+  }
+  .status-summary-copy,
+  .status-summary-list-item,
+  .status-summary-error {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--t1);
+  }
+  .status-summary-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
   .approval-burst {
     align-self: flex-start;
     font-family: 'JetBrains Mono', monospace;

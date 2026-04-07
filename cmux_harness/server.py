@@ -23,6 +23,7 @@ from .routes import console_logs as console_logs_routes
 from .routes import file_browser as file_browser_routes
 from .routes import objectives as objective_routes
 from .routes import projects as project_routes
+from .routes import status_summary as status_summary_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_FILES = {
@@ -240,6 +241,18 @@ def make_handler(engine):
                     objective,
                     parsed,
                     human_file_size=_human_file_size,
+                )
+            elif path.startswith("/api/objectives/") and path.endswith("/status-summary"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/status-summary")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                status_summary_routes.handle_get_status_summary(
+                    self,
+                    objective_id,
+                    objective,
+                    engine=self.server.engine,
                 )
             elif path.startswith("/api/objectives/") and "/tasks/" in path and path.endswith("/screen"):
                 parts = path.split("/")

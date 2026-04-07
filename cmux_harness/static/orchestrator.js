@@ -88,6 +88,10 @@
     consoleLogPinned: true,
     consoleLogHasNewOutput: false,
     consoleLogLastSignature: '',
+    statusSummary: null,
+    statusSummaryLoading: false,
+    statusSummaryError: '',
+    statusSummaryObjectiveId: null,
     draftProjectDir: '',
     draftProjectId: '',
     draftProjectName: '',
@@ -417,6 +421,21 @@
     if (hours > 0) return hours + 'h ' + mins + 'm';
     if (mins > 0) return mins + 'm ' + secs + 's';
     return secs + 's';
+  }
+
+  function formatDateTime(value) {
+    const ts = parseIso(value);
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      return '';
+    }
   }
 
   function statusMeta(status) {
@@ -1360,6 +1379,13 @@
     state.consoleLogPreset = 'all';
   }
 
+  function resetStatusSummaryState() {
+    state.statusSummary = null;
+    state.statusSummaryLoading = false;
+    state.statusSummaryError = '';
+    state.statusSummaryObjectiveId = null;
+  }
+
   function debugJsonl(entries) {
     return (entries || []).map((entry) => JSON.stringify(entry)).join('\n');
   }
@@ -2209,6 +2235,37 @@
     }
   }
 
+  async function fetchStatusSummary(force) {
+    if (!state.activeObjectiveId) return;
+    const objectiveId = state.activeObjectiveId;
+    if (!force && state.statusSummary && state.statusSummaryObjectiveId === objectiveId) {
+      renderMessages();
+      return;
+    }
+    state.statusSummaryLoading = true;
+    state.statusSummaryError = '';
+    if (!state.statusSummary || state.statusSummaryObjectiveId !== objectiveId) {
+      state.statusSummary = null;
+      state.statusSummaryObjectiveId = objectiveId;
+    }
+    renderMessages();
+    try {
+      const summary = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/status-summary');
+      if (state.activeObjectiveId !== objectiveId) return;
+      state.statusSummary = summary;
+      state.statusSummaryObjectiveId = objectiveId;
+      state.statusSummaryError = '';
+    } catch (error) {
+      if (state.activeObjectiveId !== objectiveId) return;
+      state.statusSummaryError = error.message || 'Could not load status summary';
+    } finally {
+      if (state.activeObjectiveId === objectiveId) {
+        state.statusSummaryLoading = false;
+        renderMessages();
+      }
+    }
+  }
+
   function closeGitPanel() {
     state.gitPanelOpen = false;
     renderContext();
@@ -2549,6 +2606,7 @@
           '<div class="ctx-meta">' + esc(elapsed) + '</div>',
           branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
           '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
+          '<button class="ctx-git-button" id="statusSummaryButton" type="button">Status</button>',
           gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
           filesRoot ? '<button class="ctx-git-button' + (isFilesPanelMode() ? ' open' : '') + '" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
           '</div>',
@@ -2570,6 +2628,7 @@
           '</div>',
           '</div>',
           '<div class="ctx-actions">',
+          '<button class="ctx-git-button" id="statusSummaryButton" type="button">Status</button>',
           gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
           filesRoot ? '<button class="ctx-git-button' + (isFilesPanelMode() ? ' open' : '') + '" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
           '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
@@ -2578,6 +2637,12 @@
           '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
           '</div>'
         ].join('');
+    const statusSummaryButton = document.getElementById('statusSummaryButton');
+    if (statusSummaryButton) {
+      statusSummaryButton.addEventListener('click', () => {
+        fetchStatusSummary(true);
+      });
+    }
     const gitButton = document.getElementById('gitPanelToggleButton');
     if (gitButton) {
       gitButton.addEventListener('click', toggleGitPanel);
@@ -2632,6 +2697,9 @@
 
   function normalizeMessages(messages) {
     const items = [];
+    if ((state.statusSummary && state.statusSummaryObjectiveId === state.activeObjectiveId) || state.statusSummaryLoading || state.statusSummaryError) {
+      items.push({ kind: 'status-summary', id: 'status-summary' });
+    }
     let insertedSyntheticPlan = false;
     const tasks = (state.activeObjective && state.activeObjective.tasks) || [];
     const hasPlanMessage = messages.some((message) => message.type === 'plan' || message.type === 'plan_review');
@@ -2893,6 +2961,54 @@
     ].join('');
   }
 
+  function renderStatusSummaryCard() {
+    const loading = state.statusSummaryLoading;
+    const error = state.statusSummaryError;
+    const summary = state.statusSummary;
+    if (loading && !summary) {
+      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Objective status</div><div class="status-summary-meta">Refreshing…</div></div></div><div class="build-log-state"><div class="build-log-spinner"></div><div>Building a quick status snapshot…</div></div></div>';
+    }
+    if (error && !summary) {
+      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Objective status</div><div class="status-summary-meta">Could not refresh</div></div><button class="status-summary-refresh" type="button" data-status-summary-refresh="true">Retry</button></div><div class="status-summary-error">' + esc(error) + '</div></div>';
+    }
+    if (!summary) return '';
+    const stage = summary.stage || {};
+    const signals = summary.signals || {};
+    const tasks = signals.tasks || {};
+    const approvals = signals.approvals || {};
+    const git = signals.git || {};
+    const blockers = Array.isArray(summary.blockers) ? summary.blockers : [];
+    const refreshedLabel = formatDateTime(summary.generatedAt) || 'just now';
+    const refreshedAgo = relativeTime(summary.generatedAt) || 'just now';
+    const taskStats = [];
+    if (tasks.total) taskStats.push(tasks.completed + '/' + tasks.total + ' tasks done');
+    if (tasks.active) taskStats.push(tasks.active + ' active');
+    if (git.changedFiles) taskStats.push(git.changedFiles + ' changed files');
+    if (approvals.waiting) taskStats.push(approvals.waiting + ' approval' + (approvals.waiting === 1 ? '' : 's') + ' waiting');
+    return [
+      '<div class="card-status-summary">',
+      '<div class="status-summary-head">',
+      '<div>',
+      '<div class="status-summary-title">Objective status</div>',
+      '<div class="status-summary-meta" title="' + esc(summary.generatedAt || '') + '">Refreshed ' + esc(refreshedAgo) + ' · ' + esc(refreshedLabel) + '</div>',
+      '</div>',
+      '<div class="status-summary-head-actions">',
+      loading ? '<span class="status-summary-inline">Refreshing…</span>' : '',
+      '<button class="status-summary-refresh" type="button" data-status-summary-refresh="true">Refresh</button>',
+      '</div>',
+      '</div>',
+      '<div class="status-summary-stage-row"><span class="status-summary-stage">' + esc((stage.label || 'Unknown stage')) + '</span>' + (taskStats.length ? '<span class="status-summary-stats">' + esc(taskStats.join(' · ')) + '</span>' : '') + '</div>',
+      '<div class="status-summary-tldr">' + esc(summary.tldr || '') + '</div>',
+      '<div class="status-summary-grid">',
+      '<div class="status-summary-block"><div class="status-summary-label">Just happened</div><div class="status-summary-copy">' + esc(summary.justHappened || 'No recent update yet.') + '</div></div>',
+      '<div class="status-summary-block"><div class="status-summary-label">Now</div><div class="status-summary-copy">' + esc(summary.now || 'No active work right now.') + '</div></div>',
+      '<div class="status-summary-block"><div class="status-summary-label">Next</div><div class="status-summary-copy">' + esc(summary.next || 'No next step available yet.') + '</div></div>',
+      blockers.length ? '<div class="status-summary-block blockers"><div class="status-summary-label">Blockers</div><div class="status-summary-list">' + blockers.map((item) => '<div class="status-summary-list-item">' + esc(item) + '</div>').join('') + '</div></div>' : '',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
   function renderApprovalCard(message) {
     const metadata = message.metadata || {};
     const taskId = metadata.task_id || '';
@@ -2940,6 +3056,17 @@
   function renderMessageItem(item, grouped) {
     const groupClass = grouped ? ' msg-grouped' : '';
     if (item.kind === 'approval-burst') return renderBurst(item);
+    if (item.kind === 'status-summary') {
+      return [
+        '<div class="msg">',
+        '<div class="msg-av av-c">⌘</div>',
+        '<div class="msg-body">',
+        '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">status</span></div>',
+        renderStatusSummaryCard(),
+        '</div>',
+        '</div>'
+      ].join('');
+    }
     if (item.kind === 'plan_review') {
       const time = relativeTime(item.message.timestamp);
       return [
@@ -3094,6 +3221,11 @@
         copyText(node.getAttribute('data-copy-path'), 'Path');
       });
     });
+    els.messageColumn.querySelectorAll('[data-status-summary-refresh]').forEach((node) => {
+      node.addEventListener('click', () => {
+        fetchStatusSummary(true);
+      });
+    });
 
     if (beforeBottom) {
       scrollToBottom();
@@ -3201,6 +3333,7 @@
       state.fabModalOpen = false;
       resetBuildLogState();
       resetConsoleLogState();
+      resetStatusSummaryState();
       renderBuildLog();
       renderConsoleLog();
       renderFabRail();
@@ -3279,6 +3412,7 @@
     state.lastMessageTimestamp = null;
     resetBuildLogState();
     resetConsoleLogState();
+    resetStatusSummaryState();
     await Promise.all([
       pollActiveObjective(false),
       pollMessages(false)
