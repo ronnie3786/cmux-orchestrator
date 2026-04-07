@@ -1786,6 +1786,11 @@
     opacity: 0;
     pointer-events: none;
   }
+  body.right-panel-open .fab-rail,
+  body.right-panel-open .debug-fab {
+    opacity: 0;
+    pointer-events: none;
+  }
   .fab-btn {
     height: 40px;
     padding: 0 14px 0 10px;
@@ -1972,7 +1977,7 @@
     box-shadow: -18px 0 40px rgba(0,0,0,.35);
     transform: translateX(100%);
     transition: transform .18s ease;
-    z-index: 18;
+    z-index: 28;
     display: flex;
     flex-direction: column;
   }
@@ -2048,6 +2053,13 @@
     flex: 1;
     overflow-y: auto;
     padding: 4px 0 16px;
+  }
+  .git-panel .card-status-summary {
+    max-width: none;
+    margin: 12px 16px 0;
+  }
+  .git-panel .status-summary-grid {
+    grid-template-columns: 1fr;
   }
   .file-panel-search-row {
     display: flex;
@@ -2343,7 +2355,7 @@
   }
   .git-ctx-menu {
     position: fixed;
-    z-index: 40;
+    z-index: 45;
     min-width: 160px;
     background: var(--sidebar);
     border: 1px solid var(--b2);

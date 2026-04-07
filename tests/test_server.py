@@ -554,6 +554,44 @@ class TestServerResponses(unittest.TestCase):
         self.assertIn("-print('one')", body["diff"])
         self.assertIn("+print('two')", body["diff"])
 
+    def test_open_worktree_route_opens_active_worktree_in_vscode(self):
+        worktree_path = Path(self.tmpdir.name) / "objective-worktree"
+        worktree_path.mkdir(parents=True)
+        objective = self._create_objective_with_worktree(worktree_path)
+
+        with patch("cmux_harness.routes.file_browser.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            handler = self._post_json(
+                f"/api/objectives/{objective['id']}/open-worktree",
+                {},
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "rootPath": str(worktree_path.resolve()), "editor": "vscode"})
+        mock_run.assert_called_once_with(
+            ["open", "-a", "Visual Studio Code", str(worktree_path.resolve())],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_open_in_native_resolves_git_rename_to_existing_path(self):
+        repo_path, _first_hash, _second_hash = self._create_git_repo_with_history("repo-open-native-rename")
+        self._git(repo_path, "mv", "src/app.py", "src/renamed.py")
+
+        with patch("cmux_harness.server.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            handler = self._post_json(
+                "/api/open-in-native",
+                {"cwd": str(repo_path), "file": "src/app.py -> src/renamed.py"},
+                engine=self._make_git_engine(),
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        expected_path = str((repo_path / "src" / "renamed.py").resolve())
+        self.assertEqual(body, {"ok": True, "path": expected_path})
+        mock_run.assert_called_once_with(["open", expected_path], check=True, capture_output=True, text=True)
+
     def test_get_build_log_returns_exists_false_when_file_is_missing(self):
         worktree_path = Path(self.tmpdir.name) / "worktree-missing-build-log"
         worktree_path.mkdir(parents=True)

@@ -215,3 +215,27 @@ def handle_open_file(handler, objective, data):
         handler._json_response({"ok": True})
     except OSError as exc:
         handler._json_response({"ok": False, "error": str(exc)}, 500)
+
+
+def handle_open_worktree(handler, objective):
+    root = _objective_root(handler, objective)
+    if root is None:
+        return
+
+    commands = [
+        ["open", "-a", "Visual Studio Code", str(root)],
+        ["code", str(root)],
+    ]
+    last_error = None
+    for command in commands:
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            handler._json_response({"ok": True, "rootPath": str(root), "editor": "vscode"})
+            return
+        except (OSError, subprocess.CalledProcessError) as exc:
+            last_error = exc
+
+    handler._json_response(
+        {"ok": False, "error": str(last_error) if last_error else "Could not open worktree in VS Code"},
+        500,
+    )

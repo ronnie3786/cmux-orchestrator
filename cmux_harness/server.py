@@ -102,6 +102,29 @@ def make_handler(engine):
                 return None
             return cwd
 
+        def _resolve_workspace_file_path(self, root_path, file_value):
+            root = os.path.realpath(str(root_path or "").strip())
+            if not root or not os.path.isdir(root):
+                return None, "workspace cwd not found"
+            raw_file = str(file_value or "").strip().replace("\\", "/")
+            if not raw_file:
+                return None, "file required"
+
+            candidates = [raw_file]
+            if " -> " in raw_file:
+                old_path, new_path = raw_file.split(" -> ", 1)
+                candidates = [new_path.strip(), old_path.strip()]
+
+            root_prefix = root + os.sep
+            for candidate in candidates:
+                full_path = os.path.realpath(os.path.join(root, candidate))
+                if full_path != root and not full_path.startswith(root_prefix):
+                    continue
+                if os.path.exists(full_path):
+                    return full_path, None
+
+            return None, f"file not found: {raw_file}"
+
         def _serve_static(self, path):
             content = _STATIC_CONTENT.get(path)
             meta = _STATIC_FILES.get(path)
@@ -417,6 +440,13 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 file_browser_routes.handle_open_file(self, objective, data)
+            elif path.startswith("/api/objectives/") and path.endswith("/open-worktree"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/open-worktree")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                file_browser_routes.handle_open_worktree(self, objective)
             elif path == "/api/projects":
                 project_routes.handle_post_create_project(self, data)
             elif path == "/api/objectives":
@@ -808,6 +838,27 @@ def make_handler(engine):
                     self._json_response({"ok": True})
                 except OSError as e:
                     self._json_response({"ok": False, "error": str(e)}, 500)
+            elif self.path == "/api/open-in-native":
+                file = data.get("file")
+                cwd = self._resolve_git_path(data.get("cwd") or data.get("path")) if file else None
+                if file:
+                    full_path, error = self._resolve_workspace_file_path(cwd, file)
+                    if error:
+                        self._json_response({"ok": False, "error": error}, 404 if error.startswith("file not found") else 400)
+                        return
+                else:
+                    full_path = os.path.realpath(os.path.expanduser(str(data.get("path") or "").strip()))
+                    if not full_path:
+                        self._json_response({"ok": False, "error": "path required"}, 400)
+                        return
+                    if not os.path.exists(full_path):
+                        self._json_response({"ok": False, "error": f"file not found: {full_path}"}, 404)
+                        return
+                try:
+                    subprocess.run(["open", full_path], check=True, capture_output=True, text=True)
+                    self._json_response({"ok": True, "path": full_path})
+                except (OSError, subprocess.CalledProcessError) as e:
+                    self._json_response({"ok": False, "error": str(e), "path": full_path}, 500)
             elif self.path == "/api/git-diff":
                 idx = data.get("index")
                 file = data.get("file")

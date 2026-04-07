@@ -834,14 +834,6 @@
       : '';
   }
 
-  function isFilesPanelMode() {
-    return state.gitPanelOpen && state.rightPanelMode === 'files';
-  }
-
-  function selectedFileItem() {
-    return (state.fileBrowserItems || []).find((item) => item.path === state.fileBrowserSelectedPath) || null;
-  }
-
   function gitButtonLabel() {
     const branch = state.gitStatus && state.gitStatus.branch
       ? state.gitStatus.branch
@@ -852,6 +844,23 @@
   function currentObjectiveName() {
     const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
     return objective && objective.goal ? String(objective.goal) : 'No objective selected';
+  }
+
+  async function openObjectiveWorktreeInVSCode() {
+    if (!state.activeObjectiveId) {
+      showToast('No active objective worktree');
+      return;
+    }
+    try {
+      await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/open-worktree', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      showToast('Opened worktree in VS Code');
+    } catch (error) {
+      console.error('open-worktree failed', error);
+      showToast(error.message || 'Could not open worktree in VS Code');
+    }
   }
 
   function buildLogSignature(data) {
@@ -1822,24 +1831,6 @@
     const absolutePath = state.gitContextAbsolutePath;
     hideGitContextMenu();
     if (!path || !file) return;
-    if (mode === 'files') {
-      if (action === 'copy-path') {
-        copyText(absolutePath || (path + '/' + file), 'Path');
-        return;
-      }
-      if (action === 'open-native') {
-        try {
-          await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/files/open', {
-            method: 'POST',
-            body: JSON.stringify({ path: file })
-          });
-          showToast('Opened in native app');
-        } catch (error) {
-          showToast(error.message || 'Could not open file');
-        }
-      }
-      return;
-    }
     if (action === 'diff') {
       await openGitDiff(file, section);
       return;
@@ -1852,10 +1843,11 @@
       try {
         await api('/api/open-in-native', {
           method: 'POST',
-          body: JSON.stringify({ path: absolutePath || (path + '/' + file) })
+          body: JSON.stringify({ cwd: path, file })
         });
         showToast('Opened in native app');
       } catch (error) {
+        console.error('open-in-native failed', { path, file, absolutePath, error });
         showToast(error.message || 'Could not open file');
       }
       return;
@@ -1879,21 +1871,16 @@
     state.gitContextSection = options.section || '';
     state.gitContextAbsolutePath = options.absolutePath || '';
     let html = '';
-    if (state.gitContextMode === 'files') {
-      html += '<div class="git-ctx-item" data-git-action="open-native">Open in native app</div>';
-      html += '<div class="git-ctx-item" data-git-action="copy-path">Copy path</div>';
-    } else {
-      const section = options.section || '';
-      if (section === 'unstaged' || section === 'untracked') {
-        html += '<div class="git-ctx-item" data-git-action="stage">Stage file</div>';
-      }
-      if (section === 'staged') {
-        html += '<div class="git-ctx-item" data-git-action="unstage">Unstage file</div>';
-      }
-      html += '<div class="git-ctx-item" data-git-action="diff">View diff</div>';
-      html += '<div class="git-ctx-item" data-git-action="open-native">Open in native app</div>';
-      html += '<div class="git-ctx-item" data-git-action="copy-path">Copy path</div>';
+    const section = options.section || '';
+    if (section === 'unstaged' || section === 'untracked') {
+      html += '<div class="git-ctx-item" data-git-action="stage">Stage file</div>';
     }
+    if (section === 'staged') {
+      html += '<div class="git-ctx-item" data-git-action="unstage">Unstage file</div>';
+    }
+    html += '<div class="git-ctx-item" data-git-action="diff">View diff</div>';
+    html += '<div class="git-ctx-item" data-git-action="open-native">Open in native app</div>';
+    html += '<div class="git-ctx-item" data-git-action="copy-path">Copy path</div>';
     els.gitContextMenu.innerHTML = html;
     els.gitContextMenu.classList.add('visible');
     let x = event.clientX;
@@ -1905,143 +1892,11 @@
     els.gitContextMenu.style.top = y + 'px';
   }
 
-  async function fetchFilePreview(filePath) {
-    if (!state.activeObjectiveId || !filePath) return;
-    state.fileBrowserSelectedPath = filePath;
-    state.fileBrowserPreview = null;
-    state.fileBrowserPreviewLoading = true;
-    state.fileBrowserPreviewError = '';
-    renderGitPanel();
-    try {
-      const data = await api(
-        '/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/files/content?path=' + encodeURIComponent(filePath)
-      );
-      if (state.fileBrowserSelectedPath !== filePath) return;
-      state.fileBrowserPreview = data;
-    } catch (error) {
-      if (state.fileBrowserSelectedPath !== filePath) return;
-      state.fileBrowserPreviewError = error.message || 'Could not load preview';
-    } finally {
-      if (state.fileBrowserSelectedPath === filePath) {
-        state.fileBrowserPreviewLoading = false;
-        renderGitPanel();
-      }
-    }
-  }
-
-  async function fetchFileBrowser(forcePreview) {
-    if (!state.gitPanelOpen || state.rightPanelMode !== 'files' || !state.activeObjectiveId) {
-      return;
-    }
-    const requestToken = ++state.fileBrowserFetchToken;
-    state.fileBrowserLoading = true;
-    state.fileBrowserError = '';
-    renderGitPanel();
-    try {
-      const suffix = state.fileBrowserQuery
-        ? ('?query=' + encodeURIComponent(state.fileBrowserQuery))
-        : '';
-      const data = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/files' + suffix);
-      if (!state.gitPanelOpen || state.rightPanelMode !== 'files' || requestToken !== state.fileBrowserFetchToken) return;
-      state.fileBrowserItems = Array.isArray(data.items) ? data.items : [];
-      state.fileBrowserRootPath = data.rootPath || activeFilesRoot();
-      if (!state.fileBrowserQuery && data.truncated) {
-        showToast('File list truncated for performance');
-      }
-      const previousSelection = state.fileBrowserSelectedPath;
-      const existing = selectedFileItem();
-      if (!existing) {
-        const nextSelection = state.fileBrowserItems.length ? state.fileBrowserItems[0].path : '';
-        state.fileBrowserSelectedPath = nextSelection;
-        state.fileBrowserPreview = null;
-        state.fileBrowserPreviewError = '';
-        if (nextSelection && (forcePreview || nextSelection !== previousSelection)) {
-          await fetchFilePreview(nextSelection);
-          return;
-        }
-      } else if (forcePreview && existing.path) {
-        await fetchFilePreview(existing.path);
-        return;
-      }
-    } catch (error) {
-      if (requestToken !== state.fileBrowserFetchToken) return;
-      state.fileBrowserError = error.message || 'Could not load files';
-      state.fileBrowserItems = [];
-      state.fileBrowserRootPath = activeFilesRoot();
-      state.fileBrowserSelectedPath = '';
-      state.fileBrowserPreview = null;
-    } finally {
-      if (requestToken === state.fileBrowserFetchToken) {
-        state.fileBrowserLoading = false;
-        renderGitPanel();
-      }
-    }
-  }
-
-  function renderFilesPanel() {
-    const rootPath = state.fileBrowserRootPath || activeFilesRoot();
-    if (!rootPath) {
-      els.gitPanelBody.innerHTML = '<div class="git-empty">No active objective worktree</div>';
-      return;
-    }
-    if (state.fileBrowserLoading && !state.fileBrowserItems.length) {
-      els.gitPanelBody.innerHTML = '<div class="diff-loading">Loading files…</div>';
-      return;
-    }
-    if (state.fileBrowserError) {
-      els.gitPanelBody.innerHTML = '<div class="git-empty">' + esc(state.fileBrowserError) + '</div>';
-      return;
-    }
-    const selected = selectedFileItem();
-    const preview = state.fileBrowserPreview;
-    const previewHtml = state.fileBrowserPreviewLoading
-      ? '<div class="file-preview-empty">Loading preview…</div>'
-      : state.fileBrowserPreviewError
-        ? '<div class="file-preview-empty">' + esc(state.fileBrowserPreviewError) + '</div>'
-        : !selected
-          ? '<div class="file-preview-empty">Select a file to preview it.</div>'
-          : !preview
-            ? '<div class="file-preview-empty">Pick a file to load a preview.</div>'
-            : preview.previewable
-              ? '<div class="file-preview-card"><div class="file-preview-header"><div class="file-preview-title">' + esc(selected.name) + '</div><div class="file-preview-path">' + esc(preview.path || selected.path) + ' · ' + esc(preview.sizeHuman || selected.sizeHuman || '') + '</div></div><pre class="file-preview-content">' + esc(preview.content || '') + '</pre>' + (preview.truncated ? '<div class="file-preview-note">Preview truncated to keep the panel responsive.</div>' : '') + '</div>'
-              : '<div class="file-preview-card"><div class="file-preview-header"><div class="file-preview-title">' + esc(selected.name) + '</div><div class="file-preview-path">' + esc(preview.path || selected.path) + ' · ' + esc(preview.sizeHuman || selected.sizeHuman || '') + '</div></div><div class="file-preview-empty">' + esc(preview.reason || 'Preview not available for this file type.') + '</div></div>';
-
-    let listHtml = '';
-    if (!state.fileBrowserItems.length) {
-      listHtml = '<div class="git-empty">' + (state.fileBrowserQuery ? 'No files match this search.' : 'No files found in this objective worktree.') + '</div>';
-    } else {
-      listHtml = '<div class="files-list">' + state.fileBrowserItems.map((item) => {
-        return [
-          '<div class="file-item' + (item.path === state.fileBrowserSelectedPath ? ' selected' : '') + '" data-file-path="' + esc(item.path) + '" data-file-absolute="' + esc(item.absolutePath || '') + '" title="' + esc(item.path) + '">',
-          '<div class="file-item-name-row"><span class="file-item-icon">📄</span><span class="file-item-name">' + esc(item.name) + '</span><span class="file-item-size">' + esc(item.sizeHuman || '') + '</span></div>',
-          '<div class="file-item-dir">' + esc(item.directory || '.') + '</div>',
-          '</div>'
-        ].join('');
-      }).join('') + '</div>';
-    }
-    els.gitPanelBody.innerHTML = [
-      '<div class="files-shell">',
-      '<div class="files-list-pane">',
-      '<div class="files-list-meta">' + esc(rootPath) + (state.fileBrowserQuery ? ' · ' + esc(state.fileBrowserItems.length + ' matches') : '') + '</div>',
-      listHtml,
-      '</div>',
-      '<div class="files-preview-pane">',
-      '<div class="file-preview-meta">Read-only preview</div>',
-      previewHtml,
-      '</div>',
-      '</div>'
-    ].join('');
-    els.gitPanelBody.querySelectorAll('[data-file-path]').forEach((node) => {
+  function renderStatusPanel() {
+    els.gitPanelBody.innerHTML = renderStatusSummaryCard();
+    els.gitPanelBody.querySelectorAll('[data-status-summary-refresh]').forEach((node) => {
       node.addEventListener('click', () => {
-        fetchFilePreview(node.getAttribute('data-file-path'));
-      });
-      node.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-        showGitContextMenu(event, {
-          mode: 'files',
-          file: node.getAttribute('data-file-path'),
-          absolutePath: node.getAttribute('data-file-absolute')
-        });
+        fetchStatusSummary(true);
       });
     });
   }
@@ -2049,24 +1904,23 @@
   function renderGitPanel() {
     const path = activeGitPath();
     els.gitPanel.className = 'git-panel' + (state.gitPanelOpen ? ' open' : '');
-    els.main.classList.toggle('panel-overlay-open', !!(state.gitPanelOpen || state.diffOpen));
-    const isFilesMode = state.rightPanelMode === 'files';
-    const panelPath = isFilesMode
-      ? (selectedFileItem() && selectedFileItem().absolutePath) || state.fileBrowserRootPath || activeFilesRoot()
+    const panelOverlayOpen = !!state.gitPanelOpen;
+    els.main.classList.toggle('panel-overlay-open', panelOverlayOpen);
+    document.body.classList.toggle('right-panel-open', panelOverlayOpen);
+    const isStatusMode = state.rightPanelMode === 'status';
+    const panelPath = isStatusMode
+      ? activeFilesRoot() || path
       : ((state.gitStatus && state.gitStatus.cwd) || path);
-    els.gitPanelBranch.textContent = isFilesMode
-      ? 'Files'
+    els.gitPanelBranch.textContent = isStatusMode
+      ? 'Status'
       : ((state.gitStatus && state.gitStatus.branch) || (state.activeObjective && state.activeObjective.branchName) || 'Git');
     els.gitPanelPath.textContent = panelPath || 'No working directory';
     els.gitPanelCopyButton.disabled = !panelPath;
-    els.filePanelSearchRow.hidden = !isFilesMode;
-    if (isFilesMode) {
-      els.filePanelSearchInput.value = state.fileBrowserQuery || '';
-    }
+    els.filePanelSearchRow.hidden = true;
     const data = state.gitStatus;
     if (!state.gitPanelOpen) return;
-    if (isFilesMode) {
-      renderFilesPanel();
+    if (isStatusMode) {
+      renderStatusPanel();
       return;
     }
     if (!path) {
@@ -2292,7 +2146,7 @@
     });
     if (!force && state.statusSummary && state.statusSummaryObjectiveId === objectiveId) {
       addLocalDebugEntry('info', 'status-using-cached-summary', { objectiveId });
-      renderMessages();
+      renderGitPanel();
       return;
     }
     state.statusSummaryLoading = true;
@@ -2301,7 +2155,7 @@
       state.statusSummary = null;
       state.statusSummaryObjectiveId = objectiveId;
     }
-    renderMessages();
+    renderGitPanel();
     try {
       const url = '/api/objectives/' + encodeURIComponent(objectiveId) + '/status-summary?enrich=haiku';
       addLocalDebugEntry('info', 'status-fetch-start', { objectiveId, url });
@@ -2326,7 +2180,7 @@
     } finally {
       if (state.activeObjectiveId === objectiveId) {
         state.statusSummaryLoading = false;
-        renderMessages();
+        renderGitPanel();
       }
     }
   }
@@ -2343,13 +2197,14 @@
     toggleRightPanel('git');
   }
 
-  function toggleFilesPanel() {
-    if (!activeFilesRoot()) return;
-    toggleRightPanel('files');
+  function toggleStatusPanel() {
+    if (!state.activeObjectiveId) return;
+    toggleRightPanel('status');
   }
 
   function toggleRightPanel(mode) {
-    if (!activeGitPath()) return;
+    if (mode === 'git' && !activeGitPath()) return;
+    if (mode === 'status' && !state.activeObjectiveId) return;
     if (state.gitPanelOpen && state.rightPanelMode === mode) {
       state.gitPanelOpen = false;
     } else {
@@ -2360,11 +2215,11 @@
     renderGitPanel();
     if (state.gitPanelOpen) {
       hideGitContextMenu();
-      if (mode === 'git') {
-        fetchGitStatus();
-      } else {
+      if (mode === 'status') {
         closeDiffOverlay();
-        fetchFileBrowser(true);
+        fetchStatusSummary(false);
+      } else {
+        fetchGitStatus();
       }
     } else {
       hideGitContextMenu();
@@ -2671,9 +2526,9 @@
           '<div class="ctx-meta">' + esc(elapsed) + '</div>',
           branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
           '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
-          '<button class="ctx-git-button" id="statusSummaryButton" type="button">Status</button>',
+          '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'status' ? ' open' : '') + '" id="statusSummaryButton" type="button">Status</button>',
           gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
-          filesRoot ? '<button class="ctx-git-button' + (isFilesPanelMode() ? ' open' : '') + '" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
+          filesRoot ? '<button class="ctx-git-button" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
           '</div>',
           '</div>',
           '<div class="ctx-actions">',
@@ -2693,9 +2548,9 @@
           '</div>',
           '</div>',
           '<div class="ctx-actions">',
-          '<button class="ctx-git-button" id="statusSummaryButton" type="button">Status</button>',
+          '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'status' ? ' open' : '') + '" id="statusSummaryButton" type="button">Status</button>',
           gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
-          filesRoot ? '<button class="ctx-git-button' + (isFilesPanelMode() ? ' open' : '') + '" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
+          filesRoot ? '<button class="ctx-git-button" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
           '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
           '<button class="' + logButtonClass + '" id="buildLogToggleButton" type="button" title="Toggle build log" aria-label="Toggle build log">⎔' + logIndicator + '</button>',
           '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
@@ -2705,7 +2560,7 @@
     const statusSummaryButton = document.getElementById('statusSummaryButton');
     if (statusSummaryButton) {
       statusSummaryButton.addEventListener('click', () => {
-        fetchStatusSummary(true);
+        toggleStatusPanel();
       });
     }
     const gitButton = document.getElementById('gitPanelToggleButton');
@@ -2714,7 +2569,7 @@
     }
     const filesButton = document.getElementById('filesPanelToggleButton');
     if (filesButton) {
-      filesButton.addEventListener('click', toggleFilesPanel);
+      filesButton.addEventListener('click', openObjectiveWorktreeInVSCode);
     }
     const menuButton = document.getElementById('mobileMenuBtn');
     if (menuButton) {
@@ -2762,9 +2617,6 @@
 
   function normalizeMessages(messages) {
     const items = [];
-    if ((state.statusSummary && state.statusSummaryObjectiveId === state.activeObjectiveId) || state.statusSummaryLoading || state.statusSummaryError) {
-      items.push({ kind: 'status-summary', id: 'status-summary' });
-    }
     let insertedSyntheticPlan = false;
     const tasks = (state.activeObjective && state.activeObjective.tasks) || [];
     const hasPlanMessage = messages.some((message) => message.type === 'plan' || message.type === 'plan_review');
@@ -3417,19 +3269,14 @@
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
       state.gitStatus = null;
-      state.fileBrowserItems = [];
-      state.fileBrowserRootPath = activeFilesRoot() || '';
-      state.fileBrowserSelectedPath = '';
-      state.fileBrowserPreview = null;
-      state.fileBrowserPreviewError = '';
       if (!nextPath) {
         state.gitPanelOpen = false;
         hideGitContextMenu();
         closeDiffOverlay();
       } else if (state.gitPanelOpen && state.rightPanelMode === 'git') {
         await fetchGitStatus();
-      } else if (state.gitPanelOpen && state.rightPanelMode === 'files') {
-        await fetchFileBrowser(true);
+      } else if (state.gitPanelOpen && state.rightPanelMode === 'status') {
+        await fetchStatusSummary(true);
       }
     }
     const index = state.objectives.findIndex((item) => item.id === objective.id);
@@ -3484,6 +3331,9 @@
       pollActiveObjective(false),
       pollMessages(false)
     ]);
+    if (state.gitPanelOpen && state.rightPanelMode === 'status') {
+      await fetchStatusSummary(false);
+    }
     if (forceAll) render();
   }
 
@@ -3655,8 +3505,8 @@
       try {
         if (state.gitPanelOpen && state.rightPanelMode === 'git') {
           await fetchGitStatus();
-        } else if (state.gitPanelOpen && state.rightPanelMode === 'files') {
-          await fetchFileBrowser(false);
+        } else if (state.gitPanelOpen && state.rightPanelMode === 'status') {
+          await fetchStatusSummary(true);
         }
       } catch (error) {
         console.error(error);
@@ -3780,34 +3630,15 @@
     els.sidebarBackdrop.addEventListener('click', closeSidebar);
     els.sidebarCloseButton.addEventListener('click', closeSidebar);
     els.gitPanelRefreshButton.addEventListener('click', () => {
-      if (state.rightPanelMode === 'files') {
-        fetchFileBrowser(true);
+      if (state.rightPanelMode === 'status') {
+        fetchStatusSummary(true);
       } else {
         fetchGitStatus();
       }
     });
     els.gitPanelCloseButton.addEventListener('click', closeGitPanel);
     els.gitPanelCopyButton.addEventListener('click', () => {
-      if (state.rightPanelMode === 'files') {
-        const selected = selectedFileItem();
-        copyText((selected && selected.absolutePath) || state.fileBrowserRootPath || activeGitPath(), 'Path');
-      } else {
-        copyText((state.gitStatus && state.gitStatus.cwd) || activeGitPath(), 'Path');
-      }
-    });
-    els.filePanelSearchInput.addEventListener('input', () => {
-      state.fileBrowserQuery = String(els.filePanelSearchInput.value || '').trim();
-      if (state.fileBrowserSearchDebounce) window.clearTimeout(state.fileBrowserSearchDebounce);
-      state.fileBrowserSearchDebounce = window.setTimeout(() => {
-        fetchFileBrowser(false);
-      }, 250);
-    });
-    els.filePanelSearchInput.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      if (state.fileBrowserSearchDebounce) window.clearTimeout(state.fileBrowserSearchDebounce);
-      state.fileBrowserQuery = String(els.filePanelSearchInput.value || '').trim();
-      fetchFileBrowser(false);
+      copyText((state.gitStatus && state.gitStatus.cwd) || activeFilesRoot() || activeGitPath(), 'Path');
     });
     els.gitContextMenu.addEventListener('click', (event) => {
       const actionNode = event.target.closest('[data-git-action]');
