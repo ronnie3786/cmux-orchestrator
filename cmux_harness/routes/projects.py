@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from .. import objectives
 
 
@@ -27,6 +30,41 @@ def handle_post_create_project(handler, data):
         handler._json_response({"ok": False, "error": message}, status)
         return
     handler._json_response(project, 201)
+
+
+def handle_post_pick_project_root(handler):
+    script = 'POSIX path of (choose folder with prompt "Choose Project Folder")'
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip().lower()
+        if "user canceled" in detail or "user cancelled" in detail or "-128" in detail:
+            handler._json_response({"ok": False, "cancelled": True})
+            return
+        handler._json_response({
+            "ok": False,
+            "error": "Folder picker unavailable. Enter the path manually.",
+            "fallback": True,
+        })
+        return
+    except OSError:
+        handler._json_response({
+            "ok": False,
+            "error": "Folder picker unavailable. Enter the path manually.",
+            "fallback": True,
+        })
+        return
+
+    selected = str(Path((result.stdout or "").strip()).expanduser())
+    if not selected:
+        handler._json_response({"ok": False, "cancelled": True})
+        return
+    handler._json_response({"ok": True, "path": selected})
 
 
 def handle_patch_project(handler, project_id, data):

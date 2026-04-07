@@ -243,6 +243,40 @@ class TestServerResponses(unittest.TestCase):
         response = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(response["ok"], False)
 
+    def test_pick_project_root_endpoint_returns_selected_folder(self):
+        selected_path = Path(self.tmpdir.name) / "picked-project"
+        selected_path.mkdir()
+
+        with patch("cmux_harness.routes.projects.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=str(selected_path) + "\n",
+                stderr="",
+            )
+            handler = self._post_json("/api/projects/pick-root", {})
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "path": str(selected_path)})
+        mock_run.assert_called_once_with(
+            ["osascript", "-e", 'POSIX path of (choose folder with prompt "Choose Project Folder")'],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_pick_project_root_endpoint_handles_cancel(self):
+        with patch("cmux_harness.routes.projects.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(
+                returncode=1,
+                cmd=["osascript"],
+                stderr="execution error: User canceled. (-128)",
+            )
+            handler = self._post_json("/api/projects/pick-root", {})
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": False, "cancelled": True})
+
     def test_get_and_delete_project_endpoints_return_not_found_for_missing_project(self):
         get_handler = self._make_handler(Mock(), "/api/projects/missing-project")
 

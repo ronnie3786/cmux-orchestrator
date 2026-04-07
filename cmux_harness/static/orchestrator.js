@@ -87,6 +87,8 @@
     draftProjectId: '',
     draftProjectName: '',
     draftProjectRootPath: '',
+    projectPickerFallback: false,
+    projectPickerBusy: false,
     draftProjectBaseBranch: 'main',
     draftWorkflowMode: 'structured',
     draftBaseBranch: 'main',
@@ -625,6 +627,13 @@
     }
     const text = await response.text();
     return text ? JSON.parse(text) : {};
+  }
+
+  function inferProjectNameFromPath(path) {
+    const trimmed = String(path || '').trim().replace(/[\\/]+$/, '');
+    if (!trimmed) return '';
+    const parts = trimmed.split(/[\\/]+/).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
   }
 
   async function loadActionButtons(objectiveId) {
@@ -2225,7 +2234,14 @@
       ? [
           '<div class="sf-mode-title">Add project</div>',
           '<input class="sf-input" id="projectNameInput" placeholder="Project name" value="' + esc(state.draftProjectName || '') + '">',
-          '<input class="sf-input" id="projectRootPathInput" placeholder="Project root path" value="' + esc(state.draftProjectRootPath || state.draftProjectDir || '') + '">',
+          '<label class="sf-field-label" for="projectFolderPickerButton">Choose Project Folder</label>',
+          '<div class="sf-picker-row">',
+          '<input class="sf-input sf-input-readonly" id="projectRootPathInput" placeholder="No folder selected" value="' + esc(state.draftProjectRootPath || state.draftProjectDir || '') + '" readonly>',
+          '<button class="sf-picker-button" id="projectFolderPickerButton" type="button">' + (state.projectPickerBusy ? 'Choosing…' : 'Browse…') + '</button>',
+          '</div>',
+          (state.projectPickerFallback
+            ? '<input class="sf-input" id="projectRootPathManualInput" placeholder="/path/to/git/repo" value="' + esc(state.draftProjectRootPath || state.draftProjectDir || '') + '">'
+            : '<button class="sf-inline-link" id="projectFolderManualButton" type="button">Type path manually</button>'),
           '<input class="sf-input" id="projectBaseBranchInput" placeholder="Default base branch" value="' + esc(state.draftProjectBaseBranch || 'main') + '">',
           '<div class="sf-actions">',
           '<button class="sf-submit" id="sidebarCreateProjectButton">Save project</button>',
@@ -2267,14 +2283,38 @@
     if (state.sidebarFormMode === 'project') {
       const projectNameInput = document.getElementById('projectNameInput');
       const projectRootPathInput = document.getElementById('projectRootPathInput');
+      const projectRootPathManualInput = document.getElementById('projectRootPathManualInput');
       const projectBaseBranchInput = document.getElementById('projectBaseBranchInput');
+      const projectFolderPickerButton = document.getElementById('projectFolderPickerButton');
+      const projectFolderManualButton = document.getElementById('projectFolderManualButton');
       document.getElementById('sidebarCreateProjectButton').addEventListener('click', submitSidebarProject);
+      if (projectFolderPickerButton) {
+        projectFolderPickerButton.disabled = !!state.projectPickerBusy;
+        projectFolderPickerButton.addEventListener('click', pickProjectFolder);
+      }
+      if (projectFolderManualButton) {
+        projectFolderManualButton.addEventListener('click', () => {
+          state.projectPickerFallback = true;
+          updateSidebarFormFromState();
+          window.setTimeout(() => {
+            const input = document.getElementById('projectRootPathManualInput');
+            if (input) input.focus();
+          }, 0);
+        });
+      }
       projectNameInput.addEventListener('input', (event) => {
         state.draftProjectName = event.target.value;
       });
-      projectRootPathInput.addEventListener('input', (event) => {
-        state.draftProjectRootPath = event.target.value;
-      });
+      if (projectRootPathInput) {
+        projectRootPathInput.addEventListener('click', () => {
+          if (!state.draftProjectRootPath) pickProjectFolder();
+        });
+      }
+      if (projectRootPathManualInput) {
+        projectRootPathManualInput.addEventListener('input', (event) => {
+          state.draftProjectRootPath = event.target.value;
+        });
+      }
       projectBaseBranchInput.addEventListener('input', (event) => {
         state.draftProjectBaseBranch = event.target.value || 'main';
       });
@@ -2336,13 +2376,47 @@
     openSidebar();
     state.sidebarFormMode = 'project';
     state.sidebarFormOpen = true;
+    state.projectPickerFallback = false;
+    state.projectPickerBusy = false;
     state.draftProjectRootPath = state.draftProjectRootPath || state.draftProjectDir || '';
     state.draftProjectBaseBranch = state.draftProjectBaseBranch || defaultBaseBranch();
     updateSidebarFormFromState();
     window.setTimeout(() => {
-      const input = document.getElementById('projectRootPathInput') || document.getElementById('projectNameInput');
+      const input = document.getElementById('projectFolderPickerButton') || document.getElementById('projectNameInput');
       if (input) input.focus();
     }, 0);
+  }
+
+  async function pickProjectFolder() {
+    if (state.projectPickerBusy) return;
+    state.projectPickerBusy = true;
+    updateSidebarFormFromState();
+    try {
+      const result = await api('/api/projects/pick-root', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      if (result && result.ok && result.path) {
+        state.draftProjectRootPath = String(result.path || '').trim();
+        if (!String(state.draftProjectName || '').trim()) {
+          state.draftProjectName = inferProjectNameFromPath(state.draftProjectRootPath);
+        }
+        state.projectPickerFallback = false;
+        updateSidebarFormFromState();
+        return;
+      }
+      if (result && result.cancelled) return;
+      state.projectPickerFallback = true;
+      updateSidebarFormFromState();
+      showToast((result && result.error) ? result.error : 'Folder picker unavailable. Enter the path manually.');
+    } catch (error) {
+      state.projectPickerFallback = true;
+      updateSidebarFormFromState();
+      showToast(error.message || 'Folder picker unavailable. Enter the path manually.');
+    } finally {
+      state.projectPickerBusy = false;
+      updateSidebarFormFromState();
+    }
   }
 
   function checkpointStatus(status) {
@@ -3389,12 +3463,15 @@
   async function submitSidebarProject() {
     const projectNameInput = document.getElementById('projectNameInput');
     const projectRootPathInput = document.getElementById('projectRootPathInput');
+    const projectRootPathManualInput = document.getElementById('projectRootPathManualInput');
     const projectBaseBranchInput = document.getElementById('projectBaseBranchInput');
     state.draftProjectName = projectNameInput ? projectNameInput.value.trim() : state.draftProjectName;
-    state.draftProjectRootPath = projectRootPathInput ? projectRootPathInput.value.trim() : state.draftProjectRootPath;
+    state.draftProjectRootPath = projectRootPathManualInput
+      ? projectRootPathManualInput.value.trim()
+      : (projectRootPathInput ? projectRootPathInput.value.trim() : state.draftProjectRootPath);
     state.draftProjectBaseBranch = projectBaseBranchInput ? (projectBaseBranchInput.value.trim() || 'main') : (state.draftProjectBaseBranch || 'main');
     if (!state.draftProjectRootPath) {
-      showToast('Project root path is required');
+      showToast(state.projectPickerFallback ? 'Project root path is required' : 'Choose a project folder');
       return;
     }
     try {

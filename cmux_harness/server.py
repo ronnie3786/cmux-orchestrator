@@ -416,6 +416,8 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 file_browser_routes.handle_open_worktree(self, objective)
+            elif path == "/api/projects/pick-root":
+                project_routes.handle_post_pick_project_root(self)
             elif path == "/api/projects":
                 project_routes.handle_post_create_project(self, data)
             elif path == "/api/objectives":

@@ -1313,6 +1313,49 @@
     display: flex;
     gap: 8px;
   }
+  .sf-picker-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .sf-input-readonly {
+    color: var(--t2);
+    cursor: pointer;
+  }
+  .sf-picker-button {
+    border-radius: 8px;
+    border: 1px solid var(--b2);
+    background: var(--raised);
+    color: var(--t1);
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .sf-picker-button:hover:not(:disabled) {
+    background: var(--hover);
+  }
+  .sf-picker-button:disabled {
+    cursor: wait;
+    opacity: 0.7;
+  }
+  .sf-inline-link {
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--blue);
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+  }
+  .sf-inline-link:hover {
+    color: #7fb0ff;
+  }
   .sf-actions {
     display: flex;
     gap: 8px;
