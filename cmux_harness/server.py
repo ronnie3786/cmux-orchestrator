@@ -241,30 +241,6 @@ def make_handler(engine):
                     re_module=__import__("re"),
                     human_file_size=_human_file_size,
                 )
-            elif path.startswith("/api/objectives/") and path.endswith("/files/content"):
-                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/files/content")]).strip("/")
-                objective = objectives.read_objective(objective_id)
-                if objective is None:
-                    self._json_response({"ok": False, "error": "objective not found"}, 404)
-                    return
-                file_browser_routes.handle_get_file_preview(
-                    self,
-                    objective,
-                    parsed,
-                    human_file_size=_human_file_size,
-                )
-            elif path.startswith("/api/objectives/") and path.endswith("/files"):
-                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/files")]).strip("/")
-                objective = objectives.read_objective(objective_id)
-                if objective is None:
-                    self._json_response({"ok": False, "error": "objective not found"}, 404)
-                    return
-                file_browser_routes.handle_list_files(
-                    self,
-                    objective,
-                    parsed,
-                    human_file_size=_human_file_size,
-                )
             elif path.startswith("/api/objectives/") and path.endswith("/status-summary"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/status-summary")]).strip("/")
                 objective = objectives.read_objective(objective_id)
@@ -433,13 +409,6 @@ def make_handler(engine):
                     time_module=time,
                     re_module=__import__("re"),
                 )
-            elif path.startswith("/api/objectives/") and path.endswith("/files/open"):
-                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/files/open")]).strip("/")
-                objective = objectives.read_objective(objective_id)
-                if objective is None:
-                    self._json_response({"ok": False, "error": "objective not found"}, 404)
-                    return
-                file_browser_routes.handle_open_file(self, objective, data)
             elif path.startswith("/api/objectives/") and path.endswith("/open-worktree"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/open-worktree")]).strip("/")
                 objective = objectives.read_objective(objective_id)

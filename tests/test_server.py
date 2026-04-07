@@ -938,146 +938,28 @@ class TestServerResponses(unittest.TestCase):
         stored = objectives.read_objective(objective["id"])
         self.assertEqual(stored["actionButtons"], [])
 
-    def test_objective_files_endpoint_lists_and_filters_worktree_files(self):
-        worktree_path = Path(self.tmpdir.name) / "worktree-files-list"
+    def test_removed_objective_file_browser_routes_return_not_found(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-removed-routes"
         worktree_path.mkdir(parents=True)
-        (worktree_path / "src").mkdir()
-        (worktree_path / ".git").mkdir()
-        (worktree_path / "README.md").write_text("hello\n", encoding="utf-8")
-        (worktree_path / "src" / "app.ts").write_text("export const ok = true;\n", encoding="utf-8")
-        (worktree_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
         objective = self._create_objective_with_worktree(worktree_path)
 
-        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files?query=app")
-        handler.do_GET()
+        list_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files")
+        list_handler.do_GET()
+        self.assertEqual(list_handler.send_response.call_args_list[0].args, (404,))
+        self.assertEqual(json.loads(list_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "objective not found"})
 
-        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(body["ok"], True)
-        self.assertEqual(body["rootPath"], str(worktree_path.resolve()))
-        self.assertEqual([item["path"] for item in body["items"]], ["src/app.ts"])
+        preview_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=notes.txt")
+        preview_handler.do_GET()
+        self.assertEqual(preview_handler.send_response.call_args_list[0].args, (404,))
+        self.assertEqual(json.loads(preview_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "objective not found"})
 
-    def test_objective_files_endpoint_stays_inside_worktree_and_filters_by_path_only(self):
-        worktree_path = Path(self.tmpdir.name) / "worktree-files-scope"
-        sibling_path = Path(self.tmpdir.name) / "sibling-files-scope"
-        worktree_path.mkdir(parents=True)
-        sibling_path.mkdir(parents=True)
-        (worktree_path / "src").mkdir()
-        (worktree_path / "src" / "match.ts").write_text("hidden-keyword only in content\n", encoding="utf-8")
-        (worktree_path / "notes.md").write_text("match.ts appears only in file contents\n", encoding="utf-8")
-        (sibling_path / "match.ts").write_text("outside worktree\n", encoding="utf-8")
-        objective = self._create_objective_with_worktree(worktree_path)
-
-        name_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files?query=match")
-        name_handler.do_GET()
-        name_body = json.loads(name_handler.wfile.getvalue().decode("utf-8"))
-
-        self.assertEqual([item["path"] for item in name_body["items"]], ["src/match.ts"])
-        self.assertNotIn(str(sibling_path / "match.ts"), [item["absolutePath"] for item in name_body["items"]])
-
-        content_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files?query=hidden-keyword")
-        content_handler.do_GET()
-        content_body = json.loads(content_handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(content_body["items"], [])
-
-    def test_objective_file_preview_endpoint_returns_text_preview(self):
-        worktree_path = Path(self.tmpdir.name) / "worktree-files-preview"
-        worktree_path.mkdir(parents=True)
-        preview_file = worktree_path / "notes.txt"
-        preview_file.write_text("line 1\nline 2\n", encoding="utf-8")
-        objective = self._create_objective_with_worktree(worktree_path)
-
-        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=notes.txt")
-        handler.do_GET()
-
-        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(body["ok"], True)
-        self.assertEqual(body["path"], "notes.txt")
-        self.assertEqual(body["previewable"], True)
-        self.assertIn("line 1", body["content"])
-
-    def test_objective_file_preview_endpoint_rejects_binary_and_traversal(self):
-        worktree_path = Path(self.tmpdir.name) / "worktree-files-binary"
-        worktree_path.mkdir(parents=True)
-        (worktree_path / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00binary")
-        objective = self._create_objective_with_worktree(worktree_path)
-
-        binary_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=image.png")
-        binary_handler.do_GET()
-        binary_body = json.loads(binary_handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(binary_body["ok"], True)
-        self.assertEqual(binary_body["previewable"], False)
-
-        traversal_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=../secret.txt")
-        traversal_handler.do_GET()
-        traversal_handler.send_response.assert_called_once_with(400)
-        traversal_body = json.loads(traversal_handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(traversal_body["ok"], False)
-        self.assertEqual(binary_body["binary"], True)
-        self.assertEqual(binary_body["reason"], "Binary or unsupported file type")
-
-    def test_objective_file_preview_endpoint_truncates_large_text_and_rejects_absolute_outside_path(self):
-        worktree_path = Path(self.tmpdir.name) / "worktree-files-large-preview"
-        outside_path = Path(self.tmpdir.name) / "outside.txt"
-        worktree_path.mkdir(parents=True)
-        outside_path.write_text("secret\n", encoding="utf-8")
-        large_file = worktree_path / "large.txt"
-        large_file.write_text("a" * (128 * 1024 + 64), encoding="utf-8")
-        objective = self._create_objective_with_worktree(worktree_path)
-
-        large_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=large.txt")
-        large_handler.do_GET()
-        large_body = json.loads(large_handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(large_body["ok"], True)
-        self.assertEqual(large_body["previewable"], True)
-        self.assertEqual(large_body["truncated"], True)
-        self.assertEqual(len(large_body["content"]), 128 * 1024)
-        self.assertEqual(large_body["size"], 128 * 1024 + 64)
-
-        outside_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path={outside_path}")
-        outside_handler.do_GET()
-        outside_handler.send_response.assert_called_once_with(400)
-        self.assertEqual(json.loads(outside_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "path outside objective worktree"})
-
-    def test_objective_files_open_endpoint_uses_native_open(self):
-        worktree_path = Path(self.tmpdir.name) / "worktree-files-open"
-        worktree_path.mkdir(parents=True)
-        opened_file = worktree_path / "docs.md"
-        opened_file.write_text("# docs\n", encoding="utf-8")
-        objective = self._create_objective_with_worktree(worktree_path)
-        body = json.dumps({"path": "docs.md"}).encode("utf-8")
-        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/open")
-        handler.headers = {"Content-Length": str(len(body))}
-        handler.rfile = io.BytesIO(body)
-
-        with patch("cmux_harness.routes.file_browser.subprocess.Popen") as mock_popen:
-            handler.do_POST()
-
-        mock_popen.assert_called_once_with(["open", str(opened_file.resolve())])
-        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(response, {"ok": True})
-
-    def test_objective_files_open_endpoint_rejects_invalid_and_missing_paths(self):
-        worktree_path = Path(self.tmpdir.name) / "worktree-files-open-errors"
-        outside_path = Path(self.tmpdir.name) / "outside-open.txt"
-        worktree_path.mkdir(parents=True)
-        outside_path.write_text("secret\n", encoding="utf-8")
-        objective = self._create_objective_with_worktree(worktree_path)
-
-        invalid_body = json.dumps({"path": str(outside_path)}).encode("utf-8")
-        invalid_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/open")
-        invalid_handler.headers = {"Content-Length": str(len(invalid_body))}
-        invalid_handler.rfile = io.BytesIO(invalid_body)
-        invalid_handler.do_POST()
-        invalid_handler.send_response.assert_called_once_with(400)
-        self.assertEqual(json.loads(invalid_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "path outside objective worktree"})
-
-        missing_body = json.dumps({"path": "missing.txt"}).encode("utf-8")
-        missing_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/open")
-        missing_handler.headers = {"Content-Length": str(len(missing_body))}
-        missing_handler.rfile = io.BytesIO(missing_body)
-        missing_handler.do_POST()
-        missing_handler.send_response.assert_called_once_with(404)
-        self.assertEqual(json.loads(missing_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "file not found"})
+        open_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/open")
+        open_handler.send_error = Mock()
+        body = json.dumps({"path": "notes.txt"}).encode("utf-8")
+        open_handler.headers = {"Content-Length": str(len(body))}
+        open_handler.rfile = io.BytesIO(body)
+        open_handler.do_POST()
+        open_handler.send_error.assert_called_once_with(404)
 
     def test_debug_modal_static_markup_includes_rendering_regression_fix(self):
         html = Path("cmux_harness/static/orchestrator.html").read_text(encoding="utf-8")

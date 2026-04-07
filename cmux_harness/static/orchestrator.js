@@ -40,17 +40,6 @@
     gitContextFile: '',
     gitContextSection: '',
     gitContextAbsolutePath: '',
-    fileBrowserQuery: '',
-    fileBrowserItems: [],
-    fileBrowserRootPath: '',
-    fileBrowserLoading: false,
-    fileBrowserError: '',
-    fileBrowserSelectedPath: '',
-    fileBrowserPreview: null,
-    fileBrowserPreviewLoading: false,
-    fileBrowserPreviewError: '',
-    fileBrowserFetchToken: 0,
-    fileBrowserSearchDebounce: null,
     lastMessageTimestamp: null,
     relativeTick: Date.now(),
     isMobile: null,
@@ -187,8 +176,6 @@
     gitPanelCopyButton: document.getElementById('gitPanelCopyButton'),
     gitPanelRefreshButton: document.getElementById('gitPanelRefreshButton'),
     gitPanelCloseButton: document.getElementById('gitPanelCloseButton'),
-    filePanelSearchRow: document.getElementById('filePanelSearchRow'),
-    filePanelSearchInput: document.getElementById('filePanelSearchInput'),
     gitContextMenu: document.getElementById('gitContextMenu'),
     diffOverlay: document.getElementById('diffOverlay'),
     diffPanelTitle: document.getElementById('diffPanelTitle'),
@@ -1916,7 +1903,6 @@
       : ((state.gitStatus && state.gitStatus.branch) || (state.activeObjective && state.activeObjective.branchName) || 'Git');
     els.gitPanelPath.textContent = panelPath || 'No working directory';
     els.gitPanelCopyButton.disabled = !panelPath;
-    els.filePanelSearchRow.hidden = true;
     const data = state.gitStatus;
     if (!state.gitPanelOpen) return;
     if (isStatusMode) {
