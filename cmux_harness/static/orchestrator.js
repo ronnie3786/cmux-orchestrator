@@ -2664,29 +2664,6 @@
         ].join('');
       }).join('');
     };
-      const meta = statusMeta(objective.status);
-      const progress = objectiveProgress(objective);
-      const active = objective.id === state.activeObjectiveId ? ' active' : '';
-      const doneClass = String(objective.status).toLowerCase() === 'completed' ? ' done' : '';
-      let progressText = progress.total ? (progress.done + ' of ' + progress.total + ' done') : meta.label.toLowerCase();
-      if (String(objective.status).toLowerCase() === 'completed') {
-        progressText = 'done · ' + relativeTime(objective.updatedAt || objective.createdAt);
-      } else if (String(objective.status).toLowerCase() === 'failed') {
-        progressText = 'failed · ' + relativeTime(objective.updatedAt || objective.createdAt);
-      }
-      return [
-        '<div class="obj-item nested' + active + doneClass + '" data-objective-id="' + esc(objective.id) + '">',
-        '<div class="obj-dot ' + meta.dot + '"></div>',
-        '<div class="obj-info">',
-        '<div class="obj-name">' + esc(objective.goal || 'Untitled objective') + '</div>',
-        '<div class="obj-progress">',
-        '<div class="obj-prog-bar"><div class="obj-prog-fill ' + meta.fill + '" style="width:' + progress.percent + '%"></div></div>',
-        '<span>' + esc(progressText) + '</span>',
-        '</div>',
-        '</div>',
-        '</div>'
-      ].join('');
-    }).join('');
     els.objectiveList.innerHTML = projects.map((project) => {
       const itemCount = projectObjectives(project.id).length + projectWorkspaces(project.id).length;
       const expanded = state.projectExpansion[project.id] !== false;
