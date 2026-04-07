@@ -12,6 +12,57 @@ class CompletedProcess:
 
 
 class TestStatusSummary(unittest.TestCase):
+    def test_summary_with_no_tasks_uses_clean_deterministic_defaults(self):
+        objective = {
+            'id': 'objective-empty',
+            'goal': 'Start from scratch',
+            'status': 'planning',
+            'worktreePath': '/tmp/repo',
+            'tasks': [],
+        }
+
+        with patch('cmux_harness.routes.status_summary.subprocess.run', return_value=CompletedProcess('')):
+            summary = status_summary.build_status_summary('objective-empty', objective, [])
+
+        self.assertEqual(summary['tldr'], 'Planning: no tasks planned yet.')
+        self.assertEqual(summary['justHappened'], '')
+        self.assertEqual(summary['now'], 'The planner is breaking the objective into executable tasks.')
+        self.assertEqual(summary['next'], 'Wait for the plan review card, then approve or revise it.')
+        self.assertEqual(summary['signals']['tasks']['total'], 0)
+        self.assertEqual(summary['signals']['git']['changedFiles'], 0)
+        self.assertEqual(summary['summarySource'], {'kind': 'deterministic', 'display': 'Deterministic', 'fallbackReason': ''})
+
+    def test_summary_with_one_active_task_and_clean_git_state(self):
+        objective = {
+            'id': 'objective-active',
+            'goal': 'Keep moving',
+            'status': 'executing',
+            'worktreePath': '/tmp/repo',
+            'tasks': [
+                {'id': 'task-1', 'title': 'Wire endpoint', 'status': 'executing', 'reviewCycles': 0},
+            ],
+        }
+        messages = [
+            {'timestamp': '2026-04-07T07:05:00+00:00', 'type': 'progress', 'content': 'Started wiring the endpoint.', 'metadata': {'task_id': 'task-1'}},
+        ]
+
+        def fake_run(command, capture_output, text, timeout, check):
+            if command[-3:] == ['status', '--short', '--branch']:
+                return CompletedProcess('## feature/clean-branch\n')
+            if command[-3:] == ['-1', '--pretty=%h %s']:
+                return CompletedProcess('abc123 latest commit')
+            return CompletedProcess('')
+
+        with patch('cmux_harness.routes.status_summary.subprocess.run', side_effect=fake_run):
+            summary = status_summary.build_status_summary('objective-active', objective, messages)
+
+        self.assertIn('Executing: 0/1 tasks complete', summary['tldr'])
+        self.assertIn('1 active', summary['tldr'])
+        self.assertNotIn('changed files', summary['tldr'])
+        self.assertEqual(summary['now'], 'Active work is in flight on Wire endpoint.')
+        self.assertEqual(summary['signals']['git']['branch'], 'feature/clean-branch')
+        self.assertEqual(summary['signals']['git']['changedFiles'], 0)
+
     def test_builds_executing_summary_from_task_review_message_and_git_state(self):
         objective = {
             'id': 'objective-1',
@@ -88,6 +139,52 @@ class TestStatusSummary(unittest.TestCase):
         self.assertIn('Missing refresh button on the status card', ' '.join(summary['blockers']))
         self.assertIn('blocker', summary['tldr'])
 
+    def test_pending_approval_takes_priority_in_now_next_and_blockers(self):
+        objective = {
+            'id': 'objective-approval',
+            'goal': 'Wait for approval',
+            'status': 'executing',
+            'worktreePath': '/tmp/repo',
+            'tasks': [
+                {'id': 'task-1', 'title': 'Open approval gate', 'status': 'executing', 'reviewCycles': 0},
+                {'id': 'task-2', 'title': 'Queued follow-up', 'status': 'queued', 'reviewCycles': 0},
+            ],
+        }
+        messages = [
+            {'timestamp': '2026-04-07T07:10:00+00:00', 'type': 'approval', 'content': 'Approval needed to continue task-1', 'metadata': {'task_id': 'task-1'}},
+        ]
+
+        with patch('cmux_harness.routes.status_summary.subprocess.run', return_value=CompletedProcess('')):
+            summary = status_summary.build_status_summary('objective-approval', objective, messages)
+
+        self.assertEqual(summary['signals']['approvals']['waiting'], 1)
+        self.assertEqual(summary['now'], 'Waiting on approval for Open approval gate.')
+        self.assertEqual(summary['next'], 'Approve the pending task or take over manually to unblock progress.')
+        self.assertIn('Waiting on approval for Open approval gate', summary['blockers'])
+
+    def test_failed_review_issue_is_exposed_as_latest_blocker(self):
+        objective = {
+            'id': 'objective-review-fail',
+            'goal': 'Catch failing review',
+            'status': 'reviewing',
+            'worktreePath': '/tmp/repo',
+            'tasks': [
+                {'id': 'task-1', 'title': 'Review API changes', 'status': 'reviewing', 'reviewCycles': 1, 'updatedAt': '2026-04-07T07:20:00+00:00'},
+            ],
+        }
+
+        def fake_read_task_file(objective_id, task_id, filename):
+            if filename == 'review.json':
+                return json.dumps({'verdict': 'fail', 'issues': ['Need coverage for fallbackReason handling']})
+            return None
+
+        with patch('cmux_harness.routes.status_summary.objectives.read_task_file', side_effect=fake_read_task_file), patch('cmux_harness.routes.status_summary.subprocess.run', return_value=CompletedProcess('')):
+            summary = status_summary.build_status_summary('objective-review-fail', objective, [])
+
+        self.assertEqual(summary['signals']['reviews']['failed'], 1)
+        self.assertEqual(summary['signals']['reviews']['latest']['verdict'], 'fail')
+        self.assertIn('Need coverage for fallbackReason handling', summary['blockers'])
+
     def test_haiku_enrichment_overrides_human_facing_copy_when_valid(self):
         base_summary = {
             'objectiveId': 'objective-3',
@@ -123,6 +220,27 @@ class TestStatusSummary(unittest.TestCase):
         self.assertIn('smart summary layer', enriched['tldr'])
         self.assertEqual(enriched['signals'], base_summary['signals'])
 
+    def test_haiku_enrichment_is_skipped_when_not_requested(self):
+        base_summary = {
+            'objectiveId': 'objective-plain',
+            'generatedAt': '2026-04-07T08:00:00+00:00',
+            'objective': 'Stay deterministic',
+            'stage': {'code': 'executing', 'label': 'Executing'},
+            'tldr': 'Executing: 1/1 tasks complete.',
+            'justHappened': 'Deterministic summary built.',
+            'now': 'Nothing else to do.',
+            'next': 'Ship it.',
+            'blockers': [],
+            'signals': {'tasks': {}, 'approvals': {}, 'reviews': {}, 'git': {}},
+            'summarySource': {'kind': 'deterministic', 'display': 'Deterministic', 'fallbackReason': ''},
+        }
+
+        with patch('cmux_harness.routes.status_summary.claude_cli.run_haiku') as mock_haiku:
+            enriched = status_summary.maybe_enrich_status_summary(base_summary, {'id': 'objective-plain'}, [], enrich=None)
+
+        mock_haiku.assert_not_called()
+        self.assertEqual(enriched['summarySource'], {'kind': 'deterministic', 'display': 'Deterministic', 'fallbackReason': ''})
+
     def test_haiku_enrichment_falls_back_when_response_is_malformed(self):
         base_summary = {
             'objectiveId': 'objective-4',
@@ -145,6 +263,27 @@ class TestStatusSummary(unittest.TestCase):
         self.assertEqual(enriched['tldr'], base_summary['tldr'])
         self.assertEqual(enriched['summarySource']['kind'], 'deterministic')
         self.assertTrue(enriched['summarySource']['fallbackReason'])
+
+    def test_haiku_enrichment_falls_back_with_explicit_error_reason(self):
+        base_summary = {
+            'objectiveId': 'objective-5',
+            'generatedAt': '2026-04-07T08:00:00+00:00',
+            'objective': 'Handle Haiku errors',
+            'stage': {'code': 'executing', 'label': 'Executing'},
+            'tldr': 'Executing: 1/1 tasks complete.',
+            'justHappened': 'Built the deterministic version.',
+            'now': 'Active work is in flight.',
+            'next': 'Let the active task finish.',
+            'blockers': [],
+            'signals': {'tasks': {}, 'approvals': {}, 'reviews': {}, 'git': {}},
+            'summarySource': {'kind': 'deterministic', 'display': 'Deterministic', 'fallbackReason': ''},
+        }
+
+        with patch('cmux_harness.routes.status_summary.claude_cli.run_haiku', return_value={'error': 'Haiku timed out'}):
+            enriched = status_summary.maybe_enrich_status_summary(base_summary, {'id': 'objective-5'}, [], enrich='haiku')
+
+        self.assertEqual(enriched['summarySource'], {'kind': 'deterministic', 'display': 'Deterministic', 'fallbackReason': 'Haiku timed out'})
+        self.assertEqual(enriched['tldr'], base_summary['tldr'])
 
 
 if __name__ == '__main__':

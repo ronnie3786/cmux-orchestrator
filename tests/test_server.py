@@ -243,6 +243,80 @@ class TestServerResponses(unittest.TestCase):
         response = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(response["ok"], False)
 
+    def test_get_and_delete_project_endpoints_return_not_found_for_missing_project(self):
+        get_handler = self._make_handler(Mock(), "/api/projects/missing-project")
+
+        get_handler.do_GET()
+
+        get_handler.send_response.assert_called_once_with(404)
+        self.assertEqual(json.loads(get_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "project not found"})
+
+        delete_handler = self._make_handler(Mock(), "/api/projects/missing-project")
+
+        delete_handler.do_DELETE()
+
+        delete_handler.send_response.assert_called_once_with(404)
+        self.assertEqual(json.loads(delete_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "project not found"})
+
+    def test_patch_project_endpoint_rejects_duplicate_root_path_and_non_git_root(self):
+        first_root = Path(self.tmpdir.name) / "project-one"
+        second_root = Path(self.tmpdir.name) / "project-two"
+        nongit_root = Path(self.tmpdir.name) / "plain-folder"
+        first_root.mkdir()
+        second_root.mkdir()
+        nongit_root.mkdir()
+        first = objectives.create_project("One", str(first_root), "main")
+        objectives.create_project("Two", str(second_root), "develop")
+
+        duplicate_body = json.dumps({"rootPath": str(second_root)}).encode("utf-8")
+        duplicate_handler = self._make_handler(Mock(), f"/api/projects/{first['id']}")
+        duplicate_handler.headers = {"Content-Length": str(len(duplicate_body))}
+        duplicate_handler.rfile = io.BytesIO(duplicate_body)
+
+        duplicate_handler.do_PATCH()
+
+        duplicate_handler.send_response.assert_called_once_with(409)
+        self.assertEqual(json.loads(duplicate_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "project already exists for rootPath"})
+
+        self.mock_run.side_effect = subprocess.CalledProcessError(returncode=128, cmd=["git"], stderr="not a git repository")
+        nongit_body = json.dumps({"rootPath": str(nongit_root)}).encode("utf-8")
+        nongit_handler = self._make_handler(Mock(), f"/api/projects/{first['id']}")
+        nongit_handler.headers = {"Content-Length": str(len(nongit_body))}
+        nongit_handler.rfile = io.BytesIO(nongit_body)
+
+        nongit_handler.do_PATCH()
+
+        nongit_handler.send_response.assert_called_once_with(400)
+        self.assertEqual(json.loads(nongit_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "not a git repository"})
+
+    def test_patch_project_name_preserves_other_fields(self):
+        root_path = Path(self.tmpdir.name) / "rename-only-project"
+        root_path.mkdir()
+        project = objectives.create_project("Original", str(root_path), "develop")
+        body = json.dumps({"name": "Renamed"}).encode("utf-8")
+        handler = self._make_handler(Mock(), f"/api/projects/{project['id']}")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_PATCH()
+
+        patched = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(patched["name"], "Renamed")
+        self.assertEqual(patched["rootPath"], str(root_path))
+        self.assertEqual(patched["defaultBaseBranch"], "develop")
+
+    def test_delete_project_endpoint_allows_delete_after_last_objective_removed(self):
+        root_path = Path(self.tmpdir.name) / "delete-after-objective"
+        root_path.mkdir()
+        project = objectives.create_project("Delete Later", str(root_path), "main")
+        objective = objectives.create_objective("Ship feature", project_id=project["id"])
+        objectives.delete_objective(objective["id"])
+        handler = self._make_handler(Mock(), f"/api/projects/{project['id']}")
+
+        handler.do_DELETE()
+
+        self.assertEqual(json.loads(handler.wfile.getvalue().decode("utf-8")), {"ok": True})
+
     def test_delete_project_endpoint_rejects_when_objectives_exist(self):
         root_path = Path(self.tmpdir.name) / "guarded-server-project"
         root_path.mkdir()
@@ -286,6 +360,39 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(response["projectId"], project["id"])
         self.assertEqual(response["baseBranch"], "develop")
         self.assertEqual(response["workflowMode"], "direct")
+
+    def test_create_objective_endpoint_project_branch_override_wins(self):
+        root_path = Path(self.tmpdir.name) / "objective-project-override"
+        root_path.mkdir()
+        project = objectives.create_project("Objective Project", str(root_path), "develop")
+        engine = Mock()
+        payload = {"goal": "Ship feature", "projectId": project["id"], "baseBranch": "release/2026"}
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(engine, "/api/objectives")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response["projectId"], project["id"])
+        self.assertEqual(response["baseBranch"], "release/2026")
+
+    def test_create_objective_endpoint_defaults_invalid_workflow_mode_to_structured(self):
+        root_path = Path(self.tmpdir.name) / "objective-project-workflow"
+        root_path.mkdir()
+        project = objectives.create_project("Objective Project", str(root_path), "develop")
+        engine = Mock()
+        payload = {"goal": "Ship feature", "projectId": project["id"], "workflowMode": "wild-west"}
+        body = json.dumps(payload).encode("utf-8")
+        handler = self._make_handler(engine, "/api/objectives")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response["workflowMode"], "structured")
 
     def test_create_objective_endpoint_requires_project_selection(self):
         engine = Mock()
@@ -811,6 +918,29 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(body["rootPath"], str(worktree_path.resolve()))
         self.assertEqual([item["path"] for item in body["items"]], ["src/app.ts"])
 
+    def test_objective_files_endpoint_stays_inside_worktree_and_filters_by_path_only(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-scope"
+        sibling_path = Path(self.tmpdir.name) / "sibling-files-scope"
+        worktree_path.mkdir(parents=True)
+        sibling_path.mkdir(parents=True)
+        (worktree_path / "src").mkdir()
+        (worktree_path / "src" / "match.ts").write_text("hidden-keyword only in content\n", encoding="utf-8")
+        (worktree_path / "notes.md").write_text("match.ts appears only in file contents\n", encoding="utf-8")
+        (sibling_path / "match.ts").write_text("outside worktree\n", encoding="utf-8")
+        objective = self._create_objective_with_worktree(worktree_path)
+
+        name_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files?query=match")
+        name_handler.do_GET()
+        name_body = json.loads(name_handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual([item["path"] for item in name_body["items"]], ["src/match.ts"])
+        self.assertNotIn(str(sibling_path / "match.ts"), [item["absolutePath"] for item in name_body["items"]])
+
+        content_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files?query=hidden-keyword")
+        content_handler.do_GET()
+        content_body = json.loads(content_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(content_body["items"], [])
+
     def test_objective_file_preview_endpoint_returns_text_preview(self):
         worktree_path = Path(self.tmpdir.name) / "worktree-files-preview"
         worktree_path.mkdir(parents=True)
@@ -844,6 +974,31 @@ class TestServerResponses(unittest.TestCase):
         traversal_handler.send_response.assert_called_once_with(400)
         traversal_body = json.loads(traversal_handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(traversal_body["ok"], False)
+        self.assertEqual(binary_body["binary"], True)
+        self.assertEqual(binary_body["reason"], "Binary or unsupported file type")
+
+    def test_objective_file_preview_endpoint_truncates_large_text_and_rejects_absolute_outside_path(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-large-preview"
+        outside_path = Path(self.tmpdir.name) / "outside.txt"
+        worktree_path.mkdir(parents=True)
+        outside_path.write_text("secret\n", encoding="utf-8")
+        large_file = worktree_path / "large.txt"
+        large_file.write_text("a" * (128 * 1024 + 64), encoding="utf-8")
+        objective = self._create_objective_with_worktree(worktree_path)
+
+        large_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path=large.txt")
+        large_handler.do_GET()
+        large_body = json.loads(large_handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(large_body["ok"], True)
+        self.assertEqual(large_body["previewable"], True)
+        self.assertEqual(large_body["truncated"], True)
+        self.assertEqual(len(large_body["content"]), 128 * 1024)
+        self.assertEqual(large_body["size"], 128 * 1024 + 64)
+
+        outside_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/content?path={outside_path}")
+        outside_handler.do_GET()
+        outside_handler.send_response.assert_called_once_with(400)
+        self.assertEqual(json.loads(outside_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "path outside objective worktree"})
 
     def test_objective_files_open_endpoint_uses_native_open(self):
         worktree_path = Path(self.tmpdir.name) / "worktree-files-open"
@@ -862,6 +1017,29 @@ class TestServerResponses(unittest.TestCase):
         mock_popen.assert_called_once_with(["open", str(opened_file.resolve())])
         response = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(response, {"ok": True})
+
+    def test_objective_files_open_endpoint_rejects_invalid_and_missing_paths(self):
+        worktree_path = Path(self.tmpdir.name) / "worktree-files-open-errors"
+        outside_path = Path(self.tmpdir.name) / "outside-open.txt"
+        worktree_path.mkdir(parents=True)
+        outside_path.write_text("secret\n", encoding="utf-8")
+        objective = self._create_objective_with_worktree(worktree_path)
+
+        invalid_body = json.dumps({"path": str(outside_path)}).encode("utf-8")
+        invalid_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/open")
+        invalid_handler.headers = {"Content-Length": str(len(invalid_body))}
+        invalid_handler.rfile = io.BytesIO(invalid_body)
+        invalid_handler.do_POST()
+        invalid_handler.send_response.assert_called_once_with(400)
+        self.assertEqual(json.loads(invalid_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "path outside objective worktree"})
+
+        missing_body = json.dumps({"path": "missing.txt"}).encode("utf-8")
+        missing_handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/files/open")
+        missing_handler.headers = {"Content-Length": str(len(missing_body))}
+        missing_handler.rfile = io.BytesIO(missing_body)
+        missing_handler.do_POST()
+        missing_handler.send_response.assert_called_once_with(404)
+        self.assertEqual(json.loads(missing_handler.wfile.getvalue().decode("utf-8")), {"ok": False, "error": "file not found"})
 
     def test_debug_modal_static_markup_includes_rendering_regression_fix(self):
         html = Path("cmux_harness/static/orchestrator.html").read_text(encoding="utf-8")

@@ -22,6 +22,12 @@ class TestObjectives(unittest.TestCase):
         self.addCleanup(self.patch_subprocess_run.stop)
         self.mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
+    def _write_legacy_objective(self, objective_id, payload):
+        objective_dir = self.objectives_dir / objective_id
+        objective_dir.mkdir(parents=True)
+        (objective_dir / "objective.json").write_text(json.dumps(payload), encoding="utf-8")
+        return objective_dir
+
     def test_create_objective_creates_directory_and_json(self):
         project_dir = Path(self.tmpdir.name) / "project"
         objective = objectives.create_objective("Ship feature", str(project_dir), base_branch="develop")
@@ -242,25 +248,191 @@ class TestObjectives(unittest.TestCase):
             ),
         )
 
+    def test_create_objective_project_override_wins_over_project_default_branch(self):
+        root_path = Path(self.tmpdir.name) / "override-branch-project"
+        root_path.mkdir()
+        project = objectives.create_project("Configured", str(root_path), "develop")
+
+        objective = objectives.create_objective(
+            "Ship feature",
+            project_id=project["id"],
+            base_branch="release/2026",
+        )
+
+        self.assertEqual(objective["projectId"], project["id"])
+        self.assertEqual(objective["baseBranch"], "release/2026")
+        self.assertEqual(
+            self.mock_run.call_args_list[-1],
+            unittest.mock.call(
+                [
+                    "git",
+                    "-C",
+                    str(root_path),
+                    "worktree",
+                    "add",
+                    objective["worktreePath"],
+                    "-b",
+                    objective["branchName"],
+                    "release/2026",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
+        )
+
+    def test_create_objective_invalid_workflow_mode_falls_back_to_structured(self):
+        root_path = Path(self.tmpdir.name) / "workflow-mode-project"
+        root_path.mkdir()
+        project = objectives.create_project("Configured", str(root_path), "main")
+
+        objective = objectives.create_objective(
+            "Ship feature",
+            project_id=project["id"],
+            workflow_mode="ship-it",
+        )
+
+        self.assertEqual(objective["workflowMode"], "structured")
+
+    def test_read_objective_migrates_legacy_objective_missing_only_project_id(self):
+        objective_id = "legacy-missing-project"
+        legacy_root = Path(self.tmpdir.name) / "legacy-project-only-project-id"
+        legacy_root.mkdir()
+        self._write_legacy_objective(
+            objective_id,
+            {
+                "id": objective_id,
+                "goal": "Legacy goal",
+                "status": "planning",
+                "projectDir": str(legacy_root),
+                "baseBranch": "release",
+                "branchName": "orchestrator/legacy-project",
+                "worktreePath": str(legacy_root / ".cmux-harness" / "worktrees" / "orchestrator-legacy-project"),
+                "workflowMode": "direct",
+                "createdAt": "2026-04-07T00:00:00+00:00",
+                "updatedAt": "2026-04-07T00:00:00+00:00",
+                "tasks": [],
+            },
+        )
+
+        loaded = objectives.read_objective(objective_id)
+
+        self.assertTrue(loaded["projectId"])
+        self.assertEqual(loaded["workflowMode"], "direct")
+        self.assertEqual(loaded["baseBranch"], "release")
+        self.assertEqual(objectives.read_project(loaded["projectId"])["rootPath"], str(legacy_root))
+
+    def test_read_objective_migrates_legacy_objective_missing_only_workflow_mode(self):
+        root_path = Path(self.tmpdir.name) / "legacy-existing-project"
+        root_path.mkdir()
+        project = objectives.create_project("Existing", str(root_path), "develop")
+        objective_id = "legacy-missing-workflow"
+        self._write_legacy_objective(
+            objective_id,
+            {
+                "id": objective_id,
+                "goal": "Legacy goal",
+                "status": "planning",
+                "projectId": project["id"],
+                "projectDir": str(root_path),
+                "baseBranch": "develop",
+                "branchName": "orchestrator/legacy-workflow",
+                "worktreePath": str(root_path / ".cmux-harness" / "worktrees" / "orchestrator-legacy-workflow"),
+                "createdAt": "2026-04-07T00:00:00+00:00",
+                "updatedAt": "2026-04-07T00:00:00+00:00",
+                "tasks": [],
+            },
+        )
+
+        loaded = objectives.read_objective(objective_id)
+
+        self.assertEqual(loaded["projectId"], project["id"])
+        self.assertEqual(loaded["workflowMode"], "structured")
+
+    def test_read_objective_migrates_multiple_legacy_objectives_from_same_repo_to_one_project(self):
+        shared_root = Path(self.tmpdir.name) / "shared-legacy-root"
+        shared_root.mkdir()
+        self._write_legacy_objective(
+            "legacy-one",
+            {
+                "id": "legacy-one",
+                "goal": "One",
+                "status": "planning",
+                "projectDir": str(shared_root),
+                "baseBranch": "main",
+                "branchName": "orchestrator/legacy-one",
+                "worktreePath": str(shared_root / ".cmux-harness" / "worktrees" / "legacy-one"),
+                "createdAt": "2026-04-07T00:00:00+00:00",
+                "updatedAt": "2026-04-07T00:00:00+00:00",
+                "tasks": [],
+            },
+        )
+        self._write_legacy_objective(
+            "legacy-two",
+            {
+                "id": "legacy-two",
+                "goal": "Two",
+                "status": "planning",
+                "projectDir": str(shared_root),
+                "baseBranch": "develop",
+                "branchName": "orchestrator/legacy-two",
+                "worktreePath": str(shared_root / ".cmux-harness" / "worktrees" / "legacy-two"),
+                "createdAt": "2026-04-07T00:00:00+00:00",
+                "updatedAt": "2026-04-07T00:00:00+00:00",
+                "tasks": [],
+            },
+        )
+
+        first = objectives.read_objective("legacy-one")
+        second = objectives.read_objective("legacy-two")
+
+        self.assertEqual(first["projectId"], second["projectId"])
+        self.assertEqual(len(objectives.list_projects()), 1)
+
+    def test_read_objective_migrates_legacy_objective_with_missing_base_branch_safely(self):
+        objective_id = "legacy-missing-base-branch"
+        legacy_root = Path(self.tmpdir.name) / "legacy-no-base"
+        legacy_root.mkdir()
+        self._write_legacy_objective(
+            objective_id,
+            {
+                "id": objective_id,
+                "goal": "Legacy goal",
+                "status": "planning",
+                "projectDir": str(legacy_root),
+                "baseBranch": "",
+                "branchName": "orchestrator/legacy-no-base",
+                "worktreePath": str(legacy_root / ".cmux-harness" / "worktrees" / "legacy-no-base"),
+                "createdAt": "2026-04-07T00:00:00+00:00",
+                "updatedAt": "2026-04-07T00:00:00+00:00",
+                "tasks": [],
+            },
+        )
+
+        loaded = objectives.read_objective(objective_id)
+
+        self.assertEqual(loaded["baseBranch"], "main")
+        self.assertEqual(objectives.read_project(loaded["projectId"])["defaultBaseBranch"], "main")
+
     def test_read_objective_migrates_legacy_objective_to_project_and_workflow_mode(self):
         objective_id = "legacy-objective"
-        objective_dir = self.objectives_dir / objective_id
-        objective_dir.mkdir(parents=True)
         legacy_root = Path(self.tmpdir.name) / "legacy-project"
         legacy_root.mkdir()
-        legacy = {
-            "id": objective_id,
-            "goal": "Legacy goal",
-            "status": "planning",
-            "projectDir": str(legacy_root),
-            "baseBranch": "release",
-            "branchName": "orchestrator/legacy",
-            "worktreePath": str(legacy_root / ".cmux-harness" / "worktrees" / "orchestrator-legacy"),
-            "createdAt": "2026-04-07T00:00:00+00:00",
-            "updatedAt": "2026-04-07T00:00:00+00:00",
-            "tasks": [],
-        }
-        (objective_dir / "objective.json").write_text(json.dumps(legacy), encoding="utf-8")
+        self._write_legacy_objective(
+            objective_id,
+            {
+                "id": objective_id,
+                "goal": "Legacy goal",
+                "status": "planning",
+                "projectDir": str(legacy_root),
+                "baseBranch": "release",
+                "branchName": "orchestrator/legacy",
+                "worktreePath": str(legacy_root / ".cmux-harness" / "worktrees" / "orchestrator-legacy"),
+                "createdAt": "2026-04-07T00:00:00+00:00",
+                "updatedAt": "2026-04-07T00:00:00+00:00",
+                "tasks": [],
+            },
+        )
 
         loaded = objectives.read_objective(objective_id)
 
@@ -268,7 +440,7 @@ class TestObjectives(unittest.TestCase):
         self.assertEqual(loaded["workflowMode"], "structured")
         project = objectives.read_project(loaded["projectId"])
         self.assertEqual(project["rootPath"], str(legacy_root))
-        on_disk = json.loads((objective_dir / "objective.json").read_text(encoding="utf-8"))
+        on_disk = json.loads((self.objectives_dir / objective_id / "objective.json").read_text(encoding="utf-8"))
         self.assertEqual(on_disk["projectId"], loaded["projectId"])
         self.assertEqual(on_disk["workflowMode"], "structured")
 
