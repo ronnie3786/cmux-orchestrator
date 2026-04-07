@@ -2305,6 +2305,18 @@
           '</div>',
           '<div class="sf-hint">Point this at an existing git repo. A lightweight project record is all we need for now.</div>'
         ].join('')
+      : state.sidebarFormMode === 'add-kind'
+        ? [
+          '<div class="sf-mode-title">Add to project</div>',
+          '<label class="sf-field-label" for="addKindProjectSelectInput">Project</label>',
+          '<select class="sf-input" id="addKindProjectSelectInput">' + projectOptions + '</select>',
+          '<div class="sf-actions sf-actions-stack">',
+          '<button class="sf-submit" id="chooseObjectiveButton">New objective</button>',
+          '<button class="sf-submit secondary" id="chooseWorkspaceButton">Open workspace</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '</div>',
+          '<div class="sf-hint">Choose what you want to add inside this project.</div>'
+        ].join('')
       : state.sidebarFormMode === 'workspace'
         ? [
           '<div class="sf-mode-title">Open workspace</div>',
@@ -2391,6 +2403,23 @@
       });
       return;
     }
+    if (state.sidebarFormMode === 'add-kind') {
+      const addKindProjectSelectInput = document.getElementById('addKindProjectSelectInput');
+      document.getElementById('chooseObjectiveButton').addEventListener('click', () => {
+        const projectId = addKindProjectSelectInput ? addKindProjectSelectInput.value.trim() : state.draftProjectId;
+        openSidebarForm('', projectId);
+      });
+      document.getElementById('chooseWorkspaceButton').addEventListener('click', () => {
+        const projectId = addKindProjectSelectInput ? addKindProjectSelectInput.value.trim() : state.draftProjectId;
+        openWorkspaceForm(projectId);
+      });
+      if (addKindProjectSelectInput) {
+        addKindProjectSelectInput.addEventListener('change', (event) => {
+          setDraftProject(event.target.value, { updateBaseBranch: false });
+        });
+      }
+      return;
+    }
     if (state.sidebarFormMode === 'workspace') {
       const workspaceProjectSelectInput = document.getElementById('workspaceProjectSelectInput');
       const workspaceRootPathInput = document.getElementById('workspaceRootPathInput');
@@ -2436,6 +2465,25 @@
     sidebarGoalInput.addEventListener('input', (event) => {
       state.draftGoal = event.target.value;
     });
+  }
+
+  function openAddKindForm(projectId) {
+    openSidebar();
+    state.sidebarFormMode = 'add-kind';
+    state.sidebarFormOpen = true;
+    const projects = sortedProjects(state.projects);
+    if (!projects.length) {
+      showToast('Add a project first.');
+      openProjectForm();
+      return;
+    }
+    const nextProjectId = projectId || state.draftProjectId || selectedProjectId() || (projects[0] && projects[0].id) || '';
+    setDraftProject(nextProjectId, { updateBaseBranch: false });
+    updateSidebarFormFromState();
+    window.setTimeout(() => {
+      const input = document.getElementById('addKindProjectSelectInput');
+      if (input) input.focus();
+    }, 0);
   }
 
   function openSidebarForm(seedGoal, projectId) {
@@ -2569,20 +2617,53 @@
       return;
     }
     ensureProjectExpansion();
-    const workspaceCards = (items) => items.map((workspace) => {
-      const active = workspace.id === state.activeWorkspaceId ? ' active' : '';
-      const statusClass = workspace.sessionActive ? 'badge-running' : 'badge-queued';
-      return [
-        '<div class="obj-item nested workspace' + active + '" data-workspace-id="' + esc(workspace.id) + '">',
-        '<div class="obj-status-pill ' + statusClass + '">WS</div>',
-        '<div class="obj-info">',
-        '<div class="obj-name">' + esc(workspace.name || 'Workspace') + '</div>',
-        '<div class="obj-progress"><span>' + esc(compactPath(workspace.rootPath || '')) + '</span></div>',
-        '</div>',
-        '</div>'
-      ].join('');
-    }).join('');
-    const objectiveCards = (objectives) => objectives.map((objective) => {
+    const mixedCards = (projectId) => {
+      const items = [];
+      projectWorkspaces(projectId).forEach((workspace) => {
+        items.push({ kind: 'workspace', item: workspace, sortAt: parseIso(workspace.updatedAt || workspace.createdAt) || 0 });
+      });
+      projectObjectives(projectId).forEach((objective) => {
+        items.push({ kind: 'objective', item: objective, sortAt: parseIso(objective.updatedAt || objective.createdAt) || 0 });
+      });
+      items.sort((a, b) => b.sortAt - a.sortAt);
+      return items.map(({ kind, item }) => {
+        if (kind === 'workspace') {
+          const active = item.id === state.activeWorkspaceId ? ' active' : '';
+          const statusClass = item.sessionActive ? 'badge-running' : 'badge-queued';
+          return [
+            '<div class="obj-item nested workspace' + active + '" data-workspace-id="' + esc(item.id) + '">',
+            '<div class="obj-status-pill ' + statusClass + '">WS</div>',
+            '<div class="obj-info">',
+            '<div class="obj-name">' + esc(item.name || 'Workspace') + '</div>',
+            '<div class="obj-progress"><span>' + esc(compactPath(item.rootPath || '')) + '</span></div>',
+            '</div>',
+            '</div>'
+          ].join('');
+        }
+        const meta = statusMeta(item.status);
+        const progress = objectiveProgress(item);
+        const active = item.id === state.activeObjectiveId ? ' active' : '';
+        const doneClass = String(item.status).toLowerCase() === 'completed' ? ' done' : '';
+        let progressText = progress.total ? (progress.done + ' of ' + progress.total + ' done') : meta.label.toLowerCase();
+        if (String(item.status).toLowerCase() === 'completed') {
+          progressText = 'done · ' + relativeTime(item.updatedAt || item.createdAt);
+        } else if (String(item.status).toLowerCase() === 'failed') {
+          progressText = 'failed · ' + relativeTime(item.updatedAt || item.createdAt);
+        }
+        return [
+          '<div class="obj-item nested' + active + doneClass + '" data-objective-id="' + esc(item.id) + '">',
+          '<div class="obj-dot ' + meta.dot + '"></div>',
+          '<div class="obj-info">',
+          '<div class="obj-name-row"><div class="obj-name">' + esc(item.goal || 'Untitled objective') + '</div><div class="obj-inline-tag">OBJ</div></div>',
+          '<div class="obj-progress">',
+          '<div class="obj-prog-bar"><div class="obj-prog-fill ' + meta.fill + '" style="width:' + progress.percent + '%"></div></div>',
+          '<span>' + esc(progressText) + '</span>',
+          '</div>',
+          '</div>',
+          '</div>'
+        ].join('');
+      }).join('');
+    };
       const meta = statusMeta(objective.status);
       const progress = objectiveProgress(objective);
       const active = objective.id === state.activeObjectiveId ? ' active' : '';
@@ -2607,8 +2688,7 @@
       ].join('');
     }).join('');
     els.objectiveList.innerHTML = projects.map((project) => {
-      const objectives = projectObjectives(project.id);
-      const workspaces = projectWorkspaces(project.id);
+      const itemCount = projectObjectives(project.id).length + projectWorkspaces(project.id).length;
       const expanded = state.projectExpansion[project.id] !== false;
       const pathHint = compactPath(project.rootPath || '');
       return [
@@ -2616,18 +2696,12 @@
         '<div class="project-row' + (expanded ? ' expanded' : '') + '">',
         '<button class="project-toggle" type="button" data-project-toggle="' + esc(project.id) + '" aria-label="Toggle ' + esc(project.name || 'project') + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">▾</button>',
         '<div class="project-info" data-project-toggle="' + esc(project.id) + '">',
-        '<div class="project-name-row"><div class="project-name">' + esc(project.name || 'Untitled project') + '</div><div class="project-count">' + objectives.length + '</div></div>',
+        '<div class="project-name-row"><div class="project-name">' + esc(project.name || 'Untitled project') + '</div><div class="project-count">' + itemCount + '</div></div>',
         pathHint ? '<div class="project-path">' + esc(pathHint) + '</div>' : '',
         '</div>',
-        '<div class="project-row-actions">',
-        '<button class="project-open-workspace" type="button" data-project-open-workspace="' + esc(project.id) + '">Open workspace</button>',
-        '<button class="project-add-objective" type="button" data-project-new-objective="' + esc(project.id) + '" aria-label="New objective in ' + esc(project.name || 'project') + '">+</button>',
+        '<button class="project-add-objective" type="button" data-project-add-item="' + esc(project.id) + '" aria-label="Add item to ' + esc(project.name || 'project') + '">+</button>',
         '</div>',
-        '</div>',
-        expanded ? '<div class="project-objectives">'
-          + '<div class="project-subsection"><div class="project-subsection-label">Workspaces</div>' + (workspaces.length ? workspaceCards(workspaces) : '<div class="project-empty">No workspaces yet</div>') + '</div>'
-          + '<div class="project-subsection"><div class="project-subsection-label">Objectives</div>' + (objectives.length ? objectiveCards(objectives) : '<div class="project-empty">No objectives yet</div>') + '</div>'
-          + '</div>' : '',
+        expanded ? '<div class="project-objectives">' + (itemCount ? mixedCards(project.id) : '<div class="project-empty">No items yet</div>') + '</div>' : '',
         '</div>'
       ].join('');
     }).join('');
@@ -2639,18 +2713,11 @@
         renderSidebar();
       });
     });
-    els.objectiveList.querySelectorAll('[data-project-new-objective]').forEach((node) => {
+    els.objectiveList.querySelectorAll('[data-project-add-item]').forEach((node) => {
       node.addEventListener('click', (event) => {
         event.stopPropagation();
-        const projectId = node.getAttribute('data-project-new-objective');
-        openSidebarForm('', projectId);
-      });
-    });
-    els.objectiveList.querySelectorAll('[data-project-open-workspace]').forEach((node) => {
-      node.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const projectId = node.getAttribute('data-project-open-workspace');
-        openWorkspaceForm(projectId);
+        const projectId = node.getAttribute('data-project-add-item');
+        openAddKindForm(projectId);
       });
     });
     els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
