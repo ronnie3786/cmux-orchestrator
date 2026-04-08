@@ -232,6 +232,18 @@ def make_handler(engine):
                     parsed,
                     human_file_size=_human_file_size,
                 )
+            elif path.startswith("/api/workspaces/") and path.endswith("/build-log"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/build-log")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                build_log_routes.handle_get_workspace_build_log(
+                    self,
+                    workspace,
+                    parsed,
+                    human_file_size=_human_file_size,
+                )
             elif path.startswith("/api/objectives/") and path.endswith("/console-logs"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/console-logs")]).strip("/")
                 objective = objectives.read_objective(objective_id)
@@ -241,6 +253,19 @@ def make_handler(engine):
                 console_logs_routes.handle_get_console_logs(
                     self,
                     objective,
+                    parsed,
+                    re_module=__import__("re"),
+                    human_file_size=_human_file_size,
+                )
+            elif path.startswith("/api/workspaces/") and path.endswith("/console-logs"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/console-logs")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                console_logs_routes.handle_get_workspace_console_logs(
+                    self,
+                    workspace,
                     parsed,
                     re_module=__import__("re"),
                     human_file_size=_human_file_size,
@@ -255,6 +280,19 @@ def make_handler(engine):
                     self,
                     objective_id,
                     objective,
+                    engine=self.server.engine,
+                    parsed=parsed,
+                )
+            elif path.startswith("/api/workspaces/") and path.endswith("/status-summary"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/status-summary")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                status_summary_routes.handle_get_workspace_status_summary(
+                    self,
+                    workspace_id,
+                    workspace,
                     engine=self.server.engine,
                     parsed=parsed,
                 )

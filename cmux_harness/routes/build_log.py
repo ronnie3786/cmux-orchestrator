@@ -4,7 +4,7 @@ from collections import deque
 from pathlib import Path
 
 
-def handle_get_build_log(handler, objective, parsed, *, human_file_size):
+def _handle_get_build_log(handler, root_path: str, parsed, *, human_file_size, missing_error: str):
     params = handler.parse_qs(parsed.query)
     try:
         line_limit = int(params.get("lines", ["200"])[0])
@@ -20,11 +20,10 @@ def handle_get_build_log(handler, objective, parsed, *, human_file_size):
         return
     line_limit = max(1, min(line_limit, 1000))
     offset = max(0, offset)
-    worktree_path = str(objective.get("worktreePath") or "").strip()
-    if not worktree_path:
-        handler._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
+    if not root_path:
+        handler._json_response({"ok": False, "error": missing_error}, 400)
         return
-    log_path = Path(worktree_path) / ".build" / filename
+    log_path = Path(root_path) / ".build" / filename
     if not log_path.exists() or not log_path.is_file():
         handler._json_response({
             "exists": False,
@@ -68,3 +67,25 @@ def handle_get_build_log(handler, objective, parsed, *, human_file_size):
         "totalLines": total_lines,
         "truncated": truncated,
     })
+
+
+def handle_get_build_log(handler, objective, parsed, *, human_file_size):
+    root_path = str(objective.get("worktreePath") or "").strip()
+    _handle_get_build_log(
+        handler,
+        root_path,
+        parsed,
+        human_file_size=human_file_size,
+        missing_error="objective worktreePath required",
+    )
+
+
+def handle_get_workspace_build_log(handler, workspace, parsed, *, human_file_size):
+    root_path = str(workspace.get("rootPath") or "").strip()
+    _handle_get_build_log(
+        handler,
+        root_path,
+        parsed,
+        human_file_size=human_file_size,
+        missing_error="workspace rootPath required",
+    )

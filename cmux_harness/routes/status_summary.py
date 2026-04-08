@@ -21,6 +21,13 @@ _STAGE_LABELS = {
     "failed": "Needs attention",
 }
 
+_WORKSPACE_STAGE_LABELS = {
+    "active": "Active",
+    "idle": "Idle",
+    "closed": "Closed",
+    "failed": "Needs attention",
+}
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -343,6 +350,65 @@ def _summary_source(kind: str, *, fallback_reason: str = "") -> dict[str, Any]:
     }
 
 
+def _workspace_status_label(status: str) -> str:
+    value = str(status or "").strip().lower()
+    return _WORKSPACE_STAGE_LABELS.get(value, value.replace("_", " ").title() or "Unknown")
+
+
+def _workspace_blockers_for_summary(workspace: dict, recent_message: dict | None) -> list[str]:
+    blockers: list[str] = []
+    status = str(workspace.get("status") or "").lower()
+    if status == "failed":
+        blockers.append("Workspace session needs attention before it can continue.")
+    if recent_message and str(recent_message.get("type") or "") == "alert":
+        blockers.append(_clean_message_text(recent_message))
+    deduped: list[str] = []
+    seen = set()
+    for blocker in blockers:
+        value = str(blocker or "").strip()
+        key = value.lower()
+        if not value or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(value)
+    return deduped[:4]
+
+
+def _workspace_now_line(workspace: dict, blockers: list[str]) -> str:
+    if blockers:
+        return blockers[0]
+    if workspace.get("sessionActive"):
+        return "The workspace session is active and ready for questions or edits."
+    status = str(workspace.get("status") or "").lower()
+    if status == "closed":
+        return "The workspace was closed and can be reopened from the sidebar."
+    return "The workspace is idle and can resume on the next message."
+
+
+def _workspace_next_line(workspace: dict, blockers: list[str], git_summary: dict) -> str:
+    if blockers:
+        return "Resolve the current blocker or reopen the workspace session."
+    changed_files = int(git_summary.get("changedFiles") or 0)
+    if changed_files:
+        return "Review the current changes, ask a question, or continue editing."
+    if workspace.get("sessionActive"):
+        return "Ask about the codebase, inspect files, or make the next change."
+    return "Send a message to resume the workspace session."
+
+
+def _workspace_tldr(workspace: dict, stage_label: str, blockers: list[str], git_summary: dict) -> str:
+    changed_files = int(git_summary.get("changedFiles") or 0)
+    branch = str(git_summary.get("branch") or "").strip()
+    pieces = [f"{stage_label} workspace"]
+    if branch:
+        pieces.append(f"branch {branch}")
+    if changed_files:
+        pieces.append(f"{changed_files} changed file{'s' if changed_files != 1 else ''}")
+    if blockers:
+        pieces.append(f"blocker: {blockers[0]}")
+    return ". ".join(pieces) + "."
+
+
 def _recent_events(messages: list[dict], limit: int = 4) -> list[dict[str, str]]:
     interesting = [
         message
@@ -498,6 +564,33 @@ def build_status_summary(objective_id: str, objective: dict, messages: list[dict
     return summary
 
 
+def build_workspace_status_summary(workspace_id: str, workspace: dict, messages: list[dict]) -> dict[str, Any]:
+    stage = str(workspace.get("status") or "unknown").lower()
+    stage_label = _workspace_status_label(stage)
+    recent_message = _latest_interesting_message(messages)
+    git_summary = _git_summary(str(workspace.get("rootPath") or ""))
+    blockers = _workspace_blockers_for_summary(workspace, recent_message)
+    summary = {
+        "workspaceId": workspace_id,
+        "generatedAt": _utc_now_iso(),
+        "objective": str(workspace.get("name") or workspace.get("rootPath") or ""),
+        "stage": {"code": stage, "label": stage_label},
+        "tldr": _workspace_tldr(workspace, stage_label, blockers, git_summary),
+        "justHappened": _clean_message_text(recent_message),
+        "now": _workspace_now_line(workspace, blockers),
+        "next": _workspace_next_line(workspace, blockers, git_summary),
+        "blockers": blockers,
+        "signals": {
+            "tasks": {"total": 0, "completed": 0, "queued": 0, "active": 0, "failed": 0, "reviewing": 0, "rework": 0, "activeTitles": []},
+            "approvals": {"waiting": 0, "latest": None},
+            "reviews": {"passed": 0, "failed": 0, "latest": None},
+            "git": git_summary,
+        },
+        "summarySource": _summary_source("deterministic"),
+    }
+    return summary
+
+
 def handle_get_status_summary(handler, objective_id: str, objective: dict, *, engine, parsed=None):
     orchestrator = getattr(engine, "orchestrator", None)
     get_messages = getattr(orchestrator, "get_messages", None)
@@ -509,3 +602,11 @@ def handle_get_status_summary(handler, objective_id: str, objective: dict, *, en
         enrich = (params.get("enrich", [None])[0] or "").strip().lower() or None
     summary = build_status_summary(objective_id, objective, messages)
     handler._json_response(maybe_enrich_status_summary(summary, objective, messages, enrich=enrich))
+
+
+def handle_get_workspace_status_summary(handler, workspace_id: str, workspace: dict, *, engine, parsed=None):
+    orchestrator = getattr(engine, "orchestrator", None)
+    get_messages = getattr(orchestrator, "get_workspace_messages", None)
+    messages = get_messages(workspace_id) if callable(get_messages) else []
+    summary = build_workspace_status_summary(workspace_id, workspace, messages)
+    handler._json_response(summary)

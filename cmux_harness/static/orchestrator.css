@@ -42,8 +42,8 @@
 
   /* ─── SIDEBAR ─── */
   .sidebar {
-    width: 240px;
-    min-width: 240px;
+    width: 280px;
+    min-width: 280px;
     background: var(--sidebar);
     border-right: 1px solid var(--b);
     display: flex;
@@ -115,8 +115,20 @@
     text-align: left;
   }
   .new-obj-btn:hover { background: var(--hover); color: var(--t1); }
+  .new-obj-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
   .new-obj-btn .plus { font-size: 16px; color: var(--t3); line-height: 1; }
   .new-obj-btn.secondary {
+    margin-top: 8px;
+    background: transparent;
+    color: var(--t1);
+  }
+  .new-obj-btn.secondary .plus {
+    color: var(--blue);
+  }
+  .new-obj-btn.tertiary {
     margin-top: 8px;
     background: transparent;
   }
@@ -301,6 +313,13 @@
     display: flex;
     align-items: center;
     gap: 5px;
+    min-width: 0;
+  }
+  .obj-progress > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .obj-prog-bar {
     height: 3px;
@@ -1360,6 +1379,9 @@
     display: flex;
     gap: 8px;
   }
+  .sf-actions.sf-actions-stack {
+    flex-direction: column;
+  }
   .sf-toggle-group {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1395,10 +1417,22 @@
     font-family: 'Inter', sans-serif;
     cursor: pointer;
   }
+  .sf-submit:disabled,
+  .sf-cancel:disabled,
+  .sf-toggle:disabled,
+  .sf-picker-button:disabled {
+    opacity: 0.65;
+    cursor: wait;
+  }
   .sf-submit {
     border: none;
     background: var(--blue);
     color: white;
+  }
+  .sf-submit.secondary {
+    background: transparent;
+    border: 1px solid var(--b2);
+    color: var(--t1);
   }
   .sf-cancel {
     border: 1px solid var(--b2);

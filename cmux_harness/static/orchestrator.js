@@ -52,6 +52,8 @@
     sidebarFormMode: 'objective',
     draftWorkspaceName: '',
     draftWorkspaceRootPath: '',
+    openPathPickerFallback: false,
+    openPathPickerBusy: false,
     projectExpansion: {},
     settingsOpen: false,
     settingsSaving: false,
@@ -88,13 +90,14 @@
     statusSummary: null,
     statusSummaryLoading: false,
     statusSummaryError: '',
-    statusSummaryObjectiveId: null,
+    statusSummaryTargetKey: null,
     draftProjectDir: '',
     draftProjectId: '',
     draftProjectName: '',
     draftProjectRootPath: '',
     projectPickerFallback: false,
     projectPickerBusy: false,
+    projectCreationReturnMode: '',
     draftProjectBaseBranch: 'main',
     draftWorkflowMode: 'structured',
     draftBaseBranch: 'main',
@@ -126,6 +129,7 @@
     inputHint: document.getElementById('inputHint'),
     sidebarForm: document.getElementById('sidebarForm'),
     newObjectiveButton: document.getElementById('newObjectiveButton'),
+    openWorkspaceButton: document.getElementById('openWorkspaceButton'),
     addProjectButton: document.getElementById('addProjectButton'),
     settingsButton: document.getElementById('settingsButton'),
     settingsModal: document.getElementById('settingsModal'),
@@ -658,6 +662,13 @@
     return parts.length ? parts[parts.length - 1] : '';
   }
 
+  async function pickFolderPath() {
+    return api('/api/projects/pick-root', {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+  }
+
   async function loadActionButtons(objectiveId) {
     if (!objectiveId) {
       state.actionButtons = [];
@@ -847,6 +858,30 @@
       : '';
   }
 
+  function currentActiveTarget() {
+    if (state.activeWorkspaceId) return { kind: 'workspace', id: state.activeWorkspaceId };
+    if (state.activeObjectiveId) return { kind: 'objective', id: state.activeObjectiveId };
+    return null;
+  }
+
+  function currentTargetKey() {
+    const target = currentActiveTarget();
+    return target ? (target.kind + ':' + target.id) : '';
+  }
+
+  function currentTargetApiBase() {
+    const target = currentActiveTarget();
+    if (!target) return '';
+    return '/api/' + (target.kind === 'workspace' ? 'workspaces' : 'objectives') + '/' + encodeURIComponent(target.id);
+  }
+
+  function workspaceMeta(workspace) {
+    const status = String(workspace && workspace.status || '').toLowerCase();
+    if (status === 'failed') return { dot: 'od-failed', badge: 'badge-failed', label: 'Needs attention' };
+    if (workspace && workspace.sessionActive) return { dot: 'od-running', badge: 'badge-running', label: 'Active' };
+    return { dot: 'od-queued', badge: 'badge-queued', label: 'Idle' };
+  }
+
   function activeFilesRoot() {
     if (state.activeWorkspace && state.activeWorkspace.rootPath) return String(state.activeWorkspace.rootPath).trim();
     return state.activeObjective && state.activeObjective.worktreePath
@@ -862,7 +897,7 @@
   }
 
   function currentTargetName() {
-    if (state.activeWorkspace) return String(state.activeWorkspace.name || state.activeWorkspace.rootPath || 'Workspace');
+    if (state.activeWorkspace) return String(state.activeWorkspace.name || state.activeWorkspace.rootPath || 'Untitled item');
     const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
     return objective && objective.goal ? String(objective.goal) : 'Nothing selected';
   }
@@ -874,15 +909,15 @@
           method: 'POST',
           body: JSON.stringify({})
         });
-        showToast('Opened workspace in VS Code');
+        showToast('Opened path in VS Code');
       } catch (error) {
         console.error('open-workspace failed', error);
-        showToast(error.message || 'Could not open workspace in VS Code');
+        showToast(error.message || 'Could not open path in VS Code');
       }
       return;
     }
     if (!state.activeObjectiveId) {
-      showToast('No active workspace or objective');
+      showToast('No active item selected');
       return;
     }
     try {
@@ -890,7 +925,7 @@
         method: 'POST',
         body: JSON.stringify({})
       });
-      showToast('Opened worktree in VS Code');
+      showToast('Opened path in VS Code');
     } catch (error) {
       console.error('open-worktree failed', error);
       showToast(error.message || 'Could not open worktree in VS Code');
@@ -993,28 +1028,29 @@
   }
 
   function renderBuildLog() {
-    const objectiveName = currentTargetName();
+    const targetName = currentTargetName();
+    const hasTarget = !!currentActiveTarget();
     const fileLabel = state.buildLogFile || 'build.log';
     const data = state.buildLogData;
     els.buildLogPanel.className = 'build-log-panel' + (state.buildLogOpen ? ' open' : '');
     els.buildLogTitle.textContent = 'Build Log';
     els.buildLogFileSelect.value = fileLabel;
-    els.buildLogFileSelect.disabled = !state.activeObjectiveId;
+    els.buildLogFileSelect.disabled = !hasTarget;
     els.buildLogAutoButton.className = 'build-log-toggle' + (state.buildLogAuto ? ' active' : '');
     els.buildLogAutoButton.setAttribute('aria-pressed', state.buildLogAuto ? 'true' : 'false');
-    els.buildLogRefreshButton.disabled = !state.activeObjectiveId || state.buildLogLoading;
+    els.buildLogRefreshButton.disabled = !hasTarget || state.buildLogLoading;
     els.buildLogCloseButton.disabled = !state.buildLogOpen;
 
-    if (!state.activeObjectiveId) {
-      els.buildLogMeta.textContent = 'Select an objective to view logs.';
-      els.buildLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">⎔</div><div>No active objective selected.</div></div>';
+    if (!hasTarget) {
+      els.buildLogMeta.textContent = 'Select an item to view logs.';
+      els.buildLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">⎔</div><div>No active item selected.</div></div>';
       state.buildLogHasNewOutput = false;
       renderBuildLogBadge();
       return;
     }
 
     if (state.buildLogLoading && !data) {
-      els.buildLogMeta.textContent = objectiveName + ' · ' + fileLabel;
+      els.buildLogMeta.textContent = targetName + ' · ' + fileLabel;
       els.buildLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-spinner"></div><div>Loading build log…</div></div>';
       state.buildLogHasNewOutput = false;
       renderBuildLogBadge();
@@ -1022,7 +1058,7 @@
     }
 
     if (state.buildLogError) {
-      els.buildLogMeta.textContent = objectiveName + ' · ' + fileLabel;
+      els.buildLogMeta.textContent = targetName + ' · ' + fileLabel;
       els.buildLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">⚠</div><div>Failed to read build log.</div><button class="build-log-retry" id="buildLogRetryButton" type="button">Retry</button></div>';
       const retryButton = document.getElementById('buildLogRetryButton');
       if (retryButton) retryButton.addEventListener('click', () => fetchBuildLog(true));
@@ -1031,7 +1067,7 @@
     }
 
     if (!data || !data.exists) {
-      els.buildLogMeta.textContent = objectiveName + ' · ' + fileLabel;
+      els.buildLogMeta.textContent = targetName + ' · ' + fileLabel;
       els.buildLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">⎔</div><div>No build log yet. Run a build to see output here.</div></div>';
       state.buildLogHasNewOutput = false;
       renderBuildLogBadge();
@@ -1049,7 +1085,8 @@
   }
 
   function renderConsoleLog() {
-    const objectiveName = currentTargetName();
+    const targetName = currentTargetName();
+    const hasTarget = !!currentActiveTarget();
     const data = state.consoleLogData;
     const files = data && Array.isArray(data.files) ? data.files : [];
     const activeFile = state.consoleLogFile || (data && data.activeFile) || (files[0] || '');
@@ -1059,31 +1096,31 @@
     els.consoleLogTitle.textContent = activeFile ? ('Console Logs - ' + activeFile) : 'Console Logs';
     els.consoleLogAutoButton.className = 'build-log-toggle' + (state.consoleLogAuto ? ' active' : '');
     els.consoleLogAutoButton.setAttribute('aria-pressed', state.consoleLogAuto ? 'true' : 'false');
-    els.consoleLogRefreshButton.disabled = !state.activeObjectiveId || state.consoleLogLoading;
+    els.consoleLogRefreshButton.disabled = !hasTarget || state.consoleLogLoading;
     els.consoleLogCloseButton.disabled = !state.consoleLogOpen;
     els.consoleLogPresetSelect.innerHTML = CONSOLE_LOG_PRESETS.map((item) => (
       '<option value="' + esc(item.id) + '">' + esc(item.label) + '</option>'
     )).join('');
     els.consoleLogPresetSelect.value = preset.id;
     els.consoleLogCustomInput.value = state.consoleLogDraftFilter;
-    els.consoleLogCustomInput.disabled = !state.activeObjectiveId;
-    els.consoleLogApplyButton.disabled = !state.activeObjectiveId;
-    els.consoleLogFileSelect.disabled = !state.activeObjectiveId || files.length <= 1;
+    els.consoleLogCustomInput.disabled = !hasTarget;
+    els.consoleLogApplyButton.disabled = !hasTarget;
+    els.consoleLogFileSelect.disabled = !hasTarget || files.length <= 1;
     els.consoleLogFileSelect.innerHTML = files.length
       ? files.map((file) => '<option value="' + esc(file) + '">' + esc(file) + '</option>').join('')
       : '<option value="">No files</option>';
     els.consoleLogFileSelect.value = activeFile;
 
-    if (!state.activeObjectiveId) {
-      els.consoleLogMeta.textContent = 'Select an objective to view logs.';
-      els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">📟</div><div>No active objective selected.</div></div>';
+    if (!hasTarget) {
+      els.consoleLogMeta.textContent = 'Select an item to view logs.';
+      els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">📟</div><div>No active item selected.</div></div>';
       state.consoleLogHasNewOutput = false;
       renderConsoleLogBadge();
       return;
     }
 
     if (state.consoleLogLoading && !data) {
-      els.consoleLogMeta.textContent = objectiveName + (activeFile ? (' · ' + activeFile) : '');
+      els.consoleLogMeta.textContent = targetName + (activeFile ? (' · ' + activeFile) : '');
       els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-spinner"></div><div>Loading console logs…</div></div>';
       state.consoleLogHasNewOutput = false;
       renderConsoleLogBadge();
@@ -1091,7 +1128,7 @@
     }
 
     if (state.consoleLogError) {
-      els.consoleLogMeta.textContent = objectiveName + (activeFile ? (' · ' + activeFile) : '');
+      els.consoleLogMeta.textContent = targetName + (activeFile ? (' · ' + activeFile) : '');
       els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">⚠</div><div>Failed to read console logs.</div><button class="build-log-retry" id="consoleLogRetryButton" type="button">Retry</button></div>';
       const retryButton = document.getElementById('consoleLogRetryButton');
       if (retryButton) retryButton.addEventListener('click', () => fetchConsoleLog(true));
@@ -1100,7 +1137,7 @@
     }
 
     if (!data || !data.exists) {
-      els.consoleLogMeta.textContent = objectiveName + ' · waiting for .build/logs/*.log';
+      els.consoleLogMeta.textContent = targetName + ' · waiting for .build/logs/*.log';
       els.consoleLogContent.innerHTML = '<div class="build-log-state"><div class="build-log-state-icon">📟</div><div>No console logs yet. Run the app to see runtime output here.</div></div>';
       state.consoleLogHasNewOutput = false;
       renderConsoleLogBadge();
@@ -1120,7 +1157,8 @@
   }
 
   async function fetchBuildLog(forceRender) {
-    if (!state.activeObjectiveId) {
+    const target = currentActiveTarget();
+    if (!target) {
       state.buildLogData = null;
       state.buildLogError = '';
       state.buildLogLoading = false;
@@ -1131,7 +1169,7 @@
       return;
     }
 
-    const objectiveId = state.activeObjectiveId;
+    const targetKey = currentTargetKey();
     const wasPinned = isBuildLogPinned();
     state.buildLogPinned = wasPinned;
     if (!state.buildLogData) state.buildLogLoading = true;
@@ -1140,10 +1178,10 @@
 
     try {
       const data = await api(
-        '/api/objectives/' + encodeURIComponent(objectiveId) +
+        currentTargetApiBase() +
         '/build-log?lines=200&file=' + encodeURIComponent(state.buildLogFile)
       );
-      if (state.activeObjectiveId !== objectiveId) return;
+      if (currentTargetKey() !== targetKey) return;
       const nextSignature = buildLogSignature(data);
       const changed = state.buildLogLastSignature && state.buildLogLastSignature !== nextSignature;
       state.buildLogData = data;
@@ -1159,7 +1197,7 @@
         window.setTimeout(scrollBuildLogToBottom, 0);
       }
     } catch (error) {
-      if (state.activeObjectiveId !== objectiveId) return;
+      if (currentTargetKey() !== targetKey) return;
       state.buildLogLoading = false;
       state.buildLogError = error.message || 'Failed to read build log';
       renderContext();
@@ -1168,7 +1206,8 @@
   }
 
   async function fetchConsoleLog(forceRender) {
-    if (!state.activeObjectiveId) {
+    const target = currentActiveTarget();
+    if (!target) {
       state.consoleLogData = null;
       state.consoleLogError = '';
       state.consoleLogLoading = false;
@@ -1179,7 +1218,7 @@
       return;
     }
 
-    const objectiveId = state.activeObjectiveId;
+    const targetKey = currentTargetKey();
     const wasPinned = isConsoleLogPinned();
     state.consoleLogPinned = wasPinned;
     if (!state.consoleLogData) state.consoleLogLoading = true;
@@ -1187,7 +1226,7 @@
     if (forceRender) renderConsoleLog();
 
     try {
-      let path = '/api/objectives/' + encodeURIComponent(objectiveId) + '/console-logs?lines=500';
+      let path = currentTargetApiBase() + '/console-logs?lines=500';
       if (state.consoleLogFile) {
         path += '&file=' + encodeURIComponent(state.consoleLogFile);
       }
@@ -1195,7 +1234,7 @@
         path += '&filter=' + encodeURIComponent(state.consoleLogFilter);
       }
       const data = await api(path);
-      if (state.activeObjectiveId !== objectiveId) return;
+      if (currentTargetKey() !== targetKey) return;
       const nextSignature = consoleLogSignature(data);
       const changed = state.consoleLogLastSignature && state.consoleLogLastSignature !== nextSignature;
       state.consoleLogData = data;
@@ -1215,7 +1254,7 @@
         window.setTimeout(scrollConsoleLogToBottom, 0);
       }
     } catch (error) {
-      if (state.activeObjectiveId !== objectiveId) return;
+      if (currentTargetKey() !== targetKey) return;
       state.consoleLogLoading = false;
       state.consoleLogError = error.message || 'Failed to read console logs';
       renderContext();
@@ -1232,7 +1271,7 @@
 
   function startBuildLogPoll() {
     stopBuildLogPoll();
-    if (!state.buildLogOpen || !state.buildLogAuto || !state.activeObjectiveId) return;
+    if (!state.buildLogOpen || !state.buildLogAuto || !currentActiveTarget()) return;
     state.buildLogInterval = window.setInterval(() => {
       fetchBuildLog(false).catch((error) => {
         console.error(error);
@@ -1249,7 +1288,7 @@
 
   function startConsoleLogPoll() {
     stopConsoleLogPoll();
-    if (!state.consoleLogOpen || !state.consoleLogAuto || !state.activeObjectiveId) return;
+    if (!state.consoleLogOpen || !state.consoleLogAuto || !currentActiveTarget()) return;
     state.consoleLogInterval = window.setInterval(() => {
       fetchConsoleLog(false).catch((error) => {
         console.error(error);
@@ -1281,7 +1320,7 @@
   }
 
   function toggleBuildLogAuto() {
-    if (!state.activeObjectiveId) return;
+    if (!currentActiveTarget()) return;
     state.buildLogAuto = !state.buildLogAuto;
     renderContext();
     renderBuildLog();
@@ -1381,7 +1420,7 @@
   }
 
   function toggleConsoleLogAuto() {
-    if (!state.activeObjectiveId) return;
+    if (!currentActiveTarget()) return;
     state.consoleLogAuto = !state.consoleLogAuto;
     renderContext();
     renderConsoleLog();
@@ -1428,7 +1467,7 @@
     state.statusSummary = null;
     state.statusSummaryLoading = false;
     state.statusSummaryError = '';
-    state.statusSummaryObjectiveId = null;
+    state.statusSummaryTargetKey = null;
   }
 
   function debugJsonl(entries) {
@@ -1547,7 +1586,7 @@
 
   async function deleteActiveObjective() {
     if (!state.activeObjectiveId) return;
-    const confirmed = window.confirm('Are you sure you want to clear this objective? This cannot be undone.');
+    const confirmed = window.confirm('Are you sure you want to clear this item? This cannot be undone.');
     if (!confirmed) return;
     const deletingId = state.activeObjectiveId;
     try {
@@ -1569,10 +1608,47 @@
       await pollObjectives();
       if (state.activeObjectiveId) await loadActiveObjective(true);
       else render();
-      showToast('Objective cleared');
+      showToast('Item cleared');
     } catch (error) {
-      showToast(error.message || 'Could not clear objective');
+      showToast(error.message || 'Could not clear item');
     }
+  }
+
+  async function deleteActiveWorkspace() {
+    if (!state.activeWorkspaceId) return;
+    const confirmed = window.confirm('Are you sure you want to clear this item? This cannot be undone.');
+    if (!confirmed) return;
+    const deletingId = state.activeWorkspaceId;
+    try {
+      await api('/api/workspaces/' + encodeURIComponent(deletingId), { method: 'DELETE' });
+      if (state.activeWorkspaceId === deletingId) {
+        state.activeWorkspaceId = null;
+        state.activeWorkspace = null;
+        state.messages = [];
+        state.lastMessageTimestamp = null;
+        state.debugEntries = [];
+        state.debugHasErrors = false;
+        resetBuildLogState();
+        resetConsoleLogState();
+        resetStatusSummaryState();
+        closeDebugModal();
+      }
+      await pollObjectives();
+      if (state.activeWorkspaceId) await loadActiveWorkspace(true);
+      else if (state.activeObjectiveId) await loadActiveObjective(true);
+      else render();
+      showToast('Item cleared');
+    } catch (error) {
+      showToast(error.message || 'Could not clear item');
+    }
+  }
+
+  function deleteActiveItem() {
+    if (state.activeWorkspaceId) {
+      deleteActiveWorkspace();
+      return;
+    }
+    deleteActiveObjective();
   }
 
   function renderDiffView(diffText) {
@@ -1643,16 +1719,42 @@
     if (state.activeTargetType === 'objective' && state.activeObjectiveId && availableObjectives.some((item) => item.id === state.activeObjectiveId)) {
       return;
     }
-    if (availableWorkspaces.length) {
+
+    const runningObjective = availableObjectives.find((item) => (
+      ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase())
+    ));
+    if (runningObjective) {
+      state.activeTargetType = 'objective';
+      state.activeObjectiveId = runningObjective.id;
+      state.activeWorkspaceId = null;
+      return;
+    }
+
+    const activeWorkspace = availableWorkspaces.find((item) => !!item.sessionActive);
+    if (activeWorkspace) {
       state.activeTargetType = 'workspace';
-      state.activeWorkspaceId = availableWorkspaces[0].id;
+      state.activeWorkspaceId = activeWorkspace.id;
       state.activeObjectiveId = null;
       return;
     }
-    const running = availableObjectives.find((item) => ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase()));
-    state.activeTargetType = 'objective';
-    state.activeObjectiveId = (running || availableObjectives[0]).id;
-    state.activeWorkspaceId = null;
+
+    const mostRecent = []
+      .concat(availableObjectives.map((item) => ({
+        kind: 'objective',
+        item,
+        ts: parseIso(item.updatedAt || item.createdAt) || 0
+      })))
+      .concat(availableWorkspaces.map((item) => ({
+        kind: 'workspace',
+        item,
+        ts: parseIso(item.updatedAt || item.createdAt) || 0
+      })))
+      .sort((a, b) => b.ts - a.ts)[0];
+
+    if (!mostRecent) return;
+    state.activeTargetType = mostRecent.kind;
+    state.activeObjectiveId = mostRecent.kind === 'objective' ? mostRecent.item.id : null;
+    state.activeWorkspaceId = mostRecent.kind === 'workspace' ? mostRecent.item.id : null;
   }
 
   function isNearBottom() {
@@ -1957,9 +2059,6 @@
     els.main.classList.toggle('panel-overlay-open', panelOverlayOpen);
     document.body.classList.toggle('right-panel-open', panelOverlayOpen);
     const isStatusMode = state.rightPanelMode === 'status';
-    if (state.activeWorkspace && isStatusMode) {
-      state.rightPanelMode = 'git';
-    }
     const panelPath = isStatusMode
       ? activeFilesRoot() || path
       : ((state.gitStatus && state.gitStatus.cwd) || path);
@@ -1975,7 +2074,7 @@
       return;
     }
     if (!path) {
-      els.gitPanelBody.innerHTML = '<div class="git-empty">No active workspace or objective root</div>';
+      els.gitPanelBody.innerHTML = '<div class="git-empty">No active path available</div>';
       return;
     }
     if (!data) {
@@ -2185,51 +2284,58 @@
   }
 
   async function fetchStatusSummary(force) {
-    if (!state.activeObjectiveId) {
-      addLocalDebugEntry('warn', 'status-click-ignored', { reason: 'no-active-objective' });
+    const target = currentActiveTarget();
+    if (!target) {
+      addLocalDebugEntry('warn', 'status-click-ignored', { reason: 'no-active-item' });
       return;
     }
-    const objectiveId = state.activeObjectiveId;
+    const targetKey = currentTargetKey();
+    const targetBase = currentTargetApiBase();
     addLocalDebugEntry('info', 'status-clicked', {
-      objectiveId,
+      targetKind: target.kind,
+      targetId: target.id,
       force: !!force,
-      objectiveStatus: state.activeObjective && state.activeObjective.status
+      targetStatus: target.kind === 'workspace'
+        ? (state.activeWorkspace && state.activeWorkspace.status)
+        : (state.activeObjective && state.activeObjective.status)
     });
-    if (!force && state.statusSummary && state.statusSummaryObjectiveId === objectiveId) {
-      addLocalDebugEntry('info', 'status-using-cached-summary', { objectiveId });
+    if (!force && state.statusSummary && state.statusSummaryTargetKey === targetKey) {
+      addLocalDebugEntry('info', 'status-using-cached-summary', { targetKind: target.kind, targetId: target.id });
       renderGitPanel();
       return;
     }
     state.statusSummaryLoading = true;
     state.statusSummaryError = '';
-    if (!state.statusSummary || state.statusSummaryObjectiveId !== objectiveId) {
+    if (!state.statusSummary || state.statusSummaryTargetKey !== targetKey) {
       state.statusSummary = null;
-      state.statusSummaryObjectiveId = objectiveId;
+      state.statusSummaryTargetKey = targetKey;
     }
     renderGitPanel();
     try {
-      const url = '/api/objectives/' + encodeURIComponent(objectiveId) + '/status-summary?enrich=haiku';
-      addLocalDebugEntry('info', 'status-fetch-start', { objectiveId, url });
+      const url = targetBase + '/status-summary' + (target.kind === 'objective' ? '?enrich=haiku' : '');
+      addLocalDebugEntry('info', 'status-fetch-start', { targetKind: target.kind, targetId: target.id, url });
       const summary = await api(url);
-      if (state.activeObjectiveId !== objectiveId) return;
+      if (currentTargetKey() !== targetKey) return;
       state.statusSummary = summary;
-      state.statusSummaryObjectiveId = objectiveId;
+      state.statusSummaryTargetKey = targetKey;
       state.statusSummaryError = '';
       addLocalDebugEntry('info', 'status-fetch-success', {
-        objectiveId,
+        targetKind: target.kind,
+        targetId: target.id,
         source: summary && summary.summarySource && summary.summarySource.kind,
         display: summary && summary.summarySource && summary.summarySource.display
       });
     } catch (error) {
-      if (state.activeObjectiveId !== objectiveId) return;
+      if (currentTargetKey() !== targetKey) return;
       state.statusSummaryError = error.message || 'Could not load status summary';
       addLocalDebugEntry('error', 'status-fetch-failed', {
-        objectiveId,
+        targetKind: target.kind,
+        targetId: target.id,
         message: state.statusSummaryError
       });
       showToast(state.statusSummaryError);
     } finally {
-      if (state.activeObjectiveId === objectiveId) {
+      if (currentTargetKey() === targetKey) {
         state.statusSummaryLoading = false;
         renderGitPanel();
       }
@@ -2249,13 +2355,13 @@
   }
 
   function toggleStatusPanel() {
-    if (!state.activeObjectiveId) return;
+    if (!currentActiveTarget()) return;
     toggleRightPanel('status');
   }
 
   function toggleRightPanel(mode) {
     if (mode === 'git' && !activeGitPath()) return;
-    if (mode === 'status' && !state.activeObjectiveId) return;
+    if (mode === 'status' && !currentActiveTarget()) return;
     if (state.gitPanelOpen && state.rightPanelMode === mode) {
       state.gitPanelOpen = false;
     } else {
@@ -2281,6 +2387,7 @@
   function updateSidebarFormFromState() {
     const className = 'sidebar-form' + (state.sidebarFormOpen ? ' open' : '');
     const projects = sortedProjects(state.projects);
+    const formDisabled = state.pendingCreate ? ' disabled' : '';
     const projectOptions = sortedProjects(state.projects).map((project) => {
       const selected = project.id === state.draftProjectId ? ' selected' : '';
       const hint = compactPath(project.rootPath || '');
@@ -2293,53 +2400,59 @@
           '<label class="sf-field-label" for="projectFolderPickerButton">Choose Project Folder</label>',
           '<div class="sf-picker-row">',
           '<input class="sf-input sf-input-readonly" id="projectRootPathInput" placeholder="No folder selected" value="' + esc(state.draftProjectRootPath || state.draftProjectDir || '') + '" readonly>',
-          '<button class="sf-picker-button" id="projectFolderPickerButton" type="button">' + (state.projectPickerBusy ? 'Choosing…' : 'Browse…') + '</button>',
+          '<button class="sf-picker-button" id="projectFolderPickerButton" type="button"' + ((state.projectPickerBusy || state.pendingCreate) ? ' disabled' : '') + '>' + (state.projectPickerBusy ? 'Choosing…' : 'Browse…') + '</button>',
           '</div>',
           (state.projectPickerFallback
             ? '<input class="sf-input" id="projectRootPathManualInput" placeholder="/path/to/git/repo" value="' + esc(state.draftProjectRootPath || state.draftProjectDir || '') + '">'
-            : '<button class="sf-inline-link" id="projectFolderManualButton" type="button">Type path manually</button>'),
+            : '<button class="sf-inline-link" id="projectFolderManualButton" type="button"' + formDisabled + '>Type path manually</button>'),
           '<input class="sf-input" id="projectBaseBranchInput" placeholder="Default base branch" value="' + esc(state.draftProjectBaseBranch || 'main') + '">',
           '<div class="sf-actions">',
-          '<button class="sf-submit" id="sidebarCreateProjectButton">Save project</button>',
-          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '<button class="sf-submit" id="sidebarCreateProjectButton"' + formDisabled + '>' + (state.pendingCreate ? 'Saving...' : 'Save project') + '</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton"' + formDisabled + '>Cancel</button>',
           '</div>',
-          '<div class="sf-hint">Point this at an existing git repo. A lightweight project record is all we need for now.</div>'
+          '<div class="sf-hint">Point this at an existing git repo. After that, you can choose New or Open.</div>'
         ].join('')
       : state.sidebarFormMode === 'add-kind'
         ? [
-          '<div class="sf-mode-title">Add to project</div>',
+          '<div class="sf-mode-title">Start with</div>',
           '<label class="sf-field-label" for="addKindProjectSelectInput">Project</label>',
           '<select class="sf-input" id="addKindProjectSelectInput">' + projectOptions + '</select>',
           '<div class="sf-actions sf-actions-stack">',
-          '<button class="sf-submit" id="chooseObjectiveButton">New objective</button>',
-          '<button class="sf-submit secondary" id="chooseWorkspaceButton">Open workspace</button>',
-          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '<button class="sf-submit" id="chooseObjectiveButton"' + formDisabled + '>New</button>',
+          '<button class="sf-submit secondary" id="chooseWorkspaceButton"' + formDisabled + '>Open</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton"' + formDisabled + '>Cancel</button>',
           '</div>',
-          '<div class="sf-hint">Choose what you want to add inside this project.</div>'
+          '<div class="sf-hint">Choose whether to start something new or open work that already exists.</div>'
         ].join('')
       : state.sidebarFormMode === 'workspace'
         ? [
-          '<div class="sf-mode-title">Open workspace</div>',
+          '<div class="sf-mode-title">Open</div>',
           '<label class="sf-field-label" for="workspaceProjectSelectInput">Project</label>',
           '<select class="sf-input" id="workspaceProjectSelectInput">' + projectOptions + '</select>',
-          '<label class="sf-field-label" for="workspaceRootPathInput">Workspace path</label>',
-          '<input class="sf-input" id="workspaceRootPathInput" placeholder="/path/to/repo/or/worktree" value="' + esc(state.draftWorkspaceRootPath || state.draftProjectDir || '') + '">',
+          '<label class="sf-field-label" for="workspaceFolderPickerButton">Path</label>',
+          '<div class="sf-picker-row">',
+          '<input class="sf-input sf-input-readonly" id="workspaceRootPathInput" placeholder="No folder selected" value="' + esc(state.draftWorkspaceRootPath || state.draftProjectDir || '') + '" readonly>',
+          '<button class="sf-picker-button" id="workspaceFolderPickerButton" type="button"' + ((state.openPathPickerBusy || state.pendingCreate) ? ' disabled' : '') + '>' + (state.openPathPickerBusy ? 'Choosing…' : 'Browse…') + '</button>',
+          '</div>',
+          (state.openPathPickerFallback
+            ? '<input class="sf-input" id="workspaceRootPathManualInput" placeholder="/path/to/repo/or/worktree" value="' + esc(state.draftWorkspaceRootPath || state.draftProjectDir || '') + '">'
+            : '<button class="sf-inline-link" id="workspaceFolderManualButton" type="button"' + formDisabled + '>Type path manually</button>'),
           '<label class="sf-field-label" for="workspaceNameInput">Name (optional)</label>',
           '<input class="sf-input" id="workspaceNameInput" placeholder="Main workspace" value="' + esc(state.draftWorkspaceName || '') + '">',
           '<div class="sf-actions">',
-          '<button class="sf-submit" id="sidebarCreateWorkspaceButton">Open workspace</button>',
-          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '<button class="sf-submit" id="sidebarCreateWorkspaceButton"' + formDisabled + '>' + (state.pendingCreate ? 'Opening...' : 'Open') + '</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton"' + formDisabled + '>Cancel</button>',
           '</div>',
-          '<div class="sf-hint">Open an existing repo or worktree without creating an objective first.</div>'
+          '<div class="sf-hint">Open an existing feature, repo root, or worktree that already has work in progress.</div>'
         ].join('')
       : [
-          '<div class="sf-mode-title">New objective</div>',
+          '<div class="sf-mode-title">New</div>',
           '<label class="sf-field-label" for="projectSelectInput">Project</label>',
           '<select class="sf-input" id="projectSelectInput">' + projectOptions + '</select>',
           '<div class="sf-field-label">Workflow</div>',
           '<div class="sf-toggle-group" role="group" aria-label="Workflow mode">',
-          '<button class="sf-toggle' + (defaultWorkflowMode() === 'structured' ? ' active' : '') + '" id="workflowStructuredButton" type="button" data-workflow-mode="structured" aria-pressed="' + (defaultWorkflowMode() === 'structured' ? 'true' : 'false') + '">Structured</button>',
-          '<button class="sf-toggle' + (defaultWorkflowMode() === 'direct' ? ' active' : '') + '" id="workflowDirectButton" type="button" data-workflow-mode="direct" aria-pressed="' + (defaultWorkflowMode() === 'direct' ? 'true' : 'false') + '">Direct</button>',
+          '<button class="sf-toggle' + (defaultWorkflowMode() === 'structured' ? ' active' : '') + '" id="workflowStructuredButton" type="button" data-workflow-mode="structured" aria-pressed="' + (defaultWorkflowMode() === 'structured' ? 'true' : 'false') + '"' + formDisabled + '>Structured</button>',
+          '<button class="sf-toggle' + (defaultWorkflowMode() === 'direct' ? ' active' : '') + '" id="workflowDirectButton" type="button" data-workflow-mode="direct" aria-pressed="' + (defaultWorkflowMode() === 'direct' ? 'true' : 'false') + '"' + formDisabled + '>Direct</button>',
           '</div>',
           '<label class="sf-field-label" for="baseBranchInput">Base branch</label>',
           '<div class="sf-row">',
@@ -2350,16 +2463,19 @@
           '<label class="sf-field-label" for="sidebarGoalInput">Goal</label>',
           '<textarea class="sf-textarea" id="sidebarGoalInput" placeholder="Describe the objective">' + esc(state.draftGoal) + '</textarea>',
           '<div class="sf-actions">',
-          '<button class="sf-submit" id="sidebarCreateButton">Create &amp; start</button>',
-          '<button class="sf-cancel" id="sidebarCancelButton">Cancel</button>',
+          '<button class="sf-submit" id="sidebarCreateButton"' + formDisabled + '>' + (state.pendingCreate ? 'Starting...' : 'Start new') + '</button>',
+          '<button class="sf-cancel" id="sidebarCancelButton"' + formDisabled + '>Cancel</button>',
           '</div>',
-          '<div class="sf-hint">Objectives run inside a project. Pick a project, then describe the work.</div>'
+          '<div class="sf-hint">Start a new feature or task in this project. cmux will create the working context and get started.</div>'
         ].join('');
     if (els.sidebarForm.className === className && els.sidebarForm.innerHTML === nextHtml) return;
     els.sidebarForm.className = className;
     els.sidebarForm.innerHTML = nextHtml;
     if (!state.sidebarFormOpen) return;
     document.getElementById('sidebarCancelButton').addEventListener('click', () => {
+      if (state.sidebarFormMode === 'project') {
+        state.projectCreationReturnMode = '';
+      }
       state.sidebarFormOpen = false;
       updateSidebarFormFromState();
     });
@@ -2372,7 +2488,6 @@
       const projectFolderManualButton = document.getElementById('projectFolderManualButton');
       document.getElementById('sidebarCreateProjectButton').addEventListener('click', submitSidebarProject);
       if (projectFolderPickerButton) {
-        projectFolderPickerButton.disabled = !!state.projectPickerBusy;
         projectFolderPickerButton.addEventListener('click', pickProjectFolder);
       }
       if (projectFolderManualButton) {
@@ -2423,18 +2538,42 @@
     if (state.sidebarFormMode === 'workspace') {
       const workspaceProjectSelectInput = document.getElementById('workspaceProjectSelectInput');
       const workspaceRootPathInput = document.getElementById('workspaceRootPathInput');
+      const workspaceRootPathManualInput = document.getElementById('workspaceRootPathManualInput');
       const workspaceNameInput = document.getElementById('workspaceNameInput');
+      const workspaceFolderPickerButton = document.getElementById('workspaceFolderPickerButton');
+      const workspaceFolderManualButton = document.getElementById('workspaceFolderManualButton');
       document.getElementById('sidebarCreateWorkspaceButton').addEventListener('click', submitSidebarWorkspace);
       workspaceProjectSelectInput.addEventListener('change', (event) => {
+        const previousProjectDir = state.draftProjectDir;
         const project = setDraftProject(event.target.value);
-        if ((!state.draftWorkspaceRootPath || state.draftWorkspaceRootPath === state.draftProjectDir) && project && project.rootPath) {
+        if ((!state.draftWorkspaceRootPath || state.draftWorkspaceRootPath === previousProjectDir) && project && project.rootPath) {
           state.draftWorkspaceRootPath = project.rootPath;
           updateSidebarFormFromState();
         }
       });
-      workspaceRootPathInput.addEventListener('input', (event) => {
-        state.draftWorkspaceRootPath = event.target.value;
-      });
+      if (workspaceFolderPickerButton) {
+        workspaceFolderPickerButton.addEventListener('click', pickWorkspaceFolder);
+      }
+      if (workspaceFolderManualButton) {
+        workspaceFolderManualButton.addEventListener('click', () => {
+          state.openPathPickerFallback = true;
+          updateSidebarFormFromState();
+          window.setTimeout(() => {
+            const input = document.getElementById('workspaceRootPathManualInput');
+            if (input) input.focus();
+          }, 0);
+        });
+      }
+      if (workspaceRootPathInput) {
+        workspaceRootPathInput.addEventListener('click', () => {
+          if (!state.draftWorkspaceRootPath) pickWorkspaceFolder();
+        });
+      }
+      if (workspaceRootPathManualInput) {
+        workspaceRootPathManualInput.addEventListener('input', (event) => {
+          state.draftWorkspaceRootPath = event.target.value;
+        });
+      }
       workspaceNameInput.addEventListener('input', (event) => {
         state.draftWorkspaceName = event.target.value;
       });
@@ -2492,8 +2631,8 @@
     state.sidebarFormOpen = true;
     const projects = sortedProjects(state.projects);
     if (!projects.length) {
-      showToast('Add a project first, then create an objective.');
-      openProjectForm();
+      showToast('Add a project first, then start something new.');
+      openProjectForm({ returnMode: 'objective' });
       return;
     }
     const nextProjectId = projectId || state.draftProjectId || selectedProjectId() || (projects[0] && projects[0].id) || '';
@@ -2515,10 +2654,12 @@
     openSidebar();
     state.sidebarFormMode = 'workspace';
     state.sidebarFormOpen = true;
+    state.openPathPickerFallback = false;
+    state.openPathPickerBusy = false;
     const projects = sortedProjects(state.projects);
     if (!projects.length) {
-      showToast('Add a project first, then open a workspace.');
-      openProjectForm();
+      showToast('Add a project first, then open existing work.');
+      openProjectForm({ returnMode: 'workspace' });
       return;
     }
     const nextProjectId = projectId || state.draftProjectId || selectedProjectId() || (projects[0] && projects[0].id) || '';
@@ -2531,12 +2672,14 @@
     }, 0);
   }
 
-  function openProjectForm() {
+  function openProjectForm(options) {
+    const settings = options || {};
     openSidebar();
     state.sidebarFormMode = 'project';
     state.sidebarFormOpen = true;
     state.projectPickerFallback = false;
     state.projectPickerBusy = false;
+    state.projectCreationReturnMode = settings.returnMode || '';
     state.draftProjectRootPath = state.draftProjectRootPath || state.draftProjectDir || '';
     state.draftProjectBaseBranch = state.draftProjectBaseBranch || defaultBaseBranch();
     updateSidebarFormFromState();
@@ -2551,10 +2694,7 @@
     state.projectPickerBusy = true;
     updateSidebarFormFromState();
     try {
-      const result = await api('/api/projects/pick-root', {
-        method: 'POST',
-        body: JSON.stringify({})
-      });
+      const result = await pickFolderPath();
       if (result && result.ok && result.path) {
         state.draftProjectRootPath = String(result.path || '').trim();
         if (!String(state.draftProjectName || '').trim()) {
@@ -2574,6 +2714,35 @@
       showToast(error.message || 'Folder picker unavailable. Enter the path manually.');
     } finally {
       state.projectPickerBusy = false;
+      updateSidebarFormFromState();
+    }
+  }
+
+  async function pickWorkspaceFolder() {
+    if (state.openPathPickerBusy) return;
+    state.openPathPickerBusy = true;
+    updateSidebarFormFromState();
+    try {
+      const result = await pickFolderPath();
+      if (result && result.ok && result.path) {
+        state.draftWorkspaceRootPath = String(result.path || '').trim();
+        if (!String(state.draftWorkspaceName || '').trim()) {
+          state.draftWorkspaceName = inferProjectNameFromPath(state.draftWorkspaceRootPath);
+        }
+        state.openPathPickerFallback = false;
+        updateSidebarFormFromState();
+        return;
+      }
+      if (result && result.cancelled) return;
+      state.openPathPickerFallback = true;
+      updateSidebarFormFromState();
+      showToast((result && result.error) ? result.error : 'Folder picker unavailable. Enter the path manually.');
+    } catch (error) {
+      state.openPathPickerFallback = true;
+      updateSidebarFormFromState();
+      showToast(error.message || 'Folder picker unavailable. Enter the path manually.');
+    } finally {
+      state.openPathPickerBusy = false;
       updateSidebarFormFromState();
     }
   }
@@ -2608,7 +2777,7 @@
       els.objectiveList.innerHTML = [
         '<div class="sidebar-empty-state">',
         '<div class="sidebar-empty-title">No projects yet</div>',
-        '<div class="sidebar-empty-copy">Add your first project to organize objectives here.</div>',
+        '<div class="sidebar-empty-copy">Add your first project, then choose New or Open.</div>',
         '<button class="sidebar-empty-button" id="sidebarEmptyAddProjectButton" type="button">+ Add project</button>',
         '</div>'
       ].join('');
@@ -2629,12 +2798,11 @@
       return items.map(({ kind, item }) => {
         if (kind === 'workspace') {
           const active = item.id === state.activeWorkspaceId ? ' active' : '';
-          const statusClass = item.sessionActive ? 'badge-running' : 'badge-queued';
           return [
             '<div class="obj-item nested workspace' + active + '" data-workspace-id="' + esc(item.id) + '">',
             '<div class="obj-dot ' + (item.sessionActive ? 'od-running' : 'od-queued') + '"></div>',
             '<div class="obj-info">',
-            '<div class="obj-name">' + esc(item.name || 'Workspace') + '</div>',
+            '<div class="obj-name">' + esc(item.name || 'Untitled item') + '</div>',
             '<div class="obj-progress"><span>' + esc(compactPath(item.rootPath || '')) + '</span></div>',
             '</div>',
             '</div>'
@@ -2654,7 +2822,7 @@
           '<div class="obj-item nested' + active + doneClass + '" data-objective-id="' + esc(item.id) + '">',
           '<div class="obj-dot ' + meta.dot + '"></div>',
           '<div class="obj-info">',
-          '<div class="obj-name">' + esc(item.goal || 'Untitled objective') + '</div>',
+          '<div class="obj-name">' + esc(item.goal || 'Untitled item') + '</div>',
           '<div class="obj-progress">',
           '<div class="obj-prog-bar"><div class="obj-prog-fill ' + meta.fill + '" style="width:' + progress.percent + '%"></div></div>',
           '<span>' + esc(progressText) + '</span>',
@@ -2725,41 +2893,68 @@
   function renderContext() {
     if (state.activeWorkspace) {
       const workspace = state.activeWorkspace;
+      const meta = workspaceMeta(workspace);
       const gitPath = activeGitPath();
       const filesRoot = activeFilesRoot();
       const sessionActive = !!workspace.sessionActive;
+      const logIndicator = state.buildLogAuto && state.buildLogData && state.buildLogData.exists
+        ? '<span class="ctx-icon-indicator"></span>'
+        : '';
+      const consoleLogIndicator = state.consoleLogData && state.consoleLogData.exists
+        ? '<span class="ctx-icon-indicator"></span>'
+        : '';
+      const logButtonClass = 'ctx-icon-button has-indicator' + (state.buildLogOpen ? ' log-active' : '');
+      const consoleLogButtonClass = 'ctx-icon-button has-indicator' + (state.consoleLogOpen ? ' log-active' : '');
       els.contextStrip.innerHTML = state.isMobile
         ? [
             '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>',
             '<div class="ctx-main">',
-            '<div class="ctx-mobile-row primary"><div class="ctx-title">' + esc(workspace.name || 'Workspace') + '</div></div>',
+            '<div class="ctx-mobile-row primary"><div class="ctx-title">' + esc(workspace.name || 'Untitled item') + '</div></div>',
             '<div class="ctx-mobile-row secondary">',
-            '<div class="ctx-dot od-' + (sessionActive ? 'running' : 'queued') + '" title="' + esc(sessionActive ? 'Session active' : 'Session idle') + '" aria-label="' + esc(sessionActive ? 'Session active' : 'Session idle') + '"></div>',
+            '<div class="ctx-dot ' + meta.dot + '" title="' + esc(meta.label) + '" aria-label="' + esc(meta.label) + '"></div>',
             '<div class="ctx-meta">' + esc(compactPath(workspace.rootPath || '')) + '</div>',
+            '<div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div>',
+            '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'status' ? ' open' : '') + '" id="statusSummaryButton" type="button">Status</button>',
+            gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
+            filesRoot ? '<button class="ctx-git-button" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
             '</div>',
             '</div>',
-            '<div class="ctx-actions">' +
-              (gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '') +
-              (filesRoot ? '<button class="ctx-icon-button" id="filesButton" type="button" title="Open in VS Code">📂</button>' : '') +
+            '<div class="ctx-actions">',
+            '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
+            '<button class="' + logButtonClass + '" id="buildLogToggleButton" type="button" title="Toggle build log" aria-label="Toggle build log">⎔' + logIndicator + '</button>',
+            '<button class="ctx-icon-button danger" id="clearItemButton" type="button" title="Clear item" aria-label="Clear item">🗑</button>',
             '</div>'
           ].join('')
         : [
-            '<div class="ctx-dot od-' + (sessionActive ? 'running' : 'queued') + '"></div>',
+            '<div class="ctx-dot ' + meta.dot + '"></div>',
             '<div class="ctx-main">',
-            '<div class="ctx-title">' + esc(workspace.name || 'Workspace') + '</div>',
-            '<div class="ctx-secondary"><div class="ctx-meta">' + esc(compactPath(workspace.rootPath || '')) + '</div></div>',
+            '<div class="ctx-title">' + esc(workspace.name || 'Untitled item') + '</div>',
+            '<div class="ctx-secondary"><div class="ctx-meta">' + esc(compactPath(workspace.rootPath || '')) + '</div><div class="ctx-session' + (sessionActive ? ' active' : '') + '"><div class="ctx-session-dot"></div><span>' + esc(sessionActive ? 'Session active' : 'Session idle') + '</span></div></div>',
             '</div>',
-            '<div class="ctx-actions">' +
-              (gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '') +
-              (filesRoot ? '<button class="ctx-icon-button" id="filesButton" type="button" title="Open in VS Code">📂</button>' : '') +
+            '<div class="ctx-actions">',
+            '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'status' ? ' open' : '') + '" id="statusSummaryButton" type="button">Status</button>',
+            gitPath ? '<button class="ctx-git-button' + (state.gitPanelOpen && state.rightPanelMode === 'git' ? ' open' : '') + '" id="gitPanelToggleButton" type="button">' + esc(gitButtonLabel()) + '</button>' : '',
+            filesRoot ? '<button class="ctx-git-button" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
+            '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
+            '<button class="' + logButtonClass + '" id="buildLogToggleButton" type="button" title="Toggle build log" aria-label="Toggle build log">⎔' + logIndicator + '</button>',
+            '<button class="ctx-icon-button danger" id="clearItemButton" type="button" title="Clear item" aria-label="Clear item">🗑</button>',
+            '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
             '</div>'
           ].join('');
       const menuButton = document.getElementById('mobileMenuBtn');
       if (menuButton) menuButton.addEventListener('click', toggleSidebar);
+      const statusSummaryButton = document.getElementById('statusSummaryButton');
+      if (statusSummaryButton) statusSummaryButton.addEventListener('click', toggleStatusPanel);
       const gitButton = document.getElementById('gitPanelToggleButton');
-      if (gitButton) gitButton.addEventListener('click', () => toggleRightPanel('git'));
-      const filesButton = document.getElementById('filesButton');
+      if (gitButton) gitButton.addEventListener('click', toggleGitPanel);
+      const filesButton = document.getElementById('filesPanelToggleButton');
       if (filesButton) filesButton.addEventListener('click', openActiveRootInVSCode);
+      const clearButton = document.getElementById('clearItemButton');
+      if (clearButton) clearButton.addEventListener('click', deleteActiveItem);
+      const buildLogButton = document.getElementById('buildLogToggleButton');
+      if (buildLogButton) buildLogButton.addEventListener('click', toggleBuildLog);
+      const consoleLogButton = document.getElementById('consoleLogToggleButton');
+      if (consoleLogButton) consoleLogButton.addEventListener('click', toggleConsoleLog);
       return;
     }
     const objective = state.activeObjective || sortedObjectives(state.objectives).find((item) => item.id === state.activeObjectiveId);
@@ -2768,7 +2963,7 @@
         ? [
             '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>',
             '<div class="ctx-main">',
-            '<div class="ctx-mobile-row primary"><div class="ctx-title">No objective selected</div></div>',
+            '<div class="ctx-mobile-row primary"><div class="ctx-title">Nothing selected</div></div>',
             '<div class="ctx-mobile-row secondary">',
             '<div class="ctx-dot od-queued" title="Idle" aria-label="Idle"></div>',
             '<div class="ctx-meta">waiting</div>',
@@ -2779,7 +2974,7 @@
         : [
             '<div class="ctx-dot od-queued"></div>',
             '<div class="ctx-main">',
-            '<div class="ctx-title">No objective selected</div>',
+            '<div class="ctx-title">Nothing selected</div>',
             '<div class="ctx-secondary"><div class="ctx-meta">waiting</div></div>',
             '</div>',
             '<div class="ctx-actions"><div class="ctx-badge badge-queued">Idle</div></div>'
@@ -2811,7 +3006,7 @@
           '<button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>',
           '<div class="ctx-main">',
           '<div class="ctx-mobile-row primary">',
-          '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
+          '<div class="ctx-title">' + esc(objective.goal || 'Untitled item') + '</div>',
           '</div>',
           '<div class="ctx-mobile-row secondary">',
           '<div class="ctx-dot ' + meta.dot + '" title="' + esc(meta.label) + '" aria-label="' + esc(meta.label) + '"></div>',
@@ -2827,13 +3022,13 @@
           '<div class="ctx-actions">',
           '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
           '<button class="' + logButtonClass + '" id="buildLogToggleButton" type="button" title="Toggle build log" aria-label="Toggle build log">⎔' + logIndicator + '</button>',
-          '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
+          '<button class="ctx-icon-button danger" id="clearItemButton" type="button" title="Clear item" aria-label="Clear item">🗑</button>',
           '</div>'
         ].join('')
       : [
           '<div class="ctx-dot ' + meta.dot + '"></div>',
           '<div class="ctx-main">',
-          '<div class="ctx-title">' + esc(objective.goal || 'Untitled objective') + '</div>',
+          '<div class="ctx-title">' + esc(objective.goal || 'Untitled item') + '</div>',
           '<div class="ctx-secondary">',
           '<div class="ctx-meta">' + esc(elapsed + ' · ' + taskCount) + '</div>',
           branchName ? '<div class="ctx-meta mono">' + esc(branchName) + '</div>' : '',
@@ -2846,7 +3041,7 @@
           filesRoot ? '<button class="ctx-git-button" id="filesPanelToggleButton" type="button">📁 Files</button>' : '',
           '<button class="' + consoleLogButtonClass + '" id="consoleLogToggleButton" type="button" title="Toggle console logs" aria-label="Toggle console logs">&gt;_' + consoleLogIndicator + '</button>',
           '<button class="' + logButtonClass + '" id="buildLogToggleButton" type="button" title="Toggle build log" aria-label="Toggle build log">⎔' + logIndicator + '</button>',
-          '<button class="ctx-icon-button danger" id="clearObjectiveButton" type="button" title="Clear objective" aria-label="Clear objective">🗑</button>',
+          '<button class="ctx-icon-button danger" id="clearItemButton" type="button" title="Clear item" aria-label="Clear item">🗑</button>',
           '<div class="ctx-badge ' + meta.badge + '">' + esc(meta.label) + '</div>',
           '</div>'
         ].join('');
@@ -2862,15 +3057,15 @@
     }
     const filesButton = document.getElementById('filesPanelToggleButton');
     if (filesButton) {
-      filesButton.addEventListener('click', openObjectiveWorktreeInVSCode);
+      filesButton.addEventListener('click', openActiveRootInVSCode);
     }
     const menuButton = document.getElementById('mobileMenuBtn');
     if (menuButton) {
       menuButton.addEventListener('click', toggleSidebar);
     }
-    const clearButton = document.getElementById('clearObjectiveButton');
+    const clearButton = document.getElementById('clearItemButton');
     if (clearButton) {
-      clearButton.addEventListener('click', deleteActiveObjective);
+      clearButton.addEventListener('click', deleteActiveItem);
     }
     const buildLogButton = document.getElementById('buildLogToggleButton');
     if (buildLogButton) {
@@ -3152,7 +3347,7 @@
       '<div class="card-complete">',
       '<div class="cc-icon">✓</div>',
       '<div class="cc-text">',
-      '<div class="cc-title">Objective complete!</div>',
+      '<div class="cc-title">Item complete!</div>',
       '<div class="cc-body">' + renderMarkdown(metadata.summary || message.content || '') + '</div>',
       '<div class="cc-body" style="margin-top:6px">' + esc(taskCount + ' tasks · ' + (metadata.rework_count || 0) + ' rework cycles') + '</div>',
       '</div>',
@@ -3176,10 +3371,10 @@
     const error = state.statusSummaryError;
     const summary = state.statusSummary;
     if (loading && !summary) {
-      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Objective status</div><div class="status-summary-meta">Refreshing…</div></div></div><div class="build-log-state"><div class="build-log-spinner"></div><div>Getting the latest status. Give me a min.</div></div></div>';
+      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Status</div><div class="status-summary-meta">Refreshing…</div></div></div><div class="build-log-state"><div class="build-log-spinner"></div><div>Getting the latest status. Give me a min.</div></div></div>';
     }
     if (error && !summary) {
-      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Objective status</div><div class="status-summary-meta">Could not refresh</div></div><button class="status-summary-refresh" type="button" data-status-summary-refresh="true">Retry</button></div><div class="status-summary-error">' + esc(error) + '</div></div>';
+      return '<div class="card-status-summary"><div class="status-summary-head"><div><div class="status-summary-title">Status</div><div class="status-summary-meta">Could not refresh</div></div><button class="status-summary-refresh" type="button" data-status-summary-refresh="true">Retry</button></div><div class="status-summary-error">' + esc(error) + '</div></div>';
     }
     if (!summary) return '';
     const stage = summary.stage || {};
@@ -3201,7 +3396,7 @@
       '<div class="card-status-summary">',
       '<div class="status-summary-head">',
       '<div>',
-      '<div class="status-summary-title">Objective status</div>',
+      '<div class="status-summary-title">Status</div>',
       '<div class="status-summary-meta" title="' + esc(summary.generatedAt || '') + '">Refreshed ' + esc(refreshedAgo) + ' · ' + esc(refreshedLabel) + esc(sourceLabel) + '</div>',
       '</div>',
       '<div class="status-summary-head-actions">',
@@ -3349,14 +3544,17 @@
   }
 
   function renderEmptyState() {
-    const copy = state.projects.length
-      ? 'Pick a project in the sidebar, then create an objective to get started.'
-      : 'Add a project first, then create an objective inside it.';
+    const hasActiveTarget = !!state.activeObjectiveId || !!state.activeWorkspaceId;
+    const copy = !state.projects.length
+      ? 'Add a project, then choose New or Open.'
+      : hasActiveTarget
+        ? 'Ready when you are.'
+        : 'Choose an item from the sidebar, or start with New or Open.';
     return [
       '<div class="empty-state">',
       '<div class="empty-card">',
       '<div class="empty-kicker">Orchestrator</div>',
-      '<div class="empty-title">Give me a goal and a codebase - I\u2019ll break it down and build it.</div>',
+      '<div class="empty-title">Open existing work or start something new in the same place.</div>',
       '<div class="empty-copy">' + copy + '</div>',
       '</div>',
       '</div>'
@@ -3368,12 +3566,22 @@
     const oldScrollTop = els.messagesPane.scrollTop;
     const items = normalizeMessages(state.messages);
     let html = '';
-    if (!state.objectives.length && !state.activeObjectiveId) {
+    const hasActiveTarget = !!state.activeObjectiveId || !!state.activeWorkspaceId;
+    if (!state.projects.length || !hasActiveTarget) {
       els.messageColumn.innerHTML = renderEmptyState();
       return;
     }
     if (!items.length) {
-      html = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">Waiting for the objective to start.</div></div></div>';
+      let waitingCopy = 'Ready when you are.';
+      if (state.activeWorkspaceId) {
+        waitingCopy = 'Ready. Ask about the codebase or make a change.';
+      } else if (state.activeObjective) {
+        const status = String(state.activeObjective.status || '').toLowerCase();
+        waitingCopy = ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(status)
+          ? 'Starting the new item...'
+          : 'Ready when you are.';
+      }
+      html = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">' + esc(waitingCopy) + '</div></div></div>';
     } else {
       html = '<div class="thread-div">now</div>' + items.map((item, index) => renderMessageItem(item, shouldGroupSystemItem(items, index))).join('');
     }
@@ -3462,7 +3670,7 @@
   function renderInputState() {
     if (state.activeWorkspace && state.activeWorkspaceId) {
       els.chatInput.disabled = false;
-      els.inputHint.textContent = 'Chat with the workspace assistant about this repo.';
+      els.inputHint.textContent = 'Chat about this item.';
       els.chatInput.placeholder = 'Ask about files, code, git status, or make a change...';
       els.sendButton.disabled = state.pendingCreate || state.pendingSend;
       return;
@@ -3471,8 +3679,10 @@
     const status = String(objective && objective.status || '').toLowerCase();
     const hasObjective = !!state.activeObjectiveId && !!objective;
     if (!hasObjective) {
-      els.inputHint.textContent = 'Select or create an objective to start.';
-      els.chatInput.placeholder = 'No objective selected...';
+      els.inputHint.textContent = state.projects.length
+        ? 'Choose New or Open, or select an item from the sidebar.'
+        : 'Add a project first, then choose New or Open.';
+      els.chatInput.placeholder = 'Nothing selected...';
       els.chatInput.disabled = true;
       els.sendButton.disabled = true;
       return;
@@ -3482,13 +3692,13 @@
       els.inputHint.textContent = 'Type feedback in chat or approve the plan above.';
       els.chatInput.placeholder = 'Type plan feedback or approve above...';
     } else if (status === 'completed') {
-      els.inputHint.textContent = 'Objective complete. Ask questions about the work done.';
+      els.inputHint.textContent = 'Item complete. Ask questions about the work done.';
       els.chatInput.placeholder = 'Ask about the completed work...';
     } else if (status === 'failed') {
-      els.inputHint.textContent = 'Objective failed. Type "retry" to restart or ask what happened.';
+      els.inputHint.textContent = 'Item failed. Type "retry" to restart or ask what happened.';
       els.chatInput.placeholder = 'Type retry or ask what went wrong...';
     } else {
-      els.inputHint.textContent = 'Chat with the orchestrator about this objective.';
+      els.inputHint.textContent = 'Chat about this item.';
       els.chatInput.placeholder = 'Ask about status, blockers, or give feedback...';
     }
     els.sendButton.disabled = state.pendingCreate || state.pendingSend;
@@ -3662,6 +3872,7 @@
     }
     state.pendingCreate = true;
     renderInputState();
+    updateSidebarFormFromState();
     try {
       const objective = await api('/api/objectives', {
         method: 'POST',
@@ -3683,6 +3894,7 @@
     } finally {
       state.pendingCreate = false;
       renderInputState();
+      updateSidebarFormFromState();
     }
   }
 
@@ -3692,6 +3904,9 @@
     state.activeObjective = null;
     state.actionButtons = [];
     state.actionButtonState = {};
+    state.debugEntries = [];
+    state.debugHasErrors = false;
+    closeDebugModal();
     state.messages = [];
     state.lastMessageTimestamp = null;
     resetBuildLogState();
@@ -3702,9 +3917,81 @@
       if (forceAll) render();
       return;
     }
+    const previousPath = activeGitPath();
     state.activeWorkspace = await api('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId));
+    if (state.activeWorkspace && state.activeWorkspace.projectId) {
+      state.projectExpansion = Object.assign({}, state.projectExpansion, { [state.activeWorkspace.projectId]: true });
+    }
     await pollMessages(false);
+    const nextPath = activeGitPath();
+    if (previousPath !== nextPath) {
+      state.gitStatus = null;
+      if (!nextPath) {
+        state.gitPanelOpen = false;
+        hideGitContextMenu();
+        closeDiffOverlay();
+      } else if (state.gitPanelOpen && state.rightPanelMode === 'git') {
+        await fetchGitStatus();
+      } else if (state.gitPanelOpen && state.rightPanelMode === 'status') {
+        await fetchStatusSummary(true);
+      }
+    } else if (state.gitPanelOpen && state.rightPanelMode === 'status') {
+      await fetchStatusSummary(false);
+    }
     if (forceAll) render();
+    else {
+      renderContext();
+      renderBuildLog();
+      renderConsoleLog();
+      renderSidebar();
+      renderDebugModal();
+      renderMessages();
+      renderInputState();
+    }
+  }
+
+  async function pollActiveWorkspace(forceRender) {
+    if (!state.activeWorkspaceId) {
+      state.activeWorkspace = null;
+      resetBuildLogState();
+      resetConsoleLogState();
+      resetStatusSummaryState();
+      renderBuildLog();
+      renderConsoleLog();
+      return;
+    }
+    const previousPath = activeGitPath();
+    const workspace = await api('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId));
+    state.activeWorkspace = workspace;
+    if (workspace && workspace.projectId) {
+      state.projectExpansion = Object.assign({}, state.projectExpansion, { [workspace.projectId]: true });
+    }
+    const index = state.workspaces.findIndex((item) => item.id === workspace.id);
+    if (index >= 0) {
+      state.workspaces[index] = workspace;
+    }
+    const nextPath = activeGitPath();
+    if (previousPath !== nextPath) {
+      state.gitStatus = null;
+      if (!nextPath) {
+        state.gitPanelOpen = false;
+        hideGitContextMenu();
+        closeDiffOverlay();
+      } else if (state.gitPanelOpen && state.rightPanelMode === 'git') {
+        await fetchGitStatus();
+      } else if (state.gitPanelOpen && state.rightPanelMode === 'status') {
+        await fetchStatusSummary(true);
+      }
+    }
+    if (forceRender) render();
+    else {
+      renderContext();
+      renderBuildLog();
+      renderConsoleLog();
+      renderSidebar();
+      renderMessages();
+      renderInputState();
+    }
   }
 
   async function createWorkspace(options) {
@@ -3716,6 +4003,7 @@
     };
     state.pendingCreate = true;
     renderInputState();
+    updateSidebarFormFromState();
     try {
       const workspace = await api('/api/workspaces', {
         method: 'POST',
@@ -3738,6 +4026,7 @@
     } finally {
       state.pendingCreate = false;
       renderInputState();
+      updateSidebarFormFromState();
     }
   }
 
@@ -3770,12 +4059,15 @@
   async function submitSidebarWorkspace() {
     const projectSelectInput = document.getElementById('workspaceProjectSelectInput');
     const workspaceRootPathInput = document.getElementById('workspaceRootPathInput');
+    const workspaceRootPathManualInput = document.getElementById('workspaceRootPathManualInput');
     const workspaceNameInput = document.getElementById('workspaceNameInput');
     setDraftProject(projectSelectInput ? projectSelectInput.value.trim() : state.draftProjectId, { updateBaseBranch: false });
-    state.draftWorkspaceRootPath = workspaceRootPathInput ? workspaceRootPathInput.value.trim() : state.draftWorkspaceRootPath;
+    state.draftWorkspaceRootPath = workspaceRootPathManualInput
+      ? workspaceRootPathManualInput.value.trim()
+      : (workspaceRootPathInput ? workspaceRootPathInput.value.trim() : state.draftWorkspaceRootPath);
     state.draftWorkspaceName = workspaceNameInput ? workspaceNameInput.value.trim() : state.draftWorkspaceName;
     if (!state.draftProjectId || !state.draftWorkspaceRootPath) {
-      showToast('Choose a project and workspace path');
+      showToast('Choose a project and path');
       return;
     }
     try {
@@ -3786,7 +4078,7 @@
         source: 'manual-path'
       });
     } catch (error) {
-      showToast(error.message || 'Could not open workspace');
+      showToast(error.message || 'Could not open item');
     }
   }
 
@@ -3804,6 +4096,9 @@
       showToast(state.projectPickerFallback ? 'Project root path is required' : 'Choose a project folder');
       return;
     }
+    state.pendingCreate = true;
+    renderInputState();
+    updateSidebarFormFromState();
     try {
       const project = await api('/api/projects', {
         method: 'POST',
@@ -3813,15 +4108,27 @@
           defaultBaseBranch: state.draftProjectBaseBranch || 'main'
         })
       });
+      const returnMode = state.projectCreationReturnMode;
+      state.projectCreationReturnMode = '';
       setDraftProject(project.id);
       state.draftProjectName = '';
       state.draftProjectRootPath = '';
       state.draftProjectBaseBranch = state.draftBaseBranch || 'main';
       await pollObjectives();
-      openSidebarForm(state.draftGoal, project.id);
+      if (returnMode === 'workspace') {
+        openWorkspaceForm(project.id);
+      } else if (returnMode === 'objective') {
+        openSidebarForm(state.draftGoal, project.id);
+      } else {
+        openAddKindForm(project.id);
+      }
       showToast('Project added');
     } catch (error) {
       showToast(error.message || 'Could not add project');
+    } finally {
+      state.pendingCreate = false;
+      renderInputState();
+      updateSidebarFormFromState();
     }
   }
 
@@ -3860,7 +4167,7 @@
       return;
     }
     if (!state.activeObjectiveId || !state.activeObjective) {
-      showToast(state.projects.length ? 'No active workspace or objective selected.' : 'No projects yet. Add a project first.');
+      showToast(state.projects.length ? 'Nothing selected. Choose New or Open, or pick an item from the sidebar.' : 'No projects yet. Add a project first.');
       return;
     }
     state.pendingSend = true;
@@ -3919,7 +4226,8 @@
 
     state.pollers.objective = window.setInterval(async () => {
       try {
-        await pollActiveObjective(false);
+        if (state.activeWorkspaceId) await pollActiveWorkspace(false);
+        else await pollActiveObjective(false);
       } catch (error) {
         console.error(error);
       }
@@ -3960,12 +4268,11 @@
   }
 
   function bindEvents() {
-els.newObjectiveButton.addEventListener('click', () => {
-      if (state.activeTargetType === 'workspace') {
-        openWorkspaceForm(selectedProjectId());
-      } else {
-        openSidebarForm(state.draftGoal);
-      }
+    els.newObjectiveButton.addEventListener('click', () => {
+      openSidebarForm(state.draftGoal);
+    });
+    els.openWorkspaceButton.addEventListener('click', () => {
+      openWorkspaceForm(selectedProjectId());
     });
     els.addProjectButton.addEventListener('click', openProjectForm);
     els.settingsButton.addEventListener('click', openSettingsModal);

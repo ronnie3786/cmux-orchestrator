@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from cmux_harness import objectives
+from cmux_harness import workspaces
 from cmux_harness.orchestrator import Orchestrator
 
 
@@ -1173,6 +1174,127 @@ class TestOrchestratorSessions(unittest.TestCase):
         mock_close.assert_not_called()
         updated = objectives.read_objective(objective["id"])
         self.assertTrue(updated["orchestratorSessionActive"])
+
+
+class TestWorkspaceSessions(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.workspaces_dir = Path(self.tmpdir.name) / "workspaces"
+        self.project_dir = Path(self.tmpdir.name) / "project"
+        self.project_dir.mkdir()
+        self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
+        self.patch_objectives_dir.start()
+        self.addCleanup(self.patch_objectives_dir.stop)
+        self.patch_workspaces_dir = patch.object(workspaces, "WORKSPACES_DIR", self.workspaces_dir)
+        self.patch_workspaces_dir.start()
+        self.addCleanup(self.patch_workspaces_dir.stop)
+        self.mock_objectives_run = _patch_objective_git(self)
+        self.patch_workspaces_run = patch("cmux_harness.workspaces.subprocess.run")
+        self.mock_workspaces_run = self.patch_workspaces_run.start()
+        self.mock_workspaces_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        self.addCleanup(self.patch_workspaces_run.stop)
+        self.orchestrator = Orchestrator(object())
+
+    def _create_workspace(self, name="Feature Workspace"):
+        project = objectives.create_project("Workspace Project", str(self.project_dir), "main")
+        return workspaces.create_workspace_session(project["id"], str(self.project_dir), name=name)
+
+    def test_prepare_workspace_assistant_message_strips_tool_transcript(self):
+        prepared = self.orchestrator._prepare_workspace_assistant_message(
+            "\n".join(
+                [
+                    "● Bash(git log --oneline develop..HEAD)",
+                    "  L 5a879f0831 Move TCA Architecture Patterns section to top",
+                    "  ... +4 lines (ctrl+o to expand)",
+                    "",
+                    "● Bash(git diff --stat develop..HEAD)",
+                    "  .github/copilot-instructions.md | 58 ++++++",
+                    "",
+                    "Here's the status of IOSDOX-25557:",
+                    "",
+                    "Branch: rr/chore/IOSDOX-25557-copilot-code-review-instructions",
+                    "7 commits ahead of develop.",
+                    "",
+                    "Want me to check if there's an open PR, or anything else?",
+                    "Model: Opus 4.6 (1M context)",
+                    "Cost: $0.33",
+                ]
+            )
+        )
+
+        self.assertEqual(
+            prepared["content"],
+            "\n".join(
+                [
+                    "Here's the status of IOSDOX-25557:",
+                    "",
+                    "Branch: rr/chore/IOSDOX-25557-copilot-code-review-instructions",
+                    "7 commits ahead of develop.",
+                    "",
+                    "Want me to check if there's an open PR, or anything else?",
+                ]
+            ),
+        )
+        self.assertIn("rawResponse", prepared["metadata"])
+        self.assertEqual(prepared["metadata"]["presentation"], "summary")
+
+    def test_capture_workspace_response_detects_prompt_in_recent_window(self):
+        workspace = self._create_workspace()
+
+        footer = "\n".join(["status line 1", "status line 2", "status line 3", "status line 4", "status line 5", "status line 6"])
+        with patch(
+            "cmux_harness.orchestrator.cmux_api.cmux_read_workspace",
+            side_effect=[
+                "What changed?\nWorking",
+                f"What changed?\nHere is the concise answer.\n❯\n{footer}",
+                f"What changed?\nHere is the concise answer.\n❯\n{footer}",
+            ],
+        ), patch("cmux_harness.orchestrator.time.sleep", return_value=None):
+            response = self.orchestrator._capture_workspace_like_response(
+                workspace["id"],
+                "ws-1",
+                baseline_screen="What changed?",
+                user_message="What changed?",
+                append_fn=self.orchestrator._append_workspace_message,
+                prepare_response_fn=self.orchestrator._prepare_workspace_assistant_message,
+                initial_delay=0,
+                poll_interval=0,
+                max_polls=3,
+            )
+
+        self.assertEqual(response, "Here is the concise answer.")
+        messages = self.orchestrator.get_workspace_messages(workspace["id"])
+        self.assertEqual(messages[-1]["type"], "assistant")
+        self.assertEqual(messages[-1]["content"], "Here is the concise answer.")
+
+    def test_handle_workspace_input_uses_workspace_summary_capture_settings(self):
+        workspace = self._create_workspace()
+        workspaces.update_workspace_session(
+            workspace["id"],
+            {
+                "cmuxWorkspaceId": "ws-1",
+                "sessionActive": True,
+                "status": "active",
+            },
+        )
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="baseline"), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
+            self.orchestrator.handle_workspace_input(workspace["id"], "What's the status?")
+
+        self.assertEqual(mock_thread.call_args.kwargs["target"], self.orchestrator._capture_workspace_like_response)
+        kwargs = mock_thread.call_args.kwargs["kwargs"]
+        self.assertEqual(kwargs["initial_delay"], 0.75)
+        self.assertEqual(kwargs["poll_interval"], 1.0)
+        self.assertEqual(kwargs["max_polls"], 120)
+        self.assertEqual(kwargs["prepare_response_fn"], self.orchestrator._prepare_workspace_assistant_message)
+        messages = self.orchestrator.get_workspace_messages(workspace["id"])
+        self.assertEqual(messages[0]["type"], "user")
+        self.assertEqual(messages[-1]["content"], "What's the status?")
 
 
 if __name__ == "__main__":

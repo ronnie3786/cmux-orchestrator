@@ -4,7 +4,7 @@ from collections import deque
 from pathlib import Path
 
 
-def handle_get_console_logs(handler, objective, parsed, *, re_module, human_file_size):
+def _handle_get_console_logs(handler, root_path: str, parsed, *, re_module, human_file_size, missing_error: str):
     params = handler.parse_qs(parsed.query)
     try:
         line_limit = int(params.get("lines", ["500"])[0])
@@ -29,11 +29,10 @@ def handle_get_console_logs(handler, objective, parsed, *, re_module, human_file
         except re_module.error as exc:
             handler._json_response({"ok": False, "error": f"invalid regex: {exc}"}, 400)
             return
-    worktree_path = str(objective.get("worktreePath") or "").strip()
-    if not worktree_path:
-        handler._json_response({"ok": False, "error": "objective worktreePath required"}, 400)
+    if not root_path:
+        handler._json_response({"ok": False, "error": missing_error}, 400)
         return
-    logs_dir = Path(worktree_path) / ".build" / "logs"
+    logs_dir = Path(root_path) / ".build" / "logs"
     try:
         files = sorted(
             entry.name for entry in logs_dir.glob("*.log")
@@ -94,3 +93,27 @@ def handle_get_console_logs(handler, objective, parsed, *, re_module, human_file
         "truncated": truncated,
         "filter": filter_pattern,
     })
+
+
+def handle_get_console_logs(handler, objective, parsed, *, re_module, human_file_size):
+    root_path = str(objective.get("worktreePath") or "").strip()
+    _handle_get_console_logs(
+        handler,
+        root_path,
+        parsed,
+        re_module=re_module,
+        human_file_size=human_file_size,
+        missing_error="objective worktreePath required",
+    )
+
+
+def handle_get_workspace_console_logs(handler, workspace, parsed, *, re_module, human_file_size):
+    root_path = str(workspace.get("rootPath") or "").strip()
+    _handle_get_console_logs(
+        handler,
+        root_path,
+        parsed,
+        re_module=re_module,
+        human_file_size=human_file_size,
+        missing_error="workspace rootPath required",
+    )

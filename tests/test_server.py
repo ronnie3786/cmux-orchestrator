@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from cmux_harness import objectives
+from cmux_harness import workspaces
 from cmux_harness.server import make_handler
 
 REAL_SUBPROCESS_RUN = subprocess.run
@@ -24,13 +25,18 @@ class TestServerResponses(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
         self.objectives_dir = Path(self.tmpdir.name) / "objectives"
+        self.workspaces_dir = Path(self.tmpdir.name) / "workspaces"
         self.patch_objectives_dir = patch.object(objectives, "OBJECTIVES_DIR", self.objectives_dir)
         self.patch_objectives_dir.start()
         self.addCleanup(self.patch_objectives_dir.stop)
+        self.patch_workspaces_dir = patch.object(workspaces, "WORKSPACES_DIR", self.workspaces_dir)
+        self.patch_workspaces_dir.start()
+        self.addCleanup(self.patch_workspaces_dir.stop)
         self.patch_subprocess_run = patch("cmux_harness.objectives.subprocess.run")
         self.mock_run = self.patch_subprocess_run.start()
         self.mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         self.addCleanup(self.patch_subprocess_run.stop)
+        self.mock_workspace_run = self.mock_run
 
     def test_json_response_suppresses_broken_pipe(self):
         handler_cls = make_handler(Mock())
@@ -76,6 +82,17 @@ class TestServerResponses(unittest.TestCase):
             objectives.update_objective(objective["id"], {"worktreePath": str(worktree_path)})
             objective = objectives.read_objective(objective["id"])
         return objective
+
+    def _create_project(self, name="Server Project", root_path=None, default_base_branch="main"):
+        root = Path(root_path) if root_path is not None else (Path(self.tmpdir.name) / name.lower().replace(" ", "-"))
+        root.mkdir(parents=True, exist_ok=True)
+        return objectives.create_project(name, str(root), default_base_branch)
+
+    def _create_workspace(self, root_path=None, project=None, name="Workspace"):
+        root = Path(root_path) if root_path is not None else (Path(self.tmpdir.name) / name.lower().replace(" ", "-"))
+        root.mkdir(parents=True, exist_ok=True)
+        project = project or self._create_project(root_path=root)
+        return workspaces.create_workspace_session(project["id"], str(root), name=name)
 
     def _write_build_log(self, objective, lines, filename="build.log"):
         log_path = Path(objective["worktreePath"]) / ".build" / filename
@@ -897,6 +914,73 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         handler.send_response.assert_called_once_with(404)
         self.assertEqual(body, {"ok": False, "error": "objective not found"})
+
+    def test_get_workspace_build_log_returns_tail_lines_when_file_exists(self):
+        root_path = Path(self.tmpdir.name) / "workspace-build-log-tail"
+        workspace = self._create_workspace(root_path=root_path, name="Feature Workspace")
+        log_path = root_path / ".build" / "build.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
+        handler = self._make_handler(Mock(), f"/api/workspaces/{workspace['id']}/build-log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["lines"], ["line 1", "line 2", "line 3"])
+        self.assertEqual(body["totalLines"], 3)
+        self.assertEqual(body["truncated"], False)
+
+    def test_get_workspace_console_logs_returns_tail_lines(self):
+        root_path = Path(self.tmpdir.name) / "workspace-console-tail"
+        workspace = self._create_workspace(root_path=root_path, name="Console Workspace")
+        log_path = root_path / ".build" / "logs" / "console.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("line 0\nline 1\nline 2\nline 3\n", encoding="utf-8")
+        handler = self._make_handler(Mock(), f"/api/workspaces/{workspace['id']}/console-logs?lines=2")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["files"], ["console.log"])
+        self.assertEqual(body["activeFile"], "console.log")
+        self.assertEqual(body["lines"], ["line 2", "line 3"])
+        self.assertEqual(body["matchedLines"], 4)
+
+    def test_get_workspace_status_summary_returns_workspace_payload(self):
+        root_path = Path(self.tmpdir.name) / "workspace-status-summary"
+        workspace = self._create_workspace(root_path=root_path, name="Status Workspace")
+        workspaces.append_workspace_message(workspace["id"], {
+            "timestamp": "2026-04-07T12:00:00+00:00",
+            "type": "assistant",
+            "content": "Indexed the repo and ready for the next step.",
+        })
+        engine = Mock()
+        engine.orchestrator.get_workspace_messages.return_value = workspaces.load_workspace_messages(workspace["id"])
+        handler = self._make_handler(engine, f"/api/workspaces/{workspace['id']}/status-summary")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["workspaceId"], workspace["id"])
+        self.assertEqual(body["objective"], "Status Workspace")
+        self.assertEqual(body["stage"]["label"], "Idle")
+        self.assertIn("signals", body)
+        self.assertIn("git", body["signals"])
+        self.assertEqual(body["summarySource"]["kind"], "deterministic")
+
+    def test_delete_workspace_endpoint_closes_session_and_deletes_workspace(self):
+        root_path = Path(self.tmpdir.name) / "workspace-delete"
+        workspace = self._create_workspace(root_path=root_path, name="Delete Workspace")
+        engine = Mock()
+        handler = self._make_handler(engine, f"/api/workspaces/{workspace['id']}")
+
+        handler.do_DELETE()
+
+        engine.orchestrator.close_workspace_session.assert_called_once_with(workspace["id"], reason="delete")
+        self.assertFalse((self.workspaces_dir / workspace["id"]).exists())
+        self.assertEqual(json.loads(handler.wfile.getvalue().decode("utf-8")), {"ok": True})
 
     def test_get_action_buttons_returns_default_button(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")

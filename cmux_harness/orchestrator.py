@@ -43,6 +43,18 @@ _RETRY_REQUEST_PATTERN = re.compile(
     r"\b(retry|try again|restart|rerun|re-run|start over)\b",
     re.IGNORECASE,
 )
+_WORKSPACE_TOOL_TRACE_RE = re.compile(
+    r"^\s*(?:[●•◦]\s*)?(?:Bash|Read|Write|Edit|MultiEdit|Glob|Grep|Search|LS|ListDir|TodoRead|TodoWrite|NotebookRead|NotebookEdit|WebFetch|WebSearch|Fetch|Task|Agent|Open|Find|MCP)\b",
+    re.IGNORECASE,
+)
+_WORKSPACE_TRANSCRIPT_META_RE = re.compile(
+    r"^\s*(?:Model:|Cost:\s*\$|Ctx:\s*\d|PR\s*#\d+\b)",
+    re.IGNORECASE,
+)
+_WORKSPACE_TRANSCRIPT_EXPAND_RE = re.compile(
+    r"^\s*(?:\.\.\.|…)\s*\+\d+\s+lines?\b.*ctrl\+o\s+to\s+expand",
+    re.IGNORECASE,
+)
 
 
 class Orchestrator:
@@ -242,6 +254,48 @@ class Orchestrator:
             lines.pop()
         return "\n".join(lines).strip()
 
+    def _prepare_workspace_assistant_message(self, response_text, user_message=""):
+        raw_response = str(response_text or "").strip()
+        if not raw_response:
+            return {"content": "", "metadata": {}}
+
+        cleaned_lines = []
+        skipping_tool_block = False
+        saw_tool_block = False
+        for raw_line in raw_response.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            if not stripped:
+                if skipping_tool_block:
+                    skipping_tool_block = False
+                if cleaned_lines and cleaned_lines[-1]:
+                    cleaned_lines.append("")
+                continue
+            if _WORKSPACE_TRANSCRIPT_META_RE.match(stripped) or _WORKSPACE_TRANSCRIPT_EXPAND_RE.match(stripped):
+                continue
+            if _WORKSPACE_TOOL_TRACE_RE.match(stripped):
+                saw_tool_block = True
+                skipping_tool_block = True
+                continue
+            if skipping_tool_block:
+                continue
+            cleaned_lines.append(line)
+
+        while cleaned_lines and not cleaned_lines[0].strip():
+            cleaned_lines.pop(0)
+        while cleaned_lines and not cleaned_lines[-1].strip():
+            cleaned_lines.pop()
+
+        cleaned_response = "\n".join(cleaned_lines).strip()
+        if not cleaned_response:
+            cleaned_response = raw_response
+
+        metadata = {}
+        if saw_tool_block and cleaned_response != raw_response:
+            metadata["rawResponse"] = raw_response
+            metadata["presentation"] = "summary"
+        return {"content": cleaned_response, "metadata": metadata}
+
     def _start_orchestrator_session(self, objective_id):
         objective = objectives.read_objective(objective_id)
         if objective is None:
@@ -335,14 +389,24 @@ class Orchestrator:
         max_polls=90,
         append_fn=None,
         log_fn=None,
+        prepare_response_fn=None,
     ):
         time.sleep(initial_delay)
         previous_screen = None
         final_screen = ""
+        stable_polls = 0
         for attempt in range(max_polls):
             screen = cmux_api.cmux_read_workspace(0, 0, lines=200, workspace_uuid=workspace_uuid) or ""
-            tail = "\n".join(screen.splitlines()[-5:])
-            if previous_screen is not None and screen == previous_screen and self._orchestrator_response_pattern.search(tail):
+            recent_lines = screen.splitlines()[-20:]
+            recent_screen = "\n".join(recent_lines)
+            if previous_screen is not None and screen == previous_screen:
+                stable_polls += 1
+            else:
+                stable_polls = 0
+            if stable_polls >= 1 and self._orchestrator_response_pattern.search(recent_screen):
+                final_screen = screen
+                break
+            if stable_polls >= 2 and not detection.detect_claude_session(recent_screen):
                 final_screen = screen
                 break
             previous_screen = screen
@@ -353,7 +417,20 @@ class Orchestrator:
 
         response_text = self._extract_orchestrator_response(final_screen, baseline_screen, user_message)
         if append_message and response_text and append_fn:
-            append_fn(record_id, "assistant", response_text)
+            content = response_text
+            metadata = None
+            if prepare_response_fn:
+                prepared = prepare_response_fn(response_text, user_message=user_message)
+                if isinstance(prepared, dict):
+                    content = str(prepared.get("content") or "").strip()
+                    metadata = prepared.get("metadata") if isinstance(prepared.get("metadata"), dict) else None
+                elif isinstance(prepared, tuple) and len(prepared) == 2:
+                    content = str(prepared[0] or "").strip()
+                    metadata = prepared[1] if isinstance(prepared[1], dict) else None
+                elif isinstance(prepared, str):
+                    content = prepared.strip()
+            if content:
+                append_fn(record_id, "assistant", content, metadata=metadata)
             if log_fn:
                 log_fn(record_id, workspace_uuid, user_message)
         return response_text
@@ -588,7 +665,11 @@ class Orchestrator:
                 "baseline_screen": baseline_screen,
                 "user_message": message,
                 "append_message": True,
+                "initial_delay": 0.75,
+                "poll_interval": 1.0,
+                "max_polls": 120,
                 "append_fn": self._append_workspace_message,
+                "prepare_response_fn": self._prepare_workspace_assistant_message,
             },
             daemon=True,
         ).start()
