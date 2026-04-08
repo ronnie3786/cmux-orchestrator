@@ -2924,6 +2924,83 @@
     sidebarScrollTarget.addEventListener('scroll', () => hideCtxMenu(), { passive: true });
   }
 
+  function startInlineRename(type, id) {
+    const attr = type === 'objective' ? 'data-objective-id' : 'data-workspace-id';
+    const itemEl = els.objectiveList.querySelector('[' + attr + '="' + CSS.escape(id) + '"]');
+    if (!itemEl) return;
+    const nameEl = itemEl.querySelector('.obj-name');
+    if (!nameEl) return;
+    const currentName = nameEl.textContent;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'obj-name-input';
+    input.value = currentName;
+    nameEl.textContent = '';
+    nameEl.appendChild(input);
+    input.focus();
+    input.select();
+
+    // Prevent sidebar item click from navigating while editing
+    itemEl.dataset.renaming = 'true';
+
+    function commit() {
+      const newName = input.value.trim();
+      if (!newName || newName === currentName) {
+        cancel();
+        return;
+      }
+      const endpoint = type === 'objective'
+        ? '/api/objectives/' + encodeURIComponent(id)
+        : '/api/workspaces/' + encodeURIComponent(id);
+      const body = type === 'objective' ? { goal: newName } : { name: newName };
+      fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+        .then((res) => res.json())
+        .then((updated) => {
+          if (type === 'objective') {
+            const idx = state.objectives.findIndex((o) => o.id === id);
+            if (idx !== -1) state.objectives[idx] = updated;
+            if (state.activeObjective && state.activeObjective.id === id) {
+              state.activeObjective = updated;
+            }
+          } else {
+            const idx = state.workspaces.findIndex((w) => w.id === id);
+            if (idx !== -1) state.workspaces[idx] = updated;
+            if (state.activeWorkspace && state.activeWorkspace.id === id) {
+              state.activeWorkspace = updated;
+            }
+          }
+          renderSidebar();
+        })
+        .catch(() => {
+          cancel();
+        });
+    }
+
+    function cancel() {
+      delete itemEl.dataset.renaming;
+      nameEl.textContent = currentName;
+    }
+
+    let committed = false;
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); committed = true; commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', () => {
+      if (!committed) cancel();
+    });
+  }
+
+  els.ctxRename.addEventListener('click', () => {
+    const target = state.ctxTarget;
+    hideCtxMenu();
+    if (target) startInlineRename(target.type, target.id);
+  });
+
   function renderSidebar() {
     const projects = sortedProjects(state.projects);
     if (!projects.length) {
@@ -3020,6 +3097,7 @@
     });
     els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
       node.addEventListener('click', () => {
+        if (node.dataset.renaming) return;
         const id = node.getAttribute('data-objective-id');
         if (!id) return;
         if (id !== state.activeObjectiveId) {
@@ -3036,6 +3114,7 @@
     });
     els.objectiveList.querySelectorAll('[data-workspace-id]').forEach((node) => {
       node.addEventListener('click', () => {
+        if (node.dataset.renaming) return;
         const id = node.getAttribute('data-workspace-id');
         if (!id) return;
         if (id !== state.activeWorkspaceId) {
