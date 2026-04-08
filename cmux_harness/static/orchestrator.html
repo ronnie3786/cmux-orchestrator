@@ -265,6 +265,22 @@
 
 <div class="toast-wrap" id="toastWrap"></div>
 
+<div class="ctx-menu" id="ctxMenu">
+  <button class="ctx-menu-item" id="ctxRename" type="button"><span class="ctx-menu-icon">✏️</span> Rename</button>
+  <button class="ctx-menu-item destructive" id="ctxDelete" type="button"><span class="ctx-menu-icon">🗑️</span> Delete</button>
+</div>
+
+<div class="modal-overlay" id="deleteConfirmOverlay">
+  <div class="confirm-modal">
+    <div class="confirm-head"><div class="confirm-title" id="deleteConfirmTitle">Delete item?</div></div>
+    <div class="confirm-body">This will permanently remove <span class="confirm-item-name" id="deleteConfirmName"></span>.</div>
+    <div class="confirm-actions">
+      <button class="confirm-btn" id="deleteConfirmCancel" type="button">Cancel</button>
+      <button class="confirm-btn danger" id="deleteConfirmOk" type="button">Delete</button>
+    </div>
+  </div>
+</div>
+
 <script src="/orchestrator.js"></script>
 </body>
 </html>

@@ -57,6 +57,7 @@
     openPathPickerFallback: false,
     openPathPickerBusy: false,
     projectExpansion: {},
+    ctxTarget: null,
     settingsOpen: false,
     settingsSaving: false,
     fabModalOpen: false,
@@ -206,7 +207,15 @@
     workerOutputClose: document.getElementById('workerOutputClose'),
     workerOutputRefresh: document.getElementById('workerOutputRefresh'),
     terminalLink: document.getElementById('terminalLink'),
-    toastWrap: document.getElementById('toastWrap')
+    toastWrap: document.getElementById('toastWrap'),
+    ctxMenu: document.getElementById('ctxMenu'),
+    ctxRename: document.getElementById('ctxRename'),
+    ctxDelete: document.getElementById('ctxDelete'),
+    deleteConfirmOverlay: document.getElementById('deleteConfirmOverlay'),
+    deleteConfirmTitle: document.getElementById('deleteConfirmTitle'),
+    deleteConfirmName: document.getElementById('deleteConfirmName'),
+    deleteConfirmCancel: document.getElementById('deleteConfirmCancel'),
+    deleteConfirmOk: document.getElementById('deleteConfirmOk')
   };
 
   function esc(value) {
@@ -2874,6 +2883,45 @@
   function taskTitle(taskId) {
     const task = findTask(taskId);
     return task ? task.title : taskId;
+  }
+
+  function showCtxMenu(event, type, id) {
+    event.preventDefault();
+    event.stopPropagation();
+    state.ctxTarget = { type: type, id: id };
+    const menu = els.ctxMenu;
+    menu.classList.add('open');
+    const x = event.clientX;
+    const y = event.clientY;
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    // Adjust if overflowing viewport
+    requestAnimationFrame(() => {
+      const rect = menu.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight) {
+        menu.style.top = (y - rect.height) + 'px';
+      }
+      if (rect.right > window.innerWidth) {
+        menu.style.left = (x - rect.width) + 'px';
+      }
+    });
+  }
+
+  function hideCtxMenu() {
+    els.ctxMenu.classList.remove('open');
+    state.ctxTarget = null;
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!els.ctxMenu.contains(e.target)) hideCtxMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideCtxMenu();
+  });
+  // Dismiss on sidebar scroll
+  const sidebarScrollTarget = document.querySelector('.obj-list') || document.querySelector('.sidebar');
+  if (sidebarScrollTarget) {
+    sidebarScrollTarget.addEventListener('scroll', () => hideCtxMenu(), { passive: true });
   }
 
   function renderSidebar() {
