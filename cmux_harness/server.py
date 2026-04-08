@@ -1082,6 +1082,22 @@ def make_handler(engine):
                 project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
                 project_routes.handle_patch_project(self, project_id, data)
                 return
+            if path.startswith("/api/objectives/"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                objective_routes.handle_patch_objective(self, objective_id, data)
+                return
+            if path.startswith("/api/workspaces/"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_patch_workspace(self, workspace_id, data)
+                return
             self.send_error(404)
 
         def do_DELETE(self):

@@ -93,3 +93,16 @@ def handle_delete_workspace(handler, workspace_id, *, engine):
     engine.orchestrator.close_workspace_session(workspace_id, reason="delete")
     workspaces.delete_workspace_session(workspace_id)
     handler._json_response({"ok": True})
+
+
+def handle_patch_workspace(handler, workspace_id, data):
+    name = (data.get("name") or "").strip()
+    if not name:
+        handler._json_response({"ok": False, "error": "name is required"}, 400)
+        return
+    try:
+        updated = workspaces.update_workspace_session(workspace_id, {"name": name})
+    except FileNotFoundError:
+        handler._json_response({"ok": False, "error": "workspace not found"}, 404)
+        return
+    handler._json_response(updated)

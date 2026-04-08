@@ -125,3 +125,16 @@ def handle_delete_objective(handler, objective_id, *, engine):
     engine.orchestrator.stop_and_cleanup(objective_id)
     objectives.delete_objective(objective_id)
     handler._json_response({"ok": True})
+
+
+def handle_patch_objective(handler, objective_id, data):
+    goal = (data.get("goal") or "").strip()
+    if not goal:
+        handler._json_response({"ok": False, "error": "goal is required"}, 400)
+        return
+    try:
+        updated = objectives.update_objective(objective_id, {"goal": goal})
+    except FileNotFoundError:
+        handler._json_response({"ok": False, "error": "objective not found"}, 404)
+        return
+    handler._json_response(updated)
