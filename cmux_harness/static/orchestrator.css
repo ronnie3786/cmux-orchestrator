@@ -3224,3 +3224,106 @@
       grid-template-columns: 1fr;
     }
   }
+
+/* ─── CONTEXT MENU ─── */
+.ctx-menu {
+  position: fixed;
+  z-index: 50;
+  background: var(--sidebar);
+  border: 1px solid var(--b2);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.45);
+  min-width: 160px;
+  padding: 4px;
+  display: none;
+}
+.ctx-menu.open { display: block; }
+.ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  border: none;
+  background: none;
+  color: var(--t1);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.ctx-menu-item:hover { background: var(--hover); }
+.ctx-menu-item.destructive { color: var(--red); }
+.ctx-menu-item.destructive:hover { background: var(--red-d); }
+.ctx-menu-icon { width: 14px; text-align: center; font-size: 13px; flex-shrink: 0; }
+
+/* ─── INLINE RENAME ─── */
+.obj-name-input {
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--t1);
+  background: var(--bg);
+  border: 1px solid var(--blue-b);
+  border-radius: 4px;
+  padding: 1px 4px;
+  line-height: 1.4;
+  width: 100%;
+  outline: none;
+}
+.obj-name-input:focus { border-color: var(--blue); }
+
+/* ─── DELETE CONFIRMATION MODAL ─── */
+.confirm-modal {
+  width: 100%;
+  max-width: 380px;
+  background:
+    radial-gradient(circle at top left, rgba(248,113,113,.08), transparent 38%),
+    var(--sidebar);
+  border: 1px solid var(--b2);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.45);
+  overflow: hidden;
+}
+.confirm-head {
+  padding: 16px 18px 0;
+}
+.confirm-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.confirm-body {
+  padding: 8px 18px 16px;
+  font-size: 13px;
+  color: var(--t2);
+  line-height: 1.5;
+}
+.confirm-body .confirm-item-name {
+  color: var(--t1);
+  font-weight: 500;
+}
+.confirm-actions {
+  padding: 0 18px 16px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.confirm-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--b2);
+  background: transparent;
+  color: var(--t2);
+}
+.confirm-btn:hover { background: var(--hover); color: var(--t1); }
+.confirm-btn.danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+.confirm-btn.danger:hover { opacity: .85; }
