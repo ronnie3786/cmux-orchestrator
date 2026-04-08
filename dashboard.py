@@ -13,6 +13,7 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9090
 
     engine = HarnessEngine()
+    engine.callback_base_url = f"http://127.0.0.1:{port}"
     engine.start()
 
     handler_class = make_handler(engine)

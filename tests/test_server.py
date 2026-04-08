@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from cmux_harness import objectives
+from cmux_harness.orchestrator import Orchestrator
 from cmux_harness import workspaces
 from cmux_harness.server import make_handler
 
@@ -969,6 +970,98 @@ class TestServerResponses(unittest.TestCase):
         self.assertIn("signals", body)
         self.assertIn("git", body["signals"])
         self.assertEqual(body["summarySource"]["kind"], "deterministic")
+
+    def test_get_workspace_active_turn_returns_pending_turn_payload(self):
+        root_path = Path(self.tmpdir.name) / "workspace-active-turn"
+        workspace = self._create_workspace(root_path=root_path, name="Active Turn Workspace")
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="What are you doing?")
+        workspaces.update_workspace_turn(
+            workspace["id"],
+            turn["id"],
+            {
+                "progressSummary": "Checking repo status and recent changes.",
+                "progressState": "working",
+                "progressUpdatedAt": "2026-04-07T12:00:05+00:00",
+                "progressSequence": 1,
+            },
+        )
+        handler = self._make_handler(Mock(), f"/api/workspaces/{workspace['id']}/active-turn")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["id"], turn["id"])
+        self.assertEqual(body["progressSummary"], "Checking repo status and recent changes.")
+        self.assertEqual(body["status"], "pending")
+
+    def test_get_workspace_screen_returns_active_session_snapshot(self):
+        root_path = Path(self.tmpdir.name) / "workspace-screen"
+        workspace = self._create_workspace(root_path=root_path, name="Screen Workspace")
+        workspaces.update_workspace_session(
+            workspace["id"],
+            {
+                "cmuxWorkspaceId": "ws-123",
+                "sessionActive": True,
+                "status": "active",
+            },
+        )
+        handler = self._make_handler(Mock(), f"/api/workspaces/{workspace['id']}/screen?lines=120")
+
+        with patch("cmux_harness.routes.workspaces.cmux_api.cmux_read_workspace", return_value="live terminal output\n") as mock_read:
+            handler.do_GET()
+
+        mock_read.assert_called_once_with(0, 0, lines=120, workspace_uuid="ws-123")
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["screen"], "live terminal output\n")
+        self.assertEqual(body["lines"], 120)
+
+    def test_post_workspace_turn_finalize_appends_assistant_message(self):
+        root_path = Path(self.tmpdir.name) / "workspace-turn-finalize"
+        workspace = self._create_workspace(root_path=root_path, name="Callback Workspace")
+        engine = Mock()
+        engine.callback_base_url = "http://127.0.0.1:9090"
+        engine.orchestrator = Orchestrator(engine)
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="Need TL;DR")
+        payload = {
+            "token": turn["token"],
+            "content": "TL;DR delivered through callback.",
+            "source": "callback-helper",
+        }
+        handler = self._post_json(
+            f"/api/workspaces/{workspace['id']}/turns/{turn['id']}/finalize",
+            payload,
+            engine=engine,
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["status"], "completed")
+        messages = engine.orchestrator.get_workspace_messages(workspace["id"])
+        self.assertEqual(messages[-1]["type"], "assistant")
+        self.assertEqual(messages[-1]["content"], "TL;DR delivered through callback.")
+
+    def test_post_workspace_turn_finalize_rejects_invalid_token(self):
+        root_path = Path(self.tmpdir.name) / "workspace-turn-invalid-token"
+        workspace = self._create_workspace(root_path=root_path, name="Callback Workspace")
+        engine = Mock()
+        engine.callback_base_url = "http://127.0.0.1:9090"
+        engine.orchestrator = Orchestrator(engine)
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="Need TL;DR")
+        handler = self._post_json(
+            f"/api/workspaces/{workspace['id']}/turns/{turn['id']}/finalize",
+            {
+                "token": "wrong-token",
+                "content": "Nope",
+            },
+            engine=engine,
+        )
+
+        self.assertEqual(handler.send_response.call_args.args, (403,))
+        self.assertEqual(
+            json.loads(handler.wfile.getvalue().decode("utf-8")),
+            {"ok": False, "error": "invalid turn token"},
+        )
 
     def test_delete_workspace_endpoint_closes_session_and_deletes_workspace(self):
         root_path = Path(self.tmpdir.name) / "workspace-delete"

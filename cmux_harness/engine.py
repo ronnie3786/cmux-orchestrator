@@ -42,6 +42,7 @@ class HarnessEngine(threading.Thread):
         self.review_enabled = True
         self.review_model = detection.OLLAMA_MODEL
         self.review_backend = "ollama"
+        self.callback_base_url = ""
         self.default_project_dir = ""
         self.default_base_branch = "main"
         self.ollama_available = None   # None=unknown, True=available, False=unavailable

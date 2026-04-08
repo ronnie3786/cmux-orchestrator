@@ -2,6 +2,8 @@ import json
 import os
 import pathlib
 import re
+import shlex
+import hashlib
 import subprocess
 import threading
 import time
@@ -44,7 +46,7 @@ _RETRY_REQUEST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _WORKSPACE_TOOL_TRACE_RE = re.compile(
-    r"^\s*(?:[●•◦]\s*)?(?:Bash|Read|Write|Edit|MultiEdit|Glob|Grep|Search|LS|ListDir|TodoRead|TodoWrite|NotebookRead|NotebookEdit|WebFetch|WebSearch|Fetch|Task|Agent|Open|Find|MCP)\b",
+    r"^\s*(?:[●•◦⏺]\s*)?(?:Bash|Read|Write|Edit|MultiEdit|Glob|Grep|Search|LS|ListDir|TodoRead|TodoWrite|NotebookRead|NotebookEdit|WebFetch|WebSearch|Fetch|Task|Agent|Open|Find|MCP)\b",
     re.IGNORECASE,
 )
 _WORKSPACE_TRANSCRIPT_META_RE = re.compile(
@@ -53,6 +55,17 @@ _WORKSPACE_TRANSCRIPT_META_RE = re.compile(
 )
 _WORKSPACE_TRANSCRIPT_EXPAND_RE = re.compile(
     r"^\s*(?:\.\.\.|…)\s*\+\d+\s+lines?\b.*ctrl\+o\s+to\s+expand",
+    re.IGNORECASE,
+)
+_WORKSPACE_PROMPT_LINE_RE = re.compile(r"^\s*[❯>›]\s*$")
+_WORKSPACE_CALLBACK_PROTOCOL_RE = re.compile(
+    r"(?:Do not answer in the terminal for this turn|When you are ready to answer the user:|"
+    r"Write ONLY the final answer, in Markdown, to this file:|"
+    r"Run this exact command from the shell:|"
+    r"The callback payload must be concise and directly useful to the user\.|"
+    r"The turn is not complete until the callback command succeeds\.|"
+    r"If the callback command fails, print a short note about the callback failure and stop\.|"
+    r"User message:|/tmp/cmux-turn-|report_turn\.py|--turn-id|--workspace-id|--token)",
     re.IGNORECASE,
 )
 
@@ -68,6 +81,7 @@ class Orchestrator:
         self._task_last_progress = {}
         self._lock = threading.Lock()
         self._orchestrator_response_pattern = re.compile(r"(?:^|\n)\s*(?:❯(?:\s|$)|[>›](?:\s|$)|Model:)", re.MULTILINE)
+        self._reconcile_workspace_state_on_startup()
         self._idle_sweep_thread = threading.Thread(target=self._idle_sweep, daemon=True)
         self._idle_sweep_thread.start()
 
@@ -153,6 +167,10 @@ class Orchestrator:
             messages = self._workspace_messages.setdefault(workspace_id, [])
             messages.append(msg)
         workspaces.append_workspace_message(workspace_id, msg)
+        try:
+            workspaces.sync_workspace_conversation_context(workspace_id)
+        except (FileNotFoundError, OSError):
+            pass
         return msg
 
     def _close_workspace(self, objective_id, workspace_id, purpose, task_id=None):
@@ -181,6 +199,23 @@ class Orchestrator:
             self._log_event(objective_id, "error", "exception", details)
 
     def _build_workspace_context_prompt(self, workspace):
+        workspace_id = str(workspace.get("id") or "").strip()
+        context_file = workspaces.workspace_conversation_context_path(workspace_id)
+        context_block = ""
+        context_message_count = 0
+        for message in workspaces.load_workspace_messages(workspace_id):
+            if str(message.get("type") or "").strip().lower() in {"user", "assistant"} and str(message.get("content") or "").strip():
+                context_message_count += 1
+        if context_file.exists() and context_message_count >= 1:
+            quoted_context_file = shlex.quote(str(context_file))
+            context_block = (
+                "A workspace conversation context file is available for continuity across re-opened sessions.\n"
+                f"Before you answer any live user turn in this session, read this file now: {context_file}\n"
+                f"If needed, use this exact shell command: cat {quoted_context_file}\n"
+                "Do this silently. Do not summarize the file unless the user asks.\n"
+                "Do not claim you lack prior context without first consulting this file.\n"
+                "A new live user turn may be sent separately right after this bootstrap; treat that later turn as authoritative.\n\n"
+            )
         return (
             "You are the workspace assistant for this repo context.\n\n"
             f"Project: {workspace.get('projectId') or ''}\n"
@@ -189,7 +224,174 @@ class Orchestrator:
             "You are running inside this workspace path. Help the user inspect the codebase, answer questions, make edits, run git commands, and support open-ended development work.\n\n"
             "This is NOT a tracked objective unless the user explicitly creates one later.\n"
             "Do not refer to objective.json, plan.md, or task files unless they actually exist in this workspace.\n"
+            f"{context_block}"
+            "This bootstrap message is setup only. Do not answer it by itself.\n"
             "Be concise and practical."
+        )
+
+    def _build_workspace_start_prompt(self, workspace, initial_turn_prompt=""):
+        context_prompt = self._build_workspace_context_prompt(workspace)
+        turn_prompt = str(initial_turn_prompt or "").strip()
+        if not turn_prompt:
+            return context_prompt
+        return (
+            f"{context_prompt}\n\n"
+            "A live user turn follows immediately below. Treat that next block as the only turn you should answer.\n\n"
+            f"{turn_prompt}"
+        )
+
+    def _workspace_runtime_dir(self, workspace_id):
+        runtime_dir = workspaces.workspace_conversation_context_path(workspace_id).parent / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        return runtime_dir
+
+    def _write_workspace_start_instruction_file(self, workspace_id, prompt):
+        runtime_dir = self._workspace_runtime_dir(workspace_id)
+        path = runtime_dir / f"startup-{uuid.uuid4().hex}.md"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(prompt or "").rstrip() + "\n")
+        return path
+
+    def _build_workspace_start_loader_prompt(self, instruction_path):
+        quoted_instruction_path = shlex.quote(str(instruction_path))
+        return (
+            "Do not answer this message directly.\n\n"
+            "Before you do anything else, read the harness startup instruction file at this exact path:\n"
+            f"{instruction_path}\n"
+            f"If needed, use this exact shell command: cat {quoted_instruction_path}\n\n"
+            "That file contains your full startup instructions and the live user turn you must answer. "
+            "Read it completely, then follow it exactly.\n"
+            "If you cannot read the file, print exactly: HARNESS_STARTUP_READ_FAILED"
+        )
+
+    def _workspace_callback_base_url(self):
+        configured = str(
+            getattr(self.engine, "callback_base_url", "") or os.environ.get("CMUX_HARNESS_SERVER_URL", "")
+        ).strip()
+        if configured:
+            return configured.rstrip("/")
+        return "http://127.0.0.1:9090"
+
+    def _workspace_callback_helper_path(self):
+        return str((pathlib.Path(__file__).with_name("report_turn.py")).resolve())
+
+    def _append_workspace_debug(self, workspace_id, level, event, details=None):
+        payload = {
+            "timestamp": _utc_now_iso(),
+            "level": str(level or "info"),
+            "event": str(event or "unknown"),
+            "details": details if isinstance(details, dict) else {},
+        }
+        try:
+            workspaces.append_workspace_debug(workspace_id, payload)
+        except OSError:
+            pass
+
+    def _reconcile_workspace_state_on_startup(self):
+        expected_workspace_dir = objectives.OBJECTIVES_DIR.parent / "workspaces"
+        if pathlib.Path(workspaces.WORKSPACES_DIR) != expected_workspace_dir:
+            return
+        for workspace in workspaces.list_workspace_sessions():
+            workspace_id = str(workspace.get("id") or "").strip()
+            if not workspace_id:
+                continue
+            session_updates = {}
+            stale_turns = []
+            had_session = bool(workspace.get("sessionActive")) or bool(str(workspace.get("cmuxWorkspaceId") or "").strip())
+            if had_session:
+                session_updates = {
+                    "sessionActive": False,
+                    "cmuxWorkspaceId": "",
+                    "status": "idle",
+                }
+                try:
+                    workspaces.update_workspace_session(workspace_id, session_updates)
+                except (FileNotFoundError, OSError):
+                    continue
+            for turn in workspaces.list_workspace_turns(workspace_id):
+                status = str(turn.get("status") or "").lower()
+                if status not in {"pending", "timed_out"}:
+                    continue
+                stale_turns.append(str(turn.get("id") or ""))
+                try:
+                    workspaces.update_workspace_turn(
+                        workspace_id,
+                        str(turn.get("id") or ""),
+                        {
+                            "status": "failed",
+                            "lastError": "Dashboard restarted before this workspace turn completed.",
+                        },
+                    )
+                except (FileNotFoundError, OSError):
+                    continue
+            if session_updates or stale_turns:
+                self._append_workspace_debug(
+                    workspace_id,
+                    "info",
+                    "workspace_startup_reconciled",
+                    {
+                        "clearedSession": had_session,
+                        "clearedTurns": stale_turns,
+                    },
+                )
+
+    def _log_workspace_progress(self, workspace_id, level, event, details=None):
+        safe_details = details if isinstance(details, dict) else {}
+        self._append_workspace_debug(workspace_id, level, event, safe_details)
+        payload = {
+            "timestamp": _utc_now_iso(),
+            "workspaceId": str(workspace_id or ""),
+            "level": str(level or "info"),
+            "event": str(event or "unknown"),
+            "details": safe_details,
+        }
+        try:
+            print(f"[workspace-progress] {json.dumps(payload, sort_keys=True)}", flush=True)
+        except Exception:
+            print(
+                f"[workspace-progress] workspaceId={payload['workspaceId']} "
+                f"level={payload['level']} event={payload['event']}",
+                flush=True,
+            )
+
+    def _build_workspace_turn_prompt(self, workspace, turn):
+        turn_id = str(turn.get("id") or "").strip()
+        token = str(turn.get("token") or "").strip()
+        user_message = str(turn.get("userMessage") or "").strip()
+        callback_file = f"/tmp/cmux-turn-{turn_id}.md"
+        callback_cmd = " ".join(
+            [
+                "python3",
+                shlex.quote(self._workspace_callback_helper_path()),
+                "--server-url",
+                shlex.quote(self._workspace_callback_base_url()),
+                "--workspace-id",
+                shlex.quote(str(workspace.get("id") or "")),
+                "--turn-id",
+                shlex.quote(turn_id),
+                "--token",
+                shlex.quote(token),
+                "--file",
+                shlex.quote(callback_file),
+            ]
+        )
+        return (
+            "Do not answer in the terminal for this turn. Deliver the final user-facing answer through the "
+            "cmux harness callback command below.\n\n"
+            f"Turn ID: {turn_id}\n"
+            f"Workspace: {workspace.get('name') or workspace.get('rootPath') or workspace.get('id')}\n\n"
+            "When you are ready to answer the user:\n"
+            f"1. Write ONLY the final answer, in Markdown, to this file: {callback_file}\n"
+            "2. Run this exact command from the shell:\n"
+            f"{callback_cmd}\n"
+            "3. After the callback succeeds, do not print the full answer in the terminal.\n\n"
+            "Rules:\n"
+            "- The callback payload must be concise and directly useful to the user.\n"
+            "- Do not include tool logs, command transcripts, progress spinners, or status footer text.\n"
+            "- The turn is not complete until the callback command succeeds.\n"
+            "- If the callback command fails, print a short note about the callback failure and stop.\n\n"
+            "User message:\n"
+            f"{user_message}"
         )
 
     def _build_orchestrator_context_prompt(self, objective):
@@ -295,6 +497,445 @@ class Orchestrator:
             metadata["rawResponse"] = raw_response
             metadata["presentation"] = "summary"
         return {"content": cleaned_response, "metadata": metadata}
+
+    def _workspace_progress_snapshot(self, screen, user_message=""):
+        lines = [line.rstrip() for line in str(screen or "").splitlines()]
+        if not lines:
+            return ""
+        cleaned = []
+        skipping_callback_block = False
+        prompt_text = str(user_message or "").strip()
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if skipping_callback_block:
+                    continue
+                if cleaned and cleaned[-1]:
+                    cleaned.append("")
+                continue
+            if _WORKSPACE_CALLBACK_PROTOCOL_RE.search(stripped):
+                skipping_callback_block = True
+                continue
+            if skipping_callback_block:
+                if _WORKSPACE_TOOL_TRACE_RE.match(stripped):
+                    skipping_callback_block = False
+                else:
+                    continue
+            if _WORKSPACE_TRANSCRIPT_META_RE.match(stripped) or _WORKSPACE_TRANSCRIPT_EXPAND_RE.match(stripped):
+                continue
+            if _WORKSPACE_PROMPT_LINE_RE.match(stripped):
+                continue
+            if prompt_text and stripped == prompt_text:
+                continue
+            cleaned.append(line)
+        while cleaned and not cleaned[0].strip():
+            cleaned.pop(0)
+        while cleaned and not cleaned[-1].strip():
+            cleaned.pop()
+        if len(cleaned) > 40:
+            cleaned = cleaned[-40:]
+        return "\n".join(cleaned).strip()
+
+    def _heuristic_workspace_progress(self, snapshot):
+        text = str(snapshot or "").strip()
+        if not text:
+            return None
+        lowered = text.lower()
+        if "needs human" in lowered or "waiting for input" in lowered or "approve" in lowered:
+            return {"state": "waiting", "summary": "Waiting for input or approval.", "shouldDisplay": True}
+        if "git push" in lowered or "pushing" in lowered or "origin/" in lowered and "git log" in lowered:
+            return {"state": "working", "summary": "Checking the remote branch and push status.", "shouldDisplay": True}
+        if "git log" in lowered:
+            return {"state": "working", "summary": "Checking recent git history.", "shouldDisplay": True}
+        if "git diff" in lowered or "diff --stat" in lowered:
+            return {"state": "working", "summary": "Reviewing the current code changes.", "shouldDisplay": True}
+        if "git status" in lowered:
+            return {"state": "working", "summary": "Checking the repo status.", "shouldDisplay": True}
+        if "read" in lowered or "reading files" in lowered or "grep" in lowered or "search" in lowered:
+            return {"state": "working", "summary": "Inspecting files in the workspace.", "shouldDisplay": True}
+        if "write" in lowered or "edit" in lowered:
+            return {"state": "working", "summary": "Updating files in the workspace.", "shouldDisplay": True}
+        if "bash(" in lowered or "⏺ bash" in lowered or "running" in lowered:
+            return {"state": "working", "summary": "Running commands in the workspace.", "shouldDisplay": True}
+        return None
+
+    def _normalize_workspace_progress_result(self, result):
+        if not isinstance(result, dict) or result.get("error"):
+            return None
+        summary = str(result.get("summary") or "").strip()
+        state = str(result.get("state") or "working").strip().lower()
+        should_display = result.get("shouldDisplay")
+        if should_display is None:
+            should_display = bool(summary)
+        if not isinstance(should_display, bool):
+            return None
+        if state not in {"working", "waiting", "unknown"}:
+            state = "working"
+        if should_display and not summary:
+            return None
+        return {
+            "state": state,
+            "summary": summary[:160],
+            "shouldDisplay": should_display,
+        }
+
+    def _summarize_workspace_progress(
+        self,
+        screen,
+        *,
+        user_message="",
+        previous_summary="",
+        elapsed_seconds=0,
+        workspace_id="",
+        turn_id="",
+        snapshot_hash="",
+    ):
+        snapshot = self._workspace_progress_snapshot(screen, user_message=user_message)
+        if not snapshot:
+            if workspace_id and turn_id:
+                self._log_workspace_progress(
+                    workspace_id,
+                    "debug",
+                    "workspace_turn_progress_snapshot_empty",
+                    {"turnId": turn_id, "snapshotHash": snapshot_hash},
+                )
+            return None
+        if workspace_id and turn_id:
+            self._log_workspace_progress(
+                workspace_id,
+                "debug",
+                "workspace_turn_progress_haiku_request",
+                {
+                    "turnId": turn_id,
+                    "snapshotHash": snapshot_hash,
+                    "elapsedSeconds": int(max(0, elapsed_seconds)),
+                    "previousSummary": previous_summary[:160],
+                    "snapshotPreview": snapshot[:240],
+                },
+            )
+        prompt = "\n".join(
+            [
+                "You summarize an in-progress coding session from a terminal snapshot.",
+                "This snapshot comes from a Claude Code terminal session.",
+                "This is for a subtle loading subtitle in a UI, not the final user answer.",
+                "Return JSON only with exactly these keys:",
+                '{"state":"working|waiting|unknown","summary":"...","shouldDisplay":true}',
+                "Rules:",
+                "- summary must be one short sentence under 90 characters.",
+                "- Describe only what appears to be happening right now.",
+                "- Do not state final outcomes or completed results.",
+                "- If the screen looks like it is waiting for human input or approval, use state=\"waiting\".",
+                "- If the snapshot is too ambiguous or not meaningfully different from the previous summary, set shouldDisplay to false.",
+                "",
+                "Previous summary:",
+                previous_summary or "(none)",
+                "",
+                f"Elapsed seconds: {int(max(0, elapsed_seconds))}",
+                "",
+                "Terminal snapshot:",
+                snapshot,
+            ]
+        )
+        result = claude_cli.run_haiku(prompt, timeout=20)
+        normalized = self._normalize_workspace_progress_result(result)
+        if not normalized:
+            normalized = self._heuristic_workspace_progress(snapshot)
+        if workspace_id and turn_id:
+            result_preview = result
+            if isinstance(result_preview, dict):
+                result_preview = {
+                    key: (value[:240] if isinstance(value, str) else value)
+                    for key, value in result_preview.items()
+                }
+            elif isinstance(result_preview, str):
+                result_preview = result_preview[:240]
+            self._log_workspace_progress(
+                workspace_id,
+                "debug",
+                "workspace_turn_progress_haiku_result",
+                {
+                    "turnId": turn_id,
+                    "snapshotHash": snapshot_hash,
+                    "rawResult": result_preview,
+                    "normalized": normalized or {},
+                },
+            )
+            if normalized and isinstance(result, dict) and result.get("error"):
+                self._log_workspace_progress(
+                    workspace_id,
+                    "info",
+                    "workspace_turn_progress_fallback_used",
+                    {
+                        "turnId": turn_id,
+                        "snapshotHash": snapshot_hash,
+                        "summary": normalized.get("summary") or "",
+                        "state": normalized.get("state") or "working",
+                        "errorType": str(result.get("type") or ""),
+                    },
+                )
+        return normalized
+
+    def _fail_workspace_turn(self, workspace_id, turn_id, message):
+        error_message = str(message or "").strip() or "Workspace turn failed."
+        try:
+            workspaces.update_workspace_turn(
+                workspace_id,
+                turn_id,
+                {
+                    "status": "failed",
+                    "lastError": error_message,
+                },
+            )
+        except FileNotFoundError:
+            return
+        self._append_workspace_debug(
+            workspace_id,
+            "error",
+            "workspace_turn_failed",
+            {"turnId": turn_id, "message": error_message},
+        )
+        self._append_workspace_message(
+            workspace_id,
+            "alert",
+            error_message,
+            metadata={"turnId": turn_id, "delivery": "callback", "state": "failed"},
+        )
+
+    def _watch_workspace_turn(self, workspace_id, turn_id, timeout_seconds=180, poll_interval=1.0):
+        deadline = time.time() + max(5, int(timeout_seconds))
+        while time.time() < deadline:
+            turn = workspaces.read_workspace_turn(workspace_id, turn_id)
+            if turn is None:
+                return
+            status = str(turn.get("status") or "").lower()
+            if status in {"completed", "failed"}:
+                return
+            time.sleep(poll_interval)
+
+        turn = workspaces.read_workspace_turn(workspace_id, turn_id)
+        if turn is None:
+            return
+        if str(turn.get("status") or "").lower() != "pending":
+            return
+        workspaces.update_workspace_turn(
+            workspace_id,
+            turn_id,
+            {
+                "status": "timed_out",
+                "lastError": "Workspace reply callback timed out.",
+            },
+        )
+        self._append_workspace_debug(
+            workspace_id,
+            "warn",
+            "workspace_turn_timed_out",
+            {"turnId": turn_id, "timeoutSeconds": int(timeout_seconds)},
+        )
+        self._append_workspace_message(
+            workspace_id,
+            "alert",
+            "Workspace reply did not arrive through the callback channel yet. The session may still be working.",
+            metadata={"turnId": turn_id, "delivery": "callback", "state": "timed_out"},
+        )
+
+    def _monitor_workspace_turn_progress(
+        self,
+        workspace_id,
+        turn_id,
+        workspace_uuid,
+        *,
+        user_message="",
+        initial_delay=20.0,
+        interval=22.0,
+    ):
+        self._log_workspace_progress(
+            workspace_id,
+            "info",
+            "workspace_turn_progress_monitor_started",
+            {
+                "turnId": turn_id,
+                "workspaceUuid": str(workspace_uuid or ""),
+                "initialDelaySeconds": float(max(0, initial_delay)),
+                "intervalSeconds": float(max(0, interval)),
+            },
+        )
+        if initial_delay > 0:
+            time.sleep(initial_delay)
+        while True:
+            turn = workspaces.read_workspace_turn(workspace_id, turn_id)
+            if turn is None:
+                self._log_workspace_progress(
+                    workspace_id,
+                    "warn",
+                    "workspace_turn_progress_monitor_stopped",
+                    {"turnId": turn_id, "reason": "turn_missing"},
+                )
+                return
+            status = str(turn.get("status") or "").lower()
+            if status not in {"pending", "timed_out"}:
+                self._log_workspace_progress(
+                    workspace_id,
+                    "info",
+                    "workspace_turn_progress_monitor_stopped",
+                    {"turnId": turn_id, "reason": "turn_not_pending", "status": status},
+                )
+                return
+
+            screen = cmux_api.cmux_read_workspace(0, 0, lines=120, workspace_uuid=workspace_uuid) or ""
+            snapshot = self._workspace_progress_snapshot(screen, user_message=user_message)
+            elapsed_seconds = max(0, int(time.time() - _coerce_timestamp(turn.get("createdAt"), default=time.time())))
+            self._log_workspace_progress(
+                workspace_id,
+                "debug",
+                "workspace_turn_progress_cycle",
+                {
+                    "turnId": turn_id,
+                    "status": status,
+                    "elapsedSeconds": elapsed_seconds,
+                    "screenLines": len(str(screen).splitlines()),
+                    "snapshotLines": len(snapshot.splitlines()) if snapshot else 0,
+                    "snapshotPreview": snapshot[:240],
+                },
+            )
+            if snapshot:
+                snapshot_hash = hashlib.md5(snapshot.encode("utf-8")).hexdigest()
+                previous_hash = str(turn.get("lastScreenHash") or "").strip()
+                previous_summary = str(turn.get("progressSummary") or "").strip()
+                if snapshot_hash != previous_hash or not previous_summary:
+                    summarized = self._summarize_workspace_progress(
+                        screen,
+                        user_message=user_message,
+                        previous_summary=previous_summary,
+                        elapsed_seconds=elapsed_seconds,
+                        workspace_id=workspace_id,
+                        turn_id=turn_id,
+                        snapshot_hash=snapshot_hash,
+                    )
+                    updates = {"lastScreenHash": snapshot_hash}
+                    if summarized and summarized.get("shouldDisplay") and summarized.get("summary"):
+                        summary = summarized["summary"]
+                        if summary != previous_summary:
+                            updates.update(
+                                {
+                                    "progressSummary": summary,
+                                    "progressState": summarized.get("state") or "working",
+                                    "progressUpdatedAt": _utc_now_iso(),
+                                    "progressSequence": int(turn.get("progressSequence") or 0) + 1,
+                                }
+                            )
+                            self._log_workspace_progress(
+                                workspace_id,
+                                "info",
+                                "workspace_turn_progress",
+                                {
+                                    "turnId": turn_id,
+                                    "summary": summary,
+                                    "state": updates["progressState"],
+                                    "snapshotHash": snapshot_hash,
+                                },
+                            )
+                        else:
+                            self._log_workspace_progress(
+                                workspace_id,
+                                "debug",
+                                "workspace_turn_progress_summary_unchanged",
+                                {
+                                    "turnId": turn_id,
+                                    "summary": summary,
+                                    "snapshotHash": snapshot_hash,
+                                },
+                            )
+                    else:
+                        self._log_workspace_progress(
+                            workspace_id,
+                            "debug",
+                            "workspace_turn_progress_summary_skipped",
+                            {
+                                "turnId": turn_id,
+                                "snapshotHash": snapshot_hash,
+                                "previousSummary": previous_summary[:160],
+                            },
+                        )
+                    workspaces.update_workspace_turn(workspace_id, turn_id, updates)
+                else:
+                    self._log_workspace_progress(
+                        workspace_id,
+                        "debug",
+                        "workspace_turn_progress_snapshot_unchanged",
+                        {"turnId": turn_id, "snapshotHash": snapshot_hash},
+                    )
+            else:
+                self._log_workspace_progress(
+                    workspace_id,
+                    "debug",
+                    "workspace_turn_progress_no_snapshot",
+                    {"turnId": turn_id},
+                )
+            time.sleep(interval)
+
+    def finalize_workspace_turn(self, workspace_id, turn_id, token, content, source="callback-helper"):
+        workspace = workspaces.read_workspace_session(workspace_id)
+        if workspace is None:
+            return {"ok": False, "error": "workspace not found"}, 404
+        turn = workspaces.read_workspace_turn(workspace_id, turn_id)
+        if turn is None:
+            return {"ok": False, "error": "workspace turn not found"}, 404
+        if str(token or "").strip() != str(turn.get("token") or "").strip():
+            return {"ok": False, "error": "invalid turn token"}, 403
+
+        status = str(turn.get("status") or "").lower()
+        if status == "completed":
+            return {
+                "ok": True,
+                "turnId": turn_id,
+                "status": "completed",
+                "assistantMessageId": turn.get("assistantMessageId") or "",
+                "idempotent": True,
+            }, 200
+        if status not in {"pending", "timed_out"}:
+            return {"ok": False, "error": f"workspace turn is {status or 'unavailable'}"}, 409
+
+        final_content = str(content or "").strip()
+        if not final_content:
+            return {"ok": False, "error": "content required"}, 400
+
+        message = self._append_workspace_message(
+            workspace_id,
+            "assistant",
+            final_content,
+            metadata={"turnId": turn_id, "delivery": "callback", "source": str(source or "callback-helper")},
+        )
+        workspaces.update_workspace_turn(
+            workspace_id,
+            turn_id,
+            {
+                "status": "completed",
+                "assistantMessageId": message["id"],
+                "contentPreview": final_content[:2000],
+                "callbackSource": str(source or "callback-helper"),
+                "lastError": "",
+                "completedAt": _utc_now_iso(),
+            },
+        )
+        workspaces.update_workspace_session(
+            workspace_id,
+            {
+                "lastActivityAt": _utc_now_iso(),
+                "status": "active",
+            },
+        )
+        self._append_workspace_debug(
+            workspace_id,
+            "info",
+            "workspace_turn_completed",
+            {"turnId": turn_id, "source": str(source or "callback-helper"), "assistantMessageId": message["id"]},
+        )
+        return {
+            "ok": True,
+            "turnId": turn_id,
+            "status": "completed",
+            "assistantMessageId": message["id"],
+        }, 200
 
     def _start_orchestrator_session(self, objective_id):
         objective = objectives.read_objective(objective_id)
@@ -580,7 +1221,7 @@ class Orchestrator:
             messages = list(self._workspace_messages[workspace_id])
         return self._filter_messages_after(messages, after=after)
 
-    def start_workspace_session(self, workspace_id):
+    def start_workspace_session(self, workspace_id, initial_turn_prompt=""):
         workspace = workspaces.read_workspace_session(workspace_id)
         if workspace is None:
             return None
@@ -598,16 +1239,30 @@ class Orchestrator:
         if not self._wait_for_repl(workspace_uuid, objective_id=workspace_id, purpose="workspace"):
             self._close_workspace(workspace_id, workspace_uuid, "workspace_startup_failed")
             return None
-        prompt = self._build_workspace_context_prompt(workspace)
+        prompt = self._build_workspace_start_prompt(workspace, initial_turn_prompt=initial_turn_prompt)
+        if initial_turn_prompt:
+            instruction_path = self._write_workspace_start_instruction_file(workspace_id, prompt)
+            prompt = self._build_workspace_start_loader_prompt(instruction_path)
+            self._append_workspace_debug(
+                workspace_id,
+                "info",
+                "workspace_startup_instruction_file_written",
+                {
+                    "workspaceUuid": str(workspace_uuid or ""),
+                    "path": str(instruction_path),
+                    "promptChars": len(initial_turn_prompt),
+                },
+            )
         if not cmux_api.send_prompt_to_workspace(workspace_uuid, prompt):
             self._close_workspace(workspace_id, workspace_uuid, "workspace_context_failed")
             return None
-        self._capture_workspace_like_response(
-            workspace_id,
-            workspace_uuid,
-            append_message=False,
-            max_polls=90,
-        )
+        if not initial_turn_prompt:
+            self._capture_workspace_like_response(
+                workspace_id,
+                workspace_uuid,
+                append_message=False,
+                max_polls=90,
+            )
         workspaces.update_workspace_session(
             workspace_id,
             {
@@ -637,18 +1292,50 @@ class Orchestrator:
         workspace = workspaces.read_workspace_session(workspace_id)
         if workspace is None:
             return
+        turn = workspaces.create_workspace_turn(workspace_id, user_message=message)
+        self._append_workspace_debug(
+            workspace_id,
+            "info",
+            "workspace_turn_created",
+            {"turnId": turn["id"]},
+        )
         workspace_uuid = workspace.get("cmuxWorkspaceId")
         is_active = workspace.get("sessionActive", False)
+        prompt = self._build_workspace_turn_prompt(workspace, turn)
+        prompt_sent_during_startup = False
         if not workspace_uuid or not is_active:
             self._append_workspace_message(workspace_id, "system", "Resuming workspace session...")
-            workspace_uuid = self.start_workspace_session(workspace_id)
+            workspace_uuid = self.start_workspace_session(workspace_id, initial_turn_prompt=prompt)
             if not workspace_uuid:
-                self._append_workspace_message(workspace_id, "alert", "Could not start workspace session.")
+                self._fail_workspace_turn(workspace_id, turn["id"], "Could not start workspace session.")
                 return
-        baseline_screen = cmux_api.cmux_read_workspace(0, 0, lines=200, workspace_uuid=workspace_uuid) or ""
-        if not cmux_api.send_prompt_to_workspace(workspace_uuid, message):
-            self._append_workspace_message(workspace_id, "alert", "Could not deliver message to workspace session.")
-            return
+            prompt_sent_during_startup = True
+        if not prompt_sent_during_startup and not cmux_api.send_prompt_to_workspace(workspace_uuid, prompt):
+            self._append_workspace_debug(
+                workspace_id,
+                "warn",
+                "workspace_turn_send_failed",
+                {"turnId": turn["id"], "workspaceUuid": str(workspace_uuid or ""), "retrying": bool(is_active and workspace_uuid)},
+            )
+            if is_active and workspace_uuid:
+                workspaces.update_workspace_session(
+                    workspace_id,
+                    {
+                        "sessionActive": False,
+                        "cmuxWorkspaceId": "",
+                        "status": "idle",
+                    },
+                )
+                self._append_workspace_message(workspace_id, "system", "Reconnecting workspace session...")
+                workspace_uuid = self.start_workspace_session(workspace_id, initial_turn_prompt=prompt)
+                if workspace_uuid:
+                    is_active = True
+                else:
+                    self._fail_workspace_turn(workspace_id, turn["id"], "Could not deliver message to workspace session.")
+                    return
+            else:
+                self._fail_workspace_turn(workspace_id, turn["id"], "Could not deliver message to workspace session.")
+                return
         workspaces.update_workspace_session(
             workspace_id,
             {
@@ -659,18 +1346,14 @@ class Orchestrator:
             },
         )
         threading.Thread(
-            target=self._capture_workspace_like_response,
-            args=(workspace_id, workspace_uuid),
-            kwargs={
-                "baseline_screen": baseline_screen,
-                "user_message": message,
-                "append_message": True,
-                "initial_delay": 0.75,
-                "poll_interval": 1.0,
-                "max_polls": 120,
-                "append_fn": self._append_workspace_message,
-                "prepare_response_fn": self._prepare_workspace_assistant_message,
-            },
+            target=self._watch_workspace_turn,
+            args=(workspace_id, turn["id"]),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._monitor_workspace_turn_progress,
+            args=(workspace_id, turn["id"], workspace_uuid),
+            kwargs={"user_message": message},
             daemon=True,
         ).start()
 

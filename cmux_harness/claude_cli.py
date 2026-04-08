@@ -10,6 +10,17 @@ class ClaudeCliError(Exception):
     pass
 
 
+def _should_retry_without_model(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "invalid api key" in text
+        or "fix external api key" in text
+        or "external api key" in text
+    )
+
+
 def _extract_json(raw):
     if not raw:
         return None
@@ -69,7 +80,12 @@ def run_haiku(prompt: str, timeout: int = 30) -> dict | str:
     try:
         raw = run_claude_print(prompt, model="haiku", timeout=timeout)
     except ClaudeCliError as exc:
-        return _error_dict(str(exc), "claude_cli_error")
+        if not _should_retry_without_model(str(exc)):
+            return _error_dict(str(exc), "claude_cli_error")
+        try:
+            raw = run_claude_print(prompt, timeout=timeout)
+        except ClaudeCliError as retry_exc:
+            return _error_dict(str(retry_exc), "claude_cli_error")
     return _extract_json(raw) or raw
 
 

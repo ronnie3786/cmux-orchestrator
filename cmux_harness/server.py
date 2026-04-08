@@ -314,6 +314,19 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "workspace not found"}, 404)
                     return
                 workspace_routes.handle_get_messages(self, workspace_id, parsed, engine=self.server.engine)
+            elif path.startswith("/api/workspaces/") and path.endswith("/active-turn"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/active-turn")]).strip("/")
+                if workspaces.read_workspace_session(workspace_id) is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_get_active_turn(self, workspace_id)
+            elif path.startswith("/api/workspaces/") and path.endswith("/screen"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/screen")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_get_screen(self, workspace, parsed)
             elif path.startswith("/api/objectives/") and path.endswith("/debug"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/debug")]).strip("/")
                 if objectives.read_objective(objective_id) is None:
@@ -477,6 +490,18 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "workspace not found"}, 404)
                     return
                 workspace_routes.handle_post_start(self, workspace_id, engine=self.server.engine)
+            elif path.startswith("/api/workspaces/") and "/turns/" in path and path.endswith("/finalize"):
+                prefix = path[len("/api/workspaces/"):]
+                workspace_part, turn_part = prefix.split("/turns/", 1)
+                workspace_id = urllib.parse.unquote(workspace_part).strip("/")
+                turn_id = urllib.parse.unquote(turn_part[:-len("/finalize")]).strip("/")
+                workspace_routes.handle_post_finalize_turn(
+                    self,
+                    workspace_id,
+                    turn_id,
+                    data,
+                    engine=self.server.engine,
+                )
             elif path.startswith("/api/workspaces/") and path.endswith("/message"):
                 workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/message")]).strip("/")
                 if workspaces.read_workspace_session(workspace_id) is None:

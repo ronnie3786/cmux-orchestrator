@@ -868,6 +868,91 @@
     0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
     30% { opacity: 1; transform: scale(1); }
   }
+  .turn-live-bubble {
+    min-width: 280px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0)),
+      var(--raised);
+  }
+  .turn-live-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .turn-live-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+  }
+  .turn-live-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--t1);
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+  }
+  .turn-live-elapsed {
+    font-size: 11px;
+    color: var(--t3);
+    white-space: nowrap;
+  }
+  .turn-live-peek {
+    border: 1px solid var(--b2);
+    background: rgba(79,142,247,.12);
+    color: var(--blue);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 7px 10px;
+    cursor: pointer;
+    transition: background .16s ease, color .16s ease, border-color .16s ease;
+  }
+  .turn-live-peek:hover {
+    background: rgba(79,142,247,.22);
+    border-color: rgba(79,142,247,.35);
+    color: #dce9ff;
+  }
+  .turn-live-subtitle {
+    margin-top: 8px;
+    font-size: 14px;
+    color: var(--t2);
+    line-height: 1.45;
+  }
+  .turn-live-subtitle.shimmer {
+    background: linear-gradient(90deg, var(--t2) 0%, #ffffff 35%, var(--t2) 70%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: turnLiveShimmer 2.4s linear infinite;
+  }
+  .turn-live-dots {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 10px;
+  }
+  .turn-live-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--blue);
+    opacity: 0.35;
+    animation: turnLivePulse 1.4s infinite both;
+  }
+  .turn-live-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .turn-live-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes turnLivePulse {
+    0%, 60%, 100% { opacity: 0.22; transform: translateY(0); }
+    30% { opacity: 0.9; transform: translateY(-1px); }
+  }
+  @keyframes turnLiveShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -20% 0; }
+  }
 
   .md-content {
     color: inherit;
@@ -2253,11 +2338,76 @@
     line-height: 1.5;
   }
   .worker-output-content { padding: 12px 16px; }
+  .worker-output-content.workspace-peek {
+    padding: 16px 18px 22px;
+    background:
+      radial-gradient(circle at top left, rgba(79,142,247,.06), transparent 28%),
+      linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0)),
+      #0d1018;
+  }
   .wo-line {
     white-space: pre-wrap;
     word-break: break-all;
     color: var(--t1);
     min-height: 18px;
+  }
+  .workspace-peek .wo-line {
+    min-height: 20px;
+    padding: 1px 0;
+    word-break: break-word;
+  }
+  .workspace-peek .wo-empty {
+    min-height: 12px;
+  }
+  .workspace-peek .wo-tool {
+    color: #f4f7ff;
+    font-weight: 600;
+  }
+  .workspace-peek .wo-bullet {
+    color: #d8dde8;
+    opacity: .95;
+  }
+  .workspace-peek .wo-kind {
+    color: #7eb6ff;
+  }
+  .workspace-peek .wo-tool-call {
+    color: #dce7fb;
+    font-weight: 500;
+  }
+  .workspace-peek .wo-child {
+    color: #aab4c8;
+    padding-left: 18px;
+  }
+  .workspace-peek .wo-numbered {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    color: #e7ebf4;
+  }
+  .workspace-peek .wo-number {
+    color: #8e9ab3;
+    text-align: right;
+    user-select: none;
+  }
+  .workspace-peek .wo-number-text {
+    min-width: 0;
+  }
+  .workspace-peek .wo-meta {
+    color: #8e9ab3;
+  }
+  .workspace-peek .wo-rule {
+    min-height: 1px;
+    margin: 10px 0;
+    padding: 0;
+    background: linear-gradient(90deg, rgba(255,255,255,.18), rgba(255,255,255,.04));
+  }
+  .workspace-peek .wo-emphasis {
+    color: #e8edf8;
+    font-weight: 600;
+  }
+  .workspace-peek .wo-plain {
+    color: #d5dceb;
   }
   .worker-output-refresh {
     border: none;

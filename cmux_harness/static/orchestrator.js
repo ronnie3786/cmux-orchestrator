@@ -38,8 +38,10 @@
     gitCommitFiles: [],
     gitCommitFilesLoading: false,
     workerOutputTaskId: null,
+    workerOutputMode: '',
     workerOutputContent: '',
     workerOutputPolling: false,
+    workerOutputInterval: null,
     gitContextMode: '',
     gitContextFile: '',
     gitContextSection: '',
@@ -91,6 +93,7 @@
     statusSummaryLoading: false,
     statusSummaryError: '',
     statusSummaryTargetKey: null,
+    activeWorkspaceTurn: null,
     draftProjectDir: '',
     draftProjectId: '',
     draftProjectName: '',
@@ -109,6 +112,7 @@
       objectives: null,
       messages: null,
       objective: null,
+      activeTurn: null,
       git: null,
       relative: null,
       debug: null
@@ -2166,6 +2170,8 @@
 
   async function openWorkerOutput(taskId) {
     if (!state.activeObjectiveId || !taskId) return;
+    clearWorkerOutputPolling();
+    state.workerOutputMode = 'task';
     state.workerOutputTaskId = taskId;
     state.workerOutputContent = '';
     const task = findTask(taskId);
@@ -2175,31 +2181,130 @@
     await refreshWorkerOutput();
   }
 
+  function clearWorkerOutputPolling() {
+    if (state.workerOutputInterval) {
+      window.clearInterval(state.workerOutputInterval);
+      state.workerOutputInterval = null;
+    }
+    state.workerOutputPolling = false;
+  }
+
+  async function openWorkspaceOutput() {
+    if (!state.activeWorkspaceId) return;
+    clearWorkerOutputPolling();
+    state.workerOutputMode = 'workspace';
+    state.workerOutputTaskId = null;
+    state.workerOutputContent = '';
+    const title = state.activeWorkspace && state.activeWorkspace.name
+      ? 'Workspace Terminal \u2014 ' + state.activeWorkspace.name
+      : 'Workspace Terminal';
+    els.workerOutputTitle.textContent = title;
+    els.workerOutputBody.innerHTML = '<div class="diff-loading">Loading terminal snapshot\u2026</div>';
+    els.workerOutputOverlay.classList.add('visible');
+    await refreshWorkerOutput();
+    state.workerOutputPolling = true;
+    state.workerOutputInterval = window.setInterval(() => {
+      if (!els.workerOutputOverlay.classList.contains('visible') || state.workerOutputMode !== 'workspace') {
+        clearWorkerOutputPolling();
+        return;
+      }
+      refreshWorkerOutput();
+    }, 3000);
+  }
+
+  function renderWorkspaceTerminalLine(line) {
+    const raw = String(line == null ? '' : line);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return '<div class="wo-line wo-empty">&nbsp;</div>';
+    }
+    if (/^[\u2500-\u257f_\-=]{8,}$/.test(trimmed)) {
+      return '<div class="wo-line wo-rule"></div>';
+    }
+    if (/^\s*(Model:|Cost:|PR\s*#\d+\b|Ctx:)/i.test(trimmed) || /^\s*\*\s+Brewed for\b/i.test(trimmed)) {
+      return '<div class="wo-line wo-meta">' + esc(raw) + '</div>';
+    }
+    const bulletMatch = raw.match(/^(\s*[●•◦⏺]\s+)(.+)$/);
+    if (bulletMatch) {
+      const body = bulletMatch[2];
+      const kindMatch = body.match(/^([A-Za-z][A-Za-z0-9]*)(\(.+\))$/);
+      if (kindMatch) {
+        return [
+          '<div class="wo-line wo-tool">',
+          '<span class="wo-bullet">' + esc(bulletMatch[1]) + '</span>',
+          '<span class="wo-kind">' + esc(kindMatch[1]) + '</span>',
+          '<span class="wo-tool-call">' + esc(kindMatch[2]) + '</span>',
+          '</div>'
+        ].join('');
+      }
+      return '<div class="wo-line wo-tool"><span class="wo-bullet">' + esc(bulletMatch[1]) + '</span>' + esc(body) + '</div>';
+    }
+    if (/^\s*[╰└│]/.test(raw)) {
+      return '<div class="wo-line wo-child">' + esc(raw) + '</div>';
+    }
+    const numberedMatch = raw.match(/^(\s*\d+)\s+(.*)$/);
+    if (numberedMatch) {
+      return [
+        '<div class="wo-line wo-numbered">',
+        '<span class="wo-number">' + esc(numberedMatch[1]) + '</span>',
+        '<span class="wo-number-text">' + esc(numberedMatch[2]) + '</span>',
+        '</div>'
+      ].join('');
+    }
+    if (/^\s{2,}\S/.test(raw)) {
+      return '<div class="wo-line wo-child">' + esc(raw) + '</div>';
+    }
+    if (/^(Here'?s|Potential|Priority|Three files|The instructions|With them|Earlier)/i.test(trimmed)) {
+      return '<div class="wo-line wo-emphasis">' + esc(raw) + '</div>';
+    }
+    return '<div class="wo-line wo-plain">' + esc(raw) + '</div>';
+  }
+
+  function renderWorkerOutputContent(content, mode) {
+    const lines = String(content || '').split('\n');
+    if (mode === 'workspace') {
+      return '<div class="worker-output-content workspace-peek">' + lines.map(renderWorkspaceTerminalLine).join('') + '</div>';
+    }
+    return '<div class="worker-output-content">' + lines.map((line) => '<div class="wo-line">' + esc(line) + '</div>').join('') + '</div>';
+  }
+
   async function refreshWorkerOutput() {
-    const taskId = state.workerOutputTaskId;
-    if (!taskId || !state.activeObjectiveId) return;
+    const mode = state.workerOutputMode || 'task';
     try {
-      const response = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/tasks/' + encodeURIComponent(taskId) + '/screen');
-      if (state.workerOutputTaskId !== taskId) return;
+      let response;
+      if (mode === 'workspace') {
+        const workspaceId = state.activeWorkspaceId;
+        if (!workspaceId) return;
+        response = await api('/api/workspaces/' + encodeURIComponent(workspaceId) + '/screen?lines=220');
+        if (state.workerOutputMode !== 'workspace' || state.activeWorkspaceId !== workspaceId) return;
+      } else {
+        const taskId = state.workerOutputTaskId;
+        if (!taskId || !state.activeObjectiveId) return;
+        response = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/tasks/' + encodeURIComponent(taskId) + '/screen');
+        if (state.workerOutputMode !== 'task' || state.workerOutputTaskId !== taskId) return;
+      }
       if (response.ok) {
         state.workerOutputContent = response.screen || '';
-        const lines = state.workerOutputContent.split('\n');
-        const html = lines.map((line) => '<div class="wo-line">' + esc(line) + '</div>').join('');
-        els.workerOutputBody.innerHTML = '<div class="worker-output-content">' + html + '</div>';
+        els.workerOutputBody.innerHTML = renderWorkerOutputContent(state.workerOutputContent, mode);
         els.workerOutputBody.scrollTop = els.workerOutputBody.scrollHeight;
       } else {
         els.workerOutputBody.innerHTML = '<div class="diff-loading" style="color:var(--red)">' + esc(response.error || 'Failed to load output') + '</div>';
       }
     } catch (error) {
-      if (state.workerOutputTaskId !== taskId) return;
+      if (mode === 'workspace') {
+        if (state.workerOutputMode !== 'workspace') return;
+      } else if (!state.workerOutputTaskId || state.workerOutputMode !== 'task') {
+        return;
+      }
       els.workerOutputBody.innerHTML = '<div class="diff-loading" style="color:var(--red)">' + esc(error.message || 'Failed to load output') + '</div>';
     }
   }
 
   function closeWorkerOutput() {
+    clearWorkerOutputPolling();
+    state.workerOutputMode = '';
     state.workerOutputTaskId = null;
     state.workerOutputContent = '';
-    state.workerOutputPolling = false;
     els.workerOutputOverlay.classList.remove('visible');
     els.workerOutputBody.innerHTML = '';
   }
@@ -3561,6 +3666,45 @@
     ].join('');
   }
 
+  function workspaceTurnSubtitle(turn) {
+    if (!turn) return 'Thinking through the workspace...';
+    const summary = String(turn.progressSummary || '').trim();
+    if (summary) return summary;
+    const stateName = String(turn.progressState || turn.status || '').toLowerCase();
+    if (stateName === 'waiting') return 'Waiting for the workspace session to continue.';
+    if (stateName === 'timed_out') return 'Still working. This one is taking longer than usual.';
+    return 'Thinking through the workspace...';
+  }
+
+  function renderWorkspaceTurnBubble() {
+    const turn = state.activeWorkspaceTurn;
+    if (!turn) return '';
+    const status = String(turn.status || '').toLowerCase();
+    const title = status === 'timed_out' ? 'Still Working' : 'Working On It';
+    const elapsed = durationFrom(turn.createdAt) || '0s';
+    const subtitle = workspaceTurnSubtitle(turn);
+    const shimmerClass = subtitle ? ' turn-live-subtitle shimmer' : ' turn-live-subtitle';
+    return [
+      '<div class="msg">',
+      '<div class="msg-av av-c">⌘</div>',
+      '<div class="msg-body">',
+      '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">live</span></div>',
+      '<div class="msg-bubble turn-live-bubble">',
+      '<div class="turn-live-head">',
+      '<div class="turn-live-title">' + esc(title) + '</div>',
+      '<div class="turn-live-meta">',
+      '<button class="turn-live-peek" type="button" data-workspace-peek="true">Peek Terminal</button>',
+      '<div class="turn-live-elapsed">' + esc(elapsed + ' elapsed') + '</div>',
+      '</div>',
+      '</div>',
+      '<div class="' + shimmerClass.trim() + '">' + esc(subtitle) + '</div>',
+      '<div class="turn-live-dots"><span></span><span></span><span></span></div>',
+      '</div>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
   function renderMessages() {
     const beforeBottom = isNearBottom();
     const oldScrollTop = els.messagesPane.scrollTop;
@@ -3585,7 +3729,9 @@
     } else {
       html = '<div class="thread-div">now</div>' + items.map((item, index) => renderMessageItem(item, shouldGroupSystemItem(items, index))).join('');
     }
-    if (state.typing) {
+    if (state.activeWorkspaceId && state.activeWorkspaceTurn) {
+      html += renderWorkspaceTurnBubble();
+    } else if (state.typing) {
       html += '<div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-bubble typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div>';
     }
     els.messageColumn.innerHTML = html;
@@ -3593,6 +3739,12 @@
       node.addEventListener('click', (event) => {
         event.stopPropagation();
         openWorkerOutput(node.getAttribute('data-worker-task-id'));
+      });
+    });
+    els.messageColumn.querySelectorAll('[data-workspace-peek]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openWorkspaceOutput();
       });
     });
     els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {
@@ -3665,6 +3817,18 @@
       return !serverUserSignatures.has(String(message.content || ''));
     });
     return base.concat(incoming);
+  }
+
+  async function pollActiveWorkspaceTurn(forceRender) {
+    if (!state.activeWorkspaceId) {
+      state.activeWorkspaceTurn = null;
+      if (forceRender) renderMessages();
+      return;
+    }
+    const turn = await api('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId) + '/active-turn');
+    state.activeWorkspaceTurn = turn && typeof turn === 'object' ? turn : null;
+    if (state.activeWorkspaceTurn) state.typing = false;
+    if (forceRender) renderMessages();
   }
 
   function renderInputState() {
@@ -3844,6 +4008,7 @@
     state.activeTargetType = 'objective';
     state.activeWorkspaceId = null;
     state.activeWorkspace = null;
+    state.activeWorkspaceTurn = null;
     state.messages = [];
     state.lastMessageTimestamp = null;
     resetBuildLogState();
@@ -3907,6 +4072,7 @@
     state.debugEntries = [];
     state.debugHasErrors = false;
     closeDebugModal();
+    state.activeWorkspaceTurn = null;
     state.messages = [];
     state.lastMessageTimestamp = null;
     resetBuildLogState();
@@ -3922,7 +4088,10 @@
     if (state.activeWorkspace && state.activeWorkspace.projectId) {
       state.projectExpansion = Object.assign({}, state.projectExpansion, { [state.activeWorkspace.projectId]: true });
     }
-    await pollMessages(false);
+    await Promise.all([
+      pollMessages(false),
+      pollActiveWorkspaceTurn(false)
+    ]);
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
       state.gitStatus = null;
@@ -3953,6 +4122,7 @@
   async function pollActiveWorkspace(forceRender) {
     if (!state.activeWorkspaceId) {
       state.activeWorkspace = null;
+      state.activeWorkspaceTurn = null;
       resetBuildLogState();
       resetConsoleLogState();
       resetStatusSummaryState();
@@ -3970,6 +4140,7 @@
     if (index >= 0) {
       state.workspaces[index] = workspace;
     }
+    await pollActiveWorkspaceTurn(false);
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
       state.gitStatus = null;
@@ -4149,14 +4320,23 @@
       state.lastMessageTimestamp = optimistic.timestamp;
       els.chatInput.value = '';
       autoResizeTextarea();
-      state.typing = true;
+      state.activeWorkspaceTurn = {
+        id: 'pending-local',
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        progressSummary: '',
+        progressState: 'working'
+      };
+      state.typing = false;
       renderMessages();
       try {
         await api('/api/workspaces/' + encodeURIComponent(state.activeWorkspaceId) + '/message', {
           method: 'POST',
           body: JSON.stringify({ message: text })
         });
+        await pollActiveWorkspaceTurn(false);
       } catch (error) {
+        state.activeWorkspaceTurn = null;
         state.typing = false;
         renderMessages();
         showToast(error.message || 'Could not send message');
@@ -4204,6 +4384,7 @@
     if (state.pollers.objectives) window.clearInterval(state.pollers.objectives);
     if (state.pollers.messages) window.clearInterval(state.pollers.messages);
     if (state.pollers.objective) window.clearInterval(state.pollers.objective);
+    if (state.pollers.activeTurn) window.clearInterval(state.pollers.activeTurn);
     if (state.pollers.git) window.clearInterval(state.pollers.git);
     if (state.pollers.relative) window.clearInterval(state.pollers.relative);
     if (state.pollers.debug) window.clearInterval(state.pollers.debug);
@@ -4232,6 +4413,14 @@
         console.error(error);
       }
     }, 5000);
+
+    state.pollers.activeTurn = window.setInterval(async () => {
+      try {
+        if (state.activeWorkspaceId) await pollActiveWorkspaceTurn(false);
+      } catch (error) {
+        console.error(error);
+      }
+    }, 4000);
 
     state.pollers.git = window.setInterval(async () => {
       try {

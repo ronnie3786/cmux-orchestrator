@@ -37,6 +37,30 @@ class TestClaudeCli(unittest.TestCase):
         self.assertEqual(result["type"], "claude_cli_error")
         self.assertIn("timed out", result["error"])
 
+    @patch("cmux_harness.claude_cli.shutil.which", return_value="claude")
+    @patch("cmux_harness.claude_cli.subprocess.run")
+    def test_run_haiku_retries_without_model_on_external_api_key_error(self, mock_run, _mock_which):
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(
+                returncode=2,
+                cmd=["claude", "--print", "--model", "haiku", "-p", "hello"],
+                stderr="Invalid API key · Fix external API key",
+            ),
+            subprocess.CompletedProcess(
+                args=["claude", "--print", "-p", "hello"],
+                returncode=0,
+                stdout='{"ok": true}',
+                stderr="",
+            ),
+        ]
+
+        result = claude_cli.run_haiku("hello", timeout=30)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(mock_run.call_args_list[0].args[0], ["claude", "--print", "--model", "haiku", "-p", "hello"])
+        self.assertEqual(mock_run.call_args_list[1].args[0], ["claude", "--print", "-p", "hello"])
+
     @patch("cmux_harness.claude_cli.subprocess.run")
     def test_run_sonnet_parses_clean_json(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(

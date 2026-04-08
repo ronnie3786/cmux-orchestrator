@@ -1202,75 +1202,39 @@ class TestWorkspaceSessions(unittest.TestCase):
         project = objectives.create_project("Workspace Project", str(self.project_dir), "main")
         return workspaces.create_workspace_session(project["id"], str(self.project_dir), name=name)
 
-    def test_prepare_workspace_assistant_message_strips_tool_transcript(self):
-        prepared = self.orchestrator._prepare_workspace_assistant_message(
-            "\n".join(
-                [
-                    "● Bash(git log --oneline develop..HEAD)",
-                    "  L 5a879f0831 Move TCA Architecture Patterns section to top",
-                    "  ... +4 lines (ctrl+o to expand)",
-                    "",
-                    "● Bash(git diff --stat develop..HEAD)",
-                    "  .github/copilot-instructions.md | 58 ++++++",
-                    "",
-                    "Here's the status of IOSDOX-25557:",
-                    "",
-                    "Branch: rr/chore/IOSDOX-25557-copilot-code-review-instructions",
-                    "7 commits ahead of develop.",
-                    "",
-                    "Want me to check if there's an open PR, or anything else?",
-                    "Model: Opus 4.6 (1M context)",
-                    "Cost: $0.33",
-                ]
-            )
-        )
-
-        self.assertEqual(
-            prepared["content"],
-            "\n".join(
-                [
-                    "Here's the status of IOSDOX-25557:",
-                    "",
-                    "Branch: rr/chore/IOSDOX-25557-copilot-code-review-instructions",
-                    "7 commits ahead of develop.",
-                    "",
-                    "Want me to check if there's an open PR, or anything else?",
-                ]
-            ),
-        )
-        self.assertIn("rawResponse", prepared["metadata"])
-        self.assertEqual(prepared["metadata"]["presentation"], "summary")
-
-    def test_capture_workspace_response_detects_prompt_in_recent_window(self):
+    def test_startup_reconciles_stale_workspace_session_and_turns(self):
         workspace = self._create_workspace()
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="Still working?")
+        workspaces.update_workspace_session(
+            workspace["id"],
+            {
+                "cmuxWorkspaceId": "ws-stale",
+                "sessionActive": True,
+                "status": "active",
+            },
+        )
+        workspaces.update_workspace_turn(
+            workspace["id"],
+            turn["id"],
+            {
+                "status": "timed_out",
+                "progressSummary": "Still working. This one is taking longer than usual.",
+            },
+        )
 
-        footer = "\n".join(["status line 1", "status line 2", "status line 3", "status line 4", "status line 5", "status line 6"])
-        with patch(
-            "cmux_harness.orchestrator.cmux_api.cmux_read_workspace",
-            side_effect=[
-                "What changed?\nWorking",
-                f"What changed?\nHere is the concise answer.\n❯\n{footer}",
-                f"What changed?\nHere is the concise answer.\n❯\n{footer}",
-            ],
-        ), patch("cmux_harness.orchestrator.time.sleep", return_value=None):
-            response = self.orchestrator._capture_workspace_like_response(
-                workspace["id"],
-                "ws-1",
-                baseline_screen="What changed?",
-                user_message="What changed?",
-                append_fn=self.orchestrator._append_workspace_message,
-                prepare_response_fn=self.orchestrator._prepare_workspace_assistant_message,
-                initial_delay=0,
-                poll_interval=0,
-                max_polls=3,
-            )
+        reconciled = Orchestrator(object())
 
-        self.assertEqual(response, "Here is the concise answer.")
-        messages = self.orchestrator.get_workspace_messages(workspace["id"])
-        self.assertEqual(messages[-1]["type"], "assistant")
-        self.assertEqual(messages[-1]["content"], "Here is the concise answer.")
+        del reconciled
+        updated_workspace = workspaces.read_workspace_session(workspace["id"])
+        updated_turn = workspaces.read_workspace_turn(workspace["id"], turn["id"])
+        self.assertEqual(updated_workspace["sessionActive"], False)
+        self.assertEqual(updated_workspace["cmuxWorkspaceId"], "")
+        self.assertEqual(updated_workspace["status"], "idle")
+        self.assertEqual(updated_turn["status"], "failed")
+        self.assertIn("Dashboard restarted", updated_turn["lastError"])
+        self.assertIsNone(workspaces.get_active_workspace_turn(workspace["id"]))
 
-    def test_handle_workspace_input_uses_workspace_summary_capture_settings(self):
+    def test_handle_workspace_input_wraps_message_for_callback_delivery(self):
         workspace = self._create_workspace()
         workspaces.update_workspace_session(
             workspace["id"],
@@ -1280,21 +1244,314 @@ class TestWorkspaceSessions(unittest.TestCase):
                 "status": "active",
             },
         )
+        self.orchestrator._append_workspace_message(workspace["id"], "assistant", "The branch is up and the push succeeded.")
+        self.orchestrator._append_workspace_message(workspace["id"], "user", "What changed in the branch?")
 
-        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="baseline"), \
-                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True), \
+        with patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
                 patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
             self.orchestrator.handle_workspace_input(workspace["id"], "What's the status?")
 
-        self.assertEqual(mock_thread.call_args.kwargs["target"], self.orchestrator._capture_workspace_like_response)
-        kwargs = mock_thread.call_args.kwargs["kwargs"]
-        self.assertEqual(kwargs["initial_delay"], 0.75)
-        self.assertEqual(kwargs["poll_interval"], 1.0)
-        self.assertEqual(kwargs["max_polls"], 120)
-        self.assertEqual(kwargs["prepare_response_fn"], self.orchestrator._prepare_workspace_assistant_message)
+        turns = workspaces.list_workspace_turns(workspace["id"])
+        self.assertEqual(len(turns), 1)
+        turn = turns[0]
+        prompt = mock_send.call_args.args[1]
+        self.assertIn("Do not answer in the terminal for this turn.", prompt)
+        self.assertIn("report_turn.py", prompt)
+        self.assertIn(turn["id"], prompt)
+        self.assertIn(turn["token"], prompt)
+        self.assertNotIn("Recent workspace conversation context follows.", prompt)
+        self.assertNotIn("The branch is up and the push succeeded.", prompt)
+        self.assertNotIn("What changed in the branch?", prompt)
+        self.assertEqual(mock_thread.call_count, 2)
+        thread_calls = [call.kwargs for call in mock_thread.call_args_list]
+        self.assertEqual(thread_calls[0]["target"], self.orchestrator._watch_workspace_turn)
+        self.assertEqual(thread_calls[0]["args"], (workspace["id"], turn["id"]))
+        self.assertEqual(thread_calls[1]["target"], self.orchestrator._monitor_workspace_turn_progress)
+        self.assertEqual(thread_calls[1]["args"], (workspace["id"], turn["id"], "ws-1"))
+        self.assertEqual(thread_calls[1]["kwargs"]["user_message"], "What's the status?")
         messages = self.orchestrator.get_workspace_messages(workspace["id"])
-        self.assertEqual(messages[0]["type"], "user")
+        self.assertEqual(messages[0]["type"], "assistant")
         self.assertEqual(messages[-1]["content"], "What's the status?")
+
+    def test_append_workspace_message_syncs_conversation_context_file(self):
+        workspace = self._create_workspace()
+
+        self.orchestrator._append_workspace_message(workspace["id"], "assistant", "The branch is up and the push succeeded.")
+        self.orchestrator._append_workspace_message(workspace["id"], "user", "What changed in the branch?")
+
+        context_path = workspaces.workspace_conversation_context_path(workspace["id"])
+        self.assertTrue(context_path.exists())
+        content = context_path.read_text(encoding="utf-8")
+        self.assertIn("# Workspace Conversation Context", content)
+        self.assertIn("## Assistant", content)
+        self.assertIn("The branch is up and the push succeeded.", content)
+        self.assertIn("## User", content)
+        self.assertIn("What changed in the branch?", content)
+
+    def test_start_workspace_session_bootstraps_from_conversation_context_file(self):
+        workspace = self._create_workspace()
+        self.orchestrator._append_workspace_message(workspace["id"], "assistant", "The branch is up and the push succeeded.")
+        self.orchestrator._append_workspace_message(workspace["id"], "user", "What changed in the branch?")
+        context_path = workspaces.workspace_conversation_context_path(workspace["id"])
+
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-start", True)) as mock_create, \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True) as mock_wait, \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch.object(self.orchestrator, "_capture_workspace_like_response", return_value=""):
+            workspace_uuid = self.orchestrator.start_workspace_session(workspace["id"])
+
+        self.assertEqual(workspace_uuid, "ws-start")
+        mock_create.assert_called_once()
+        mock_wait.assert_called_once_with("ws-start", objective_id=workspace["id"], purpose="workspace")
+        prompt = mock_send.call_args.args[1]
+        self.assertIn("A workspace conversation context file is available for continuity across re-opened sessions.", prompt)
+        self.assertIn("Before you answer any live user turn in this session, read this file now:", prompt)
+        self.assertIn("Do not claim you lack prior context without first consulting this file.", prompt)
+        self.assertIn(str(context_path), prompt)
+        self.assertIn("cat " + str(context_path), prompt)
+        self.assertIn("Do this silently.", prompt)
+
+    def test_start_workspace_session_combines_bootstrap_and_initial_turn(self):
+        workspace = self._create_workspace()
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-start", True)), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch.object(self.orchestrator, "_capture_workspace_like_response", return_value="") as mock_capture:
+            workspace_uuid = self.orchestrator.start_workspace_session(
+                workspace["id"],
+                initial_turn_prompt="User message:\nExplain the value we'd get from that.",
+            )
+
+        self.assertEqual(workspace_uuid, "ws-start")
+        prompt = mock_send.call_args.args[1]
+        self.assertIn("Do not answer this message directly.", prompt)
+        self.assertIn("Before you do anything else, read the harness startup instruction file at this exact path:", prompt)
+        self.assertIn("HARNESS_STARTUP_READ_FAILED", prompt)
+        instruction_path = None
+        for line in prompt.splitlines():
+            if "/runtime/startup-" in line and line.strip().endswith(".md"):
+                instruction_path = Path(line.strip())
+                break
+        self.assertIsNotNone(instruction_path)
+        self.assertTrue(instruction_path.exists())
+        content = instruction_path.read_text(encoding="utf-8")
+        self.assertIn("This bootstrap message is setup only. Do not answer it by itself.", content)
+        self.assertIn("A live user turn follows immediately below.", content)
+        self.assertIn("User message:\nExplain the value we'd get from that.", content)
+        mock_capture.assert_not_called()
+
+    def test_handle_workspace_input_starts_inactive_workspace_with_single_combined_send(self):
+        workspace = self._create_workspace()
+        with patch.object(self.orchestrator, "start_workspace_session", return_value="ws-start") as mock_start, \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
+            self.orchestrator.handle_workspace_input(workspace["id"], "Explain the value we'd get from that.")
+
+        self.assertEqual(mock_send.call_count, 0)
+        self.assertEqual(mock_start.call_count, 1)
+        self.assertEqual(mock_start.call_args.kwargs["initial_turn_prompt"].count("Do not answer in the terminal for this turn."), 1)
+        self.assertEqual(mock_thread.call_count, 2)
+
+    def test_handle_workspace_input_reconnects_when_saved_workspace_is_gone(self):
+        workspace = self._create_workspace()
+        workspaces.update_workspace_session(
+            workspace["id"],
+            {
+                "cmuxWorkspaceId": "ws-stale",
+                "sessionActive": True,
+                "status": "active",
+            },
+        )
+
+        with patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", side_effect=[False, True]) as mock_send, \
+                patch.object(self.orchestrator, "start_workspace_session", return_value="ws-fresh") as mock_start, \
+                patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
+            self.orchestrator.handle_workspace_input(workspace["id"], "How did the push go?")
+
+        self.assertEqual(mock_send.call_count, 1)
+        self.assertEqual(mock_send.call_args_list[0].args[0], "ws-stale")
+        mock_start.assert_called_once()
+        self.assertEqual(mock_start.call_args.args, (workspace["id"],))
+        self.assertEqual(mock_start.call_args.kwargs["initial_turn_prompt"].count("Do not answer in the terminal for this turn."), 1)
+        updated_workspace = workspaces.read_workspace_session(workspace["id"])
+        self.assertEqual(updated_workspace["sessionActive"], True)
+        self.assertEqual(updated_workspace["cmuxWorkspaceId"], "ws-fresh")
+        messages = self.orchestrator.get_workspace_messages(workspace["id"])
+        self.assertTrue(any(msg["type"] == "system" and "Reconnecting workspace session" in msg["content"] for msg in messages))
+        self.assertEqual(mock_thread.call_count, 2)
+
+    def test_finalize_workspace_turn_appends_callback_message(self):
+        workspace = self._create_workspace()
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="Need the TL;DR")
+
+        payload, status = self.orchestrator.finalize_workspace_turn(
+            workspace["id"],
+            turn["id"],
+            turn["token"],
+            "TL;DR: branch is ready for final review.",
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["ok"], True)
+        updated_turn = workspaces.read_workspace_turn(workspace["id"], turn["id"])
+        self.assertEqual(updated_turn["status"], "completed")
+        messages = self.orchestrator.get_workspace_messages(workspace["id"])
+        self.assertEqual(messages[-1]["type"], "assistant")
+        self.assertEqual(messages[-1]["content"], "TL;DR: branch is ready for final review.")
+        self.assertEqual(messages[-1]["metadata"]["delivery"], "callback")
+
+    def test_watch_workspace_turn_marks_timeout_and_appends_alert(self):
+        workspace = self._create_workspace()
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="What changed?")
+
+        with patch("cmux_harness.orchestrator.time.time", side_effect=[0, 6, 6]), \
+                patch("cmux_harness.orchestrator.time.sleep", return_value=None):
+            self.orchestrator._watch_workspace_turn(workspace["id"], turn["id"], timeout_seconds=1, poll_interval=0)
+
+        updated_turn = workspaces.read_workspace_turn(workspace["id"], turn["id"])
+        self.assertEqual(updated_turn["status"], "timed_out")
+        messages = self.orchestrator.get_workspace_messages(workspace["id"])
+        self.assertEqual(messages[-1]["type"], "alert")
+        self.assertIn("did not arrive through the callback channel", messages[-1]["content"])
+
+    def test_monitor_workspace_turn_progress_updates_turn_summary(self):
+        workspace = self._create_workspace()
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="What is it doing?")
+
+        def _sleep(_seconds):
+            workspaces.update_workspace_turn(workspace["id"], turn["id"], {"status": "completed"})
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Mapping salaries...\nReading files\n"), \
+                patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value={
+                    "state": "working",
+                    "summary": "Inspecting files and mapping the code paths.",
+                    "shouldDisplay": True,
+                }), \
+                patch("cmux_harness.orchestrator.time.sleep", side_effect=_sleep):
+            self.orchestrator._monitor_workspace_turn_progress(
+                workspace["id"],
+                turn["id"],
+                "ws-1",
+                user_message="What is it doing?",
+                initial_delay=0,
+                interval=0,
+            )
+
+        updated_turn = workspaces.read_workspace_turn(workspace["id"], turn["id"])
+        self.assertEqual(updated_turn["progressSummary"], "Inspecting files and mapping the code paths.")
+        self.assertEqual(updated_turn["progressState"], "working")
+        self.assertEqual(updated_turn["progressSequence"], 1)
+
+    def test_workspace_progress_snapshot_ignores_callback_protocol_text(self):
+        snapshot = self.orchestrator._workspace_progress_snapshot(
+            "\n".join(
+                [
+                    "Do not answer in the terminal for this turn.",
+                    "When you are ready to answer the user:",
+                    "1. Write ONLY the final answer, in Markdown, to this file: /tmp/cmux-turn-123.md",
+                    "2. Run this exact command from the shell:",
+                    "python3 /tmp/report_turn.py --turn-id 123 --token abc",
+                    "",
+                    "⏺ Bash(git log --oneline -5 HEAD)",
+                    "  abc123 recent commit",
+                ]
+            ),
+            user_message="How did the push go?",
+        )
+
+        self.assertEqual(
+            snapshot,
+            "\n".join(
+                [
+                    "⏺ Bash(git log --oneline -5 HEAD)",
+                    "  abc123 recent commit",
+                ]
+            ),
+        )
+
+    def test_summarize_workspace_progress_uses_heuristic_when_haiku_fails(self):
+        with patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value={
+            "error": "Invalid API key · Fix external API key",
+            "type": "claude_cli_error",
+            "timestamp": "2026-04-08T04:17:22+00:00",
+        }):
+            result = self.orchestrator._summarize_workspace_progress(
+                "⏺ Bash(git log --oneline -5 origin/main)\n  abc123 latest commit\n",
+                user_message="How did the push go?",
+                previous_summary="",
+                elapsed_seconds=40,
+                workspace_id="ws-local",
+                turn_id="turn-1",
+                snapshot_hash="hash-1",
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "state": "working",
+                "summary": "Checking the remote branch and push status.",
+                "shouldDisplay": True,
+            },
+        )
+
+    def test_monitor_workspace_turn_progress_logs_debug_events(self):
+        workspace = self._create_workspace()
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="What is it doing?")
+
+        def _sleep(_seconds):
+            workspaces.update_workspace_turn(workspace["id"], turn["id"], {"status": "completed"})
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Mapping salaries...\nReading files\n"), \
+                patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value={
+                    "state": "working",
+                    "summary": "Inspecting files and mapping the code paths.",
+                    "shouldDisplay": True,
+                }), \
+                patch("cmux_harness.orchestrator.time.sleep", side_effect=_sleep), \
+                patch("builtins.print") as mock_print:
+            self.orchestrator._monitor_workspace_turn_progress(
+                workspace["id"],
+                turn["id"],
+                "ws-1",
+                user_message="What is it doing?",
+                initial_delay=0,
+                interval=0,
+            )
+
+        log_lines = [" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list]
+        self.assertTrue(any("[workspace-progress]" in line for line in log_lines))
+        self.assertTrue(any("workspace_turn_progress_monitor_started" in line for line in log_lines))
+        self.assertTrue(any("workspace_turn_progress_haiku_request" in line for line in log_lines))
+        self.assertTrue(any("workspace_turn_progress_haiku_result" in line for line in log_lines))
+        self.assertTrue(any("workspace_turn_progress\"" in line for line in log_lines))
+
+    def test_monitor_workspace_turn_progress_uses_fallback_when_haiku_errors(self):
+        workspace = self._create_workspace()
+        turn = workspaces.create_workspace_turn(workspace["id"], user_message="How did the push go?")
+
+        def _sleep(_seconds):
+            workspaces.update_workspace_turn(workspace["id"], turn["id"], {"status": "completed"})
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="⏺ Bash(git log --oneline -5 origin/main)\n  abc123 latest commit\n"), \
+                patch("cmux_harness.orchestrator.claude_cli.run_haiku", return_value={
+                    "error": "Invalid API key · Fix external API key",
+                    "type": "claude_cli_error",
+                    "timestamp": "2026-04-08T04:17:22+00:00",
+                }), \
+                patch("cmux_harness.orchestrator.time.sleep", side_effect=_sleep):
+            self.orchestrator._monitor_workspace_turn_progress(
+                workspace["id"],
+                turn["id"],
+                "ws-1",
+                user_message="How did the push go?",
+                initial_delay=0,
+                interval=0,
+            )
+
+        updated_turn = workspaces.read_workspace_turn(workspace["id"], turn["id"])
+        self.assertEqual(updated_turn["progressSummary"], "Checking the remote branch and push status.")
+        self.assertEqual(updated_turn["progressState"], "working")
+        self.assertEqual(updated_turn["progressSequence"], 1)
 
 
 if __name__ == "__main__":
