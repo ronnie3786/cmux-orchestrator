@@ -3075,6 +3075,8 @@
   });
 
   function renderSidebar() {
+    // Skip re-render while inline rename is active to prevent pollers from destroying the input
+    if (els.objectiveList.querySelector('.obj-name-input')) return;
     const projects = sortedProjects(state.projects);
     if (!projects.length) {
       els.objectiveList.innerHTML = [
