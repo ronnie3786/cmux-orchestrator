@@ -3001,6 +3001,79 @@
     if (target) startInlineRename(target.type, target.id);
   });
 
+  function showDeleteConfirm(type, id) {
+    const item = type === 'objective'
+      ? state.objectives.find((o) => o.id === id)
+      : state.workspaces.find((w) => w.id === id);
+    if (!item) return;
+    const name = type === 'objective' ? (item.goal || 'Untitled') : (item.name || 'Untitled');
+    els.deleteConfirmTitle.textContent = 'Delete ' + type + '?';
+    els.deleteConfirmName.textContent = name;
+    els.deleteConfirmOverlay.classList.add('open');
+
+    function cleanup() {
+      els.deleteConfirmOverlay.classList.remove('open');
+      els.deleteConfirmOk.removeEventListener('click', onConfirm);
+      els.deleteConfirmCancel.removeEventListener('click', onCancel);
+      els.deleteConfirmOverlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onEscape);
+    }
+
+    function onConfirm() {
+      cleanup();
+      executeDelete(type, id);
+    }
+
+    function onCancel() {
+      cleanup();
+    }
+
+    function onBackdrop(e) {
+      if (e.target === els.deleteConfirmOverlay) cleanup();
+    }
+
+    function onEscape(e) {
+      if (e.key === 'Escape') cleanup();
+    }
+
+    els.deleteConfirmOk.addEventListener('click', onConfirm);
+    els.deleteConfirmCancel.addEventListener('click', onCancel);
+    els.deleteConfirmOverlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onEscape);
+  }
+
+  function executeDelete(type, id) {
+    const endpoint = type === 'objective'
+      ? '/api/objectives/' + encodeURIComponent(id)
+      : '/api/workspaces/' + encodeURIComponent(id);
+    fetch(endpoint, { method: 'DELETE' })
+      .then((res) => res.json())
+      .then(() => {
+        if (type === 'objective') {
+          state.objectives = state.objectives.filter((o) => o.id !== id);
+          if (state.activeObjectiveId === id) {
+            state.activeObjectiveId = null;
+            state.activeObjective = null;
+            state.activeTargetType = null;
+          }
+        } else {
+          state.workspaces = state.workspaces.filter((w) => w.id !== id);
+          if (state.activeWorkspaceId === id) {
+            state.activeWorkspaceId = null;
+            state.activeWorkspace = null;
+            state.activeTargetType = null;
+          }
+        }
+        renderSidebar();
+      });
+  }
+
+  els.ctxDelete.addEventListener('click', () => {
+    const target = state.ctxTarget;
+    hideCtxMenu();
+    if (target) showDeleteConfirm(target.type, target.id);
+  });
+
   function renderSidebar() {
     const projects = sortedProjects(state.projects);
     if (!projects.length) {
