@@ -3029,6 +3029,11 @@
         closeSidebar();
       });
     });
+    els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
+      node.addEventListener('contextmenu', (e) => {
+        showCtxMenu(e, 'objective', node.getAttribute('data-objective-id'));
+      });
+    });
     els.objectiveList.querySelectorAll('[data-workspace-id]').forEach((node) => {
       node.addEventListener('click', () => {
         const id = node.getAttribute('data-workspace-id');
@@ -3039,6 +3044,11 @@
           loadActiveWorkspace(true);
         }
         closeSidebar();
+      });
+    });
+    els.objectiveList.querySelectorAll('[data-workspace-id]').forEach((node) => {
+      node.addEventListener('contextmenu', (e) => {
+        showCtxMenu(e, 'workspace', node.getAttribute('data-workspace-id'));
       });
     });
   }
