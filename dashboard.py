@@ -3,7 +3,7 @@
 
 import sys
 import webbrowser
-from http.server import HTTPServer
+from http.server import ThreadingHTTPServer
 
 from cmux_harness.engine import HarnessEngine
 from cmux_harness.server import make_handler
@@ -18,11 +18,12 @@ def main():
 
     handler_class = make_handler(engine)
 
-    print(f"⚡ cmux Auto-Approve Dashboard: http://localhost:{port}")
+    server = ThreadingHTTPServer(("0.0.0.0", port), handler_class)
+    server.engine = engine
+
+    print(f"⚡ cmux Orchestrator: http://localhost:{port}")
     webbrowser.open(f"http://localhost:{port}")
 
-    server = HTTPServer(("0.0.0.0", port), handler_class)
-    server.engine = engine
     try:
         server.serve_forever()
     except KeyboardInterrupt:

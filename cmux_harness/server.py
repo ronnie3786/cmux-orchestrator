@@ -30,8 +30,8 @@ from .routes import workspaces as workspace_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_FILES = {
-    "/": ("dashboard.html", "text/html; charset=utf-8"),
-    "/orchestrator": ("orchestrator.html", "text/html; charset=utf-8"),
+    "/": ("orchestrator.html", "text/html; charset=utf-8"),
+    "/harness": ("dashboard.html", "text/html; charset=utf-8"),
     "/orchestrator.css": ("orchestrator.css", "text/css; charset=utf-8"),
     "/orchestrator.js": ("orchestrator.js", "application/javascript; charset=utf-8"),
 }
@@ -49,8 +49,8 @@ ORCHESTRATOR_HTML = _read_static_file("orchestrator.html", "<html><body><h1>orch
 ORCHESTRATOR_CSS = _read_static_file("orchestrator.css", "/* orchestrator.css not found */\n")
 ORCHESTRATOR_JS = _read_static_file("orchestrator.js", "console.error('orchestrator.js not found');\n")
 _STATIC_CONTENT = {
-    "/": DASHBOARD_HTML,
-    "/orchestrator": ORCHESTRATOR_HTML,
+    "/": ORCHESTRATOR_HTML,
+    "/harness": DASHBOARD_HTML,
     "/orchestrator.css": ORCHESTRATOR_CSS,
     "/orchestrator.js": ORCHESTRATOR_JS,
 }
