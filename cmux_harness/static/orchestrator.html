@@ -138,15 +138,18 @@
 
 <div class="diff-overlay" id="diffOverlay">
   <div class="diff-panel">
-    <div class="diff-panel-header">
-      <div class="diff-panel-title" id="diffPanelTitle">Diff</div>
-      <div class="diff-tabs" id="diffTabs" style="display:none">
-        <button class="diff-tab active" id="diffTabDiff" data-tab="diff" type="button">Diff</button>
-        <button class="diff-tab" id="diffTabPreview" data-tab="preview" type="button">Preview</button>
+    <div class="diff-sidebar" id="diffSidebar"></div>
+    <div class="diff-main">
+      <div class="diff-panel-header">
+        <div class="diff-panel-title" id="diffPanelTitle">Diff</div>
+        <div class="diff-tabs" id="diffTabs" style="display:none">
+          <button class="diff-tab active" id="diffTabDiff" data-tab="diff" type="button">Diff</button>
+          <button class="diff-tab" id="diffTabPreview" data-tab="preview" type="button">Preview</button>
+        </div>
+        <button class="settings-close" id="diffCloseButton" aria-label="Close diff">×</button>
       </div>
-      <button class="settings-close" id="diffCloseButton" aria-label="Close diff">×</button>
+      <div class="diff-panel-body" id="diffPanelBody"></div>
     </div>
-    <div class="diff-panel-body" id="diffPanelBody"></div>
   </div>
 </div>
 

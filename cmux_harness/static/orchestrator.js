@@ -195,6 +195,7 @@
     gitPanelCloseButton: document.getElementById('gitPanelCloseButton'),
     gitContextMenu: document.getElementById('gitContextMenu'),
     diffOverlay: document.getElementById('diffOverlay'),
+    diffSidebar: document.getElementById('diffSidebar'),
     diffPanelTitle: document.getElementById('diffPanelTitle'),
     diffTabs: document.getElementById('diffTabs'),
     diffTabDiff: document.getElementById('diffTabDiff'),
@@ -1963,6 +1964,7 @@
     setDiffTabState('diff');
     els.diffOverlay.classList.remove('visible');
     els.diffPanelBody.innerHTML = '';
+    els.diffSidebar.innerHTML = '';
   }
 
   async function openGitDiff(file, section) {
@@ -1977,6 +1979,7 @@
     els.diffPanelTitle.textContent = file;
     els.diffPanelBody.innerHTML = '<div class="diff-loading">Loading diff…</div>';
     els.diffOverlay.classList.add('visible');
+    renderDiffSidebar();
     try {
       const response = await api('/api/git-diff-path', {
         method: 'POST',
@@ -2034,6 +2037,7 @@
         body: JSON.stringify({ path, file })
       });
       await fetchGitStatus();
+      if (els.diffOverlay.classList.contains('visible')) renderDiffSidebar();
     } catch (error) {
       showToast(error.message || 'Git action failed');
     }
@@ -2053,7 +2057,9 @@
     if (section === 'staged') {
       html += '<div class="git-ctx-item" data-git-action="unstage">Unstage file</div>';
     }
-    html += '<div class="git-ctx-item" data-git-action="diff">View diff</div>';
+    if (options.mode !== 'diff-sidebar') {
+      html += '<div class="git-ctx-item" data-git-action="diff">View diff</div>';
+    }
     html += '<div class="git-ctx-item" data-git-action="open-native">Open in native app</div>';
     html += '<div class="git-ctx-item" data-git-action="copy-path">Copy path</div>';
     els.gitContextMenu.innerHTML = html;
@@ -2184,6 +2190,96 @@
       node.addEventListener('click', (event) => {
         event.stopPropagation();
         openCommitDiff(node.getAttribute('data-commit-hash'), node.getAttribute('data-commit-file'));
+      });
+    });
+  }
+
+  function renderDiffSidebar() {
+    const data = state.gitStatus;
+    const branch = (data && data.branch) || '';
+    const pathLabel = (data && data.cwd) || activeGitPath() || '';
+    const staged = Array.isArray(data && data.staged) ? data.staged : [];
+    const unstaged = Array.isArray(data && data.unstaged) ? data.unstaged : [];
+    const untracked = Array.isArray(data && data.untracked) ? data.untracked : [];
+    const commits = Array.isArray(data && data.commits) ? data.commits : [];
+
+    function sidebarFileEl(status, file, cls, section) {
+      const isActive = state.gitDiffFile === file && state.gitDiffSection === section;
+      return '<div class="git-file' + (isActive ? ' active' : '') + '" data-diff-sb-file="' + esc(file) + '" data-diff-sb-section="' + esc(section) + '" title="' + esc(file) + '"><span class="git-status ' + cls + '">' + esc(status) + '</span><span class="git-file-name">' + esc(file) + '</span></div>';
+    }
+
+    let html = '<div class="diff-sidebar-header">';
+    html += '<div class="diff-sidebar-branch">' + esc(branch || 'Git') + '</div>';
+    if (pathLabel) html += '<div class="diff-sidebar-path" title="' + esc(pathLabel) + '">' + esc(pathLabel) + '</div>';
+    html += '</div><div class="diff-sidebar-body">';
+
+    if (commits.length) {
+      html += '<div class="git-section"><div class="git-section-title commits">Commits</div>';
+      commits.forEach((commit) => {
+        const isExpanded = state.gitExpandedCommit === commit.hash;
+        const chevron = '<span class="git-commit-chevron">' + (isExpanded ? '▼' : '►') + '</span>';
+        html += '<div class="git-commit' + (isExpanded ? ' expanded' : '') + '" data-diff-sb-commit="' + esc(commit.hash) + '">' + chevron + '<span class="git-hash">' + esc(commit.hash) + '</span>' + esc(commit.message) + '</div>';
+        if (isExpanded) {
+          if (state.gitCommitFilesLoading) {
+            html += '<div class="git-commit-files"><div class="diff-loading" style="padding:4px 16px;font-size:11px">Loading…</div></div>';
+          } else if (state.gitCommitFiles.length) {
+            html += '<div class="git-commit-files">';
+            state.gitCommitFiles.forEach((cf) => {
+              const statusCls = 'cf-' + (cf.status || 'M').charAt(0);
+              const isActive = state.gitDiffFile === cf.file && state.gitDiffSection === 'commit';
+              html += '<div class="git-commit-file' + (isActive ? ' active' : '') + '" data-diff-sb-cfile="' + esc(cf.file) + '" data-diff-sb-chash="' + esc(commit.hash) + '"><span class="git-cf-status ' + statusCls + '">' + esc(cf.status) + '</span><span class="git-file-name">' + esc(cf.file) + '</span></div>';
+            });
+            html += '</div>';
+          } else {
+            html += '<div class="git-commit-files"><div class="git-empty" style="padding:4px 16px;font-size:11px">No files</div></div>';
+          }
+        }
+      });
+      html += '</div>';
+    }
+    if (staged.length) {
+      html += '<div class="git-section"><div class="git-section-title staged">Staged</div>';
+      staged.forEach((item) => { html += sidebarFileEl(item.status, item.file, 'st-staged', 'staged'); });
+      html += '</div>';
+    }
+    if (unstaged.length) {
+      html += '<div class="git-section"><div class="git-section-title unstaged">Unstaged</div>';
+      unstaged.forEach((item) => { html += sidebarFileEl(item.status, item.file, 'st-unstaged', 'unstaged'); });
+      html += '</div>';
+    }
+    if (untracked.length) {
+      html += '<div class="git-section"><div class="git-section-title untracked">Untracked</div>';
+      untracked.forEach((item) => { html += sidebarFileEl('?', item, 'st-untracked', 'untracked'); });
+      html += '</div>';
+    }
+    if (!commits.length && !staged.length && !unstaged.length && !untracked.length) {
+      html += '<div class="git-empty" style="padding:16px;font-size:12px">No changes</div>';
+    }
+    html += '</div>';
+    els.diffSidebar.innerHTML = html;
+
+    els.diffSidebar.querySelectorAll('[data-diff-sb-file]').forEach((node) => {
+      node.addEventListener('click', () => {
+        openGitDiff(node.getAttribute('data-diff-sb-file'), node.getAttribute('data-diff-sb-section'));
+      });
+      node.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        showGitContextMenu(event, {
+          mode: 'diff-sidebar',
+          file: node.getAttribute('data-diff-sb-file'),
+          section: node.getAttribute('data-diff-sb-section')
+        });
+      });
+    });
+    els.diffSidebar.querySelectorAll('[data-diff-sb-commit]').forEach((node) => {
+      node.addEventListener('click', () => {
+        toggleCommitExpansion(node.getAttribute('data-diff-sb-commit')).then(() => renderDiffSidebar());
+      });
+    });
+    els.diffSidebar.querySelectorAll('[data-diff-sb-cfile]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openCommitDiff(node.getAttribute('data-diff-sb-chash'), node.getAttribute('data-diff-sb-cfile'));
       });
     });
   }
@@ -2369,6 +2465,7 @@
     els.diffPanelTitle.textContent = file + ' @ ' + shortHash;
     els.diffPanelBody.innerHTML = '<div class="diff-loading">Loading diff\u2026</div>';
     els.diffOverlay.classList.add('visible');
+    renderDiffSidebar();
     try {
       const response = await api('/api/git-commit-diff', {
         method: 'POST',
@@ -3828,10 +3925,22 @@
   function renderApprovalCard(message) {
     const metadata = message.metadata || {};
     const taskId = metadata.task_id || '';
+    const severityLevel = metadata.severity_level;
+    const toolName = metadata.tool_name || '';
+    const toolPreview = metadata.tool_input_preview || '';
+    const severityColors = { 4: '#e6a700', 5: '#d32f2f' };
+    const severityLabels = { 1: 'Safe', 2: 'Write', 3: 'External', 4: 'Judgment', 5: 'Dangerous' };
+    const severityBadge = severityLevel
+      ? '<span class="severity-badge" style="background:' + (severityColors[severityLevel] || '#888') + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-left:8px;">Level ' + severityLevel + ': ' + esc(severityLabels[severityLevel] || '') + '</span>'
+      : '';
+    const toolInfo = toolName
+      ? '<div class="approval-tool-info" style="font-size:12px;color:#888;margin-top:4px;"><code>' + esc(toolName) + '</code>' + (toolPreview ? ' — <span style="font-family:monospace;font-size:11px;">' + esc(toolPreview.substring(0, 120)) + (toolPreview.length > 120 ? '...' : '') + '</span>' : '') + '</div>'
+      : '';
     return [
       '<div class="card-approval">',
-      '<div class="approval-title">Approval needed</div>',
+      '<div class="approval-title">Approval needed' + severityBadge + '</div>',
       '<div class="approval-body">' + esc(message.content || '') + '</div>',
+      toolInfo,
       metadata.screen_preview ? '<div class="screen-preview">' + esc(metadata.screen_preview) + '</div>' : '',
       '<div class="approval-actions">',
       '<button class="approval-btn approve" data-approval-action="approve" data-task-id="' + esc(taskId) + '">Approve</button>',

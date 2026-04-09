@@ -17,7 +17,7 @@ from . import objectives
 from . import workspaces
 from . import review as review_mod
 from . import storage
-from .detection import OLLAMA_URL
+from .engine import OLLAMA_URL
 from .routes import action_buttons as action_buttons_routes
 from .routes import build_log as build_log_routes
 from .routes import console_logs as console_logs_routes
@@ -25,6 +25,7 @@ from .routes import file_browser as file_browser_routes
 from .routes import objectives as objective_routes
 from .routes import projects as project_routes
 from .routes import status_summary as status_summary_routes
+from .routes import hooks as hooks_routes
 from .routes import workspaces as workspace_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -83,7 +84,7 @@ def make_handler(engine):
             self.end_headers()
             try:
                 self.wfile.write(body)
-            except BrokenPipeError:
+            except (BrokenPipeError, ConnectionResetError):
                 return
 
         def _read_body(self):
@@ -1115,6 +1116,8 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
                 self._json_response({"ok": True, "diff": result})
+            elif path == "/api/hooks/pre-tool-use":
+                hooks_routes.handle_pre_tool_use(self, data, engine=self.server.engine)
             else:
                 self.send_error(404)
 
