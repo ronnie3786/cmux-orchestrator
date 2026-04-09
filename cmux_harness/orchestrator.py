@@ -701,17 +701,34 @@ class Orchestrator:
             metadata={"turnId": turn_id, "delivery": "callback", "state": "failed"},
         )
 
-    def _watch_workspace_turn(self, workspace_id, turn_id, timeout_seconds=180, poll_interval=1.0):
-        deadline = time.time() + max(5, int(timeout_seconds))
-        while time.time() < deadline:
+    def _watch_workspace_turn(self, workspace_id, turn_id, soft_timeout=180, hard_timeout=600, poll_interval=1.0):
+        start = time.time()
+        soft_deadline = start + max(5, int(soft_timeout))
+        hard_deadline = start + max(10, int(hard_timeout))
+        soft_sent = False
+
+        while time.time() < hard_deadline:
             turn = workspaces.read_workspace_turn(workspace_id, turn_id)
             if turn is None:
                 return
             status = str(turn.get("status") or "").lower()
             if status in {"completed", "failed"}:
                 return
+
+            # Stage 1: soft "still waiting" message at the soft deadline
+            if not soft_sent and time.time() >= soft_deadline:
+                if status == "pending":
+                    self._append_workspace_message(
+                        workspace_id,
+                        "system",
+                        "Still waiting for workspace reply \u2014 the session appears to be still working.",
+                        metadata={"turnId": turn_id, "delivery": "callback", "state": "waiting"},
+                    )
+                    soft_sent = True
+
             time.sleep(poll_interval)
 
+        # Stage 2: hard timeout alert
         turn = workspaces.read_workspace_turn(workspace_id, turn_id)
         if turn is None:
             return
@@ -729,7 +746,7 @@ class Orchestrator:
             workspace_id,
             "warn",
             "workspace_turn_timed_out",
-            {"turnId": turn_id, "timeoutSeconds": int(timeout_seconds)},
+            {"turnId": turn_id, "timeoutSeconds": int(hard_timeout)},
         )
         self._append_workspace_message(
             workspace_id,
@@ -2935,6 +2952,7 @@ Verdict rules:
                 raise FileNotFoundError(f"objective not found: {objective_id}")
 
             tasks = [task for task in objective.get("tasks", []) if isinstance(task, dict)]
+            contract_metadata = []
             for task in tasks:
                 task_id = task.get("id")
                 if not task_id:
@@ -2942,12 +2960,22 @@ Verdict rules:
                 result = claude_cli.run_sonnet(contracts.build_contract_prompt(task))
                 content = result if isinstance(result, str) else json.dumps(result, indent=2)
                 objectives.write_task_file(objective_id, task_id, "contract.md", content)
+                parsed = contracts.parse_contract(content)
+                contract_metadata.append({
+                    "taskId": task_id,
+                    "title": task.get("title", ""),
+                    "acceptanceCriteria": parsed.get("acceptanceCriteria", "") if parsed else content,
+                    "buildVerification": parsed.get("buildVerification", "") if parsed else "",
+                    "functionalTestHints": parsed.get("functionalTestHints", "") if parsed else "",
+                    "passFailThreshold": parsed.get("passFailThreshold", "") if parsed else "",
+                })
 
             objectives.update_objective(objective_id, {"status": "contract_review"})
             self._append_message(
                 objective_id,
-                "system",
+                "contract_review",
                 "Sprint contracts are ready for review.",
+                metadata={"contracts": contract_metadata},
             )
         except Exception as exc:
             tb = traceback.format_exc()

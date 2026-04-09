@@ -460,6 +460,10 @@
         return { dot: 'od-failed', fill: 'opf-failed', badge: 'badge-failed', label: 'Failed' };
       case 'plan_review':
         return { dot: 'od-plan-review', fill: 'opf-plan-review', badge: 'badge-plan-review', label: 'reviewing plan' };
+      case 'contract_review':
+        return { dot: 'od-plan-review', fill: 'opf-plan-review', badge: 'badge-plan-review', label: 'reviewing contracts' };
+      case 'negotiating_contracts':
+        return { dot: 'od-reviewing', fill: 'opf-reviewing', badge: 'badge-planning', label: 'Negotiating' };
       case 'planning':
         return { dot: 'od-reviewing', fill: 'opf-reviewing', badge: 'badge-planning', label: 'Planning' };
       case 'reviewing':
@@ -682,23 +686,25 @@
     });
   }
 
-  async function loadActionButtons(objectiveId) {
-    if (!objectiveId) {
+  async function loadActionButtons() {
+    const base = currentTargetApiBase();
+    if (!base) {
       state.actionButtons = [];
       state.actionButtonState = {};
       renderFabRail();
       renderFabModal();
       return;
     }
-    const data = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/action-buttons');
-    if (state.activeObjectiveId !== objectiveId) return;
+    const targetKey = currentTargetKey();
+    const data = await api(base + '/action-buttons');
+    if (currentTargetKey() !== targetKey) return;
     state.actionButtons = Array.isArray(data.buttons) ? data.buttons : [];
     renderFabRail();
     renderFabModal();
   }
 
   function showAddModal() {
-    if (!state.activeObjectiveId) return;
+    if (!currentActiveTarget()) return;
     els.fabLabel.value = '';
     els.fabPrompt.value = '';
     els.fabIcon.value = '';
@@ -718,10 +724,10 @@
   }
 
   function renderFabRail() {
-    const objectiveId = getCurrentObjectiveId();
-    const hasObjective = !!objectiveId && !!state.activeObjective;
-    els.fabRail.className = 'fab-rail' + (hasObjective ? ' visible' : '');
-    if (!hasObjective) {
+    const target = currentActiveTarget();
+    const hasTarget = !!target && !!(state.activeObjective || state.activeWorkspace);
+    els.fabRail.className = 'fab-rail' + (hasTarget ? ' visible' : '');
+    if (!hasTarget) {
       els.fabRail.innerHTML = '';
       return;
     }
@@ -760,7 +766,7 @@
   }
 
   function renderFabModal() {
-    const visible = state.fabModalOpen && !!state.activeObjectiveId;
+    const visible = state.fabModalOpen && !!currentActiveTarget();
     els.fabModal.className = 'modal-overlay' + (visible ? ' open' : '');
     els.fabSaveButton.disabled = state.fabSaving;
     const buttons = Array.isArray(state.actionButtons) ? state.actionButtons : [];
@@ -785,7 +791,8 @@
   }
 
   async function saveActionButton() {
-    if (!state.activeObjectiveId) return;
+    const base = currentTargetApiBase();
+    if (!base) return;
     const label = els.fabLabel.value.trim();
     const prompt = els.fabPrompt.value.trim();
     const icon = (els.fabIcon.value || '').trim() || '⚡';
@@ -798,7 +805,7 @@
     renderFabModal();
     renderFabRail();
     try {
-      await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/action-buttons', {
+      await api(base + '/action-buttons', {
         method: 'POST',
         body: JSON.stringify({ label, prompt, icon, color })
       });
@@ -806,7 +813,7 @@
       els.fabPrompt.value = '';
       els.fabIcon.value = '';
       els.fabColor.value = '#4f8ef7';
-      await loadActionButtons(state.activeObjectiveId);
+      await loadActionButtons();
       hideAddModal();
       showToast('Action button saved');
     } catch (error) {
@@ -818,14 +825,15 @@
   }
 
   async function deleteActionButton(buttonId) {
-    if (!state.activeObjectiveId || !buttonId) return;
+    const base = currentTargetApiBase();
+    if (!base || !buttonId) return;
     state.fabDeletingId = buttonId;
     renderFabModal();
     try {
-      await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/action-buttons/' + encodeURIComponent(buttonId), {
+      await api(base + '/action-buttons/' + encodeURIComponent(buttonId), {
         method: 'DELETE'
       });
-      await loadActionButtons(state.activeObjectiveId);
+      await loadActionButtons();
       state.fabDeletingId = null;
       renderFabModal();
       showToast('Action button removed');
@@ -837,19 +845,20 @@
   }
 
   async function executeAction(button) {
-    const objectiveId = getCurrentObjectiveId();
-    if (!objectiveId) return;
+    const base = currentTargetApiBase();
+    if (!base) return;
     setActionButtonState(button.id, 'launching');
     showToast('Spawning ' + (button.label || 'action') + ' session...');
     try {
-      const data = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/action-inject', {
+      const data = await api(base + '/action-inject', {
         method: 'POST',
         body: JSON.stringify({ buttonId: button.id })
       });
       if (data && data.ok) {
         setActionButtonState(button.id, 'success', 1800);
+        const pollTarget = state.activeWorkspaceId ? pollActiveWorkspace : pollActiveObjective;
         await Promise.all([
-          pollActiveObjective(true),
+          pollTarget(true),
           pollMessages(false)
         ]);
         return;
@@ -1504,13 +1513,14 @@
   }
 
   async function fetchDebugErrorState() {
-    if (!state.activeObjectiveId) {
+    const base = currentTargetApiBase();
+    if (!base) {
       state.debugHasErrors = false;
       renderDebugChrome();
       return;
     }
     try {
-      const errors = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/debug?level=error&limit=1');
+      const errors = await api(base + '/debug?level=error&limit=1');
       state.debugHasErrors = Array.isArray(errors) && errors.length > 0;
     } catch (error) {
       state.debugHasErrors = false;
@@ -1519,7 +1529,8 @@
   }
 
   async function fetchDebugEntries() {
-    if (!state.activeObjectiveId) {
+    const base = currentTargetApiBase();
+    if (!base) {
       state.debugEntries = [];
       renderDebugModal();
       renderDebugChrome();
@@ -1528,7 +1539,7 @@
     state.debugLoading = true;
     renderDebugModal();
     try {
-      const entries = await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/debug?limit=200');
+      const entries = await api(base + '/debug?limit=200');
       state.debugEntries = Array.isArray(entries) ? entries : [];
       state.debugHasErrors = state.debugEntries.some((entry) => String(entry.level || '').toLowerCase() === 'error');
     } catch (error) {
@@ -1548,7 +1559,7 @@
   }
 
   function renderDebugChrome() {
-    els.debugFab.disabled = !state.activeObjectiveId;
+    els.debugFab.disabled = !currentActiveTarget();
     els.debugFab.className = 'debug-fab' + (state.debugHasErrors ? ' has-errors' : '');
     els.debugModal.className = 'modal-overlay' + (state.debugOpen ? ' open' : '');
   }
@@ -1586,7 +1597,7 @@
   }
 
   async function openDebugModal() {
-    if (!state.activeObjectiveId) return;
+    if (!currentActiveTarget()) return;
     state.debugOpen = true;
     renderDebugModal();
     await fetchDebugEntries();
@@ -1734,7 +1745,7 @@
     }
 
     const runningObjective = availableObjectives.find((item) => (
-      ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase())
+      ['planning', 'plan_review', 'negotiating_contracts', 'contract_review', 'executing', 'reviewing', 'rework'].includes(String(item.status).toLowerCase())
     ));
     if (runningObjective) {
       state.activeTargetType = 'objective';
@@ -2548,9 +2559,6 @@
           '<input class="sf-input sf-input-readonly" id="workspaceRootPathInput" placeholder="No folder selected" value="' + esc(state.draftWorkspaceRootPath || state.draftProjectDir || '') + '" readonly>',
           '<button class="sf-picker-button" id="workspaceFolderPickerButton" type="button"' + ((state.openPathPickerBusy || state.pendingCreate) ? ' disabled' : '') + '>' + (state.openPathPickerBusy ? 'Choosing…' : 'Browse…') + '</button>',
           '</div>',
-          (state.openPathPickerFallback
-            ? '<input class="sf-input" id="workspaceRootPathManualInput" placeholder="/path/to/repo/or/worktree" value="' + esc(state.draftWorkspaceRootPath || state.draftProjectDir || '') + '">'
-            : '<button class="sf-inline-link" id="workspaceFolderManualButton" type="button"' + formDisabled + '>Type path manually</button>'),
           '<label class="sf-field-label" for="workspaceNameInput">Name (optional)</label>',
           '<input class="sf-input" id="workspaceNameInput" placeholder="Main workspace" value="' + esc(state.draftWorkspaceName || '') + '">',
           '<div class="sf-actions">',
@@ -2652,10 +2660,8 @@
     if (state.sidebarFormMode === 'workspace') {
       const workspaceProjectSelectInput = document.getElementById('workspaceProjectSelectInput');
       const workspaceRootPathInput = document.getElementById('workspaceRootPathInput');
-      const workspaceRootPathManualInput = document.getElementById('workspaceRootPathManualInput');
       const workspaceNameInput = document.getElementById('workspaceNameInput');
       const workspaceFolderPickerButton = document.getElementById('workspaceFolderPickerButton');
-      const workspaceFolderManualButton = document.getElementById('workspaceFolderManualButton');
       document.getElementById('sidebarCreateWorkspaceButton').addEventListener('click', submitSidebarWorkspace);
       workspaceProjectSelectInput.addEventListener('change', (event) => {
         const previousProjectDir = state.draftProjectDir;
@@ -2668,24 +2674,9 @@
       if (workspaceFolderPickerButton) {
         workspaceFolderPickerButton.addEventListener('click', pickWorkspaceFolder);
       }
-      if (workspaceFolderManualButton) {
-        workspaceFolderManualButton.addEventListener('click', () => {
-          state.openPathPickerFallback = true;
-          updateSidebarFormFromState();
-          window.setTimeout(() => {
-            const input = document.getElementById('workspaceRootPathManualInput');
-            if (input) input.focus();
-          }, 0);
-        });
-      }
       if (workspaceRootPathInput) {
         workspaceRootPathInput.addEventListener('click', () => {
-          if (!state.draftWorkspaceRootPath) pickWorkspaceFolder();
-        });
-      }
-      if (workspaceRootPathManualInput) {
-        workspaceRootPathManualInput.addEventListener('input', (event) => {
-          state.draftWorkspaceRootPath = event.target.value;
+          pickWorkspaceFolder();
         });
       }
       workspaceNameInput.addEventListener('input', (event) => {
@@ -2768,7 +2759,6 @@
     openSidebar();
     state.sidebarFormMode = 'workspace';
     state.sidebarFormOpen = true;
-    state.openPathPickerFallback = false;
     state.openPathPickerBusy = false;
     const projects = sortedProjects(state.projects);
     if (!projects.length) {
@@ -2780,10 +2770,7 @@
     const project = setDraftProject(nextProjectId, { updateBaseBranch: false });
     state.draftWorkspaceRootPath = (project && project.rootPath) || state.draftWorkspaceRootPath || '';
     updateSidebarFormFromState();
-    window.setTimeout(() => {
-      const input = document.getElementById('workspaceRootPathInput') || document.getElementById('workspaceProjectSelectInput');
-      if (input) input.focus();
-    }, 0);
+    pickWorkspaceFolder();
   }
 
   function openProjectForm(options) {
@@ -2843,18 +2830,25 @@
         if (!String(state.draftWorkspaceName || '').trim()) {
           state.draftWorkspaceName = inferProjectNameFromPath(state.draftWorkspaceRootPath);
         }
-        state.openPathPickerFallback = false;
         updateSidebarFormFromState();
+        window.setTimeout(() => {
+          const input = document.getElementById('workspaceNameInput');
+          if (input) input.focus();
+        }, 0);
         return;
       }
-      if (result && result.cancelled) return;
-      state.openPathPickerFallback = true;
+      if (result && result.cancelled) {
+        if (!state.draftWorkspaceRootPath) {
+          state.sidebarFormOpen = false;
+          updateSidebarFormFromState();
+        }
+        return;
+      }
       updateSidebarFormFromState();
-      showToast((result && result.error) ? result.error : 'Folder picker unavailable. Enter the path manually.');
+      showToast((result && result.error) ? result.error : 'Folder picker unavailable. Use Browse to try again.');
     } catch (error) {
-      state.openPathPickerFallback = true;
       updateSidebarFormFromState();
-      showToast(error.message || 'Folder picker unavailable. Enter the path manually.');
+      showToast(error.message || 'Folder picker unavailable. Use Browse to try again.');
     } finally {
       state.openPathPickerBusy = false;
       updateSidebarFormFromState();
@@ -3004,6 +2998,8 @@
   function showDeleteConfirm(type, id) {
     const item = type === 'objective'
       ? state.objectives.find((o) => o.id === id)
+      : type === 'project'
+      ? state.projects.find((p) => p.id === id)
       : state.workspaces.find((w) => w.id === id);
     if (!item) return;
     const name = type === 'objective' ? (item.goal || 'Untitled') : (item.name || 'Untitled');
@@ -3045,6 +3041,8 @@
   function executeDelete(type, id) {
     const endpoint = type === 'objective'
       ? '/api/objectives/' + encodeURIComponent(id)
+      : type === 'project'
+      ? '/api/projects/' + encodeURIComponent(id)
       : '/api/workspaces/' + encodeURIComponent(id);
     fetch(endpoint, { method: 'DELETE' })
       .then((res) => res.json())
@@ -3056,6 +3054,9 @@
             state.activeObjective = null;
             state.activeTargetType = null;
           }
+        } else if (type === 'project') {
+          state.projects = state.projects.filter((p) => p.id !== id);
+          delete state.projectExpansion[id];
         } else {
           state.workspaces = state.workspaces.filter((w) => w.id !== id);
           if (state.activeWorkspaceId === id) {
@@ -3073,6 +3074,46 @@
     hideCtxMenu();
     if (target) showDeleteConfirm(target.type, target.id);
   });
+
+  function showProjectMenu(event, projectId) {
+    event.preventDefault();
+    event.stopPropagation();
+    const existing = document.getElementById('projectPopoverMenu');
+    if (existing) existing.remove();
+    const menu = document.createElement('div');
+    menu.id = 'projectPopoverMenu';
+    menu.className = 'ctx-menu open';
+    menu.innerHTML = [
+      '<button class="ctx-menu-item" data-action="add-item" type="button">Add item</button>',
+      '<button class="ctx-menu-item destructive" data-action="delete-project" type="button">Delete project</button>'
+    ].join('');
+    document.body.appendChild(menu);
+    const rect = event.currentTarget.getBoundingClientRect();
+    menu.style.left = rect.right + 'px';
+    menu.style.top = rect.bottom + 'px';
+    requestAnimationFrame(() => {
+      const mr = menu.getBoundingClientRect();
+      if (mr.bottom > window.innerHeight) menu.style.top = (rect.top - mr.height) + 'px';
+      if (mr.right > window.innerWidth) menu.style.left = (rect.left - mr.width) + 'px';
+    });
+    function cleanup() {
+      menu.remove();
+      document.removeEventListener('click', onOutside);
+      document.removeEventListener('keydown', onEscape);
+    }
+    function onOutside(e) { if (!menu.contains(e.target)) cleanup(); }
+    function onEscape(e) { if (e.key === 'Escape') cleanup(); }
+    document.addEventListener('click', onOutside);
+    document.addEventListener('keydown', onEscape);
+    menu.querySelector('[data-action="add-item"]').addEventListener('click', () => {
+      cleanup();
+      openAddKindForm(projectId);
+    });
+    menu.querySelector('[data-action="delete-project"]').addEventListener('click', () => {
+      cleanup();
+      showDeleteConfirm('project', projectId);
+    });
+  }
 
   function renderSidebar() {
     // Skip re-render while inline rename is active to prevent pollers from destroying the input
@@ -3105,7 +3146,7 @@
           const active = item.id === state.activeWorkspaceId ? ' active' : '';
           return [
             '<div class="obj-item nested workspace' + active + '" data-workspace-id="' + esc(item.id) + '">',
-            '<div class="obj-dot ' + (item.sessionActive ? 'od-running' : 'od-queued') + '"></div>',
+            '<div class="obj-dot ' + (item.status === 'starting' ? 'od-starting' : item.status === 'error' ? 'od-failed' : item.sessionActive ? 'od-running' : 'od-queued') + '"></div>',
             '<div class="obj-info">',
             '<div class="obj-name">' + esc(item.name || 'Untitled item') + '</div>',
             '<div class="obj-progress"><span>' + esc(compactPath(item.rootPath || '')) + '</span></div>',
@@ -3149,7 +3190,7 @@
         '<div class="project-name-row"><div class="project-name">' + esc(project.name || 'Untitled project') + '</div><div class="project-count">' + itemCount + '</div></div>',
         pathHint ? '<div class="project-path">' + esc(pathHint) + '</div>' : '',
         '</div>',
-        '<button class="project-add-objective" type="button" data-project-add-item="' + esc(project.id) + '" aria-label="Add item to ' + esc(project.name || 'project') + '">+</button>',
+        '<button class="project-add-objective" type="button" data-project-menu="' + esc(project.id) + '" aria-label="Project options for ' + esc(project.name || 'project') + '">\u22EF</button>',
         '</div>',
         expanded ? '<div class="project-objectives">' + (itemCount ? mixedCards(project.id) : '<div class="project-empty">No items yet</div>') + '</div>' : '',
         '</div>'
@@ -3163,11 +3204,11 @@
         renderSidebar();
       });
     });
-    els.objectiveList.querySelectorAll('[data-project-add-item]').forEach((node) => {
+    els.objectiveList.querySelectorAll('[data-project-menu]').forEach((node) => {
       node.addEventListener('click', (event) => {
         event.stopPropagation();
-        const projectId = node.getAttribute('data-project-add-item');
-        openAddKindForm(projectId);
+        const projectId = node.getAttribute('data-project-menu');
+        showProjectMenu(event, projectId);
       });
     });
     els.objectiveList.querySelectorAll('[data-objective-id]').forEach((node) => {
@@ -3527,6 +3568,57 @@
     ].join('');
   }
 
+  function renderContractReviewCard(message) {
+    const metadata = message.metadata || {};
+    const contracts = Array.isArray(metadata.contracts) ? metadata.contracts : [];
+    return [
+      '<div class="card-plan-review">',
+      '<div class="plan-review-head">',
+      '<div class="plan-review-title">Contract Review</div>',
+      '<div class="plan-review-count">' + esc(contracts.length + ' contract' + (contracts.length === 1 ? '' : 's')) + '</div>',
+      '</div>',
+      '<div class="plan-review-body">',
+      contracts.map(function(contract, index) { return [
+        '<div class="plan-review-task">',
+        '<div class="plan-review-task-head">',
+        '<div class="plan-review-task-number">Task ' + esc(String(index + 1)) + '</div>',
+        '<div class="plan-review-task-title">' + esc(contract.title || contract.taskId || ('Task ' + (index + 1))) + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Acceptance Criteria</div>',
+        '<div class="plan-review-checkpoints">' + (contract.acceptanceCriteria
+          ? '<div class="plan-review-checkpoint">' + esc(contract.acceptanceCriteria) + '</div>'
+          : '<div class="plan-review-checkpoint">None listed.</div>') + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Build Verification</div>',
+        '<div class="plan-review-checkpoints">' + (contract.buildVerification
+          ? '<div class="plan-review-checkpoint">' + esc(contract.buildVerification) + '</div>'
+          : '<div class="plan-review-checkpoint">None listed.</div>') + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Functional Test Hints</div>',
+        '<div class="plan-review-checkpoints">' + (contract.functionalTestHints
+          ? '<div class="plan-review-checkpoint">' + esc(contract.functionalTestHints) + '</div>'
+          : '<div class="plan-review-checkpoint">None listed.</div>') + '</div>',
+        '</div>',
+        '<div class="plan-review-row">',
+        '<div class="plan-review-label">Pass/Fail Threshold</div>',
+        '<div class="plan-review-checkpoints">' + (contract.passFailThreshold
+          ? '<div class="plan-review-checkpoint">' + esc(contract.passFailThreshold) + '</div>'
+          : '<div class="plan-review-checkpoint">None listed.</div>') + '</div>',
+        '</div>',
+        '</div>'
+      ].join(''); }).join(''),
+      '<div class="plan-review-actions">',
+      '<button class="plan-review-approve" type="button" data-contract-action="approve">Approve Contracts</button>',
+      '<div class="plan-review-hint">Type feedback in the chat to request changes, or approve to start execution.</div>',
+      '</div>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
   function renderPlanCard() {
     const tasks = (state.activeObjective && state.activeObjective.tasks) || [];
     return [
@@ -3803,6 +3895,18 @@
         '</div>'
       ].join('');
     }
+    if (item.kind === 'contract_review') {
+      const time = relativeTime(item.message.timestamp);
+      return [
+        '<div class="msg' + groupClass + '">',
+        grouped ? '' : '<div class="msg-av av-c">⌘</div>',
+        '<div class="msg-body">',
+        grouped ? '' : '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">' + esc(time) + '</span></div>',
+        renderContractReviewCard(item.message),
+        '</div>',
+        '</div>'
+      ].join('');
+    }
     if (item.kind === 'plan' || item.kind === 'plan-synthetic') {
       const time = relativeTime(item.message.timestamp);
       return [
@@ -3905,7 +4009,7 @@
       '<div class="turn-live-head">',
       '<div class="turn-live-title">' + esc(title) + '</div>',
       '<div class="turn-live-meta">',
-      '<button class="turn-live-peek" type="button" data-workspace-peek="true">Peek Terminal</button>',
+      '<button class="turn-live-peek" type="button" data-workspace-peek="true">Terminal Peek</button>',
       '<div class="turn-live-elapsed">' + esc(elapsed + ' elapsed') + '</div>',
       '</div>',
       '</div>',
@@ -3929,15 +4033,24 @@
     }
     if (!items.length) {
       let waitingCopy = 'Ready when you are.';
-      if (state.activeWorkspaceId) {
+      var isStarting = state.activeWorkspace && state.activeWorkspace.status === 'starting';
+      var isError = state.activeWorkspace && state.activeWorkspace.status === 'error';
+      if (state.activeWorkspaceId && isStarting) {
+        waitingCopy = 'Starting workspace\u2026';
+      } else if (state.activeWorkspaceId && isError) {
+        waitingCopy = 'Workspace failed to start. Try closing and re-opening it.';
+      } else if (state.activeWorkspaceId) {
         waitingCopy = 'Ready. Ask about the codebase or make a change.';
       } else if (state.activeObjective) {
         const status = String(state.activeObjective.status || '').toLowerCase();
-        waitingCopy = ['planning', 'plan_review', 'executing', 'reviewing', 'rework'].includes(status)
+        waitingCopy = ['planning', 'plan_review', 'negotiating_contracts', 'contract_review', 'executing', 'reviewing', 'rework'].includes(status)
           ? 'Starting the new item...'
           : 'Ready when you are.';
       }
-      html = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">' + esc(waitingCopy) + '</div></div></div>';
+      var startingSpinner = isStarting
+        ? '<div class="workspace-starting-spinner"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>'
+        : '';
+      html = '<div class="thread-div">now</div><div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">just now</span></div><div class="msg-bubble">' + esc(waitingCopy) + startingSpinner + '</div></div></div>';
     } else {
       html = '<div class="thread-div">now</div>' + items.map((item, index) => renderMessageItem(item, shouldGroupSystemItem(items, index))).join('');
     }
@@ -4000,6 +4113,22 @@
         }
       });
     });
+    els.messageColumn.querySelectorAll('[data-contract-action="approve"]').forEach((node) => {
+      node.addEventListener('click', async () => {
+        if (!state.activeObjectiveId) return;
+        try {
+          await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/approve-contracts', {
+            method: 'POST',
+            body: JSON.stringify({})
+          });
+          state.lastMessageTimestamp = null;
+          await pollMessages(true);
+          await pollActiveObjective(true);
+        } catch (error) {
+          showToast(error.message || 'Could not approve contracts');
+        }
+      });
+    });
     els.messageColumn.querySelectorAll('[data-copy-path]').forEach((node) => {
       node.addEventListener('click', () => {
         copyText(node.getAttribute('data-copy-path'), 'Path');
@@ -4045,10 +4174,23 @@
 
   function renderInputState() {
     if (state.activeWorkspace && state.activeWorkspaceId) {
-      els.chatInput.disabled = false;
-      els.inputHint.textContent = 'Chat about this item.';
-      els.chatInput.placeholder = 'Ask about files, code, git status, or make a change...';
-      els.sendButton.disabled = state.pendingCreate || state.pendingSend;
+      var wsStatus = state.activeWorkspace.status;
+      if (wsStatus === 'starting') {
+        els.chatInput.disabled = true;
+        els.inputHint.textContent = 'Workspace is starting\u2026';
+        els.chatInput.placeholder = 'Waiting for workspace to start...';
+        els.sendButton.disabled = true;
+      } else if (wsStatus === 'error') {
+        els.chatInput.disabled = true;
+        els.inputHint.textContent = 'Workspace failed to start.';
+        els.chatInput.placeholder = '';
+        els.sendButton.disabled = true;
+      } else {
+        els.chatInput.disabled = false;
+        els.inputHint.textContent = 'Chat about this item.';
+        els.chatInput.placeholder = 'Ask about files, code, git status, or make a change...';
+        els.sendButton.disabled = state.pendingCreate || state.pendingSend;
+      }
       return;
     }
     const objective = state.activeObjective;
@@ -4067,6 +4209,9 @@
     if (status === 'plan_review') {
       els.inputHint.textContent = 'Type feedback in chat or approve the plan above.';
       els.chatInput.placeholder = 'Type plan feedback or approve above...';
+    } else if (status === 'contract_review') {
+      els.inputHint.textContent = 'Type feedback in chat or approve the contracts above.';
+      els.chatInput.placeholder = 'Type contract feedback or approve above...';
     } else if (status === 'completed') {
       els.inputHint.textContent = 'Item complete. Ask questions about the work done.';
       els.chatInput.placeholder = 'Ask about the completed work...';
@@ -4157,7 +4302,7 @@
     if (objective && objective.projectId) {
       state.projectExpansion = Object.assign({}, state.projectExpansion, { [objective.projectId]: true });
     }
-    await loadActionButtons(state.activeObjectiveId);
+    await loadActionButtons();
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
       state.gitStatus = null;
@@ -4302,7 +4447,9 @@
     }
     await Promise.all([
       pollMessages(false),
-      pollActiveWorkspaceTurn(false)
+      pollActiveWorkspaceTurn(false),
+      loadActionButtons(),
+      fetchDebugErrorState()
     ]);
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
@@ -4335,11 +4482,16 @@
     if (!state.activeWorkspaceId) {
       state.activeWorkspace = null;
       state.activeWorkspaceTurn = null;
+      state.actionButtons = [];
+      state.actionButtonState = {};
+      state.fabModalOpen = false;
       resetBuildLogState();
       resetConsoleLogState();
       resetStatusSummaryState();
       renderBuildLog();
       renderConsoleLog();
+      renderFabRail();
+      renderFabModal();
       return;
     }
     const previousPath = activeGitPath();
@@ -4352,7 +4504,11 @@
     if (index >= 0) {
       state.workspaces[index] = workspace;
     }
-    await pollActiveWorkspaceTurn(false);
+    await Promise.all([
+      pollActiveWorkspaceTurn(false),
+      loadActionButtons()
+    ]);
+    await fetchDebugErrorState();
     const nextPath = activeGitPath();
     if (previousPath !== nextPath) {
       state.gitStatus = null;
@@ -4392,10 +4548,11 @@
         method: 'POST',
         body: JSON.stringify(payload)
       });
-      await api('/api/workspaces/' + encodeURIComponent(workspace.id) + '/start', {
+      // Fire start in background — don't block the UI
+      api('/api/workspaces/' + encodeURIComponent(workspace.id) + '/start', {
         method: 'POST',
         body: JSON.stringify({})
-      });
+      }).catch(function() {});
       state.activeWorkspaceId = workspace.id;
       state.activeTargetType = 'workspace';
       closeSidebar();
@@ -4441,13 +4598,8 @@
 
   async function submitSidebarWorkspace() {
     const projectSelectInput = document.getElementById('workspaceProjectSelectInput');
-    const workspaceRootPathInput = document.getElementById('workspaceRootPathInput');
-    const workspaceRootPathManualInput = document.getElementById('workspaceRootPathManualInput');
     const workspaceNameInput = document.getElementById('workspaceNameInput');
     setDraftProject(projectSelectInput ? projectSelectInput.value.trim() : state.draftProjectId, { updateBaseBranch: false });
-    state.draftWorkspaceRootPath = workspaceRootPathManualInput
-      ? workspaceRootPathManualInput.value.trim()
-      : (workspaceRootPathInput ? workspaceRootPathInput.value.trim() : state.draftWorkspaceRootPath);
     state.draftWorkspaceName = workspaceNameInput ? workspaceNameInput.value.trim() : state.draftWorkspaceName;
     if (!state.draftProjectId || !state.draftWorkspaceRootPath) {
       showToast('Choose a project and path');

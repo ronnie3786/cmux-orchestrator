@@ -205,3 +205,29 @@ Reuses existing overlay with tabs:
 - Review count in top bar
 - Settings modal: review section (enable, model picker, auto-review toggle)
 - Refresh loop for reviews view
+
+---
+
+## Future Enhancements
+
+### Onboarding Flow
+First-time setup experience for new users: project directory picker, initial config walkthrough, and a sample objective to demonstrate the review pipeline.
+
+### Async Workspace Open with Loading State
+
+**Problem:** When a user clicks "Open" for a workspace, the sidebar item does not appear until the cmux session has started and Claude Code is running. This can take several seconds and looks like nothing is happening — the UI feels stuck.
+
+**Solution:** Make workspace startup fully async from the UI's perspective.
+
+**Behavior:**
+1. User clicks "Open" and submits the form
+2. `POST /api/workspaces/<id>/start` is called immediately
+3. The workspace item appears in the sidebar right away (no waiting)
+4. The chat area shows a loading spinner while the session initializes
+5. Frontend polls `GET /api/workspaces/<id>` until `status === "active"`
+6. Once active, the spinner is replaced with the ready message: "Workspace ready. Ask about the codebase or make a change."
+
+**Implementation notes:**
+- The sidebar render should treat a workspace with `status: "starting"` as a valid, selectable item — just with a loading indicator in the chat panel instead of a message thread
+- The "Open" button should enter a submitting state and return to normal after the workspace is persisted (not after Claude is ready)
+- No changes needed to the backend start endpoint — this is purely a frontend async/polling change

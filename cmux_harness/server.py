@@ -333,6 +333,19 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 objective_routes.handle_get_debug(self, objective_id, parsed, engine=self.server.engine)
+            elif path.startswith("/api/workspaces/") and path.endswith("/debug"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/debug")]).strip("/")
+                if workspaces.read_workspace_session(workspace_id) is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                workspace_routes.handle_get_debug(self, workspace_id, parsed)
+            elif path.startswith("/api/workspaces/") and path.endswith("/action-buttons"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/action-buttons")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                action_buttons_routes.handle_get_workspace_action_buttons(self, workspace)
             elif path.startswith("/api/objectives/"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
                 objective = objectives.read_objective(objective_id)
@@ -484,6 +497,36 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 file_browser_routes.handle_open_worktree(self, objective)
+            elif path.startswith("/api/workspaces/") and path.endswith("/action-buttons"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/action-buttons")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                action_buttons_routes.handle_post_workspace_action_buttons(
+                    self,
+                    workspace_id,
+                    workspace,
+                    data,
+                    uuid_module=uuid,
+                )
+            elif path.startswith("/api/workspaces/") and path.endswith("/action-inject"):
+                workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/action-inject")]).strip("/")
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                action_buttons_routes.handle_post_workspace_action_inject(
+                    self,
+                    workspace_id,
+                    workspace,
+                    data,
+                    engine=self.server.engine,
+                    cmux_api=cmux_api,
+                    datetime_cls=datetime,
+                    time_module=time,
+                    re_module=__import__("re"),
+                )
             elif path.startswith("/api/workspaces/") and path.endswith("/start"):
                 workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/start")]).strip("/")
                 if workspaces.read_workspace_session(workspace_id) is None:
@@ -1118,6 +1161,19 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
                 action_buttons_routes.handle_delete_action_button(self, objective_id, objective, button_id)
+                return
+            if path.startswith("/api/workspaces/") and "/action-buttons/" in path:
+                parts = path.split("/")
+                if len(parts) != 6 or parts[1] != "api" or parts[2] != "workspaces" or parts[4] != "action-buttons":
+                    self.send_error(404)
+                    return
+                workspace_id = urllib.parse.unquote(parts[3])
+                button_id = urllib.parse.unquote(parts[5])
+                workspace = workspaces.read_workspace_session(workspace_id)
+                if workspace is None:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                action_buttons_routes.handle_delete_workspace_action_button(self, workspace_id, workspace, button_id)
                 return
             if path.startswith("/api/objectives/"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")

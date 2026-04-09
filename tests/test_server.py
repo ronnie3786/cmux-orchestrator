@@ -1075,6 +1075,47 @@ class TestServerResponses(unittest.TestCase):
         self.assertFalse((self.workspaces_dir / workspace["id"]).exists())
         self.assertEqual(json.loads(handler.wfile.getvalue().decode("utf-8")), {"ok": True})
 
+    def test_post_workspace_start_sets_starting_status_and_returns_immediately(self):
+        root_path = Path(self.tmpdir.name) / "workspace-start"
+        workspace = self._create_workspace(root_path=root_path, name="Start Workspace")
+        engine = Mock()
+        handler = self._make_handler(engine, f"/api/workspaces/{workspace['id']}/start")
+        handler.rfile = io.BytesIO(b'{}')
+        handler.headers = {"Content-Length": "2", "Content-Type": "application/json"}
+
+        with patch("cmux_harness.routes.workspaces.threading") as mock_threading:
+            handler.do_POST()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+        updated = workspaces.read_workspace_session(workspace["id"])
+        self.assertEqual(updated["status"], "starting")
+        mock_threading.Thread.assert_called_once()
+        mock_threading.Thread.return_value.start.assert_called_once()
+
+    def test_post_workspace_start_background_thread_sets_error_on_failure(self):
+        root_path = Path(self.tmpdir.name) / "workspace-start-fail"
+        workspace = self._create_workspace(root_path=root_path, name="Fail Workspace")
+        engine = Mock()
+        engine.orchestrator.start_workspace_session.return_value = None
+
+        handler = self._make_handler(engine, f"/api/workspaces/{workspace['id']}/start")
+        handler.rfile = io.BytesIO(b'{}')
+        handler.headers = {"Content-Length": "2", "Content-Type": "application/json"}
+
+        captured_target = []
+        def capture_thread(*args, **kwargs):
+            captured_target.append(kwargs.get("target"))
+            return Mock()
+        with patch("cmux_harness.routes.workspaces.threading") as mock_threading:
+            mock_threading.Thread.side_effect = capture_thread
+            handler.do_POST()
+
+        self.assertEqual(len(captured_target), 1)
+        captured_target[0]()
+        updated = workspaces.read_workspace_session(workspace["id"])
+        self.assertEqual(updated["status"], "error")
+
     def test_get_action_buttons_returns_default_button(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
         handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/action-buttons")

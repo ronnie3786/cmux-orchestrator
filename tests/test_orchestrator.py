@@ -1404,13 +1404,17 @@ class TestWorkspaceSessions(unittest.TestCase):
         workspace = self._create_workspace()
         turn = workspaces.create_workspace_turn(workspace["id"], user_message="What changed?")
 
-        with patch("cmux_harness.orchestrator.time.time", side_effect=[0, 6, 6]), \
+        # Time sequence: start=0, first poll=6 (past soft_deadline=5), second poll=12 (past hard_deadline=10), post-loop check=12
+        with patch("cmux_harness.orchestrator.time.time", side_effect=[0, 0, 6, 6, 12, 12]), \
                 patch("cmux_harness.orchestrator.time.sleep", return_value=None):
-            self.orchestrator._watch_workspace_turn(workspace["id"], turn["id"], timeout_seconds=1, poll_interval=0)
+            self.orchestrator._watch_workspace_turn(workspace["id"], turn["id"], soft_timeout=1, hard_timeout=2, poll_interval=0)
 
         updated_turn = workspaces.read_workspace_turn(workspace["id"], turn["id"])
         self.assertEqual(updated_turn["status"], "timed_out")
         messages = self.orchestrator.get_workspace_messages(workspace["id"])
+        # Soft message first, then hard alert
+        self.assertEqual(messages[-2]["type"], "system")
+        self.assertIn("Still waiting", messages[-2]["content"])
         self.assertEqual(messages[-1]["type"], "alert")
         self.assertIn("did not arrive through the callback channel", messages[-1]["content"])
 

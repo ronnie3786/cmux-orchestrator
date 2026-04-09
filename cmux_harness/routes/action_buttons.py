@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timezone
 
 from .. import objectives
+from .. import workspaces
 
 
 DEFAULT_ACTION_BUTTONS = [
@@ -161,4 +162,111 @@ def handle_delete_action_button(handler, objective_id, objective, button_id):
         handler._json_response({"ok": False, "error": "action button not found"}, 404)
         return
     objectives.set_action_buttons(objective_id, remaining)
+    handler._json_response({"ok": True})
+
+
+# --- Workspace action-button handlers ---
+
+def action_buttons_for_workspace(workspace):
+    buttons = workspace.get("actionButtons")
+    if isinstance(buttons, list):
+        filtered = [button for button in buttons if isinstance(button, dict)]
+        return sorted(filtered, key=lambda button: button_order(button, 0))
+    return [dict(button) for button in DEFAULT_ACTION_BUTTONS]
+
+
+def handle_get_workspace_action_buttons(handler, workspace):
+    handler._json_response({"buttons": action_buttons_for_workspace(workspace)})
+
+
+def handle_post_workspace_action_buttons(handler, workspace_id, workspace, data, *, uuid_module):
+    label = str(data.get("label") or "").strip()
+    prompt = str(data.get("prompt") or "").strip()
+    icon = str(data.get("icon") or "⚡").strip() or "⚡"
+    color = str(data.get("color") or "#4f8ef7").strip() or "#4f8ef7"
+    if not label or not prompt:
+        handler._json_response({"ok": False, "error": "label and prompt required"}, 400)
+        return
+    buttons = workspace.get("actionButtons")
+    if not isinstance(buttons, list):
+        buttons = []
+    order = max(
+        [button_order(button, index) for index, button in enumerate(buttons) if isinstance(button, dict)]
+        + [-1]
+    ) + 1
+    button = {
+        "id": str(uuid_module.uuid4()),
+        "label": label,
+        "icon": icon,
+        "color": color,
+        "prompt": prompt,
+        "order": order,
+    }
+    buttons.append(button)
+    workspaces.set_action_buttons(workspace_id, buttons)
+    handler._json_response({"ok": True, "button": button})
+
+
+def handle_post_workspace_action_inject(
+    handler,
+    workspace_id,
+    workspace,
+    data,
+    *,
+    engine,
+    cmux_api,
+    datetime_cls,
+    time_module,
+    re_module,
+):
+    root_path = str(workspace.get("rootPath") or "").strip()
+    if not root_path:
+        handler._json_response({"ok": False, "error": "workspace rootPath required"}, 400)
+        return
+    button_id = str(data.get("buttonId") or "").strip()
+    prompt_override = str(data.get("prompt") or "").strip()
+    button = None
+    if button_id:
+        button = next((item for item in action_buttons_for_workspace(workspace) if item.get("id") == button_id), None)
+        if button is None:
+            handler._json_response({"ok": False, "error": "action button not found"}, 404)
+            return
+    prompt = prompt_override or str((button or {}).get("prompt") or "").strip()
+    if not prompt:
+        handler._json_response({"ok": False, "error": "prompt required"}, 400)
+        return
+    button_label = str((button or {}).get("label") or "Ad Hoc Action").strip() or "Ad Hoc Action"
+    workspace_title = action_task_title({"title": button_label, "source": "action-button"})
+    new_workspace_uuid, created = engine.orchestrator._create_worker_workspace(
+        workspace_title,
+        root_path,
+        purpose="action-button",
+    )
+    if not created or not new_workspace_uuid:
+        handler._json_response({"ok": False, "error": "workspace creation failed"}, 500)
+        return
+    if not engine.orchestrator._wait_for_repl(
+        new_workspace_uuid,
+        purpose="action-button",
+    ):
+        engine.orchestrator._close_workspace(None, new_workspace_uuid, "action-button_repl_timeout")
+        handler._json_response({"ok": False, "error": "repl not ready"}, 500)
+        return
+    if not cmux_api.send_prompt_to_workspace(new_workspace_uuid, prompt):
+        engine.orchestrator._close_workspace(None, new_workspace_uuid, "action-button_prompt_failed")
+        handler._json_response({"ok": False, "error": "prompt delivery failed"}, 500)
+        return
+    handler._json_response({"ok": True, "workspaceId": new_workspace_uuid})
+
+
+def handle_delete_workspace_action_button(handler, workspace_id, workspace, button_id):
+    buttons = workspace.get("actionButtons")
+    if not isinstance(buttons, list):
+        handler._json_response({"ok": False, "error": "action button not found"}, 404)
+        return
+    remaining = [button for button in buttons if isinstance(button, dict) and button.get("id") != button_id]
+    if len(remaining) == len(buttons):
+        handler._json_response({"ok": False, "error": "action button not found"}, 404)
+        return
+    workspaces.set_action_buttons(workspace_id, remaining)
     handler._json_response({"ok": True})

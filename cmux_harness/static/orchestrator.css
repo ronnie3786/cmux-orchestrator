@@ -289,9 +289,10 @@
     margin-top: 5px;
     flex-shrink: 0;
   }
-  .od-running { background: var(--blue); box-shadow: 0 0 6px var(--blue); animation: pulse 2s infinite; }
-  .od-done    { background: var(--green); }
-  .od-queued  { background: var(--t3); }
+  .od-running  { background: var(--blue); box-shadow: 0 0 6px var(--blue); animation: pulse 2s infinite; }
+  .od-starting { background: var(--purple); box-shadow: 0 0 6px rgba(167,139,250,.4); animation: pulse 1.4s infinite; }
+  .od-done     { background: var(--green); }
+  .od-queued   { background: var(--t3); }
 
   .obj-info { flex: 1; min-width: 0; }
   .obj-name {
@@ -540,7 +541,7 @@
   /* centered column */
   .msg-col {
     width: 100%;
-    max-width: 720px;
+    max-width: min(80%, 1100px);
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -841,12 +842,13 @@
     border-radius: 4px 14px 14px 14px;
     background: var(--raised);
     border: 1px solid var(--b);
-    max-width: 560px;
+    max-width: 88%;
   }
   .msg.user .msg-bubble {
     background: var(--blue-d);
     border-color: var(--blue-b);
     border-radius: 14px 4px 14px 14px;
+    max-width: 560px;
   }
   .typing-indicator {
     display: flex;
@@ -868,6 +870,21 @@
     0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
     30% { opacity: 1; transform: scale(1); }
   }
+  .workspace-starting-spinner {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .workspace-starting-spinner .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--purple);
+    animation: typingDot 1.4s infinite both;
+  }
+  .workspace-starting-spinner .dot:nth-child(2) { animation-delay: 0.2s; }
+  .workspace-starting-spinner .dot:nth-child(3) { animation-delay: 0.4s; }
   .turn-live-bubble {
     min-width: 280px;
     background:
@@ -1027,6 +1044,31 @@
   .md-content a:hover {
     text-decoration: underline;
   }
+  .md-content blockquote {
+    border-left: 3px solid rgba(79,142,247,.5);
+    margin: 12px 0;
+    padding: 4px 16px;
+    color: rgba(255,255,255,.65);
+  }
+  .md-content table {
+    border-collapse: collapse;
+    margin: 12px 0;
+    width: 100%;
+  }
+  .md-content th, .md-content td {
+    border: 1px solid rgba(255,255,255,.12);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  .md-content th {
+    background: rgba(255,255,255,.06);
+    font-weight: 600;
+  }
+  .md-content hr {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,.1);
+    margin: 16px 0;
+  }
 
   code {
     background: rgba(255,255,255,.08);
@@ -1039,7 +1081,6 @@
   /* ── plan card ── */
   .card-plan {
     width: 100%;
-    max-width: 480px;
     background: var(--raised);
     border: 1px solid var(--b2);
     border-radius: 12px;
@@ -1113,7 +1154,6 @@
   /* ── progress update card ── */
   .card-progress {
     width: 100%;
-    max-width: 480px;
     background: var(--raised);
     border: 1px solid var(--b);
     border-left: 3px solid var(--blue);
@@ -1225,7 +1265,6 @@
   /* ── review card ── */
   .card-review {
     width: 100%;
-    max-width: 480px;
     background: var(--raised);
     border: 1px solid var(--green-b);
     border-radius: 12px;
@@ -1270,7 +1309,6 @@
   /* ── completion card ── */
   .card-complete {
     width: 100%;
-    max-width: 480px;
     background: var(--green-d);
     border: 1px solid var(--green-b);
     border-radius: 12px;
@@ -1294,7 +1332,7 @@
   }
   .input-wrap {
     width: 100%;
-    max-width: 720px;
+    max-width: min(80%, 1100px);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1689,7 +1727,6 @@
 
   .card-alert, .card-approval {
     width: 100%;
-    max-width: 480px;
     border-radius: 12px;
     padding: 12px 14px;
     background: var(--raised);
@@ -1777,7 +1814,6 @@
 
   .card-plan-review {
     width: 100%;
-    max-width: 560px;
     background:
       radial-gradient(circle at top right, rgba(167,139,250,.14), transparent 34%),
       var(--raised);
@@ -1952,6 +1988,10 @@
   body.right-panel-open .debug-fab {
     opacity: 0;
     pointer-events: none;
+  }
+  body.right-panel-open .msg-col,
+  body.right-panel-open .input-wrap {
+    max-width: min(80%, calc(100% - 380px));
   }
   .fab-btn {
     height: 40px;

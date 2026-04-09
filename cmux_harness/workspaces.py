@@ -187,6 +187,42 @@ def load_workspace_messages(workspace_id: str) -> list[dict]:
     return messages
 
 
+def set_action_buttons(workspace_id: str, buttons: list[dict]) -> list[dict]:
+    workspace = read_workspace_session(workspace_id)
+    if workspace is None:
+        raise FileNotFoundError(f"workspace not found: {workspace_id}")
+    workspace["actionButtons"] = buttons
+    workspace["updatedAt"] = _now_iso()
+    with open(_workspace_path(workspace_id), "w", encoding="utf-8") as f:
+        json.dump(workspace, f, indent=2)
+    return buttons
+
+
+def get_debug_entries(workspace_id: str, limit: int = 200, level: str | None = None) -> list[dict]:
+    entries = []
+    path = _debug_path(workspace_id)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                if level and str(entry.get("level") or "").lower() != level.lower():
+                    continue
+                entries.append(entry)
+    except OSError:
+        return []
+    if len(entries) > limit:
+        entries = entries[-limit:]
+    return entries
+
+
 def append_workspace_debug(workspace_id: str, entry: dict) -> dict:
     path = _debug_path(workspace_id)
     path.parent.mkdir(parents=True, exist_ok=True)

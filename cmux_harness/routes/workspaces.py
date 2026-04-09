@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from .. import cmux_api
 from .. import workspaces
 
@@ -10,6 +12,18 @@ def handle_list_workspaces(handler):
 
 def handle_get_workspace(handler, workspace):
     handler._json_response(workspace)
+
+
+def handle_get_debug(handler, workspace_id, parsed):
+    params = handler.parse_qs(parsed.query)
+    try:
+        limit = int(params.get("limit", ["200"])[0])
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(1, min(limit, 500))
+    level = params.get("level", [None])[0]
+    entries = workspaces.get_debug_entries(workspace_id, limit=limit, level=level)
+    handler._json_response(entries)
 
 
 def handle_get_messages(handler, workspace_id, parsed, *, engine):
@@ -58,11 +72,22 @@ def handle_post_create_workspace(handler, data):
 
 
 def handle_post_start(handler, workspace_id, *, engine):
-    started = engine.orchestrator.start_workspace_session(workspace_id)
-    if started:
-        handler._json_response({"ok": True})
-    else:
-        handler._json_response({"ok": False, "error": "Could not start workspace session"}, 400)
+    workspace = workspaces.read_workspace_session(workspace_id)
+    if workspace is None:
+        handler._json_response({"ok": False, "error": "workspace not found"}, 404)
+        return
+    workspaces.update_workspace_session(workspace_id, {"status": "starting"})
+
+    def _start_in_background():
+        started = engine.orchestrator.start_workspace_session(workspace_id)
+        if not started:
+            try:
+                workspaces.update_workspace_session(workspace_id, {"status": "error"})
+            except FileNotFoundError:
+                pass
+
+    threading.Thread(target=_start_in_background, daemon=True).start()
+    handler._json_response({"ok": True})
 
 
 def handle_post_message(handler, workspace_id, data, *, engine, threading_module):

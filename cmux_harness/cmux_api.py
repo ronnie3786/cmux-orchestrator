@@ -115,24 +115,10 @@ def cmux_read_workspace(ws_index, surface_index=0, lines=40, workspace_uuid=None
             if b64:
                 return _b64.b64decode(b64).decode(errors="replace")
             return ""
-    # Fallback to v1 (requires workspace switching)
-    path = _find_socket_path()
-    if not path:
+        # v2 failed — return None instead of falling back to v1
+        # (v1 uses select_workspace which visibly switches the active tab)
         return None
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.connect(path)
-        _cmux_send(sock, f"select_workspace {ws_index}")
-        screen = _cmux_send(sock, f"read_screen {surface_index} --lines {lines}")
-        return screen
-    except OSError:
-        return None
-    finally:
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        sock.close()
+    return None
 
 
 def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspace_uuid=None, surface_id=None):
@@ -152,27 +138,9 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
                 params["surface_id"] = surface_id
             result = _v2_request("surface.send_key", params)
             return result is not None
-    # Fallback to v1 (requires workspace switching)
-    path = _find_socket_path()
-    if not path:
-        return False
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.connect(path)
-        _cmux_send(sock, f"select_workspace {ws_index}")
-        if text is not None:
-            _cmux_send(sock, f"send_surface {surface_index} {text}")
-        if key is not None:
-            _cmux_send(sock, f"send_key_surface {surface_index} {key}")
-        return True
-    except OSError:
-        return False
-    finally:
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        sock.close()
+    # No workspace_uuid provided and no v1 fallback — v1 used select_workspace
+    # which visibly switches the active tab, causing UI flickering.
+    return False
 
 
 def _try_tmux_paste(pane_ref, text):
@@ -233,8 +201,33 @@ def send_prompt_to_workspace(workspace_uuid, text, surface_id=None):
 
     Returns True if the submit key was sent successfully.
     """
+    # Validate workspace exists in the system tree before sending anything.
+    # Without this check, a stale UUID can cause the v2 API fallback to
+    # route the command to the wrong panel (e.g. the currently active one).
+    data = _v2_request("system.tree", {"all": True})
+    pane_ref = None
+    workspace_found = False
+    if data:
+        for win in data.get("windows", []):
+            for ws in win.get("workspaces", []):
+                if ws.get("uuid") == workspace_uuid or ws.get("id") == workspace_uuid:
+                    workspace_found = True
+                    panes = ws.get("panes", [])
+                    if panes:
+                        pane_ref = panes[0].get("ref")
+                    break
+            if workspace_found:
+                break
+
+    if data is not None and not workspace_found:
+        log.warning(
+            "send_prompt_to_workspace: workspace %s not in system tree — "
+            "aborting to avoid misrouted command",
+            workspace_uuid,
+        )
+        return False
+
     # Attempt 1: tmux paste-buffer (atomic, handles long text)
-    pane_ref = _find_pane_ref_for_workspace(workspace_uuid)
     if pane_ref:
         if _try_tmux_paste(pane_ref, text):
             return True
@@ -243,7 +236,14 @@ def send_prompt_to_workspace(workspace_uuid, text, surface_id=None):
     params = {"workspace_id": workspace_uuid, "text": text}
     if surface_id:
         params["surface_id"] = surface_id
-    _v2_request("surface.send_text", params)
+    send_result = _v2_request("surface.send_text", params)
+    if send_result is None:
+        log.warning(
+            "send_prompt_to_workspace: send_text failed for workspace %s — "
+            "not sending enter key",
+            workspace_uuid,
+        )
+        return False
     _time.sleep(0.15)
     key_params = {"workspace_id": workspace_uuid, "key": "enter"}
     if surface_id:
