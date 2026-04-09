@@ -1,117 +1,66 @@
-# cmux-harness
+# cmux orchestrator
 
-Command center for managing Claude Code sessions across cmux workspaces. Auto-approves permission prompts, monitors session status, and gives you a bird's-eye view of all your coding agents from one browser tab.
+> **Stop. Read this first.**
+>
+> In the words of Steve Yegge and his warning of Gas Town (paraphrasing)...
+>
+> DON'T INSTALL THIS SOFTWARE!
+> 
+> This is in active development and has many bugs and sharp edges. 
+> 
+> Yegge's exact wording is _"'You probably don't want to use it yet.' It needs some Lysol._" and _"You shouldn't be using it now, unless you're either experimenting or you're contributing. Otherwise it's too much of a headache."_
+> 
+> Now that we've gotten that out of the way. Welcome to my in-progress cmux orchestrator.
 
-Built for environments where `--permission-mode auto` is disabled (e.g., corporate Claude Code installations).
-
-## What it does
-
-- **Command center dashboard** with live terminal previews for every workspace
-- **Auto-approve** safe prompts (Yes/No confirmations, tool approvals, proceed dialogs)
-- **Flag** domain-specific choices as "needs human" (menu selections, file/section choices)
-- **Per-workspace auto toggle** — enable/disable auto-approve individually
-- **Rename workspaces** — click any name to give it a meaningful label
-- **Send input** directly to any workspace from the dashboard
-- **Spin up new sessions** — creates a workspace, cd's to your project, and launches Claude Code
-- **Browser notifications** with sound when a session needs you or completes
-- **Session timer and cost tracking** — parsed from Claude Code's statusline
-- **Local LLM fallback** (Ollama) for classifying unknown prompt formats
-- **Persistent config** — workspace settings survive restarts
+A web-based orchestrator for managing parallel Claude Code sessions across [cmux](https://cmux.com) workspaces. Define high-level objectives, and the orchestrator breaks them into tasks, spins up agents, dispatches work across workspaces, and tracks everything from a single browser tab.
 
 ## Requirements
 
-- [cmux](https://cmux.com) with socket in Automation mode (Settings > Automation)
-- Python 3.9+ (no pip dependencies)
-- [Ollama](https://ollama.com) (optional, for LLM fallback classification)
+- **[cmux](https://cmux.com)** — installed and running, with Automation mode enabled:
+  - Open cmux > Settings > Automation
+  - Enable the socket API (this exposes the v2 JSON-RPC API that the orchestrator talks to)
+- **Python 3.9+** — no pip install, no virtual env, no dependencies. Standard library only.
+- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** — installed and authenticated (`claude` must be in your PATH)
 
-## Quick Start
+## Setup
 
 ```bash
-git clone git@github.com:ronnie3786/cmux-harness.git
-cd cmux-harness
+git clone git@github.com:ronnie3786/cmux-orchestrator.git
+cd cmux-orchestrator
 
-# (Optional) Pull an LLM model for fallback classification
-ollama pull qwen3.5:35b-a3b-nvfp4
-
-# Start the dashboard
+# Start the orchestrator
 python3 dashboard.py
-
-# Opens http://localhost:9091
 ```
 
-Custom port: `python3 dashboard.py 9091`
+Opens automatically at **http://localhost:9091**. Custom port: `python3 dashboard.py 8080`
 
-## Dashboard
+## Orchestrator
 
-The dashboard is a single-page web app served from `dashboard.py`. No build step, no npm, no dependencies.
+The core of the app. Define objectives in plain language and the orchestrator handles the rest.
 
-**Grid view** — each workspace is a card showing:
-- Status (active/idle/needs you) with live terminal preview
-- Auto-approve toggle
-- Session duration and cost (if Claude Code statusline is configured)
-- Text input to send messages directly to the terminal
+- **Objective-driven workflow** — describe what you want built, and the system uses Claude to decompose it into discrete tasks with dependencies
+- **Multi-workspace dispatch** — tasks are assigned to available cmux workspaces and executed in parallel across independent Claude Code sessions
+- **Live progress tracking** — real-time status for every task (queued, in progress, completed, failed) with a unified view across all workspaces
+- **Sprint contracts** — define acceptance criteria and the orchestrator evaluates task output against them before marking work complete
+- **Dependency-aware scheduling** — tasks execute in the right order; dependent tasks wait for their prerequisites to finish
 
-**Expanded view** — click ⤢ on any card for:
-- Full scrollable terminal output with syntax highlighting
-- Activity feed showing all auto-approvals and flags for that workspace
-- Raw/Intent input modes
+## UI
 
-**Activity feed** — collapsible panel at the bottom showing approval events across all workspaces.
+Single-page web app — no build step, no npm, no framework.
 
-**Settings** — poll interval, Ollama model picker, notifications toggle, default working directory.
-
-## How It Works
-
-1. Reads terminal screens via cmux v2 JSON-RPC API (no workspace switching or focus changes)
-2. Regex fast-path detects known Claude Code prompt patterns
-3. Local LLM classifies unknown prompts as a fallback
-4. Sends `Enter` or `y` to approve, or flags as "needs human"
-5. Active sessions (Claude Code running) polled every cycle; idle sessions every 30 seconds
-
-## Detection Logic
-
-**Auto-approved:**
-- `(Y/n)` / `(y/n)` text prompts
-- `Allow <ToolName>` tool approval prompts
-- Numbered menus where all options are Yes/No/Allow/Confirm variants
-- "Run this command?" / "Apply changes?" prompts
-
-**Flagged for human:**
-- Menus with domain-specific options (file choices, which approach to take)
-- Anything the LLM classifies as requiring judgment
-
-**Skipped:**
-- Claude Code idle REPL
-- Shell prompts
-- Active processing (Musing.../Thinking...)
+- **Project sidebar** — organize objectives by project, with progress bars and status indicators
+- **Streaming conversation** — watch the orchestrator plan, dispatch, and report in real time
+- **Plan and contract review** — review the orchestrator's plan and acceptance criteria before execution starts
+- **Approval workflow** — tasks below your severity threshold auto-approve; higher-severity actions escalate to you with approve/take-over options
+- **Git panel** — branch, commits, staged/unstaged changes for the active objective's working directory
+- **Diff viewer** — inspect code changes inline as tasks complete
+- **Build log viewer** — view build output and errors for the active objective
+- **Console log viewer** — stream Claude Code console output with filtering presets
 
 ## Configuration
 
-Environment variables:
+All settings are configurable from the dashboard UI and persist across restarts.
 
-| Variable | Default | Description |
-|---|---|---|
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
-| `OLLAMA_MODEL` | `qwen3.5:35b-a3b-nvfp4` | Model for LLM classification |
-| `USE_LLM` | `1` | Set to `0` to disable LLM, regex only |
+## License
 
-All runtime settings (poll interval, model selection, per-workspace auto-approve, custom names) are configurable from the dashboard UI and persist to `~/.cmux-harness/workspace-config.json`.
-
-## Files
-
-```
-dashboard.py              — Everything: web UI + harness engine (single file, no dependencies)
-auto-approve.sh           — Standalone CLI script (no dashboard, bash-only)
-DEVLOG.md                 — Development history and future ideas
-~/.cmux-harness/
-  workspace-config.json   — Persistent workspace settings
-  approval-log.jsonl      — Approval/flag event log
-  debug-log.jsonl         — Full debug data (auto-rotated at 10MB)
-```
-
-## Logs
-
-Both log files auto-rotate at 10MB, keeping one `.1.jsonl` backup.
-
-- `~/.cmux-harness/approval-log.jsonl` — approval and flag events
-- `~/.cmux-harness/debug-log.jsonl` — full debug data dump
+MIT
