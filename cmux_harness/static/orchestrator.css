@@ -541,7 +541,7 @@
   /* centered column */
   .msg-col {
     width: 100%;
-    max-width: min(80%, 1100px);
+    max-width: min(92%, 1100px);
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -842,7 +842,7 @@
     border-radius: 4px 14px 14px 14px;
     background: var(--raised);
     border: 1px solid var(--b);
-    max-width: 88%;
+    width: 100%;
   }
   .msg.user .msg-bubble {
     background: var(--blue-d);
@@ -1332,7 +1332,7 @@
   }
   .input-wrap {
     width: 100%;
-    max-width: min(80%, 1100px);
+    max-width: min(92%, 1100px);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1991,7 +1991,7 @@
   }
   body.right-panel-open .msg-col,
   body.right-panel-open .input-wrap {
-    max-width: min(80%, calc(100% - 380px));
+    max-width: min(92%, calc(100% - 380px));
   }
   .fab-btn {
     height: 40px;
@@ -2371,7 +2371,7 @@
     font-family: 'JetBrains Mono','SF Mono',monospace;
   }
   .worker-output-btn:hover { background: rgba(79,142,247,.25); }
-  .worker-output-panel { max-width: 900px; width: 90vw; max-height: 85vh; flex-direction: column; height: auto; }
+  .diff-panel.worker-output-panel { max-width: 900px; width: 90vw; max-height: 85vh; flex-direction: column; height: auto; }
   .worker-output-body {
     font-family: 'JetBrains Mono','SF Mono',monospace;
     font-size: 12px;
@@ -2459,6 +2459,45 @@
     border-radius: 4px;
   }
   .worker-output-refresh:hover { color: var(--t1); background: rgba(255,255,255,.06); }
+
+  /* ANSI terminal colors */
+  .ansi-bold { font-weight: 700; }
+  .ansi-dim { opacity: .6; }
+  .ansi-italic { font-style: italic; }
+  .ansi-underline { text-decoration: underline; }
+  .ansi-black { color: #546178; }
+  .ansi-red { color: #f87171; }
+  .ansi-green { color: #34d399; }
+  .ansi-yellow { color: #fbbf24; }
+  .ansi-blue { color: #60a5fa; }
+  .ansi-magenta { color: #c084fc; }
+  .ansi-cyan { color: #22d3ee; }
+  .ansi-white { color: #e2e8f0; }
+  .ansi-bright-black { color: #7a8ba4; }
+  .ansi-bright-red { color: #fca5a5; }
+  .ansi-bright-green { color: #6ee7b7; }
+  .ansi-bright-yellow { color: #fde68a; }
+  .ansi-bright-blue { color: #93c5fd; }
+  .ansi-bright-magenta { color: #d8b4fe; }
+  .ansi-bright-cyan { color: #67e8f9; }
+  .ansi-bright-white { color: #f8fafc; }
+  .ansi-bg-black { background: #1e293b; }
+  .ansi-bg-red { background: rgba(248,113,113,.25); }
+  .ansi-bg-green { background: rgba(52,211,153,.2); }
+  .ansi-bg-yellow { background: rgba(251,191,36,.2); }
+  .ansi-bg-blue { background: rgba(96,165,250,.2); }
+  .ansi-bg-magenta { background: rgba(192,132,252,.2); }
+  .ansi-bg-cyan { background: rgba(34,211,238,.15); }
+  .ansi-bg-white { background: rgba(226,232,240,.15); }
+  .ansi-bg-bright-black { background: #334155; }
+  .ansi-bg-bright-red { background: rgba(252,165,165,.25); }
+  .ansi-bg-bright-green { background: rgba(110,231,183,.2); }
+  .ansi-bg-bright-yellow { background: rgba(253,230,138,.2); }
+  .ansi-bg-bright-blue { background: rgba(147,197,253,.2); }
+  .ansi-bg-bright-magenta { background: rgba(216,180,254,.2); }
+  .ansi-bg-bright-cyan { background: rgba(103,232,249,.15); }
+  .ansi-bg-bright-white { background: rgba(248,250,252,.15); }
+
   .git-empty {
     padding: 24px 16px;
     text-align: center;

@@ -228,6 +228,63 @@
       .replace(/'/g, '&#39;');
   }
 
+  function stripAnsi(text) {
+    return String(text == null ? '' : text).replace(/\x1b\[[0-9;]*m/g, '');
+  }
+
+  function ansiToHtml(text) {
+    var raw = String(text == null ? '' : text);
+    var RE = /\x1b\[([0-9;]*)m/g;
+    var FG = {
+      '30': 'ansi-black',   '31': 'ansi-red',     '32': 'ansi-green',  '33': 'ansi-yellow',
+      '34': 'ansi-blue',    '35': 'ansi-magenta',  '36': 'ansi-cyan',   '37': 'ansi-white',
+      '90': 'ansi-bright-black', '91': 'ansi-bright-red', '92': 'ansi-bright-green',
+      '93': 'ansi-bright-yellow', '94': 'ansi-bright-blue', '95': 'ansi-bright-magenta',
+      '96': 'ansi-bright-cyan', '97': 'ansi-bright-white'
+    };
+    var BG = {
+      '40': 'ansi-bg-black',   '41': 'ansi-bg-red',     '42': 'ansi-bg-green',  '43': 'ansi-bg-yellow',
+      '44': 'ansi-bg-blue',    '45': 'ansi-bg-magenta',  '46': 'ansi-bg-cyan',   '47': 'ansi-bg-white',
+      '100': 'ansi-bg-bright-black', '101': 'ansi-bg-bright-red', '102': 'ansi-bg-bright-green',
+      '103': 'ansi-bg-bright-yellow', '104': 'ansi-bg-bright-blue', '105': 'ansi-bg-bright-magenta',
+      '106': 'ansi-bg-bright-cyan', '107': 'ansi-bg-bright-white'
+    };
+    var parts = [];
+    var openSpans = 0;
+    var lastIndex = 0;
+    var match;
+    while ((match = RE.exec(raw)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(esc(raw.substring(lastIndex, match.index)));
+      }
+      lastIndex = RE.lastIndex;
+      var codes = match[1] ? match[1].split(';') : ['0'];
+      for (var ci = 0; ci < codes.length; ci++) {
+        var code = codes[ci];
+        if (code === '' || code === '0') {
+          while (openSpans > 0) { parts.push('</span>'); openSpans--; }
+        } else if (code === '1') {
+          parts.push('<span class="ansi-bold">'); openSpans++;
+        } else if (code === '2') {
+          parts.push('<span class="ansi-dim">'); openSpans++;
+        } else if (code === '3') {
+          parts.push('<span class="ansi-italic">'); openSpans++;
+        } else if (code === '4') {
+          parts.push('<span class="ansi-underline">'); openSpans++;
+        } else if (FG[code]) {
+          parts.push('<span class="' + FG[code] + '">'); openSpans++;
+        } else if (BG[code]) {
+          parts.push('<span class="' + BG[code] + '">'); openSpans++;
+        }
+      }
+    }
+    if (lastIndex < raw.length) {
+      parts.push(esc(raw.substring(lastIndex)));
+    }
+    while (openSpans > 0) { parts.push('</span>'); openSpans--; }
+    return parts.join('');
+  }
+
   function escapeRegExp(value) {
     return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -2329,7 +2386,7 @@
   }
 
   function renderWorkspaceTerminalLine(line) {
-    const raw = String(line == null ? '' : line);
+    const raw = stripAnsi(String(line == null ? '' : line));
     const trimmed = raw.trim();
     if (!trimmed) {
       return '<div class="wo-line wo-empty">&nbsp;</div>';
@@ -2381,7 +2438,7 @@
     if (mode === 'workspace') {
       return '<div class="worker-output-content workspace-peek">' + lines.map(renderWorkspaceTerminalLine).join('') + '</div>';
     }
-    return '<div class="worker-output-content">' + lines.map((line) => '<div class="wo-line">' + esc(line) + '</div>').join('') + '</div>';
+    return '<div class="worker-output-content">' + lines.map((line) => '<div class="wo-line">' + ansiToHtml(line) + '</div>').join('') + '</div>';
   }
 
   async function refreshWorkerOutput() {
