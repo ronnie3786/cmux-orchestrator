@@ -201,7 +201,7 @@ cmux has a full browser automation API (`browser.*`) with 60+ methods covering n
 
 ## Part 2: cmux-harness HTTP APIs (what the dashboard exposes)
 
-Server runs on `http://localhost:9090` (configurable port).
+Server runs on `http://localhost:9091` (configurable port).
 
 ### GET Endpoints
 

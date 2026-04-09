@@ -1020,7 +1020,7 @@ class TestServerResponses(unittest.TestCase):
         root_path = Path(self.tmpdir.name) / "workspace-turn-finalize"
         workspace = self._create_workspace(root_path=root_path, name="Callback Workspace")
         engine = Mock()
-        engine.callback_base_url = "http://127.0.0.1:9090"
+        engine.callback_base_url = "http://127.0.0.1:9091"
         engine.orchestrator = Orchestrator(engine)
         turn = workspaces.create_workspace_turn(workspace["id"], user_message="Need TL;DR")
         payload = {
@@ -1045,7 +1045,7 @@ class TestServerResponses(unittest.TestCase):
         root_path = Path(self.tmpdir.name) / "workspace-turn-invalid-token"
         workspace = self._create_workspace(root_path=root_path, name="Callback Workspace")
         engine = Mock()
-        engine.callback_base_url = "http://127.0.0.1:9090"
+        engine.callback_base_url = "http://127.0.0.1:9091"
         engine.orchestrator = Orchestrator(engine)
         turn = workspaces.create_workspace_turn(workspace["id"], user_message="Need TL;DR")
         handler = self._post_json(

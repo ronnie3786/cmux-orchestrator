@@ -10,7 +10,7 @@ from cmux_harness.server import make_handler
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 9090
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 9091
 
     engine = HarnessEngine()
     engine.callback_base_url = f"http://127.0.0.1:{port}"

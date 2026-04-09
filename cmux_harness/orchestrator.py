@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 
 from . import claude_cli
 from . import contracts
-from . import approval
 from . import cmux_api
 from . import detection
 from . import evaluator
@@ -79,6 +78,7 @@ class Orchestrator:
         self._workspace_messages = {}
         self._task_screen_cache = {}
         self._task_last_progress = {}
+        self._pending_hook_approvals = set()  # task IDs with unresolved hook escalations
         self._lock = threading.Lock()
         self._orchestrator_response_pattern = re.compile(r"(?:^|\n)\s*(?:❯(?:\s|$)|[>›](?:\s|$)|Model:)", re.MULTILINE)
         self._reconcile_workspace_state_on_startup()
@@ -270,10 +270,90 @@ class Orchestrator:
         ).strip()
         if configured:
             return configured.rstrip("/")
-        return "http://127.0.0.1:9090"
+        return "http://127.0.0.1:9091"
 
     def _workspace_callback_helper_path(self):
         return str((pathlib.Path(__file__).with_name("report_turn.py")).resolve())
+
+    def _inject_hook_config(self, cwd):
+        """Write .claude/settings.local.json with PreToolUse hook pointing to our server.
+
+        Uses settings.local.json to avoid committing hook config to the git worktree.
+        Merges with existing settings if the file already exists.
+        """
+        claude_dir = os.path.join(cwd, ".claude")
+        os.makedirs(claude_dir, exist_ok=True)
+        settings_path = os.path.join(claude_dir, "settings.local.json")
+
+        base_url = self._workspace_callback_base_url()
+        hook_url = f"{base_url}/api/hooks/pre-tool-use"
+
+        settings = {}
+        if os.path.isfile(settings_path):
+            try:
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                settings = {}
+
+        settings["hooks"] = {
+            "PreToolUse": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "http",
+                            "url": hook_url,
+                            "timeout": 15,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with open(settings_path, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+
+    def _try_approve_permission_prompt(self, workspace_uuid, screen_text, workspace_id=None, turn_id=None, objective_id=None, task_id=None):
+        """Auto-approve a Claude Code permission prompt stuck on a workspace screen.
+
+        Only called after the progress monitor or poll loop confirms the same
+        prompt has been showing for 2+ consecutive cycles.  Uses a regex safety
+        check to ensure the screen actually shows a permission prompt before
+        sending Enter.
+        """
+        if not detection.is_permission_prompt(screen_text):
+            return False
+
+        try:
+            cmux_api.cmux_send_to_workspace(
+                0, 0, key="enter", workspace_uuid=workspace_uuid,
+            )
+        except Exception:
+            return False
+
+        screen_tail = screen_text[-200:] if len(screen_text) > 200 else screen_text
+        if workspace_id:
+            self._log_workspace_progress(
+                workspace_id, "info", "workspace_permission_auto_approved",
+                {"turnId": turn_id, "screenTail": screen_tail},
+            )
+            self._append_workspace_message(
+                workspace_id, "system",
+                "Auto-approved a permission prompt that was blocking the session.",
+                metadata={"turnId": turn_id},
+            )
+        if objective_id:
+            self._log_event(
+                objective_id, "info", "task_builtin_permission_approved",
+                {"taskId": task_id, "workspaceId": workspace_uuid, "screenTail": screen_tail},
+            )
+            self._append_message(
+                objective_id, "system",
+                f"Task {task_id}: auto-approved Claude Code permission prompt",
+                metadata={"task_id": task_id},
+            )
+        return True
 
     def _append_workspace_debug(self, workspace_id, level, event, details=None):
         payload = {
@@ -778,6 +858,7 @@ class Orchestrator:
         )
         if initial_delay > 0:
             time.sleep(initial_delay)
+        consecutive_waiting = 0
         while True:
             turn = workspaces.read_workspace_turn(workspace_id, turn_id)
             if turn is None:
@@ -874,7 +955,32 @@ class Orchestrator:
                             },
                         )
                     workspaces.update_workspace_turn(workspace_id, turn_id, updates)
+
+                    # Track consecutive "waiting" cycles with unchanged screen
+                    if updates.get("progressState") == "waiting" and snapshot_hash == previous_hash:
+                        consecutive_waiting += 1
+                    else:
+                        consecutive_waiting = 0
+
+                    if consecutive_waiting >= 2:
+                        if self._try_approve_permission_prompt(
+                            workspace_uuid, screen, workspace_id=workspace_id, turn_id=turn_id,
+                        ):
+                            consecutive_waiting = 0
                 else:
+                    # Snapshot hash unchanged — Haiku not called.
+                    # Check last known state from turn data.
+                    if str(turn.get("progressState") or "").lower() == "waiting":
+                        consecutive_waiting += 1
+                    else:
+                        consecutive_waiting = 0
+
+                    if consecutive_waiting >= 2:
+                        if self._try_approve_permission_prompt(
+                            workspace_uuid, screen, workspace_id=workspace_id, turn_id=turn_id,
+                        ):
+                            consecutive_waiting = 0
+
                     self._log_workspace_progress(
                         workspace_id,
                         "debug",
@@ -1515,11 +1621,7 @@ class Orchestrator:
             # This prevents false "exited" detection during startup.
             seen_claude_active = False
             grace_polls = _grace_polls
-            # Pattern to detect Claude Code permission/approval prompts
-            permission_pattern = re.compile(
-                r"(Do you want to|Allow|Y/n|y/n|❯\s*1\.\s*Yes|Yes, allow all)",
-                re.IGNORECASE,
-            )
+            # Approval is now handled by PreToolUse hooks (see routes/hooks.py).
             for attempt in range(_max_polls):
                 plan_exists = os.path.isfile(plan_path)
                 screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=workspace_uuid) or ""
@@ -1539,39 +1641,6 @@ class Orchestrator:
                     )
                 if claude_running:
                     seen_claude_active = True
-
-                # Auto-approve file write permissions during planning.
-                # Claude Code asks "Do you want to create plan.md?" etc.
-                # We always approve during planning since the planner needs
-                # to write files to fulfill its task.
-                # NOTE: detect_claude_session may return False while the
-                # permission prompt is showing, so check for permission
-                # prompts independently of claude_running.
-                if permission_pattern.search(screen):
-                    # The permission prompt IS proof Claude is running
-                    seen_claude_active = True
-                    try:
-                        with self.mutex.context(workspace_uuid):
-                            cmux_api._v2_request("surface.send_key", {
-                                "workspace_id": workspace_uuid,
-                                "key": "enter",
-                            })
-                        self._log_event(
-                            objective_id,
-                            "info",
-                            "task_approval",
-                            {
-                                "mode": "auto",
-                                "phase": "planning",
-                                "workspaceId": workspace_uuid,
-                            },
-                        )
-                    except Exception:
-                        pass
-                    # Don't check exit status this cycle — we just approved
-                    if attempt < _max_polls - 1:
-                        time.sleep(_poll_interval)
-                    continue
 
                 if plan_exists:
                     # Plan file exists — that's our deliverable. Proceed
@@ -1723,6 +1792,7 @@ class Orchestrator:
             "workspace.rename",
             {"workspace_id": workspace_uuid, "title": title},
         )
+        self._inject_hook_config(cwd)
         cmux_api._v2_request(
             "surface.send_text",
             {"workspace_id": workspace_uuid, "text": f"cd {cwd} && claude\n"},
@@ -1989,6 +2059,8 @@ class Orchestrator:
             if not ws_uuid:
                 continue
 
+            # Approval is now handled by PreToolUse hooks (see routes/hooks.py).
+            # Screen read retained for stuck detection and approval dismissal.
             screen_text = ""
             try:
                 screen_text = cmux_api.cmux_read_workspace(
@@ -1997,96 +2069,37 @@ class Orchestrator:
             except Exception:
                 screen_text = ""
 
-            # Fast path: detect Claude Code permission prompts directly
-            # (don't depend on Ollama/local model which may not be running)
-            _perm_re = re.compile(
-                r"(Do you want to|❯\s*1\.\s*Yes|Allow\s+(Read|Write|Edit|Bash)|Yes, allow all|\(Y/n\)|\(y/n\))",
-                re.IGNORECASE,
-            )
-            if screen_text and _perm_re.search(screen_text):
-                # Auto-approve by sending Enter (option 1 "Yes" is pre-selected)
-                try:
-                    with self.mutex.context(ws_uuid):
-                        cmux_api._v2_request("surface.send_key", {
-                            "workspace_id": ws_uuid,
-                            "key": "enter",
-                        })
-                    self._log_event(
-                        objective_id,
-                        "info",
-                        "task_approval",
-                        {"taskId": task_id, "mode": "auto", "classification": "permission_prompt", "workspaceId": ws_uuid},
-                    )
+            # If a hook escalated an approval for this task, check whether the
+            # user already handled it in the terminal.  When Claude is actively
+            # working (thinking, running tools) the permission prompt is gone —
+            # dismiss the stale approval card in the dashboard.
+            if task_id in self._pending_hook_approvals and screen_text:
+                is_working = bool(re.search(
+                    r"(Musing\.\.\.|Thinking\.\.\.|⚡\s*\w)",
+                    screen_text[-500:],
+                ))
+                if is_working:
+                    self._pending_hook_approvals.discard(task_id)
                     self._append_message(
                         objective_id,
-                        "system",
-                        f"Task {task_id}: auto-approved permission prompt",
+                        "progress",
+                        f"Task {task_id}: user approved — Claude resumed",
                         metadata={"task_id": task_id},
                     )
-                except Exception:
-                    pass
-            else:
-                # Fall back to Haiku classification for non-obvious prompts
-                prompt_info = None
-                if screen_text:
-                    prompt_info = detection.detect_prompt(screen_text)
 
-                prompt_detected = False
-                if isinstance(prompt_info, dict):
-                    prompt_detected = prompt_info.get("type") != "none"
-                elif prompt_info:
-                    prompt_detected = True
-
-                if prompt_detected:
-                    spec_text = objectives.read_task_file(objective_id, task_id, "spec.md")
-                    classification = approval.classify_approval(screen_text, spec_text)
-                    if approval.should_auto_approve(classification):
-                        with self.mutex.context(ws_uuid):
-                            cmux_api._v2_request("surface.send_key", {
-                                "workspace_id": ws_uuid,
-                                "key": "enter",
-                            })
-                        self._log_event(
-                            objective_id,
-                            "info",
-                            "task_approval",
-                            {
-                                "taskId": task_id,
-                                "mode": "auto",
-                                "classification": classification,
-                                "workspaceId": ws_uuid,
-                            },
-                        )
-                        self._append_message(
-                            objective_id,
-                            "system",
-                            f"Task {task_id}: auto-approved ({classification.get('reason', 'routine')})",
-                            metadata={"task_id": task_id, "classification": classification},
-                        )
-                    else:
-                        preview = screen_text[-500:] if len(screen_text) > 500 else screen_text
-                        self._append_message(
-                            objective_id,
-                            "approval",
-                            f"Task {task_id}: needs your input — {classification.get('reason', 'requires human judgment')}",
-                            metadata={
-                                "task_id": task_id,
-                                "classification": classification,
-                                "screen_preview": preview,
-                            },
-                        )
-                        self._log_event(
-                            objective_id,
-                            "warn",
-                            "task_approval",
-                            {
-                                "taskId": task_id,
-                                "mode": "manual_required",
-                                "classification": classification,
-                                "workspaceId": ws_uuid,
-                                "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
-                            },
-                        )
+            # Fallback: detect Claude Code's own built-in permission prompts
+            # (e.g. "Bash(git push *)") that our PreToolUse hook can't control.
+            # Auto-approve only if the same permission screen is seen twice
+            # in a row (confirms the prompt is genuinely stuck).
+            if screen_text and detection.is_permission_prompt(screen_text):
+                screen_fp = detection.fingerprint(screen_text)
+                prev_cached = self._task_screen_cache.get(task_id, "")
+                prev_fp = detection.fingerprint(prev_cached) if prev_cached else ""
+                if prev_fp and prev_fp == screen_fp:
+                    self._try_approve_permission_prompt(
+                        ws_uuid, screen_text,
+                        objective_id=objective_id, task_id=task_id,
+                    )
 
             last_ts = self._task_last_progress.get(task_id, 0)
             wt_path = task.get("worktreePath")
@@ -2515,6 +2528,7 @@ Verdict rules:
                         time.sleep(2)
                     except Exception:
                         pass
+                self._inject_hook_config(worktree_path)
                 launch_text = f"cd {worktree_path} && claude\n"
                 with self.mutex.context(workspace_uuid):
                     cmux_api.cmux_send_to_workspace(

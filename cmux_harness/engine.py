@@ -13,6 +13,9 @@ from . import review as review_mod
 from . import storage
 from .orchestrator import Orchestrator
 
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b-nvfp4")
+
 
 class HarnessEngine(threading.Thread):
     def __init__(self):
@@ -38,11 +41,12 @@ class HarnessEngine(threading.Thread):
         self.connection_lost_at = 0     # when we first noticed the socket was gone
         self.consecutive_failures = 0   # count of consecutive failed polls
         self._lock = threading.Lock()
-        self.model = detection.OLLAMA_MODEL
+        self.model = OLLAMA_DEFAULT_MODEL
         self.review_enabled = True
-        self.review_model = detection.OLLAMA_MODEL
+        self.review_model = OLLAMA_DEFAULT_MODEL
         self.review_backend = "ollama"
         self.callback_base_url = ""
+        self.approval_threshold = 3
         self.default_project_dir = ""
         self.default_base_branch = "main"
         self.ollama_available = None   # None=unknown, True=available, False=unavailable
@@ -64,6 +68,10 @@ class HarnessEngine(threading.Thread):
         extra_config = self._load_engine_config()
         self.default_project_dir = extra_config.get("defaultProjectDir", self.default_project_dir) or ""
         self.default_base_branch = extra_config.get("defaultBaseBranch", self.default_base_branch) or "main"
+        try:
+            self.approval_threshold = int(extra_config.get("approvalThreshold", self.approval_threshold))
+        except (TypeError, ValueError):
+            pass
         self.orchestrator = Orchestrator(self)
 
     def _load_engine_config(self):
@@ -141,7 +149,7 @@ class HarnessEngine(threading.Thread):
                 return self.ollama_available
         try:
             import urllib.request
-            with urllib.request.urlopen(f"{detection.OLLAMA_URL}/api/tags", timeout=3) as r:
+            with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=3) as r:
                 r.read()
             with self._lock:
                 self.ollama_available = True
@@ -715,83 +723,11 @@ class HarnessEngine(threading.Thread):
             storage.debug_log({"event": "empty_screen", "workspace": idx, "name": ws_name, "surface_id": surface_id})
             return
 
+        # Approval is now handled by PreToolUse hooks (see routes/hooks.py).
+        # Screen fingerprinting retained for dashboard display.
         fp = detection.fingerprint(screen)
         with self._lock:
-            if self.fingerprints.get(idx) == fp:
-                return
-
-        result = detection.detect_prompt(screen, model=self.model, ollama_available_checker=self._check_ollama)
-        screen_tail = "\n".join(screen.splitlines()[-15:])
-
-        storage.debug_log({
-            "event": "check",
-            "workspace": idx,
-            "name": ws_name,
-            "surface": surface_index,
-            "surface_id": surface_id,
-            "screen_tail": screen_tail,
-            "detect_result": list(result) if result else None,
-        })
-
-        # Store fingerprint so we don't re-process the same screen
-        with self._lock:
             self.fingerprints[idx] = fp
-
-        if result is None:
-            return
-
-        pattern_name, action, reason = result
-
-        if action == "skip":
-            print(f"[harness] ⚠ ws:{idx} ({ws_name}) needs human input: {pattern_name}")
-            storage.debug_log({
-                "event": "needs_human",
-                "workspace": idx,
-                "name": ws_name,
-                "pattern": pattern_name,
-                "screen_tail": screen_tail,
-            })
-            self._append_log({
-                "timestamp": now_str,
-                "workspace": idx,
-                "workspaceName": ws_name,
-                "promptType": pattern_name,
-                "action": "⚠ needs human",
-                "reason": reason,
-                "surface": surface_index,
-                "surfaceId": surface_id,
-            })
-            return
-
-        if action == "enter":
-            ok = cmux_api.cmux_send_to_workspace(real_idx, surface_index, key="enter", workspace_uuid=ws_uuid, surface_id=surface_id)
-        else:
-            ok = cmux_api.cmux_send_to_workspace(real_idx, surface_index, text="y", workspace_uuid=ws_uuid, surface_id=surface_id)
-
-        storage.debug_log({
-            "event": "approved",
-            "workspace": idx,
-            "name": ws_name,
-            "pattern": pattern_name,
-            "action_sent": "Enter" if action == "enter" else "y",
-            "ok": ok,
-            "screen_tail": screen_tail,
-            "surface_id": surface_id,
-        })
-
-        if ok:
-            with self._lock:
-                self.fingerprints.pop(idx, None)
-            print(f"[harness] ✓ ws:{idx} ({ws_name}) {pattern_name} → {'Enter' if action == 'enter' else 'y'}")
-            self._append_log({
-                "timestamp": now_str,
-                "workspace": idx,
-                "workspaceName": ws_name,
-                "promptType": pattern_name,
-                "action": f"sent {'Enter' if action == 'enter' else 'y'}",
-                "surface": surface_index,
-                "surfaceId": surface_id,
-            })
 
     def run(self):
         while True:

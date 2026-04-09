@@ -643,10 +643,10 @@ class TestPollTasks(unittest.TestCase):
         objectives.update_objective(objective["id"], {"tasks": tasks, "status": "executing"})
         return objective
 
-    def test_poll_tasks_auto_approves_routine_prompt(self):
+    def test_poll_tasks_no_longer_does_approval(self):
+        """Approval is now handled by PreToolUse hooks, not polling."""
         task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
         objective = self._create_objective([task])
-        objectives.write_task_file(objective["id"], "task-1", "spec.md", "Routine task")
 
         with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Do you want to create file.ts?"), \
                 patch("cmux_harness.orchestrator.cmux_api._v2_request") as mock_v2, \
@@ -655,19 +655,17 @@ class TestPollTasks(unittest.TestCase):
                 patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "ok"}):
             self.orchestrator.poll_tasks(objective["id"])
 
-        mock_v2.assert_any_call("surface.send_key", {"workspace_id": "ws-1", "key": "enter"})
-        messages = self.orchestrator.get_messages(objective["id"])
-        self.assertTrue(any(msg["type"] == "system" and "auto-approved" in msg["content"] for msg in messages))
+        # Verify no keystroke was sent — approval is handled by hooks now
+        for call in mock_v2.call_args_list:
+            if len(call[0]) >= 1:
+                self.assertNotEqual(call[0][0], "surface.send_key")
 
-    def test_poll_tasks_escalates_complex_prompt(self):
+    def test_poll_tasks_does_not_escalate_via_polling(self):
+        """Escalation is now handled by PreToolUse hooks, not polling."""
         task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
         objective = self._create_objective([task])
-        objectives.write_task_file(objective["id"], "task-1", "spec.md", "Complex task")
 
         with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="Choose one option"), \
-                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "yesno"}), \
-                patch("cmux_harness.orchestrator.approval.classify_approval", return_value={"decision": "ESCALATE", "reason": "requires human judgment"}), \
-                patch("cmux_harness.orchestrator.approval.should_auto_approve", return_value=False), \
                 patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send, \
                 patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": False, "has_progress_update": False}), \
                 patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
@@ -676,9 +674,7 @@ class TestPollTasks(unittest.TestCase):
 
         mock_send.assert_not_called()
         messages = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "approval"]
-        self.assertEqual(len(messages), 1)
-        self.assertIn("needs your input", messages[0]["content"])
-        self.assertEqual(messages[0]["metadata"]["screen_preview"], "Choose one option")
+        self.assertEqual(len(messages), 0)
 
     def test_poll_tasks_detects_completion(self):
         task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
@@ -703,7 +699,6 @@ class TestPollTasks(unittest.TestCase):
         ]
 
         with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="screen"), \
-                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "none"}), \
                 patch("cmux_harness.orchestrator.monitor.check_progress", return_value={
                     "has_result": False,
                     "has_progress_update": True,
@@ -729,7 +724,6 @@ class TestPollTasks(unittest.TestCase):
         self.orchestrator._task_last_progress["task-1"] = 0.0
 
         with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="stalled screen"), \
-                patch("cmux_harness.orchestrator.detection.detect_prompt", return_value={"type": "none"}), \
                 patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": False, "has_progress_update": False}), \
                 patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
                 patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "stalled", "reason": "no activity", "elapsed_minutes": 10.0}):

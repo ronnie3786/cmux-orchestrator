@@ -34,7 +34,7 @@ class TestReportTurn(unittest.TestCase):
             with patch("cmux_harness.report_turn.urllib.request.urlopen", side_effect=_fake_urlopen):
                 code = report_turn.main(
                     [
-                        "--server-url", "http://127.0.0.1:9090",
+                        "--server-url", "http://127.0.0.1:9091",
                         "--workspace-id", "ws-123",
                         "--turn-id", "turn-456",
                         "--token", "secret-token",
@@ -43,7 +43,7 @@ class TestReportTurn(unittest.TestCase):
                 )
 
         self.assertEqual(code, 0)
-        self.assertEqual(captured["url"], "http://127.0.0.1:9090/api/workspaces/ws-123/turns/turn-456/finalize")
+        self.assertEqual(captured["url"], "http://127.0.0.1:9091/api/workspaces/ws-123/turns/turn-456/finalize")
         self.assertEqual(captured["payload"]["token"], "secret-token")
         self.assertEqual(captured["payload"]["content"], "Final callback answer.\n")
         self.assertEqual(captured["payload"]["source"], "callback-helper")
@@ -51,7 +51,7 @@ class TestReportTurn(unittest.TestCase):
     def test_main_returns_error_for_missing_content_source(self):
         code = report_turn.main(
             [
-                "--server-url", "http://127.0.0.1:9090",
+                "--server-url", "http://127.0.0.1:9091",
                 "--workspace-id", "ws-123",
                 "--turn-id", "turn-456",
                 "--token", "secret-token",

@@ -36,7 +36,7 @@ ollama pull qwen3.5:35b-a3b-nvfp4
 # Start the dashboard
 python3 dashboard.py
 
-# Opens http://localhost:9090
+# Opens http://localhost:9091
 ```
 
 Custom port: `python3 dashboard.py 9091`

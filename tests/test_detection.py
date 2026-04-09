@@ -1,6 +1,6 @@
 import unittest
 
-from cmux_harness.detection import detect_claude_session, fingerprint, is_permission_menu
+from cmux_harness.detection import detect_claude_session, fingerprint, is_permission_prompt
 
 
 class TestDetectClaudeSession(unittest.TestCase):
@@ -14,7 +14,7 @@ class TestDetectClaudeSession(unittest.TestCase):
         self.assertTrue(detect_claude_session(screen))
 
     def test_detects_tool_use(self):
-        screen = "⚡ Read file.py"
+        screen = "\u26a1 Read file.py"
         self.assertTrue(detect_claude_session(screen))
 
     def test_detects_permission_prompt(self):
@@ -26,9 +26,6 @@ class TestDetectClaudeSession(unittest.TestCase):
         self.assertFalse(detect_claude_session(screen))
 
     def test_shell_prompt_after_exit_with_scrollback(self):
-        # After /exit, scrollback may still contain "Sonnet 4.6 (default)" or
-        # other Claude-related text — but the last line is a shell prompt,
-        # so the session is NOT active.
         screen = (
             "> /model\n"
             "  Set model to Sonnet 4.6 (default)\n"
@@ -49,35 +46,43 @@ class TestDetectClaudeSession(unittest.TestCase):
         self.assertTrue(detect_claude_session(screen))
 
 
-class TestIsPermissionMenu(unittest.TestCase):
+class TestIsPermissionPrompt(unittest.TestCase):
 
-    def test_yes_no_menu(self):
-        options = "1. Yes\n2. No\n3. Type something else"
-        self.assertTrue(is_permission_menu(options))
+    def test_do_you_want_to_proceed(self):
+        screen = "Bash command\n  git push origin main\nDo you want to proceed?\n> 1. Yes\n  2. No"
+        self.assertTrue(is_permission_prompt(screen))
 
-    def test_allow_menu(self):
-        options = "1. Yes, allow reading from /src\n2. No\n3. Type something else"
-        self.assertTrue(is_permission_menu(options))
+    def test_permission_rule_requires_confirmation(self):
+        screen = "Permission rule Bash(git push *) requires confirmation for this command.\nDo you want to proceed?"
+        self.assertTrue(is_permission_prompt(screen))
 
-    def test_domain_specific_menu(self):
-        options = "1. src/main.py\n2. src/utils.py\n3. tests/test.py"
-        self.assertFalse(is_permission_menu(options))
+    def test_allow_read_yn(self):
+        screen = "Allow Read access to /path/to/file? (Y/n)"
+        self.assertTrue(is_permission_prompt(screen))
 
-    def test_mixed_menu_with_file_choice(self):
-        options = "1. Yes\n2. No\n3. Pick a different file"
-        self.assertFalse(is_permission_menu(options))
+    def test_allow_bash(self):
+        screen = "Allow Bash to run: npm test\n(Y/n)"
+        self.assertTrue(is_permission_prompt(screen))
 
-    def test_all_permission_variants(self):
-        options = (
-            "1. Yes, and don't ask again for: bash\n"
-            "2. Yes, allow from this project\n"
-            "3. No\n"
-            "4. Type something else"
-        )
-        self.assertTrue(is_permission_menu(options))
+    def test_cursor_on_yes(self):
+        screen = "\u276f 1. Yes\n  2. No\nEsc to cancel"
+        self.assertTrue(is_permission_prompt(screen))
 
-    def test_empty_options(self):
-        self.assertFalse(is_permission_menu(""))
+    def test_paren_cursor_on_yes(self):
+        screen = ") 1. Yes\n  2. No\nEsc to cancel"
+        self.assertTrue(is_permission_prompt(screen))
+
+    def test_plain_shell_prompt_is_not_permission(self):
+        screen = "user@host ~ %"
+        self.assertFalse(is_permission_prompt(screen))
+
+    def test_claude_working_is_not_permission(self):
+        screen = "Musing...\n\u26a1 Read src/main.py"
+        self.assertFalse(is_permission_prompt(screen))
+
+    def test_empty_screen(self):
+        self.assertFalse(is_permission_prompt(""))
+        self.assertFalse(is_permission_prompt(None))
 
 
 class TestFingerprint(unittest.TestCase):
@@ -102,7 +107,6 @@ class TestFingerprint(unittest.TestCase):
         result = fingerprint(text)
         self.assertIsInstance(result, str)
         self.assertEqual(len(result), 32)
-        # Verify it's a valid hex string
         int(result, 16)
 
 
