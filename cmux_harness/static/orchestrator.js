@@ -117,7 +117,11 @@
       git: null,
       relative: null,
       debug: null
-    }
+    },
+    onboardingOpen: false,
+    tourActive: false,
+    tourStep: 0,
+    prereqStatus: null
   };
 
   const els = {
@@ -216,7 +220,17 @@
     deleteConfirmTitle: document.getElementById('deleteConfirmTitle'),
     deleteConfirmName: document.getElementById('deleteConfirmName'),
     deleteConfirmCancel: document.getElementById('deleteConfirmCancel'),
-    deleteConfirmOk: document.getElementById('deleteConfirmOk')
+    deleteConfirmOk: document.getElementById('deleteConfirmOk'),
+    onboardingOverlay: document.getElementById('onboardingOverlay'),
+    onboardingPrereqs: document.getElementById('onboardingPrereqs'),
+    onboardingFeatures: document.getElementById('onboardingFeatures'),
+    onboardingCloseButton: document.getElementById('onboardingCloseButton'),
+    onboardingSkipButton: document.getElementById('onboardingSkipButton'),
+    onboardingTourButton: document.getElementById('onboardingTourButton'),
+    onboardingRecheckButton: document.getElementById('onboardingRecheckButton'),
+    tourOverlay: document.getElementById('tourOverlay'),
+    tourTooltip: document.getElementById('tourTooltip'),
+    helpFab: document.getElementById('helpFab')
   };
 
   function esc(value) {
@@ -4986,7 +5000,318 @@
     }, 5000);
   }
 
+  /* ── Onboarding & Tour ──────────────────────── */
+
+  const TOUR_STEPS = [
+    {
+      target: 'addProjectButton',
+      title: 'Add a Project',
+      body: 'Register a git repository directory. Projects organize your objectives and workspaces under one roof.',
+      side: 'right'
+    },
+    {
+      target: 'newObjectiveButton',
+      title: 'Create an Objective',
+      body: 'Set a goal or paste a Jira ticket URL. "Structured" runs multi-step planning with agent review between tasks. "Direct" sends the goal straight to a single worker agent.',
+      side: 'right'
+    },
+    {
+      target: 'openWorkspaceButton',
+      title: 'Open a Workspace',
+      body: 'If you have an existing worktree or feature branch from a project, open it here to start an unstructured Claude Code session.',
+      side: 'right'
+    },
+    {
+      target: 'objectiveList',
+      title: 'Sidebar Navigation',
+      body: 'Projects, objectives, and workspaces appear here grouped by project. Click to select, right-click for rename or delete.',
+      side: 'right'
+    },
+    {
+      target: 'contextStrip',
+      title: 'Context Strip',
+      body: 'Shows the current item\u2019s status, branch, and quick actions. The Git button opens diffs, Status shows a task summary, and Build Log / Console Log stream live output.',
+      side: 'bottom'
+    },
+    {
+      target: 'chatInput',
+      title: 'Chat Input',
+      body: 'Send messages to the active objective or workspace. For objectives, steer the plan or ask what\u2019s happening. The orchestrator updates you as tasks complete.',
+      side: 'top'
+    },
+    {
+      target: 'settingsButton',
+      title: 'Settings',
+      body: 'Configure poll interval (how often we check workspaces), review backend (Claude / Ollama / LM Studio), and the approval severity threshold \u2014 tools below the threshold are auto-approved, at or above are escalated to you.',
+      side: 'top'
+    },
+    {
+      target: 'fabRail',
+      title: 'Action Buttons',
+      body: 'Custom reusable prompt buttons on the right rail (e.g., "Build & Run", "Run Tests"). Define per objective or workspace. The \uD83D\uDC1B debug button is always available for troubleshooting.',
+      side: 'left'
+    }
+  ];
+
+  const ONBOARDING_FEATURES = [
+    { icon: '\uD83D\uDCCB', title: 'Projects & Objectives', desc: 'Register repos, set goals, auto-plan into parallel tasks with sprint contracts and acceptance criteria.' },
+    { icon: '\uD83D\uDDA5\uFE0F', title: 'Workspaces', desc: 'Unstructured Claude Code sessions for ad-hoc work, exploration, or debugging.' },
+    { icon: '\uD83D\uDD12', title: 'Auto-Approval', desc: '5-level severity classifier auto-approves safe tool uses and escalates risky ones to you.' },
+    { icon: '\uD83D\uDD0D', title: 'Code Reviews', desc: 'Automated post-task review via Claude, Ollama, or LM Studio with structured feedback.' }
+  ];
+
+  function shouldShowOnboarding() {
+    try { return !localStorage.getItem('cmux-onboarding-dismissed'); }
+    catch (e) { return false; }
+  }
+
+  async function checkPrerequisites() {
+    try {
+      const status = await api('/api/status');
+      state.prereqStatus = {
+        socketFound: !!status.socketFound,
+        connected: !!status.connected,
+        ollamaAvailable: status.ollamaAvailable,
+        serverRunning: true
+      };
+    } catch (err) {
+      state.prereqStatus = {
+        socketFound: false,
+        connected: false,
+        ollamaAvailable: null,
+        serverRunning: true
+      };
+    }
+  }
+
+  function renderOnboardingPrereqs() {
+    const s = state.prereqStatus || {};
+    const items = [
+      {
+        ok: s.connected,
+        label: 'cmux socket connected',
+        hint: s.connected
+          ? 'Socket found and communicating.'
+          : 'Enable automation mode: cmux Settings \u2192 Automation \u2192 set to <code>automation</code>. Or run: <code>defaults write com.cmuxterm.app socketControlMode -string automation</code> and restart cmux.',
+        optional: false
+      },
+      {
+        ok: true,
+        label: 'Harness server running',
+        hint: 'You\u2019re seeing this page, so the server is working.',
+        optional: false
+      }
+    ];
+    els.onboardingPrereqs.innerHTML = items.map(item => {
+      const iconClass = item.ok ? 'ok' : (item.optional ? 'opt' : 'err');
+      const iconChar = item.ok ? '\u2713' : (item.optional ? '\u25CB' : '\u2717');
+      return '<div class="prereq-item">'
+        + '<div class="prereq-icon ' + iconClass + '">' + iconChar + '</div>'
+        + '<div class="prereq-text">'
+        + '<div class="prereq-name">' + esc(item.label) + '</div>'
+        + '<div class="prereq-hint">' + item.hint + '</div>'
+        + '</div></div>';
+    }).join('');
+  }
+
+  function renderOnboardingFeatures() {
+    els.onboardingFeatures.innerHTML = ONBOARDING_FEATURES.map(f =>
+      '<div class="feature-card">'
+      + '<div class="feature-card-icon">' + f.icon + '</div>'
+      + '<div class="feature-card-title">' + esc(f.title) + '</div>'
+      + '<div class="feature-card-desc">' + esc(f.desc) + '</div>'
+      + '</div>'
+    ).join('');
+  }
+
+  function openOnboarding() {
+    state.onboardingOpen = true;
+    renderOnboardingPrereqs();
+    renderOnboardingFeatures();
+    els.onboardingOverlay.classList.add('open');
+  }
+
+  function closeOnboarding() {
+    state.onboardingOpen = false;
+    els.onboardingOverlay.classList.remove('open');
+    try { localStorage.setItem('cmux-onboarding-dismissed', String(Date.now())); }
+    catch (e) { /* localStorage unavailable */ }
+  }
+
+  async function recheckPrerequisites() {
+    await checkPrerequisites();
+    renderOnboardingPrereqs();
+  }
+
+  /* ── Spotlight Tour ── */
+
+  function startTour() {
+    closeOnboarding();
+    state.tourActive = true;
+    state.tourStep = 0;
+    els.tourOverlay.classList.add('active');
+    renderTourStep();
+  }
+
+  function renderTourStep() {
+    const step = TOUR_STEPS[state.tourStep];
+    if (!step) { endTour(); return; }
+
+    // Resolve target element (with fallback)
+    let targetEl = els[step.target];
+    if ((!targetEl || targetEl.offsetParent === null) && step.fallback) {
+      targetEl = els[step.fallback];
+    }
+
+    // Remove previous highlight
+    document.querySelectorAll('.tour-target-highlight, .tour-target-highlight-fixed').forEach(el => {
+      el.classList.remove('tour-target-highlight');
+      el.classList.remove('tour-target-highlight-fixed');
+    });
+
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const isFixed = window.getComputedStyle(targetEl).position === 'fixed';
+      targetEl.classList.add(isFixed ? 'tour-target-highlight-fixed' : 'tour-target-highlight');
+
+      const rect = targetEl.getBoundingClientRect();
+      const pad = 8;
+      const x1 = Math.max(0, rect.left - pad);
+      const y1 = Math.max(0, rect.top - pad);
+      const x2 = Math.min(window.innerWidth, rect.right + pad);
+      const y2 = Math.min(window.innerHeight, rect.bottom + pad);
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      els.tourOverlay.style.clipPath =
+        'polygon(0 0, ' + w + 'px 0, ' + w + 'px ' + h + 'px, 0 ' + h + 'px, 0 0, '
+        + x1 + 'px ' + y1 + 'px, ' + x1 + 'px ' + y2 + 'px, '
+        + x2 + 'px ' + y2 + 'px, ' + x2 + 'px ' + y1 + 'px, '
+        + x1 + 'px ' + y1 + 'px)';
+
+      positionTourTooltip(rect, step.side);
+    } else {
+      els.tourOverlay.style.clipPath = '';
+      positionTourTooltipCenter();
+    }
+
+    const total = TOUR_STEPS.length;
+    const current = state.tourStep + 1;
+    const isFirst = state.tourStep === 0;
+    const isLast = state.tourStep === total - 1;
+
+    els.tourTooltip.innerHTML =
+      '<div class="tour-tooltip-title">' + esc(step.title) + '</div>'
+      + '<div class="tour-tooltip-body">' + esc(step.body) + '</div>'
+      + '<div class="tour-tooltip-footer">'
+      + '<span class="tour-step-indicator">' + current + ' of ' + total + '</span>'
+      + '<div class="tour-nav">'
+      + '<button class="tour-nav-btn skip" id="tourSkipBtn" type="button">Skip</button>'
+      + (isFirst ? '' : '<button class="tour-nav-btn back" id="tourBackBtn" type="button">Back</button>')
+      + '<button class="tour-nav-btn next" id="tourNextBtn" type="button">'
+      + (isLast ? 'Finish' : 'Next') + '</button>'
+      + '</div></div>';
+
+    els.tourTooltip.classList.add('active');
+
+    document.getElementById('tourNextBtn').addEventListener('click', advanceTour);
+    if (!isFirst) document.getElementById('tourBackBtn').addEventListener('click', retreatTour);
+    document.getElementById('tourSkipBtn').addEventListener('click', endTour);
+  }
+
+  function positionTourTooltip(rect, side) {
+    const tip = els.tourTooltip;
+    const gap = 14;
+    const tipW = 320;
+    const tipH = tip.offsetHeight || 180;
+
+    let left, top;
+    switch (side) {
+      case 'right':
+        left = rect.right + gap;
+        top = rect.top + (rect.height / 2) - (tipH / 2);
+        break;
+      case 'left':
+        left = rect.left - tipW - gap;
+        top = rect.top + (rect.height / 2) - (tipH / 2);
+        break;
+      case 'bottom':
+        left = rect.left + (rect.width / 2) - (tipW / 2);
+        top = rect.bottom + gap;
+        break;
+      case 'top':
+        left = rect.left + (rect.width / 2) - (tipW / 2);
+        top = rect.top - tipH - gap;
+        break;
+      default:
+        left = rect.right + gap;
+        top = rect.top;
+    }
+
+    // Clamp to viewport
+    left = Math.max(12, Math.min(left, window.innerWidth - tipW - 12));
+    top = Math.max(12, Math.min(top, window.innerHeight - tipH - 12));
+
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+
+  function positionTourTooltipCenter() {
+    const tip = els.tourTooltip;
+    tip.style.left = '50%';
+    tip.style.top = '50%';
+    tip.style.transform = 'translate(-50%, -50%)';
+  }
+
+  function advanceTour() {
+    state.tourStep++;
+    if (state.tourStep >= TOUR_STEPS.length) {
+      endTour();
+    } else {
+      renderTourStep();
+    }
+  }
+
+  function retreatTour() {
+    if (state.tourStep > 0) {
+      state.tourStep--;
+      renderTourStep();
+    }
+  }
+
+  function endTour() {
+    state.tourActive = false;
+    state.tourStep = 0;
+    els.tourOverlay.classList.remove('active');
+    els.tourOverlay.style.clipPath = '';
+    els.tourTooltip.classList.remove('active');
+    els.tourTooltip.style.transform = '';
+    document.querySelectorAll('.tour-target-highlight, .tour-target-highlight-fixed').forEach(el => {
+      el.classList.remove('tour-target-highlight');
+      el.classList.remove('tour-target-highlight-fixed');
+    });
+    try { localStorage.setItem('cmux-tour-completed', String(Date.now())); }
+    catch (e) { /* localStorage unavailable */ }
+  }
+
+  function bindOnboardingEvents() {
+    els.onboardingCloseButton.addEventListener('click', closeOnboarding);
+    els.onboardingSkipButton.addEventListener('click', closeOnboarding);
+    els.onboardingTourButton.addEventListener('click', startTour);
+    els.onboardingRecheckButton.addEventListener('click', recheckPrerequisites);
+    els.onboardingOverlay.addEventListener('click', (event) => {
+      if (event.target === els.onboardingOverlay) closeOnboarding();
+    });
+    els.tourOverlay.addEventListener('click', (event) => {
+      if (event.target === els.tourOverlay) endTour();
+    });
+    els.helpFab.addEventListener('click', async () => {
+      await checkPrerequisites();
+      openOnboarding();
+    });
+  }
+
   function bindEvents() {
+    bindOnboardingEvents();
     els.newObjectiveButton.addEventListener('click', () => {
       openSidebarForm(state.draftGoal);
     });
@@ -5124,6 +5449,16 @@
       }
     });
     document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && state.tourActive) {
+        event.preventDefault();
+        endTour();
+        return;
+      }
+      if (event.key === 'Escape' && state.onboardingOpen) {
+        event.preventDefault();
+        closeOnboarding();
+        return;
+      }
       if (event.key === 'Escape' && state.fabModalOpen) {
         event.preventDefault();
         hideAddModal();
@@ -5164,6 +5499,7 @@
     });
     window.addEventListener('resize', () => {
       syncResponsiveState(true);
+      if (state.tourActive) renderTourStep();
     });
     els.terminalLink.addEventListener('click', () => {
       showToast('Terminal sessions view is not wired here yet');
@@ -5190,6 +5526,10 @@
       render();
     }
     installPollers();
+    if (shouldShowOnboarding()) {
+      await checkPrerequisites();
+      openOnboarding();
+    }
   }
 
   boot();

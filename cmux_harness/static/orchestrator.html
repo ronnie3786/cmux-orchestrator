@@ -268,6 +268,33 @@
 
 <div class="toast-wrap" id="toastWrap"></div>
 
+<div class="onboarding-overlay" id="onboardingOverlay">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+    <div class="onboarding-head">
+      <div class="onboarding-logo">
+        <span class="logo-icon">⌘</span>
+        Welcome to the cmux Orchestrator
+      </div>
+      <button class="settings-close" id="onboardingCloseButton" type="button" aria-label="Close onboarding">×</button>
+    </div>
+    <div class="onboarding-subtitle">Your command center for managing Claude Code sessions across cmux workspaces.</div>
+    <div class="onboarding-section-label">Prerequisites</div>
+    <div class="onboarding-prereqs" id="onboardingPrereqs"></div>
+    <div class="onboarding-recheck"><button id="onboardingRecheckButton" type="button">Recheck</button></div>
+    <div class="onboarding-section-label">What you can do</div>
+    <div class="onboarding-features" id="onboardingFeatures"></div>
+    <div class="onboarding-actions">
+      <button class="onboarding-btn secondary" id="onboardingSkipButton" type="button">Skip, I know what I'm doing</button>
+      <button class="onboarding-btn primary" id="onboardingTourButton" type="button">Show me around</button>
+    </div>
+  </div>
+</div>
+
+<div class="tour-overlay" id="tourOverlay"></div>
+<div class="tour-tooltip" id="tourTooltip"></div>
+
+<button class="help-fab" id="helpFab" type="button" aria-label="Help">?</button>
+
 <div class="ctx-menu" id="ctxMenu">
   <button class="ctx-menu-item" id="ctxRename" type="button">Rename</button>
   <button class="ctx-menu-item destructive" id="ctxDelete" type="button">Delete</button>
