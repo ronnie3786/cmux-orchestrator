@@ -29,16 +29,24 @@ def handle_get_task_screen(handler, objective, task_id):
 def handle_get_screen(handler, objective, parsed):
     params = handler.parse_qs(parsed.query)
     lines_str = params.get("lines", ["200"])[0]
+    source = str(params.get("source", ["active"])[0] or "active").strip().lower()
     try:
         lines = max(20, min(int(lines_str), 500))
     except (TypeError, ValueError):
         lines = 200
 
-    workspace_uuid = str(objective.get("plannerWorkspaceId") or "").strip()
-    if not workspace_uuid:
-        orchestrator_workspace_id = str(objective.get("orchestratorSessionId") or "").strip()
-        if objective.get("orchestratorSessionActive") and orchestrator_workspace_id:
-            workspace_uuid = orchestrator_workspace_id
+    workspace_uuid = ""
+    if source == "archived_planner":
+        workspace_uuid = str(objective.get("plannerArchivedWorkspaceId") or "").strip()
+        if not workspace_uuid:
+            handler._json_response({"ok": False, "error": "Archived planner session is not available"}, 409)
+            return
+    else:
+        workspace_uuid = str(objective.get("plannerWorkspaceId") or "").strip()
+        if not workspace_uuid:
+            orchestrator_workspace_id = str(objective.get("orchestratorSessionId") or "").strip()
+            if objective.get("orchestratorSessionActive") and orchestrator_workspace_id:
+                workspace_uuid = orchestrator_workspace_id
 
     if not workspace_uuid:
         handler._json_response({"ok": False, "error": "Objective session is not active"}, 409)

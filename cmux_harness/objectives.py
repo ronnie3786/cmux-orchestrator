@@ -303,6 +303,9 @@ def _ensure_objective_project(objective_id: str, objective: dict) -> tuple[dict,
     if not isinstance(tasks, list):
         objective["tasks"] = []
         changed = True
+    if "plannerArchivedWorkspaceId" not in objective:
+        objective["plannerArchivedWorkspaceId"] = None
+        changed = True
     return objective, changed
 
 
@@ -416,6 +419,7 @@ def create_objective(
         "workflowMode": _normalize_workflow_mode(workflow_mode),
         "createdAt": now,
         "updatedAt": now,
+        "plannerArchivedWorkspaceId": None,
         "tasks": [],
     }
     objective_dir = get_objective_dir(objective_id)

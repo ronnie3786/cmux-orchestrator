@@ -144,6 +144,47 @@ function buildMessage(contracts, id = 'contract-review-1') {
   };
 }
 
+function createObjectivePeekHarness(activeObjective) {
+  const context = vm.createContext({
+    __state: {
+      activeWorkspaceId: null,
+      activeObjective,
+      messages: []
+    }
+  });
+
+  const script = [
+    `
+    const state = __state;
+    function esc(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+    `,
+    extractFunction('objectiveHasPeekSession'),
+    extractFunction('objectiveHasArchivedPlannerSession'),
+    extractFunction('objectivePeekTitle'),
+    extractFunction('objectivePeekSubtitle'),
+    extractFunction('renderObjectivePeekBubble'),
+    extractFunction('renderArchivedPlannerPeekBubble'),
+    `
+    globalThis.__exports = {
+      objectiveHasPeekSession,
+      objectiveHasArchivedPlannerSession,
+      renderObjectivePeekBubble,
+      renderArchivedPlannerPeekBubble
+    };
+    `
+  ].join('\n');
+
+  vm.runInContext(script, context);
+  return context.__exports;
+}
+
 test('contract review card shows active all-pass evaluator banner and per-task approval state', () => {
   const harness = createRendererHarness('contract_review');
   const message = buildMessage([
@@ -242,4 +283,33 @@ test('contract review card renders a neutral evaluator state when verdict metada
   assert.match(html, /No evaluator result/);
   assert.match(html, /No Verdict/);
   assert.match(html, /No evaluator result recorded for this contract\./);
+});
+
+test('objective peek bubble only treats live planner/orchestrator sessions as active', () => {
+  const harness = createObjectivePeekHarness({
+    status: 'negotiating_contracts',
+    plannerWorkspaceId: null,
+    plannerArchivedWorkspaceId: 'ws-planner-archived',
+    orchestratorSessionId: '',
+    orchestratorSessionActive: false
+  });
+
+  assert.equal(harness.objectiveHasPeekSession(), false);
+  assert.equal(harness.objectiveHasArchivedPlannerSession(), true);
+});
+
+test('archived planner bubble renders as a read-only terminal affordance', () => {
+  const harness = createObjectivePeekHarness({
+    status: 'negotiating_contracts',
+    plannerWorkspaceId: null,
+    plannerArchivedWorkspaceId: 'ws-planner-archived',
+    orchestratorSessionId: 'ws-orch',
+    orchestratorSessionActive: true
+  });
+
+  const html = harness.renderArchivedPlannerPeekBubble();
+
+  assert.match(html, /Planner Session Archive/);
+  assert.match(html, /Read-Only Peek/);
+  assert.match(html, /read-only mode/i);
 });

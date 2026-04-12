@@ -180,6 +180,7 @@ class TestOrchestrator(unittest.TestCase):
             objective["id"],
             {
                 "plannerWorkspaceId": "ws-planner",
+                "plannerArchivedWorkspaceId": "ws-planner-archived",
                 "tasks": [
                     {"id": "task-1", "workspaceId": "ws-1"},
                     {"id": "task-2", "workspaceId": "ws-2"},
@@ -200,6 +201,7 @@ class TestOrchestrator(unittest.TestCase):
             mock_send.call_args_list,
             [
                 unittest.mock.call("ws-planner", "/exit"),
+                unittest.mock.call("ws-planner-archived", "/exit"),
                 unittest.mock.call("ws-1", "/exit"),
                 unittest.mock.call("ws-2", "/exit"),
             ],
@@ -208,6 +210,7 @@ class TestOrchestrator(unittest.TestCase):
             mock_request.call_args_list,
             [
                 unittest.mock.call("workspace.close", {"workspace_id": "ws-planner"}),
+                unittest.mock.call("workspace.close", {"workspace_id": "ws-planner-archived"}),
                 unittest.mock.call("workspace.close", {"workspace_id": "ws-1"}),
                 unittest.mock.call("workspace.close", {"workspace_id": "ws-2"}),
             ],
@@ -402,7 +405,7 @@ class TestPlanningPipeline(unittest.TestCase):
         self.assertEqual(updated["status"], "failed")
         self.assertTrue(any(raw_plan in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
 
-    def test_approve_plan_closes_planner_and_starts_contract_negotiation(self):
+    def test_approve_plan_archives_planner_and_starts_contract_negotiation(self):
         objective = self._create_objective()
         objectives.update_objective(
             objective["id"],
@@ -422,8 +425,9 @@ class TestPlanningPipeline(unittest.TestCase):
         updated = objectives.read_objective(objective["id"])
         self.assertEqual(updated["status"], "negotiating_contracts")
         self.assertIsNone(updated["plannerWorkspaceId"])
+        self.assertEqual(updated["plannerArchivedWorkspaceId"], "ws-planner")
         mock_send.assert_called_once_with("ws-planner", "/exit")
-        mock_request.assert_called_once_with("workspace.close", {"workspace_id": "ws-planner"})
+        mock_request.assert_not_called()
         mock_thread.assert_called_once_with(
             target=self.orchestrator._negotiate_contracts,
             args=(objective["id"],),

@@ -262,6 +262,26 @@ class Orchestrator:
             }
             self._log_event(objective_id, "error", "exception", details)
 
+    def _exit_workspace(self, objective_id, workspace_id, purpose, task_id=None):
+        if not workspace_id:
+            return
+        try:
+            cmux_api.send_prompt_to_workspace(workspace_id, "/exit")
+            details = {"workspaceId": workspace_id, "purpose": purpose}
+            if task_id:
+                details["taskId"] = task_id
+            self._log_event(objective_id, "info", "workspace_exited", details)
+        except Exception as exc:
+            details = {
+                "phase": f"exit_workspace_{purpose}",
+                "workspaceId": workspace_id,
+                "taskId": task_id,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+                "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
+            }
+            self._log_event(objective_id, "error", "exception", details)
+
     def _build_workspace_context_prompt(self, workspace):
         workspace_id = str(workspace.get("id") or "").strip()
         context_file = workspaces.workspace_conversation_context_path(workspace_id)
@@ -1637,7 +1657,13 @@ class Orchestrator:
 
             # Store workspace ID immediately so hook approvals can route to this session
             # before plan_review status is set (where it was previously stored).
-            objectives.update_objective(objective_id, {"plannerWorkspaceId": workspace_uuid})
+            objectives.update_objective(
+                objective_id,
+                {
+                    "plannerWorkspaceId": workspace_uuid,
+                    "plannerArchivedWorkspaceId": None,
+                },
+            )
 
             if not self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="planning"):
                 objectives.update_objective(objective_id, {"status": "failed"})
@@ -2973,6 +2999,10 @@ Verdict rules:
         if planner_workspace_id:
             seen.add(planner_workspace_id)
             self._close_workspace(objective_id, planner_workspace_id, "cleanup_planner")
+        archived_planner_workspace_id = objective.get("plannerArchivedWorkspaceId")
+        if archived_planner_workspace_id and archived_planner_workspace_id not in seen:
+            seen.add(archived_planner_workspace_id)
+            self._close_workspace(objective_id, archived_planner_workspace_id, "cleanup_archived_planner")
         orchestrator_workspace_id = objective.get("orchestratorSessionId")
         if orchestrator_workspace_id and orchestrator_workspace_id not in seen:
             seen.add(orchestrator_workspace_id)
@@ -3021,10 +3051,14 @@ Verdict rules:
             return False
         planner_workspace_id = objective.get("plannerWorkspaceId")
         if planner_workspace_id:
-            self._close_workspace(objective_id, planner_workspace_id, "plan_approved")
+            self._exit_workspace(objective_id, planner_workspace_id, "plan_approved")
         objectives.update_objective(
             objective_id,
-            {"status": "negotiating_contracts", "plannerWorkspaceId": None},
+            {
+                "status": "negotiating_contracts",
+                "plannerWorkspaceId": None,
+                "plannerArchivedWorkspaceId": planner_workspace_id,
+            },
         )
         self._append_message(
             objective_id,

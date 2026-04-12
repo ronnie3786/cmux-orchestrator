@@ -2426,6 +2426,30 @@
     }, 3000);
   }
 
+  async function openArchivedPlannerOutput() {
+    if (!state.activeObjectiveId) return;
+    clearWorkerOutputPolling();
+    state.workerOutputMode = 'archived_planner';
+    state.workerOutputTaskId = null;
+    state.workerOutputContent = '';
+    const objective = state.activeObjective;
+    const title = objective && objective.goal
+      ? 'Planner Terminal — Read Only — ' + objective.goal
+      : 'Planner Terminal — Read Only';
+    els.workerOutputTitle.textContent = title;
+    els.workerOutputBody.innerHTML = '<div class="diff-loading">Loading planner snapshot…</div>';
+    els.workerOutputOverlay.classList.add('visible');
+    await refreshWorkerOutput();
+    state.workerOutputPolling = true;
+    state.workerOutputInterval = window.setInterval(() => {
+      if (!els.workerOutputOverlay.classList.contains('visible') || state.workerOutputMode !== 'archived_planner') {
+        clearWorkerOutputPolling();
+        return;
+      }
+      refreshWorkerOutput();
+    }, 3000);
+  }
+
   function renderWorkspaceTerminalLine(line) {
     const raw = stripAnsi(String(line == null ? '' : line));
     const trimmed = raw.trim();
@@ -2476,7 +2500,7 @@
 
   function renderWorkerOutputContent(content, mode) {
     const lines = String(content || '').split('\n');
-    if (mode === 'workspace' || mode === 'objective') {
+    if (mode === 'workspace' || mode === 'objective' || mode === 'archived_planner') {
       return '<div class="worker-output-content workspace-peek">' + lines.map(renderWorkspaceTerminalLine).join('') + '</div>';
     }
     return '<div class="worker-output-content">' + lines.map((line) => '<div class="wo-line">' + ansiToHtml(line) + '</div>').join('') + '</div>';
@@ -2496,6 +2520,11 @@
         if (!objectiveId) return;
         response = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/screen?lines=220');
         if (state.workerOutputMode !== 'objective' || state.activeObjectiveId !== objectiveId) return;
+      } else if (mode === 'archived_planner') {
+        const objectiveId = state.activeObjectiveId;
+        if (!objectiveId) return;
+        response = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/screen?lines=220&source=archived_planner');
+        if (state.workerOutputMode !== 'archived_planner' || state.activeObjectiveId !== objectiveId) return;
       } else {
         const taskId = state.workerOutputTaskId;
         if (!taskId || !state.activeObjectiveId) return;
@@ -2514,6 +2543,8 @@
         if (state.workerOutputMode !== 'workspace') return;
       } else if (mode === 'objective') {
         if (state.workerOutputMode !== 'objective') return;
+      } else if (mode === 'archived_planner') {
+        if (state.workerOutputMode !== 'archived_planner') return;
       } else if (!state.workerOutputTaskId || state.workerOutputMode !== 'task') {
         return;
       }
@@ -4457,6 +4488,12 @@
     return !!(objective.plannerWorkspaceId || (objective.orchestratorSessionActive && objective.orchestratorSessionId));
   }
 
+  function objectiveHasArchivedPlannerSession() {
+    const objective = state.activeObjective;
+    if (!objective || state.activeWorkspaceId) return false;
+    return !!objective.plannerArchivedWorkspaceId;
+  }
+
   function objectivePeekTitle() {
     const status = String(state.activeObjective && state.activeObjective.status || '').toLowerCase();
     if (status === 'planning') return 'Planning In Progress';
@@ -4489,6 +4526,28 @@
       '</div>',
       '</div>',
       '<div class="turn-live-subtitle shimmer">' + esc(objectivePeekSubtitle()) + '</div>',
+      '<div class="turn-live-dots"><span></span><span></span><span></span></div>',
+      '</div>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderArchivedPlannerPeekBubble() {
+    if (!objectiveHasArchivedPlannerSession()) return '';
+    return [
+      '<div class="msg">',
+      '<div class="msg-av av-c">⌘</div>',
+      '<div class="msg-body">',
+      '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">archived</span></div>',
+      '<div class="msg-bubble turn-live-bubble">',
+      '<div class="turn-live-head">',
+      '<div class="turn-live-title">Planner Session Archive</div>',
+      '<div class="turn-live-meta">',
+      '<button class="turn-live-peek" type="button" data-objective-archived-peek="true">Read-Only Peek</button>',
+      '</div>',
+      '</div>',
+      '<div class="turn-live-subtitle shimmer">The planner terminal remains available here in read-only mode.</div>',
       '<div class="turn-live-dots"><span></span><span></span><span></span></div>',
       '</div>',
       '</div>',
@@ -4529,11 +4588,21 @@
     } else {
       html = '<div class="thread-div">now</div>' + items.map((item, index) => renderMessageItem(item, shouldGroupSystemItem(items, index))).join('');
     }
+    let renderedPeekBubble = false;
     if (state.activeWorkspaceId && state.activeWorkspaceTurn) {
       html += renderWorkspaceTurnBubble();
-    } else if (!state.activeWorkspaceId && objectiveHasPeekSession()) {
-      html += renderObjectivePeekBubble();
-    } else if (state.typing) {
+      renderedPeekBubble = true;
+    } else if (!state.activeWorkspaceId) {
+      if (objectiveHasPeekSession()) {
+        html += renderObjectivePeekBubble();
+        renderedPeekBubble = true;
+      }
+      if (objectiveHasArchivedPlannerSession()) {
+        html += renderArchivedPlannerPeekBubble();
+        renderedPeekBubble = true;
+      }
+    }
+    if (!renderedPeekBubble && state.typing) {
       html += '<div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-bubble typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div>';
     }
     els.messageColumn.innerHTML = html;
@@ -4553,6 +4622,12 @@
       node.addEventListener('click', (event) => {
         event.stopPropagation();
         openObjectiveOutput();
+      });
+    });
+    els.messageColumn.querySelectorAll('[data-objective-archived-peek]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openArchivedPlannerOutput();
       });
     });
     els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {

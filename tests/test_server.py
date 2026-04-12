@@ -1072,6 +1072,42 @@ class TestServerResponses(unittest.TestCase):
         handler.send_response.assert_called_once_with(409)
         self.assertEqual(body, {"ok": False, "error": "Objective session is not active"})
 
+    def test_get_objective_screen_can_return_archived_planner_snapshot(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "negotiating_contracts",
+                "plannerArchivedWorkspaceId": "ws-planner-archived",
+            },
+        )
+        handler = self._make_handler(
+            Mock(),
+            f"/api/objectives/{objective['id']}/screen?lines=120&source=archived_planner",
+        )
+
+        with patch("cmux_harness.routes.objectives.cmux_api.cmux_read_workspace", return_value="archived planner output\n") as mock_read:
+            handler.do_GET()
+
+        mock_read.assert_called_once_with(0, 0, lines=120, workspace_uuid="ws-planner-archived")
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["screen"], "archived planner output\n")
+        self.assertEqual(body["lines"], 120)
+
+    def test_get_objective_screen_archived_planner_conflicts_when_missing(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        handler = self._make_handler(
+            Mock(),
+            f"/api/objectives/{objective['id']}/screen?source=archived_planner",
+        )
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(409)
+        self.assertEqual(body, {"ok": False, "error": "Archived planner session is not available"})
+
     def test_get_workspace_screen_returns_active_session_snapshot(self):
         root_path = Path(self.tmpdir.name) / "workspace-screen"
         workspace = self._create_workspace(root_path=root_path, name="Screen Workspace")
