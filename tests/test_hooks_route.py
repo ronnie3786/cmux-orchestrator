@@ -47,7 +47,7 @@ class TestHandlePreToolUse(unittest.TestCase):
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_read_tool_auto_approved(self, mock_resolve):
-        mock_resolve.return_value = {"objective_id": None, "task_id": None, "spec_text": None}
+        mock_resolve.return_value = {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine()
         data = {"tool_name": "Read", "tool_input": {"file_path": "/src/main.py"}, "cwd": "/tmp"}
@@ -59,7 +59,7 @@ class TestHandlePreToolUse(unittest.TestCase):
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_edit_tool_auto_approved(self, mock_resolve):
-        mock_resolve.return_value = {"objective_id": None, "task_id": None, "spec_text": None}
+        mock_resolve.return_value = {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine()
         data = {"tool_name": "Edit", "tool_input": {}, "cwd": "/tmp"}
@@ -69,8 +69,19 @@ class TestHandlePreToolUse(unittest.TestCase):
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
 
     @patch("cmux_harness.routes.hooks._resolve_context")
+    def test_ls_tool_auto_approved(self, mock_resolve):
+        mock_resolve.return_value = {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
+        handler = MockHandler()
+        engine = self._make_engine()
+        data = {"tool_name": "LS", "tool_input": {}, "cwd": "/tmp"}
+
+        handle_pre_tool_use(handler, data, engine=engine)
+
+        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
+
+    @patch("cmux_harness.routes.hooks._resolve_context")
     def test_destructive_bash_denied(self, mock_resolve):
-        mock_resolve.return_value = {"objective_id": "obj-1", "task_id": "task-1", "spec_text": "Build the app"}
+        mock_resolve.return_value = {"objective_id": "obj-1", "task_id": "task-1", "workspace_id": "ws-1", "spec_text": "Build the app"}
         handler = MockHandler()
         engine = self._make_engine()
         data = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}, "cwd": "/project"}
@@ -87,7 +98,7 @@ class TestHandlePreToolUse(unittest.TestCase):
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_safe_bash_approved(self, mock_resolve):
-        mock_resolve.return_value = {"objective_id": None, "task_id": None, "spec_text": None}
+        mock_resolve.return_value = {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine()
         data = {"tool_name": "Bash", "tool_input": {"command": "npm test"}, "cwd": "/project"}
@@ -98,7 +109,7 @@ class TestHandlePreToolUse(unittest.TestCase):
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_ask_user_question_denied(self, mock_resolve):
-        mock_resolve.return_value = {"objective_id": "obj-1", "task_id": "task-1", "spec_text": None}
+        mock_resolve.return_value = {"objective_id": "obj-1", "task_id": "task-1", "workspace_id": "ws-1", "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine()
         data = {"tool_name": "AskUserQuestion", "tool_input": {}, "cwd": "/project"}
@@ -109,7 +120,7 @@ class TestHandlePreToolUse(unittest.TestCase):
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_threshold_4_approves_level_4(self, mock_resolve):
-        mock_resolve.return_value = {"objective_id": None, "task_id": None, "spec_text": None}
+        mock_resolve.return_value = {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine(threshold=4)
         data = {"tool_name": "AskUserQuestion", "tool_input": {}, "cwd": "/tmp"}
@@ -120,7 +131,7 @@ class TestHandlePreToolUse(unittest.TestCase):
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_no_escalation_message_when_no_objective(self, mock_resolve):
-        mock_resolve.return_value = {"objective_id": None, "task_id": None, "spec_text": None}
+        mock_resolve.return_value = {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine()
         data = {"tool_name": "AskUserQuestion", "tool_input": {}, "cwd": "/unknown"}

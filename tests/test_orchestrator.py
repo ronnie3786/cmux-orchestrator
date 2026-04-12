@@ -298,6 +298,29 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertTrue(updated["orchestratorSessionActive"])
         self.assertEqual(updated["orchestratorSessionId"], "ws-orch")
 
+    def test_handle_human_input_records_resolved_approval_without_newline_artifact(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "executing",
+                "tasks": [{"id": "task-1", "workspaceId": "ws-task"}],
+            },
+        )
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send:
+            self.orchestrator.handle_human_input(
+                objective["id"],
+                "Approved: y",
+                context={"task_id": "task-1", "approval_action": "y\n", "approval_message_id": "approval-1"},
+            )
+
+        mock_send.assert_called_once_with(0, 0, text="y\n", workspace_uuid="ws-task")
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertEqual(messages[-1]["type"], "approval_resolved")
+        self.assertEqual(messages[-1]["metadata"]["approval_message_id"], "approval-1")
+        self.assertIn("human approved with 'y' — Claude resumed", messages[-1]["content"])
+
     def test_run_planning_defaults_to_ten_minute_timeout(self):
         self.assertEqual(Orchestrator._run_planning.__defaults__, (10, 36, 90))
 
@@ -438,6 +461,166 @@ class TestPlanningPipeline(unittest.TestCase):
             )
         )
 
+    def test_negotiate_contracts_auto_starts_execution_when_contract_review_disabled(self):
+        objective = self._create_objective()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "negotiating_contracts",
+                "tasks": [{"id": "task-1", "title": "First", "status": "queued"}],
+            },
+        )
+        self.orchestrator.engine = Mock(contract_review_enabled=False)
+        contract_text = """## Acceptance Criteria
+1. Feature works.
+
+## Build Verification
+/exp-project-run
+
+## Functional Test Hints
+Run the flow.
+
+## Pass/Fail Threshold
+Pass if the task behaves as specified.
+"""
+
+        with patch("cmux_harness.orchestrator.claude_cli.run_sonnet", side_effect=[
+                contract_text,
+                {"verdict": "pass", "summary": "Contract is aligned and testable.", "issues": []},
+            ]), \
+                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch:
+            self.orchestrator._negotiate_contracts(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "executing")
+        mock_launch.assert_called_once_with(objective["id"])
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertTrue(any(msg["type"] == "contract_review" for msg in messages))
+        self.assertTrue(any("AI contract evaluator approved the contracts" in msg["content"] for msg in messages if msg["type"] == "system"))
+
+    def test_negotiate_contracts_waits_for_human_review_when_enabled(self):
+        objective = self._create_objective()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "negotiating_contracts",
+                "tasks": [{"id": "task-1", "title": "First", "status": "queued"}],
+            },
+        )
+        self.orchestrator.engine = Mock(contract_review_enabled=True)
+        contract_text = """## Acceptance Criteria
+1. Feature works.
+
+## Build Verification
+/exp-project-run
+
+## Functional Test Hints
+Run the flow.
+
+## Pass/Fail Threshold
+Pass if the task behaves as specified.
+"""
+
+        with patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value=contract_text), \
+                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch:
+            self.orchestrator._negotiate_contracts(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "contract_review")
+        mock_launch.assert_not_called()
+
+    def test_negotiate_contracts_regenerates_until_evaluator_passes(self):
+        objective = self._create_objective()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "negotiating_contracts",
+                "tasks": [{"id": "task-1", "title": "First", "status": "queued"}],
+            },
+        )
+        self.orchestrator.engine = Mock(contract_review_enabled=False)
+        weak_contract = """## Acceptance Criteria
+1. Do the thing.
+
+## Build Verification
+/exp-project-run
+
+## Functional Test Hints
+- Test it.
+
+## Pass/Fail Threshold
+- Should probably work.
+"""
+        improved_contract = """## Acceptance Criteria
+1. The feature works end to end for the primary flow.
+
+## Build Verification
+- /exp-project-run
+
+## Functional Test Hints
+- Run the full user flow in Maestro and verify success and failure paths.
+
+## Pass/Fail Threshold
+- Fail if the flow does not work end to end or any acceptance criterion lacks evidence.
+"""
+
+        with patch("cmux_harness.orchestrator.claude_cli.run_sonnet", side_effect=[
+                weak_contract,
+                {"verdict": "fail", "summary": "Too vague.", "issues": ["Acceptance criteria are not concrete enough."]},
+                improved_contract,
+                {"verdict": "pass", "summary": "Looks good.", "issues": []},
+            ]), \
+                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch:
+            self.orchestrator._negotiate_contracts(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "executing")
+        mock_launch.assert_called_once_with(objective["id"])
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertTrue(any("AI contract evaluator requested changes" in msg["content"] for msg in messages if msg["type"] == "system"))
+        final_contract = objectives.read_task_file(objective["id"], "task-1", "contract.md")
+        self.assertIn("The feature works end to end", final_contract)
+
+    def test_negotiate_contracts_falls_back_to_human_review_when_evaluator_never_passes(self):
+        objective = self._create_objective()
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "negotiating_contracts",
+                "tasks": [{"id": "task-1", "title": "First", "status": "queued"}],
+            },
+        )
+        self.orchestrator.engine = Mock(contract_review_enabled=False)
+        weak_contract = """## Acceptance Criteria
+1. Do the thing.
+
+## Build Verification
+/exp-project-run
+
+## Functional Test Hints
+- Test it.
+
+## Pass/Fail Threshold
+- Should probably work.
+"""
+
+        with patch("cmux_harness.orchestrator.claude_cli.run_sonnet", side_effect=[
+                weak_contract,
+                {"verdict": "fail", "summary": "Too vague.", "issues": ["Acceptance criteria are not concrete enough."]},
+                weak_contract,
+                {"verdict": "fail", "summary": "Still too vague.", "issues": ["Acceptance criteria are not concrete enough."]},
+                weak_contract,
+                {"verdict": "fail", "summary": "Still too vague.", "issues": ["Acceptance criteria are not concrete enough."]},
+            ]), \
+                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch:
+            self.orchestrator._negotiate_contracts(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "contract_review")
+        mock_launch.assert_not_called()
+        messages = self.orchestrator.get_messages(objective["id"])
+        self.assertTrue(any(msg["type"] == "alert" and "Human review is required" in msg["content"] for msg in messages))
+
     def test_handle_human_input_revises_plan_during_plan_review(self):
         objective = self._create_objective()
         plan_path = Path(objective["worktreePath"]) / "plan.md"
@@ -497,6 +680,7 @@ class TestPlanningPipeline(unittest.TestCase):
         self.assertEqual(updated["tasks"], revised_tasks)
         messages = self.orchestrator.get_messages(objective["id"])
         self.assertEqual(messages[0]["type"], "user")
+        self.assertTrue(any(msg["type"] == "system" and "Revising plan based on your feedback" in msg["content"] for msg in messages))
         self.assertTrue(any(msg["type"] == "plan_review" and "Plan updated" in msg["content"] for msg in messages))
 
 
@@ -987,7 +1171,8 @@ class TestReviewRework(unittest.TestCase):
 
         mock_send.assert_called_once_with(0, 0, text="y\n", workspace_uuid="ws-approve")
         messages = self.orchestrator.get_messages(objective["id"])
-        self.assertEqual(messages[-1]["content"], "Sent 'y\n' to Task task-1")
+        self.assertEqual(messages[-1]["type"], "approval_resolved")
+        self.assertEqual(messages[-1]["content"], "Task task-1: human approved with 'y' — Claude resumed")
 
     def test_handle_human_input_takes_over(self):
         task = {"id": "task-1", "status": "executing", "workspaceId": "ws-approve"}

@@ -235,15 +235,20 @@ def _clean_message_text(message: dict | None) -> str:
     return msg_type.title() or "No recent activity yet"
 
 
+def _contract_review_required(objective: dict) -> bool:
+    return bool(objective.get("contractReviewEnabled", False))
+
+
 def _blockers_for_summary(objective: dict, tasks: list[dict], approvals: dict, review_summary: dict, recent_message: dict | None) -> list[str]:
     blockers: list[str] = []
     status = str(objective.get("status") or "").lower()
+    contract_review_required = _contract_review_required(objective)
     if approvals.get("latest"):
         latest = approvals["latest"]
         blockers.append(f"Waiting on approval for {latest.get('taskTitle') or latest.get('taskId')}")
     if status == "plan_review":
         blockers.append("Plan needs human approval or feedback before execution can start")
-    if status == "contract_review":
+    if status == "contract_review" and contract_review_required:
         blockers.append("Sprint contracts need human approval before tasks can start")
     for task in tasks:
         if str(task.get("status") or "").lower() != "failed":
@@ -273,6 +278,7 @@ def _blockers_for_summary(objective: dict, tasks: list[dict], approvals: dict, r
 
 def _now_line(objective: dict, task_counts: dict, approvals: dict) -> str:
     status = str(objective.get("status") or "").lower()
+    contract_review_required = _contract_review_required(objective)
     active_titles = task_counts.get("activeTitles") or []
     if approvals.get("latest"):
         latest = approvals["latest"]
@@ -284,7 +290,9 @@ def _now_line(objective: dict, task_counts: dict, approvals: dict) -> str:
     if status == "negotiating_contracts":
         return "The orchestrator is generating sprint contracts for each planned task."
     if status == "contract_review":
-        return "Contracts are ready and waiting for human approval."
+        if contract_review_required:
+            return "Contracts are ready and waiting for human approval."
+        return "Contracts are ready and execution will continue automatically."
     if status in {"executing", "reviewing", "rework"} and active_titles:
         titles = ", ".join(active_titles[:2])
         if len(active_titles) > 2:
@@ -299,16 +307,21 @@ def _now_line(objective: dict, task_counts: dict, approvals: dict) -> str:
 
 def _next_line(objective: dict, task_counts: dict, approvals: dict, blockers: list[str]) -> str:
     status = str(objective.get("status") or "").lower()
+    contract_review_required = _contract_review_required(objective)
     if approvals.get("latest"):
         return "Approve the pending task or take over manually to unblock progress."
     if status == "plan_review":
         return "Approve the plan or send feedback in chat to revise it."
     if status == "contract_review":
-        return "Approve the contracts so execution can start."
+        if contract_review_required:
+            return "Approve the contracts so execution can start."
+        return "Wait for execution to start automatically from the generated contracts."
     if status == "planning":
         return "Wait for the plan review card, then approve or revise it."
     if status == "negotiating_contracts":
-        return "Wait for the contract review step, then approve it."
+        if contract_review_required:
+            return "Wait for the contract review step, then approve it."
+        return "Wait for the contracts to finish generating; tasks will start automatically after that."
     if status in {"executing", "reviewing", "rework"}:
         queued = int(task_counts.get("queued") or 0)
         if queued > 0:
@@ -595,6 +608,8 @@ def handle_get_status_summary(handler, objective_id: str, objective: dict, *, en
     orchestrator = getattr(engine, "orchestrator", None)
     get_messages = getattr(orchestrator, "get_messages", None)
     messages = get_messages(objective_id) if callable(get_messages) else []
+    objective = dict(objective or {})
+    objective["contractReviewEnabled"] = bool(getattr(engine, "contract_review_enabled", False))
     enrich = None
     if parsed is not None:
         query = getattr(handler, "parse_qs", None)

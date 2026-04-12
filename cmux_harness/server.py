@@ -306,6 +306,13 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "Not found"}, 404)
                     return
                 objective_routes.handle_get_task_screen(self, objective, task_id)
+            elif path.startswith("/api/objectives/") and path.endswith("/screen"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/screen")]).strip("/")
+                objective = objectives.read_objective(objective_id)
+                if objective is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                objective_routes.handle_get_screen(self, objective, parsed)
             elif path.startswith("/api/objectives/") and "/messages" in path:
                 objective_id = path.split("/")[3]
                 objective_routes.handle_get_messages(self, objective_id, parsed, engine=self.server.engine)
@@ -376,6 +383,7 @@ def make_handler(engine):
                         "reviewEnabled": engine.review_enabled,
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
+                        "contractReviewEnabled": engine.contract_review_enabled,
                         "defaultProjectDir": engine.default_project_dir,
                         "defaultBaseBranch": engine.default_base_branch,
                     })
@@ -597,6 +605,9 @@ def make_handler(engine):
                         model=review_model,
                         backend=review_backend,
                     )
+                contract_review_enabled = data.get("contractReviewEnabled")
+                if contract_review_enabled is not None:
+                    engine.set_contract_review_config(enabled=contract_review_enabled)
                 default_project_dir = data.get("defaultProjectDir")
                 default_base_branch = data.get("defaultBaseBranch")
                 if default_project_dir is not None or default_base_branch is not None:
@@ -612,6 +623,7 @@ def make_handler(engine):
                         "reviewEnabled": engine.review_enabled,
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
+                        "contractReviewEnabled": engine.contract_review_enabled,
                         "defaultProjectDir": engine.default_project_dir,
                         "defaultBaseBranch": engine.default_base_branch,
                     })

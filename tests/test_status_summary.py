@@ -162,6 +162,24 @@ class TestStatusSummary(unittest.TestCase):
         self.assertEqual(summary['next'], 'Approve the pending task or take over manually to unblock progress.')
         self.assertIn('Waiting on approval for Open approval gate', summary['blockers'])
 
+    def test_negotiating_contracts_describes_auto_execution_when_contract_review_disabled(self):
+        objective = {
+            'id': 'objective-contracts-auto',
+            'goal': 'Keep moving after contracts',
+            'status': 'negotiating_contracts',
+            'contractReviewEnabled': False,
+            'worktreePath': '/tmp/repo',
+            'tasks': [
+                {'id': 'task-1', 'title': 'Write contract', 'status': 'queued', 'reviewCycles': 0},
+            ],
+        }
+
+        with patch('cmux_harness.routes.status_summary.subprocess.run', return_value=CompletedProcess('')):
+            summary = status_summary.build_status_summary('objective-contracts-auto', objective, [])
+
+        self.assertEqual(summary['now'], 'The orchestrator is generating sprint contracts for each planned task.')
+        self.assertEqual(summary['next'], 'Wait for the contracts to finish generating; tasks will start automatically after that.')
+
     def test_failed_review_issue_is_exposed_as_latest_blocker(self):
         objective = {
             'id': 'objective-review-fail',

@@ -26,6 +26,31 @@ def handle_get_task_screen(handler, objective, task_id):
     handler._json_response({"ok": True, "screen": screen, "lines": 200})
 
 
+def handle_get_screen(handler, objective, parsed):
+    params = handler.parse_qs(parsed.query)
+    lines_str = params.get("lines", ["200"])[0]
+    try:
+        lines = max(20, min(int(lines_str), 500))
+    except (TypeError, ValueError):
+        lines = 200
+
+    workspace_uuid = str(objective.get("plannerWorkspaceId") or "").strip()
+    if not workspace_uuid:
+        orchestrator_workspace_id = str(objective.get("orchestratorSessionId") or "").strip()
+        if objective.get("orchestratorSessionActive") and orchestrator_workspace_id:
+            workspace_uuid = orchestrator_workspace_id
+
+    if not workspace_uuid:
+        handler._json_response({"ok": False, "error": "Objective session is not active"}, 409)
+        return
+
+    try:
+        screen = cmux_api.cmux_read_workspace(0, 0, lines=lines, workspace_uuid=workspace_uuid) or ""
+    except Exception:
+        screen = ""
+    handler._json_response({"ok": True, "screen": screen, "lines": lines})
+
+
 def handle_get_messages(handler, objective_id, parsed, *, engine):
     params = handler.parse_qs(parsed.query)
     after = params.get("after", [None])[0]
@@ -55,10 +80,11 @@ def handle_post_start(handler, objective_id, *, engine):
 
 def handle_post_task_approve(handler, objective_id, task_id, data, *, engine):
     action = data.get("action", "y\n")
+    approval_message_id = data.get("approvalMessageId")
     engine.orchestrator.handle_human_input(
         objective_id,
         f"Approved: {action}",
-        context={"task_id": task_id, "approval_action": action},
+        context={"task_id": task_id, "approval_action": action, "approval_message_id": approval_message_id},
     )
     handler._json_response({"ok": True})
 
@@ -67,10 +93,11 @@ def handle_post_approve_hook(handler, objective_id, data, *, engine):
     """Approve a hook escalation for a non-task session (e.g. the planner)."""
     action = data.get("action", "y\n")
     workspace_id = data.get("workspace_id", "")
+    approval_message_id = data.get("approvalMessageId")
     engine.orchestrator.handle_human_input(
         objective_id,
         f"Approved: {action}",
-        context={"workspace_id": workspace_id, "approval_action": action},
+        context={"workspace_id": workspace_id, "approval_action": action, "approval_message_id": approval_message_id},
     )
     handler._json_response({"ok": True})
 

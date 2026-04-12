@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
@@ -488,6 +488,52 @@ class TestServerResponses(unittest.TestCase):
         engine.orchestrator.approve_contracts.assert_called_once_with(objective["id"])
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
+
+    def test_get_config_includes_contract_review_flag(self):
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine.poll_interval = 5
+        engine.model = "test-model"
+        engine.review_enabled = True
+        engine.review_model = "review-model"
+        engine.review_backend = "ollama"
+        engine.contract_review_enabled = False
+        engine.default_project_dir = "/tmp/project"
+        engine.default_base_branch = "main"
+        handler = self._make_handler(engine, "/api/config")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["contractReviewEnabled"], False)
+
+    def test_post_config_updates_contract_review_flag(self):
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine.poll_interval = 5
+        engine.model = "test-model"
+        engine.review_enabled = True
+        engine.review_model = "review-model"
+        engine.review_backend = "ollama"
+        engine.contract_review_enabled = False
+        engine.default_project_dir = "/tmp/project"
+        engine.default_base_branch = "main"
+
+        def _set_contract_review(enabled=None):
+            engine.contract_review_enabled = bool(enabled)
+
+        engine.set_contract_review_config.side_effect = _set_contract_review
+        handler = self._post_json(
+            "/api/config",
+            {"contractReviewEnabled": True},
+            engine=engine,
+        )
+
+        engine.set_contract_review_config.assert_called_once_with(enabled=True)
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["contractReviewEnabled"], True)
 
     def test_message_endpoint_starts_background_thread_and_returns_ok(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
@@ -993,6 +1039,38 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(body["id"], turn["id"])
         self.assertEqual(body["progressSummary"], "Checking repo status and recent changes.")
         self.assertEqual(body["status"], "pending")
+
+    def test_get_objective_screen_prefers_planner_workspace_snapshot(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "planning",
+                "plannerWorkspaceId": "ws-planner",
+                "orchestratorSessionId": "ws-orch",
+                "orchestratorSessionActive": True,
+            },
+        )
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/screen?lines=120")
+
+        with patch("cmux_harness.routes.objectives.cmux_api.cmux_read_workspace", return_value="planner output\n") as mock_read:
+            handler.do_GET()
+
+        mock_read.assert_called_once_with(0, 0, lines=120, workspace_uuid="ws-planner")
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["screen"], "planner output\n")
+        self.assertEqual(body["lines"], 120)
+
+    def test_get_objective_screen_returns_conflict_when_no_active_session(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        handler = self._make_handler(Mock(), f"/api/objectives/{objective['id']}/screen")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(409)
+        self.assertEqual(body, {"ok": False, "error": "Objective session is not active"})
 
     def test_get_workspace_screen_returns_active_session_snapshot(self):
         root_path = Path(self.tmpdir.name) / "workspace-screen"

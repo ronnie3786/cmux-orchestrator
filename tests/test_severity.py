@@ -12,7 +12,7 @@ from cmux_harness.severity import (
 class TestToolSeverityLevels(unittest.TestCase):
 
     def test_level_1_read_tools(self):
-        for tool in ("Read", "Glob", "Grep", "LSP", "ListDir", "Search", "TodoRead"):
+        for tool in ("Read", "Glob", "Grep", "LSP", "ListDir", "LS", "Search", "Open", "Find", "TodoRead"):
             result = classify_tool_severity(tool)
             self.assertEqual(result["level"], 1, f"{tool} should be level 1")
             self.assertEqual(result["decision"], "allow")
@@ -25,7 +25,7 @@ class TestToolSeverityLevels(unittest.TestCase):
             self.assertEqual(result["decision"], "allow")
 
     def test_level_3_web_tools(self):
-        for tool in ("WebFetch", "WebSearch"):
+        for tool in ("WebFetch", "WebSearch", "Fetch"):
             result = classify_tool_severity(tool)
             self.assertEqual(result["level"], 3, f"{tool} should be level 3")
             self.assertEqual(result["decision"], "allow")

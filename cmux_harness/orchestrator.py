@@ -173,6 +173,70 @@ class Orchestrator:
             pass
         return msg
 
+    def _format_approval_action(self, action):
+        cleaned = str(action or "").strip()
+        return cleaned or "approved"
+
+    def _contract_review_required(self):
+        return bool(getattr(self.engine, "contract_review_enabled", False))
+
+    def _evaluate_contract(self, task, contract_text):
+        raw = claude_cli.run_sonnet(contracts.build_contract_evaluator_prompt(task, contract_text))
+        evaluation = contracts.parse_contract_evaluation(raw)
+        if evaluation is None:
+            return {
+                "verdict": "fail",
+                "summary": "Evaluator returned an invalid response.",
+                "issues": ["Evaluator did not return a valid pass/fail decision."],
+            }
+        return evaluation
+
+    def _negotiate_single_contract(self, objective_id, task, max_rounds=3):
+        title = str(task.get("title") or task.get("id") or "Untitled task")
+        content = claude_cli.run_sonnet(contracts.build_contract_prompt(task))
+        contract_text = content if isinstance(content, str) else json.dumps(content, indent=2)
+        evaluation = None
+
+        if self._contract_review_required():
+            parsed = contracts.parse_contract(contract_text)
+            return contract_text, parsed, evaluation, False
+
+        for round_index in range(1, max_rounds + 1):
+            parsed = contracts.parse_contract(contract_text)
+            evaluation = self._evaluate_contract(task, contract_text)
+            if parsed is None:
+                issues = list(evaluation.get("issues") or [])
+                issues.insert(0, "Contract is missing one or more required sections.")
+                evaluation = {
+                    "verdict": "fail",
+                    "summary": evaluation.get("summary") or "Contract structure is invalid.",
+                    "issues": issues,
+                }
+            if evaluation["verdict"] == "pass":
+                return contract_text, parsed, evaluation, False
+            if round_index >= max_rounds:
+                return contract_text, parsed, evaluation, True
+
+            self._append_message(
+                objective_id,
+                "system",
+                f"AI contract evaluator requested changes for {title} (round {round_index}/{max_rounds}).",
+                metadata={
+                    "phase": "contract_evaluation",
+                    "task_id": task.get("id"),
+                    "round": round_index,
+                    "maxRounds": max_rounds,
+                    "issues": evaluation.get("issues") or [],
+                },
+            )
+            revised = claude_cli.run_sonnet(
+                contracts.build_contract_revision_prompt(task, contract_text, evaluation)
+            )
+            contract_text = revised if isinstance(revised, str) else json.dumps(revised, indent=2)
+
+        parsed = contracts.parse_contract(contract_text)
+        return contract_text, parsed, evaluation, True
+
     def _close_workspace(self, objective_id, workspace_id, purpose, task_id=None):
         if not workspace_id:
             return
@@ -2674,6 +2738,8 @@ Verdict rules:
         task_id = context.get("task_id")
         workspace_id = context.get("workspace_id")
         if context.get("approval_action") and (task_id or workspace_id):
+            action_text = self._format_approval_action(context.get("approval_action"))
+            approval_message_id = str(context.get("approval_message_id") or "").strip() or None
             if task_id:
                 task = next((item for item in objective.get("tasks", []) if item.get("id") == task_id), None)
                 workspace_uuid = task.get("workspaceId") if task else None
@@ -2687,18 +2753,26 @@ Verdict rules:
                         text=context["approval_action"],
                         workspace_uuid=workspace_uuid,
                     )
+                if task_id:
+                    self._pending_hook_approvals.discard(task_id)
                 label = f"Task {task_id}" if task_id else "Planner"
                 self._append_message(
                     objective_id,
-                    "system",
-                    f"Sent '{context['approval_action']}' to {label}",
-                    metadata={"task_id": task_id, "workspace_id": workspace_uuid},
+                    "approval_resolved",
+                    f"{label}: human approved with '{action_text}' — Claude resumed",
+                    metadata={
+                        "task_id": task_id,
+                        "workspace_id": workspace_uuid,
+                        "action": action_text,
+                        "approval_message_id": approval_message_id,
+                        "label": label,
+                    },
                 )
                 self._log_event(
                     objective_id,
                     "info",
                     "task_approval",
-                    {"taskId": task_id, "mode": "manual", "action": context["approval_action"], "workspaceId": workspace_uuid},
+                    {"taskId": task_id, "mode": "manual", "action": action_text, "workspaceId": workspace_uuid},
                 )
             return
 
@@ -2736,6 +2810,12 @@ Verdict rules:
                 )
                 return
             objectives.update_objective(objective_id, {"status": "planning"})
+            self._append_message(
+                objective_id,
+                "system",
+                "Revising plan based on your feedback. Planner is working on an updated plan now.",
+                metadata={"phase": "plan_revision", "workspace_id": planner_workspace_id},
+            )
             threading.Thread(
                 target=self._poll_for_plan_revision,
                 args=(objective_id, plan_path, pathlib.Path(plan_path).stat().st_mtime),
@@ -2946,6 +3026,12 @@ Verdict rules:
             objective_id,
             {"status": "negotiating_contracts", "plannerWorkspaceId": None},
         )
+        self._append_message(
+            objective_id,
+            "system",
+            "Plan approved.",
+            metadata={"phase": "plan_review", "state": "approved"},
+        )
         self._append_message(objective_id, "system", "Plan approved, negotiating sprint contracts...")
         try:
             threading.Thread(target=self._negotiate_contracts, args=(objective_id,), daemon=True).start()
@@ -2976,14 +3062,14 @@ Verdict rules:
 
             tasks = [task for task in objective.get("tasks", []) if isinstance(task, dict)]
             contract_metadata = []
+            requires_human_review = False
             for task in tasks:
                 task_id = task.get("id")
                 if not task_id:
                     continue
-                result = claude_cli.run_sonnet(contracts.build_contract_prompt(task))
-                content = result if isinstance(result, str) else json.dumps(result, indent=2)
+                content, parsed, evaluation, needs_human_review = self._negotiate_single_contract(objective_id, task)
                 objectives.write_task_file(objective_id, task_id, "contract.md", content)
-                parsed = contracts.parse_contract(content)
+                requires_human_review = requires_human_review or needs_human_review
                 contract_metadata.append({
                     "taskId": task_id,
                     "title": task.get("title", ""),
@@ -2991,15 +3077,43 @@ Verdict rules:
                     "buildVerification": parsed.get("buildVerification", "") if parsed else "",
                     "functionalTestHints": parsed.get("functionalTestHints", "") if parsed else "",
                     "passFailThreshold": parsed.get("passFailThreshold", "") if parsed else "",
+                    "evaluationVerdict": (evaluation or {}).get("verdict", ""),
+                    "evaluationSummary": (evaluation or {}).get("summary", ""),
+                    "evaluationIssues": (evaluation or {}).get("issues", []),
                 })
 
-            objectives.update_objective(objective_id, {"status": "contract_review"})
             self._append_message(
                 objective_id,
                 "contract_review",
                 "Sprint contracts are ready for review.",
                 metadata={"contracts": contract_metadata},
             )
+            if self._contract_review_required() or requires_human_review:
+                objectives.update_objective(objective_id, {"status": "contract_review"})
+                if requires_human_review and not self._contract_review_required():
+                    self._append_message(
+                        objective_id,
+                        "alert",
+                        "AI contract evaluator could not approve all contracts. Human review is required before execution can start.",
+                        metadata={"phase": "contract_review", "state": "human_fallback"},
+                    )
+                else:
+                    self._append_message(
+                        objective_id,
+                        "system",
+                        "Contracts are waiting for human approval.",
+                        metadata={"phase": "contract_review", "state": "human_review"},
+                    )
+                return
+
+            objectives.update_objective(objective_id, {"status": "executing"})
+            self._append_message(
+                objective_id,
+                "system",
+                "AI contract evaluator approved the contracts. Execution is starting automatically.",
+                metadata={"phase": "contract_review", "state": "ai_approved"},
+            )
+            self._launch_ready_tasks(objective_id)
         except Exception as exc:
             tb = traceback.format_exc()
             objectives.update_objective(objective_id, {"status": "failed"})
@@ -3026,6 +3140,12 @@ Verdict rules:
         if str(objective.get("status") or "").lower() != "contract_review":
             return False
         objectives.update_objective(objective_id, {"status": "executing"})
+        self._append_message(
+            objective_id,
+            "system",
+            "Contracts approved.",
+            metadata={"phase": "contract_review", "state": "approved"},
+        )
         self._append_message(objective_id, "system", "Contracts approved, launching tasks...")
         try:
             self._launch_ready_tasks(objective_id)

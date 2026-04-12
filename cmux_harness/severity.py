@@ -24,7 +24,7 @@ from .claude_cli import run_haiku
 # ── Level maps (fast-path, no LLM) ──────────────────────────────────────
 
 LEVEL_1_TOOLS: set[str] = {
-    "Read", "Glob", "Grep", "LSP", "ListDir", "Search",
+    "Read", "Glob", "Grep", "LSP", "ListDir", "LS", "Search", "Open", "Find",
     "TodoRead", "NotebookRead", "TaskGet", "TaskList", "TaskOutput",
 }
 
@@ -33,7 +33,7 @@ LEVEL_2_TOOLS: set[str] = {
 }
 
 LEVEL_3_TOOLS: set[str] = {
-    "WebFetch", "WebSearch",
+    "WebFetch", "WebSearch", "Fetch",
 }
 
 LEVEL_4_TOOLS: set[str] = {

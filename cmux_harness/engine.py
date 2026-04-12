@@ -45,6 +45,7 @@ class HarnessEngine(threading.Thread):
         self.review_enabled = True
         self.review_model = OLLAMA_DEFAULT_MODEL
         self.review_backend = "ollama"
+        self.contract_review_enabled = False
         self.callback_base_url = ""
         self.approval_threshold = 3
         self.default_project_dir = ""
@@ -68,6 +69,7 @@ class HarnessEngine(threading.Thread):
         extra_config = self._load_engine_config()
         self.default_project_dir = extra_config.get("defaultProjectDir", self.default_project_dir) or ""
         self.default_base_branch = extra_config.get("defaultBaseBranch", self.default_base_branch) or "main"
+        self.contract_review_enabled = bool(extra_config.get("contractReviewEnabled", self.contract_review_enabled))
         try:
             self.approval_threshold = int(extra_config.get("approvalThreshold", self.approval_threshold))
         except (TypeError, ValueError):
@@ -85,6 +87,7 @@ class HarnessEngine(threading.Thread):
         return {
             "defaultProjectDir": data.get("defaultProjectDir", ""),
             "defaultBaseBranch": data.get("defaultBaseBranch", "main"),
+            "contractReviewEnabled": bool(data.get("contractReviewEnabled", False)),
         }
 
     def _save_config(self):
@@ -97,6 +100,7 @@ class HarnessEngine(threading.Thread):
             },
             "defaultProjectDir": self.default_project_dir,
             "defaultBaseBranch": self.default_base_branch,
+            "contractReviewEnabled": self.contract_review_enabled,
         }
         try:
             with open(storage.CONFIG_FILE, "w") as f:
@@ -230,6 +234,12 @@ class HarnessEngine(threading.Thread):
                     self.review_backend = backend_name
             self._save_config()
 
+    def set_contract_review_config(self, enabled=None):
+        with self._lock:
+            if enabled is not None:
+                self.contract_review_enabled = bool(enabled)
+            self._save_config()
+
     def set_default_objective_config(self, project_dir=None, base_branch=None):
         with self._lock:
             if project_dir is not None:
@@ -317,6 +327,7 @@ class HarnessEngine(threading.Thread):
                 "reviewEnabled": self.review_enabled,
                 "reviewModel": self.review_model,
                 "reviewBackend": self.review_backend,
+                "contractReviewEnabled": self.contract_review_enabled,
                 "connected": self.socket_connected,
                 "lastSuccessfulPoll": self.last_successful_poll,
                 "connectionLostAt": self.connection_lost_at,
