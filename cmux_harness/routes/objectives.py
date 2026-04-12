@@ -63,6 +63,18 @@ def handle_post_task_approve(handler, objective_id, task_id, data, *, engine):
     handler._json_response({"ok": True})
 
 
+def handle_post_approve_hook(handler, objective_id, data, *, engine):
+    """Approve a hook escalation for a non-task session (e.g. the planner)."""
+    action = data.get("action", "y\n")
+    workspace_id = data.get("workspace_id", "")
+    engine.orchestrator.handle_human_input(
+        objective_id,
+        f"Approved: {action}",
+        context={"workspace_id": workspace_id, "approval_action": action},
+    )
+    handler._json_response({"ok": True})
+
+
 def handle_post_approve_plan(handler, objective_id, *, engine):
     approved = engine.orchestrator.approve_plan(objective_id)
     if approved:

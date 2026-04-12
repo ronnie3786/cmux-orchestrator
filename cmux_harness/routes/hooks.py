@@ -50,18 +50,20 @@ def _resolve_context(engine, cwd: str) -> dict:
                 return {
                     "objective_id": obj_id,
                     "task_id": task_id,
+                    "workspace_id": task.get("workspaceId"),
                     "spec_text": spec_text,
                 }
 
-        # Fall back to objective-level worktree
+        # Fall back to objective-level worktree (e.g. planner session)
         if obj_wt and os.path.realpath(obj_wt) == real_cwd:
             return {
                 "objective_id": obj_id,
                 "task_id": None,
+                "workspace_id": full_obj.get("plannerWorkspaceId"),
                 "spec_text": None,
             }
 
-    return {"objective_id": None, "task_id": None, "spec_text": None}
+    return {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
 
 
 def _build_allow_response(level: int, reason: str) -> dict:
@@ -100,6 +102,7 @@ def handle_pre_tool_use(handler, data, *, engine):
     ctx = _resolve_context(engine, cwd)
     objective_id = ctx["objective_id"]
     task_id = ctx["task_id"]
+    workspace_id = ctx["workspace_id"]
     spec_text = ctx["spec_text"]
 
     # Classify severity
@@ -141,6 +144,7 @@ def handle_pre_tool_use(handler, data, *, engine):
             f"Task {task_id or 'N/A'}: needs your input — {reason}",
             metadata={
                 "task_id": task_id,
+                "workspace_id": workspace_id,
                 "severity_level": level,
                 "tool_name": tool_name,
                 "tool_input_preview": tool_input_preview,

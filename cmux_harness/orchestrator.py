@@ -1571,6 +1571,10 @@ class Orchestrator:
                 )
                 return
 
+            # Store workspace ID immediately so hook approvals can route to this session
+            # before plan_review status is set (where it was previously stored).
+            objectives.update_objective(objective_id, {"plannerWorkspaceId": workspace_uuid})
+
             if not self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="planning"):
                 objectives.update_objective(objective_id, {"status": "failed"})
                 self._log_event(
@@ -2668,9 +2672,13 @@ Verdict rules:
         context = context or {}
         objective_status = str(objective.get("status") or "").lower()
         task_id = context.get("task_id")
-        if task_id and context.get("approval_action"):
-            task = next((item for item in objective.get("tasks", []) if item.get("id") == task_id), None)
-            workspace_uuid = task.get("workspaceId") if task else None
+        workspace_id = context.get("workspace_id")
+        if context.get("approval_action") and (task_id or workspace_id):
+            if task_id:
+                task = next((item for item in objective.get("tasks", []) if item.get("id") == task_id), None)
+                workspace_uuid = task.get("workspaceId") if task else None
+            else:
+                workspace_uuid = workspace_id
             if workspace_uuid:
                 with self.mutex.context(workspace_uuid):
                     cmux_api.cmux_send_to_workspace(
@@ -2679,11 +2687,12 @@ Verdict rules:
                         text=context["approval_action"],
                         workspace_uuid=workspace_uuid,
                     )
+                label = f"Task {task_id}" if task_id else "Planner"
                 self._append_message(
                     objective_id,
                     "system",
-                    f"Sent '{context['approval_action']}' to Task {task_id}",
-                    metadata={"task_id": task_id},
+                    f"Sent '{context['approval_action']}' to {label}",
+                    metadata={"task_id": task_id, "workspace_id": workspace_uuid},
                 )
                 self._log_event(
                     objective_id,

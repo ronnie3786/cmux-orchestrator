@@ -3996,6 +3996,7 @@
   function renderApprovalCard(message) {
     const metadata = message.metadata || {};
     const taskId = metadata.task_id || '';
+    const workspaceId = metadata.workspace_id || '';
     const severityLevel = metadata.severity_level;
     const toolName = metadata.tool_name || '';
     const toolPreview = metadata.tool_input_preview || '';
@@ -4014,8 +4015,8 @@
       toolInfo,
       metadata.screen_preview ? '<div class="screen-preview">' + esc(metadata.screen_preview) + '</div>' : '',
       '<div class="approval-actions">',
-      '<button class="approval-btn approve" data-approval-action="approve" data-task-id="' + esc(taskId) + '">Approve</button>',
-      '<button class="approval-btn takeover" data-approval-action="takeover" data-task-id="' + esc(taskId) + '">Take over</button>',
+      '<button class="approval-btn approve" data-approval-action="approve" data-task-id="' + esc(taskId) + '" data-workspace-id="' + esc(workspaceId) + '">Approve</button>',
+      '<button class="approval-btn takeover" data-approval-action="takeover" data-task-id="' + esc(taskId) + '" data-workspace-id="' + esc(workspaceId) + '">Take over</button>',
       '</div>',
       '</div>'
     ].join('');
@@ -4255,14 +4256,22 @@
     els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {
       node.addEventListener('click', async () => {
         const taskId = node.getAttribute('data-task-id');
+        const workspaceId = node.getAttribute('data-workspace-id');
         const action = node.getAttribute('data-approval-action');
-        if (!state.activeObjectiveId || !taskId) return;
+        if (!state.activeObjectiveId || (!taskId && !workspaceId)) return;
         try {
           if (action === 'approve') {
-            await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/tasks/' + encodeURIComponent(taskId) + '/approve', {
-              method: 'POST',
-              body: JSON.stringify({ action: 'y\n' })
-            });
+            if (taskId) {
+              await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/tasks/' + encodeURIComponent(taskId) + '/approve', {
+                method: 'POST',
+                body: JSON.stringify({ action: 'y\n' })
+              });
+            } else {
+              await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/approve-hook', {
+                method: 'POST',
+                body: JSON.stringify({ action: 'y\n', workspace_id: workspaceId })
+              });
+            }
           } else {
             await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/message', {
               method: 'POST',

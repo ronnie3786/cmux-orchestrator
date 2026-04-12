@@ -1,14 +1,46 @@
 from __future__ import annotations
 
 import json
+import re
 
 from .claude_cli import run_haiku, run_sonnet
 from .objectives import create_task_dir, write_task_file
 
+_JIRA_TICKET_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
+
+
+def _jira_context_block(goal: str) -> str:
+    """Return a Step 0 context-gathering block if a Jira ticket ID is detected in the goal."""
+    matches = _JIRA_TICKET_RE.findall(goal)
+    if not matches:
+        return ""
+
+    ticket_id = matches[0]
+    return f"""
+## Step 0: Gather External Context
+
+Before reading the codebase or writing anything to plan.md, collect all available context.
+
+**Fetch the Jira ticket:**
+```
+acli jira workitem {ticket_id}
+```
+
+After reading the ticket, check for:
+
+1. **GraphQL APIs** — if the ticket mentions any GraphQL types, queries, mutations, or schema names, invoke the `dox-graphql` skill (`Skill(skill: "dox-graphql")`) and use it to pull real schema context for those APIs before writing the plan.
+
+2. **Figma designs** — if the ticket contains any Figma URLs (figma.com/...), invoke the `figma:figma-use` skill first, then use `mcp__plugin_figma_figma__get_design_context` to fetch design context for each URL.
+
+Incorporate ticket details, schema facts, and design specs into your understanding before writing plan.md.
+
+"""
+
 
 def build_planning_prompt(goal: str) -> str:
+    jira_block = _jira_context_block(goal)
     return f"""You are the planner for this codebase.
-
+{jira_block}
 Analyze the repository for the following goal:
 
 {goal}

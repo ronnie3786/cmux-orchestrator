@@ -62,7 +62,7 @@ DESTRUCTIVE_BASH_PATTERNS: list[re.Pattern] = [
         r"\bDELETE\s+FROM\b",                         # DELETE FROM (no WHERE)
         r"\bTRUNCATE\s+TABLE\b",                      # TRUNCATE TABLE
         r"\bchmod\s+777\b",                            # chmod 777
-        r">\s*/dev/(sd|null|zero)",                    # write to devices
+        r">\s*/dev/(sd[a-z]|zero)",                    # write to block devices (not /dev/null)
         r"\bmkfs\b",                                   # format filesystems
         r"\bdd\s+if=",                                 # dd raw disk writes
         r"\bkill\s+-9\b",                              # kill -9
@@ -138,11 +138,36 @@ def classify_tool_severity(
     """Classify a tool use into severity levels 1-5.
 
     Returns ``{"level", "decision", "reason", "model", "latency_ms"}``.
+
+    When the regex fast-path flags a tool at level 4+, Haiku gets a second
+    look before escalating to the human.  If Haiku downgrades to level ≤ 3,
+    the tool is auto-approved without human involvement.
     """
     tool_input = tool_input or {}
     start = time.monotonic()
 
-    # ── Fast-path: known tool sets ───────────────────────────────────
+    result = _fast_classify(tool_name, tool_input, spec_text, timeout, start)
+
+    # If the fast-path flagged level ≥ 4 and it wasn't already a Haiku
+    # result, ask Haiku for a second opinion before escalating to the human.
+    if result["level"] >= 4 and result["model"] is None:
+        haiku_result = _haiku_classify(tool_name, tool_input, spec_text, timeout, start)
+        if haiku_result["level"] <= 3:
+            return haiku_result
+
+    return result
+
+
+def _fast_classify(
+    tool_name: str,
+    tool_input: dict,
+    spec_text: str | None,
+    timeout: int,
+    start: float,
+) -> dict:
+    """Deterministic regex/lookup classification.  No LLM calls."""
+
+    # ── Known tool sets ─────────────────────────────────────────────
     if tool_name in LEVEL_1_TOOLS:
         return {
             "level": 1,
@@ -199,7 +224,7 @@ def classify_tool_severity(
                 "model": None,
                 "latency_ms": _latency_ms(start),
             }
-        # Unknown MCP → level 4, ask Haiku for refinement
+        # Unknown MCP → Haiku classification (model will be set)
         return _haiku_classify(tool_name, tool_input, spec_text, timeout, start)
 
     # ── Level 4 tools (always need judgment) ─────────────────────────

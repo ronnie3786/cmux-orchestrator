@@ -446,6 +446,9 @@ def make_handler(engine):
                     data,
                     engine=self.server.engine,
                 )
+            elif path.startswith("/api/objectives/") and path.endswith("/approve-hook"):
+                objective_id = path.split("/")[3]
+                objective_routes.handle_post_approve_hook(self, objective_id, data, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and path.endswith("/approve-plan"):
                 objective_id = path.split("/")[3]
                 objective_routes.handle_post_approve_plan(self, objective_id, engine=self.server.engine)
