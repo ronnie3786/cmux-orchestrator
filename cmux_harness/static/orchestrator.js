@@ -148,6 +148,7 @@
     settingsBaseBranch: document.getElementById('settingsBaseBranch'),
     settingsPollInterval: document.getElementById('settingsPollInterval'),
     settingsReviewEnabled: document.getElementById('settingsReviewEnabled'),
+    settingsContractReviewEnabled: document.getElementById('settingsContractReviewEnabled'),
     settingsReviewModel: document.getElementById('settingsReviewModel'),
     settingsReviewBackend: document.getElementById('settingsReviewBackend'),
     fabRail: document.getElementById('fabRail'),
@@ -1918,6 +1919,7 @@
     els.settingsBaseBranch.value = cfg.defaultBaseBranch || 'main';
     els.settingsPollInterval.value = cfg.pollInterval != null ? String(cfg.pollInterval) : '5';
     els.settingsReviewEnabled.checked = !!cfg.reviewEnabled;
+    els.settingsContractReviewEnabled.checked = !!cfg.contractReviewEnabled;
     els.settingsReviewModel.value = cfg.reviewModel || '';
     els.settingsReviewBackend.value = ['claude', 'lmstudio', 'ollama'].includes(cfg.reviewBackend) ? cfg.reviewBackend : 'ollama';
   }
@@ -1956,6 +1958,7 @@
         defaultBaseBranch: els.settingsBaseBranch.value.trim() || 'main',
         pollInterval: Number(els.settingsPollInterval.value || 5),
         reviewEnabled: !!els.settingsReviewEnabled.checked,
+        contractReviewEnabled: !!els.settingsContractReviewEnabled.checked,
         reviewModel: els.settingsReviewModel.value.trim(),
         reviewBackend: els.settingsReviewBackend.value || 'ollama'
       };
@@ -2399,6 +2402,30 @@
     }, 3000);
   }
 
+  async function openObjectiveOutput() {
+    if (!state.activeObjectiveId) return;
+    clearWorkerOutputPolling();
+    state.workerOutputMode = 'objective';
+    state.workerOutputTaskId = null;
+    state.workerOutputContent = '';
+    const objective = state.activeObjective;
+    const title = objective && objective.goal
+      ? 'Objective Terminal — ' + objective.goal
+      : 'Objective Terminal';
+    els.workerOutputTitle.textContent = title;
+    els.workerOutputBody.innerHTML = '<div class="diff-loading">Loading terminal snapshot…</div>';
+    els.workerOutputOverlay.classList.add('visible');
+    await refreshWorkerOutput();
+    state.workerOutputPolling = true;
+    state.workerOutputInterval = window.setInterval(() => {
+      if (!els.workerOutputOverlay.classList.contains('visible') || state.workerOutputMode !== 'objective') {
+        clearWorkerOutputPolling();
+        return;
+      }
+      refreshWorkerOutput();
+    }, 3000);
+  }
+
   function renderWorkspaceTerminalLine(line) {
     const raw = stripAnsi(String(line == null ? '' : line));
     const trimmed = raw.trim();
@@ -2449,7 +2476,7 @@
 
   function renderWorkerOutputContent(content, mode) {
     const lines = String(content || '').split('\n');
-    if (mode === 'workspace') {
+    if (mode === 'workspace' || mode === 'objective') {
       return '<div class="worker-output-content workspace-peek">' + lines.map(renderWorkspaceTerminalLine).join('') + '</div>';
     }
     return '<div class="worker-output-content">' + lines.map((line) => '<div class="wo-line">' + ansiToHtml(line) + '</div>').join('') + '</div>';
@@ -2464,6 +2491,11 @@
         if (!workspaceId) return;
         response = await api('/api/workspaces/' + encodeURIComponent(workspaceId) + '/screen?lines=220');
         if (state.workerOutputMode !== 'workspace' || state.activeWorkspaceId !== workspaceId) return;
+      } else if (mode === 'objective') {
+        const objectiveId = state.activeObjectiveId;
+        if (!objectiveId) return;
+        response = await api('/api/objectives/' + encodeURIComponent(objectiveId) + '/screen?lines=220');
+        if (state.workerOutputMode !== 'objective' || state.activeObjectiveId !== objectiveId) return;
       } else {
         const taskId = state.workerOutputTaskId;
         if (!taskId || !state.activeObjectiveId) return;
@@ -2480,6 +2512,8 @@
     } catch (error) {
       if (mode === 'workspace') {
         if (state.workerOutputMode !== 'workspace') return;
+      } else if (mode === 'objective') {
+        if (state.workerOutputMode !== 'objective') return;
       } else if (!state.workerOutputTaskId || state.workerOutputMode !== 'task') {
         return;
       }
@@ -3629,15 +3663,42 @@
     return match ? match[1] : null;
   }
 
+  function approvalEntityKey(taskId, workspaceId) {
+    if (taskId) return 'task:' + taskId;
+    if (workspaceId) return 'workspace:' + workspaceId;
+    return '';
+  }
+
   function normalizeMessages(messages) {
     const items = [];
     let insertedSyntheticPlan = false;
     const tasks = (state.activeObjective && state.activeObjective.tasks) || [];
     const hasPlanMessage = messages.some((message) => message.type === 'plan' || message.type === 'plan_review');
+    const resolvedApprovalIds = new Set();
+    const resolvedApprovalKeys = new Set();
+
+    messages.forEach((message) => {
+      if (!message) return;
+      const metadata = message.metadata || {};
+      if (message.type === 'approval_resolved') {
+        if (metadata.approval_message_id) resolvedApprovalIds.add(String(metadata.approval_message_id));
+        const key = approvalEntityKey(metadata.task_id, metadata.workspace_id);
+        if (key) resolvedApprovalKeys.add(key);
+      } else if ((message.type === 'progress' || message.type === 'system')
+        && /user approved — Claude resumed/i.test(String(message.content || ''))) {
+        const key = approvalEntityKey(metadata.task_id, metadata.workspace_id);
+        if (key) resolvedApprovalKeys.add(key);
+      }
+    });
 
     messages.forEach((message) => {
       if (isHiddenSystemMessage(message)) return;
       const taskId = extractTaskId(message);
+      const metadata = message.metadata || {};
+      const approvalKey = approvalEntityKey(taskId, metadata.workspace_id);
+      if (message.type === 'approval' && (resolvedApprovalIds.has(String(message.id || '')) || (approvalKey && resolvedApprovalKeys.has(approvalKey)))) {
+        return;
+      }
       if (shouldCollapseAutoApproval(message)) {
         const previous = items[items.length - 1];
         if (previous && previous.kind === 'approval-burst') {
@@ -3685,9 +3746,174 @@
     return items;
   }
 
+  function latestMessageIdOfType(type) {
+    for (let index = (state.messages || []).length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index];
+      if (message && message.type === type) return message.id;
+    }
+    return '';
+  }
+
+  function reviewCardState(kind, message) {
+    const status = String(state.activeObjective && state.activeObjective.status || '').toLowerCase();
+    const isLatest = String(message && message.id || '') === latestMessageIdOfType(kind);
+    if (kind === 'plan_review') {
+      if (status === 'plan_review' && isLatest) {
+        return {
+          active: true,
+          badge: 'Waiting For Approval',
+          hint: 'Type feedback in the chat to request changes, or approve to start execution.'
+        };
+      }
+      if (!isLatest) {
+        return { active: false, badge: 'Superseded', hint: 'A newer plan review replaced this one.' };
+      }
+      if (status === 'planning') {
+        return { active: false, badge: 'Revision Requested', hint: 'Planner is revising this plan now.' };
+      }
+      if (['negotiating_contracts', 'contract_review', 'executing', 'reviewing', 'rework', 'completed', 'failed'].includes(status)) {
+        return { active: false, badge: 'Approved', hint: 'This plan moved forward and is no longer actionable.' };
+      }
+      return { active: false, badge: 'Closed', hint: 'This review is no longer actionable.' };
+    }
+    if (status === 'contract_review' && isLatest) {
+      return {
+        active: true,
+        badge: 'Waiting For Approval',
+        hint: 'Type feedback in the chat to request changes, or approve to start execution.'
+      };
+    }
+    if (!isLatest) {
+      return { active: false, badge: 'Superseded', hint: 'A newer contract review replaced this one.' };
+    }
+    if (['executing', 'reviewing', 'rework', 'completed', 'failed'].includes(status)) {
+      return { active: false, badge: 'Approved', hint: 'These contracts moved forward and are no longer actionable.' };
+    }
+    return { active: false, badge: 'Closed', hint: 'This review is no longer actionable.' };
+  }
+
+  function normalizeContractEvaluationVerdict(verdict) {
+    const normalized = String(verdict || '').trim().toLowerCase();
+    return normalized === 'pass' || normalized === 'fail' ? normalized : '';
+  }
+
+  function summarizeContractEvaluation(contracts) {
+    let passCount = 0;
+    let failCount = 0;
+    let missingCount = 0;
+    (Array.isArray(contracts) ? contracts : []).forEach((contract) => {
+      const verdict = normalizeContractEvaluationVerdict(contract && contract.evaluationVerdict);
+      if (verdict === 'pass') {
+        passCount += 1;
+      } else if (verdict === 'fail') {
+        failCount += 1;
+      } else {
+        missingCount += 1;
+      }
+    });
+    let stateName = 'missing';
+    if (failCount > 0) {
+      stateName = 'fail';
+    } else if (contracts.length && passCount === contracts.length) {
+      stateName = 'pass';
+    }
+    return {
+      state: stateName,
+      passCount,
+      failCount,
+      missingCount
+    };
+  }
+
+  function contractEvaluationBadge(verdict) {
+    if (verdict === 'pass') {
+      return { label: 'AI Approved', className: 'pass' };
+    }
+    if (verdict === 'fail') {
+      return { label: 'Needs Fixes', className: 'fail' };
+    }
+    return { label: 'No Verdict', className: 'neutral' };
+  }
+
+  function contractReviewBannerState(contracts, stateMeta) {
+    const summary = summarizeContractEvaluation(contracts);
+    const objectiveStatus = String(state.activeObjective && state.activeObjective.status || '').toLowerCase();
+
+    if (summary.state === 'pass') {
+      if (objectiveStatus === 'contract_review' && stateMeta.active) {
+        return {
+          title: 'All approved by AI evaluator',
+          copy: 'AI evaluator approved every contract. Human approval is still required before execution can start.',
+          className: 'pass'
+        };
+      }
+      if (stateMeta.badge === 'Approved') {
+        return {
+          title: 'All approved by AI evaluator',
+          copy: 'AI evaluator approved every contract and execution moved forward.',
+          className: 'pass'
+        };
+      }
+      return {
+        title: 'All approved by AI evaluator',
+        copy: 'AI evaluator approved every contract in this review.',
+        className: 'pass'
+      };
+    }
+
+    if (summary.state === 'fail') {
+      if (objectiveStatus === 'contract_review' && stateMeta.active) {
+        return {
+          title: 'Evaluator found issues',
+          copy: 'AI evaluator rejected one or more contracts. Human review is required before execution can start.',
+          className: 'fail'
+        };
+      }
+      return {
+        title: 'Evaluator found issues',
+        copy: 'One or more contracts failed AI evaluation in this review.',
+        className: 'fail'
+      };
+    }
+
+    return {
+      title: 'No evaluator result',
+      copy: 'This review does not include a complete AI evaluator verdict for every contract.',
+      className: 'neutral'
+    };
+  }
+
+  function renderContractEvaluationBlock(contract) {
+    const verdict = normalizeContractEvaluationVerdict(contract && contract.evaluationVerdict);
+    const badge = contractEvaluationBadge(verdict);
+    const summary = String(contract && contract.evaluationSummary || '').trim();
+    const issues = Array.isArray(contract && contract.evaluationIssues)
+      ? contract.evaluationIssues.filter((item) => String(item || '').trim())
+      : [];
+    const fallbackSummary = verdict
+      ? ''
+      : 'No evaluator result recorded for this contract.';
+
+    return [
+      '<div class="contract-eval">',
+      '<div class="contract-eval-head">',
+      '<div class="contract-eval-label">AI Evaluator</div>',
+      '<div class="contract-eval-badge ' + badge.className + '">' + esc(badge.label) + '</div>',
+      '</div>',
+      (summary || fallbackSummary)
+        ? '<div class="contract-eval-summary">' + esc(summary || fallbackSummary) + '</div>'
+        : '',
+      issues.length
+        ? '<div class="contract-eval-issues">' + issues.map((issue) => '<div class="contract-eval-issue">' + esc(issue) + '</div>').join('') + '</div>'
+        : '',
+      '</div>'
+    ].join('');
+  }
+
   function renderPlanReviewCard(message) {
     const metadata = message.metadata || {};
     const tasks = Array.isArray(metadata.tasks) ? metadata.tasks : [];
+    const stateMeta = reviewCardState('plan_review', message);
     return [
       '<div class="card-plan-review">',
       '<div class="plan-review-head">',
@@ -3728,8 +3954,10 @@
         '</div>'
       ].join('')).join(''),
       '<div class="plan-review-actions">',
-      '<button class="plan-review-approve" type="button" data-plan-action="approve">✅ Approve Plan</button>',
-      '<div class="plan-review-hint">Type feedback in the chat to request changes, or approve to start execution.</div>',
+      stateMeta.active
+        ? '<button class="plan-review-approve" type="button" data-plan-action="approve">✅ Approve Plan</button>'
+        : '<div class="plan-review-count">' + esc(stateMeta.badge) + '</div>',
+      '<div class="plan-review-hint">' + esc(stateMeta.hint) + '</div>',
       '</div>',
       '</div>',
       '</div>'
@@ -3739,6 +3967,8 @@
   function renderContractReviewCard(message) {
     const metadata = message.metadata || {};
     const contracts = Array.isArray(metadata.contracts) ? metadata.contracts : [];
+    const stateMeta = reviewCardState('contract_review', message);
+    const banner = contractReviewBannerState(contracts, stateMeta);
     return [
       '<div class="card-plan-review">',
       '<div class="plan-review-head">',
@@ -3746,12 +3976,17 @@
       '<div class="plan-review-count">' + esc(contracts.length + ' contract' + (contracts.length === 1 ? '' : 's')) + '</div>',
       '</div>',
       '<div class="plan-review-body">',
+      '<div class="plan-review-banner ' + esc(banner.className) + '">',
+      '<div class="plan-review-banner-title">' + esc(banner.title) + '</div>',
+      '<div class="plan-review-banner-copy">' + esc(banner.copy) + '</div>',
+      '</div>',
       contracts.map(function(contract, index) { return [
         '<div class="plan-review-task">',
         '<div class="plan-review-task-head">',
         '<div class="plan-review-task-number">Task ' + esc(String(index + 1)) + '</div>',
         '<div class="plan-review-task-title">' + esc(contract.title || contract.taskId || ('Task ' + (index + 1))) + '</div>',
         '</div>',
+        renderContractEvaluationBlock(contract),
         '<div class="plan-review-row">',
         '<div class="plan-review-label">Acceptance Criteria</div>',
         '<div class="plan-review-checkpoints">' + (contract.acceptanceCriteria
@@ -3779,8 +4014,10 @@
         '</div>'
       ].join(''); }).join(''),
       '<div class="plan-review-actions">',
-      '<button class="plan-review-approve" type="button" data-contract-action="approve">Approve Contracts</button>',
-      '<div class="plan-review-hint">Type feedback in the chat to request changes, or approve to start execution.</div>',
+      stateMeta.active
+        ? '<button class="plan-review-approve" type="button" data-contract-action="approve">Approve Contracts</button>'
+        : '<div class="plan-review-count">' + esc(stateMeta.badge) + '</div>',
+      '<div class="plan-review-hint">' + esc(stateMeta.hint) + '</div>',
       '</div>',
       '</div>',
       '</div>'
@@ -3997,6 +4234,7 @@
     const metadata = message.metadata || {};
     const taskId = metadata.task_id || '';
     const workspaceId = metadata.workspace_id || '';
+    const approvalMessageId = message.id || '';
     const severityLevel = metadata.severity_level;
     const toolName = metadata.tool_name || '';
     const toolPreview = metadata.tool_input_preview || '';
@@ -4015,9 +4253,18 @@
       toolInfo,
       metadata.screen_preview ? '<div class="screen-preview">' + esc(metadata.screen_preview) + '</div>' : '',
       '<div class="approval-actions">',
-      '<button class="approval-btn approve" data-approval-action="approve" data-task-id="' + esc(taskId) + '" data-workspace-id="' + esc(workspaceId) + '">Approve</button>',
-      '<button class="approval-btn takeover" data-approval-action="takeover" data-task-id="' + esc(taskId) + '" data-workspace-id="' + esc(workspaceId) + '">Take over</button>',
+      '<button class="approval-btn approve" data-approval-action="approve" data-approval-message-id="' + esc(approvalMessageId) + '" data-task-id="' + esc(taskId) + '" data-workspace-id="' + esc(workspaceId) + '">Approve</button>',
+      '<button class="approval-btn takeover" data-approval-action="takeover" data-approval-message-id="' + esc(approvalMessageId) + '" data-task-id="' + esc(taskId) + '" data-workspace-id="' + esc(workspaceId) + '">Take over</button>',
       '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderApprovalResolvedCard(message) {
+    return [
+      '<div class="card-approval">',
+      '<div class="approval-title">Approval Resolved</div>',
+      '<div class="approval-body">' + esc(message.content || '') + '</div>',
       '</div>'
     ].join('');
   }
@@ -4130,6 +4377,8 @@
       content = renderAlertCard(message);
     } else if (item.kind === 'approval') {
       content = renderApprovalCard(message);
+    } else if (item.kind === 'approval_resolved') {
+      content = renderApprovalResolvedCard(message);
     } else {
       content = '<div class="msg-bubble">' + esc(message.content || '') + '</div>';
     }
@@ -4202,6 +4451,51 @@
     ].join('');
   }
 
+  function objectiveHasPeekSession() {
+    const objective = state.activeObjective;
+    if (!objective || state.activeWorkspaceId) return false;
+    return !!(objective.plannerWorkspaceId || (objective.orchestratorSessionActive && objective.orchestratorSessionId));
+  }
+
+  function objectivePeekTitle() {
+    const status = String(state.activeObjective && state.activeObjective.status || '').toLowerCase();
+    if (status === 'planning') return 'Planning In Progress';
+    if (status === 'plan_review') return 'Planner Session';
+    if (status === 'contract_review') return 'Contracts Ready';
+    return 'Objective Session';
+  }
+
+  function objectivePeekSubtitle() {
+    const objective = state.activeObjective || {};
+    const status = String(objective.status || '').toLowerCase();
+    if (status === 'planning') return 'Planner is drafting or revising the plan.';
+    if (status === 'plan_review') return 'The planner session is still available if you want to inspect the terminal.';
+    if (status === 'contract_review') return 'Contracts are ready. Any remaining session output is available here.';
+    return 'A live objective session is available.';
+  }
+
+  function renderObjectivePeekBubble() {
+    if (!objectiveHasPeekSession()) return '';
+    return [
+      '<div class="msg">',
+      '<div class="msg-av av-c">⌘</div>',
+      '<div class="msg-body">',
+      '<div class="msg-header"><span class="msg-name mn-sys">cmux</span><span class="msg-time">live</span></div>',
+      '<div class="msg-bubble turn-live-bubble">',
+      '<div class="turn-live-head">',
+      '<div class="turn-live-title">' + esc(objectivePeekTitle()) + '</div>',
+      '<div class="turn-live-meta">',
+      '<button class="turn-live-peek" type="button" data-objective-peek="true">Terminal Peek</button>',
+      '</div>',
+      '</div>',
+      '<div class="turn-live-subtitle shimmer">' + esc(objectivePeekSubtitle()) + '</div>',
+      '<div class="turn-live-dots"><span></span><span></span><span></span></div>',
+      '</div>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+
   function renderMessages() {
     const beforeBottom = isNearBottom();
     const oldScrollTop = els.messagesPane.scrollTop;
@@ -4237,6 +4531,8 @@
     }
     if (state.activeWorkspaceId && state.activeWorkspaceTurn) {
       html += renderWorkspaceTurnBubble();
+    } else if (!state.activeWorkspaceId && objectiveHasPeekSession()) {
+      html += renderObjectivePeekBubble();
     } else if (state.typing) {
       html += '<div class="msg"><div class="msg-av av-c">⌘</div><div class="msg-body"><div class="msg-bubble typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div>';
     }
@@ -4253,10 +4549,17 @@
         openWorkspaceOutput();
       });
     });
+    els.messageColumn.querySelectorAll('[data-objective-peek]').forEach((node) => {
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openObjectiveOutput();
+      });
+    });
     els.messageColumn.querySelectorAll('[data-approval-action]').forEach((node) => {
       node.addEventListener('click', async () => {
         const taskId = node.getAttribute('data-task-id');
         const workspaceId = node.getAttribute('data-workspace-id');
+        const approvalMessageId = node.getAttribute('data-approval-message-id');
         const action = node.getAttribute('data-approval-action');
         if (!state.activeObjectiveId || (!taskId && !workspaceId)) return;
         try {
@@ -4264,12 +4567,12 @@
             if (taskId) {
               await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/tasks/' + encodeURIComponent(taskId) + '/approve', {
                 method: 'POST',
-                body: JSON.stringify({ action: 'y\n' })
+                body: JSON.stringify({ action: 'y\n', approvalMessageId })
               });
             } else {
               await api('/api/objectives/' + encodeURIComponent(state.activeObjectiveId) + '/approve-hook', {
                 method: 'POST',
-                body: JSON.stringify({ action: 'y\n', workspace_id: workspaceId })
+                body: JSON.stringify({ action: 'y\n', workspace_id: workspaceId, approvalMessageId })
               });
             }
           } else {
