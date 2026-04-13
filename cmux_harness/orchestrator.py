@@ -193,6 +193,14 @@ class Orchestrator:
 
     def _negotiate_single_contract(self, objective_id, task, max_rounds=3):
         title = str(task.get("title") or task.get("id") or "Untitled task")
+        task_id = task.get("id")
+        task_label = f"Task {task_id}" if task_id else title
+        self._append_message(
+            objective_id,
+            "progress",
+            f"{task_label}: drafting sprint contract...",
+            metadata={"phase": "contract_review", "task_id": task_id, "state": "drafting"},
+        )
         content = claude_cli.run_sonnet(contracts.build_contract_prompt(task))
         contract_text = content if isinstance(content, str) else json.dumps(content, indent=2)
         evaluation = None
@@ -202,6 +210,18 @@ class Orchestrator:
             return contract_text, parsed, evaluation, False
 
         for round_index in range(1, max_rounds + 1):
+            self._append_message(
+                objective_id,
+                "progress",
+                f"{task_label}: evaluating sprint contract (round {round_index}/{max_rounds})...",
+                metadata={
+                    "phase": "contract_evaluation",
+                    "task_id": task_id,
+                    "state": "evaluating",
+                    "round": round_index,
+                    "maxRounds": max_rounds,
+                },
+            )
             parsed = contracts.parse_contract(contract_text)
             evaluation = self._evaluate_contract(task, contract_text)
             if parsed is None:
@@ -213,8 +233,20 @@ class Orchestrator:
                     "issues": issues,
                 }
             if evaluation["verdict"] == "pass":
+                self._append_message(
+                    objective_id,
+                    "progress",
+                    f"{task_label}: contract approved by AI evaluator.",
+                    metadata={"phase": "contract_evaluation", "task_id": task_id, "state": "approved"},
+                )
                 return contract_text, parsed, evaluation, False
             if round_index >= max_rounds:
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"{task_label}: contract still needs human review after {max_rounds} AI evaluation rounds.",
+                    metadata={"phase": "contract_evaluation", "task_id": task_id, "state": "human_review_required"},
+                )
                 return contract_text, parsed, evaluation, True
 
             self._append_message(
@@ -2110,6 +2142,8 @@ class Orchestrator:
             )
             return
 
+        self._task_last_progress.pop(task["id"], None)
+        self._task_screen_cache.pop(task["id"], None)
         objectives.update_task(objective_id, task["id"], {
             "status": "executing",
             "workspaceId": ws_uuid,
@@ -2265,6 +2299,8 @@ class Orchestrator:
                     )
 
             last_progress_at = self._task_last_progress.get(task_id)
+            if last_progress_at is None:
+                last_progress_at = _coerce_timestamp(task.get("startedAt"), None)
             has_git = False
             if worktree_path:
                 since_ts = last_progress_at
@@ -2505,8 +2541,11 @@ Verdict rules:
             ]
 
         tier2_failed = False
-        # Tier 2: Maestro functional test (if available and contract exists)
-        if contract_text and evaluator.is_maestro_available():
+        should_run_maestro = contracts.should_run_maestro(task, contract_text)
+        if "tier2_maestro" not in review_json:
+            review_json["tier2_maestro"] = "skipped"
+        # Tier 2: Maestro functional test (runtime flows only)
+        if contract_text and should_run_maestro and evaluator.is_maestro_available():
             flow_yaml = evaluator.generate_maestro_flow(contract_text)
             tier2_passed, tier2_output = evaluator.run_tier2_maestro(flow_yaml)
             review_json["tier2_maestro"] = "pass" if tier2_passed else "fail"

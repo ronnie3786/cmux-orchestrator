@@ -79,3 +79,45 @@ class TestContracts(unittest.TestCase):
 
     def test_parse_contract_evaluation_returns_none_for_invalid_payload(self):
         self.assertIsNone(contracts.parse_contract_evaluation({"summary": "missing verdict"}))
+
+    def test_should_run_maestro_for_runtime_contract(self):
+        task = {
+            "title": "Ship login screen",
+            "userStory": "Users can sign in from the iOS app.",
+            "deliverables": ["Login form works"],
+        }
+        contract_text = """## Acceptance Criteria
+1. Users can sign in from the mobile app.
+
+## Build Verification
+- /exp-project-run
+
+## Functional Test Hints
+- Use Maestro to launch app, fill the login form, and assert the home screen is visible.
+
+## Pass/Fail Threshold
+- Fail if the login flow breaks.
+"""
+
+        self.assertTrue(contracts.should_run_maestro(task, contract_text))
+
+    def test_should_not_run_maestro_for_non_runtime_contract(self):
+        task = {
+            "title": "Create Jira ticket",
+            "userStory": "Track the CLAUDE.md change in Jira.",
+            "deliverables": ["A Jira issue exists with the right metadata"],
+        }
+        contract_text = """## Acceptance Criteria
+1. The Jira ticket exists with the requested title and links.
+
+## Build Verification
+- Verify the Jira issue exists and contains the required fields.
+
+## Functional Test Hints
+- Confirm the Jira ticket exists, the links resolve, and the branch reference is present.
+
+## Pass/Fail Threshold
+- Fail if the ticket is missing, incorrect, or unlinked.
+"""
+
+        self.assertFalse(contracts.should_run_maestro(task, contract_text))

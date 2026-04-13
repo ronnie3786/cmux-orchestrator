@@ -22,6 +22,21 @@ _SECTION_PATTERNS = {
     ),
 }
 
+_MAESTRO_RUNTIME_HINT_RE = re.compile(
+    r"\b("
+    r"maestro|ios|android|mobile|screen|button|tap|swipe|scroll|text field|textfield|"
+    r"dialog|modal|sheet|toast|navigate|navigation|launch app|open app|assertvisible"
+    r")\b",
+    re.IGNORECASE,
+)
+_NON_RUNTIME_TASK_RE = re.compile(
+    r"\b("
+    r"jira|ticket|issue\b|github|pull request|draft pr|commit|push|branch|docs?|documentation|"
+    r"claude\.md|readme|comment"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def build_contract_prompt(task):
     """Build a prompt asking Claude to generate a sprint contract from a task."""
@@ -61,10 +76,11 @@ Write the sprint contract in markdown using exactly these sections and headings:
 Provide a numbered list of specific, testable behaviors.
 
 ## Build Verification
-Always include `/exp-project-run`.
+If the task changes repository code or config that should be validated locally, include `/exp-project-run`.
+If that command is not applicable, give the concrete verification step that fits the task and say why `/exp-project-run` is not needed.
 
 ## Functional Test Hints
-Suggest practical Maestro flow ideas to validate the task end to end.
+Suggest practical end-to-end validation steps. Use Maestro only when the task changes a user-facing app flow that Maestro can realistically exercise. For repo hygiene, docs, Jira, PR, or other non-runtime tasks, give the appropriate manual or CLI verification instead.
 
 ## Pass/Fail Threshold
 State the minimum bar for accepting or rejecting the task result.
@@ -113,8 +129,8 @@ Decide whether this contract is good enough to hand to a coding worker.
 Fail the contract if any of these are true:
 - It does not match the task title, user story, deliverables, or checkpoints
 - Acceptance criteria are vague, partial, or not testable end to end
-- Build verification is missing or too weak
-- Functional test hints are not useful for validating the task
+- Build verification is missing, too weak, or inappropriate for the task
+- Functional test hints are not useful for validating the task, or they propose UI automation for a task that is not a runtime/user-flow change
 - Pass/fail threshold is vague or lenient
 - Required sections are missing
 
@@ -183,3 +199,31 @@ def parse_contract_evaluation(value):
         "summary": str(value.get("summary") or "").strip(),
         "issues": cleaned_issues,
     }
+
+
+def should_run_maestro(task, contract_text):
+    """Return True when the task/contract suggests a real runtime flow for Maestro."""
+    parsed = parse_contract(contract_text) if contract_text else None
+    hints_text = ""
+    criteria_text = ""
+    if isinstance(parsed, dict):
+        hints_text = str(parsed.get("functionalTestHints") or "")
+        criteria_text = str(parsed.get("acceptanceCriteria") or "")
+
+    if _MAESTRO_RUNTIME_HINT_RE.search(hints_text):
+        return True
+
+    task_parts = []
+    if isinstance(task, dict):
+        task_parts.append(str(task.get("title") or ""))
+        task_parts.append(str(task.get("userStory") or ""))
+        deliverables = task.get("deliverables") or []
+        if isinstance(deliverables, list):
+            task_parts.extend(str(item) for item in deliverables)
+
+    combined = "\n".join(part for part in [criteria_text, hints_text, *task_parts] if part.strip())
+    if not combined.strip():
+        return False
+    if _NON_RUNTIME_TASK_RE.search(combined) and not _MAESTRO_RUNTIME_HINT_RE.search(combined):
+        return False
+    return bool(_MAESTRO_RUNTIME_HINT_RE.search(criteria_text) or _MAESTRO_RUNTIME_HINT_RE.search(combined))

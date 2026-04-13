@@ -500,6 +500,9 @@ Pass if the task behaves as specified.
         mock_launch.assert_called_once_with(objective["id"])
         messages = self.orchestrator.get_messages(objective["id"])
         self.assertTrue(any(msg["type"] == "contract_review" for msg in messages))
+        self.assertTrue(any("drafting sprint contract" in msg["content"] for msg in messages if msg["type"] == "progress"))
+        self.assertTrue(any("evaluating sprint contract" in msg["content"] for msg in messages if msg["type"] == "progress"))
+        self.assertTrue(any("contract approved by AI evaluator" in msg["content"] for msg in messages if msg["type"] == "progress"))
         self.assertTrue(any("AI contract evaluator approved the contracts" in msg["content"] for msg in messages if msg["type"] == "system"))
 
     def test_negotiate_contracts_waits_for_human_review_when_enabled(self):
@@ -720,6 +723,8 @@ class TestTaskLauncher(unittest.TestCase):
         self._create_task_files(objective["id"], "task-1")
         self._create_task_files(objective["id"], "task-2")
         Path(objective["worktreePath"]).mkdir(parents=True, exist_ok=True)
+        self.orchestrator._task_last_progress["task-1"] = 123.0
+        self.orchestrator._task_screen_cache["task-1"] = "stale screen"
 
         with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-1", True)) as mock_workspace, \
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
@@ -732,6 +737,8 @@ class TestTaskLauncher(unittest.TestCase):
         self.assertIsNone(updated["tasks"][1]["workspaceId"])
         self.assertEqual(updated["tasks"][0]["worktreePath"], objective["worktreePath"])
         self.assertIsNone(updated["tasks"][1]["worktreePath"])
+        self.assertNotIn("task-1", self.orchestrator._task_last_progress)
+        self.assertNotIn("task-1", self.orchestrator._task_screen_cache)
         mock_workspace.assert_called_once_with(
             "Worker: First task",
             objective["worktreePath"],
@@ -922,6 +929,29 @@ class TestPollTasks(unittest.TestCase):
         self.assertIn("appears stalled", messages[0]["content"])
         self.assertEqual(messages[0]["metadata"]["screen_preview"], "stalled screen")
 
+    def test_poll_tasks_uses_started_at_when_no_progress_seen_yet(self):
+        started_at = "2026-04-12T18:41:29+00:00"
+        task = {
+            "id": "task-1",
+            "status": "executing",
+            "workspaceId": "ws-1",
+            "worktreePath": str(self.project_dir),
+            "startedAt": started_at,
+        }
+        objective = self._create_objective([task])
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="screen"), \
+                patch("cmux_harness.orchestrator.monitor.check_progress", return_value={"has_result": False, "has_progress_update": False}), \
+                patch("cmux_harness.orchestrator.monitor.check_git_activity", return_value=False), \
+                patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "ok"}) as mock_assess:
+            self.orchestrator.poll_tasks(objective["id"])
+
+        task_state = mock_assess.call_args.args[0]
+        self.assertEqual(
+            task_state["last_progress_at"],
+            datetime.fromisoformat(started_at).timestamp(),
+        )
+
     def test_poll_tasks_skips_non_executing_tasks(self):
         tasks = [
             {"id": "task-1", "status": "queued", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)},
@@ -1094,6 +1124,69 @@ class TestReviewRework(unittest.TestCase):
         self.assertTrue(
             any("sending back for fixes" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"]))
         )
+
+    def test_run_review_skips_maestro_for_non_runtime_contracts(self):
+        worktree = self.project_dir / "wt-jira"
+        worktree.mkdir()
+        task = {
+            "id": "task-1",
+            "title": "Create Jira ticket",
+            "status": "reviewing",
+            "workspaceId": "ws-1",
+            "worktreePath": str(worktree),
+            "reviewCycles": 0,
+            "maxReviewCycles": 5,
+        }
+        objective = self._create_objective([task])
+        self._create_task_files(
+            objective["id"],
+            "task-1",
+            result_text="Created IOSDOX-25752 and linked it to the branch.",
+            contract_text="""## Acceptance Criteria
+1. The Jira ticket exists with the requested metadata and links.
+
+## Build Verification
+- Verify the Jira issue exists with the correct title and branch link.
+
+## Functional Test Hints
+- Confirm the Jira ticket exists and the referenced links resolve.
+
+## Pass/Fail Threshold
+- Fail if the Jira issue is missing, incorrect, or unlinked.
+""",
+        )
+
+        mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
+        with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
+                patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
+                    "verdict": "pass",
+                    "tier1_build": "skipped",
+                    "criteria_results": [
+                        {
+                            "criterion": "The Jira ticket exists with the requested metadata and links.",
+                            "result": "pass",
+                            "evidence": "IOSDOX-25752 was created and linked correctly.",
+                        }
+                    ],
+                    "issues": [],
+                    "recommendation": "Looks good",
+                }), \
+                patch("cmux_harness.orchestrator.evaluator.is_maestro_available", return_value=True), \
+                patch("cmux_harness.orchestrator.evaluator.run_tier2_maestro") as mock_maestro, \
+                patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch_ready, \
+                patch.object(self.orchestrator, "_complete_objective") as mock_complete:
+            self.orchestrator._run_review(objective["id"], "task-1")
+
+        updated = objectives.read_objective(objective["id"])
+        updated_task = updated["tasks"][0]
+        self.assertEqual(updated_task["status"], "completed")
+        self.assertEqual(
+            json.loads(objectives.read_task_file(objective["id"], "task-1", "review.json"))["tier2_maestro"],
+            "skipped",
+        )
+        mock_maestro.assert_not_called()
+        mock_launch_ready.assert_called_once_with(objective["id"])
+        mock_complete.assert_called_once_with(objective["id"])
 
     def test_run_review_escalates_after_max_cycles(self):
         worktree = self.project_dir / "wt-fail"
