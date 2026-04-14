@@ -27,6 +27,8 @@
     --purple-b:rgba(167,139,250,0.25);
     --red:    #f87171;
     --red-d:  rgba(248,113,113,0.10);
+    --message-body-size: 15px;
+    --message-body-line: 1.65;
   }
 
   html, body { height: 100%; overflow: hidden; }
@@ -835,8 +837,8 @@
   .msg-time { font-size: 11px; color: var(--t3); }
 
   .msg-bubble {
-    font-size: 14px;
-    line-height: 1.65;
+    font-size: var(--message-body-size);
+    line-height: var(--message-body-line);
     color: var(--t1);
     padding: 10px 14px;
     border-radius: 4px 14px 14px 14px;
@@ -904,7 +906,7 @@
     margin-left: auto;
   }
   .turn-live-title {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--t1);
     letter-spacing: 0.01em;
@@ -934,9 +936,9 @@
   }
   .turn-live-subtitle {
     margin-top: 8px;
-    font-size: 14px;
+    font-size: var(--message-body-size);
     color: var(--t2);
-    line-height: 1.45;
+    line-height: var(--message-body-line);
   }
   .turn-live-subtitle.shimmer {
     background: linear-gradient(90deg, var(--t2) 0%, #ffffff 35%, var(--t2) 70%);
@@ -1750,8 +1752,8 @@
   .alert-title { color: var(--red); }
   .approval-title { color: var(--amber); }
   .alert-body, .approval-body {
-    font-size: 13px;
-    line-height: 1.6;
+    font-size: var(--message-body-size);
+    line-height: var(--message-body-line);
     color: var(--t2);
   }
   .screen-preview {
@@ -1872,9 +1874,9 @@
     color: var(--t1);
   }
   .plan-review-banner-copy {
-    font-size: 12px;
+    font-size: var(--message-body-size);
     color: var(--t2);
-    line-height: 1.5;
+    line-height: var(--message-body-line);
   }
   .plan-review-task {
     border: 1px solid var(--b);
@@ -1899,7 +1901,7 @@
     font-weight: 700;
   }
   .plan-review-task-title {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--t1);
     font-weight: 600;
     flex: 1;
@@ -1948,9 +1950,9 @@
     color: var(--t2);
   }
   .contract-eval-summary {
-    font-size: 12px;
+    font-size: var(--message-body-size);
     color: var(--t2);
-    line-height: 1.5;
+    line-height: var(--message-body-line);
   }
   .contract-eval-issues {
     display: flex;
@@ -1958,9 +1960,9 @@
     gap: 6px;
   }
   .contract-eval-issue {
-    font-size: 12px;
+    font-size: var(--message-body-size);
     color: var(--t2);
-    line-height: 1.5;
+    line-height: var(--message-body-line);
     padding-left: 12px;
     position: relative;
   }
@@ -1997,15 +1999,15 @@
     border: 1px solid var(--b2);
     border-radius: 999px;
     padding: 4px 8px;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--t2);
     font-family: 'JetBrains Mono', monospace;
   }
   .plan-review-checkpoint {
     width: 100%;
-    font-size: 12px;
+    font-size: var(--message-body-size);
     color: var(--t2);
-    line-height: 1.5;
+    line-height: var(--message-body-line);
   }
   .plan-review-actions {
     display: flex;
@@ -2027,9 +2029,9 @@
     opacity: .9;
   }
   .plan-review-hint {
-    font-size: 12px;
+    font-size: var(--message-body-size);
     color: var(--t2);
-    line-height: 1.6;
+    line-height: var(--message-body-line);
   }
 
   .review-cycle {
@@ -2070,12 +2072,13 @@
   .fab-rail {
     position: fixed;
     right: 20px;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 58px;
+    transform: none;
     display: none;
     flex-direction: column;
     gap: 10px;
     z-index: 24;
+    align-items: flex-end;
   }
   .fab-rail.visible {
     display: flex;
@@ -3427,8 +3430,8 @@
     }
     .msg-bubble {
       padding: 9px 12px;
-      font-size: 13px;
-      line-height: 1.55;
+      font-size: 14px;
+      line-height: 1.6;
     }
     .input-area {
       padding: 10px 12px 12px;
@@ -3490,6 +3493,7 @@
       top: auto;
       bottom: 126px;
       transform: none;
+      align-items: stretch;
     }
     .fab-btn {
       height: 36px;

@@ -5435,7 +5435,7 @@
     {
       target: 'fabRail',
       title: 'Action Buttons',
-      body: 'Custom reusable prompt buttons on the right rail (e.g., "Build & Run", "Run Tests"). Define per objective or workspace. The \uD83D\uDC1B debug button is always available for troubleshooting.',
+      body: 'Custom reusable prompt buttons live in the top action rail (e.g., "Build & Run", "Run Tests"). Define them per objective or workspace. The \uD83D\uDC1B debug button stays separate for troubleshooting.',
       side: 'left'
     }
   ];
