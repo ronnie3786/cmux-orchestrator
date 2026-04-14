@@ -36,6 +36,7 @@ When there's no uncommitted diff but there ARE new commits since session start, 
 
 ## Open TODOs
 
+- [ ] **Scheduled task execution** — Submit a preset prompt scheduled for a future time. At the scheduled time, the harness opens a cmux session, launches Claude Code, and injects the prompt automatically. Primary use case: scheduling failed Waldo test reruns overnight or at off-peak times without manual intervention.
 - [ ] Filter/sort controls in Command Center (show only active, only needs-you)
 - [ ] "Pause for 5 minutes" button
 - [ ] Favicon for tab identification *(low priority)*
