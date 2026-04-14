@@ -52,6 +52,20 @@ class TestServerResponses(unittest.TestCase):
         handler.send_response.assert_called_once_with(202)
         handler.end_headers.assert_called_once()
 
+    def test_json_response_suppresses_broken_pipe_during_headers(self):
+        handler_cls = make_handler(Mock())
+        handler = handler_cls.__new__(handler_cls)
+        handler.wfile = io.BytesIO()
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock(side_effect=BrokenPipeError)
+
+        result = handler._json_response({"ok": True}, status=202)
+
+        self.assertFalse(result)
+        handler.send_response.assert_called_once_with(202)
+        handler.end_headers.assert_called_once()
+
     def test_json_response_writes_body_when_pipe_is_open(self):
         handler_cls = make_handler(Mock())
         handler = handler_cls.__new__(handler_cls)

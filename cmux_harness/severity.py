@@ -29,7 +29,7 @@ LEVEL_1_TOOLS: set[str] = {
 }
 
 LEVEL_2_TOOLS: set[str] = {
-    "Edit", "Write", "MultiEdit", "NotebookEdit", "TodoWrite",
+    "Edit", "Write", "MultiEdit", "NotebookEdit", "TodoWrite", "TaskUpdate",
 }
 
 LEVEL_3_TOOLS: set[str] = {

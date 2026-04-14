@@ -13,13 +13,15 @@ from cmux_harness.routes.hooks import (
 class MockHandler:
     """Minimal handler mock capturing the JSON response."""
 
-    def __init__(self):
+    def __init__(self, response_sent=True):
         self.response = None
         self.status = None
+        self.response_sent = response_sent
 
     def _json_response(self, data, status=200):
         self.response = data
         self.status = status
+        return self.response_sent
 
 
 class TestBuildResponses(unittest.TestCase):
@@ -41,6 +43,7 @@ class TestHandlePreToolUse(unittest.TestCase):
     def _make_engine(self, threshold=3, objectives=None):
         engine = MagicMock()
         engine.approval_threshold = threshold
+        engine.orchestrator._pending_hook_approvals = set()
         engine.orchestrator._append_message = MagicMock()
         engine.orchestrator._log_event = MagicMock()
         return engine
@@ -141,6 +144,20 @@ class TestHandlePreToolUse(unittest.TestCase):
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
         # No message appended because objective_id is None
         engine.orchestrator._append_message.assert_not_called()
+
+    @patch("cmux_harness.routes.hooks._resolve_context")
+    def test_no_escalation_message_when_ask_response_not_sent(self, mock_resolve):
+        mock_resolve.return_value = {"objective_id": "obj-1", "task_id": "task-1", "workspace_id": "ws-1", "spec_text": None}
+        handler = MockHandler(response_sent=False)
+        engine = self._make_engine()
+        data = {"tool_name": "AskUserQuestion", "tool_input": {}, "cwd": "/project"}
+
+        handle_pre_tool_use(handler, data, engine=engine)
+
+        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertNotIn("task-1", engine.orchestrator._pending_hook_approvals)
+        engine.orchestrator._append_message.assert_not_called()
+        engine.orchestrator._log_event.assert_not_called()
 
 
 class TestResolveContext(unittest.TestCase):

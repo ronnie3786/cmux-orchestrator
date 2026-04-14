@@ -134,6 +134,10 @@ def handle_pre_tool_use(handler, data, *, engine):
     # Escalate — pause Claude Code with "ask" and notify the dashboard.
     # "ask" makes Claude Code show the normal permission prompt, waiting
     # for the user to manually approve or deny in the terminal.
+    response_sent = handler._json_response(_build_ask_response(level, reason))
+    if response_sent is False:
+        return
+
     if objective_id:
         if task_id:
             engine.orchestrator._pending_hook_approvals.add(task_id)
@@ -163,5 +167,3 @@ def handle_pre_tool_use(handler, data, *, engine):
                 "session_id": session_id,
             },
         )
-
-    handler._json_response(_build_ask_response(level, reason))

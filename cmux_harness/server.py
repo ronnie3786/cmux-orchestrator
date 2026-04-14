@@ -78,14 +78,15 @@ def make_handler(engine):
 
         def _json_response(self, data, status=200):
             body = json.dumps(data).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
             try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
                 self.wfile.write(body)
             except (BrokenPipeError, ConnectionResetError):
-                return
+                return False
+            return True
 
         def _read_body(self):
             length = int(self.headers.get("Content-Length", 0))
@@ -134,11 +135,14 @@ def make_handler(engine):
             if content is None or meta is None:
                 return False
             body = content.encode()
-            self.send_response(200)
-            self.send_header("Content-Type", meta[1])
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", meta[1])
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return False
             return True
 
         def do_GET(self):

@@ -19,7 +19,7 @@ class TestToolSeverityLevels(unittest.TestCase):
             self.assertIsNone(result["model"])
 
     def test_level_2_write_tools(self):
-        for tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "TodoWrite"):
+        for tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "TodoWrite", "TaskUpdate"):
             result = classify_tool_severity(tool)
             self.assertEqual(result["level"], 2, f"{tool} should be level 2")
             self.assertEqual(result["decision"], "allow")
