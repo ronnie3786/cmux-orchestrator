@@ -273,11 +273,6 @@ class Orchestrator:
         if not workspace_id:
             return
         try:
-            cmux_api.send_prompt_to_workspace(workspace_id, "/exit")
-            time.sleep(1)
-        except Exception:
-            pass
-        try:
             cmux_api._v2_request("workspace.close", {"workspace_id": workspace_id})
             details = {"workspaceId": workspace_id, "purpose": purpose}
             if task_id:
@@ -294,25 +289,13 @@ class Orchestrator:
             }
             self._log_event(objective_id, "error", "exception", details)
 
-    def _exit_workspace(self, objective_id, workspace_id, purpose, task_id=None):
+    def _archive_workspace(self, objective_id, workspace_id, purpose, task_id=None):
         if not workspace_id:
             return
-        try:
-            cmux_api.send_prompt_to_workspace(workspace_id, "/exit")
-            details = {"workspaceId": workspace_id, "purpose": purpose}
-            if task_id:
-                details["taskId"] = task_id
-            self._log_event(objective_id, "info", "workspace_exited", details)
-        except Exception as exc:
-            details = {
-                "phase": f"exit_workspace_{purpose}",
-                "workspaceId": workspace_id,
-                "taskId": task_id,
-                "error": str(exc),
-                "traceback": traceback.format_exc(),
-                "screen_last_20_lines": self._capture_screen_snapshot(workspace_id),
-            }
-            self._log_event(objective_id, "error", "exception", details)
+        details = {"workspaceId": workspace_id, "purpose": purpose}
+        if task_id:
+            details["taskId"] = task_id
+        self._log_event(objective_id, "info", "workspace_archived", details)
 
     def _build_workspace_context_prompt(self, workspace):
         workspace_id = str(workspace.get("id") or "").strip()
@@ -2240,12 +2223,6 @@ class Orchestrator:
                 # result.md exists — the task deliverable is done.
                 # Proceed immediately regardless of whether Claude is
                 # still idle at the REPL (same fix as planner).
-                # Send /exit to clean up the Claude session.
-                try:
-                    with self.mutex.context(ws_uuid):
-                        cmux_api.send_prompt_to_workspace(ws_uuid, "/exit")
-                except Exception:
-                    pass
                 objectives.update_task(objective_id, task_id, {"status": "reviewing"})
                 task["status"] = "reviewing"  # update local copy too
                 self._append_message(
@@ -2587,18 +2564,7 @@ Verdict rules:
             # Clean up the worker's Claude session and workspace
             workspace_uuid = task.get("workspaceId")
             if workspace_uuid:
-                try:
-                    cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
-                    time.sleep(1)
-                    cmux_api._v2_request("workspace.close", {"workspace_id": workspace_uuid})
-                    self._log_event(
-                        objective_id,
-                        "info",
-                        "workspace_closed",
-                        {"workspaceId": workspace_uuid, "purpose": "task_completed", "taskId": task_id},
-                    )
-                except Exception:
-                    pass
+                self._close_workspace(objective_id, workspace_uuid, "task_completed", task_id=task_id)
             objectives.update_task(objective_id, task_id, {
                 "status": "completed",
                 "completedAt": _utc_now_iso(),
@@ -2637,42 +2603,67 @@ Verdict rules:
                     wt_result.write_text("", encoding="utf-8")
             except OSError:
                 pass
-            objectives.update_task(objective_id, task_id, {"status": "rework"})
             issues, recommendation = monitor.build_review_rework_summary(review_json)
             rework_prompt = worker.build_rework_prompt(issues, recommendation)
-            workspace_uuid = task.get("workspaceId")
-            screen_text = ""
-            if workspace_uuid:
-                try:
-                    screen_text = cmux_api.cmux_read_workspace(
-                        0,
-                        0,
-                        lines=200,
-                        workspace_uuid=workspace_uuid,
-                    ) or ""
-                except Exception:
-                    screen_text = ""
-                # Ensure Claude is exited before relaunching for rework.
-                # We may have sent /exit when result.md was detected, but
-                # the session might still be shutting down.
-                if detection.detect_claude_session(screen_text):
-                    try:
-                        cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
-                        time.sleep(2)
-                    except Exception:
-                        pass
-                self._inject_hook_config(worktree_path)
-                launch_text = f"cd {worktree_path} && claude\n"
-                with self.mutex.context(workspace_uuid):
-                    cmux_api.cmux_send_to_workspace(
-                        0,
-                        0,
-                        text=launch_text,
-                        workspace_uuid=workspace_uuid,
-                    )
-                self._wait_for_repl(workspace_uuid, objective_id=objective_id, purpose="rework", task_id=task_id)
-                cmux_api.send_prompt_to_workspace(workspace_uuid, rework_prompt)
-            objectives.update_task(objective_id, task_id, {"status": "executing"})
+            previous_workspace_uuid = task.get("workspaceId")
+            objectives.update_task(objective_id, task_id, {"status": "rework", "workspaceId": None})
+            self._task_screen_cache.pop(task_id, None)
+            self._pending_hook_approvals.discard(task_id)
+            if previous_workspace_uuid:
+                self._close_workspace(
+                    objective_id,
+                    previous_workspace_uuid,
+                    "task_rework_restart",
+                    task_id=task_id,
+                )
+            workspace_uuid, created = self._create_worker_workspace(
+                f"Rework: {task.get('title', '')[:35]}",
+                worktree_path,
+                objective_id=objective_id,
+                purpose="rework",
+                task_id=task_id,
+            )
+            if not created or not workspace_uuid:
+                objectives.update_task(objective_id, task_id, {"status": "failed"})
+                self._log_event(
+                    objective_id,
+                    "error",
+                    "task_failure",
+                    {"taskId": task_id, "reason": "rework_workspace_creation_failed"},
+                )
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task_id}: could not relaunch a fresh workspace for rework.",
+                    metadata={"task_id": task_id, "issues": issues},
+                )
+                return
+            if not self._wait_for_repl(
+                workspace_uuid,
+                objective_id=objective_id,
+                purpose="rework",
+                task_id=task_id,
+            ):
+                self._close_workspace(objective_id, workspace_uuid, "rework_startup_failed", task_id=task_id)
+                objectives.update_task(objective_id, task_id, {"status": "failed", "workspaceId": None})
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task_id}: rework workspace did not become ready in time.",
+                    metadata={"task_id": task_id, "issues": issues},
+                )
+                return
+            if not cmux_api.send_prompt_to_workspace(workspace_uuid, rework_prompt):
+                self._close_workspace(objective_id, workspace_uuid, "rework_prompt_failed", task_id=task_id)
+                objectives.update_task(objective_id, task_id, {"status": "failed", "workspaceId": None})
+                self._append_message(
+                    objective_id,
+                    "alert",
+                    f"Task {task_id}: failed to deliver the rework prompt to the fresh workspace.",
+                    metadata={"task_id": task_id, "issues": issues},
+                )
+                return
+            objectives.update_task(objective_id, task_id, {"status": "executing", "workspaceId": workspace_uuid})
             self._log_event(
                 objective_id,
                 "warn",
@@ -2699,18 +2690,7 @@ Verdict rules:
         # Clean up the worker's Claude session on permanent failure
         workspace_uuid = task.get("workspaceId")
         if workspace_uuid:
-            try:
-                cmux_api.send_prompt_to_workspace(workspace_uuid, "/exit")
-                time.sleep(1)
-                cmux_api._v2_request("workspace.close", {"workspace_id": workspace_uuid})
-                self._log_event(
-                    objective_id,
-                    "info",
-                    "workspace_closed",
-                    {"workspaceId": workspace_uuid, "purpose": "task_failed", "taskId": task_id},
-                )
-            except Exception:
-                pass
+            self._close_workspace(objective_id, workspace_uuid, "task_failed", task_id=task_id)
         objectives.update_task(objective_id, task_id, {"status": "failed"})
         issues, _ = monitor.build_review_rework_summary(review_json)
         self._log_event(
@@ -3090,7 +3070,7 @@ Verdict rules:
             return False
         planner_workspace_id = objective.get("plannerWorkspaceId")
         if planner_workspace_id:
-            self._exit_workspace(objective_id, planner_workspace_id, "plan_approved")
+            self._archive_workspace(objective_id, planner_workspace_id, "plan_approved")
         objectives.update_objective(
             objective_id,
             {

@@ -191,21 +191,10 @@ class TestOrchestrator(unittest.TestCase):
         self.orchestrator._active_objective_id = objective["id"]
 
         with patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request, \
-                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
                 patch("cmux_harness.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             self.assertTrue(self.orchestrator.stop_and_cleanup(objective["id"]))
 
-        # /exit sent to each unique workspace before closing
-        self.assertEqual(
-            mock_send.call_args_list,
-            [
-                unittest.mock.call("ws-planner", "/exit"),
-                unittest.mock.call("ws-planner-archived", "/exit"),
-                unittest.mock.call("ws-1", "/exit"),
-                unittest.mock.call("ws-2", "/exit"),
-            ],
-        )
         self.assertEqual(
             mock_request.call_args_list,
             [
@@ -416,8 +405,7 @@ class TestPlanningPipeline(unittest.TestCase):
             },
         )
 
-        with patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send, \
-                patch("cmux_harness.orchestrator.cmux_api._v2_request", return_value={"ok": True}) as mock_request, \
+        with patch.object(self.orchestrator, "_archive_workspace") as mock_archive, \
                 patch("cmux_harness.orchestrator.threading.Thread") as mock_thread:
             approved = self.orchestrator.approve_plan(objective["id"])
 
@@ -426,8 +414,7 @@ class TestPlanningPipeline(unittest.TestCase):
         self.assertEqual(updated["status"], "negotiating_contracts")
         self.assertIsNone(updated["plannerWorkspaceId"])
         self.assertEqual(updated["plannerArchivedWorkspaceId"], "ws-planner")
-        mock_send.assert_called_once_with("ws-planner", "/exit")
-        mock_request.assert_not_called()
+        mock_archive.assert_called_once_with(objective["id"], "ws-planner", "plan_approved")
         mock_thread.assert_called_once_with(
             target=self.orchestrator._negotiate_contracts,
             args=(objective["id"],),
@@ -1045,6 +1032,7 @@ class TestReviewRework(unittest.TestCase):
                     "recommendation": "Looks good",
                 }), \
                 patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=False), \
+                patch.object(self.orchestrator, "_close_workspace") as mock_close, \
                 patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch_ready, \
                 patch.object(self.orchestrator, "_complete_objective") as mock_complete:
             self.orchestrator._run_review(objective["id"], "task-1")
@@ -1059,6 +1047,7 @@ class TestReviewRework(unittest.TestCase):
             "pass",
         )
         self.assertTrue(any("review passed" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"])))
+        mock_close.assert_called_once_with(objective["id"], "ws-1", "task_completed", task_id="task-1")
         mock_launch_ready.assert_called_once_with(objective["id"])
         mock_complete.assert_called_once_with(objective["id"])
 
@@ -1096,31 +1085,38 @@ class TestReviewRework(unittest.TestCase):
                 patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=True), \
                 patch("cmux_harness.orchestrator.monitor.can_retry_review", return_value=True), \
                 patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")) as mock_rework_summary, \
-                patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace", return_value="shell prompt"), \
-                patch("cmux_harness.orchestrator.detection.detect_claude_session", return_value=False), \
-                patch("cmux_harness.orchestrator.cmux_api.cmux_send_to_workspace") as mock_send_text, \
+                patch.object(self.orchestrator, "_close_workspace") as mock_close, \
+                patch.object(self.orchestrator, "_create_worker_workspace", return_value=("ws-rework", True)) as mock_create, \
                 patch.object(self.orchestrator, "_wait_for_repl", return_value=True) as mock_wait, \
-                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace") as mock_send_prompt:
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True) as mock_send_prompt:
             self.orchestrator._run_review(objective["id"], "task-1")
 
         updated = objectives.read_objective(objective["id"])
         updated_task = updated["tasks"][0]
         self.assertEqual(updated_task["status"], "executing")
         self.assertEqual(updated_task["reviewCycles"], 1)
-        mock_send_text.assert_called_once_with(
-            0,
-            0,
-            text=f"cd {worktree} && claude\n",
-            workspace_uuid="ws-1",
+        self.assertEqual(updated_task["workspaceId"], "ws-rework")
+        mock_close.assert_called_once_with(
+            objective["id"],
+            "ws-1",
+            "task_rework_restart",
+            task_id="task-1",
+        )
+        mock_create.assert_called_once_with(
+            "Rework: Needs fixes",
+            str(worktree),
+            objective_id=objective["id"],
+            purpose="rework",
+            task_id="task-1",
         )
         mock_wait.assert_called_once_with(
-            "ws-1",
+            "ws-rework",
             objective_id=objective["id"],
             purpose="rework",
             task_id="task-1",
         )
         self.assertIn("Feature works end-to-end", mock_rework_summary.call_args.args[0]["issues"][0])
-        mock_send_prompt.assert_called_once()
+        mock_send_prompt.assert_called_once_with("ws-rework", unittest.mock.ANY)
         self.assertTrue(
             any("sending back for fixes" in msg["content"] for msg in self.orchestrator.get_messages(objective["id"]))
         )
@@ -1173,6 +1169,7 @@ class TestReviewRework(unittest.TestCase):
                 }), \
                 patch("cmux_harness.orchestrator.evaluator.is_maestro_available", return_value=True), \
                 patch("cmux_harness.orchestrator.evaluator.run_tier2_maestro") as mock_maestro, \
+                patch.object(self.orchestrator, "_close_workspace") as mock_close, \
                 patch.object(self.orchestrator, "_launch_ready_tasks") as mock_launch_ready, \
                 patch.object(self.orchestrator, "_complete_objective") as mock_complete:
             self.orchestrator._run_review(objective["id"], "task-1")
@@ -1185,6 +1182,7 @@ class TestReviewRework(unittest.TestCase):
             "skipped",
         )
         mock_maestro.assert_not_called()
+        mock_close.assert_called_once_with(objective["id"], "ws-1", "task_completed", task_id="task-1")
         mock_launch_ready.assert_called_once_with(objective["id"])
         mock_complete.assert_called_once_with(objective["id"])
 
@@ -1221,13 +1219,15 @@ class TestReviewRework(unittest.TestCase):
                 }), \
                 patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=True), \
                 patch("cmux_harness.orchestrator.monitor.can_retry_review", return_value=False), \
-                patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")):
+                patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")), \
+                patch.object(self.orchestrator, "_close_workspace") as mock_close:
             self.orchestrator._run_review(objective["id"], "task-1")
 
         updated = objectives.read_objective(objective["id"])
         updated_task = updated["tasks"][0]
         self.assertEqual(updated_task["status"], "failed")
         self.assertEqual(updated_task["reviewCycles"], 5)
+        mock_close.assert_called_once_with(objective["id"], "ws-1", "task_failed", task_id="task-1")
         alerts = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "alert"]
         self.assertEqual(len(alerts), 1)
         self.assertIn("Needs your attention", alerts[0]["content"])
