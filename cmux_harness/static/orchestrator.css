@@ -2148,6 +2148,7 @@
   .fab-modal {
     width: 100%;
     max-width: 520px;
+    max-height: min(820px, calc(100dvh - 48px));
     background:
       radial-gradient(circle at top left, rgba(79,142,247,.12), transparent 38%),
       radial-gradient(circle at bottom right, rgba(167,139,250,.08), transparent 32%),
@@ -2155,6 +2156,8 @@
     border: 1px solid var(--b2);
     border-radius: 16px;
     box-shadow: 0 24px 80px rgba(0,0,0,.45);
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
   }
   .fab-modal-head {
@@ -2170,6 +2173,9 @@
     font-weight: 600;
   }
   .fab-modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     padding: 18px;
     display: flex;
     flex-direction: column;
@@ -2913,11 +2919,15 @@
     justify-content: center;
     z-index: 30;
     padding: 24px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
   .modal-overlay.open { display: flex; }
   .settings-modal {
     width: 100%;
     max-width: 520px;
+    max-height: min(820px, calc(100dvh - 48px));
     background:
       radial-gradient(circle at top left, rgba(79,142,247,.12), transparent 38%),
       radial-gradient(circle at bottom right, rgba(167,139,250,.08), transparent 32%),
@@ -2925,6 +2935,8 @@
     border: 1px solid var(--b2);
     border-radius: 16px;
     box-shadow: 0 24px 80px rgba(0,0,0,.45);
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
   }
   .settings-head {
@@ -2954,6 +2966,9 @@
     color: var(--t1);
   }
   .settings-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     padding: 18px;
     display: flex;
     flex-direction: column;
@@ -3073,7 +3088,7 @@
   }
   .debug-modal {
     width: min(880px, 94vw);
-    max-height: 82vh;
+    max-height: min(82vh, calc(100dvh - 48px));
     background: var(--sidebar);
     border: 1px solid var(--b2);
     border-radius: 16px;
@@ -3228,6 +3243,38 @@
   @media (max-width: 768px) {
     body {
       position: relative;
+    }
+    .modal-overlay {
+      align-items: flex-end;
+      padding: 12px;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
+    }
+    .settings-modal,
+    .fab-modal,
+    .debug-modal,
+    .confirm-modal {
+      width: 100%;
+      max-width: none;
+      border-radius: 18px 18px 14px 14px;
+    }
+    .settings-modal,
+    .fab-modal,
+    .debug-modal {
+      max-height: calc(100dvh - 24px - env(safe-area-inset-bottom, 0));
+    }
+    .settings-grid {
+      grid-template-columns: 1fr;
+    }
+    .settings-actions {
+      position: sticky;
+      bottom: 0;
+      background: linear-gradient(180deg, rgba(13,13,19,.72), rgba(13,13,19,.96) 45%, var(--sidebar));
+      padding-bottom: calc(18px + env(safe-area-inset-bottom, 0));
+      flex-wrap: wrap;
+    }
+    .modal-settings-btn {
+      flex: 1 1 140px;
+      min-height: 44px;
     }
     .sidebar {
       position: fixed;
@@ -3622,12 +3669,16 @@
   justify-content: center;
   z-index: 40;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 .onboarding-overlay.open { display: flex; }
 
 .onboarding-modal {
   width: 100%;
   max-width: 560px;
+  max-height: min(860px, calc(100dvh - 48px));
   background:
     radial-gradient(circle at top left, rgba(79,142,247,.10), transparent 38%),
     radial-gradient(circle at bottom right, rgba(52,211,153,.06), transparent 32%),
@@ -3635,7 +3686,11 @@
   border: 1px solid var(--b2);
   border-radius: 16px;
   box-shadow: 0 24px 80px rgba(0,0,0,.50);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   animation: onboardingFadeIn .25s ease-out;
 }
 @keyframes onboardingFadeIn {
@@ -3790,10 +3845,15 @@
 
 /* ── Onboarding footer ── */
 .onboarding-actions {
+  margin-top: auto;
   padding: 18px 24px 20px;
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid var(--b);
+  background: linear-gradient(180deg, rgba(13,13,19,.72), rgba(13,13,19,.96) 45%, var(--sidebar));
 }
 .onboarding-btn {
   border-radius: 10px;
@@ -3944,8 +4004,42 @@
 
 /* ── Onboarding responsive ── */
 @media (max-width: 640px) {
-  .onboarding-modal { max-width: 100%; }
+  .onboarding-overlay {
+    align-items: flex-end;
+    padding: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
+  }
+  .onboarding-modal {
+    max-width: 100%;
+    max-height: calc(100dvh - 24px - env(safe-area-inset-bottom, 0));
+    border-radius: 18px 18px 14px 14px;
+  }
+  .onboarding-head {
+    padding: 18px 18px 0;
+  }
+  .onboarding-subtitle,
+  .onboarding-prereqs,
+  .onboarding-features {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .onboarding-section-label {
+    padding: 16px 18px 8px;
+  }
+  .onboarding-recheck {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
   .onboarding-features { grid-template-columns: 1fr; }
+  .onboarding-actions {
+    padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0));
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .onboarding-btn {
+    width: 100%;
+    min-height: 44px;
+  }
   .tour-tooltip { width: calc(100vw - 32px); left: 16px !important; right: 16px !important; }
   .help-fab { right: 12px; bottom: 70px; width: 36px; height: 36px; font-size: 14px; }
 }

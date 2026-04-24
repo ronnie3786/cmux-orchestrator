@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>cmux harness — Command Center</title>
 <style>
-:root{--bg:#0d1117;--surface:#161b22;--surface-hover:#1c2129;--border:#30363d;--text:#e6edf3;--text-muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff;--radius:12px}
+:root{--bg:#0d1117;--surface:#161b22;--surface-hover:#1c2129;--border:#30363d;--text:#e6edf3;--text-muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff;--radius:12px;--safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);--mobile-top-clearance:max(26px,var(--safe-top))}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
 
 /* Top Bar */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:100}
@@ -41,10 +41,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .global-toggle-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
 
 /* Grid */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:16px;padding:24px 28px 28px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,540px),1fr));gap:16px;padding:24px 28px 28px}
 .grid-empty{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:15px;grid-column:1/-1}
 .grid-divider{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:4px 0;color:var(--text-muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 .grid-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+.mobile-harness-title,.mobile-list-title,.mobile-exp-tabs{display:none}
+.mobile-session-group{display:contents}
 .reviews-container{padding:20px 28px 60px}
 .reviews-filters{position:sticky;top:73px;z-index:40;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;margin-bottom:18px;border:1px solid var(--border);border-radius:14px;background:rgba(22,27,34,.96);backdrop-filter:blur(10px)}
 .reviews-filters-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -164,6 +166,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .card-input:focus{border-color:var(--accent)}
 .card-input::placeholder{color:var(--text-muted)}
 .card-send{padding:9px 16px;border-radius:8px;border:none;background:var(--accent);color:#000;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.input-shortcuts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.key-btn{padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .15s}
+.key-btn:hover{border-color:var(--accent);color:var(--accent)}
 
 /* Expanded overlay */
 .overlay{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);animation:fadeIn .15s ease}
@@ -179,6 +184,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-header-actions.hidden,.exp-input.hidden{display:none}
 .exp-tabs{display:none;padding:0 24px 16px;border-bottom:1px solid var(--border);background:var(--surface)}
 .exp-tabs.visible{display:block}
+.mobile-exp-tab{border:none}
 .exp-close{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .exp-close:hover{border-color:var(--red);color:var(--red)}
 .btn-build-run{background:rgba(63,185,80,.15);border-color:var(--green);color:var(--green);font-weight:600}
@@ -350,6 +356,109 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   .exp-sidebar{width:100%;height:280px;border-left:none;border-top:1px solid var(--border);flex-direction:row}
   .exp-git{border-bottom:none;border-right:1px solid var(--border)}
 }
+@media (max-width: 640px){
+  body{min-height:100dvh;background:linear-gradient(180deg,#121923 0,#0d1117 42%,#080b10 100%)}
+  .topbar{display:grid;grid-template-columns:1fr;gap:8px;padding:calc(10px + var(--mobile-top-clearance)) 12px 10px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(13,17,23,.88);backdrop-filter:blur(22px)}
+  .topbar-left{width:100%;gap:8px;align-items:stretch;flex-wrap:wrap}
+  .logo{display:none}
+  .view-switcher{width:100%;display:grid;grid-template-columns:1fr 1fr}
+  .view-btn{justify-content:center;min-width:0;min-height:34px;padding:7px 10px;border-radius:999px;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.08);font-size:11px;font-weight:700}
+  .topbar-stats{display:none}
+  .stat{font-size:12px}
+  .topbar-actions{width:100%;display:grid;grid-template-columns:42px minmax(74px,.85fr) minmax(82px,1fr) minmax(94px,1.15fr);gap:8px}
+  .topbar-actions>*{min-width:0}
+  .activity-btn-wrap{min-width:0}
+  .activity-btn,.global-toggle,.topbar-actions .btn{width:100%;justify-content:center;min-height:38px;padding:7px 9px;border-radius:14px;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.08);font-size:12px}
+  .global-toggle{gap:6px}
+  .activity-popover{position:fixed;top:calc(92px + var(--mobile-top-clearance));left:12px;right:12px;width:auto;max-height:min(60vh,420px)}
+  .activity-popover-body{max-height:min(52vh,340px)}
+  .stale-banner{padding:10px 12px;font-size:12px;text-align:center}
+  .mobile-harness-title{display:block;padding:20px 16px 10px}
+  .mobile-harness-eyebrow{margin-bottom:5px;color:var(--accent);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+  .mobile-harness-title h1{margin:0;color:var(--text);font-size:34px;line-height:1;letter-spacing:-.05em}
+  .mobile-harness-summary{margin-top:8px;color:var(--text-muted);font-size:13px;line-height:1.35}
+  .grid{display:block;padding:0 14px calc(24px + var(--safe-bottom))}
+  .reviews-container{padding:12px 12px calc(20px + var(--safe-bottom))}
+  .mobile-list-title,.grid-divider{display:flex;align-items:center;gap:10px;margin:20px 4px 8px;padding:0;color:var(--text-muted);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+  .mobile-list-title::after,.grid-divider::after{content:'';flex:1;height:1px;background:rgba(255,255,255,.08)}
+  .mobile-session-group{display:block;margin-bottom:4px;border:1px solid rgba(255,255,255,.08);border-radius:22px;overflow:hidden;background:rgba(22,27,34,.86);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+  .mobile-session-group .card{min-height:74px;border:0;border-bottom:1px solid rgba(255,255,255,.08);border-radius:0;background:transparent;box-shadow:none;opacity:1;cursor:pointer}
+  .mobile-session-group .card:last-child{border-bottom:0}
+  .mobile-session-group .card:hover{border-color:rgba(255,255,255,.08)}
+  .mobile-session-group .card:active{background:rgba(255,255,255,.06)}
+  .reviews-filters{position:static;top:auto;padding:12px}
+  .reviews-filters-left{display:grid;grid-template-columns:1fr;gap:10px}
+  .reviews-count{text-align:left}
+  .review-card{padding:14px}
+  .review-header,.review-status-row{flex-direction:column;align-items:stretch}
+  .review-head-main{align-items:flex-start}
+  .review-title{white-space:normal}
+  .review-meta-right{justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .review-actions{gap:8px}
+  .review-action-btn{flex:1 1 calc(50% - 4px);text-align:center}
+  .card-header{padding:13px 12px 5px 14px;align-items:center;gap:8px;border-bottom:0}
+  .card-title-row{align-items:center;gap:10px;min-width:0}
+  .card-status{width:11px;height:11px}
+  .card-name{font-size:16px;font-weight:700;letter-spacing:-.02em;white-space:nowrap}
+  .card-name-original{white-space:nowrap}
+  .card-name-edit{width:100%}
+  .card-header-right{align-items:center;justify-content:flex-end;gap:8px;row-gap:0}
+  .card-header-right .auto-toggle,.card-expand-caret{display:none}
+  .badge{min-height:24px;padding:0 9px;font-size:10px;font-weight:800}
+  .expand-btn{position:relative;width:24px;height:32px;border:0;background:transparent;font-size:0}
+  .expand-btn::before{content:'';position:absolute;top:50%;left:50%;width:8px;height:8px;border-top:2px solid var(--text-muted);border-right:2px solid var(--text-muted);transform:translate(-65%,-50%) rotate(45deg)}
+  .card-meta{display:flex!important;padding:0 42px 13px 35px;gap:7px;overflow:hidden;color:var(--text-muted);font-size:12px;line-height:1.25;white-space:nowrap}
+  .card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card-meta span:nth-child(n+3){display:none}
+  .card-terminal,.card-footer{display:none!important}
+  .card-input,.card-send{width:100%}
+  .input-shortcuts{width:100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+  .key-btn{text-align:center;min-height:40px;padding:9px 8px}
+  .overlay{padding:0}
+  .overlay.visible{display:block}
+  .expanded-panel{display:flex;width:100vw;height:100dvh;max-width:none;border:none;border-radius:0;box-shadow:none;animation:none;background:var(--surface);flex-direction:column}
+  .exp-main{flex:1;min-height:0}
+  .expanded-panel.mobile-panel-git .exp-main,.expanded-panel.mobile-panel-activity .exp-main{flex:0 0 auto}
+  .exp-header{display:grid;grid-template-columns:76px minmax(0,1fr) 76px;align-items:center;gap:0;min-height:calc(54px + var(--mobile-top-clearance));padding:calc(10px + var(--mobile-top-clearance)) 12px 8px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(13,17,23,.86);backdrop-filter:blur(22px)}
+  .exp-header>div:first-child{grid-column:2;min-width:0;text-align:center}
+  .exp-title{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;letter-spacing:-.02em}
+  .exp-meta{display:none}
+  .exp-header-actions{display:contents}
+  .exp-header-actions.hidden{display:contents!important}
+  .exp-header-actions.hidden .auto-toggle,.exp-header-actions.hidden .btn-build-run{display:none!important}
+  .exp-header-actions .auto-toggle{grid-column:3;grid-row:1;justify-self:end;min-height:32px;padding:0 8px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:rgba(255,255,255,.06)}
+  .exp-header-actions .btn{min-height:32px;padding:0 8px}
+  .exp-header-actions .btn-build-run{display:none}
+  .exp-header-actions .btn:last-child{grid-column:1;grid-row:1;justify-self:start;border:0;background:transparent;color:var(--accent);font-size:0}
+  .exp-header-actions .btn:last-child::before{content:'Back';font-size:16px;font-weight:700}
+  .mobile-exp-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(13,17,23,.92)}
+  .mobile-exp-tab{min-height:34px;border-radius:12px;color:var(--text-muted);background:rgba(255,255,255,.05);font-size:12px;font-weight:800}
+  .mobile-exp-tab.active{color:#06111f;background:var(--accent)}
+  .exp-tabs{padding:0 14px 12px}
+  .exp-terminal{flex:1;min-height:0;padding:12px 14px;font-size:12px;line-height:1.7;background:#05070a}
+  .exp-input{display:grid;grid-template-columns:minmax(0,1fr) 44px;gap:8px;align-items:end;width:100%;padding:8px 12px calc(8px + var(--safe-bottom));background:rgba(13,17,23,.94);border-top:1px solid rgba(255,255,255,.08)}
+  .exp-input .mode-toggle{display:none}
+  .mode-toggle{width:100%}
+  .mode-btn{flex:1}
+  .exp-input-field{width:auto;min-width:0;min-height:44px;border-radius:18px}
+  .exp-send{width:44px;height:44px;padding:0;border-radius:999px;font-size:0}
+  .exp-send::before{content:'\2191';font-size:18px;font-weight:800}
+  .exp-input .input-shortcuts{grid-column:1/-1}
+  .exp-sidebar{display:none;width:100%;height:auto;flex:1;min-height:0;border-left:none;border-top:0;background:var(--bg);flex-direction:column}
+  .expanded-panel.mobile-panel-git .exp-sidebar,.expanded-panel.mobile-panel-activity .exp-sidebar{display:flex}
+  .expanded-panel.mobile-panel-git .exp-terminal,.expanded-panel.mobile-panel-git .exp-input,.expanded-panel.mobile-panel-activity .exp-terminal,.expanded-panel.mobile-panel-activity .exp-input{display:none!important}
+  .expanded-panel.mobile-panel-git .exp-activity,.expanded-panel.mobile-panel-activity .exp-git{display:none}
+  .exp-git{border-right:none;border-bottom:0}
+  .exp-activity{border-top:0}
+  .diff-overlay.visible,.settings-overlay.visible,.ns-overlay.visible{align-items:flex-end}
+  .diff-panel,.settings-panel,.ns-panel{width:100vw;max-width:100vw;border:none;border-radius:16px 16px 0 0}
+  .diff-panel{max-height:85dvh}
+  .settings-panel,.ns-panel{max-height:88dvh;padding:20px 16px 24px}
+  .settings-row{flex-direction:column;align-items:flex-start;gap:10px}
+  .settings-select{width:100%;min-width:0}
+  .ns-actions{flex-direction:column-reverse}
+  .ns-actions .btn{width:100%}
+}
 </style>
 </head>
 <body>
@@ -389,6 +498,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 </div>
 
 <div class="stale-banner" id="staleBanner">&#9888; Showing stale data — cmux connection lost. Attempting to reconnect...</div>
+<div class="mobile-harness-title" id="mobileHarnessTitle">
+  <div class="mobile-harness-eyebrow">Command Center</div>
+  <h1>Sessions</h1>
+  <div class="mobile-harness-summary" id="mobileHarnessSummary">Connecting to cmux...</div>
+</div>
 <div class="grid" id="grid">
   <div class="grid-empty">Connecting to cmux...</div>
 </div>
@@ -441,6 +555,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
           <button class="btn" style="font-size:12px" onclick="closeExpanded()">&#10005; Close</button>
         </div>
       </div>
+      <div class="mobile-exp-tabs" id="mobileExpTabs">
+        <button class="mobile-exp-tab active" id="mobileExpTab-terminal" type="button" onclick="setMobileExpPanel('terminal')">Terminal</button>
+        <button class="mobile-exp-tab" id="mobileExpTab-git" type="button" onclick="setMobileExpPanel('git')">Git</button>
+        <button class="mobile-exp-tab" id="mobileExpTab-activity" type="button" onclick="setMobileExpPanel('activity')">Activity</button>
+      </div>
       <div class="exp-tabs" id="expReviewTabs">
         <div class="mode-toggle">
           <button class="mode-btn" id="expTab-diff" onclick="switchReviewOverlayTab('diff')">Diff</button>
@@ -456,6 +575,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         </div>
         <input type="search" class="exp-input-field" id="expInput" placeholder="Type a message or instruction..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" onkeydown="if(event.key==='Enter')sendExp()">
         <button class="exp-send" onclick="sendExp()">Send &#8629;</button>
+        <div class="input-shortcuts" aria-label="Keyboard controls">
+          <button class="key-btn" type="button" onclick="sendExpKey('up')">&#8593;</button>
+          <button class="key-btn" type="button" onclick="sendExpKey('down')">&#8595;</button>
+          <button class="key-btn" type="button" onclick="sendExpKey('tab')">Tab</button>
+          <button class="key-btn" type="button" onclick="sendExpKey('enter')">Enter</button>
+        </div>
       </div>
     </div>
     <div class="exp-sidebar">
@@ -496,19 +621,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
       <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
         <div>
-          <div class="settings-label">LLM Model</div>
-          <div class="settings-sublabel">Ollama model for fallback classification</div>
+          <div class="settings-label">Auto-Approve Classifier</div>
+          <div class="settings-sublabel">Claude Haiku via PreToolUse hooks</div>
           <div class="ollama-status" id="ollamaStatus">
             <span class="ollama-dot gray" id="ollamaDot"></span>
             <span id="ollamaStatusText">Unknown</span>
           </div>
         </div>
-        <select class="settings-select" id="settingsModel" onchange="saveSetting('model',this.value)">
-          <option>Loading...</option>
+        <select class="settings-select" id="settingsModel" disabled>
+          <option value="haiku">Claude Haiku</option>
         </select>
       </div>
     </div>
-    <div class="settings-row">
+    <div class="settings-row" style="display:none">
       <div>
         <div class="settings-label">LLM Enabled</div>
         <div class="settings-sublabel">Use LLM when regex doesn't match</div>
@@ -651,7 +776,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 
     <div class="ns-actions">
       <button class="btn" onclick="closeNewSession()">Cancel</button>
-      <button class="btn btn-primary" id="nsCreateBtn" onclick="submitNewSession()">Create</button>
+      <button class="btn" id="nsPlainBtn" onclick="submitNewSession('plain')">Plain Terminal</button>
+      <button class="btn btn-primary" id="nsCreateBtn" onclick="submitNewSession()">Create Worktree</button>
     </div>
   </div>
 </div>
@@ -687,6 +813,7 @@ var reviewsData = [];
 var reviewsLoaded = false;
 var reviewsRefreshTimer = null;
 var reviewFilters = {status:'all',time:'today',sort:'newest'};
+var mobileExpPanel = 'terminal';
 var notifiedReviewSessions = new Set();
 var lastGlobalReviewsRefresh = 0;
 
@@ -700,6 +827,52 @@ function api(method,path,body){
   if(body!==undefined)opts.body=JSON.stringify(body);
   return fetch(path,opts).then(function(r){return r.json()}).catch(function(){return null});
 }
+
+var WORKSPACE_CONTROL_KEYS={up:'up',down:'down',tab:'tab',enter:'enter'};
+
+function findWorkspaceByIndex(idx){
+  return state.workspaces.find(function(w){return w.index===idx});
+}
+
+function buildWorkspaceSendPayload(idx,extra){
+  var ws=findWorkspaceByIndex(idx);
+  var payload={index:idx};
+  if(ws&&ws.surfaceId)payload.surfaceId=ws.surfaceId;
+  Object.keys(extra||{}).forEach(function(key){payload[key]=extra[key]});
+  return payload;
+}
+
+function postWorkspaceCommand(idx,extra){
+  return api('POST','/api/send',buildWorkspaceSendPayload(idx,extra));
+}
+
+function isMobileHarness(){
+  return window.matchMedia&&window.matchMedia('(max-width: 640px)').matches;
+}
+
+function updateMobileHarnessSummary(active,waiting,idle){
+  var el=document.getElementById('mobileHarnessSummary');
+  if(!el)return;
+  el.textContent=active+' active, '+waiting+' waiting, '+idle+' idle';
+}
+
+function updateMobileExpPanel(){
+  var panel=document.querySelector('.expanded-panel');
+  if(!panel)return;
+  ['terminal','git','activity'].forEach(function(name){
+    panel.classList.toggle('mobile-panel-'+name,mobileExpPanel===name);
+    var btn=document.getElementById('mobileExpTab-'+name);
+    if(btn)btn.classList.toggle('active',mobileExpPanel===name);
+  });
+  var tabs=document.getElementById('mobileExpTabs');
+  if(tabs)tabs.style.display=expandedMode==='workspace'?'':'none';
+}
+
+window.setMobileExpPanel=function(panel){
+  mobileExpPanel=(panel==='git'||panel==='activity')?panel:'terminal';
+  updateMobileExpPanel();
+  if(mobileExpPanel==='git')fetchGitStatus();
+};
 
 function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 
@@ -1043,7 +1216,7 @@ function updateGlobalToggle(){
 }
 
 function updateOllamaStatus(){
-  var avail=state.ollamaAvailable;
+  var avail=state.backendAvailability.claude;
   // Top bar LLM indicator
   var statLlm=document.getElementById('statLlm');
   if(statLlm)statLlm.style.display=(avail===false)?'':'none';
@@ -1052,9 +1225,9 @@ function updateOllamaStatus(){
   var txt=document.getElementById('ollamaStatusText');
   if(!dot||!txt)return;
   if(avail===true){
-    dot.className='ollama-dot green';txt.textContent='Connected';
+    dot.className='ollama-dot green';txt.textContent='Ready';
   } else if(avail===false){
-    dot.className='ollama-dot red';txt.textContent='Unavailable';
+    dot.className='ollama-dot red';txt.textContent='Claude CLI unavailable';
   } else {
     dot.className='ollama-dot gray';txt.textContent='Unknown';
   }
@@ -1062,8 +1235,10 @@ function updateOllamaStatus(){
 
 window.switchView=function(view){
   currentView=view==='reviews'?'reviews':'center';
-  document.getElementById('grid').style.display=currentView==='center'?'grid':'none';
+  document.getElementById('grid').style.display=currentView==='center'?'':'none';
   document.getElementById('reviewsContainer').style.display=currentView==='reviews'?'block':'none';
+  var mobileTitle=document.getElementById('mobileHarnessTitle');
+  if(mobileTitle)mobileTitle.style.display=currentView==='center'?'':'none';
   ['center','reviews'].forEach(function(name){
     var btn=document.getElementById('viewBtn-'+name);
     if(btn)btn.classList.toggle('active',currentView===name);
@@ -1238,7 +1413,11 @@ window.dismissReview=function(sessionId){
 function buildGrid(){
   var grid=document.getElementById('grid');
   var ws=state.workspaces;
-  if(!ws||ws.length===0){grid.innerHTML='<div class="grid-empty">No workspaces detected. Is cmux running?</div>';return}
+  if(!ws||ws.length===0){
+    updateMobileHarnessSummary(0,0,0);
+    grid.innerHTML='<div class="grid-empty">No workspaces detected. Is cmux running?</div>';
+    return;
+  }
 
   // Count stats
   var active=0,waiting=0,idle=0;
@@ -1251,6 +1430,7 @@ function buildGrid(){
   document.getElementById('statActive').textContent=active;
   document.getElementById('statWaiting').textContent=waiting;
   document.getElementById('statIdle').textContent=idle;
+  updateMobileHarnessSummary(active,waiting,idle);
 
   // Split into active (active+waiting) and inactive (idle), alphabetical within each
   var activeWs=[], inactiveWs=[];
@@ -1274,13 +1454,7 @@ function buildGrid(){
     focusedCursor=activeEl.selectionStart||0;
   }
 
-  var html='';
-  var dividerInserted=false;
-  sorted.forEach(function(w){
-    if(!dividerInserted&&classifyWs(w)==='idle'){
-      html+='<div class="grid-divider">Inactive</div>';
-      dividerInserted=true;
-    }
+  function buildWorkspaceCardHtml(w){
     var s=classifyWs(w);
     var isWaiting=s==='waiting';
     var isIdle=s==='idle';
@@ -1291,8 +1465,9 @@ function buildGrid(){
     var badgeText=isWaiting?'Needs You':isIdle?'Idle':'Active';
     var autoOn=w.enabled===true;
     var autoClass='auto-toggle'+(autoOn?' on':'');
+    var html='';
 
-    html+='<div class="'+cardClass+'" id="card-'+w.index+'">';
+    html+='<div class="'+cardClass+'" id="card-'+w.index+'" data-ws-index="'+w.index+'">';
     var displayName=w.surfaceLabel||w.customName||w.name;
     html+='<div class="card-header">';
     html+='<div class="card-title-row"><div class="'+statusClass+'"></div>';
@@ -1324,8 +1499,29 @@ function buildGrid(){
     html+='<div class="card-footer">';
     html+='<input type="search" class="card-input" placeholder="Send message..." id="input-'+w.index+'" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" onkeydown="if(event.key===\'Enter\')sendToWs('+w.index+')">';
     html+='<button class="card-send" onclick="sendToWs('+w.index+')">Send</button>';
+    html+='<div class="input-shortcuts" aria-label="Keyboard controls">';
+    html+='<button class="key-btn" type="button" onclick="sendWsKey('+w.index+',\'up\')">&#8593;</button>';
+    html+='<button class="key-btn" type="button" onclick="sendWsKey('+w.index+',\'down\')">&#8595;</button>';
+    html+='<button class="key-btn" type="button" onclick="sendWsKey('+w.index+',\'tab\')">Tab</button>';
+    html+='<button class="key-btn" type="button" onclick="sendWsKey('+w.index+',\'enter\')">Enter</button>';
+    html+='</div>';
     html+='</div></div>';
-  });
+    return html;
+  }
+
+  var html='';
+  if(activeWs.length){
+    html+='<div class="mobile-list-title">Active Sessions</div>';
+    html+='<div class="mobile-session-group mobile-session-group-active">';
+    activeWs.forEach(function(w){html+=buildWorkspaceCardHtml(w)});
+    html+='</div>';
+  }
+  if(inactiveWs.length){
+    html+='<div class="grid-divider">Inactive</div>';
+    html+='<div class="mobile-session-group mobile-session-group-inactive">';
+    inactiveWs.forEach(function(w){html+=buildWorkspaceCardHtml(w)});
+    html+='</div>';
+  }
   // Structural hash: workspace indices, status, and name (for alpha sort changes)
   var structHash=sorted.map(function(w){return w.index+'_'+classifyWs(w)+'_'+nameof(w)}).join(',');
   var needsRebuild=!window._lastStructHash||window._lastStructHash!==structHash||!grid.children.length;
@@ -1464,18 +1660,21 @@ window.toggleWsAuto=function(idx,el){
 window.sendToWs=function(idx){
   var inp=document.getElementById('input-'+idx);
   if(!inp||!inp.value.trim())return;
-  var text=inp.value.trim()+'\n';
-  var ws=state.workspaces.find(function(w){return w.index===idx});
-  var payload={index:idx,text:text};
-  if(ws&&ws.surfaceId)payload.surfaceId=ws.surfaceId;
-  api('POST','/api/send',payload);
+  postWorkspaceCommand(idx,{text:inp.value.trim()+'\n'});
   inp.value='';
+};
+
+window.sendWsKey=function(idx,key){
+  key=String(key||'').toLowerCase();
+  if(!WORKSPACE_CONTROL_KEYS[key])return;
+  postWorkspaceCommand(idx,{key:key});
 };
 
 // ─── Expanded view ───
 window.openExpanded=function(idx){
   expandedMode='workspace';
   expandedWsIndex=idx;
+  mobileExpPanel='terminal';
   // Pin the workspace by UUID+surfaceId so index shifts don't cause a swap
   var ws=state.workspaces.find(function(w){return w.index===idx});
   expandedWsUuid=ws?ws.uuid:null;
@@ -1485,6 +1684,12 @@ window.openExpanded=function(idx){
   document.getElementById('overlay').classList.add('visible');
   document.getElementById('escHint').style.display='block';
   document.body.style.overflow='hidden';
+  var gitBody=document.getElementById('expGitBody');
+  if(gitBody){
+    delete gitBody.dataset.loaded;
+    gitBody.innerHTML='<div class="git-empty">Loading git status...</div>';
+  }
+  updateMobileExpPanel();
   updateExpanded();
   var termEl=document.getElementById('expTerminal');
   if(termEl)termEl.scrollTop=termEl.scrollHeight;
@@ -1501,6 +1706,8 @@ window.closeExpanded=function(){
   expandedScreen=null;
   expandedMode='workspace';
   inlineDiffFile=null;
+  mobileExpPanel='terminal';
+  updateMobileExpPanel();
   document.getElementById('overlay').classList.remove('visible');
   document.getElementById('escHint').style.display='none';
   document.body.style.overflow='';
@@ -1516,18 +1723,16 @@ window.sendExp=function(){
   if(expandedWsIndex===null)return;
   var inp=document.getElementById('expInput');
   if(!inp.value.trim())return;
-  var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
-  var payload={index:expandedWsIndex,text:inp.value.trim()+'\n'};
-  if(ws&&ws.surfaceId)payload.surfaceId=ws.surfaceId;
-  api('POST','/api/send',payload);
+  postWorkspaceCommand(expandedWsIndex,{text:inp.value.trim()+'\n'});
   inp.value='';
+};
+window.sendExpKey=function(key){
+  if(expandedWsIndex===null)return;
+  window.sendWsKey(expandedWsIndex,key);
 };
 window.buildAndRun=function(){
   if(expandedWsIndex===null)return;
-  var ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
-  var payload={index:expandedWsIndex,text:'/exp-project-run\n'};
-  if(ws&&ws.surfaceId)payload.surfaceId=ws.surfaceId;
-  api('POST','/api/send',payload);
+  postWorkspaceCommand(expandedWsIndex,{text:'/exp-project-run\n'});
 };
 var gitPollTimer=null;
 window.gitFileClick=function(file,el){
@@ -1541,6 +1746,10 @@ window.gitFileClick=function(file,el){
   }
   el.classList.add('selected');
   var section=el.getAttribute('data-section')||'unstaged';
+  if(isMobileHarness()){
+    mobileExpPanel='terminal';
+    updateMobileExpPanel();
+  }
   showInlineDiff(file,section);
 };
 window.showInlineDiff=function(file,section){
@@ -1642,13 +1851,22 @@ window.closeInlineDiff=function(){
 
 window.fetchGitStatus=function(){
   if(expandedWsIndex===null)return;
+  var body=document.getElementById('expGitBody');
+  if(body&&!body.dataset.loaded)body.innerHTML='<div class="git-empty">Loading git status...</div>';
   fetch('/api/git-status?index='+expandedWsIndex).then(function(r){return r.json()}).then(function(d){
-    if(!d.ok)return;
+    if(!d||!d.ok){
+      if(body)body.innerHTML='<div class="git-empty" style="color:var(--red)">Failed to load git status</div>';
+      return;
+    }
     var brEl=document.getElementById('expGitBranch');
     if(brEl)brEl.textContent=d.branch||'';
-    var body=document.getElementById('expGitBody');
     if(!body)return;
-    var empty=d.staged.length===0&&d.unstaged.length===0&&d.untracked.length===0&&d.commits.length===0;
+    body.dataset.loaded='true';
+    var staged=Array.isArray(d.staged)?d.staged:[];
+    var unstaged=Array.isArray(d.unstaged)?d.unstaged:[];
+    var untracked=Array.isArray(d.untracked)?d.untracked:[];
+    var commits=Array.isArray(d.commits)?d.commits:[];
+    var empty=staged.length===0&&unstaged.length===0&&untracked.length===0&&commits.length===0;
     if(empty){body.innerHTML='<div class="git-empty">'+(d.cwd?'Working tree clean':'No git repo detected')+'</div>';return;}
     var h='';
     function truncPath(p){
@@ -1661,25 +1879,27 @@ window.fetchGitStatus=function(){
       var display=truncPath(file);
       return '<div class="git-file" data-file="'+esc(file).replace(/"/g,'&quot;')+'" data-section="'+section+'" onclick="gitFileClick(\''+escaped+'\',this)" title="'+esc(file).replace(/"/g,'&quot;')+'"><span class="git-status '+cls+'">'+esc(status)+'</span><span class="git-file-name">'+esc(display)+'</span></div>';
     }
-    if(d.staged.length){
-      h+='<div class="git-section"><div class="git-section-title staged">Staged ('+d.staged.length+')</div>';
-      d.staged.forEach(function(f){h+=fileEl(f.status,f.file,'st-staged','staged');});
+    if(staged.length){
+      h+='<div class="git-section"><div class="git-section-title staged">Staged ('+staged.length+')</div>';
+      staged.forEach(function(f){h+=fileEl(f.status,f.file,'st-staged','staged');});
       h+='</div>';
     }
-    var unstTotal=d.unstaged.length+d.untracked.length;
+    var unstTotal=unstaged.length+untracked.length;
     if(unstTotal){
       h+='<div class="git-section"><div class="git-section-title unstaged">Unstaged ('+unstTotal+')</div>';
-      d.unstaged.forEach(function(f){h+=fileEl(f.status,f.file,'st-unstaged','unstaged');});
-      d.untracked.forEach(function(f){h+=fileEl('?',f,'st-untracked','untracked');});
+      unstaged.forEach(function(f){h+=fileEl(f.status,f.file,'st-unstaged','unstaged');});
+      untracked.forEach(function(f){h+=fileEl('?',f,'st-untracked','untracked');});
       h+='</div>';
     }
-    if(d.commits.length){
+    if(commits.length){
       h+='<div class="git-section commits-section"><div class="git-section-title commits">Recent Commits</div>';
-      d.commits.forEach(function(c){h+='<div class="git-commit"><span class="git-hash">'+esc(c.hash)+'</span>'+esc(c.message)+'</div>';});
+      commits.forEach(function(c){h+='<div class="git-commit"><span class="git-hash">'+esc(c.hash)+'</span>'+esc(c.message)+'</div>';});
       h+='</div>';
     }
     body.innerHTML=h;
-  }).catch(function(){});
+  }).catch(function(){
+    if(body)body.innerHTML='<div class="git-empty" style="color:var(--red)">Network error loading git status</div>';
+  });
 };
 window.setMode=function(btn){
   btn.parentElement.querySelectorAll('.mode-btn').forEach(function(b){b.classList.remove('active')});
@@ -1692,6 +1912,7 @@ function updateExpanded(){
     return;
   }
   if(expandedWsIndex===null)return;
+  updateMobileExpPanel();
   document.getElementById('expReviewTabs').classList.remove('visible');
   document.getElementById('expTerminal').classList.remove('activity-list');
   // Find workspace by pinned UUID+surfaceId first (survives index shifts),
@@ -1805,6 +2026,8 @@ function updateReviewOverlayTabs(activeTab){
 
 function updateExpandedReview(){
   if(!expandedReview)return;
+  var mobileTabs=document.getElementById('mobileExpTabs');
+  if(mobileTabs)mobileTabs.style.display='none';
   document.querySelector('.exp-header-actions').classList.add('hidden');
   document.querySelector('.exp-input').classList.add('hidden');
   document.getElementById('expReviewTabs').classList.add('visible');
@@ -1844,10 +2067,12 @@ window.openReviewOverlay=function(sessionId,tab){
     expandedWsUuid=null;
     expandedWsSurfaceId=null;
     expandedReview=review;
+    mobileExpPanel='terminal';
     expandedReview._overlayTab=tab||'diff';
     document.getElementById('overlay').classList.add('visible');
     document.getElementById('escHint').style.display='block';
     document.body.style.overflow='hidden';
+    updateMobileExpPanel();
     updateExpandedReview();
   });
 };
@@ -1956,7 +2181,7 @@ function loadSettingsData(){
     var models=results[1]||{};
     var llmModels=models.models||[];
     state.pollInterval=status.pollInterval!==undefined?status.pollInterval:state.pollInterval;
-    state.model=status.model||state.model;
+    state.model='haiku';
     state.reviewEnabled=status.reviewEnabled!==undefined?!!status.reviewEnabled:state.reviewEnabled;
     state.reviewModel=status.reviewModel||state.reviewModel;
     state.reviewBackend=status.reviewBackend||state.reviewBackend;
@@ -1968,18 +2193,8 @@ function loadSettingsData(){
     };
     document.getElementById('settingsPoll').value=String(state.pollInterval);
     var llmSelect=document.getElementById('settingsModel');
-    llmSelect.innerHTML='';
-    if(!llmModels.length){
-      llmSelect.innerHTML='<option>'+(models.available===false?'Ollama unavailable':'No models found')+'</option>';
-    } else {
-      llmModels.forEach(function(model){
-        var opt=document.createElement('option');
-        opt.value=model;
-        opt.textContent=model;
-        if(model===state.model)opt.selected=true;
-        llmSelect.appendChild(opt);
-      });
-    }
+    llmSelect.innerHTML='<option value="haiku">Claude Haiku</option>';
+    llmSelect.value='haiku';
     updateOllamaStatus();
     updateReviewEnabledUI();
     updateBackendAvailabilityUI();
@@ -2067,8 +2282,7 @@ function openNewSession(){
   document.getElementById('nsPrompt').value='';
   var errEl=document.getElementById('nsError');
   errEl.style.display='none';errEl.textContent='';
-  var btn=document.getElementById('nsCreateBtn');
-  btn.disabled=false;btn.textContent='Create';
+  setNewSessionButtonsBusy(false);
   updateBranchReq();
   document.getElementById('nsOverlay').classList.add('visible');
 }
@@ -2116,21 +2330,43 @@ function validateNsForm(){
   return null;
 }
 
-window.submitNewSession=function(){
-  var err=validateNsForm();
+function getNewSessionProjectLabel(){
+  var el=document.getElementById('nsProject');
+  if(!el)return 'project';
+  var opt=el.options[el.selectedIndex];
+  return ((opt&&opt.textContent)||el.value||'project').trim();
+}
+
+function setNewSessionButtonsBusy(isBusy,mode){
+  var createBtn=document.getElementById('nsCreateBtn');
+  var plainBtn=document.getElementById('nsPlainBtn');
+  if(createBtn){
+    createBtn.disabled=!!isBusy;
+    createBtn.textContent=isBusy&&mode!=='plain'?'Creating worktree...':'Create Worktree';
+  }
+  if(plainBtn){
+    plainBtn.disabled=!!isBusy;
+    plainBtn.textContent=isBusy&&mode==='plain'?'Opening terminal...':'Plain Terminal';
+  }
+}
+
+window.submitNewSession=function(mode){
+  mode=mode==='plain'?'plain':'claude';
   var errEl=document.getElementById('nsError');
+  var err=mode==='plain'?null:validateNsForm();
   if(err){errEl.textContent=err;errEl.style.display='block';return;}
   errEl.style.display='none';
 
   var projectPath=document.getElementById('nsProject').value;
-  var branchName=document.getElementById('nsBranchName').value.trim();
+  var branchName=mode==='plain'?'':document.getElementById('nsBranchName').value.trim();
   var skill=document.getElementById('nsSkill').value;
   var prompt=document.getElementById('nsPrompt').value.trim();
-  var jiraUrl=document.getElementById('nsJiraUrl').value.trim();
+  var jiraUrl=mode==='plain'?'':document.getElementById('nsJiraUrl').value.trim();
+  var projectLabel=getNewSessionProjectLabel();
 
   // Compose prompt: skill prefix + user prompt
   var fullPrompt='';
-  if(skill)fullPrompt=skill;
+  if(mode!=='plain'&&skill)fullPrompt=skill;
   if(jiraUrl){
     var key=extractJiraKey(jiraUrl);
     if(key){
@@ -2139,22 +2375,22 @@ window.submitNewSession=function(){
       else if(prompt)fullPrompt=prompt;
     }
   }
-  if(prompt)fullPrompt=fullPrompt?(fullPrompt+' '+prompt):prompt;
+  if(prompt&&mode!=='plain')fullPrompt=fullPrompt?(fullPrompt+' '+prompt):prompt;
 
-  var btn=document.getElementById('nsCreateBtn');
-  btn.disabled=true;btn.textContent='Creating worktree...';
+  setNewSessionButtonsBusy(true,mode);
 
   api('POST','/api/new-session',{
     projectPath:projectPath,
     branchName:branchName,
     jiraUrl:jiraUrl,
     prompt:fullPrompt,
-    command:'claude'
+    command:mode==='plain'?'zsh':'claude',
+    sessionName:mode==='plain'?(projectLabel+' shell'):''
   }).then(function(r){
     if(!r||!r.ok){
       errEl.textContent=(r&&r.error)||'Failed to create session';
       errEl.style.display='block';
-      btn.disabled=false;btn.textContent='Create';
+      setNewSessionButtonsBusy(false);
       return;
     }
     closeNewSession();
@@ -2162,12 +2398,16 @@ window.submitNewSession=function(){
   }).catch(function(){
     errEl.textContent='Network error';
     errEl.style.display='block';
-    btn.disabled=false;btn.textContent='Create';
+    setNewSessionButtonsBusy(false);
   });
 };
 
 // ─── Inline rename ───
 window.startRename=function(idx,spanEl){
+  if(isMobileHarness()){
+    openExpanded(idx);
+    return;
+  }
   // Prevent click propagation to expand-btn etc.
   var currentName=spanEl.textContent;
   var inp=document.createElement('input');
@@ -2220,6 +2460,18 @@ window.startRename=function(idx,spanEl){
     else if(e.key==='Escape'){e.preventDefault();inp.removeEventListener('blur',commit);cancel()}
   });
 };
+
+var gridEl=document.getElementById('grid');
+if(gridEl){
+  gridEl.addEventListener('click',function(e){
+    if(!isMobileHarness())return;
+    if(e.target.closest('button,input,.auto-toggle,.badge-clickable,.card-name,.card-name-edit'))return;
+    var card=e.target.closest('.card[data-ws-index]');
+    if(!card)return;
+    var idx=parseInt(card.getAttribute('data-ws-index'),10);
+    if(!isNaN(idx))openExpanded(idx);
+  });
+}
 
 // ─── Activity Popover ───
 var _lastActivityCount = -1;
