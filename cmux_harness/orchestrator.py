@@ -82,6 +82,7 @@ class Orchestrator:
         self._lock = threading.Lock()
         self._orchestrator_response_pattern = re.compile(r"(?:^|\n)\s*(?:❯(?:\s|$)|[>›](?:\s|$)|Model:)", re.MULTILINE)
         self._reconcile_workspace_state_on_startup()
+        self._reconcile_objective_state_on_startup()
         self._idle_sweep_thread = threading.Thread(target=self._idle_sweep, daemon=True)
         self._idle_sweep_thread.start()
 
@@ -513,6 +514,64 @@ class Orchestrator:
                         "clearedTurns": stale_turns,
                     },
                 )
+
+    def _reconcile_objective_state(self, objective_id, startup=False):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return False
+        status = str(objective.get("status") or "").lower()
+        if status != "executing":
+            return False
+        tasks = [task for task in objective.get("tasks", []) if isinstance(task, dict)]
+        if not tasks:
+            return False
+
+        active_tasks = [
+            task for task in tasks
+            if str(task.get("status") or "").lower() in {"executing", "reviewing", "rework"}
+        ]
+        if active_tasks:
+            return False
+
+        failed_tasks = [task for task in tasks if str(task.get("status") or "").lower() == "failed"]
+        queued_tasks = [task for task in tasks if str(task.get("status") or "").lower() == "queued"]
+        completed_ids = {
+            str(task.get("id") or "")
+            for task in tasks
+            if str(task.get("status") or "").lower() == "completed" and str(task.get("id") or "").strip()
+        }
+        blocked_queued_tasks = [
+            task for task in queued_tasks
+            if not all(dep_id in completed_ids for dep_id in task.get("dependsOn", []))
+        ]
+
+        reason = None
+        details = {"startup": bool(startup)}
+        if failed_tasks:
+            reason = "failed_tasks_with_no_active_workers"
+            details["failedTaskIds"] = [task.get("id") for task in failed_tasks if task.get("id")]
+        elif queued_tasks and len(blocked_queued_tasks) == len(queued_tasks):
+            reason = "queued_tasks_blocked_by_unmet_dependencies"
+            details["queuedTaskIds"] = [task.get("id") for task in queued_tasks if task.get("id")]
+        else:
+            return False
+
+        objectives.update_objective(objective_id, {"status": "failed"})
+        self._log_event(objective_id, "warn", "objective_state_reconciled", {"reason": reason, **details})
+        self._append_message(
+            objective_id,
+            "alert",
+            "Recovered objective state: no active workers remained and execution could not continue. Marked as failed.",
+            metadata={"reason": reason, **details},
+        )
+        return True
+
+    def _reconcile_objective_state_on_startup(self):
+        for objective in objectives.list_objectives():
+            objective_id = str(objective.get("id") or "").strip()
+            if not objective_id:
+                continue
+            self._reconcile_objective_state(objective_id, startup=True)
 
     def _log_workspace_progress(self, workspace_id, level, event, details=None):
         safe_details = details if isinstance(details, dict) else {}
@@ -2001,6 +2060,28 @@ class Orchestrator:
         combined_context = "# Context from completed tasks\n\n" + "\n\n".join(context_parts) + "\n"
         objectives.write_task_file(objective_id, task["id"], "context.md", combined_context)
 
+    def _reset_task_runtime_files(self, objective_id, task_id, worktree_path):
+        for filename in ("progress.md", "result.md"):
+            objectives.write_task_file(objective_id, task_id, filename, "")
+            if not worktree_path:
+                continue
+            try:
+                (pathlib.Path(worktree_path) / filename).write_text("", encoding="utf-8")
+            except OSError:
+                pass
+
+    def _fail_objective(self, objective_id, reason, task_id=None):
+        objective = objectives.read_objective(objective_id)
+        if objective is None:
+            return
+        if str(objective.get("status") or "").lower() == "failed":
+            return
+        objectives.update_objective(objective_id, {"status": "failed"})
+        details = {"reason": reason}
+        if task_id:
+            details["taskId"] = task_id
+        self._log_event(objective_id, "error", "objective_failure", details)
+
     def _launch_ready_tasks(self, objective_id):
         objective = objectives.read_objective(objective_id)
         if objective is None:
@@ -2057,6 +2138,7 @@ class Orchestrator:
 
         spec_content = objectives.read_task_file(objective_id, task["id"], "spec.md") or ""
         context_content = objectives.read_task_file(objective_id, task["id"], "context.md") or ""
+        self._reset_task_runtime_files(objective_id, task["id"], worktree_path)
         with open(os.path.join(worktree_path, "spec.md"), "w", encoding="utf-8") as f:
             f.write(spec_content)
         with open(os.path.join(worktree_path, "context.md"), "w", encoding="utf-8") as f:
@@ -2070,12 +2152,14 @@ class Orchestrator:
             task_id=task["id"],
         )
         if not created or not ws_uuid:
+            objectives.update_task(objective_id, task["id"], {"status": "failed", "workspaceId": None})
             self._log_event(
                 objective_id,
                 "error",
                 "task_failure",
                 {"taskId": task["id"], "reason": "workspace_creation_failed"},
             )
+            self._fail_objective(objective_id, "workspace_creation_failed", task_id=task["id"])
             self._append_message(
                 objective_id,
                 "alert",
@@ -2089,6 +2173,7 @@ class Orchestrator:
             purpose="task",
             task_id=task["id"],
         ):
+            objectives.update_task(objective_id, task["id"], {"status": "failed", "workspaceId": None})
             self._log_event(
                 objective_id,
                 "error",
@@ -2100,6 +2185,8 @@ class Orchestrator:
                     "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
                 },
             )
+            self._close_workspace(objective_id, ws_uuid, "task_startup_failed", task_id=task["id"])
+            self._fail_objective(objective_id, "repl_not_ready", task_id=task["id"])
             self._append_message(
                 objective_id,
                 "alert",
@@ -2107,6 +2194,7 @@ class Orchestrator:
             )
             return
         if not cmux_api.send_prompt_to_workspace(ws_uuid, worker.build_task_prompt(task["id"])):
+            objectives.update_task(objective_id, task["id"], {"status": "failed", "workspaceId": None})
             self._log_event(
                 objective_id,
                 "error",
@@ -2118,6 +2206,8 @@ class Orchestrator:
                     "screen_last_20_lines": self._capture_screen_snapshot(ws_uuid),
                 },
             )
+            self._close_workspace(objective_id, ws_uuid, "task_prompt_failed", task_id=task["id"])
+            self._fail_objective(objective_id, "prompt_delivery_failed", task_id=task["id"])
             self._append_message(
                 objective_id,
                 "alert",
@@ -2152,6 +2242,8 @@ class Orchestrator:
         )
 
     def poll_tasks(self, objective_id):
+        if self._reconcile_objective_state(objective_id):
+            return
         objective = objectives.read_objective(objective_id)
         if objective is None:
             return
@@ -2591,18 +2683,7 @@ Verdict rules:
         if monitor.can_retry_review(task):
             # Clear result.md so poll_tasks doesn't re-detect completion
             # before the worker has a chance to rework
-            task_dir = objectives.get_objective_dir(objective_id) / "tasks" / task_id
-            for result_path in [task_dir / "result.md"]:
-                try:
-                    result_path.write_text("", encoding="utf-8")
-                except OSError:
-                    pass
-            wt_result = pathlib.Path(task.get("worktreePath", "")) / "result.md"
-            try:
-                if wt_result.is_file():
-                    wt_result.write_text("", encoding="utf-8")
-            except OSError:
-                pass
+            self._reset_task_runtime_files(objective_id, task_id, worktree_path)
             issues, recommendation = monitor.build_review_rework_summary(review_json)
             rework_prompt = worker.build_rework_prompt(issues, recommendation)
             previous_workspace_uuid = task.get("workspaceId")
@@ -2631,6 +2712,7 @@ Verdict rules:
                     "task_failure",
                     {"taskId": task_id, "reason": "rework_workspace_creation_failed"},
                 )
+                self._fail_objective(objective_id, "rework_workspace_creation_failed", task_id=task_id)
                 self._append_message(
                     objective_id,
                     "alert",
@@ -2646,6 +2728,7 @@ Verdict rules:
             ):
                 self._close_workspace(objective_id, workspace_uuid, "rework_startup_failed", task_id=task_id)
                 objectives.update_task(objective_id, task_id, {"status": "failed", "workspaceId": None})
+                self._fail_objective(objective_id, "rework_startup_failed", task_id=task_id)
                 self._append_message(
                     objective_id,
                     "alert",
@@ -2656,6 +2739,7 @@ Verdict rules:
             if not cmux_api.send_prompt_to_workspace(workspace_uuid, rework_prompt):
                 self._close_workspace(objective_id, workspace_uuid, "rework_prompt_failed", task_id=task_id)
                 objectives.update_task(objective_id, task_id, {"status": "failed", "workspaceId": None})
+                self._fail_objective(objective_id, "rework_prompt_failed", task_id=task_id)
                 self._append_message(
                     objective_id,
                     "alert",
@@ -2705,6 +2789,7 @@ Verdict rules:
             "task_failure",
             {"taskId": task_id, "reason": "review_failed_max_cycles", "issues": issues},
         )
+        self._fail_objective(objective_id, "review_failed_max_cycles", task_id=task_id)
         self._append_message(
             objective_id,
             "alert",

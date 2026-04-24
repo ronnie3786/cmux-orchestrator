@@ -778,6 +778,29 @@ class TestTaskLauncher(unittest.TestCase):
         context = objectives.read_task_file(objective["id"], "task-2", "context.md")
         self.assertIn("Task one result", context)
 
+    def test_launch_ready_tasks_clears_stale_runtime_files_before_launch(self):
+        tasks = [
+            {"id": "task-1", "title": "First task", "status": "queued", "dependsOn": [], "workspaceId": None, "worktreePath": None, "startedAt": None},
+        ]
+        objective = self._create_objective(tasks)
+        self._create_task_files(objective["id"], "task-1")
+        worktree = Path(objective["worktreePath"])
+        worktree.mkdir(parents=True, exist_ok=True)
+        (worktree / "progress.md").write_text("old progress\n", encoding="utf-8")
+        (worktree / "result.md").write_text("stale result\n", encoding="utf-8")
+        objectives.write_task_file(objective["id"], "task-1", "progress.md", "old task progress")
+        objectives.write_task_file(objective["id"], "task-1", "result.md", "old task result")
+
+        with patch.object(self.orchestrator, "_create_worker_workspace", return_value=("fake-uuid-1", True)), \
+                patch.object(self.orchestrator, "_wait_for_repl", return_value=True), \
+                patch("cmux_harness.orchestrator.cmux_api.send_prompt_to_workspace", return_value=True):
+            self.orchestrator._launch_ready_tasks(objective["id"])
+
+        self.assertEqual((worktree / "progress.md").read_text(encoding="utf-8"), "")
+        self.assertEqual((worktree / "result.md").read_text(encoding="utf-8"), "")
+        self.assertEqual(objectives.read_task_file(objective["id"], "task-1", "progress.md"), "")
+        self.assertEqual(objectives.read_task_file(objective["id"], "task-1", "result.md"), "")
+
     def test_assemble_context_builds_from_dependencies(self):
         tasks = [
             {"id": "task-1", "title": "Completed task", "status": "completed", "dependsOn": []},
@@ -952,6 +975,24 @@ class TestPollTasks(unittest.TestCase):
 
         mock_read.assert_not_called()
         mock_progress.assert_not_called()
+
+    def test_poll_tasks_reconciles_stuck_executing_objective_with_failed_task(self):
+        tasks = [
+            {"id": "task-1", "status": "completed", "workspaceId": None, "worktreePath": str(self.project_dir)},
+            {"id": "task-2", "status": "failed", "workspaceId": None, "worktreePath": str(self.project_dir)},
+        ]
+        objective = self._create_objective(tasks)
+
+        with patch("cmux_harness.orchestrator.cmux_api.cmux_read_workspace") as mock_read, \
+                patch("cmux_harness.orchestrator.monitor.check_progress") as mock_progress:
+            self.orchestrator.poll_tasks(objective["id"])
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "failed")
+        mock_read.assert_not_called()
+        mock_progress.assert_not_called()
+        alerts = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "alert"]
+        self.assertTrue(any("Recovered objective state" in msg["content"] for msg in alerts))
 
 
 class TestReviewRework(unittest.TestCase):
@@ -1227,11 +1268,64 @@ class TestReviewRework(unittest.TestCase):
         updated_task = updated["tasks"][0]
         self.assertEqual(updated_task["status"], "failed")
         self.assertEqual(updated_task["reviewCycles"], 5)
+        self.assertEqual(updated["status"], "failed")
         mock_close.assert_called_once_with(objective["id"], "ws-1", "task_failed", task_id="task-1")
         alerts = [msg for msg in self.orchestrator.get_messages(objective["id"]) if msg["type"] == "alert"]
         self.assertEqual(len(alerts), 1)
         self.assertIn("Needs your attention", alerts[0]["content"])
         self.assertEqual(alerts[0]["metadata"]["issues"], ["Fix formatting"])
+
+    def test_run_review_marks_objective_failed_when_rework_workspace_creation_fails(self):
+        worktree = self.project_dir / "wt-rework-fail"
+        worktree.mkdir()
+        task = {
+            "id": "task-1",
+            "title": "Needs fixes",
+            "status": "reviewing",
+            "workspaceId": "ws-1",
+            "worktreePath": str(worktree),
+            "reviewCycles": 0,
+            "maxReviewCycles": 5,
+        }
+        objective = self._create_objective([task])
+        self._create_task_files(objective["id"], "task-1", contract_text="AC1: Feature works end-to-end")
+        (worktree / "result.md").write_text("stale result", encoding="utf-8")
+        (worktree / "progress.md").write_text("stale progress", encoding="utf-8")
+
+        mock_git = Mock(returncode=0, stdout=" 1 file changed", stderr="")
+        with patch("cmux_harness.orchestrator.subprocess.run", return_value=mock_git), \
+                patch("cmux_harness.orchestrator.claude_cli.run_sonnet", return_value={
+                    "verdict": "fail",
+                    "tier1_build": "skipped",
+                    "tier2_maestro": "skipped",
+                    "criteria_results": [
+                        {
+                            "criterion": "Feature works end-to-end",
+                            "result": "fail",
+                            "evidence": "Implementation is still incomplete",
+                        }
+                    ],
+                    "issues": ["Fix formatting"],
+                    "recommendation": "Clean up code",
+                }), \
+                patch("cmux_harness.orchestrator.monitor.should_trigger_rework", return_value=True), \
+                patch("cmux_harness.orchestrator.monitor.can_retry_review", return_value=True), \
+                patch("cmux_harness.orchestrator.monitor.build_review_rework_summary", return_value=(["Fix formatting"], "Clean up code")), \
+                patch.object(self.orchestrator, "_close_workspace") as mock_close, \
+                patch.object(self.orchestrator, "_create_worker_workspace", return_value=(None, False)):
+            self.orchestrator._run_review(objective["id"], "task-1")
+
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "failed")
+        self.assertEqual(updated["tasks"][0]["status"], "failed")
+        self.assertEqual((worktree / "progress.md").read_text(encoding="utf-8"), "")
+        self.assertEqual((worktree / "result.md").read_text(encoding="utf-8"), "")
+        mock_close.assert_called_once_with(
+            objective["id"],
+            "ws-1",
+            "task_rework_restart",
+            task_id="task-1",
+        )
 
     def test_complete_objective(self):
         tasks = [
@@ -1509,6 +1603,25 @@ class TestWorkspaceSessions(unittest.TestCase):
         self.assertEqual(updated_turn["status"], "failed")
         self.assertIn("Dashboard restarted", updated_turn["lastError"])
         self.assertIsNone(workspaces.get_active_workspace_turn(workspace["id"]))
+
+    def test_startup_reconciles_stale_executing_objective_with_failed_task(self):
+        objective = objectives.create_objective("Broken objective", str(self.project_dir))
+        objectives.update_objective(
+            objective["id"],
+            {
+                "status": "executing",
+                "tasks": [
+                    {"id": "task-1", "status": "completed"},
+                    {"id": "task-2", "status": "failed"},
+                ],
+            },
+        )
+
+        reconciled = Orchestrator(object())
+
+        del reconciled
+        updated = objectives.read_objective(objective["id"])
+        self.assertEqual(updated["status"], "failed")
 
     def test_handle_workspace_input_wraps_message_for_callback_delivery(self):
         workspace = self._create_workspace()
