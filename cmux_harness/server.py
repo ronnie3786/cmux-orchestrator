@@ -55,6 +55,8 @@ _STATIC_CONTENT = {
     "/orchestrator.js": ORCHESTRATOR_JS,
 }
 
+_HARNESS_ALLOWED_KEYS = {"up", "down", "tab", "enter"}
+
 
 def _human_file_size(size):
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -650,9 +652,13 @@ def make_handler(engine):
             elif path == "/api/send":
                 idx = data.get("index")
                 text = data.get("text", "")
+                key = str(data.get("key") or "").strip().lower()
                 surface_id = data.get("surfaceId")
-                if idx is None or not text:
-                    self._json_response({"ok": False, "error": "index and text required"}, 400)
+                if idx is None or (not text and not key):
+                    self._json_response({"ok": False, "error": "index and text or key required"}, 400)
+                    return
+                if key and key not in _HARNESS_ALLOWED_KEYS:
+                    self._json_response({"ok": False, "error": f"unsupported key: {key}"}, 400)
                     return
                 idx = int(idx)
                 with engine._lock:
@@ -663,14 +669,23 @@ def make_handler(engine):
                     return
                 sid = surface_id or ws.get("_surface_id")
                 real_idx = ws.get("_real_index", idx)
-                ok = cmux_api.cmux_send_to_workspace(real_idx, 0, text=text, workspace_uuid=ws.get("uuid"), surface_id=sid)
+                ok = cmux_api.cmux_send_to_workspace(
+                    real_idx,
+                    0,
+                    text=text or None,
+                    key=key or None,
+                    workspace_uuid=ws.get("uuid"),
+                    surface_id=sid,
+                )
                 if ok:
+                    action = "user key" if key else "user input"
                     engine._append_log({
                         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "workspace": idx,
                         "workspaceName": ws.get("name", ws.get("surfaceLabel", "")),
-                        "promptType": "manual",
-                        "action": "user input",
+                        "promptType": "manual-key" if key else "manual",
+                        "action": action,
+                        "key": key or None,
                         "surfaceId": sid,
                     })
                     with engine._lock:
@@ -728,6 +743,7 @@ def make_handler(engine):
                 jira_url = data.get("jiraUrl", "")
                 prompt = data.get("prompt", "")
                 command = data.get("command", "claude")
+                requested_session_name = str(data.get("sessionName", "")).strip()
 
                 project_path = os.path.expanduser(project_path)
 
@@ -736,7 +752,7 @@ def make_handler(engine):
                     return
 
                 cwd = project_path
-                session_name = branch_name or "New Session"
+                session_name = requested_session_name or branch_name or "New Session"
 
                 if branch_name:
                     worktrees_dir = os.path.join(project_path, ".claude", "worktrees")
@@ -774,6 +790,14 @@ def make_handler(engine):
 
                     cwd = worktree_path
 
+                command_text = str(command or "").strip()
+                command_name = command_text.split(None, 1)[0].lower() if command_text else ""
+                if command_name == "claude":
+                    orchestrator = getattr(engine, "orchestrator", None)
+                    inject_hook_config = getattr(orchestrator, "_inject_hook_config", None)
+                    if callable(inject_hook_config):
+                        inject_hook_config(cwd)
+
                 ws_uuid = None
                 ws_idx = None
                 cli_result = None
@@ -791,7 +815,7 @@ def make_handler(engine):
                     cli_args = ["cmux", "new-workspace", "--name", session_name]
                     if cwd:
                         cli_args += ["--cwd", cwd]
-                    if command:
+                    if command_text:
                         cli_args += ["--command", command]
                     cli_result = subprocess.run(
                         cli_args, capture_output=True, text=True, timeout=10,

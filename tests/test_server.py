@@ -549,6 +549,163 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body["contractReviewEnabled"], True)
 
+    @patch("cmux_harness.server.cmux_api.cmux_send_to_workspace", return_value=True)
+    def test_post_send_supports_text_input(self, mock_send):
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine._build_virtual_workspaces.return_value = [{
+            "index": 7,
+            "_real_index": 3,
+            "uuid": "ws-123",
+            "_surface_id": "surface:1",
+            "name": "Workspace 7",
+        }]
+        engine.fingerprints = {}
+
+        handler = self._post_json("/api/send", {"index": 7, "text": "hello\n"}, engine=engine)
+
+        mock_send.assert_called_once_with(
+            3,
+            0,
+            text="hello\n",
+            key=None,
+            workspace_uuid="ws-123",
+            surface_id="surface:1",
+        )
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+
+    @patch("cmux_harness.server.cmux_api.cmux_send_to_workspace", return_value=True)
+    def test_post_send_supports_navigation_keys(self, mock_send):
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine._build_virtual_workspaces.return_value = [{
+            "index": 7,
+            "_real_index": 3,
+            "uuid": "ws-123",
+            "_surface_id": "surface:1",
+            "name": "Workspace 7",
+        }]
+        engine.fingerprints = {}
+
+        handler = self._post_json("/api/send", {"index": 7, "key": "tab"}, engine=engine)
+
+        mock_send.assert_called_once_with(
+            3,
+            0,
+            text=None,
+            key="tab",
+            workspace_uuid="ws-123",
+            surface_id="surface:1",
+        )
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+
+    def test_post_send_rejects_unsupported_keys(self):
+        handler = self._post_json("/api/send", {"index": 7, "key": "left"}, engine=Mock())
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": False, "error": "unsupported key: left"})
+
+    @patch("cmux_harness.server.cmux_api._v2_request")
+    @patch("cmux_harness.server.subprocess.run")
+    def test_post_new_session_supports_plain_terminal_mode(self, mock_run, mock_v2_request):
+        project_path = Path(self.tmpdir.name) / "plain-terminal-project"
+        project_path.mkdir()
+
+        engine = MagicMock()
+        engine.ws_config = {}
+        engine.orchestrator._inject_hook_config = MagicMock()
+
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        workspace_lists = iter([
+            {"workspaces": [{"id": "existing-ws", "title": "Existing", "index": 1}]},
+            {"workspaces": [
+                {"id": "existing-ws", "title": "Existing", "index": 1},
+                {"id": "ws-shell", "title": "plain-terminal-project shell", "index": 2},
+            ]},
+        ])
+
+        def _v2_side_effect(method, params):
+            if method == "workspace.list":
+                return next(workspace_lists)
+            return None
+
+        mock_v2_request.side_effect = _v2_side_effect
+
+        handler = self._post_json(
+            "/api/new-session",
+            {
+                "projectPath": str(project_path),
+                "branchName": "",
+                "prompt": "",
+                "command": "zsh",
+                "sessionName": "plain-terminal-project shell",
+            },
+            engine=engine,
+        )
+
+        mock_run.assert_called_once_with(
+            ["cmux", "new-workspace", "--name", "plain-terminal-project shell", "--cwd", str(project_path), "--command", "zsh"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        engine.orchestrator._inject_hook_config.assert_not_called()
+        self.assertEqual(engine.ws_config["ws-shell"]["customName"], "plain-terminal-project shell")
+        engine._save_config.assert_called_once()
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["branchName"], "")
+        self.assertEqual(body["worktreePath"], str(project_path))
+        self.assertEqual(body["workspace"], {"index": 2, "uuid": "ws-shell"})
+
+    @patch("cmux_harness.server.cmux_api._v2_request")
+    @patch("cmux_harness.server.subprocess.run")
+    def test_post_new_session_injects_hook_config_for_claude_sessions(self, mock_run, mock_v2_request):
+        project_path = Path(self.tmpdir.name) / "claude-session-project"
+        project_path.mkdir()
+
+        engine = MagicMock()
+        engine.ws_config = {}
+        engine.orchestrator._inject_hook_config = MagicMock()
+
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        workspace_lists = iter([
+            {"workspaces": [{"id": "existing-ws", "title": "Existing", "index": 1}]},
+            {"workspaces": [
+                {"id": "existing-ws", "title": "Existing", "index": 1},
+                {"id": "ws-claude", "title": "feature-branch", "index": 2},
+            ]},
+        ])
+
+        def _v2_side_effect(method, params):
+            if method == "workspace.list":
+                return next(workspace_lists)
+            return None
+
+        mock_v2_request.side_effect = _v2_side_effect
+
+        handler = self._post_json(
+            "/api/new-session",
+            {
+                "projectPath": str(project_path),
+                "branchName": "feature-branch",
+                "prompt": "",
+                "command": "claude",
+            },
+            engine=engine,
+        )
+
+        engine.orchestrator._inject_hook_config.assert_called_once_with(str(project_path / ".claude" / "worktrees" / "feature-branch"))
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["workspace"], {"index": 2, "uuid": "ws-claude"})
+
     def test_message_endpoint_starts_background_thread_and_returns_ok(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
         engine = Mock()
