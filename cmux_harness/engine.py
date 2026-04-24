@@ -15,6 +15,7 @@ from .orchestrator import Orchestrator
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b-nvfp4")
+AUTO_APPROVE_MODEL = "haiku"
 
 
 class HarnessEngine(threading.Thread):
@@ -41,7 +42,7 @@ class HarnessEngine(threading.Thread):
         self.connection_lost_at = 0     # when we first noticed the socket was gone
         self.consecutive_failures = 0   # count of consecutive failed polls
         self._lock = threading.Lock()
-        self.model = OLLAMA_DEFAULT_MODEL
+        self.model = AUTO_APPROVE_MODEL
         self.review_enabled = True
         self.review_model = OLLAMA_DEFAULT_MODEL
         self.review_backend = "ollama"
