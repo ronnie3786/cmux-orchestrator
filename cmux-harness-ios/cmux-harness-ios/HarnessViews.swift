@@ -493,6 +493,7 @@ private struct TerminalScrollView: View {
     let workspaceID: String
     let text: String
     private let bottomID = "terminal-bottom"
+    @Environment(\.colorScheme) private var colorScheme
     @State private var contentHeight: CGFloat = 0
     @State private var scrollRevision = 0
 
@@ -500,8 +501,7 @@ private struct TerminalScrollView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(text)
-                        .font(.system(.caption, design: .monospaced))
+                    Text(TerminalTextStyler.attributedString(for: text, colorScheme: colorScheme))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -520,7 +520,7 @@ private struct TerminalScrollView: View {
                     }
                 }
             }
-            .background(Color(.systemBackground))
+            .background(TerminalTextStyler.terminalBackground(for: colorScheme))
             .defaultScrollAnchor(.bottom)
             .onAppear {
                 requestBottomScroll()

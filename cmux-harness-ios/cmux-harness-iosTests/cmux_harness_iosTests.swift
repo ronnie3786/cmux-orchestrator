@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import SwiftUI
 import Testing
 @testable import cmux_harness_ios
 
@@ -95,6 +96,29 @@ struct HarnessFeatureTests {
         ]
 
         #expect(state.sortedWorkspaces.map(\.displayName) == ["Gamma", "Beta", "Alpha"])
+    }
+
+    @Test
+    func terminalTextStylerStripsAnsiControlSequences() {
+        let raw = "\u{001B}[1;32m\u{2713} Done\u{001B}[0m\n\u{001B}[38;5;196mError\u{001B}[39m"
+
+        #expect(TerminalTextStyler.plainText(for: raw) == "\u{2713} Done\nError")
+    }
+
+    @Test
+    func terminalTextStylerRendersClaudeCodeTranscriptText() {
+        let raw = """
+        > Find and fix the bug
+
+        \u{23FA} Bash(npm test)
+          \u{23BF} 42 tests passed
+        \u{23FA} Update(src/App.swift)
+          \u{23BF} Updated src/App.swift with 3 additions and 1 removal
+        """
+
+        let styled = TerminalTextStyler.attributedString(for: raw, colorScheme: .dark)
+
+        #expect(String(styled.characters) == raw)
     }
 
     @Test
