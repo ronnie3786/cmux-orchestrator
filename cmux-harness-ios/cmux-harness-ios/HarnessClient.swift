@@ -1,0 +1,112 @@
+import ComposableArchitecture
+import Foundation
+
+struct HarnessClient: Sendable {
+    var status: @Sendable (String) async throws -> HarnessStatus
+    var log: @Sendable (String) async throws -> [LogEntry]
+    var screen: @Sendable (String, Int, Int) async throws -> ScreenResponse
+    var setGlobalEnabled: @Sendable (String, Bool) async throws -> BasicResponse
+    var setWorkspaceEnabled: @Sendable (String, Int, Bool) async throws -> BasicResponse
+    var renameWorkspace: @Sendable (String, Int, String) async throws -> BasicResponse
+    var sendText: @Sendable (String, Int, String, String?) async throws -> BasicResponse
+    var sendKey: @Sendable (String, Int, HarnessKey, String?) async throws -> BasicResponse
+    var createSession: @Sendable (
+        String,
+        String,
+        String,
+        String,
+        String,
+        NewSessionMode,
+        String
+    ) async throws -> NewSessionResponse
+    var gitStatus: @Sendable (String, Int) async throws -> GitStatus
+    var stageFile: @Sendable (String, Int, String) async throws -> BasicResponse
+    var unstageFile: @Sendable (String, Int, String) async throws -> BasicResponse
+    var diff: @Sendable (String, Int, String, GitFileSection) async throws -> GitDiffResponse
+}
+
+extension HarnessClient {
+    nonisolated static let live = Self(
+        status: { baseURLString in
+            try await HarnessAPI.status(baseURLString: baseURLString)
+        },
+        log: { baseURLString in
+            try await HarnessAPI.log(baseURLString: baseURLString)
+        },
+        screen: { baseURLString, index, lines in
+            try await HarnessAPI.screen(baseURLString: baseURLString, index: index, lines: lines)
+        },
+        setGlobalEnabled: { baseURLString, enabled in
+            try await HarnessAPI.setGlobalEnabled(baseURLString: baseURLString, enabled: enabled)
+        },
+        setWorkspaceEnabled: { baseURLString, index, enabled in
+            try await HarnessAPI.setWorkspaceEnabled(baseURLString: baseURLString, index: index, enabled: enabled)
+        },
+        renameWorkspace: { baseURLString, index, name in
+            try await HarnessAPI.renameWorkspace(baseURLString: baseURLString, index: index, name: name)
+        },
+        sendText: { baseURLString, index, text, surfaceId in
+            try await HarnessAPI.sendText(baseURLString: baseURLString, index: index, text: text, surfaceId: surfaceId)
+        },
+        sendKey: { baseURLString, index, key, surfaceId in
+            try await HarnessAPI.sendKey(baseURLString: baseURLString, index: index, key: key, surfaceId: surfaceId)
+        },
+        createSession: { baseURLString, projectPath, branchName, jiraURL, prompt, mode, sessionName in
+            try await HarnessAPI.createSession(
+                baseURLString: baseURLString,
+                projectPath: projectPath,
+                branchName: branchName,
+                jiraURL: jiraURL,
+                prompt: prompt,
+                mode: mode,
+                sessionName: sessionName
+            )
+        },
+        gitStatus: { baseURLString, index in
+            try await HarnessAPI.gitStatus(baseURLString: baseURLString, index: index)
+        },
+        stageFile: { baseURLString, index, file in
+            try await HarnessAPI.stageFile(baseURLString: baseURLString, index: index, file: file)
+        },
+        unstageFile: { baseURLString, index, file in
+            try await HarnessAPI.unstageFile(baseURLString: baseURLString, index: index, file: file)
+        },
+        diff: { baseURLString, index, file, section in
+            try await HarnessAPI.diff(baseURLString: baseURLString, index: index, file: file, section: section)
+        }
+    )
+}
+
+enum HarnessClientError: Error, Equatable, Sendable {
+    case unimplemented(String)
+}
+
+extension HarnessClient {
+    nonisolated static let unimplemented = Self(
+        status: { _ in throw HarnessClientError.unimplemented("status") },
+        log: { _ in throw HarnessClientError.unimplemented("log") },
+        screen: { _, _, _ in throw HarnessClientError.unimplemented("screen") },
+        setGlobalEnabled: { _, _ in throw HarnessClientError.unimplemented("setGlobalEnabled") },
+        setWorkspaceEnabled: { _, _, _ in throw HarnessClientError.unimplemented("setWorkspaceEnabled") },
+        renameWorkspace: { _, _, _ in throw HarnessClientError.unimplemented("renameWorkspace") },
+        sendText: { _, _, _, _ in throw HarnessClientError.unimplemented("sendText") },
+        sendKey: { _, _, _, _ in throw HarnessClientError.unimplemented("sendKey") },
+        createSession: { _, _, _, _, _, _, _ in throw HarnessClientError.unimplemented("createSession") },
+        gitStatus: { _, _ in throw HarnessClientError.unimplemented("gitStatus") },
+        stageFile: { _, _, _ in throw HarnessClientError.unimplemented("stageFile") },
+        unstageFile: { _, _, _ in throw HarnessClientError.unimplemented("unstageFile") },
+        diff: { _, _, _, _ in throw HarnessClientError.unimplemented("diff") }
+    )
+}
+
+private enum HarnessClientKey: DependencyKey {
+    static let liveValue = HarnessClient.live
+    static let testValue = HarnessClient.unimplemented
+}
+
+extension DependencyValues {
+    var harnessClient: HarnessClient {
+        get { self[HarnessClientKey.self] }
+        set { self[HarnessClientKey.self] = newValue }
+    }
+}
