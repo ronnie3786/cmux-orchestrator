@@ -408,6 +408,125 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func skillsTabLoadsSkillsAndAppendsSelectedFormat() async {
+        let workspace = Self.workspace()
+        let projectSkill = ProjectSkill(
+            name: "ios-review",
+            skillFilePath: ".claude/skills/ios-review/SKILL.md",
+            scope: "project"
+        )
+        let userSkill = ProjectSkill(
+            name: "global-review",
+            skillFilePath: "~/.claude/skills/global-review/SKILL.md",
+            scope: "user"
+        )
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        state.detailDraft = "Review this"
+        var client = HarnessClient.unimplemented
+        client.skills = { baseURLString, index in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            return SkillsResponse(
+                ok: true,
+                rootPath: "/Users/ronnie/Code/cmux",
+                skillsDirectory: ".claude/skills",
+                userSkillsDirectory: "~/.claude/skills",
+                projectSkills: [projectSkill],
+                userSkills: [userSkill],
+                skills: [projectSkill, userSkill],
+                error: nil
+            )
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.detailTabChanged(.skills)) {
+            $0.detailTab = .skills
+        }
+        await store.receive(\.loadSkills) {
+            $0.isLoadingSkills = true
+            $0.skillsError = nil
+        }
+        await store.receive(\.skillsSucceeded) {
+            $0.isLoadingSkills = false
+            $0.projectSkills = [projectSkill]
+            $0.userSkills = [userSkill]
+        }
+        await store.send(.appendSkillInvocation(projectSkill)) {
+            $0.detailDraft = "Review this /ios-review"
+            $0.detailTab = .terminal
+            $0.detailInputFocusRequest = 1
+        }
+        await store.send(.appendSkillFilePath(projectSkill)) {
+            $0.detailDraft = "Review this /ios-review `.claude/skills/ios-review/SKILL.md`"
+            $0.detailInputFocusRequest = 2
+        }
+    }
+
+    @Test
+    func fileSearchAppendsBacktickedProjectRelativePath() async {
+        let workspace = Self.workspace()
+        let match = ProjectFileMatch(path: "Sources/AppView.swift")
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        state.detailDraft = "Open"
+        var client = HarnessClient.unimplemented
+        client.searchFiles = { baseURLString, index, query in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            #expect(query == "App")
+            return FileSearchResponse(
+                ok: true,
+                rootPath: "/Users/ronnie/Code/cmux",
+                query: query,
+                files: [match],
+                truncated: false,
+                limit: 80,
+                error: nil
+            )
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.fileSearchTapped) {
+            $0.isShowingFileSearch = true
+            $0.fileSearchQuery = ""
+            $0.fileSearchResults = []
+            $0.fileSearchError = nil
+            $0.isSearchingFiles = false
+        }
+        await store.send(.fileSearchQueryChanged("App")) {
+            $0.fileSearchQuery = "App"
+            $0.fileSearchError = nil
+            $0.isSearchingFiles = true
+        }
+        await store.receive(\.fileSearchSucceeded) {
+            $0.isSearchingFiles = false
+            $0.fileSearchResults = [match]
+        }
+        await store.send(.appendFilePath(match)) {
+            $0.detailDraft = "Open `Sources/AppView.swift`"
+            $0.detailInputFocusRequest = 1
+            $0.isShowingFileSearch = false
+            $0.fileSearchQuery = ""
+            $0.fileSearchResults = []
+            $0.fileSearchError = nil
+            $0.isSearchingFiles = false
+        }
+    }
+
+    @Test
     func harnessUrlBuildsApiRequestsAtServerRoot() throws {
         let statusURL = try HarnessAPI.makeURL(
             baseURLString: Self.baseURL,

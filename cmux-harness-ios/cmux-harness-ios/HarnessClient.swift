@@ -24,6 +24,8 @@ struct HarnessClient: Sendable {
     var stageFile: @Sendable (String, Int, String) async throws -> BasicResponse
     var unstageFile: @Sendable (String, Int, String) async throws -> BasicResponse
     var diff: @Sendable (String, Int, String, GitFileSection) async throws -> GitDiffResponse
+    var skills: @Sendable (String, Int) async throws -> SkillsResponse
+    var searchFiles: @Sendable (String, Int, String) async throws -> FileSearchResponse
 }
 
 extension HarnessClient {
@@ -77,6 +79,12 @@ extension HarnessClient {
         },
         diff: { baseURLString, index, file, section in
             try await HarnessAPI.diff(baseURLString: baseURLString, index: index, file: file, section: section)
+        },
+        skills: { baseURLString, index in
+            try await HarnessAPI.skills(baseURLString: baseURLString, index: index)
+        },
+        searchFiles: { baseURLString, index, query in
+            try await HarnessAPI.searchFiles(baseURLString: baseURLString, index: index, query: query)
         }
     )
 }
@@ -100,7 +108,9 @@ extension HarnessClient {
         gitStatus: { _, _ in throw HarnessClientError.unimplemented("gitStatus") },
         stageFile: { _, _, _ in throw HarnessClientError.unimplemented("stageFile") },
         unstageFile: { _, _, _ in throw HarnessClientError.unimplemented("unstageFile") },
-        diff: { _, _, _, _ in throw HarnessClientError.unimplemented("diff") }
+        diff: { _, _, _, _ in throw HarnessClientError.unimplemented("diff") },
+        skills: { _, _ in throw HarnessClientError.unimplemented("skills") },
+        searchFiles: { _, _, _ in throw HarnessClientError.unimplemented("searchFiles") }
     )
 }
 

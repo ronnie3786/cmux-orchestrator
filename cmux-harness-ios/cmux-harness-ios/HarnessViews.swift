@@ -30,6 +30,18 @@ struct HarnessRootView: View {
         }
         .sheet(
             isPresented: Binding(
+                get: { store.isShowingFileSearch },
+                set: { isPresented in
+                    if !isPresented {
+                        store.send(.dismissFileSearch)
+                    }
+                }
+            )
+        ) {
+            FileSearchView(store: store)
+        }
+        .sheet(
+            isPresented: Binding(
                 get: { store.diffSheet != nil },
                 set: { isPresented in
                     if !isPresented {
@@ -691,6 +703,10 @@ private struct WorkspaceDetailView: View {
             DetailFullHeightLayout {
                 ActivityListView(entries: activityEntries)
             }
+        case .skills:
+            DetailFullHeightLayout {
+                SkillsListView(store: store)
+            }
         }
     }
 
@@ -991,11 +1007,28 @@ private struct DetailInputBar: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
     let isInputFocused: FocusState<Bool>.Binding
+    @State private var inputSelection: TextSelection?
 
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
-                TextField("Type a message or instruction...", text: $store.detailDraft)
+                Button {
+                    store.send(.fileSearchTapped)
+                } label: {
+                    Text("@")
+                        .font(.headline.monospaced().weight(.bold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.92))
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                }
+                .accessibilityLabel("Add file path")
+
+                TextField("Type a message or instruction...", text: $store.detailDraft, selection: $inputSelection)
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
@@ -1045,6 +1078,25 @@ private struct DetailInputBar: View {
         .padding(.horizontal, 8)
         .padding(.top, 6)
         .padding(.bottom, 2)
+        .task(id: store.detailInputFocusRequest) {
+            let request = store.detailInputFocusRequest
+            guard request > 0 else { return }
+            await focusInputAtEnd()
+            guard !Task.isCancelled else { return }
+            store.send(.detailInputFocusHandled(request))
+        }
+    }
+
+    @MainActor
+    private func focusInputAtEnd() async {
+        await Task.yield()
+        isInputFocused.wrappedValue = true
+        inputSelection = TextSelection(insertionPoint: store.detailDraft.endIndex)
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        guard !Task.isCancelled else { return }
+        isInputFocused.wrappedValue = true
+        inputSelection = TextSelection(insertionPoint: store.detailDraft.endIndex)
     }
 }
 
@@ -1328,6 +1380,158 @@ private struct ActivityListView: View {
             }
         }
         .listStyle(.insetGrouped)
+    }
+}
+
+private struct SkillsListView: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+
+    var body: some View {
+        List {
+            if store.isLoadingSkills && !store.hasSkills {
+                ProgressView()
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else if let error = store.skillsError {
+                ErrorBanner(message: error) {
+                    store.send(.loadSkills)
+                }
+            } else if !store.hasSkills {
+                ContentUnavailableView("No Skills", systemImage: "wand.and.stars")
+            } else {
+                if !store.projectSkills.isEmpty {
+                    Section("Project Skills") {
+                        ForEach(store.projectSkills) { skill in
+                            SkillMenuRow(store: store, skill: skill)
+                        }
+                    }
+                }
+
+                if !store.userSkills.isEmpty {
+                    Section("User Skills") {
+                        ForEach(store.userSkills) { skill in
+                            SkillMenuRow(store: store, skill: skill)
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .refreshable {
+            store.send(.loadSkills)
+        }
+    }
+}
+
+private struct SkillMenuRow: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+    let skill: ProjectSkill
+
+    var body: some View {
+        Menu {
+            Button {
+                store.send(.appendSkillInvocation(skill))
+            } label: {
+                Label("Claude Code", systemImage: "terminal")
+            }
+
+            Button {
+                store.send(.appendSkillFilePath(skill))
+            } label: {
+                Label("File Path", systemImage: "doc.text")
+            }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(skill.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(skill.skillFilePath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "plus.circle.fill")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.gray)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct FileSearchView: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+    @FocusState private var isSearchFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    TextField("Search project files", text: fileSearchBinding)
+                        .font(.body.monospaced())
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($isSearchFocused)
+                }
+
+                if store.fileSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 3 {
+                    ContentUnavailableView("Search Files", systemImage: "at")
+                } else if store.isSearchingFiles && store.fileSearchResults.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else if let error = store.fileSearchError {
+                    ErrorBanner(message: error) {
+                        store.send(.fileSearchQueryChanged(store.fileSearchQuery))
+                    }
+                } else if store.fileSearchResults.isEmpty {
+                    ContentUnavailableView("No Matches", systemImage: "doc.text.magnifyingglass")
+                } else {
+                    ForEach(store.fileSearchResults) { file in
+                        Button {
+                            store.send(.appendFilePath(file))
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "doc.text")
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 24)
+                                Text(file.path)
+                                    .font(.callout.monospaced())
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 8)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Files")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        store.send(.dismissFileSearch)
+                    }
+                }
+            }
+            .onAppear {
+                isSearchFocused = true
+            }
+        }
+    }
+
+    private var fileSearchBinding: Binding<String> {
+        Binding(
+            get: { store.fileSearchQuery },
+            set: { store.send(.fileSearchQueryChanged($0)) }
+        )
     }
 }
 
@@ -1710,6 +1914,8 @@ private extension DetailTab {
             return "Git"
         case .activity:
             return "Activity"
+        case .skills:
+            return "Skills"
         }
     }
 
@@ -1721,6 +1927,8 @@ private extension DetailTab {
             return "point.3.connected.trianglepath.dotted"
         case .activity:
             return "waveform.path.ecg"
+        case .skills:
+            return "wand.and.stars"
         }
     }
 }

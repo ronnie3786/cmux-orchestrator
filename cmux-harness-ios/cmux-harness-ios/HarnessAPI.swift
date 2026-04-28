@@ -179,6 +179,25 @@ enum HarnessAPI {
         )
     }
 
+    static func skills(baseURLString: String, index: Int) async throws -> SkillsResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/skills",
+            queryItems: [URLQueryItem(name: "index", value: String(index))]
+        )
+    }
+
+    static func searchFiles(baseURLString: String, index: Int, query: String) async throws -> FileSearchResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/file-search",
+            queryItems: [
+                URLQueryItem(name: "index", value: String(index)),
+                URLQueryItem(name: "q", value: query),
+            ]
+        )
+    }
+
     nonisolated static func message(for error: Error) -> String {
         if let apiError = error as? HarnessAPIError {
             return apiError.localizedDescription
@@ -246,6 +265,12 @@ enum HarnessAPI {
             }
             if let git = decoded as? GitStatus, git.ok == false {
                 throw HarnessAPIError.server(git.error ?? "Git status failed")
+            }
+            if let skills = decoded as? SkillsResponse, !skills.ok {
+                throw HarnessAPIError.server(skills.error ?? "Skills request failed")
+            }
+            if let fileSearch = decoded as? FileSearchResponse, !fileSearch.ok {
+                throw HarnessAPIError.server(fileSearch.error ?? "File search failed")
             }
             return decoded
         } catch let error as HarnessAPIError {

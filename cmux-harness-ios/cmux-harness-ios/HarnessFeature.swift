@@ -27,6 +27,7 @@ struct HarnessFeature {
         var fullScreenText: String?
         var draftMessages: [String: String] = [:]
         var detailDraft = ""
+        var detailInputFocusRequest = 0
 
         var isShowingSettings = false
         var isShowingNewSession = false
@@ -46,6 +47,19 @@ struct HarnessFeature {
         var gitError: String?
         var isLoadingGit = false
         var diffSheet: DiffSheet?
+        var projectSkills: [ProjectSkill] = []
+        var userSkills: [ProjectSkill] = []
+        var skillsError: String?
+        var isLoadingSkills = false
+        var isShowingFileSearch = false
+        var fileSearchQuery = ""
+        var fileSearchResults: [ProjectFileMatch] = []
+        var fileSearchError: String?
+        var isSearchingFiles = false
+
+        var hasSkills: Bool {
+            !projectSkills.isEmpty || !userSkills.isEmpty
+        }
 
         var sortedWorkspaces: [Workspace] {
             workspaces.sorted {
@@ -130,6 +144,7 @@ struct HarnessFeature {
         case draftChanged(workspaceID: String, text: String)
         case sendDraft(workspaceID: String)
         case sendDetailDraft
+        case detailInputFocusHandled(Int)
         case sendKey(workspaceID: String, HarnessKey)
         case requestFinished
         case requestFailed(String)
@@ -150,6 +165,17 @@ struct HarnessFeature {
         case diffSucceeded(file: String, section: GitFileSection, diff: String)
         case diffFailed(file: String, section: GitFileSection, message: String)
         case closeDiff
+        case loadSkills
+        case skillsSucceeded(workspaceID: String, SkillsResponse)
+        case skillsFailed(String)
+        case appendSkillInvocation(ProjectSkill)
+        case appendSkillFilePath(ProjectSkill)
+        case fileSearchTapped
+        case dismissFileSearch
+        case fileSearchQueryChanged(String)
+        case fileSearchSucceeded(workspaceID: String, query: String, FileSearchResponse)
+        case fileSearchFailed(query: String, message: String)
+        case appendFilePath(ProjectFileMatch)
     }
 
     var body: some Reducer<State, Action> {
@@ -177,7 +203,8 @@ struct HarnessFeature {
                 return .merge(
                     .cancel(id: pollingCancelID),
                     .cancel(id: screenPollingCancelID),
-                    .cancel(id: gitPollingCancelID)
+                    .cancel(id: gitPollingCancelID),
+                    .cancel(id: fileSearchCancelID)
                 )
 
             case .refresh:
@@ -208,9 +235,19 @@ struct HarnessFeature {
                     state.fullScreenText = nil
                     state.gitStatus = nil
                     state.detailDraft = ""
+                    state.projectSkills = []
+                    state.userSkills = []
+                    state.skillsError = nil
+                    state.isLoadingSkills = false
+                    state.isShowingFileSearch = false
+                    state.fileSearchQuery = ""
+                    state.fileSearchResults = []
+                    state.fileSearchError = nil
+                    state.isSearchingFiles = false
                     return .merge(
                         .cancel(id: screenPollingCancelID),
-                        .cancel(id: gitPollingCancelID)
+                        .cancel(id: gitPollingCancelID),
+                        .cancel(id: fileSearchCancelID)
                     )
                 }
                 return .none
@@ -324,10 +361,20 @@ struct HarnessFeature {
                 state.gitError = nil
                 state.diffSheet = nil
                 state.detailDraft = ""
+                state.projectSkills = []
+                state.userSkills = []
+                state.skillsError = nil
+                state.isLoadingSkills = false
+                state.isShowingFileSearch = false
+                state.fileSearchQuery = ""
+                state.fileSearchResults = []
+                state.fileSearchError = nil
+                state.isSearchingFiles = false
                 guard id != nil else {
                     return .merge(
                         .cancel(id: screenPollingCancelID),
-                        .cancel(id: gitPollingCancelID)
+                        .cancel(id: gitPollingCancelID),
+                        .cancel(id: fileSearchCancelID)
                     )
                 }
                 return .merge(
@@ -340,6 +387,12 @@ struct HarnessFeature {
                 state.detailTab = tab
                 if tab == .git {
                     return .merge(.send(.gitTick), gitPollingEffect())
+                }
+                if tab == .skills {
+                    return .merge(
+                        .send(.loadSkills),
+                        .cancel(id: gitPollingCancelID)
+                    )
                 }
                 return .cancel(id: gitPollingCancelID)
 
@@ -384,6 +437,11 @@ struct HarnessFeature {
                 guard !message.isEmpty else { return .none }
                 state.detailDraft = ""
                 return sendTextEffect(state: state, workspace: workspace, message: message)
+
+            case let .detailInputFocusHandled(request):
+                guard state.detailInputFocusRequest == request else { return .none }
+                state.detailInputFocusRequest = 0
+                return .none
 
             case let .sendKey(workspaceID, key):
                 guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else { return .none }
@@ -558,6 +616,109 @@ struct HarnessFeature {
             case .closeDiff:
                 state.diffSheet = nil
                 return .none
+
+            case .loadSkills:
+                guard let workspace = state.selectedWorkspace else { return .none }
+                state.isLoadingSkills = !state.hasSkills
+                state.skillsError = nil
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace] send in
+                    do {
+                        let response = try await client.skills(baseURLString, workspace.index)
+                        await send(.skillsSucceeded(workspaceID: workspace.id, response))
+                    } catch {
+                        await send(.skillsFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+
+            case let .skillsSucceeded(workspaceID, response):
+                guard state.selectedWorkspaceID == workspaceID else { return .none }
+                state.isLoadingSkills = false
+                state.skillsError = nil
+                state.projectSkills = response.resolvedProjectSkills
+                state.userSkills = response.resolvedUserSkills
+                return .none
+
+            case let .skillsFailed(message):
+                state.isLoadingSkills = false
+                state.skillsError = message
+                return .none
+
+            case let .appendSkillInvocation(skill):
+                state.detailDraft = appendPromptToken("/\(skill.name)", to: state.detailDraft)
+                state.detailTab = .terminal
+                state.detailInputFocusRequest += 1
+                return .none
+
+            case let .appendSkillFilePath(skill):
+                state.detailDraft = appendPromptToken("`\(skill.skillFilePath)`", to: state.detailDraft)
+                state.detailTab = .terminal
+                state.detailInputFocusRequest += 1
+                return .none
+
+            case .fileSearchTapped:
+                state.isShowingFileSearch = true
+                state.fileSearchQuery = ""
+                state.fileSearchResults = []
+                state.fileSearchError = nil
+                state.isSearchingFiles = false
+                return .cancel(id: fileSearchCancelID)
+
+            case .dismissFileSearch:
+                state.isShowingFileSearch = false
+                state.fileSearchQuery = ""
+                state.fileSearchResults = []
+                state.fileSearchError = nil
+                state.isSearchingFiles = false
+                return .cancel(id: fileSearchCancelID)
+
+            case let .fileSearchQueryChanged(query):
+                state.fileSearchQuery = query
+                state.fileSearchError = nil
+                let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmedQuery.count >= 3, let workspace = state.selectedWorkspace else {
+                    state.fileSearchResults = []
+                    state.isSearchingFiles = false
+                    return .cancel(id: fileSearchCancelID)
+                }
+                state.isSearchingFiles = true
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, trimmedQuery] send in
+                    do {
+                        let response = try await client.searchFiles(baseURLString, workspace.index, trimmedQuery)
+                        await send(.fileSearchSucceeded(workspaceID: workspace.id, query: trimmedQuery, response))
+                    } catch {
+                        await send(.fileSearchFailed(query: trimmedQuery, message: HarnessAPI.message(for: error)))
+                    }
+                }
+                .cancellable(id: fileSearchCancelID, cancelInFlight: true)
+
+            case let .fileSearchSucceeded(workspaceID, query, response):
+                guard state.selectedWorkspaceID == workspaceID,
+                      state.fileSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                    return .none
+                }
+                state.isSearchingFiles = false
+                state.fileSearchError = nil
+                state.fileSearchResults = response.files
+                return .none
+
+            case let .fileSearchFailed(query, message):
+                guard state.fileSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                    return .none
+                }
+                state.isSearchingFiles = false
+                state.fileSearchError = message
+                return .none
+
+            case let .appendFilePath(file):
+                state.detailDraft = appendPromptToken("`\(file.path)`", to: state.detailDraft)
+                state.detailTab = .terminal
+                state.detailInputFocusRequest += 1
+                state.isShowingFileSearch = false
+                state.fileSearchQuery = ""
+                state.fileSearchResults = []
+                state.fileSearchError = nil
+                state.isSearchingFiles = false
+                return .cancel(id: fileSearchCancelID)
             }
         }
     }
@@ -602,6 +763,7 @@ extension HarnessFeature {
 private let pollingCancelID = "cmux-harness-ios.polling"
 private let screenPollingCancelID = "cmux-harness-ios.screen-polling"
 private let gitPollingCancelID = "cmux-harness-ios.git-polling"
+private let fileSearchCancelID = "cmux-harness-ios.file-search"
 
 private func trimDrafts(_ state: inout HarnessFeature.State) {
     let activeIDs = Set(state.workspaces.map(\.id))
@@ -619,4 +781,12 @@ private func jiraKey(from value: String) -> String? {
         return nil
     }
     return String(value[matchRange]).uppercased()
+}
+
+private func appendPromptToken(_ token: String, to draft: String) -> String {
+    guard !draft.isEmpty else { return token }
+    if draft.last?.isWhitespace == true {
+        return draft + token
+    }
+    return draft + " " + token
 }

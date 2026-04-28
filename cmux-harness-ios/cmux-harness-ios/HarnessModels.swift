@@ -179,6 +179,49 @@ struct GitCommit: Decodable, Equatable, Identifiable, Sendable {
     var id: String { "\(hash)|\(message)" }
 }
 
+struct SkillsResponse: Decodable, Equatable, Sendable {
+    var ok: Bool
+    var rootPath: String?
+    var skillsDirectory: String?
+    var userSkillsDirectory: String? = nil
+    var projectSkills: [ProjectSkill]? = nil
+    var userSkills: [ProjectSkill]? = nil
+    var skills: [ProjectSkill]? = nil
+    var error: String?
+
+    var resolvedProjectSkills: [ProjectSkill] {
+        projectSkills ?? skills?.filter { $0.scope == "project" } ?? []
+    }
+
+    var resolvedUserSkills: [ProjectSkill] {
+        userSkills ?? skills?.filter { $0.scope == "user" } ?? []
+    }
+}
+
+struct ProjectSkill: Decodable, Equatable, Identifiable, Sendable {
+    var name: String
+    var skillFilePath: String
+    var scope: String? = nil
+
+    var id: String { "\(scope ?? "project")|\(name)" }
+}
+
+struct FileSearchResponse: Decodable, Equatable, Sendable {
+    var ok: Bool
+    var rootPath: String?
+    var query: String
+    var files: [ProjectFileMatch]
+    var truncated: Bool?
+    var limit: Int?
+    var error: String?
+}
+
+struct ProjectFileMatch: Decodable, Equatable, Identifiable, Sendable {
+    var path: String
+
+    var id: String { path }
+}
+
 struct GitDiffResponse: Decodable, Equatable, Sendable {
     var ok: Bool
     var diff: String?
@@ -343,6 +386,7 @@ enum DetailTab: String, CaseIterable, Equatable, Identifiable, Sendable {
     case terminal
     case git
     case activity
+    case skills
 
     var id: String { rawValue }
 
@@ -354,6 +398,8 @@ enum DetailTab: String, CaseIterable, Equatable, Identifiable, Sendable {
             return "Git"
         case .activity:
             return "Activity"
+        case .skills:
+            return "Skills"
         }
     }
 }
