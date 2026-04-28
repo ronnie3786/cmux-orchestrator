@@ -886,6 +886,91 @@ class TestServerResponses(unittest.TestCase):
             text=True,
         )
 
+    def test_get_skills_returns_project_and_user_skill_sections(self):
+        workspace_path = Path(self.tmpdir.name) / "skills-project"
+        skill_path = workspace_path / ".claude" / "skills" / "ios-review" / "SKILL.md"
+        skill_path.parent.mkdir(parents=True)
+        skill_path.write_text("---\nname: Ignored\n---\n", encoding="utf-8")
+        (workspace_path / ".claude" / "skills" / "missing-file").mkdir(parents=True)
+        user_home = Path(self.tmpdir.name) / "home"
+        user_skill_path = user_home / ".claude" / "skills" / "global-review" / "SKILL.md"
+        user_skill_path.parent.mkdir(parents=True)
+        user_skill_path.write_text("# Global Review\n", encoding="utf-8")
+        engine = Mock()
+        engine._get_workspace_cwd.return_value = str(workspace_path)
+
+        handler = self._make_handler(engine, "/api/skills?index=7")
+        with patch("cmux_harness.routes.file_browser.Path.home", return_value=user_home):
+            handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        engine._get_workspace_cwd.assert_called_once_with(7)
+        self.assertEqual(body, {
+            "ok": True,
+            "rootPath": str(workspace_path.resolve()),
+            "skillsDirectory": ".claude/skills",
+            "userSkillsDirectory": "~/.claude/skills",
+            "projectSkills": [{
+                "name": "ios-review",
+                "skillFilePath": ".claude/skills/ios-review/SKILL.md",
+                "scope": "project",
+            }],
+            "userSkills": [{
+                "name": "global-review",
+                "skillFilePath": "~/.claude/skills/global-review/SKILL.md",
+                "scope": "user",
+            }],
+            "skills": [
+                {
+                    "name": "ios-review",
+                    "skillFilePath": ".claude/skills/ios-review/SKILL.md",
+                    "scope": "project",
+                },
+                {
+                    "name": "global-review",
+                    "skillFilePath": "~/.claude/skills/global-review/SKILL.md",
+                    "scope": "user",
+                },
+            ],
+        })
+
+    def test_file_search_returns_gitignore_aware_relative_path_matches(self):
+        repo_path = Path(self.tmpdir.name) / "repo-file-search"
+        (repo_path / "Sources").mkdir(parents=True)
+        (repo_path / "ignored").mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        (repo_path / "Sources" / "SearchTarget.swift").write_text("let value = 1\n", encoding="utf-8")
+        (repo_path / "ignored" / "SearchTarget.swift").write_text("ignored\n", encoding="utf-8")
+        (repo_path / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+        self._git(repo_path, "add", "Sources/SearchTarget.swift", ".gitignore")
+        self._git(repo_path, "commit", "-m", "initial commit")
+        engine = Mock()
+        engine._get_workspace_cwd.return_value = str(repo_path)
+
+        handler = self._make_handler(engine, "/api/file-search?index=7&q=SearchTarget&limit=20")
+        with patch("cmux_harness.routes.file_browser.subprocess.run", side_effect=REAL_SUBPROCESS_RUN):
+            handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["rootPath"], str(repo_path.resolve()))
+        self.assertEqual(body["files"], [{"path": "Sources/SearchTarget.swift"}])
+        self.assertEqual(body["truncated"], False)
+
+    def test_file_search_requires_three_characters(self):
+        repo_path = Path(self.tmpdir.name) / "repo-file-search-min"
+        repo_path.mkdir(parents=True)
+        (repo_path / "abc.swift").write_text("let value = 1\n", encoding="utf-8")
+        engine = Mock()
+        engine._get_workspace_cwd.return_value = str(repo_path)
+
+        handler = self._make_handler(engine, "/api/file-search?index=7&q=ab")
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["files"], [])
+
     def test_open_in_native_resolves_git_rename_to_existing_path(self):
         repo_path, _first_hash, _second_hash = self._create_git_repo_with_history("repo-open-native-rename")
         self._git(repo_path, "mv", "src/app.py", "src/renamed.py")

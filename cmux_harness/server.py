@@ -272,6 +272,10 @@ def make_handler(engine):
                 objective_routes.handle_list_objectives(self)
             elif path == "/api/workspaces":
                 workspace_routes.handle_list_workspaces(self)
+            elif path == "/api/skills":
+                file_browser_routes.handle_get_skills(self, parsed, engine=self.server.engine)
+            elif path == "/api/file-search":
+                file_browser_routes.handle_search_files(self, parsed, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
                 objective = objectives.read_objective(objective_id)
