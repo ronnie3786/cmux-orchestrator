@@ -4,5 +4,7 @@ __pycache__/
 *.log
 *.jsonl
 docs/superpowers/
+.superpowers/
+tmp/
 xcuserdata/
 *.xcuserstate
