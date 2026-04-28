@@ -121,6 +121,77 @@ def cmux_read_workspace(ws_index, surface_index=0, lines=40, workspace_uuid=None
     return None
 
 
+def ensure_workspace_terminal_ready(workspace_uuid=None, surface_id=None):
+    """Ask cmux to materialize/focus a terminal surface before read/write.
+
+    Some cmux workspaces lazily start the underlying TTY when the workspace or
+    surface is first focused. The harness needs the same warm-up behavior when
+    it reads/sends from the dashboard without the user manually opening cmux.
+    """
+    if not workspace_uuid and not surface_id:
+        return False
+
+    focus_params = {}
+    focus_surface_id = surface_id
+    if workspace_uuid:
+        data = _v2_request("system.tree", {"all": True})
+        if isinstance(data, dict):
+            for win in data.get("windows", []):
+                for ws in win.get("workspaces", []):
+                    if ws.get("uuid") != workspace_uuid and ws.get("id") != workspace_uuid:
+                        continue
+                    for pane in ws.get("panes", []):
+                        for surf in pane.get("surfaces", []):
+                            if surf.get("type") != "terminal":
+                                continue
+                            if not focus_surface_id or focus_surface_id in {surf.get("ref"), surf.get("id")}:
+                                focus_surface_id = surf.get("id") or surf.get("ref") or focus_surface_id
+                                break
+                        if focus_surface_id:
+                            break
+                    break
+                if focus_surface_id:
+                    break
+
+    focused = False
+    if workspace_uuid:
+        focus_params["workspace_id"] = workspace_uuid
+    if focus_surface_id:
+        focus_params["surface_id"] = focus_surface_id
+
+    if focus_params and _v2_request("surface.focus", focus_params) is not None:
+        focused = True
+    if workspace_uuid and _v2_request("workspace.select", {"workspace_id": workspace_uuid}) is not None:
+        focused = True
+
+    if focused:
+        _v2_request("surface.refresh", {})
+    return focused
+
+
+def cmux_read_workspace_warm(ws_index, surface_index=0, lines=40, workspace_uuid=None, surface_id=None):
+    """Read a workspace, warming the target terminal if the first read is empty."""
+    screen = cmux_read_workspace(
+        ws_index,
+        surface_index=surface_index,
+        lines=lines,
+        workspace_uuid=workspace_uuid,
+        surface_id=surface_id,
+    )
+    if screen:
+        return screen
+    if not ensure_workspace_terminal_ready(workspace_uuid=workspace_uuid, surface_id=surface_id):
+        return screen
+    _time.sleep(0.15)
+    return cmux_read_workspace(
+        ws_index,
+        surface_index=surface_index,
+        lines=lines,
+        workspace_uuid=workspace_uuid,
+        surface_id=surface_id,
+    )
+
+
 def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspace_uuid=None, surface_id=None):
     """Send text or a key to a surface WITHOUT switching workspaces.
     Uses the v2 JSON-RPC API with workspace_id parameter.

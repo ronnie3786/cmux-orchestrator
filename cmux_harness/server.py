@@ -147,12 +147,64 @@ def make_handler(engine):
                 return False
             return True
 
+        def _serve_events(self, parsed):
+            params = urllib.parse.parse_qs(parsed.query)
+            target_type = params.get("targetType", [""])[0]
+            target_id = params.get("targetId", [""])[0]
+            try:
+                after = int(params.get("after", ["0"])[0] or 0)
+            except (TypeError, ValueError):
+                after = 0
+            if after <= 0:
+                try:
+                    after = int(self.headers.get("Last-Event-ID", "0") or 0)
+                except (TypeError, ValueError):
+                    after = 0
+
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                self.wfile.write(b": connected\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return False
+
+            while True:
+                try:
+                    events = self.server.engine.orchestrator.wait_events_after(
+                        after,
+                        timeout=15.0,
+                        target_type=target_type,
+                        target_id=target_id,
+                    )
+                    if not events:
+                        self.wfile.write(b": heartbeat\n\n")
+                        self.wfile.flush()
+                        continue
+                    for event in events:
+                        after = max(after, int(event.get("seq") or 0))
+                        body = json.dumps(event).encode("utf-8")
+                        self.wfile.write(f"id: {after}\n".encode("utf-8"))
+                        self.wfile.write(f"event: {event.get('kind') or 'message'}\n".encode("utf-8"))
+                        self.wfile.write(b"data: ")
+                        self.wfile.write(body)
+                        self.wfile.write(b"\n\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return False
+
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             if self._serve_static(path):
                 return
-            if path == "/api/status":
+            if path == "/api/events":
+                self._serve_events(parsed)
+            elif path == "/api/status":
                 self._json_response(engine.get_status())
             elif path == "/api/log":
                 self._json_response(engine.get_log())
@@ -669,6 +721,10 @@ def make_handler(engine):
                     return
                 sid = surface_id or ws.get("_surface_id")
                 real_idx = ws.get("_real_index", idx)
+                cmux_api.ensure_workspace_terminal_ready(
+                    workspace_uuid=ws.get("uuid"),
+                    surface_id=sid,
+                )
                 ok = cmux_api.cmux_send_to_workspace(
                     real_idx,
                     0,

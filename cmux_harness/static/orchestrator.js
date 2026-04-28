@@ -109,6 +109,9 @@
     draftGoal: '',
     pendingCreate: false,
     pendingSend: false,
+    eventSource: null,
+    eventTargetKey: '',
+    lastEventSeq: 0,
     pollers: {
       objectives: null,
       messages: null,
@@ -962,6 +965,68 @@
   function currentTargetKey() {
     const target = currentActiveTarget();
     return target ? (target.kind + ':' + target.id) : '';
+  }
+
+  function closeEventStream() {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    state.eventTargetKey = '';
+  }
+
+  function applyRealtimeEvent(event) {
+    if (!event || typeof event !== 'object') return;
+    const seq = Number(event.seq || 0);
+    if (seq > state.lastEventSeq) state.lastEventSeq = seq;
+    const target = currentActiveTarget();
+    if (!target) return;
+    if (String(event.targetType || '') !== target.kind || String(event.targetId || '') !== String(target.id)) return;
+    if (event.kind === 'message' && event.message) {
+      state.messages = mergeIncomingMessages(state.messages, [event.message]);
+      const last = state.messages[state.messages.length - 1];
+      state.lastMessageTimestamp = last ? last.timestamp : null;
+      state.typing = false;
+      renderMessages();
+    } else if (event.kind === 'active_turn') {
+      state.activeWorkspaceTurn = event.turn && typeof event.turn === 'object' ? event.turn : null;
+      if (state.activeWorkspaceTurn) state.typing = false;
+      renderMessages();
+      renderInputState();
+    }
+  }
+
+  function handleRealtimeMessage(messageEvent) {
+    try {
+      applyRealtimeEvent(JSON.parse(messageEvent.data || '{}'));
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  function connectEventStream() {
+    if (!window.EventSource) return;
+    const target = currentActiveTarget();
+    const key = currentTargetKey();
+    if (!target) {
+      closeEventStream();
+      return;
+    }
+    if (state.eventSource && state.eventTargetKey === key) return;
+    closeEventStream();
+    const query = [
+      'targetType=' + encodeURIComponent(target.kind),
+      'targetId=' + encodeURIComponent(target.id),
+      'after=' + encodeURIComponent(String(state.lastEventSeq || 0))
+    ].join('&');
+    const source = new EventSource('/api/events?' + query);
+    source.addEventListener('message', handleRealtimeMessage);
+    source.addEventListener('active_turn', handleRealtimeMessage);
+    source.onerror = () => {
+      // EventSource reconnects automatically. Existing polling remains as fallback.
+    };
+    state.eventSource = source;
+    state.eventTargetKey = key;
   }
 
   function currentTargetApiBase() {
@@ -4457,7 +4522,12 @@
     const turn = state.activeWorkspaceTurn;
     if (!turn) return '';
     const status = String(turn.status || '').toLowerCase();
-    const title = status === 'timed_out' ? 'Still Working' : 'Working On It';
+    const progressState = String(turn.progressState || '').toLowerCase();
+    const title = status === 'timed_out'
+      ? 'Still Working'
+      : progressState === 'waiting'
+        ? 'Waiting'
+        : 'Working';
     const elapsed = durationFrom(turn.createdAt) || '0s';
     const subtitle = workspaceTurnSubtitle(turn);
     const shimmerClass = subtitle ? ' turn-live-subtitle shimmer' : ' turn-live-subtitle';
@@ -4715,12 +4785,18 @@
   }
 
   function mergeIncomingMessages(existing, incoming) {
+    const incomingIds = new Set(
+      incoming
+        .filter((message) => message && message.id)
+        .map((message) => String(message.id))
+    );
     const serverUserSignatures = new Set(
       incoming
         .filter((message) => message && message.type === 'user')
         .map((message) => String(message.content || ''))
     );
     const base = existing.filter((message) => {
+      if (message && message.id && incomingIds.has(String(message.id))) return false;
       if (!message || typeof message.id !== 'string' || !message.id.startsWith('local-')) return true;
       return !serverUserSignatures.has(String(message.content || ''));
     });
@@ -4793,6 +4869,7 @@
   }
 
   function render() {
+    connectEventStream();
     renderSidebar();
     renderContext();
     renderBuildLog();
@@ -4938,6 +5015,7 @@
     resetBuildLogState();
     resetConsoleLogState();
     resetStatusSummaryState();
+    connectEventStream();
     await Promise.all([
       pollActiveObjective(false),
       pollMessages(false)
@@ -5004,6 +5082,7 @@
     resetStatusSummaryState();
     if (!state.activeWorkspaceId) {
       state.activeWorkspace = null;
+      closeEventStream();
       if (forceAll) render();
       return;
     }
@@ -5012,6 +5091,7 @@
     if (state.activeWorkspace && state.activeWorkspace.projectId) {
       state.projectExpansion = Object.assign({}, state.projectExpansion, { [state.activeWorkspace.projectId]: true });
     }
+    connectEventStream();
     await Promise.all([
       pollMessages(false),
       pollActiveWorkspaceTurn(false),
