@@ -53,6 +53,7 @@ private struct TerminalTextStyle: Equatable {
     var bold = false
     var dim = false
     var italic = false
+    var isSuggested = false
     var underline = false
 
     mutating func apply(_ patch: TerminalStylePatch) {
@@ -69,6 +70,9 @@ private struct TerminalTextStyle: Equatable {
         }
         if patch.dim {
             dim = true
+        }
+        if patch.isSuggested {
+            isSuggested = true
         }
         if patch.italic {
             italic = true
@@ -137,6 +141,7 @@ private struct TerminalStylePatch {
     var bold = false
     var dim = false
     var italic = false
+    var isSuggested = false
     var underline = false
     var overridesForeground = false
     var overridesBackground = false
@@ -200,6 +205,9 @@ private enum TerminalPalette {
     static func foreground(for style: TerminalTextStyle, colorScheme: ColorScheme) -> Color {
         let resolvedColor = style.foreground.map { color(for: $0, colorScheme: colorScheme) }
             ?? (colorScheme == .dark ? hex(0xD8DDE8) : hex(0x1E293B))
+        if style.isSuggested {
+            return style.dim ? resolvedColor.opacity(0.25) : resolvedColor.opacity(0.32)
+        }
         return style.dim ? resolvedColor.opacity(0.6) : resolvedColor
     }
 
@@ -446,9 +454,310 @@ private enum ANSIParser {
 
 private enum TerminalSemanticHighlighter {
     static func highlight(_ runs: [TerminalRun]) -> [TerminalRun] {
-        patterns.reduce(runs) { currentRuns, pattern in
+        let highlightedRuns = patterns.reduce(runs) { currentRuns, pattern in
             currentRuns.flatMap { apply(pattern, to: $0) }
         }
+        return markKnownPromptSuggestions(in: markPromptSuggestions(in: highlightedRuns))
+    }
+
+    private static func markKnownPromptSuggestions(in runs: [TerminalRun]) -> [TerminalRun] {
+        let text = runs.map(\.text).joined()
+        guard let range = knownPromptSuggestionRange(in: text) else { return runs }
+        return markSuggestedRange(range, in: runs)
+    }
+
+    private static func knownPromptSuggestionRange(in text: String) -> Range<Int>? {
+        let lines = Array(lineRanges(in: text).suffix(12))
+        if let codexRange = codexPromptSuggestionRange(in: lines) {
+            return codexRange
+        }
+
+        for line in lines.reversed() {
+            guard let contentRange = promptContentRange(in: line.text) else { continue }
+
+            let rawContent = line.text[contentRange]
+            let content = String(rawContent).trimmingCharacters(in: .whitespaces)
+            guard isKnownPromptSuggestion(content) else { continue }
+
+            if let range = contentOffsetRange(for: contentRange, in: line) {
+                return range
+            }
+        }
+
+        return nil
+    }
+
+    private static func codexPromptSuggestionRange(in lines: [(text: String, startOffset: Int)]) -> Range<Int>? {
+        guard lines.count >= 2 else { return nil }
+
+        for statusIndex in lines.indices.reversed() {
+            guard isCodexStatusLine(lines[statusIndex].text),
+                  let promptIndex = promptLineIndex(before: statusIndex, in: lines),
+                  hasActiveCodexStatus(before: promptIndex, in: lines),
+                  let contentRange = promptContentRange(in: lines[promptIndex].text) else {
+                continue
+            }
+
+            return contentOffsetRange(for: contentRange, in: lines[promptIndex])
+        }
+
+        return nil
+    }
+
+    private static func isCodexStatusLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces).lowercased()
+        guard trimmed.hasPrefix("gpt-") || trimmed.hasPrefix("codex") else { return false }
+        return trimmed.contains("· ~/")
+            || trimmed.contains("· /")
+            || trimmed.contains(" - ~/")
+            || trimmed.contains(" - /")
+    }
+
+    private static func promptLineIndex(
+        before statusIndex: Int,
+        in lines: [(text: String, startOffset: Int)]
+    ) -> Int? {
+        guard statusIndex > lines.startIndex else { return nil }
+
+        var index = statusIndex - 1
+        var skippedBlankLines = 0
+        while index >= lines.startIndex, skippedBlankLines <= 2 {
+            if lines[index].text.trimmingCharacters(in: .whitespaces).isEmpty {
+                skippedBlankLines += 1
+                index -= 1
+                continue
+            }
+
+            return promptContentRange(in: lines[index].text) == nil ? nil : index
+        }
+
+        return nil
+    }
+
+    private static func hasActiveCodexStatus(
+        before promptIndex: Int,
+        in lines: [(text: String, startOffset: Int)]
+    ) -> Bool {
+        guard promptIndex > lines.startIndex else { return false }
+
+        let lowerBound = max(lines.startIndex, promptIndex - 8)
+        for line in lines[lowerBound..<promptIndex] {
+            let normalized = line.text.lowercased()
+            if normalized.contains("working (") && normalized.contains("esc to interrupt") {
+                return true
+            }
+            if normalized.contains("thinking")
+                || normalized.contains("musing")
+                || normalized.contains("processing")
+                || normalized.contains("running") {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func contentOffsetRange(
+        for contentRange: Range<String.Index>,
+        in line: (text: String, startOffset: Int)
+    ) -> Range<Int>? {
+        let rawContent = line.text[contentRange]
+        let leadingWhitespace = rawContent.prefix { $0.isWhitespace }.count
+        let trailingWhitespace = rawContent.reversed().prefix { $0.isWhitespace }.count
+        let contentStart = line.text.distance(from: line.text.startIndex, to: contentRange.lowerBound) + leadingWhitespace
+        let contentEnd = line.text.distance(from: line.text.startIndex, to: contentRange.upperBound) - trailingWhitespace
+        guard contentStart < contentEnd else { return nil }
+        return (line.startOffset + contentStart)..<(line.startOffset + contentEnd)
+    }
+
+    private static func lineRanges(in text: String) -> [(text: String, startOffset: Int)] {
+        var lines: [(text: String, startOffset: Int)] = []
+        var lineStart = text.startIndex
+        var lineStartOffset = 0
+        var offset = 0
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            if text[index] == "\n" {
+                lines.append((String(text[lineStart..<index]), lineStartOffset))
+                lineStart = text.index(after: index)
+                lineStartOffset = offset + 1
+            }
+            offset += 1
+            index = text.index(after: index)
+        }
+
+        lines.append((String(text[lineStart..<text.endIndex]), lineStartOffset))
+        return lines
+    }
+
+    private static func promptContentRange(in line: String) -> Range<String.Index>? {
+        var index = line.startIndex
+        while index < line.endIndex, line[index].isWhitespace {
+            index = line.index(after: index)
+        }
+        guard index < line.endIndex, isPromptMarker(line[index]) else { return nil }
+
+        index = line.index(after: index)
+        while index < line.endIndex, line[index].isWhitespace {
+            index = line.index(after: index)
+        }
+        guard index < line.endIndex else { return nil }
+
+        return index..<line.endIndex
+    }
+
+    private static func isPromptMarker(_ character: Character) -> Bool {
+        [">", "\u{203A}", "\u{276F}", "$", "#", ")"].contains(character)
+    }
+
+    private static func isKnownPromptSuggestion(_ text: String) -> Bool {
+        let normalized = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if normalized == "find and fix a bug in @filename"
+            || normalized == "run /review on my current changes" {
+            return true
+        }
+
+        if normalized.contains("@filename")
+            && normalized.contains("bug")
+            && (normalized.contains("find") || normalized.contains("fix")) {
+            return true
+        }
+
+        return normalized.hasPrefix("run /review")
+    }
+
+    private static func markSuggestedRange(_ range: Range<Int>, in runs: [TerminalRun]) -> [TerminalRun] {
+        var result: [TerminalRun] = []
+        var runStartOffset = 0
+
+        for run in runs {
+            let runLength = run.text.count
+            let runEndOffset = runStartOffset + runLength
+            let overlapStart = max(range.lowerBound, runStartOffset)
+            let overlapEnd = min(range.upperBound, runEndOffset)
+
+            guard overlapStart < overlapEnd else {
+                result.append(run)
+                runStartOffset = runEndOffset
+                continue
+            }
+
+            let localStart = overlapStart - runStartOffset
+            let localEnd = overlapEnd - runStartOffset
+            let startIndex = run.text.index(run.text.startIndex, offsetBy: localStart)
+            let endIndex = run.text.index(run.text.startIndex, offsetBy: localEnd)
+
+            if run.text.startIndex < startIndex {
+                result.append(TerminalRun(text: String(run.text[run.text.startIndex..<startIndex]), style: run.style))
+            }
+
+            var suggestedStyle = run.style
+            suggestedStyle.isSuggested = true
+            suggestedStyle.dim = true
+            suggestedStyle.bold = false
+            suggestedStyle.background = nil
+            result.append(TerminalRun(text: String(run.text[startIndex..<endIndex]), style: suggestedStyle))
+
+            if endIndex < run.text.endIndex {
+                result.append(TerminalRun(text: String(run.text[endIndex..<run.text.endIndex]), style: run.style))
+            }
+
+            runStartOffset = runEndOffset
+        }
+
+        return coalesceRuns(result)
+    }
+
+    private static func coalesceRuns(_ runs: [TerminalRun]) -> [TerminalRun] {
+        runs.reduce(into: []) { result, run in
+            guard !run.text.isEmpty else { return }
+            if let last = result.last, last.style == run.style {
+                result[result.count - 1].text += run.text
+            } else {
+                result.append(run)
+            }
+        }
+    }
+
+    private static func markPromptSuggestions(in runs: [TerminalRun]) -> [TerminalRun] {
+        guard !runs.isEmpty else { return runs }
+
+        var lineFragments: [(runIndex: Int, text: String)] = []
+        for index in stride(from: runs.count - 1, through: 0, by: -1) {
+            let text = runs[index].text
+            if let newlineIndex = text.lastIndex(of: "\n") {
+                let suffixStart = text.index(after: newlineIndex)
+                if suffixStart < text.endIndex {
+                    lineFragments.append((index, String(text[suffixStart..<text.endIndex])))
+                }
+                break
+            }
+            lineFragments.append((index, text))
+        }
+        guard !lineFragments.isEmpty else { return runs }
+
+        let finalLineRuns = Array(lineFragments.reversed())
+        let finalLine = finalLineRuns.map(\.text).joined()
+        let trimmedFinalLine = finalLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFinalLine.isEmpty, looksLikePromptLine(trimmedFinalLine) else {
+            return runs
+        }
+
+        var suggestionStart: Int?
+        for (offset, fragment) in finalLineRuns.enumerated().reversed() {
+            let style = runs[fragment.runIndex].style
+            if style.dim {
+                if fragment.text.contains(where: { !$0.isWhitespace }) {
+                    suggestionStart = offset
+                    break
+                }
+                continue
+            }
+
+            if fragment.text.contains(where: { !$0.isWhitespace }) {
+                return runs
+            }
+        }
+
+        guard let start = suggestionStart else { return runs }
+        var adjusted = runs
+        for fragment in finalLineRuns[start...] {
+            if fragment.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
+                continue
+            }
+            var style = adjusted[fragment.runIndex].style
+            style.isSuggested = true
+            style.background = nil
+            adjusted[fragment.runIndex].style = style
+        }
+        return adjusted
+    }
+
+    private static func looksLikePromptLine(_ line: String) -> Bool {
+        guard !line.isEmpty else { return false }
+
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return false }
+
+        if let first = trimmed.first,
+           ["\u{23FA}", "\u{23BF}", "\u{276F}", "\u{203A}", ">", "❯", "$", "#", ")"].contains(String(first)) {
+            return true
+        }
+
+        if !trimmed.contains(" ") {
+            return trimmed.contains("@") && (trimmed.contains("$") || trimmed.contains("#") || trimmed.contains("%"))
+        }
+
+        let firstToken = String(trimmed.prefix { $0 != " " })
+        if firstToken.contains("@") {
+            return trimmed.contains("$") || trimmed.contains("#") || trimmed.contains("%") || trimmed.contains(">")
+        }
+
+        return trimmed.first == "[" && (trimmed.contains("]$") || trimmed.contains("]#") || trimmed.contains("]%"))
     }
 
     private static let patterns: [TerminalTextPattern] = [
@@ -477,7 +786,7 @@ private enum TerminalSemanticHighlighter {
             patch: TerminalStylePatch(foreground: .named(.muted), dim: true)
         ),
         TerminalTextPattern(
-            #"(?m)^\s*(?:\x{23FA}|\x{23BF}|>|\$|\x{276F}|\)|\x{2022}|-|\d+[.)])"#,
+            #"(?m)^\s*(?:\x{23FA}|\x{23BF}|>|\$|\x{276F}|\x{203A}|\)|\x{2022}|-|\d+[.)])"#,
             patch: TerminalStylePatch(foreground: .named(.brightYellow), bold: true, overridesForeground: true)
         ),
         TerminalTextPattern(
@@ -517,7 +826,7 @@ private enum TerminalSemanticHighlighter {
             patch: TerminalStylePatch(foreground: .named(.cyan), bold: true)
         ),
         TerminalTextPattern(
-            #"(?m)^\s*[\x{276F})]\s*"#,
+            #"(?m)^\s*[\x{276F}\x{203A})]\s*"#,
             patch: TerminalStylePatch(foreground: .named(.green), bold: true)
         ),
         TerminalTextPattern(
