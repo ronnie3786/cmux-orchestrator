@@ -104,7 +104,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .star-btn{width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:6px;flex-shrink:0;transition:color .15s,background .15s}
 .star-btn:hover{background:rgba(255,255,255,.06);color:var(--yellow)}
 .star-btn.on{color:var(--yellow)}
+.session-auto-indicator{width:24px;height:24px;border:none;background:transparent;color:var(--accent);font-size:14px;line-height:1;display:none;align-items:center;justify-content:center;border-radius:6px;flex-shrink:0}
+.session-auto-indicator.on{display:flex}
 .exp-star{border:1px solid var(--border);background:var(--bg)}
+.exp-auto-indicator{border:1px solid var(--border);background:var(--bg)}
 .card-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border-bottom:1px solid transparent;transition:border-color .15s}
 .card-name:hover{border-bottom-color:var(--accent)}
 .card-name-edit{font-size:15px;font-weight:600;background:transparent;border:none;border-bottom:2px solid var(--accent);color:var(--text);outline:none;width:180px;font-family:inherit;padding:0}
@@ -533,6 +536,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         </div>
         <div class="exp-header-actions">
           <button class="star-btn exp-star" id="expStarToggle" onclick="toggleExpStar(event)" title="Star session">&#9734;</button>
+          <span class="session-auto-indicator exp-auto-indicator" id="expAutoIndicator" title="Auto enabled">&#9889;</span>
           <div class="auto-toggle" id="expAutoToggle" onclick="toggleExpAuto()">
             <span class="auto-toggle-label">Auto</span>
             <div class="toggle-track"></div>
@@ -1467,6 +1471,7 @@ function buildGrid(){
     html+='<div class="card-header">';
     html+='<div class="card-title-row">';
     html+='<button class="star-btn '+(w.starred?'on':'')+'" onclick="toggleWsStar(event,'+w.index+')" title="'+(w.starred?'Unstar session':'Star session')+'">'+(w.starred?'&#9733;':'&#9734;')+'</button>';
+    html+='<span class="session-auto-indicator '+(autoOn?'on':'')+'" title="'+(autoOn?'Auto enabled':'Auto disabled')+'">&#9889;</span>';
     html+='<div style="min-width:0;overflow:hidden">';
     html+='<span class="card-name" onclick="startRename('+w.index+',this)" title="Click to rename">'+esc(displayName)+'</span>';
     html+='</div>';
@@ -1538,6 +1543,11 @@ function buildGrid(){
         starEl.classList.toggle('on',!!w.starred);
         starEl.innerHTML=w.starred?'&#9733;':'&#9734;';
         starEl.setAttribute('title',w.starred?'Unstar session':'Star session');
+      }
+      var autoIndicator=card.querySelector('.session-auto-indicator');
+      if(autoIndicator){
+        autoIndicator.classList.toggle('on',w.enabled===true);
+        autoIndicator.setAttribute('title',w.enabled===true?'Auto enabled':'Auto disabled');
       }
       // Remove any leftover original-name subtitle
       var origEl=card.querySelector('.card-name-original');
@@ -1641,7 +1651,11 @@ window.showNeedsYouReason=function(event,wsIndex){
 window.toggleWsAuto=function(idx,el){
   el.classList.toggle('on');
   var on=el.classList.contains('on');
+  var ws=findWorkspaceByIndex(idx);
+  if(ws)ws.enabled=on;
   api('POST','/api/workspace',{index:idx,enabled:on});
+  buildGrid();
+  updateExpanded();
 };
 
 window.toggleWsStar=function(event,idx){
@@ -1715,7 +1729,11 @@ window.toggleExpAuto=function(){
   var el=document.getElementById('expAutoToggle');
   el.classList.toggle('on');
   var on=el.classList.contains('on');
+  var ws=findWorkspaceByIndex(expandedWsIndex);
+  if(ws)ws.enabled=on;
   api('POST','/api/workspace',{index:expandedWsIndex,enabled:on});
+  buildGrid();
+  updateExpanded();
 };
 window.toggleExpStar=function(event){
   if(event)event.stopPropagation();
@@ -1984,6 +2002,12 @@ function updateExpanded(){
   var autoEl=document.getElementById('expAutoToggle');
   if(ws.enabled!==false)autoEl.classList.add('on');
   else autoEl.classList.remove('on');
+
+  var autoIndicator=document.getElementById('expAutoIndicator');
+  if(autoIndicator){
+    autoIndicator.classList.toggle('on',ws.enabled===true);
+    autoIndicator.setAttribute('title',ws.enabled===true?'Auto enabled':'Auto disabled');
+  }
 
   var starEl=document.getElementById('expStarToggle');
   if(starEl){
