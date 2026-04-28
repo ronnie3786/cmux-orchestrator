@@ -100,42 +100,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .card.needs-attention{border-color:var(--yellow);box-shadow:0 0 16px rgba(210,153,34,.1)}
 .card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
 .card-title-row{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
-.card-status{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.card-status.active{background:var(--green);box-shadow:0 0 8px rgba(63,185,80,.4)}
-.card-status.waiting{background:var(--yellow);animation:pulse 2s infinite}
-.card-status.idle{background:var(--text-muted);opacity:.5}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.star-btn{width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:6px;flex-shrink:0;transition:color .15s,background .15s}
+.star-btn:hover{background:rgba(255,255,255,.06);color:var(--yellow)}
+.star-btn.on{color:var(--yellow)}
+.exp-star{border:1px solid var(--border);background:var(--bg)}
 .card-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border-bottom:1px solid transparent;transition:border-color .15s}
 .card-name:hover{border-bottom-color:var(--accent)}
 .card-name-edit{font-size:15px;font-weight:600;background:transparent;border:none;border-bottom:2px solid var(--accent);color:var(--text);outline:none;width:180px;font-family:inherit;padding:0}
 .card-name-original{font-size:11px;color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card-header-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-.badge-active{background:rgba(63,185,80,.15);color:var(--green)}
 .badge-waiting{background:rgba(210,153,34,.15);color:var(--yellow)}
 .badge-clickable{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
 .badge-clickable:hover{background:rgba(210,153,34,.28)}
 #needs-you-popup{display:none;position:fixed;z-index:9999;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;max-width:300px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:12px;line-height:1.5;color:var(--text)}
 #needs-you-popup .popup-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--yellow);margin-bottom:6px}
 #needs-you-popup .popup-reason{color:var(--text)}
-.badge-idle{background:rgba(139,148,158,.15);color:var(--text-muted)}
-
-/* Collapsed idle card */
-.card-collapsed{opacity:0.7;order:1}
-.card-collapsed .card-header{border-bottom:none}
-.card-collapsed:hover{opacity:0.9}
-.card-collapsed.expanded-inline .card-header{border-bottom:1px solid var(--border)}
-.card-collapsed .card-meta,.card-collapsed .card-terminal,.card-collapsed .card-footer{display:none}
-.card-collapsed.expanded-inline .card-meta,.card-collapsed.expanded-inline .card-terminal,.card-collapsed.expanded-inline .card-footer{display:flex}
-.card-collapsed.expanded-inline .card-terminal{display:block}
-.card-expand-caret{width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
-.card-expand-caret:hover{border-color:var(--accent);color:var(--accent)}
-.card-collapsed.expanded-inline .card-expand-caret{background:rgba(88,166,255,.1);color:var(--accent);border-color:var(--accent)}
-/* Active cards always show full content */
-.card:not(.card-collapsed) .card-meta{display:flex}
-.card:not(.card-collapsed) .card-terminal{display:block}
-.card:not(.card-collapsed) .card-footer{display:flex}
-/* Smooth transition for idle→active expansion */
+.badge-neutral{background:rgba(139,148,158,.15);color:var(--text-muted)}
+.card .card-meta{display:flex}
+.card .card-terminal{display:block}
+.card .card-footer{display:flex}
 .card{transition:border-color .2s,box-shadow .2s,opacity .3s}
 
 /* Auto toggle */
@@ -398,7 +383,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   .review-action-btn{flex:1 1 calc(50% - 4px);text-align:center}
   .card-header{padding:13px 12px 5px 14px;align-items:center;gap:8px;border-bottom:0}
   .card-title-row{align-items:center;gap:10px;min-width:0}
-  .card-status{width:11px;height:11px}
   .card-name{font-size:16px;font-weight:700;letter-spacing:-.02em;white-space:nowrap}
   .card-name-original{white-space:nowrap}
   .card-name-edit{width:100%}
@@ -471,9 +455,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
       <button class="view-btn" id="viewBtn-reviews" onclick="switchView('reviews')">&#128203; Reviews <span class="review-badge" id="reviewBadge"></span></button>
     </div>
     <div class="topbar-stats" id="topStats">
-      <div class="stat"><span class="stat-dot" style="background:var(--green)"></span> <span id="statActive">0</span> active</div>
-      <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> <span id="statWaiting">0</span> waiting</div>
-      <div class="stat"><span class="stat-dot" style="background:var(--text-muted);opacity:.5"></span> <span id="statIdle">0</span> idle</div>
+      <div class="stat"><span class="stat-dot" style="background:var(--accent)"></span> <span id="statSessions">0</span> sessions</div>
+      <div class="stat"><span class="stat-dot" style="background:var(--yellow)"></span> <span id="statWaiting">0</span> need attention</div>
       <div class="stat" id="statLlm" style="display:none"><span class="stat-dot" style="background:var(--red)"></span> <span class="llm-unavail">LLM ✗</span></div>
     </div>
   </div>
@@ -487,10 +470,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         <div class="activity-popover-header">Activity Feed</div>
         <div class="activity-popover-body" id="activityPopoverBody"></div>
       </div>
-    </div>
-    <div class="global-toggle">
-      <span class="global-toggle-label" id="globalLabel">OFF</span>
-      <div class="global-track" id="globalTrack" onclick="toggleGlobal()"></div>
     </div>
     <button class="btn" onclick="openSettings()">&#9881; Settings</button>
     <button class="btn btn-primary" onclick="newSession()">+ New Session</button>
@@ -547,6 +526,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
           <div class="exp-meta" id="expMeta"></div>
         </div>
         <div class="exp-header-actions">
+          <button class="star-btn exp-star" id="expStarToggle" onclick="toggleExpStar(event)" title="Star session">&#9734;</button>
           <div class="auto-toggle" id="expAutoToggle" onclick="toggleExpAuto()">
             <span class="auto-toggle-label">Auto</span>
             <div class="toggle-track"></div>
@@ -834,6 +814,25 @@ function findWorkspaceByIndex(idx){
   return state.workspaces.find(function(w){return w.index===idx});
 }
 
+function pathBasename(value){
+  var text=String(value||'').trim();
+  if(!text)return text;
+  var parts=text.replace(/\\/g,'/').split('/').filter(Boolean);
+  return parts.length?parts[parts.length-1]:text;
+}
+
+function sessionDisplayName(w){
+  var raw=w?(w.surfaceLabel||w.customName||w.name||''):'';
+  if(!raw&&w)raw='workspace-'+w.index;
+  if(w&&w.customName)return raw;
+  var marker=' : ';
+  var markerIdx=raw.indexOf(marker);
+  if(markerIdx!==-1){
+    return pathBasename(raw.slice(0,markerIdx))+marker+raw.slice(markerIdx+marker.length);
+  }
+  return pathBasename(raw);
+}
+
 function buildWorkspaceSendPayload(idx,extra){
   var ws=findWorkspaceByIndex(idx);
   var payload={index:idx};
@@ -850,10 +849,10 @@ function isMobileHarness(){
   return window.matchMedia&&window.matchMedia('(max-width: 640px)').matches;
 }
 
-function updateMobileHarnessSummary(active,waiting,idle){
+function updateMobileHarnessSummary(total,waiting){
   var el=document.getElementById('mobileHarnessSummary');
   if(!el)return;
-  el.textContent=active+' active, '+waiting+' waiting, '+idle+' idle';
+  el.textContent=total+' sessions, '+waiting+' need attention';
 }
 
 function updateMobileExpPanel(){
@@ -930,6 +929,16 @@ function fmtTime(iso){
 function formatDuration(start) {
   if (!start) return '';
   var secs = Math.floor(Date.now()/1000 - start);
+  if (secs < 60) return secs + 's';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm';
+  var hrs = Math.floor(mins / 60);
+  return hrs + 'h ' + (mins % 60) + 'm';
+}
+
+function formatRemaining(unixSeconds) {
+  if (!unixSeconds) return '';
+  var secs = Math.max(0, Math.floor(unixSeconds - Date.now()/1000));
   if (secs < 60) return secs + 's';
   var mins = Math.floor(secs / 60);
   if (mins < 60) return mins + 'm';
@@ -1184,33 +1193,21 @@ function checkNotifications(newWorkspaces) {
   newWorkspaces.forEach(function(w) {
     var idx = w.index;
     var newStatus = classifyWs(w);
-    var newHasClaude = w.hasClaude;
     var prev = prevWsStates[idx];
     if (prev !== undefined) {
-      // Workspace transitioned TO waiting
       if (prev.status !== 'waiting' && newStatus === 'waiting') {
         var wsName = w.customName || w.name;
         notify('\u26A0\uFE0F Needs Your Attention', wsName + ' is waiting for input.', 'ws-waiting-' + idx);
       }
-      // Claude Code session completed: hasClaude went true → false
-      if (prev.hasClaude && !newHasClaude) {
-        var wsName = w.customName || w.name;
-        notify('\u2705 Session Complete', wsName + ' — Claude Code has finished.', 'ws-done-' + idx);
-      }
     }
-    prevWsStates[idx] = {hasClaude: newHasClaude, status: newStatus};
+    prevWsStates[idx] = {status: newStatus};
   });
 }
 
-// ─── Global toggle ───
-window.toggleGlobal=function(){
-  state.enabled=!state.enabled;
-  api('POST','/api/toggle',{enabled:state.enabled});
-  updateGlobalToggle();
-};
 function updateGlobalToggle(){
   var t=document.getElementById('globalTrack');
   var l=document.getElementById('globalLabel');
+  if(!t||!l)return;
   if(state.enabled){t.classList.add('on');l.textContent='ON';l.style.color='var(--green)'}
   else{t.classList.remove('on');l.textContent='OFF';l.style.color='var(--red)'}
 }
@@ -1414,34 +1411,26 @@ function buildGrid(){
   var grid=document.getElementById('grid');
   var ws=state.workspaces;
   if(!ws||ws.length===0){
-    updateMobileHarnessSummary(0,0,0);
+    updateMobileHarnessSummary(0,0);
     grid.innerHTML='<div class="grid-empty">No workspaces detected. Is cmux running?</div>';
     return;
   }
 
-  // Count stats
-  var active=0,waiting=0,idle=0;
+  // Count stable session stats without terminal-state grouping.
+  var waiting=0;
   ws.forEach(function(w){
     var s=classifyWs(w);
     if(s==='waiting')waiting++;
-    else if(s==='active')active++;
-    else idle++;
   });
-  document.getElementById('statActive').textContent=active;
+  document.getElementById('statSessions').textContent=ws.length;
   document.getElementById('statWaiting').textContent=waiting;
-  document.getElementById('statIdle').textContent=idle;
-  updateMobileHarnessSummary(active,waiting,idle);
+  updateMobileHarnessSummary(ws.length,waiting);
 
-  // Split into active (active+waiting) and inactive (idle), alphabetical within each
-  var activeWs=[], inactiveWs=[];
-  ws.forEach(function(w){
-    if(classifyWs(w)==='idle') inactiveWs.push(w);
-    else activeWs.push(w);
+  var nameof=function(w){return sessionDisplayName(w).toLowerCase()};
+  var sorted=ws.slice().sort(function(a,b){
+    if(!!a.starred!==!!b.starred)return a.starred?-1:1;
+    return nameof(a).localeCompare(nameof(b));
   });
-  var nameof=function(w){return (w.surfaceLabel||w.customName||w.name||'').toLowerCase()};
-  activeWs.sort(function(a,b){return nameof(a).localeCompare(nameof(b))});
-  inactiveWs.sort(function(a,b){return nameof(a).localeCompare(nameof(b))});
-  var sorted=activeWs.concat(inactiveWs);
 
   // Preserve focus: if user is typing in an input, save it
   var activeEl=document.activeElement;
@@ -1457,21 +1446,19 @@ function buildGrid(){
   function buildWorkspaceCardHtml(w){
     var s=classifyWs(w);
     var isWaiting=s==='waiting';
-    var isIdle=s==='idle';
     var isStale=state.connected===false;
-    var cardClass='card'+(isWaiting?' needs-attention':'')+(isIdle?' card-collapsed':'')+(isStale?' stale':'');
-    var statusClass='card-status '+s;
-    var badgeClass=isWaiting?'badge badge-waiting':isIdle?'badge badge-idle':'badge badge-active';
-    var badgeText=isWaiting?'Needs You':isIdle?'Idle':'Active';
+    var cardClass='card'+(isWaiting?' needs-attention':'')+(isStale?' stale':'');
+    var badgeClass='badge '+(isWaiting?'badge-waiting':'badge-neutral');
+    var badgeText=isWaiting?'Needs You':'Session';
     var autoOn=w.enabled===true;
     var autoClass='auto-toggle'+(autoOn?' on':'');
     var html='';
 
     html+='<div class="'+cardClass+'" id="card-'+w.index+'" data-ws-index="'+w.index+'">';
-    var displayName=w.surfaceLabel||w.customName||w.name;
+    var displayName=sessionDisplayName(w);
     html+='<div class="card-header">';
-    html+='<div class="card-title-row"><div class="'+statusClass+'"></div>';
-    if(w.surfaceId)html+='<span style="color:var(--text-muted);font-size:11px;margin-right:2px" title="Split pane">&#9649;</span>';
+    html+='<div class="card-title-row">';
+    html+='<button class="star-btn '+(w.starred?'on':'')+'" onclick="toggleWsStar(event,'+w.index+')" title="'+(w.starred?'Unstar session':'Star session')+'">'+(w.starred?'&#9733;':'&#9734;')+'</button>';
     html+='<div style="min-width:0;overflow:hidden">';
     html+='<span class="card-name" onclick="startRename('+w.index+',this)" title="Click to rename">'+esc(displayName)+'</span>';
     html+='</div>';
@@ -1483,7 +1470,6 @@ function buildGrid(){
       html+='<span class="'+badgeClass+'">'+badgeText+'</span>';
     }
     html+='<div class="'+autoClass+'" onclick="toggleWsAuto('+w.index+',this)"><span class="auto-toggle-label">Auto</span><div class="toggle-track"></div></div>';
-    if(isIdle)html+='<button class="card-expand-caret" onclick="toggleInlineExpand('+w.index+')" title="Show details">&#9660;</button>';
     html+='<button class="expand-btn" onclick="openExpanded('+w.index+')">&#10530;</button>';
     html+='</div></div>';
 
@@ -1491,6 +1477,7 @@ function buildGrid(){
     html+='<span>\uD83D\uDCC2 '+esc(w.cwd||'—')+'</span>';
     if(w.branch)html+='<span>\uD83C\uDF3F '+esc(w.branch)+'</span>';
     if(w.lastCheck)html+='<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>';
+    if(autoOn&&w.autoExpiresAt)html+='<span>Auto off in '+esc(formatRemaining(w.autoExpiresAt))+'</span>';
     if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);html+='<span>\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px">'+esc(w.sessionCost)+'</span></span>';}
     html+='</div>';
 
@@ -1510,20 +1497,11 @@ function buildGrid(){
   }
 
   var html='';
-  if(activeWs.length){
-    html+='<div class="mobile-list-title">Active Sessions</div>';
-    html+='<div class="mobile-session-group mobile-session-group-active">';
-    activeWs.forEach(function(w){html+=buildWorkspaceCardHtml(w)});
-    html+='</div>';
-  }
-  if(inactiveWs.length){
-    html+='<div class="grid-divider">Inactive</div>';
-    html+='<div class="mobile-session-group mobile-session-group-inactive">';
-    inactiveWs.forEach(function(w){html+=buildWorkspaceCardHtml(w)});
-    html+='</div>';
-  }
-  // Structural hash: workspace indices, status, and name (for alpha sort changes)
-  var structHash=sorted.map(function(w){return w.index+'_'+classifyWs(w)+'_'+nameof(w)}).join(',');
+  html+='<div class="mobile-session-group">';
+  sorted.forEach(function(w){html+=buildWorkspaceCardHtml(w)});
+  html+='</div>';
+  // Structural hash: workspace indices and names only. Attention state updates in place.
+  var structHash=sorted.map(function(w){return w.index+'_'+(w.starred?'1':'0')+'_'+nameof(w)}).join(',');
   var needsRebuild=!window._lastStructHash||window._lastStructHash!==structHash||!grid.children.length;
 
   if(needsRebuild){
@@ -1544,8 +1522,14 @@ function buildGrid(){
       // Update workspace name (fixes stale titles when names change between rebuilds)
       var nameEl=card.querySelector('.card-name');
       if(nameEl&&!nameEl.isContentEditable&&nameEl.tagName!=='INPUT'){
-        var displayName=w.surfaceLabel||w.customName||w.name;
+        var displayName=sessionDisplayName(w);
         if(nameEl.textContent!==displayName)nameEl.textContent=displayName;
+      }
+      var starEl=card.querySelector('.star-btn');
+      if(starEl){
+        starEl.classList.toggle('on',!!w.starred);
+        starEl.innerHTML=w.starred?'&#9733;':'&#9734;';
+        starEl.setAttribute('title',w.starred?'Unstar session':'Star session');
       }
       // Remove any leftover original-name subtitle
       var origEl=card.querySelector('.card-name-original');
@@ -1560,6 +1544,23 @@ function buildGrid(){
           if(isAtBottom)term.scrollTop=term.scrollHeight;
         }
       }
+      // Update attention state in place without rebuilding or reordering cards.
+      var stateName=classifyWs(w);
+      var isWaitingNow=stateName==='waiting';
+      card.classList.toggle('needs-attention',isWaitingNow);
+      card.classList.toggle('stale',state.connected===false);
+      var badge=card.querySelector('.card-header-right .badge');
+      if(badge){
+        badge.className='badge '+(isWaitingNow?'badge-waiting badge-clickable':'badge-neutral');
+        badge.textContent=isWaitingNow?'Needs You':'Session';
+        if(isWaitingNow){
+          badge.setAttribute('onclick','showNeedsYouReason(event,'+w.index+')');
+          badge.setAttribute('title','Click to see why');
+        }else{
+          badge.removeAttribute('onclick');
+          badge.removeAttribute('title');
+        }
+      }
       // Update meta line
       var meta=card.querySelector('.card-meta');
       if(meta){
@@ -1567,17 +1568,15 @@ function buildGrid(){
         spans.push('<span>\uD83D\uDCC2 '+esc(w.cwd||'\u2014')+'</span>');
         if(w.branch)spans.push('<span>\uD83C\uDF3F '+esc(w.branch)+'</span>');
         if(w.lastCheck)spans.push('<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>');
+        if(w.enabled===true&&w.autoExpiresAt)spans.push('<span>Auto off in '+esc(formatRemaining(w.autoExpiresAt))+'</span>');
         if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);spans.push('<span>\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px">'+esc(w.sessionCost)+'</span></span>');}
         var newMeta=spans.join('');
         if(meta.innerHTML!==newMeta)meta.innerHTML=newMeta;
       }
+      var autoToggle=card.querySelector('.auto-toggle');
+      if(autoToggle)autoToggle.classList.toggle('on',w.enabled===true);
     });
   }
-  // Restore inline-expanded state for idle cards
-  Object.keys(inlineExpanded).forEach(function(idx){
-    var card=document.getElementById('card-'+idx);
-    if(card&&card.classList.contains('card-collapsed'))card.classList.add('expanded-inline');
-  });
 }
 
 function classifyWs(w){
@@ -1587,9 +1586,7 @@ function classifyWs(w){
     var last=recent[0]; // logData is already reversed (newest first)
     if(last.action&&last.action.indexOf('human')!==-1)return 'waiting';
   }
-  // Active = Claude Code is running in this terminal
-  // Idle = just a regular shell prompt, no Claude session
-  return w.hasClaude ? 'active' : 'idle';
+  return 'session';
 }
 
 function getWaitReason(w){
@@ -1632,28 +1629,21 @@ window.showNeedsYouReason=function(event,wsIndex){
   });
 };
 
-// ─── Inline expand for collapsed idle cards ───
-var inlineExpanded={};
-window.toggleInlineExpand=function(idx){
-  var card=document.getElementById('card-'+idx);
-  if(!card)return;
-  if(inlineExpanded[idx]){
-    card.classList.remove('expanded-inline');
-    delete inlineExpanded[idx];
-  }else{
-    card.classList.add('expanded-inline');
-    inlineExpanded[idx]=true;
-    // scroll terminal to bottom
-    var term=card.querySelector('.card-terminal');
-    if(term)term.scrollTop=term.scrollHeight;
-  }
-};
-
 // ─── Per-workspace auto toggle ───
 window.toggleWsAuto=function(idx,el){
   el.classList.toggle('on');
   var on=el.classList.contains('on');
   api('POST','/api/workspace',{index:idx,enabled:on});
+};
+
+window.toggleWsStar=function(event,idx){
+  if(event)event.stopPropagation();
+  var ws=findWorkspaceByIndex(idx);
+  var starred=!(ws&&ws.starred);
+  if(ws)ws.starred=starred;
+  api('POST','/api/workspace-star',{index:idx,starred:starred});
+  buildGrid();
+  updateExpanded();
 };
 
 // ─── Send to workspace ───
@@ -1718,6 +1708,11 @@ window.toggleExpAuto=function(){
   el.classList.toggle('on');
   var on=el.classList.contains('on');
   api('POST','/api/workspace',{index:expandedWsIndex,enabled:on});
+};
+window.toggleExpStar=function(event){
+  if(event)event.stopPropagation();
+  if(expandedWsIndex===null)return;
+  toggleWsStar(event,expandedWsIndex);
 };
 window.sendExp=function(){
   if(expandedWsIndex===null)return;
@@ -1929,7 +1924,7 @@ function updateExpanded(){
   if(!ws)return;
   document.querySelector('.exp-header-actions').classList.remove('hidden');
   document.querySelector('.exp-input').classList.remove('hidden');
-  var expDisplayName=ws.surfaceLabel||ws.customName||ws.name;
+  var expDisplayName=sessionDisplayName(ws);
   document.getElementById('expTitle').textContent=expDisplayName;
   var origNameEl=document.getElementById('expOrigName');
   if(ws.surfaceLabel||ws.customName){
@@ -1953,6 +1948,13 @@ function updateExpanded(){
   var autoEl=document.getElementById('expAutoToggle');
   if(ws.enabled!==false)autoEl.classList.add('on');
   else autoEl.classList.remove('on');
+
+  var starEl=document.getElementById('expStarToggle');
+  if(starEl){
+    starEl.classList.toggle('on',!!ws.starred);
+    starEl.innerHTML=ws.starred?'&#9733;':'&#9734;';
+    starEl.setAttribute('title',ws.starred?'Unstar session':'Star session');
+  }
 
   if(!inlineDiffFile){
     var termEl=document.getElementById('expTerminal');
@@ -2581,7 +2583,6 @@ function refresh(){
     state.socketFound=status.socketFound;
     state.ollamaAvailable=status.ollamaAvailable!==undefined?status.ollamaAvailable:state.ollamaAvailable;
     logData=log||[];
-    updateGlobalToggle();
     updateOllamaStatus();
     checkNotifications(state.workspaces);
     buildGrid();
