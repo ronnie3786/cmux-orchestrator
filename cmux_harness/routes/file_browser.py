@@ -44,12 +44,21 @@ def handle_open_worktree(handler, objective):
     _open_root_in_vscode(handler, root)
 
 
-def handle_open_workspace_root(handler, workspace):
-    root_path = str(workspace.get("rootPath") or "").strip()
+def handle_open_root_path(handler, root_path: str, required_error: str, missing_label: str):
+    root_path = str(root_path or "").strip()
     if not root_path:
-        handler._json_response({"ok": False, "error": "workspace rootPath required"}, 400)
+        handler._json_response({"ok": False, "error": required_error}, 400)
         return
-    root = _existing_root(handler, root_path, "workspace root not found")
+    root = _existing_root(handler, root_path, missing_label)
     if root is None:
         return
     _open_root_in_vscode(handler, root)
+
+
+def handle_open_workspace_root(handler, workspace):
+    handle_open_root_path(
+        handler,
+        workspace.get("rootPath"),
+        "workspace rootPath required",
+        "workspace root not found",
+    )

@@ -628,6 +628,26 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "workspace not found"}, 404)
                     return
                 file_browser_routes.handle_open_workspace_root(self, workspace)
+            elif path == "/api/workspace-open-root":
+                idx = data.get("index")
+                if idx is None:
+                    self._json_response({"ok": False, "error": "index required"}, 400)
+                    return
+                try:
+                    idx = int(idx)
+                except (TypeError, ValueError):
+                    self._json_response({"ok": False, "error": "invalid index"}, 400)
+                    return
+                cwd = engine._get_workspace_cwd(idx)
+                if not cwd:
+                    self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                    return
+                file_browser_routes.handle_open_root_path(
+                    self,
+                    cwd,
+                    "workspace cwd required",
+                    "workspace cwd not found",
+                )
             elif path == "/api/projects/pick-root":
                 project_routes.handle_post_pick_project_root(self)
             elif path == "/api/projects":

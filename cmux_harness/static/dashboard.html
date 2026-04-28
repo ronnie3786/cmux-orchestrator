@@ -193,10 +193,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 /* Git status panel — top half */
 .exp-git{flex:1;display:flex;flex-direction:column;border-bottom:1px solid var(--border);overflow:hidden;min-height:0}
 .exp-git-header{padding:12px 18px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.exp-git-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .exp-git-header .git-branch{font-weight:600;color:var(--accent);text-transform:none;letter-spacing:0;font-size:12px;margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exp-git-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .exp-git-refresh{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
 .exp-git-refresh:hover{color:var(--text);background:rgba(255,255,255,.05)}
 .exp-git-body{flex:1;overflow-y:auto;padding:4px 0}
+.git-files-cta-row{padding:10px 18px 8px;border-bottom:1px solid rgba(48,54,61,.55)}
+.git-files-cta{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;min-height:30px;padding:6px 10px;border:1px solid rgba(88,166,255,.45);border-radius:7px;background:rgba(88,166,255,.1);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer}
+.git-files-cta:hover{border-color:rgba(88,166,255,.7);background:rgba(88,166,255,.18);color:var(--text)}
+.git-files-cta:disabled{opacity:.6;cursor:default}
 .git-section{padding:8px 18px 4px}
 .git-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
 .git-section-title.staged{color:var(--green)}
@@ -566,8 +572,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     <div class="exp-sidebar">
       <div class="exp-git">
         <div class="exp-git-header">
-          <span>Git <span class="git-branch" id="expGitBranch"></span></span>
-          <button class="exp-git-refresh" onclick="fetchGitStatus()" title="Refresh">&#8635;</button>
+          <span class="exp-git-title">Git <span class="git-branch" id="expGitBranch"></span></span>
+          <div class="exp-git-actions">
+            <button class="exp-git-refresh" type="button" onclick="fetchGitStatus()" title="Refresh">&#8635;</button>
+          </div>
         </div>
         <div class="exp-git-body" id="expGitBody">
           <div class="git-empty">No git info available</div>
@@ -1729,6 +1737,32 @@ window.buildAndRun=function(){
   if(expandedWsIndex===null)return;
   postWorkspaceCommand(expandedWsIndex,{text:'/exp-project-run\n'});
 };
+function setExpandedFilesButton(label,disabled,title){
+  var btn=document.getElementById('expFilesButton');
+  if(!btn)return;
+  btn.innerHTML=label;
+  btn.disabled=!!disabled;
+  btn.dataset.busy=disabled?'true':'';
+  if(title)btn.setAttribute('title',title);
+}
+window.openExpandedFiles=function(){
+  if(expandedWsIndex===null)return;
+  setExpandedFilesButton('Opening...',true,'Opening current directory in VS Code');
+  api('POST','/api/workspace-open-root',{index:expandedWsIndex}).then(function(result){
+    if(result&&result.ok){
+      setExpandedFilesButton('Opened',true,'Opened current directory in VS Code');
+    } else {
+      var error=(result&&result.error)||'Could not open current directory in VS Code';
+      setExpandedFilesButton('Failed',true,error);
+    }
+    setTimeout(function(){
+      setExpandedFilesButton('&#128193; Files',false,'Open current directory in VS Code');
+    },1200);
+  });
+};
+function expandedFilesCtaHtml(){
+  return '<div class="git-files-cta-row"><button class="git-files-cta" id="expFilesButton" type="button" onclick="openExpandedFiles()" title="Open current directory in VS Code">&#128193; Files</button></div>';
+}
 var gitPollTimer=null;
 window.gitFileClick=function(file,el){
   if(!el)return;
@@ -1850,7 +1884,7 @@ window.fetchGitStatus=function(){
   if(body&&!body.dataset.loaded)body.innerHTML='<div class="git-empty">Loading git status...</div>';
   fetch('/api/git-status?index='+expandedWsIndex).then(function(r){return r.json()}).then(function(d){
     if(!d||!d.ok){
-      if(body)body.innerHTML='<div class="git-empty" style="color:var(--red)">Failed to load git status</div>';
+      if(body)body.innerHTML=expandedFilesCtaHtml()+'<div class="git-empty" style="color:var(--red)">Failed to load git status</div>';
       return;
     }
     var brEl=document.getElementById('expGitBranch');
@@ -1862,8 +1896,8 @@ window.fetchGitStatus=function(){
     var untracked=Array.isArray(d.untracked)?d.untracked:[];
     var commits=Array.isArray(d.commits)?d.commits:[];
     var empty=staged.length===0&&unstaged.length===0&&untracked.length===0&&commits.length===0;
-    if(empty){body.innerHTML='<div class="git-empty">'+(d.cwd?'Working tree clean':'No git repo detected')+'</div>';return;}
-    var h='';
+    if(empty){body.innerHTML=expandedFilesCtaHtml()+'<div class="git-empty">'+(d.cwd?'Working tree clean':'No git repo detected')+'</div>';return;}
+    var h=expandedFilesCtaHtml();
     function truncPath(p){
       var parts=p.split('/');
       if(parts.length<=2)return p;
@@ -1924,6 +1958,8 @@ function updateExpanded(){
   if(!ws)return;
   document.querySelector('.exp-header-actions').classList.remove('hidden');
   document.querySelector('.exp-input').classList.remove('hidden');
+  var filesCtaRow=document.querySelector('.git-files-cta-row');
+  if(filesCtaRow)filesCtaRow.style.display='';
   var expDisplayName=sessionDisplayName(ws);
   document.getElementById('expTitle').textContent=expDisplayName;
   var origNameEl=document.getElementById('expOrigName');
@@ -2032,6 +2068,8 @@ function updateExpandedReview(){
   if(mobileTabs)mobileTabs.style.display='none';
   document.querySelector('.exp-header-actions').classList.add('hidden');
   document.querySelector('.exp-input').classList.add('hidden');
+  var filesCtaRow=document.querySelector('.git-files-cta-row');
+  if(filesCtaRow)filesCtaRow.style.display='none';
   document.getElementById('expReviewTabs').classList.add('visible');
   document.getElementById('expTitle').textContent=expandedReview.workspaceName||'Review';
   var origNameEl=document.getElementById('expOrigName');

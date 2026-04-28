@@ -862,6 +862,30 @@ class TestServerResponses(unittest.TestCase):
             text=True,
         )
 
+    def test_workspace_open_root_route_opens_current_cwd_in_vscode(self):
+        workspace_path = Path(self.tmpdir.name) / "workspace-cwd"
+        workspace_path.mkdir(parents=True)
+        engine = Mock()
+        engine._get_workspace_cwd.return_value = str(workspace_path)
+
+        with patch("cmux_harness.routes.file_browser.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            handler = self._post_json(
+                "/api/workspace-open-root",
+                {"index": 7},
+                engine=engine,
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "rootPath": str(workspace_path.resolve()), "editor": "vscode"})
+        engine._get_workspace_cwd.assert_called_once_with(7)
+        mock_run.assert_called_once_with(
+            ["open", "-a", "Visual Studio Code", str(workspace_path.resolve())],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def test_open_in_native_resolves_git_rename_to_existing_path(self):
         repo_path, _first_hash, _second_hash = self._create_git_repo_with_history("repo-open-native-rename")
         self._git(repo_path, "mv", "src/app.py", "src/renamed.py")
