@@ -7,6 +7,7 @@ struct HarnessClient: Sendable {
     var screen: @Sendable (String, Int, Int) async throws -> ScreenResponse
     var setGlobalEnabled: @Sendable (String, Bool) async throws -> BasicResponse
     var setWorkspaceEnabled: @Sendable (String, Int, Bool) async throws -> BasicResponse
+    var setWorkspaceStarred: @Sendable (String, Int, Bool) async throws -> BasicResponse
     var renameWorkspace: @Sendable (String, Int, String) async throws -> BasicResponse
     var sendText: @Sendable (String, Int, String, String?) async throws -> BasicResponse
     var sendKey: @Sendable (String, Int, HarnessKey, String?) async throws -> BasicResponse
@@ -41,6 +42,9 @@ extension HarnessClient {
         },
         setWorkspaceEnabled: { baseURLString, index, enabled in
             try await HarnessAPI.setWorkspaceEnabled(baseURLString: baseURLString, index: index, enabled: enabled)
+        },
+        setWorkspaceStarred: { baseURLString, index, starred in
+            try await HarnessAPI.setWorkspaceStarred(baseURLString: baseURLString, index: index, starred: starred)
         },
         renameWorkspace: { baseURLString, index, name in
             try await HarnessAPI.renameWorkspace(baseURLString: baseURLString, index: index, name: name)
@@ -88,6 +92,7 @@ extension HarnessClient {
         screen: { _, _, _ in throw HarnessClientError.unimplemented("screen") },
         setGlobalEnabled: { _, _ in throw HarnessClientError.unimplemented("setGlobalEnabled") },
         setWorkspaceEnabled: { _, _, _ in throw HarnessClientError.unimplemented("setWorkspaceEnabled") },
+        setWorkspaceStarred: { _, _, _ in throw HarnessClientError.unimplemented("setWorkspaceStarred") },
         renameWorkspace: { _, _, _ in throw HarnessClientError.unimplemented("renameWorkspace") },
         sendText: { _, _, _, _ in throw HarnessClientError.unimplemented("sendText") },
         sendKey: { _, _, _, _ in throw HarnessClientError.unimplemented("sendKey") },

@@ -61,6 +61,19 @@ enum HarnessAPI {
         )
     }
 
+    static func setWorkspaceStarred(
+        baseURLString: String,
+        index: Int,
+        starred: Bool
+    ) async throws -> BasicResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/workspace-star",
+            method: "POST",
+            body: WorkspaceStarRequest(index: index, starred: starred)
+        )
+    }
+
     static func renameWorkspace(
         baseURLString: String,
         index: Int,
@@ -312,6 +325,11 @@ private struct ToggleRequest: Encodable {
 private struct WorkspaceToggleRequest: Encodable {
     var index: Int
     var enabled: Bool
+}
+
+private struct WorkspaceStarRequest: Encodable {
+    var index: Int
+    var starred: Bool
 }
 
 private struct RenameRequest: Encodable {

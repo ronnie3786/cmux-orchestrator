@@ -28,6 +28,9 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
     var name: String
     var uuid: String
     var enabled: Bool
+    var starred = false
+    var autoEnabledAt: Double?
+    var autoExpiresAt: Double?
     var customName: String?
     var lastCheck: String?
     var screenTail: String?
@@ -45,17 +48,45 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
 
     var id: String {
         let stableID = uuid.isEmpty ? "index-\(index)" : uuid
-        return [stableID, surfaceId ?? "", String(index)].joined(separator: "|")
+        // Single-surface refs can appear or change as cmux metadata warms.
+        // Multi-surface rows need the surface ref to remain distinct.
+        if surfaceLabel != nil, let surfaceId, !surfaceId.isEmpty {
+            return [stableID, surfaceId].joined(separator: "|")
+        }
+        return stableID
     }
 
     var displayName: String {
-        let value = surfaceLabel ?? customName ?? name
-        return value.isEmpty ? "workspace-\(index)" : value
+        let hasCustomName = customName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let rawValue = surfaceLabel ?? customName ?? name
+        let value = rawValue.isEmpty ? "workspace-\(index)" : rawValue
+        return hasCustomName ? value : Self.shortenedFallbackTitle(value)
     }
 
     var terminalPreview: String {
         let text = screenTail ?? screenFull ?? ""
         return text.isEmpty ? "(no terminal data yet)" : text
+    }
+
+    private static func shortenedFallbackTitle(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        let separator = " : "
+        if let range = trimmed.range(of: separator) {
+            let leading = String(trimmed[..<range.lowerBound])
+            let trailing = String(trimmed[range.upperBound...])
+            return pathBasename(leading) + separator + trailing
+        }
+        return pathBasename(trimmed)
+    }
+
+    private static func pathBasename(_ value: String) -> String {
+        let normalized = value.replacingOccurrences(of: "\\", with: "/")
+        let components = normalized
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        return components.last ?? value
     }
 }
 
@@ -164,31 +195,113 @@ struct DiffSheet: Equatable, Identifiable, Sendable {
 }
 
 enum WorkspaceSessionState: String, Equatable, Sendable {
-    case active
+    case session
     case waiting
-    case idle
 
     var label: String {
         switch self {
-        case .active:
-            return "Active"
+        case .session:
+            return "Session"
         case .waiting:
             return "Needs You"
-        case .idle:
-            return "Idle"
+        }
+    }
+}
+
+enum SessionFilter: String, CaseIterable, Equatable, Identifiable, Sendable {
+    case all
+    case needsYou
+    case auto
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all:
+            return "All"
+        case .needsYou:
+            return "Needs You"
+        case .auto:
+            return "Auto"
         }
     }
 
-    var systemImage: String {
+    func includes(_ workspace: Workspace, entries: [LogEntry]) -> Bool {
         switch self {
-        case .active:
-            return "play.circle.fill"
-        case .waiting:
-            return "exclamationmark.circle.fill"
-        case .idle:
-            return "pause.circle.fill"
+        case .all:
+            return true
+        case .needsYou:
+            return workspaceSessionState(for: workspace, entries: entries) == .waiting
+        case .auto:
+            return workspace.enabled
         }
     }
+}
+
+extension Workspace {
+    func matchesSearch(_ searchText: String) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+
+        return [
+            displayName,
+            name,
+            customName,
+            cwd,
+            branch,
+            surfaceLabel,
+            surfaceTitle,
+        ]
+        .compactMap { $0 }
+        .contains { $0.localizedCaseInsensitiveContains(query) }
+    }
+}
+
+func workspaceSessionState(for workspace: Workspace, entries: [LogEntry]) -> WorkspaceSessionState {
+    if let action = latestRelevantLog(for: workspace, entries: entries)?.action,
+       action.localizedCaseInsensitiveContains("human") {
+        return .waiting
+    }
+    return .session
+}
+
+func latestRelevantLog(for workspace: Workspace, entries: [LogEntry]) -> LogEntry? {
+    entries.enumerated()
+        .filter { _, entry in entry.workspace == workspace.index }
+        .sorted { lhs, rhs in
+            let leftDate = harnessLogDate(from: lhs.element.timestamp)
+            let rightDate = harnessLogDate(from: rhs.element.timestamp)
+            switch (leftDate, rightDate) {
+            case let (left?, right?) where left != right:
+                return left > right
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            default:
+                return lhs.offset < rhs.offset
+            }
+        }
+        .first?
+        .element
+}
+
+private func harnessLogDate(from value: String?) -> Date? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    if let seconds = TimeInterval(trimmed) {
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    let fractionalFormatter = ISO8601DateFormatter()
+    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractionalFormatter.date(from: trimmed) {
+        return date
+    }
+
+    return ISO8601DateFormatter().date(from: trimmed)
 }
 
 enum HarnessKey: String, CaseIterable, Equatable, Identifiable, Sendable {

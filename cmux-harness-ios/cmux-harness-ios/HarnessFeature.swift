@@ -18,9 +18,12 @@ struct HarnessFeature {
         var isRefreshing = false
         var lastUpdated: Date?
         var errorMessage: String?
+        var sessionSearchText = ""
+        var sessionFilter: SessionFilter = .all
 
         var selectedWorkspaceID: String?
         var detailTab: DetailTab = .terminal
+        var isDetailInfoExpanded = false
         var fullScreenText: String?
         var draftMessages: [String: String] = [:]
         var detailDraft = ""
@@ -46,16 +49,26 @@ struct HarnessFeature {
 
         var sortedWorkspaces: [Workspace] {
             workspaces.sorted {
-                switch (lastActivityDate(for: $0), lastActivityDate(for: $1)) {
-                case let (left?, right?) where left != right:
-                    return left > right
-                case (.some, nil):
-                    return true
-                case (nil, .some):
-                    return false
-                default:
-                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                if $0.starred != $1.starred {
+                    return $0.starred && !$1.starred
                 }
+                let displayOrder = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                if displayOrder != .orderedSame {
+                    return displayOrder == .orderedAscending
+                }
+                let uuidOrder = $0.uuid.localizedCaseInsensitiveCompare($1.uuid)
+                if uuidOrder != .orderedSame {
+                    return uuidOrder == .orderedAscending
+                }
+                return $0.index < $1.index
+            }
+        }
+
+        var visibleWorkspaces: [Workspace] {
+            let searchText = sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return sortedWorkspaces.filter { workspace in
+                sessionFilter.includes(workspace, entries: logEntries)
+                && (searchText.isEmpty || workspace.matchesSearch(searchText))
             }
         }
 
@@ -64,16 +77,12 @@ struct HarnessFeature {
             return workspaces.first { $0.id == selectedWorkspaceID }
         }
 
-        var activeCount: Int {
-            workspaces.filter { sessionState(for: $0) == .active }.count
-        }
-
         var waitingCount: Int {
             workspaces.filter { sessionState(for: $0) == .waiting }.count
         }
 
-        var idleCount: Int {
-            workspaces.filter { sessionState(for: $0) == .idle }.count
+        var sessionCount: Int {
+            workspaces.count
         }
 
         var isConnected: Bool {
@@ -85,32 +94,11 @@ struct HarnessFeature {
         }
 
         func sessionState(for workspace: Workspace) -> WorkspaceSessionState {
-            if let action = latestLog(for: workspace)?.action,
-               action.localizedCaseInsensitiveContains("human") {
-                return .waiting
-            }
-            return workspace.hasClaude ? .active : .idle
+            workspaceSessionState(for: workspace, entries: logEntries)
         }
 
         func latestLog(for workspace: Workspace) -> LogEntry? {
-            logEntries.first { entry in
-                entry.workspace == workspace.index
-            }
-        }
-
-        func activity(for workspace: Workspace) -> [LogEntry] {
-            logEntries.filter { $0.workspace == workspace.index }
-        }
-
-        func lastActivityDate(for workspace: Workspace) -> Date? {
-            let logDates = activity(for: workspace).compactMap { harnessActivityDate(from: $0.timestamp) }
-            let workspaceDates = [
-                harnessActivityDate(from: workspace.lastCheck),
-                harnessActivityDate(from: workspace.surfaceCreatedAt),
-                workspace.sessionStart.map { Date(timeIntervalSince1970: $0) },
-            ].compactMap(\.self)
-
-            return (logDates + workspaceDates).max()
+            latestRelevantLog(for: workspace, entries: logEntries)
         }
     }
 
@@ -135,6 +123,7 @@ struct HarnessFeature {
 
         case selectWorkspace(String?)
         case detailTabChanged(DetailTab)
+        case toggleDetailInfo
         case screenTick
         case screenSucceeded(workspaceID: String, response: ScreenResponse)
         case screenFailed(String)
@@ -147,6 +136,7 @@ struct HarnessFeature {
 
         case toggleGlobal(Bool)
         case toggleWorkspace(workspaceID: String, enabled: Bool)
+        case toggleWorkspaceStarred(workspaceID: String, starred: Bool)
         case renameRequested(workspaceID: String)
         case commitRename
         case cancelRename
@@ -214,6 +204,7 @@ struct HarnessFeature {
                 if let selected = state.selectedWorkspaceID,
                    !state.workspaces.contains(where: { $0.id == selected }) {
                     state.selectedWorkspaceID = nil
+                    state.isDetailInfoExpanded = false
                     state.fullScreenText = nil
                     state.gitStatus = nil
                     state.detailDraft = ""
@@ -327,6 +318,7 @@ struct HarnessFeature {
             case let .selectWorkspace(id):
                 state.selectedWorkspaceID = id
                 state.detailTab = .terminal
+                state.isDetailInfoExpanded = false
                 state.fullScreenText = nil
                 state.gitStatus = nil
                 state.gitError = nil
@@ -350,6 +342,10 @@ struct HarnessFeature {
                     return .merge(.send(.gitTick), gitPollingEffect())
                 }
                 return .cancel(id: gitPollingCancelID)
+
+            case .toggleDetailInfo:
+                state.isDetailInfoExpanded.toggle()
+                return .none
 
             case .screenTick:
                 guard let workspace = state.selectedWorkspace else { return .none }
@@ -429,6 +425,21 @@ struct HarnessFeature {
                 return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, enabled] send in
                     do {
                         _ = try await client.setWorkspaceEnabled(baseURLString, workspace.index, enabled)
+                        await send(.requestFinished)
+                    } catch {
+                        await send(.requestFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+
+            case let .toggleWorkspaceStarred(workspaceID, starred):
+                guard let workspaceIndex = state.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+                    return .none
+                }
+                state.workspaces[workspaceIndex].starred = starred
+                let workspace = state.workspaces[workspaceIndex]
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, starred] send in
+                    do {
+                        _ = try await client.setWorkspaceStarred(baseURLString, workspace.index, starred)
                         await send(.requestFinished)
                     } catch {
                         await send(.requestFailed(HarnessAPI.message(for: error)))
@@ -591,24 +602,6 @@ extension HarnessFeature {
 private let pollingCancelID = "cmux-harness-ios.polling"
 private let screenPollingCancelID = "cmux-harness-ios.screen-polling"
 private let gitPollingCancelID = "cmux-harness-ios.git-polling"
-
-private func harnessActivityDate(from value: String?) -> Date? {
-    guard let value else { return nil }
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-
-    if let seconds = TimeInterval(trimmed) {
-        return Date(timeIntervalSince1970: seconds)
-    }
-
-    let fractionalFormatter = ISO8601DateFormatter()
-    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = fractionalFormatter.date(from: trimmed) {
-        return date
-    }
-
-    return ISO8601DateFormatter().date(from: trimmed)
-}
 
 private func trimDrafts(_ state: inout HarnessFeature.State) {
     let activeIDs = Set(state.workspaces.map(\.id))

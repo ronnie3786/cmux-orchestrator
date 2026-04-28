@@ -54,7 +54,76 @@ struct HarnessFeatureTests {
     }
 
     @Test
-    func sortedWorkspacesUseLatestActivityFirst() {
+    func refreshKeepsDetailSelectionWhenSingleSurfaceIDChanges() async {
+        var selectedWorkspace = Self.workspace()
+        selectedWorkspace.surfaceId = "surface-before-refresh"
+        selectedWorkspace.surfaceLabel = nil
+
+        var refreshedWorkspace = selectedWorkspace
+        refreshedWorkspace.surfaceId = "surface-after-refresh"
+        refreshedWorkspace.screenTail = "refreshed tail"
+
+        let selectedWorkspaceID = selectedWorkspace.id
+        let fullScreenText = "current detail screen"
+        let gitStatus = GitStatus(
+            ok: true,
+            branch: "main",
+            cwd: "/Users/ronnie/Code/cmux",
+            staged: [],
+            unstaged: [],
+            untracked: [],
+            commits: [],
+            error: nil
+        )
+
+        var state = Self.initialState()
+        state.workspaces = [selectedWorkspace]
+        state.selectedWorkspaceID = selectedWorkspaceID
+        state.fullScreenText = fullScreenText
+        state.gitStatus = gitStatus
+
+        let status = Self.status(workspaces: [refreshedWorkspace])
+        let updatedAt = Date(timeIntervalSince1970: 1_777_100_000)
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.date.now = updatedAt
+        }
+
+        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: []))) {
+            $0.status = status
+            $0.workspaces = [refreshedWorkspace]
+            $0.logEntries = []
+            $0.lastUpdated = updatedAt
+            $0.selectedWorkspaceID = selectedWorkspaceID
+            $0.fullScreenText = fullScreenText
+            $0.gitStatus = gitStatus
+        }
+    }
+
+    @Test
+    func workspaceIDUsesSurfaceForMultiSurfaceLabelsOnly() {
+        var singleSurface = Self.workspace()
+        singleSurface.surfaceId = "surface-before-refresh"
+        singleSurface.surfaceLabel = nil
+
+        var refreshedSingleSurface = singleSurface
+        refreshedSingleSurface.surfaceId = "surface-after-refresh"
+
+        var paneOne = Self.workspace()
+        paneOne.surfaceLabel = "Project : server"
+        paneOne.surfaceId = "server-surface"
+
+        var paneTwo = Self.workspace()
+        paneTwo.surfaceLabel = "Project : tests"
+        paneTwo.surfaceId = "tests-surface"
+
+        #expect(singleSurface.id == refreshedSingleSurface.id)
+        #expect(paneOne.id != paneTwo.id)
+    }
+
+    @Test
+    func sortedWorkspacesUseStableDisplayIdentity() {
         var alpha = Self.workspace()
         alpha.index = 1
         alpha.uuid = "workspace-1"
@@ -95,7 +164,95 @@ struct HarnessFeatureTests {
             )
         ]
 
-        #expect(state.sortedWorkspaces.map(\.displayName) == ["Gamma", "Beta", "Alpha"])
+        #expect(state.sortedWorkspaces.map(\.displayName) == ["Alpha", "Beta", "Gamma"])
+    }
+
+    @Test
+    func sortedWorkspacesPutStarredSessionsFirstAlphabetically() {
+        var alpha = Self.workspace()
+        alpha.index = 1
+        alpha.uuid = "workspace-1"
+        alpha.name = "Alpha"
+        alpha.surfaceLabel = nil
+        alpha.starred = true
+
+        var beta = Self.workspace()
+        beta.index = 2
+        beta.uuid = "workspace-2"
+        beta.name = "Beta"
+        beta.surfaceLabel = nil
+        beta.starred = true
+
+        var gamma = Self.workspace()
+        gamma.index = 3
+        gamma.uuid = "workspace-3"
+        gamma.name = "Gamma"
+        gamma.surfaceLabel = nil
+        gamma.starred = false
+
+        var state = Self.initialState()
+        state.workspaces = [gamma, beta, alpha]
+
+        #expect(state.sortedWorkspaces.map(\.displayName) == ["Alpha", "Beta", "Gamma"])
+    }
+
+    @Test
+    func fallbackDisplayNameUsesLastPathComponentUnlessCustomNamed() {
+        var workspace = Self.workspace()
+        workspace.surfaceLabel = nil
+        workspace.customName = nil
+        workspace.name = "/root/file/path/app/project/cmux"
+
+        #expect(workspace.displayName == "cmux")
+
+        workspace.customName = "root/file/path/app/project/cmux"
+
+        #expect(workspace.displayName == "root/file/path/app/project/cmux")
+    }
+
+    @Test
+    func sessionStateOnlyUsesHumanAttentionSignal() {
+        var workspace = Self.workspace()
+        workspace.hasClaude = false
+
+        #expect(workspaceSessionState(for: workspace, entries: []) == .session)
+
+        let olderHumanLog = LogEntry(
+            timestamp: "2026-04-26T12:00:00Z",
+            workspace: workspace.index,
+            workspaceName: workspace.name,
+            promptType: "default",
+            action: "Waiting for human input",
+            reason: nil,
+            key: nil,
+            surfaceId: workspace.surfaceId,
+            sessionID: nil
+        )
+        let newerActivityLog = LogEntry(
+            timestamp: "2026-04-26T13:00:00Z",
+            workspace: workspace.index,
+            workspaceName: workspace.name,
+            promptType: "default",
+            action: "Activity",
+            reason: nil,
+            key: nil,
+            surfaceId: workspace.surfaceId,
+            sessionID: nil
+        )
+        let currentHumanLog = LogEntry(
+            timestamp: "2026-04-26T14:00:00Z",
+            workspace: workspace.index,
+            workspaceName: workspace.name,
+            promptType: "default",
+            action: "Waiting for human input",
+            reason: nil,
+            key: nil,
+            surfaceId: workspace.surfaceId,
+            sessionID: nil
+        )
+
+        #expect(workspaceSessionState(for: workspace, entries: [olderHumanLog, newerActivityLog]) == .session)
+        #expect(workspaceSessionState(for: workspace, entries: [olderHumanLog, currentHumanLog]) == .waiting)
     }
 
     @Test
@@ -142,6 +299,32 @@ struct HarnessFeatureTests {
 
         await store.send(.toggleWorkspace(workspaceID: workspace.id, enabled: true)) {
             $0.workspaces[0].enabled = true
+        }
+        await store.receive(\.requestFinished)
+    }
+
+    @Test
+    func toggleWorkspaceStarredOptimisticallyUpdatesAndCallsClient() async {
+        var workspace = Self.workspace()
+        workspace.starred = false
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        var client = HarnessClient.unimplemented
+        client.setWorkspaceStarred = { baseURLString, index, starred in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            #expect(starred)
+            return BasicResponse(ok: true, enabled: nil, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.toggleWorkspaceStarred(workspaceID: workspace.id, starred: true)) {
+            $0.workspaces[0].starred = true
         }
         await store.receive(\.requestFinished)
     }
@@ -279,6 +462,8 @@ struct HarnessFeatureTests {
             name: "ios-app",
             uuid: "workspace-2",
             enabled: enabled,
+            autoEnabledAt: nil,
+            autoExpiresAt: nil,
             customName: nil,
             lastCheck: "2026-04-26T12:00:00Z",
             screenTail: "tail",

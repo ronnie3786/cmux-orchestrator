@@ -7,38 +7,19 @@ struct HarnessRootView: View {
     var body: some View {
         NavigationSplitView {
             WorkspaceListView(store: store)
-                .navigationTitle("cmux")
-                .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button {
-                            store.send(.refresh)
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .disabled(store.isRefreshing)
-
-                        Button {
-                            store.send(.newSessionButtonTapped)
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-
-                        Button {
-                            store.send(.settingsButtonTapped)
-                        } label: {
-                            Image(systemName: "gearshape")
-                        }
-                    }
-                }
         } detail: {
             if let workspace = store.selectedWorkspace {
                 WorkspaceDetailView(store: store, workspace: workspace)
             } else {
-                ContentUnavailableView(
-                    "No Session Selected",
-                    systemImage: "terminal",
-                    description: Text("Choose a cmux session.")
-                )
+                ZStack {
+                    SessionDetailBackground()
+                    ContentUnavailableView(
+                        "No Session Selected",
+                        systemImage: "terminal",
+                        description: Text("Choose a cmux session.")
+                    )
+                    .foregroundStyle(.white)
+                }
             }
         }
         .sheet(isPresented: $store.isShowingSettings) {
@@ -95,25 +76,72 @@ private struct WorkspaceListView: View {
     var body: some View {
         List(selection: selectionBinding) {
             Section {
-                DashboardSummaryView(store: store)
-                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                HomeHeaderView(store: store)
+                    .listRowInsets(EdgeInsets(top: 26, leading: 18, bottom: 14, trailing: 18))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
 
-            Section("Sessions") {
+            Section {
+                DashboardSummaryView(store: store)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 18, bottom: 14, trailing: 18))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
+            Section {
+                SessionSearchFilterBar(store: store)
+                    .listRowInsets(EdgeInsets(top: 14, leading: 18, bottom: 18, trailing: 18))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
+            Section {
+                HStack {
+                    Text("Sessions")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text("\(store.visibleWorkspaces.count) \(store.visibleWorkspaces.count == 1 ? "session" : "sessions")")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+                .listRowInsets(EdgeInsets(top: 0, leading: 18, bottom: 10, trailing: 18))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            }
+
+            Section {
                 if store.isRefreshing && store.workspaces.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .center)
+                        .tint(.white)
+                        .listRowInsets(EdgeInsets(top: 24, leading: 18, bottom: 24, trailing: 18))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 } else if store.workspaces.isEmpty {
-                    ContentUnavailableView(
-                        "No Sessions",
-                        systemImage: "terminal",
-                        description: Text("cmux sessions will appear here.")
+                    HomeEmptyState(
+                        title: "No Sessions",
+                        message: "cmux sessions will appear here.",
+                        systemImage: "terminal"
                     )
+                    .listRowInsets(EdgeInsets(top: 8, leading: 18, bottom: 24, trailing: 18))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                } else if store.visibleWorkspaces.isEmpty {
+                    HomeEmptyState(
+                        title: "No Matches",
+                        message: "Adjust search or filter.",
+                        systemImage: "line.3.horizontal.decrease.circle"
+                    )
+                    .listRowInsets(EdgeInsets(top: 8, leading: 18, bottom: 24, trailing: 18))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 } else {
-                    ForEach(store.sortedWorkspaces) { workspace in
+                    ForEach(store.visibleWorkspaces) { workspace in
                         WorkspaceCardView(store: store, workspace: workspace)
                             .tag(workspace.id)
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 5, leading: 18, bottom: 7, trailing: 18))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                     }
@@ -125,12 +153,24 @@ private struct WorkspaceListView: View {
                     ErrorBanner(message: error) {
                         store.send(.clearError)
                     }
+                    .padding(14)
+                    .background(HomeGlassCard(cornerRadius: 16))
+                    .foregroundStyle(.white)
+                    .listRowInsets(EdgeInsets(top: 10, leading: 18, bottom: 24, trailing: 18))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 0)
         .scrollContentBackground(.hidden)
-        .background(Color(.systemGroupedBackground))
+        .background(HomeBackground())
+        .toolbar(.hidden, for: .navigationBar)
+        .preferredColorScheme(.dark)
+        .refreshable {
+            store.send(.refresh)
+        }
     }
 
     private var selectionBinding: Binding<String?> {
@@ -141,44 +181,135 @@ private struct WorkspaceListView: View {
     }
 }
 
+private struct HomeBackground: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                Color.black,
+                Color(red: 0.025, green: 0.032, blue: 0.044),
+                Color.black,
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .ignoresSafeArea()
+    }
+}
+
+private struct HomeHeaderView: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 16) {
+                Text("cmux")
+                    .font(.system(size: 44, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+                Spacer(minLength: 12)
+
+                HStack(spacing: 10) {
+                    HomeActionButton(systemImage: "arrow.clockwise") {
+                        store.send(.refresh)
+                    }
+                    .disabled(store.isRefreshing)
+
+                    HomeActionButton(systemImage: "plus", isProminent: true) {
+                        store.send(.newSessionButtonTapped)
+                    }
+
+                    HomeActionButton(systemImage: "gearshape") {
+                        store.send(.settingsButtonTapped)
+                    }
+                }
+            }
+
+            Text("Manage your terminal sessions")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.72))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+    }
+}
+
+private struct HomeActionButton: View {
+    let systemImage: String
+    var isProminent = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.title2.weight(.medium))
+                .frame(width: 48, height: 48)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .background {
+            Circle()
+                .fill(isProminent ? Color.accentColor : Color.white.opacity(0.1))
+                .overlay {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(isProminent ? 0.0 : 0.16), lineWidth: 1)
+                }
+        }
+    }
+}
+
 private struct DashboardSummaryView: View {
     @Bindable var store: StoreOf<HarnessFeature>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
                 ConnectionDot(state: connectionState)
+                    .padding(.top, 5)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(connectionTitle)
-                        .font(.headline)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
                     Text(store.committedServerURLString)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.7))
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
                 Spacer()
-                Toggle(
-                    "Auto",
-                    isOn: Binding(
-                        get: { store.status?.enabled ?? false },
-                        set: { store.send(.toggleGlobal($0)) }
-                    )
-                )
-                .labelsHidden()
+
+                AutoReconnectChip(
+                    isEnabled: store.status?.enabled ?? false
+                ) {
+                    store.send(.toggleGlobal(!(store.status?.enabled ?? false)))
+                }
             }
 
             HStack(spacing: 10) {
-                StatPill(title: "Active", value: store.activeCount, tint: .green)
-                StatPill(title: "Needs You", value: store.waitingCount, tint: .orange)
-                StatPill(title: "Idle", value: store.idleCount, tint: .secondary)
+                SummaryMetricTile(
+                    title: "Sessions",
+                    value: store.sessionCount,
+                    systemImage: "terminal",
+                    tint: .blue
+                )
+                SummaryMetricTile(
+                    title: "Needs You",
+                    value: store.waitingCount,
+                    systemImage: "person.2.fill",
+                    tint: .orange
+                )
             }
 
             if let lastUpdated = store.lastUpdated {
-                Text("Updated \(lastUpdated.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Label("Updated \(lastUpdated.formatted(date: .omitted, time: .shortened))", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.headline)
+                    .foregroundStyle(.white.opacity(0.62))
+                    .labelStyle(.titleAndIcon)
             }
         }
+        .padding(18)
+        .background(HomeGlassCard(cornerRadius: 22))
     }
 
     private var connectionState: ConnectionDot.State {
@@ -202,141 +333,178 @@ private struct DashboardSummaryView: View {
     }
 }
 
+private struct AutoReconnectChip: View {
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(isEnabled ? "Auto reconnect" : "Reconnect off", systemImage: isEnabled ? "checkmark.circle" : "pause.circle")
+                .font(.caption.weight(.bold))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .foregroundStyle(isEnabled ? Color.white.opacity(0.88) : Color.white.opacity(0.62))
+                .background(Color.white.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .tint(isEnabled ? .green : .orange)
+    }
+}
+
+private struct SummaryMetricTile: View {
+    let title: String
+    let value: Int
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 46, height: 46)
+                .background(tint.opacity(0.18), in: Circle())
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(value)")
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .monospacedDigit()
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.76))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+        .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct SessionSearchFilterBar: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.headline)
+                    .foregroundStyle(.white.opacity(0.74))
+
+                TextField(text: $store.sessionSearchText) {
+                    Text("Search sessions...")
+                        .foregroundStyle(.white.opacity(0.42))
+                }
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .background(HomeGlassCard(cornerRadius: 20))
+
+            Menu {
+                Picker("Filter", selection: $store.sessionFilter) {
+                    ForEach(SessionFilter.allCases) { filter in
+                        Text(filter.label).tag(filter)
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "slider.horizontal.3")
+                    Text(store.sessionFilter.label)
+                    Image(systemName: "chevron.down")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.56))
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .frame(height: 52)
+                .background(HomeGlassCard(cornerRadius: 20))
+            }
+        }
+    }
+}
+
+private struct HomeEmptyState: View {
+    let title: String
+    let message: String
+    let systemImage: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.largeTitle)
+                .foregroundStyle(.white.opacity(0.45))
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.white)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.62))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(28)
+        .background(HomeGlassCard(cornerRadius: 18))
+    }
+}
+
 private struct WorkspaceCardView: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                StatusGlyph(state: sessionState)
-                    .padding(.top, 2)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                SessionStarIndicator(isStarred: workspace.starred)
+                    .padding(.top, 9)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Button {
                         store.send(.selectWorkspace(workspace.id))
                     } label: {
                         SessionTitleView(workspace: workspace)
                     }
                     .buttonStyle(.plain)
-
-                    MetaLine(workspace: workspace, showsPath: false)
                 }
 
                 Spacer(minLength: 8)
 
-                Menu {
-                    Button {
-                        store.send(.selectWorkspace(workspace.id))
-                    } label: {
-                        Label("Open", systemImage: "rectangle.expand.vertical")
-                    }
-                    Button {
-                        store.send(.renameRequested(workspaceID: workspace.id))
-                    } label: {
-                        Label("Rename", systemImage: "pencil")
-                    }
-                    Toggle(
-                        "Auto Approve",
-                        isOn: Binding(
-                            get: { workspace.enabled },
-                            set: { store.send(.toggleWorkspace(workspaceID: workspace.id, enabled: $0)) }
-                        )
-                    )
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .imageScale(.large)
+                SessionContextMenu(store: store, workspace: workspace)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                if let branch = workspace.branch?.nonEmptyTrimmed {
+                    SessionMetaChip(systemImage: "point.3.connected.trianglepath.dotted", value: branch.abbreviatedPath(componentCount: 2))
+                }
+                if let cwd = workspace.cwd?.nonEmptyTrimmed {
+                    SessionMetaChip(systemImage: "folder", value: cwd.abbreviatedPath(componentCount: 2))
                 }
             }
 
-            if isExpanded {
-                Divider()
-
-                Text(workspace.terminalPreview)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(6)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
-
-                VStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        TextField("Send message", text: draftBinding)
-                            .textFieldStyle(.roundedBorder)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .onSubmit {
-                                store.send(.sendDraft(workspaceID: workspace.id))
-                            }
-
-                        Button {
-                            store.send(.sendDraft(workspaceID: workspace.id))
-                        } label: {
-                            Image(systemName: "paperplane.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-
-                    HStack(spacing: 8) {
-                        ForEach(HarnessKey.allCases) { key in
-                            Button {
-                                store.send(.sendKey(workspaceID: workspace.id, key))
-                            } label: {
-                                Label(key.label, systemImage: key.systemImage)
-                                    .labelStyle(.iconOnly)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .accessibilityLabel(key.label)
-                        }
-
-                        Spacer()
-
-                        Toggle(
-                            "Auto",
-                            isOn: Binding(
-                                get: { workspace.enabled },
-                                set: { store.send(.toggleWorkspace(workspaceID: workspace.id, enabled: $0)) }
-                            )
-                        )
-                        .font(.caption)
-                    }
-                }
-                .padding(10)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
-            }
-
-            if !isExpanded {
-                Button {
-                    store.send(.selectWorkspace(workspace.id))
-                } label: {
-                    Label("Open terminal", systemImage: "terminal")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+            HStack(spacing: 12) {
+                SessionBadge(state: sessionState)
+                AutoExpirationText(workspace: workspace)
+                Spacer()
             }
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(HomeGlassCard(cornerRadius: 16))
         .overlay {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(cardBorderColor, lineWidth: isExpanded ? 1.5 : 1)
         }
-        .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 3)
-        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture {
             store.send(.selectWorkspace(workspace.id))
         }
-    }
-
-    private var draftBinding: Binding<String> {
-        Binding(
-            get: { store.draftMessages[workspace.id, default: ""] },
-            set: { store.send(.draftChanged(workspaceID: workspace.id, text: $0)) }
-        )
     }
 
     private var sessionState: WorkspaceSessionState {
@@ -348,84 +516,159 @@ private struct WorkspaceCardView: View {
     }
 
     private var cardBorderColor: Color {
-        isExpanded ? .accentColor.opacity(0.6) : Color(.separator).opacity(0.55)
+        isExpanded ? .accentColor.opacity(0.8) : Color.white.opacity(0.14)
+    }
+}
+
+private struct SessionStarIndicator: View {
+    let isStarred: Bool
+
+    var body: some View {
+        if isStarred {
+            Image(systemName: "star.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.yellow)
+                .frame(width: 18, height: 18)
+                .accessibilityLabel("Starred")
+        }
+    }
+}
+
+private struct SessionContextMenu: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+    let workspace: Workspace
+
+    var body: some View {
+        Menu {
+            Button {
+                store.send(.toggleWorkspace(workspaceID: workspace.id, enabled: !workspace.enabled))
+            } label: {
+                Label("Auto", systemImage: workspace.enabled ? "checkmark.circle.fill" : "circle")
+            }
+
+            Button {
+                store.send(.toggleWorkspaceStarred(workspaceID: workspace.id, starred: !workspace.starred))
+            } label: {
+                Label("Star", systemImage: workspace.starred ? "star.fill" : "star")
+            }
+
+            Divider()
+
+            Button {
+                store.send(.renameRequested(workspaceID: workspace.id))
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white.opacity(0.82))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SessionMetaChip: View {
+    let systemImage: String
+    let value: String
+
+    var body: some View {
+        Label(value, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white.opacity(0.88))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.white.opacity(0.07), in: Capsule())
+    }
+}
+
+private struct HomeGlassCard: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .environment(\.colorScheme, .dark)
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.28), radius: 18, x: 0, y: 8)
     }
 }
 
 private struct WorkspaceDetailView: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
+    @FocusState private var isDetailInputFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            detailHeader
+        ZStack {
+            SessionDetailBackground()
 
-            Picker("View", selection: detailTabBinding) {
-                ForEach(DetailTab.allCases) { tab in
-                    Text(tab.label).tag(tab)
+            VStack(spacing: 0) {
+                if !isDetailInputFocused {
+                    SessionDetailTabBar(selection: detailTabBinding)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
-            }
-            .pickerStyle(.segmented)
-            .padding([.horizontal, .bottom])
-
-            Group {
-                switch store.detailTab {
-                case .terminal:
-                    TerminalScrollView(workspaceID: workspace.id, text: terminalText)
-                case .git:
-                    GitStatusView(store: store)
-                case .activity:
-                    ActivityListView(entries: activityEntries)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .safeAreaInset(edge: .bottom) {
-            if store.detailTab == .terminal {
-                DetailInputBar(store: store, workspace: workspace)
-                    .background(.bar)
+                detailContent
             }
         }
-        .navigationTitle(workspace.displayName)
+        .animation(.easeInOut(duration: 0.18), value: isDetailInputFocused)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.black.opacity(0.92), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .preferredColorScheme(.dark)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Toggle(
-                    "Auto",
-                    isOn: Binding(
-                        get: { workspace.enabled },
-                        set: { store.send(.toggleWorkspace(workspaceID: workspace.id, enabled: $0)) }
-                    )
-                )
-                .labelsHidden()
-
-                Button {
-                    store.send(.renameRequested(workspaceID: workspace.id))
-                } label: {
-                    Image(systemName: "pencil")
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 6) {
+                    if workspace.starred {
+                        Image(systemName: "star.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.yellow)
+                    }
+                    Text(workspace.displayName)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                SessionContextMenu(store: store, workspace: workspace)
             }
         }
     }
 
-    private var detailHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                StatusGlyph(state: sessionState)
-                Text(sessionState.label)
-                    .font(.subheadline.weight(.semibold))
-                if let cost = workspace.sessionCost, !cost.isEmpty {
-                    Text(cost)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(costColor(cost))
-                }
-                Spacer()
+    @ViewBuilder
+    private var detailContent: some View {
+        switch store.detailTab {
+        case .terminal:
+            DetailTerminalLayout(
+                store: store,
+                workspace: workspace,
+                terminalText: terminalText,
+                sessionState: sessionState,
+                showsMetadata: !isDetailInputFocused,
+                isDetailInfoExpanded: store.isDetailInfoExpanded,
+                isInputFocused: $isDetailInputFocused
+            )
+        case .git:
+            DetailFullHeightLayout {
+                GitStatusView(store: store)
             }
-
-            MetaLine(workspace: workspace)
+        case .activity:
+            DetailFullHeightLayout {
+                ActivityListView(entries: activityEntries)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
     }
 
     private var detailTabBinding: Binding<DetailTab> {
@@ -449,17 +692,298 @@ private struct WorkspaceDetailView: View {
     }
 }
 
+private struct DetailTerminalLayout: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+    let workspace: Workspace
+    let terminalText: String
+    let sessionState: WorkspaceSessionState
+    let showsMetadata: Bool
+    let isDetailInfoExpanded: Bool
+    let isInputFocused: FocusState<Bool>.Binding
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if showsMetadata {
+                if isDetailInfoExpanded {
+                    SessionMetadataCard(
+                        workspace: workspace,
+                        sessionState: sessionState
+                    ) {
+                        store.send(.toggleDetailInfo)
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                } else {
+                    SessionDetailsDisclosureBar(
+                        workspace: workspace,
+                        sessionState: sessionState
+                    ) {
+                        store.send(.toggleDetailInfo)
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+
+            TerminalScrollView(workspaceID: workspace.id, text: terminalText)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            DetailInputBar(
+                store: store,
+                workspace: workspace,
+                isInputFocused: isInputFocused
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct DetailFullHeightLayout<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct SessionDetailBackground: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.01, green: 0.012, blue: 0.016),
+                Color(red: 0.035, green: 0.044, blue: 0.06),
+                Color.black,
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .ignoresSafeArea()
+    }
+}
+
+private struct SessionDetailTabBar: View {
+    @Binding var selection: DetailTab
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(DetailTab.allCases) { tab in
+                Button {
+                    selection = tab
+                } label: {
+                    VStack(spacing: 8) {
+                        Label(tab.sessionLabel, systemImage: tab.systemImage)
+                            .font(.callout.weight(.semibold))
+                            .labelStyle(.titleAndIcon)
+                            .frame(maxWidth: .infinity)
+                            .foregroundStyle(selection == tab ? Color.accentColor : Color.white.opacity(0.62))
+
+                        Capsule()
+                            .fill(selection == tab ? Color.accentColor : Color.clear)
+                            .frame(height: 2.5)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 12)
+        .padding(.horizontal, 14)
+        .background {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.12))
+                        .frame(height: 1)
+                }
+        }
+    }
+}
+
+private struct SessionMetadataCard: View {
+    let workspace: Workspace
+    let sessionState: WorkspaceSessionState
+    let detailsAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .top, spacing: 12) {
+                SessionInfoItem(
+                    title: "Worktree",
+                    value: worktreeValue,
+                    systemImage: "folder"
+                )
+
+                Spacer(minLength: 12)
+
+                Button(action: detailsAction) {
+                    Label("Hide", systemImage: "chevron.up.circle")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1)
+                }
+            }
+
+            HStack(spacing: 12) {
+                SessionInfoItem(
+                    title: "Branch",
+                    value: workspace.branch?.nonEmptyTrimmed ?? "No branch",
+                    systemImage: "point.3.connected.trianglepath.dotted"
+                )
+
+                Divider()
+                    .overlay(Color.white.opacity(0.16))
+                    .frame(height: 32)
+
+                SessionInfoItem(
+                    title: "Directory",
+                    value: directoryValue,
+                    systemImage: "folder"
+                )
+            }
+
+            HStack(spacing: 8) {
+                SessionBadge(state: sessionState)
+                if let cost = workspace.sessionCost, !cost.isEmpty {
+                    Text(cost)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(costColor(cost))
+                }
+                AutoExpirationText(workspace: workspace)
+                Spacer()
+            }
+        }
+        .padding(14)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                }
+        }
+    }
+
+    private var worktreeValue: String {
+        if let cwd = workspace.cwd?.nonEmptyTrimmed {
+            return cwd.abbreviatedPath(componentCount: 4)
+        }
+        return workspace.displayName.abbreviatedPath(componentCount: 4)
+    }
+
+    private var directoryValue: String {
+        if let cwd = workspace.cwd?.nonEmptyTrimmed {
+            return cwd.abbreviatedPath(componentCount: 2)
+        }
+        return workspace.displayName.abbreviatedPath(componentCount: 2)
+    }
+}
+
+private struct SessionDetailsDisclosureBar: View {
+    let workspace: Workspace
+    let sessionState: WorkspaceSessionState
+    let detailsAction: () -> Void
+
+    var body: some View {
+        Button(action: detailsAction) {
+            HStack(spacing: 10) {
+                Label("Show details", systemImage: "info.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+
+                Spacer(minLength: 8)
+
+                SessionBadge(state: sessionState)
+                AutoExpirationText(workspace: workspace)
+
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.46))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                    }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show session details")
+    }
+}
+
+private struct SessionInfoItem: View {
+    let title: String
+    let value: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.headline)
+                .foregroundStyle(Color.white.opacity(0.72))
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.48))
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct DetailInputBar: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
+    let isInputFocused: FocusState<Bool>.Binding
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                TextField("Type a message or instruction", text: $store.detailDraft)
-                    .textFieldStyle(.roundedBorder)
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                TextField("Type a message or instruction...", text: $store.detailDraft)
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
+                    }
                     .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                    .autocorrectionDisabled(false)
+                    .focused(isInputFocused)
                     .onSubmit {
                         store.send(.sendDetailDraft)
                     }
@@ -468,24 +992,36 @@ private struct DetailInputBar: View {
                     store.send(.sendDetailDraft)
                 } label: {
                     Image(systemName: "paperplane.fill")
+                        .font(.headline.weight(.semibold))
+                        .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(Color.accentColor, in: Circle())
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 ForEach(HarnessKey.allCases) { key in
                     Button {
                         store.send(.sendKey(workspaceID: workspace.id, key))
                     } label: {
                         Label(key.label, systemImage: key.systemImage)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 38)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    }
                 }
-                Spacer()
             }
         }
-        .padding()
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
     }
 }
 
@@ -505,10 +1041,12 @@ private struct TerminalScrollView: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+                        .padding(.horizontal, 8)
+                        .padding(.top, 10)
+                        .padding(.bottom, 8)
 
                     Color.clear
-                        .frame(height: 12)
+                        .frame(height: 8)
                         .id(bottomID)
                 }
                 .background {
@@ -923,14 +1461,14 @@ private struct SessionTitleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(workspace.cardTitle)
-                .font(.headline)
+                .font(.subheadline.weight(.bold))
                 .lineLimit(1)
                 .truncationMode(.head)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let subtitle = workspace.cardSubtitle {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.head)
@@ -972,25 +1510,52 @@ private struct MetaLine: View {
     }
 }
 
-private struct StatusGlyph: View {
+private struct SessionBadge: View {
     let state: WorkspaceSessionState
 
     var body: some View {
-        Image(systemName: state.systemImage)
-            .symbolRenderingMode(.palette)
-            .foregroundStyle(primaryColor, primaryColor.opacity(0.18))
-            .imageScale(.large)
+        Text(state.label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(foregroundColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(backgroundColor, in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(foregroundColor.opacity(0.35), lineWidth: 1)
+            }
             .accessibilityLabel(state.label)
     }
 
-    private var primaryColor: Color {
+    private var foregroundColor: Color {
         switch state {
-        case .active:
+        case .session:
             return .green
         case .waiting:
             return .orange
-        case .idle:
-            return .secondary
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch state {
+        case .session:
+            return Color.green.opacity(0.14)
+        case .waiting:
+            return Color.orange.opacity(0.14)
+        }
+    }
+}
+
+private struct AutoExpirationText: View {
+    let workspace: Workspace
+
+    var body: some View {
+        if let autoExpiresAt = workspace.autoExpiresAt, autoExpiresAt > 0 {
+            TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                Label(autoExpirationLabel(expiresAt: autoExpiresAt, now: timeline.date), systemImage: "timer")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 }
@@ -1094,6 +1659,11 @@ private extension String {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    func abbreviatedPath(componentCount: Int) -> String {
+        guard let tail = pathTail(componentCount: componentCount) else { return self }
+        return ".../\(tail)"
+    }
+
     func pathTail(componentCount: Int) -> String? {
         let components = replacingOccurrences(of: "\\", with: "/")
             .split(separator: "/")
@@ -1108,12 +1678,28 @@ private extension String {
     }
 }
 
-private func workspaceSessionState(for workspace: Workspace, entries: [LogEntry]) -> WorkspaceSessionState {
-    if let action = entries.first(where: { $0.workspace == workspace.index })?.action,
-       action.localizedCaseInsensitiveContains("human") {
-        return .waiting
+private extension DetailTab {
+    var sessionLabel: String {
+        switch self {
+        case .terminal:
+            return "Session"
+        case .git:
+            return "Git"
+        case .activity:
+            return "Activity"
+        }
     }
-    return workspace.hasClaude ? .active : .idle
+
+    var systemImage: String {
+        switch self {
+        case .terminal:
+            return "terminal"
+        case .git:
+            return "point.3.connected.trianglepath.dotted"
+        case .activity:
+            return "waveform.path.ecg"
+        }
+    }
 }
 
 private func costColor(_ value: String) -> Color {
@@ -1125,6 +1711,27 @@ private func costColor(_ value: String) -> Color {
         return .orange
     }
     return .secondary
+}
+
+private func autoExpirationLabel(expiresAt: Double, now: Date) -> String {
+    let remaining = expiresAt - now.timeIntervalSince1970
+    if remaining <= 0 {
+        return "Auto expired"
+    }
+    return "Auto \(formatRemainingDuration(remaining))"
+}
+
+private func formatRemainingDuration(_ seconds: TimeInterval) -> String {
+    let totalSeconds = max(Int(seconds.rounded(.up)), 0)
+    if totalSeconds >= 3_600 {
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
+    }
+    if totalSeconds >= 60 {
+        return "\(max(1, totalSeconds / 60))m"
+    }
+    return "\(totalSeconds)s"
 }
 
 private func diffColor(for line: String) -> Color {
