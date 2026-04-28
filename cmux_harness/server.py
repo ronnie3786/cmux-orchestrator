@@ -647,6 +647,22 @@ def make_handler(engine):
                     real_idx = vws.get("_real_index", idx) if vws else idx
                     engine.set_workspace_enabled(real_idx, enabled)
                 self._json_response({"ok": True})
+            elif path == "/api/workspace-star":
+                idx = data.get("index")
+                starred = data.get("starred", True)
+                if idx is None:
+                    self._json_response({"ok": False, "error": "index required"}, 400)
+                    return
+                idx = int(idx)
+                with engine._lock:
+                    virtual_ws = engine._build_virtual_workspaces()
+                vws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
+                real_idx = vws.get("_real_index", idx) if vws else idx
+                ok = engine.set_workspace_starred(real_idx, starred)
+                if not ok:
+                    self._json_response({"ok": False, "error": "workspace not found"}, 404)
+                    return
+                self._json_response({"ok": True, "starred": bool(starred)})
             elif path == "/api/config":
                 pi = data.get("pollInterval")
                 if pi is not None:

@@ -105,6 +105,17 @@ def handle_pre_tool_use(handler, data, *, engine):
     workspace_id = ctx["workspace_id"]
     spec_text = ctx["spec_text"]
 
+    if not objective_id:
+        debug_log({
+            "event": "hook_non_objective_ask",
+            "tool_name": tool_name,
+            "session_id": session_id,
+            "cwd": cwd,
+            "reason": "Non-objective sessions use /harness Haiku auto polling.",
+        })
+        handler._json_response(_build_ask_response(5, "Non-objective session uses /harness Auto polling"))
+        return
+
     # Classify severity
     threshold = getattr(engine, "approval_threshold", 3)
     classification = severity.classify_tool_severity(

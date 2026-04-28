@@ -609,6 +609,24 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": False, "error": "unsupported key: left"})
 
+    def test_post_workspace_star_maps_virtual_index_to_real_workspace(self):
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine._build_virtual_workspaces.return_value = [{
+            "index": 7001,
+            "_real_index": 7,
+            "uuid": "ws-123",
+            "name": "Workspace 7",
+        }]
+        engine.set_workspace_starred.return_value = True
+
+        handler = self._post_json("/api/workspace-star", {"index": 7001, "starred": True}, engine=engine)
+
+        engine.set_workspace_starred.assert_called_once_with(7, True)
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "starred": True})
+
     @patch("cmux_harness.server.cmux_api._v2_request")
     @patch("cmux_harness.server.subprocess.run")
     def test_post_new_session_supports_plain_terminal_mode(self, mock_run, mock_v2_request):

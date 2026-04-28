@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from . import claude_cli
 from . import cmux_api
 from . import detection
 from . import review as review_mod
@@ -16,6 +17,8 @@ from .orchestrator import Orchestrator
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b-nvfp4")
 AUTO_APPROVE_MODEL = "haiku"
+AUTO_HAIKU_INTERVAL_SECONDS = 60
+AUTO_SESSION_MAX_SECONDS = 8 * 60 * 60
 
 
 class HarnessEngine(threading.Thread):
@@ -29,12 +32,13 @@ class HarnessEngine(threading.Thread):
         self.workspaces = []
         self.fingerprints = {}
         self.screen_cache = {}   # idx -> last screen text (tail)
-        self.ws_has_claude = {}  # idx -> bool (tracks active Claude sessions per workspace)
-        self.idle_last_read = {} # idx -> float (timestamp of last screen read for idle workspaces)
+        self.ws_has_claude = {}  # idx -> bool (tracks whether a Claude session is visible)
         self.session_start = {}  # idx -> float (when hasClaude first went True)
         self.session_cost = {}   # idx -> str (parsed cost like "$0.45")
         self.session_ids = {}    # idx -> str (workspace UUID + session start timestamp)
-        self.idle_miss_count = {} # idx -> int (consecutive polls where detect_claude_session returned False while previously active)
+        self.claude_miss_count = {} # idx -> int (consecutive polls where detect_claude_session returned False)
+        self.auto_policy_last_check = {} # idx -> float
+        self.auto_policy_last_action_fingerprint = {} # idx -> screen fingerprint acted on
         self.surface_map = {}    # workspace_ref -> [{"ref", "title", "pane_ref"}, ...]
         self.surface_map_ts = 0  # timestamp of last cmux tree fetch
         self.socket_connected = False   # current socket connection state
@@ -202,7 +206,8 @@ class HarnessEngine(threading.Thread):
 
     def set_workspace_enabled(self, index, val):
         with self._lock:
-            self.workspace_enabled[index] = bool(val)
+            enabled = bool(val)
+            self.workspace_enabled[index] = enabled
             # Persist by UUID so state survives index shifts
             ws_uuid = None
             for w in self.workspaces:
@@ -212,8 +217,27 @@ class HarnessEngine(threading.Thread):
             if ws_uuid:
                 if ws_uuid not in self.ws_config:
                     self.ws_config[ws_uuid] = {}
-                self.ws_config[ws_uuid]["autoEnabled"] = bool(val)
+                self.ws_config[ws_uuid]["autoEnabled"] = enabled
+                if enabled:
+                    self.ws_config[ws_uuid]["autoEnabledAt"] = time.time()
+                else:
+                    self.ws_config[ws_uuid].pop("autoEnabledAt", None)
                 self._save_config()
+
+    def set_workspace_starred(self, index, val):
+        with self._lock:
+            ws_uuid = None
+            for w in self.workspaces:
+                if w.get("index", w.get("id")) == index:
+                    ws_uuid = w.get("uuid")
+                    break
+            if not ws_uuid:
+                return False
+            if ws_uuid not in self.ws_config:
+                self.ws_config[ws_uuid] = {}
+            self.ws_config[ws_uuid]["starred"] = bool(val)
+            self._save_config()
+            return True
 
     def set_poll_interval(self, val):
         with self._lock:
@@ -304,6 +328,9 @@ class HarnessEngine(threading.Thread):
                     "name": ws.get("name", f"workspace-{idx}"),
                     "uuid": uuid,
                     "enabled": enabled,
+                    "starred": bool(cfg.get("starred", False)),
+                    "autoEnabledAt": cfg.get("autoEnabledAt", 0),
+                    "autoExpiresAt": (float(cfg.get("autoEnabledAt", 0) or 0) + AUTO_SESSION_MAX_SECONDS) if cfg.get("autoEnabledAt") else 0,
                     "customName": cfg.get("customName"),
                     "lastCheck": ws.get("_lastCheck", ""),
                     "screenTail": preview,
@@ -363,6 +390,185 @@ class HarnessEngine(threading.Thread):
         ptype = entry.get("promptType", "?")
         action = entry.get("action", "?")
         print(f"[{ts}] approved ws={ws_name} type={ptype} action={action}")
+
+    def _auto_cfg_for_workspace(self, workspace_uuid):
+        if not workspace_uuid:
+            return {}
+        with self._lock:
+            cfg = self.ws_config.setdefault(workspace_uuid, {})
+            if cfg.get("autoEnabled") and not cfg.get("autoEnabledAt"):
+                cfg["autoEnabledAt"] = time.time()
+                self._save_config()
+            return dict(cfg)
+
+    def _disable_workspace_auto(self, workspace_uuid, idx, ws_name, reason):
+        if not workspace_uuid:
+            return
+        with self._lock:
+            cfg = self.ws_config.setdefault(workspace_uuid, {})
+            cfg["autoEnabled"] = False
+            cfg.pop("autoEnabledAt", None)
+            self.workspace_enabled[idx] = False
+            self._save_config()
+        self._append_log({
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "workspace": idx,
+            "workspaceName": ws_name,
+            "promptType": "haiku-auto-guard",
+            "action": "auto disabled",
+            "reason": reason,
+        })
+
+    def _build_auto_policy_prompt(self, ws, screen):
+        tail = "\n".join(str(screen or "").splitlines()[-80:])
+        return "\n".join([
+            "You are a cautious automation policy engine for a terminal running an AI coding agent.",
+            "Your job is to decide whether the terminal is waiting for an approval/input and what the harness should do.",
+            "Return JSON only with exactly these keys:",
+            '{"action":"approve|submit|alert|ignore","submit":"enter|y|yes|none","confidence":0.0,"reason":"short reason"}',
+            "",
+            "Definitions:",
+            "- approve: the terminal is clearly showing a low-risk approval prompt and the harness should submit the selected/affirmative option.",
+            "- submit: the terminal is clearly waiting for a trivial continuation input such as pressing Enter.",
+            "- alert: a human should decide because the request is risky, destructive, ambiguous, asks for secrets, publishes/pushes, deletes files, changes permissions, installs/uninstalls, uses sudo, touches credentials, or has low confidence.",
+            "- ignore: no approval/input is needed right now.",
+            "",
+            "Rules:",
+            "- Only choose approve or submit when the requested action is clearly safe and low-risk.",
+            "- If the terminal is just at a shell prompt, choose ignore.",
+            "- If confidence is below 0.85, choose alert or ignore.",
+            "- submit must be one of: enter, y, yes, none.",
+            "- Never invent text to type.",
+            "",
+            f"Workspace name: {ws.get('name') or ''}",
+            f"Workspace cwd: {ws.get('_cwd') or ''}",
+            f"Workspace branch: {ws.get('_branch') or ''}",
+            "",
+            "Terminal snapshot:",
+            tail,
+        ])
+
+    def _normalize_auto_policy_result(self, result):
+        if not isinstance(result, dict) or result.get("error"):
+            return None
+        action = str(result.get("action") or "ignore").strip().lower()
+        submit = str(result.get("submit") or "none").strip().lower()
+        reason = str(result.get("reason") or "").strip()[:240]
+        try:
+            confidence = float(result.get("confidence") or 0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if action not in {"approve", "submit", "alert", "ignore"}:
+            action = "alert"
+        if submit not in {"enter", "y", "yes", "none"}:
+            submit = "none"
+        if confidence < 0.85 and action in {"approve", "submit"}:
+            action = "alert"
+            submit = "none"
+            reason = reason or "Low confidence automation decision."
+        return {
+            "action": action,
+            "submit": submit,
+            "confidence": confidence,
+            "reason": reason,
+        }
+
+    def _run_auto_policy_for_workspace(self, ws, screen, now_ts):
+        idx = ws.get("index", ws.get("id"))
+        workspace_uuid = ws.get("uuid", "")
+        ws_name = ws.get("name", f"workspace-{idx}")
+        cfg = self._auto_cfg_for_workspace(workspace_uuid)
+        if not cfg.get("autoEnabled"):
+            return
+
+        enabled_at = float(cfg.get("autoEnabledAt") or now_ts)
+        if now_ts - enabled_at >= AUTO_SESSION_MAX_SECONDS:
+            self._disable_workspace_auto(
+                workspace_uuid,
+                idx,
+                ws_name,
+                "Auto mode reached the 8 hour limit for this session.",
+            )
+            return
+
+        last_check = self.auto_policy_last_check.get(idx, 0)
+        if now_ts - last_check < AUTO_HAIKU_INTERVAL_SECONDS:
+            return
+        if not str(screen or "").strip():
+            return
+
+        self.auto_policy_last_check[idx] = now_ts
+        screen_fp = detection.fingerprint(screen)
+        prompt = self._build_auto_policy_prompt(ws, screen)
+        result = claude_cli.run_haiku(prompt, timeout=25)
+        decision = self._normalize_auto_policy_result(result)
+        if not decision:
+            self._append_log({
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "workspace": idx,
+                "workspaceName": ws_name,
+                "promptType": "haiku-auto-check-error",
+                "action": "auto check failed",
+                "reason": str(result)[:240],
+            })
+            return
+
+        action = decision["action"]
+        submit = decision["submit"]
+        if action == "ignore":
+            return
+
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "workspace": idx,
+            "workspaceName": ws_name,
+            "promptType": "haiku-auto-policy",
+            "action": "",
+            "reason": decision["reason"],
+            "confidence": decision["confidence"],
+            "submit": submit,
+            "screenFingerprint": screen_fp,
+        }
+
+        if action == "alert":
+            if self.auto_policy_last_action_fingerprint.get(idx) == screen_fp:
+                return
+            self.auto_policy_last_action_fingerprint[idx] = screen_fp
+            log_entry["action"] = "human alert"
+            self._append_log(log_entry)
+            return
+
+        if submit == "none":
+            log_entry["action"] = "human alert"
+            log_entry["reason"] = decision["reason"] or "Haiku requested action without a safe submit key."
+            self._append_log(log_entry)
+            return
+
+        if self.auto_policy_last_action_fingerprint.get(idx) == screen_fp:
+            return
+        self.auto_policy_last_action_fingerprint[idx] = screen_fp
+
+        real_idx = ws.get("_real_index", idx)
+        surface_id = ws.get("_surface_id")
+        cmux_api.ensure_workspace_terminal_ready(workspace_uuid=workspace_uuid, surface_id=surface_id)
+        if submit == "enter":
+            ok = cmux_api.cmux_send_to_workspace(
+                real_idx,
+                0,
+                key="enter",
+                workspace_uuid=workspace_uuid,
+                surface_id=surface_id,
+            )
+        else:
+            ok = cmux_api.cmux_send_to_workspace(
+                real_idx,
+                0,
+                text=f"{submit}\n",
+                workspace_uuid=workspace_uuid,
+                surface_id=surface_id,
+            )
+        log_entry["action"] = f"auto {action} {submit}" if ok else f"auto {action} failed"
+        self._append_log(log_entry)
 
     def _run_git_command(self, cwd, args, max_bytes=None):
         if not cwd:
@@ -769,7 +975,7 @@ class HarnessEngine(threading.Thread):
                             # Clear stale state to force fresh detection
                             self.ws_has_claude = {}
                             self.screen_cache = {}
-                            self.idle_miss_count = {}
+                            self.claude_miss_count = {}
                         else:
                             self.consecutive_failures = 0
                 else:
@@ -807,47 +1013,37 @@ class HarnessEngine(threading.Thread):
                 with self._lock:
                     virtual_ws = self._build_virtual_workspaces()
 
-                # Read screens for ALL virtual workspaces so the UI has data.
-                # Active (hasClaude=True) are read every cycle.
-                # Idle are read at most once every 30 seconds.
-                IDLE_READ_INTERVAL = 30  # seconds
+                # Read screens for all virtual workspaces so /harness mirrors
+                # the terminal contents without terminal-state grouping.
                 now_ts = time.time()
-                active_vidxs = set()
+                seen_vidxs = set()
                 for vws in virtual_ws:
                     ws_uuid = vws.get("uuid", "")
                     vidx = vws.get("index", vws.get("id"))
                     real_idx = vws.get("_real_index", vidx)
                     surface_id = vws.get("_surface_id")
-                    active_vidxs.add(vidx)
-                    if not ws_uuid or not surface_id:
-                        continue
-                    with self._lock:
-                        is_idle = not self.ws_has_claude.get(vidx, False)
-                        last_read = self.idle_last_read.get(vidx, 0)
-                    if is_idle and (now_ts - last_read) < IDLE_READ_INTERVAL:
+                    seen_vidxs.add(vidx)
+                    if not ws_uuid:
                         continue
                     screen = cmux_api.cmux_read_workspace(real_idx, 0, lines=40, workspace_uuid=ws_uuid, surface_id=surface_id)
                     if screen:
                         has_claude = detection.detect_claude_session(screen)
                         cost = storage.parse_session_cost(screen)
                         should_capture_snapshot = False
-                        # Hysteresis: require multiple consecutive non-detections
-                        # before transitioning ACTIVE → IDLE. This prevents transient
-                        # screen states (e.g. after /clear) from flipping status.
-                        IDLE_MISS_THRESHOLD = 3  # consecutive misses before transition
+                        # Require multiple consecutive non-detections before closing
+                        # session metadata. This avoids transient screens such as /clear.
+                        CLAUDE_MISS_THRESHOLD = 3
                         with self._lock:
                             self.screen_cache[vidx] = screen
                             prev_has_claude = self.ws_has_claude.get(vidx, False)
                             if has_claude:
-                                self.idle_miss_count.pop(vidx, None)
+                                self.claude_miss_count.pop(vidx, None)
                             elif prev_has_claude and not has_claude:
-                                miss = self.idle_miss_count.get(vidx, 0) + 1
-                                self.idle_miss_count[vidx] = miss
-                                if miss < IDLE_MISS_THRESHOLD:
-                                    # Suppress transition — keep reporting as active
+                                miss = self.claude_miss_count.get(vidx, 0) + 1
+                                self.claude_miss_count[vidx] = miss
+                                if miss < CLAUDE_MISS_THRESHOLD:
                                     has_claude = True
                             self.ws_has_claude[vidx] = has_claude
-                            self.idle_last_read[vidx] = now_ts
                             if has_claude and not prev_has_claude:
                                 start_ts = time.time()
                                 self.session_start[vidx] = start_ts
@@ -858,7 +1054,7 @@ class HarnessEngine(threading.Thread):
                                 self.session_ids[vidx] = "_".join(sid_parts)
                             elif not has_claude and prev_has_claude:
                                 should_capture_snapshot = True
-                                self.idle_miss_count.pop(vidx, None)
+                                self.claude_miss_count.pop(vidx, None)
                             if has_claude and cost is not None:
                                 self.session_cost[vidx] = cost
                         if should_capture_snapshot:
@@ -867,13 +1063,10 @@ class HarnessEngine(threading.Thread):
                                 self.session_start.pop(vidx, None)
                                 self.session_cost.pop(vidx, None)
                                 self.session_ids.pop(vidx, None)
-                    else:
-                        with self._lock:
-                            self.idle_last_read[vidx] = now_ts
                 # Clean up stale virtual indices (surfaces that disappeared)
                 with self._lock:
                     stale_keys = [k for k in list(self.ws_has_claude.keys())
-                                  if k not in active_vidxs and self.ws_has_claude.get(k)]
+                                  if k not in seen_vidxs and self.ws_has_claude.get(k)]
                 for sk in stale_keys:
                     self._capture_completion_snapshot_async({}, sk)
                     with self._lock:
@@ -882,34 +1075,13 @@ class HarnessEngine(threading.Thread):
                         self.session_start.pop(sk, None)
                         self.session_cost.pop(sk, None)
                         self.session_ids.pop(sk, None)
-                        self.idle_last_read.pop(sk, None)
                         self.fingerprints.pop(sk, None)
-                        self.idle_miss_count.pop(sk, None)
+                        self.claude_miss_count.pop(sk, None)
 
-                if enabled:
-                    # Check which workspaces have unread notifications
-                    attention_uuids = self.get_workspaces_needing_attention()
-                    known_uuids = {vws.get("uuid", "") for vws in virtual_ws}
-                    filter_is_useful = not attention_uuids or bool(attention_uuids & known_uuids)
-
-                    for vws in virtual_ws:
-                        vidx = vws.get("index", vws.get("id"))
-                        ws_uuid = vws.get("uuid", "")
-                        with self._lock:
-                            has_claude = self.ws_has_claude.get(vidx, False)
-                            cfg = self.ws_config.get(ws_uuid, {})
-                            if "autoEnabled" in cfg:
-                                ws_on = cfg["autoEnabled"]
-                            else:
-                                ws_on = self.workspace_enabled.get(vidx, True)
-                        if not ws_on:
-                            continue
-                        # Only check workspaces with an active Claude Code session
-                        if not has_claude:
-                            continue
-                        if filter_is_useful and attention_uuids and ws_uuid not in attention_uuids:
-                            continue
-                        self.check_workspace(vws)
+                for vws in virtual_ws:
+                    vidx = vws.get("index", vws.get("id"))
+                    screen = self.screen_cache.get(vidx, "")
+                    self._run_auto_policy_for_workspace(vws, screen, time.time())
                 active_obj = self.orchestrator.get_active_objective_id()
                 if active_obj:
                     try:
