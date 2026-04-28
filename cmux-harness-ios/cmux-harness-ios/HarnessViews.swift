@@ -463,7 +463,7 @@ private struct WorkspaceCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                SessionStarIndicator(isStarred: workspace.starred)
+                SessionStatusIndicators(workspace: workspace)
                     .padding(.top, 9)
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -530,6 +530,33 @@ private struct SessionStarIndicator: View {
                 .foregroundStyle(.yellow)
                 .frame(width: 18, height: 18)
                 .accessibilityLabel("Starred")
+        }
+    }
+}
+
+private struct SessionAutoIndicator: View {
+    let isEnabled: Bool
+
+    var body: some View {
+        if isEnabled {
+            Image(systemName: "bolt.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 18, height: 18)
+                .accessibilityLabel("Auto enabled")
+        }
+    }
+}
+
+private struct SessionStatusIndicators: View {
+    let workspace: Workspace
+
+    var body: some View {
+        if workspace.starred || workspace.enabled {
+            HStack(spacing: 4) {
+                SessionStarIndicator(isStarred: workspace.starred)
+                SessionAutoIndicator(isEnabled: workspace.enabled)
+            }
         }
     }
 }
@@ -628,11 +655,7 @@ private struct WorkspaceDetailView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
-                    if workspace.starred {
-                        Image(systemName: "star.fill")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.yellow)
-                    }
+                    SessionStatusIndicators(workspace: workspace)
                     Text(workspace.displayName)
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(.white)
