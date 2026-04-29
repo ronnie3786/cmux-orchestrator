@@ -362,53 +362,34 @@ private struct DashboardSummaryView: View {
     @Bindable var store: StoreOf<HarnessFeature>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
                 ConnectionDot(state: connectionState)
-                    .padding(.top, 5)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(connectionTitle)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(.white)
-                    Text(store.committedServerURLString)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+
+                Text(connectionTitle)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+
                 Spacer()
 
-                AutoReconnectChip(
-                    isEnabled: store.status?.enabled ?? false
-                ) {
-                    store.send(.toggleGlobal(!(store.status?.enabled ?? false)))
+                if !store.isConnected {
+                    AutoReconnectChip(
+                        isEnabled: store.status?.enabled ?? false
+                    ) {
+                        store.send(.toggleGlobal(!(store.status?.enabled ?? false)))
+                    }
                 }
-            }
-
-            HStack(spacing: 10) {
-                SummaryMetricTile(
-                    title: "Sessions",
-                    value: store.sessionCount,
-                    systemImage: "terminal",
-                    tint: .blue
-                )
-                SummaryMetricTile(
-                    title: "Needs You",
-                    value: store.waitingCount,
-                    systemImage: "person.2.fill",
-                    tint: .orange
-                )
             }
 
             if let lastUpdated = store.lastUpdated {
                 Label("Updated \(lastUpdated.formatted(date: .omitted, time: .shortened))", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.62))
                     .labelStyle(.titleAndIcon)
             }
         }
-        .padding(18)
-        .background(HomeGlassCard(cornerRadius: 22))
+        .padding(16)
+        .background(HomeGlassCard(cornerRadius: 18))
     }
 
     private var connectionState: ConnectionDot.State {
@@ -448,39 +429,6 @@ private struct AutoReconnectChip: View {
         }
         .buttonStyle(.plain)
         .tint(isEnabled ? .green : .orange)
-    }
-}
-
-private struct SummaryMetricTile: View {
-    let title: String
-    let value: Int
-    let systemImage: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: systemImage)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(tint)
-                .frame(width: 46, height: 46)
-                .background(tint.opacity(0.18), in: Circle())
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(value)")
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .monospacedDigit()
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.76))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
-        .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
