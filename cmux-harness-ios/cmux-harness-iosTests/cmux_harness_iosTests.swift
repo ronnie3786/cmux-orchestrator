@@ -137,9 +137,49 @@ struct HarnessFeatureTests {
             $0.lastUpdated = updatedAt
             $0.selectedWorkspaceID = nil
             $0.fullScreenText = nil
+            $0.detailDrafts[selectedWorkspace.id] = "Unsaved prompt"
             $0.detailDraft = ""
             $0.projectSkills = []
         }
+    }
+
+    @Test
+    func selectingHomePreservesDetailDraftForWorkspace() async {
+        let workspace = Self.workspace()
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        state.detailDraft = "Keep this prompt"
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        }
+
+        await store.send(.selectWorkspace(nil)) {
+            $0.detailDrafts[workspace.id] = "Keep this prompt"
+            $0.selectedWorkspaceID = nil
+            $0.detailDraft = ""
+        }
+    }
+
+    @Test
+    func stateLoadsPersistedDetailDraftForLastSelectedWorkspace() {
+        let oldDrafts = HarnessSettingsStore.detailDrafts
+        let oldSelectedWorkspaceID = HarnessSettingsStore.lastSelectedWorkspaceID
+        defer {
+            HarnessSettingsStore.detailDrafts = oldDrafts
+            HarnessSettingsStore.lastSelectedWorkspaceID = oldSelectedWorkspaceID
+        }
+
+        let workspaceID = "persisted-workspace"
+        HarnessSettingsStore.detailDrafts = [workspaceID: "Remember this prompt"]
+        HarnessSettingsStore.lastSelectedWorkspaceID = workspaceID
+
+        let state = HarnessFeature.State()
+
+        #expect(state.selectedWorkspaceID == workspaceID)
+        #expect(state.detailDraft == "Remember this prompt")
+        #expect(state.detailDrafts[workspaceID] == "Remember this prompt")
     }
 
     @Test
@@ -501,11 +541,13 @@ struct HarnessFeatureTests {
         }
         await store.send(.appendSkillInvocation(projectSkill)) {
             $0.detailDraft = "Review this /ios-review"
+            $0.detailDrafts[workspace.id] = "Review this /ios-review"
             $0.detailTab = .terminal
             $0.detailInputFocusRequest = 1
         }
         await store.send(.appendSkillFilePath(projectSkill)) {
             $0.detailDraft = "Review this /ios-review `.claude/skills/ios-review/SKILL.md`"
+            $0.detailDrafts[workspace.id] = "Review this /ios-review `.claude/skills/ios-review/SKILL.md`"
             $0.detailInputFocusRequest = 2
         }
     }
@@ -558,6 +600,7 @@ struct HarnessFeatureTests {
         }
         await store.send(.appendFilePath(match)) {
             $0.detailDraft = "Open `Sources/AppView.swift`"
+            $0.detailDrafts[workspace.id] = "Open `Sources/AppView.swift`"
             $0.detailInputFocusRequest = 1
             $0.isShowingFileSearch = false
             $0.fileSearchQuery = ""
@@ -594,6 +637,8 @@ struct HarnessFeatureTests {
         state.serverURLString = baseURL
         state.committedServerURLString = baseURL
         state.selectedWorkspaceID = nil
+        state.detailDrafts = [:]
+        state.detailDraft = ""
         return state
     }
 

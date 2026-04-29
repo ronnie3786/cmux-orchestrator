@@ -799,6 +799,7 @@ private struct DetailTerminalLayout: View {
                         store.send(.toggleDetailInfo)
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
                 } else {
                     SessionDetailsDisclosureBar(
                         workspace: workspace,
@@ -807,6 +808,7 @@ private struct DetailTerminalLayout: View {
                         store.send(.toggleDetailInfo)
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
                 }
             }
 
@@ -817,6 +819,7 @@ private struct DetailTerminalLayout: View {
                         .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
 
             DetailInputBar(
                 store: store,
@@ -828,6 +831,15 @@ private struct DetailTerminalLayout: View {
         .padding(.top, 10)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(perform: dismissKeyboard)
+        }
+    }
+
+    private func dismissKeyboard() {
+        isInputFocused.wrappedValue = false
     }
 }
 

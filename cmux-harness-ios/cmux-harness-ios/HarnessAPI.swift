@@ -481,6 +481,7 @@ enum HarnessSettingsStore {
     private static let defaultMigrationKey = "cmuxHarnessTailnetDefaultMigrated"
     private static let serverURLKey = "cmuxHarnessServerURL"
     private static let lastSelectedWorkspaceIDKey = "cmuxHarnessLastSelectedWorkspaceID"
+    private static let detailDraftsKey = "cmuxHarnessDetailDrafts"
 
     static var serverURL: String {
         get {
@@ -517,6 +518,30 @@ enum HarnessSettingsStore {
                 UserDefaults.standard.removeObject(forKey: lastSelectedWorkspaceIDKey)
             }
         }
+    }
+
+    static var detailDrafts: [String: String] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: detailDraftsKey),
+                  let drafts = try? JSONDecoder().decode([String: String].self, from: data) else {
+                return [:]
+            }
+            return drafts
+        }
+        set {
+            let drafts = newValue.filter { !$0.value.isEmpty }
+            guard !drafts.isEmpty else {
+                UserDefaults.standard.removeObject(forKey: detailDraftsKey)
+                return
+            }
+            guard let data = try? JSONEncoder().encode(drafts) else { return }
+            UserDefaults.standard.set(data, forKey: detailDraftsKey)
+        }
+    }
+
+    static func detailDraft(for workspaceID: String?) -> String {
+        guard let workspaceID else { return "" }
+        return detailDrafts[workspaceID] ?? ""
     }
 }
 

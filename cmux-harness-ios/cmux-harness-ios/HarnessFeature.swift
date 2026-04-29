@@ -26,7 +26,8 @@ struct HarnessFeature {
         var isDetailInfoExpanded = false
         var fullScreenText: String?
         var draftMessages: [String: String] = [:]
-        var detailDraft = ""
+        var detailDrafts: [String: String] = HarnessSettingsStore.detailDrafts
+        var detailDraft = HarnessSettingsStore.detailDraft(for: HarnessSettingsStore.lastSelectedWorkspaceID)
         var detailInputFocusRequest = 0
         var pendingPushApproval: PushApprovalNotification?
 
@@ -203,6 +204,7 @@ struct HarnessFeature {
         Reduce { state, action in
             switch action {
             case .binding:
+                persistDetailDraft(&state)
                 return .none
 
             case .onAppear:
@@ -262,6 +264,7 @@ struct HarnessFeature {
                 }
                 if let selected = state.selectedWorkspaceID,
                    !state.workspaces.contains(where: { $0.id == selected }) {
+                    persistDetailDraft(&state)
                     state.selectedWorkspaceID = nil
                     HarnessSettingsStore.lastSelectedWorkspaceID = nil
                     state.isDetailInfoExpanded = false
@@ -392,6 +395,7 @@ struct HarnessFeature {
                 return .none
 
             case let .selectWorkspace(id):
+                persistDetailDraft(&state)
                 let workspaceToClear = id.flatMap { selectedID in
                     state.workspaces.first { $0.id == selectedID }
                 }
@@ -403,7 +407,7 @@ struct HarnessFeature {
                 state.gitStatus = nil
                 state.gitError = nil
                 state.diffSheet = nil
-                state.detailDraft = ""
+                loadDetailDraft(for: id, into: &state)
                 state.projectSkills = []
                 state.userSkills = []
                 state.skillsError = nil
@@ -505,6 +509,7 @@ struct HarnessFeature {
                 guard !message.isEmpty || !paths.isEmpty else { return .none }
                 let finalMessage = (paths + (message.isEmpty ? [] : [message])).joined(separator: " ")
                 state.detailDraft = ""
+                persistDetailDraft(&state)
                 state.terminalAttachments[workspace.id] = []
                 return sendTextEffect(state: state, workspace: workspace, message: finalMessage)
 
@@ -715,12 +720,14 @@ struct HarnessFeature {
 
             case let .appendSkillInvocation(skill):
                 state.detailDraft = appendPromptToken("/\(skill.name)", to: state.detailDraft)
+                persistDetailDraft(&state)
                 state.detailTab = .terminal
                 state.detailInputFocusRequest += 1
                 return .none
 
             case let .appendSkillFilePath(skill):
                 state.detailDraft = appendPromptToken("`\(skill.skillFilePath)`", to: state.detailDraft)
+                persistDetailDraft(&state)
                 state.detailTab = .terminal
                 state.detailInputFocusRequest += 1
                 return .none
@@ -781,6 +788,7 @@ struct HarnessFeature {
 
             case let .appendFilePath(file):
                 state.detailDraft = appendPromptToken("`\(file.path)`", to: state.detailDraft)
+                persistDetailDraft(&state)
                 state.detailTab = .terminal
                 state.detailInputFocusRequest += 1
                 state.isShowingFileSearch = false
@@ -830,6 +838,7 @@ struct HarnessFeature {
 
             case let .appendJiraTicketReference(ticket):
                 state.detailDraft = appendPromptToken(ticket.url, to: state.detailDraft)
+                persistDetailDraft(&state)
                 state.detailTab = .terminal
                 state.detailInputFocusRequest += 1
                 state.isShowingJiraTickets = false
@@ -987,6 +996,20 @@ private func trimDrafts(_ state: inout HarnessFeature.State) {
     let activeIDs = Set(state.workspaces.map(\.id))
     state.draftMessages = state.draftMessages.filter { activeIDs.contains($0.key) }
     state.terminalAttachments = state.terminalAttachments.filter { activeIDs.contains($0.key) }
+}
+
+private func loadDetailDraft(for workspaceID: String?, into state: inout HarnessFeature.State) {
+    state.detailDraft = workspaceID.flatMap { state.detailDrafts[$0] } ?? ""
+}
+
+private func persistDetailDraft(_ state: inout HarnessFeature.State) {
+    guard let workspaceID = state.selectedWorkspaceID else { return }
+    if state.detailDraft.isEmpty {
+        state.detailDrafts.removeValue(forKey: workspaceID)
+    } else {
+        state.detailDrafts[workspaceID] = state.detailDraft
+    }
+    HarnessSettingsStore.detailDrafts = state.detailDrafts
 }
 
 private func jiraKey(from value: String) -> String? {
