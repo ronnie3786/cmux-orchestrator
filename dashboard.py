@@ -5,12 +5,20 @@ import sys
 import webbrowser
 from http.server import ThreadingHTTPServer
 
+from cmux_harness import attachments
 from cmux_harness.engine import HarnessEngine
 from cmux_harness.server import make_handler
 
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9091
+
+    cleanup = attachments.cleanup_old_attachments()
+    if cleanup.get("deletedFiles"):
+        print(
+            f"[harness] Cleaned {cleanup['deletedFiles']} old attachment"
+            f"{'s' if cleanup['deletedFiles'] != 1 else ''}"
+        )
 
     engine = HarnessEngine()
     engine.callback_base_url = f"http://127.0.0.1:{port}"

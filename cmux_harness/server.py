@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 import uuid
 
+from . import attachments
 from . import cmux_api
 from . import objectives
 from . import push_notifications
@@ -100,6 +101,44 @@ def make_handler(engine):
                 return json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 return {}
+
+        def _handle_post_attachment(self):
+            try:
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+            except (TypeError, ValueError):
+                self._json_response({"ok": False, "error": "content length required"}, 411)
+                return
+            if content_length <= 0:
+                self._json_response({"ok": False, "error": "file is empty"}, 400)
+                return
+            if content_length > attachments.MAX_ATTACHMENT_BYTES:
+                self._json_response({"ok": False, "error": "file exceeds 20 MB limit"}, 413)
+                return
+
+            filename = self.headers.get("X-Cmux-Filename", "") or ""
+            if not filename.strip():
+                self._json_response({"ok": False, "error": "filename required"}, 400)
+                return
+
+            try:
+                attachment = attachments.save_attachment_stream(
+                    self.rfile,
+                    content_length=content_length,
+                    filename=filename,
+                    content_type=self.headers.get("Content-Type", "") or "application/octet-stream",
+                    workspace_uuid=self.headers.get("X-Cmux-Workspace-UUID", "") or "",
+                    workspace_index=self.headers.get("X-Cmux-Workspace-Index", "") or "",
+                )
+            except ValueError as exc:
+                message = str(exc) or "invalid attachment"
+                status = 413 if "20 MB" in message else 400
+                self._json_response({"ok": False, "error": message}, status)
+                return
+            except OSError as exc:
+                self._json_response({"ok": False, "error": str(exc)}, 500)
+                return
+
+            self._json_response({"ok": True, "attachment": attachment})
 
         def _resolve_git_path(self, path_value):
             cwd = os.path.expanduser(str(path_value or "").strip())
@@ -500,6 +539,9 @@ def make_handler(engine):
 
         def do_POST(self):
             path = urllib.parse.urlparse(self.path).path
+            if path == "/api/attachments":
+                self._handle_post_attachment()
+                return
             data = self._read_body()
             if path == "/api/toggle":
                 engine.set_enabled(data.get("enabled", False))

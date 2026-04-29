@@ -3,10 +3,12 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+from cmux_harness import attachments
 from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
 from cmux_harness import workspaces
@@ -33,6 +35,10 @@ class TestServerResponses(unittest.TestCase):
         self.patch_workspaces_dir = patch.object(workspaces, "WORKSPACES_DIR", self.workspaces_dir)
         self.patch_workspaces_dir.start()
         self.addCleanup(self.patch_workspaces_dir.stop)
+        self.attachments_dir = Path(self.tmpdir.name) / "attachments"
+        self.patch_attachments_dir = patch.object(attachments, "ATTACHMENTS_DIR", self.attachments_dir)
+        self.patch_attachments_dir.start()
+        self.addCleanup(self.patch_attachments_dir.stop)
         self.patch_subprocess_run = patch("cmux_harness.objectives.subprocess.run")
         self.mock_run = self.patch_subprocess_run.start()
         self.mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
@@ -77,6 +83,75 @@ class TestServerResponses(unittest.TestCase):
         handler._json_response({"ok": True})
 
         self.assertEqual(handler.wfile.getvalue(), b'{"ok": true}')
+
+    def test_attachment_upload_writes_file_for_workspace_uuid(self):
+        handler = self._post_attachment(
+            b"hello attachment",
+            {
+                "Content-Type": "text/plain",
+                "X-Cmux-Filename": "screen shot?.txt",
+                "X-Cmux-Workspace-UUID": "cmux-workspace-123",
+            },
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        attachment = body["attachment"]
+        self.assertEqual(attachment["workspaceKey"], "cmux-workspace-123")
+        self.assertTrue(attachment["filename"].endswith("-screen_shot.txt"))
+        stored_path = Path(attachment["path"])
+        self.assertTrue(stored_path.is_file())
+        self.assertEqual(stored_path.read_bytes(), b"hello attachment")
+        self.assertEqual(stored_path.parent, (self.attachments_dir / "cmux-workspace-123").resolve())
+
+    def test_attachment_upload_falls_back_to_workspace_index(self):
+        handler = self._post_attachment(
+            b"index scoped",
+            {
+                "X-Cmux-Filename": "index.log",
+                "X-Cmux-Workspace-UUID": "",
+                "X-Cmux-Workspace-Index": "42",
+            },
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        attachment = body["attachment"]
+        self.assertEqual(attachment["workspaceKey"], "index-42")
+        self.assertEqual(Path(attachment["path"]).parent, (self.attachments_dir / "index-42").resolve())
+
+    def test_attachment_upload_rejects_files_over_twenty_mb(self):
+        handler = self._make_handler(Mock(), "/api/attachments")
+        handler.headers = {
+            "Content-Length": str(attachments.MAX_ATTACHMENT_BYTES + 1),
+            "Content-Type": "application/octet-stream",
+            "X-Cmux-Filename": "huge.bin",
+            "X-Cmux-Workspace-Index": "1",
+        }
+        handler.rfile = io.BytesIO()
+
+        handler.do_POST()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertFalse(body["ok"])
+        self.assertIn("20 MB", body["error"])
+        handler.send_response.assert_called_once_with(413)
+
+    def test_attachment_cleanup_removes_files_older_than_retention(self):
+        old_file = self.attachments_dir / "workspace" / "old.txt"
+        new_file = self.attachments_dir / "workspace" / "new.txt"
+        old_file.parent.mkdir(parents=True)
+        old_file.write_text("old", encoding="utf-8")
+        new_file.write_text("new", encoding="utf-8")
+        now = time.time()
+        os.utime(old_file, (now - attachments.RETENTION_SECONDS - 60, now - attachments.RETENTION_SECONDS - 60))
+        os.utime(new_file, (now, now))
+
+        result = attachments.cleanup_old_attachments(now=now)
+
+        self.assertEqual(result["deletedFiles"], 1)
+        self.assertFalse(old_file.exists())
+        self.assertTrue(new_file.exists())
 
     def _make_handler(self, engine, path):
         handler_cls = make_handler(engine)
@@ -125,6 +200,21 @@ class TestServerResponses(unittest.TestCase):
         body = json.dumps(payload).encode("utf-8")
         handler = self._make_handler(engine or Mock(), path)
         handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+        handler.do_POST()
+        return handler
+
+    def _post_attachment(self, body, headers=None, engine=None):
+        handler = self._make_handler(engine or Mock(), "/api/attachments")
+        merged_headers = {
+            "Content-Length": str(len(body)),
+            "Content-Type": "application/octet-stream",
+            "X-Cmux-Filename": "sample.txt",
+            "X-Cmux-Workspace-UUID": "workspace-uuid",
+            "X-Cmux-Workspace-Index": "3",
+        }
+        merged_headers.update(headers or {})
+        handler.headers = merged_headers
         handler.rfile = io.BytesIO(body)
         handler.do_POST()
         return handler
