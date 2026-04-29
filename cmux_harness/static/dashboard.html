@@ -104,8 +104,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .star-btn{width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:6px;flex-shrink:0;transition:color .15s,background .15s}
 .star-btn:hover{background:rgba(255,255,255,.06);color:var(--yellow)}
 .star-btn.on{color:var(--yellow)}
-.session-auto-indicator{width:24px;height:24px;border:none;background:transparent;color:var(--accent);font-size:14px;line-height:1;display:none;align-items:center;justify-content:center;border-radius:6px;flex-shrink:0}
+.session-auto-indicator{min-width:24px;height:24px;padding:0 3px;border:none;background:transparent;color:var(--accent);font-size:14px;line-height:1;display:none;align-items:center;justify-content:center;border-radius:6px;flex-shrink:0}
 .session-auto-indicator.on{display:flex}
+.session-auto-indicator.super{color:var(--yellow);font-size:12px}
 .exp-star{border:1px solid var(--border);background:var(--bg)}
 .exp-auto-indicator{border:1px solid var(--border);background:var(--bg)}
 .card-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border-bottom:1px solid transparent;transition:border-color .15s}
@@ -128,10 +129,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 
 /* Auto toggle */
 .auto-toggle{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.auto-toggle-icon{min-width:14px;display:none;align-items:center;justify-content:center;font-size:11px;line-height:1;color:var(--text-muted);transition:color .2s}
 .auto-toggle-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-muted);transition:color .2s}
+.auto-toggle.on .auto-toggle-icon{display:inline-flex;color:var(--green)}
 .auto-toggle.on .auto-toggle-label{color:var(--green)}
+.auto-toggle.super .auto-toggle-icon{min-width:24px;color:var(--yellow)}
+.auto-toggle.super .auto-toggle-label{color:var(--yellow)}
 .toggle-track{width:34px;height:18px;background:var(--border);border-radius:9px;position:relative;transition:background .2s;flex-shrink:0}
 .auto-toggle.on .toggle-track{background:var(--green)}
+.auto-toggle.super .toggle-track{background:var(--yellow)}
 .toggle-track::after{content:'';width:14px;height:14px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
 .auto-toggle.on .toggle-track::after{transform:translateX(16px)}
 
@@ -538,9 +544,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         </div>
         <div class="exp-header-actions">
           <button class="star-btn exp-star" id="expStarToggle" onclick="toggleExpStar(event)" title="Star session">&#9734;</button>
-          <span class="session-auto-indicator exp-auto-indicator" id="expAutoIndicator" title="Auto enabled">&#9889;</span>
+          <span class="session-auto-indicator exp-auto-indicator" id="expAutoIndicator" title="Auto enabled"></span>
           <div class="auto-toggle" id="expAutoToggle" onclick="toggleExpAuto()">
-            <span class="auto-toggle-label">Auto</span>
+            <span class="auto-toggle-icon" aria-hidden="true"></span>
+            <span class="auto-toggle-label">Off</span>
             <div class="toggle-track"></div>
           </div>
           <button class="btn btn-build-run" style="font-size:12px" onclick="buildAndRun()">&#9654; Build &amp; Run</button>
@@ -859,6 +866,78 @@ function sessionDisplayName(w){
     return pathBasename(raw.slice(0,markerIdx))+marker+raw.slice(markerIdx+marker.length);
   }
   return pathBasename(raw);
+}
+
+function workspaceAutoMode(w){
+  var mode=String((w&&w.autoMode)||'').toLowerCase();
+  if(mode==='super'||mode==='super-auto'||mode==='superauto')return 'super';
+  if(mode==='auto')return 'auto';
+  return w&&w.enabled===true?'auto':'off';
+}
+
+function nextAutoMode(mode){
+  if(mode==='off')return 'auto';
+  if(mode==='auto')return 'super';
+  return 'off';
+}
+
+function autoModeGlyph(mode){
+  if(mode==='super')return '\u26A1\u26A1';
+  if(mode==='auto')return '\u26A1';
+  return '';
+}
+
+function autoModeTitle(mode){
+  if(mode==='super')return 'Super Auto enabled';
+  if(mode==='auto')return 'Auto enabled';
+  return 'Auto disabled';
+}
+
+function autoModeToggleTitle(mode){
+  return 'Current: '+autoModeLabel(mode)+'. Click to switch to '+autoModeLabel(nextAutoMode(mode))+'.';
+}
+
+function autoModeLabel(mode){
+  if(mode==='super')return 'Super Auto';
+  if(mode==='auto')return 'Auto';
+  return 'Off';
+}
+
+function applyAutoModeClass(el,mode){
+  if(!el)return;
+  el.classList.toggle('on',mode==='auto'||mode==='super');
+  el.classList.toggle('super',mode==='super');
+  el.setAttribute('title',autoModeToggleTitle(mode));
+  var icon=el.querySelector('.auto-toggle-icon');
+  if(icon)icon.textContent=autoModeGlyph(mode);
+  var label=el.querySelector('.auto-toggle-label');
+  if(label)label.textContent=autoModeLabel(mode);
+}
+
+function applyAutoIndicatorClass(el,mode){
+  if(!el)return;
+  el.classList.toggle('on',mode==='auto'||mode==='super');
+  el.classList.toggle('super',mode==='super');
+  el.setAttribute('title',autoModeTitle(mode));
+  el.textContent=autoModeGlyph(mode);
+}
+
+function setWorkspaceAutoMode(idx,mode){
+  var normalized=(mode==='auto'||mode==='super')?mode:'off';
+  var ws=findWorkspaceByIndex(idx);
+  if(ws){
+    ws.autoMode=normalized;
+    ws.enabled=normalized!=='off';
+    if(ws.enabled){
+      var enabledAt=Date.now()/1000;
+      ws.autoEnabledAt=enabledAt;
+      ws.autoExpiresAt=enabledAt+(8*60*60);
+    }else{
+      ws.autoEnabledAt=0;
+      ws.autoExpiresAt=0;
+    }
+  }
+  api('POST','/api/workspace',{index:idx,enabled:normalized!=='off',autoMode:normalized});
 }
 
 function buildWorkspaceSendPayload(idx,extra){
@@ -1478,8 +1557,9 @@ function buildGrid(){
     var cardClass='card'+(isWaiting?' needs-attention':'')+(isStale?' stale':'');
     var badgeClass='badge '+(isWaiting?'badge-waiting':'badge-neutral');
     var badgeText=isWaiting?'Needs You':'Session';
-    var autoOn=w.enabled===true;
-    var autoClass='auto-toggle'+(autoOn?' on':'');
+    var autoMode=workspaceAutoMode(w);
+    var autoOn=autoMode!=='off';
+    var autoClass='auto-toggle'+(autoOn?' on':'')+(autoMode==='super'?' super':'');
     var html='';
 
     html+='<div class="'+cardClass+'" id="card-'+w.index+'" data-ws-index="'+w.index+'">';
@@ -1487,7 +1567,7 @@ function buildGrid(){
     html+='<div class="card-header">';
     html+='<div class="card-title-row">';
     html+='<button class="star-btn '+(w.starred?'on':'')+'" onclick="toggleWsStar(event,'+w.index+')" title="'+(w.starred?'Unstar session':'Star session')+'">'+(w.starred?'&#9733;':'&#9734;')+'</button>';
-    html+='<span class="session-auto-indicator '+(autoOn?'on':'')+'" title="'+(autoOn?'Auto enabled':'Auto disabled')+'">&#9889;</span>';
+    html+='<span class="session-auto-indicator '+(autoOn?'on':'')+(autoMode==='super'?' super':'')+'" title="'+esc(autoModeTitle(autoMode))+'">'+esc(autoModeGlyph(autoMode))+'</span>';
     html+='<div style="min-width:0;overflow:hidden">';
     html+='<span class="card-name" onclick="startRename('+w.index+',this)" title="Click to rename">'+esc(displayName)+'</span>';
     html+='</div>';
@@ -1498,7 +1578,7 @@ function buildGrid(){
     }else{
       html+='<span class="'+badgeClass+'">'+badgeText+'</span>';
     }
-    html+='<div class="'+autoClass+'" onclick="toggleWsAuto('+w.index+',this)"><span class="auto-toggle-label">Auto</span><div class="toggle-track"></div></div>';
+    html+='<div class="'+autoClass+'" onclick="toggleWsAuto('+w.index+',this)" title="'+esc(autoModeToggleTitle(autoMode))+'"><span class="auto-toggle-icon" aria-hidden="true">'+esc(autoModeGlyph(autoMode))+'</span><span class="auto-toggle-label">'+esc(autoModeLabel(autoMode))+'</span><div class="toggle-track"></div></div>';
     html+='<button class="expand-btn" onclick="openExpanded('+w.index+')">&#10530;</button>';
     html+='</div></div>';
 
@@ -1506,7 +1586,7 @@ function buildGrid(){
     html+='<span>\uD83D\uDCC2 '+esc(w.cwd||'—')+'</span>';
     if(w.branch)html+='<span>\uD83C\uDF3F '+esc(w.branch)+'</span>';
     if(w.lastCheck)html+='<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>';
-    if(autoOn&&w.autoExpiresAt)html+='<span>Auto off in '+esc(formatRemaining(w.autoExpiresAt))+'</span>';
+    if(autoOn&&w.autoExpiresAt)html+='<span>'+esc(autoModeLabel(autoMode))+' off in '+esc(formatRemaining(w.autoExpiresAt))+'</span>';
     if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);html+='<span>\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px">'+esc(w.sessionCost)+'</span></span>';}
     html+='</div>';
 
@@ -1560,11 +1640,9 @@ function buildGrid(){
         starEl.innerHTML=w.starred?'&#9733;':'&#9734;';
         starEl.setAttribute('title',w.starred?'Unstar session':'Star session');
       }
+      var mode=workspaceAutoMode(w);
       var autoIndicator=card.querySelector('.session-auto-indicator');
-      if(autoIndicator){
-        autoIndicator.classList.toggle('on',w.enabled===true);
-        autoIndicator.setAttribute('title',w.enabled===true?'Auto enabled':'Auto disabled');
-      }
+      applyAutoIndicatorClass(autoIndicator,mode);
       // Remove any leftover original-name subtitle
       var origEl=card.querySelector('.card-name-original');
       if(origEl)origEl.remove();
@@ -1602,13 +1680,13 @@ function buildGrid(){
         spans.push('<span>\uD83D\uDCC2 '+esc(w.cwd||'\u2014')+'</span>');
         if(w.branch)spans.push('<span>\uD83C\uDF3F '+esc(w.branch)+'</span>');
         if(w.lastCheck)spans.push('<span>\u23F1 '+fmtTime(w.lastCheck)+'</span>');
-        if(w.enabled===true&&w.autoExpiresAt)spans.push('<span>Auto off in '+esc(formatRemaining(w.autoExpiresAt))+'</span>');
+        if(mode!=='off'&&w.autoExpiresAt)spans.push('<span>'+esc(autoModeLabel(mode))+' off in '+esc(formatRemaining(w.autoExpiresAt))+'</span>');
         if(w.hasClaude&&w.sessionCost){var cc=costColor(w.sessionCost);spans.push('<span>\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:11px">'+esc(w.sessionCost)+'</span></span>');}
         var newMeta=spans.join('');
         if(meta.innerHTML!==newMeta)meta.innerHTML=newMeta;
       }
       var autoToggle=card.querySelector('.auto-toggle');
-      if(autoToggle)autoToggle.classList.toggle('on',w.enabled===true);
+      applyAutoModeClass(autoToggle,mode);
     });
   }
 }
@@ -1665,11 +1743,10 @@ window.showNeedsYouReason=function(event,wsIndex){
 
 // ─── Per-workspace auto toggle ───
 window.toggleWsAuto=function(idx,el){
-  el.classList.toggle('on');
-  var on=el.classList.contains('on');
   var ws=findWorkspaceByIndex(idx);
-  if(ws)ws.enabled=on;
-  api('POST','/api/workspace',{index:idx,enabled:on});
+  var mode=nextAutoMode(workspaceAutoMode(ws));
+  setWorkspaceAutoMode(idx,mode);
+  applyAutoModeClass(el,mode);
   buildGrid();
   updateExpanded();
 };
@@ -1743,11 +1820,10 @@ window.closeExpanded=function(){
 window.toggleExpAuto=function(){
   if(expandedWsIndex===null)return;
   var el=document.getElementById('expAutoToggle');
-  el.classList.toggle('on');
-  var on=el.classList.contains('on');
   var ws=findWorkspaceByIndex(expandedWsIndex);
-  if(ws)ws.enabled=on;
-  api('POST','/api/workspace',{index:expandedWsIndex,enabled:on});
+  var mode=nextAutoMode(workspaceAutoMode(ws));
+  setWorkspaceAutoMode(expandedWsIndex,mode);
+  applyAutoModeClass(el,mode);
   buildGrid();
   updateExpanded();
 };
@@ -2025,15 +2101,12 @@ function updateExpanded(){
   if(ws.hasClaude&&ws.sessionCost){var cc=costColor(ws.sessionCost);meta+='\uD83D\uDCB0 <span style="color:'+cc+';font-family:\'JetBrains Mono\',\'SF Mono\',monospace;font-size:12px">'+esc(ws.sessionCost)+'</span>  ';}
   document.getElementById('expMeta').innerHTML=meta;
 
+  var autoMode=workspaceAutoMode(ws);
   var autoEl=document.getElementById('expAutoToggle');
-  if(ws.enabled!==false)autoEl.classList.add('on');
-  else autoEl.classList.remove('on');
+  applyAutoModeClass(autoEl,autoMode);
 
   var autoIndicator=document.getElementById('expAutoIndicator');
-  if(autoIndicator){
-    autoIndicator.classList.toggle('on',ws.enabled===true);
-    autoIndicator.setAttribute('title',ws.enabled===true?'Auto enabled':'Auto disabled');
-  }
+  applyAutoIndicatorClass(autoIndicator,autoMode);
 
   var starEl=document.getElementById('expStarToggle');
   if(starEl){
