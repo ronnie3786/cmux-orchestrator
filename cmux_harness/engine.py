@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from . import claude_cli
 from . import cmux_api
 from . import detection
+from . import push_notifications
 from . import review as review_mod
 from . import storage
 from .orchestrator import Orchestrator
@@ -477,6 +478,7 @@ class HarnessEngine(threading.Thread):
         idx = ws.get("index", ws.get("id"))
         workspace_uuid = ws.get("uuid", "")
         ws_name = ws.get("name", f"workspace-{idx}")
+        surface_id = ws.get("_surface_id")
         cfg = self._auto_cfg_for_workspace(workspace_uuid)
         if not cfg.get("autoEnabled"):
             return
@@ -536,12 +538,33 @@ class HarnessEngine(threading.Thread):
             self.auto_policy_last_action_fingerprint[idx] = screen_fp
             log_entry["action"] = "human alert"
             self._append_log(log_entry)
+            push_notifications.notify_auto_mode_human_alert(
+                workspace_id=push_notifications.app_workspace_id(workspace_uuid, surface_id),
+                workspace_uuid=workspace_uuid,
+                surface_id=surface_id,
+                workspace_name=ws_name,
+                reason=decision["reason"],
+                request_text=push_notifications.approval_request_preview(screen),
+                notification_id=f"auto:{workspace_uuid}:{surface_id or ''}:{screen_fp}",
+            )
             return
 
         if submit == "none":
+            if self.auto_policy_last_action_fingerprint.get(idx) == screen_fp:
+                return
+            self.auto_policy_last_action_fingerprint[idx] = screen_fp
             log_entry["action"] = "human alert"
             log_entry["reason"] = decision["reason"] or "Haiku requested action without a safe submit key."
             self._append_log(log_entry)
+            push_notifications.notify_auto_mode_human_alert(
+                workspace_id=push_notifications.app_workspace_id(workspace_uuid, surface_id),
+                workspace_uuid=workspace_uuid,
+                surface_id=surface_id,
+                workspace_name=ws_name,
+                reason=log_entry["reason"],
+                request_text=push_notifications.approval_request_preview(screen),
+                notification_id=f"auto:{workspace_uuid}:{surface_id or ''}:{screen_fp}",
+            )
             return
 
         if self.auto_policy_last_action_fingerprint.get(idx) == screen_fp:

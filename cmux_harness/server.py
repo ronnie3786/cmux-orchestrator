@@ -14,6 +14,7 @@ import uuid
 
 from . import cmux_api
 from . import objectives
+from . import push_notifications
 from . import workspaces
 from . import review as review_mod
 from . import storage
@@ -660,6 +661,18 @@ def make_handler(engine):
                 objective_routes.handle_post_create_objective(self, data, engine=self.server.engine)
             elif path == "/api/workspaces":
                 workspace_routes.handle_post_create_workspace(self, data)
+            elif path == "/api/push/register":
+                self._json_response(push_notifications.register_device(
+                    data.get("token", ""),
+                    data.get("bundleId", ""),
+                    data.get("environment", ""),
+                ))
+            elif path == "/api/push/clear":
+                self._json_response(push_notifications.clear_workspace_pending(
+                    data.get("workspaceID", ""),
+                    data.get("workspaceUUID", ""),
+                    data.get("surfaceID", ""),
+                ))
             elif path == "/api/workspace":
                 idx = data.get("index")
                 enabled = data.get("enabled", True)
