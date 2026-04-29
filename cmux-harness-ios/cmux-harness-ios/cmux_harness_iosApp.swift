@@ -10,14 +10,16 @@ import ComposableArchitecture
 
 @main
 struct cmux_harness_iosApp: App {
+    @UIApplicationDelegateAdaptor(PushNotificationBridge.self) private var pushBridge
+    private let store = Store(initialState: HarnessFeature.State()) {
+        HarnessFeature()
+    }
+
     var body: some Scene {
         WindowGroup {
             if TestContext.current == nil {
-                ContentView(
-                    store: Store(initialState: HarnessFeature.State()) {
-                        HarnessFeature()
-                    }
-                )
+                ContentView(store: store)
+                    .environmentObject(pushBridge)
             }
         }
     }

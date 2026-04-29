@@ -198,6 +198,42 @@ enum HarnessAPI {
         )
     }
 
+    static func registerPushDevice(
+        baseURLString: String,
+        token: String,
+        bundleID: String,
+        environment: String
+    ) async throws -> BasicResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/push/register",
+            method: "POST",
+            body: PushDeviceRegistrationRequest(
+                token: token,
+                bundleId: bundleID,
+                environment: environment
+            )
+        )
+    }
+
+    static func clearPushApproval(
+        baseURLString: String,
+        workspaceID: String,
+        workspaceUUID: String,
+        surfaceID: String?
+    ) async throws -> BasicResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/push/clear",
+            method: "POST",
+            body: PushApprovalClearRequest(
+                workspaceID: workspaceID,
+                workspaceUUID: workspaceUUID,
+                surfaceID: surfaceID ?? ""
+            )
+        )
+    }
+
     nonisolated static func message(for error: Error) -> String {
         if let apiError = error as? HarnessAPIError {
             return apiError.localizedDescription
@@ -387,6 +423,18 @@ private struct GitDiffRequest: Encodable {
     var index: Int
     var file: String
     var section: String
+}
+
+private struct PushDeviceRegistrationRequest: Encodable {
+    var token: String
+    var bundleId: String
+    var environment: String
+}
+
+private struct PushApprovalClearRequest: Encodable {
+    var workspaceID: String
+    var workspaceUUID: String
+    var surfaceID: String
 }
 
 private struct AnyEncodable: Encodable {

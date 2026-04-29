@@ -28,6 +28,7 @@ struct HarnessFeature {
         var draftMessages: [String: String] = [:]
         var detailDraft = ""
         var detailInputFocusRequest = 0
+        var pendingPushApproval: PushApprovalNotification?
 
         var isShowingSettings = false
         var isShowingNewSession = false
@@ -136,6 +137,7 @@ struct HarnessFeature {
         case createNewSessionFailed(String)
 
         case selectWorkspace(String?)
+        case openPushApproval(PushApprovalNotification)
         case detailTabChanged(DetailTab)
         case toggleDetailInfo
         case screenTick
@@ -228,6 +230,11 @@ struct HarnessFeature {
                 state.logEntries = payload.log
                 state.lastUpdated = self.now
                 trimDrafts(&state)
+                if let pendingPushApproval = state.pendingPushApproval,
+                   let workspaceID = matchingWorkspaceID(for: pendingPushApproval, in: state) {
+                    state.pendingPushApproval = nil
+                    return .send(.selectWorkspace(workspaceID))
+                }
                 if let selected = state.selectedWorkspaceID,
                    !state.workspaces.contains(where: { $0.id == selected }) {
                     state.selectedWorkspaceID = nil
@@ -353,6 +360,9 @@ struct HarnessFeature {
                 return .none
 
             case let .selectWorkspace(id):
+                let workspaceToClear = id.flatMap { selectedID in
+                    state.workspaces.first { $0.id == selectedID }
+                }
                 state.selectedWorkspaceID = id
                 state.detailTab = .terminal
                 state.isDetailInfoExpanded = false
@@ -377,11 +387,25 @@ struct HarnessFeature {
                         .cancel(id: fileSearchCancelID)
                     )
                 }
-                return .merge(
+                var effects: [Effect<Action>] = [
                     .send(.screenTick),
                     screenPollingEffect(),
                     .cancel(id: gitPollingCancelID)
-                )
+                ]
+                if let workspaceToClear {
+                    effects.append(clearPushApprovalEffect(state: state, workspace: workspaceToClear))
+                }
+                return .merge(effects)
+
+            case let .openPushApproval(notification):
+                guard let workspaceID = matchingWorkspaceID(for: notification, in: state) else {
+                    state.pendingPushApproval = notification
+                    return .send(.refresh)
+                }
+                state.pendingPushApproval = nil
+                state.sessionSearchText = ""
+                state.sessionFilter = .all
+                return .send(.selectWorkspace(workspaceID))
 
             case let .detailTabChanged(tab):
                 state.detailTab = tab
@@ -758,6 +782,17 @@ extension HarnessFeature {
             }
         }
     }
+
+    private func clearPushApprovalEffect(state: State, workspace: Workspace) -> Effect<Action> {
+        .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace] _ in
+            _ = try? await client.clearPushApproval(
+                baseURLString,
+                workspace.pushWorkspaceID,
+                workspace.uuid,
+                workspace.surfaceId
+            )
+        }
+    }
 }
 
 private let pollingCancelID = "cmux-harness-ios.polling"
@@ -789,4 +824,34 @@ private func appendPromptToken(_ token: String, to draft: String) -> String {
         return draft + token
     }
     return draft + " " + token
+}
+
+private func matchingWorkspaceID(
+    for notification: PushApprovalNotification,
+    in state: HarnessFeature.State
+) -> String? {
+    if !notification.workspaceID.isEmpty,
+       state.workspaces.contains(where: { $0.id == notification.workspaceID }) {
+        return notification.workspaceID
+    }
+    if !notification.workspaceUUID.isEmpty, !notification.surfaceID.isEmpty,
+       let match = state.workspaces.first(where: {
+           $0.uuid == notification.workspaceUUID && $0.surfaceId == notification.surfaceID
+       }) {
+        return match.id
+    }
+    if !notification.workspaceUUID.isEmpty,
+       let match = state.workspaces.first(where: { $0.uuid == notification.workspaceUUID }) {
+        return match.id
+    }
+    return nil
+}
+
+private extension Workspace {
+    var pushWorkspaceID: String {
+        if let surfaceId, !surfaceId.isEmpty {
+            return "\(uuid)|\(surfaceId)"
+        }
+        return uuid
+    }
 }

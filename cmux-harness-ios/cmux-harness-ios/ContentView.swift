@@ -22,4 +22,5 @@ struct ContentView: View {
             HarnessFeature()
         }
     )
+    .environmentObject(PushNotificationBridge())
 }

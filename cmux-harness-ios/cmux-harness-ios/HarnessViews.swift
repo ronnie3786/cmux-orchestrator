@@ -3,6 +3,7 @@ import SwiftUI
 
 struct HarnessRootView: View {
     @Bindable var store: StoreOf<HarnessFeature>
+    @EnvironmentObject private var pushBridge: PushNotificationBridge
 
     var body: some View {
         NavigationSplitView {
@@ -22,6 +23,24 @@ struct HarnessRootView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if let banner = pushBridge.banner {
+                PushApprovalBanner(
+                    notification: banner,
+                    openAction: {
+                        openPushApproval(banner)
+                    },
+                    dismissAction: {
+                        pushBridge.dismissBanner()
+                    }
+                )
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(20)
+            }
+        }
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: pushBridge.banner?.id)
         .sheet(isPresented: $store.isShowingSettings) {
             SettingsView(store: store)
         }
@@ -79,6 +98,72 @@ struct HarnessRootView: View {
         .onDisappear {
             store.send(.onDisappear)
         }
+        .onChange(of: pushBridge.pendingDeepLink) { _, notification in
+            guard let notification else { return }
+            openPushApproval(notification)
+            pushBridge.pendingDeepLink = nil
+        }
+    }
+
+    private func openPushApproval(_ notification: PushApprovalNotification) {
+        store.send(.openPushApproval(notification))
+        pushBridge.dismissBanner()
+        PushNotificationBridge.clearApplicationBadge()
+    }
+}
+
+private struct PushApprovalBanner: View {
+    let notification: PushApprovalNotification
+    let openAction: () -> Void
+    let dismissAction: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button(action: openAction) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .frame(width: 24, height: 24)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(notification.workspaceName.isEmpty ? "Approval needed" : notification.workspaceName)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(notification.request.isEmpty ? notification.reason : notification.request)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.72))
+                            .lineLimit(3)
+                    }
+
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: dismissAction) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.08), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss approval notification")
+        }
+        .padding(14)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                }
+        }
+        .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
     }
 }
 

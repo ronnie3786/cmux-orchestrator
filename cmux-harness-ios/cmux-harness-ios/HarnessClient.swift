@@ -26,6 +26,7 @@ struct HarnessClient: Sendable {
     var diff: @Sendable (String, Int, String, GitFileSection) async throws -> GitDiffResponse
     var skills: @Sendable (String, Int) async throws -> SkillsResponse
     var searchFiles: @Sendable (String, Int, String) async throws -> FileSearchResponse
+    var clearPushApproval: @Sendable (String, String, String, String?) async throws -> BasicResponse
 }
 
 extension HarnessClient {
@@ -85,6 +86,14 @@ extension HarnessClient {
         },
         searchFiles: { baseURLString, index, query in
             try await HarnessAPI.searchFiles(baseURLString: baseURLString, index: index, query: query)
+        },
+        clearPushApproval: { baseURLString, workspaceID, workspaceUUID, surfaceID in
+            try await HarnessAPI.clearPushApproval(
+                baseURLString: baseURLString,
+                workspaceID: workspaceID,
+                workspaceUUID: workspaceUUID,
+                surfaceID: surfaceID
+            )
         }
     )
 }
@@ -110,7 +119,8 @@ extension HarnessClient {
         unstageFile: { _, _, _ in throw HarnessClientError.unimplemented("unstageFile") },
         diff: { _, _, _, _ in throw HarnessClientError.unimplemented("diff") },
         skills: { _, _ in throw HarnessClientError.unimplemented("skills") },
-        searchFiles: { _, _, _ in throw HarnessClientError.unimplemented("searchFiles") }
+        searchFiles: { _, _, _ in throw HarnessClientError.unimplemented("searchFiles") },
+        clearPushApproval: { _, _, _, _ in throw HarnessClientError.unimplemented("clearPushApproval") }
     )
 }
 
