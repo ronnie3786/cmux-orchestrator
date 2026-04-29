@@ -1135,7 +1135,7 @@ private struct DetailInputBar: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            HStack(spacing: 10) {
+            HStack(alignment: .bottom, spacing: 10) {
                 Button {
                     isShowingAttachmentOptions = true
                 } label: {
@@ -1168,17 +1168,25 @@ private struct DetailInputBar: View {
                 }
                 .accessibilityLabel("Add file path")
 
-                TextField("Type a message or instruction...", text: $store.detailDraft, selection: $inputSelection)
+                TextField(
+                    "Type a message or instruction...",
+                    text: $store.detailDraft,
+                    selection: $inputSelection,
+                    axis: .vertical
+                )
                     .font(.subheadline)
+                    .lineLimit(1...6)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .overlay {
-                        Capsule()
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
                     }
-                    .textInputAutocapitalization(.never)
+                    .textInputAutocapitalization(.sentences)
                     .autocorrectionDisabled(false)
+                    .submitLabel(.send)
                     .focused(isInputFocused)
                     .onSubmit {
                         store.send(.sendDetailDraft)
