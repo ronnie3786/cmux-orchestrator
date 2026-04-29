@@ -1099,6 +1099,16 @@ private struct SessionInfoItem: View {
     }
 }
 
+private enum HarnessHaptics {
+    static func inputCTA() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.75)
+    }
+
+    static func sendCTA() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred(intensity: 0.85)
+    }
+}
+
 private struct DetailInputBar: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
@@ -1151,6 +1161,7 @@ private struct DetailInputBar: View {
                     }
 
                     Button {
+                        HarnessHaptics.inputCTA()
                         store.send(.fileSearchTapped)
                     } label: {
                         Text("@")
@@ -1181,6 +1192,7 @@ private struct DetailInputBar: View {
 
             HStack(alignment: .bottom, spacing: 10) {
                 Button {
+                    HarnessHaptics.inputCTA()
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                         isActionMenuExpanded.toggle()
                     }
@@ -1220,7 +1232,7 @@ private struct DetailInputBar: View {
                     .submitLabel(.send)
                     .focused(isInputFocused)
                     .onSubmit {
-                        store.send(.sendDetailDraft)
+                        sendDetailDraftWithHaptic()
                     }
                     .onChange(of: store.detailDraft) {
                         dismissedSkillAutocompleteSignature = nil
@@ -1231,7 +1243,7 @@ private struct DetailInputBar: View {
                     }
 
                 Button {
-                    store.send(.sendDetailDraft)
+                    sendDetailDraftWithHaptic()
                 } label: {
                     Image(systemName: "paperplane.fill")
                         .font(.headline.weight(.semibold))
@@ -1246,6 +1258,7 @@ private struct DetailInputBar: View {
             HStack(spacing: 10) {
                 ForEach(HarnessKey.allCases) { key in
                     Button {
+                        HarnessHaptics.inputCTA()
                         store.send(.sendKey(workspaceID: workspace.id, key))
                     } label: {
                         Label(key.label, systemImage: key.systemImage)
@@ -1270,6 +1283,7 @@ private struct DetailInputBar: View {
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: isActionMenuExpanded)
         .confirmationDialog("Attach", isPresented: $isShowingAttachmentOptions) {
             Button {
+                HarnessHaptics.inputCTA()
                 isShowingAttachmentOptions = false
                 Task {
                     await Task.yield()
@@ -1279,6 +1293,7 @@ private struct DetailInputBar: View {
                 Label("Photo Library", systemImage: "photo")
             }
             Button {
+                HarnessHaptics.inputCTA()
                 isShowingAttachmentOptions = false
                 Task {
                     await Task.yield()
@@ -1338,12 +1353,21 @@ private struct DetailInputBar: View {
         return hasMessage || hasUploadedAttachment
     }
 
+    private func sendDetailDraftWithHaptic() {
+        guard canSend else { return }
+        HarnessHaptics.sendCTA()
+        store.send(.sendDetailDraft)
+    }
+
     private func inputActionButton(
         systemImage: String,
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button {
+            HarnessHaptics.inputCTA()
+            action()
+        } label: {
             Image(systemName: systemImage)
                 .font(.headline.weight(.semibold))
                 .frame(width: 44, height: 44)
@@ -1517,7 +1541,10 @@ private struct AttachmentChip: View {
                     .controlSize(.small)
                     .tint(.white.opacity(0.82))
             } else if attachment.status == .failed {
-                Button(action: retryAction) {
+                Button {
+                    HarnessHaptics.inputCTA()
+                    retryAction()
+                } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.caption.weight(.bold))
                         .frame(width: 24, height: 24)
@@ -1527,7 +1554,10 @@ private struct AttachmentChip: View {
                 .accessibilityLabel("Retry attachment upload")
             }
 
-            Button(action: removeAction) {
+            Button {
+                HarnessHaptics.inputCTA()
+                removeAction()
+            } label: {
                 Image(systemName: "xmark")
                     .font(.caption2.weight(.bold))
                     .frame(width: 24, height: 24)
@@ -1621,7 +1651,12 @@ private struct SkillAutocompletePanel: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.64))
                 Spacer()
-                Button("Cancel", action: cancelAction)
+                Button {
+                    HarnessHaptics.inputCTA()
+                    cancelAction()
+                } label: {
+                    Text("Cancel")
+                }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.accentColor)
@@ -1629,6 +1664,7 @@ private struct SkillAutocompletePanel: View {
 
             ForEach(suggestions) { skill in
                 Button {
+                    HarnessHaptics.inputCTA()
                     selectAction(skill)
                 } label: {
                     HStack(spacing: 10) {
