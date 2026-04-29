@@ -1061,6 +1061,7 @@ private struct DetailInputBar: View {
     let isInputFocused: FocusState<Bool>.Binding
     @State private var inputSelection: TextSelection?
     @State private var dismissedSkillAutocompleteSignature: String?
+    @State private var isActionMenuExpanded = false
     @State private var isShowingAttachmentOptions = false
     @State private var isShowingPhotoPicker = false
     @State private var isShowingFileImporter = false
@@ -1096,13 +1097,54 @@ private struct DetailInputBar: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            if isActionMenuExpanded {
+                HStack(spacing: 10) {
+                    inputActionButton(
+                        systemImage: "paperclip",
+                        accessibilityLabel: "Attach file"
+                    ) {
+                        isShowingAttachmentOptions = true
+                    }
+
+                    Button {
+                        store.send(.fileSearchTapped)
+                    } label: {
+                        Text("@")
+                            .font(.headline.monospaced().weight(.bold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay {
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    }
+                    .accessibilityLabel("Add file path")
+
+                    inputActionButton(
+                        systemImage: "ticket",
+                        accessibilityLabel: "Add Jira ticket"
+                    ) {
+                        store.send(.jiraTicketsTapped)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             HStack(alignment: .bottom, spacing: 10) {
                 Button {
-                    isShowingAttachmentOptions = true
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                        isActionMenuExpanded.toggle()
+                    }
                 } label: {
-                    Image(systemName: "paperclip")
+                    Image(systemName: "chevron.up")
                         .font(.headline.weight(.semibold))
                         .frame(width: 44, height: 44)
+                        .rotationEffect(.degrees(isActionMenuExpanded ? 180 : 0))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(0.92))
@@ -1111,39 +1153,7 @@ private struct DetailInputBar: View {
                     Circle()
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 }
-                .accessibilityLabel("Attach file")
-
-                Button {
-                    store.send(.fileSearchTapped)
-                } label: {
-                    Text("@")
-                        .font(.headline.monospaced().weight(.bold))
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.92))
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                }
-                .accessibilityLabel("Add file path")
-
-                Button {
-                    store.send(.jiraTicketsTapped)
-                } label: {
-                    Image(systemName: "ticket")
-                        .font(.headline.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.92))
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                }
-                .accessibilityLabel("Add Jira ticket")
+                .accessibilityLabel(isActionMenuExpanded ? "Hide input actions" : "Show input actions")
 
                 TextField(
                     "Type a message or instruction...",
@@ -1213,6 +1223,7 @@ private struct DetailInputBar: View {
         .padding(.bottom, 2)
         .animation(.easeInOut(duration: 0.16), value: skillAutocompleteContext?.signature)
         .animation(.easeInOut(duration: 0.16), value: attachments)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: isActionMenuExpanded)
         .confirmationDialog("Attach", isPresented: $isShowingAttachmentOptions) {
             Button {
                 isShowingAttachmentOptions = false
@@ -1281,6 +1292,26 @@ private struct DetailInputBar: View {
         let hasMessage = !store.detailDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasUploadedAttachment = attachments.contains { $0.status == .uploaded && $0.uploadedPath != nil }
         return hasMessage || hasUploadedAttachment
+    }
+
+    private func inputActionButton(
+        systemImage: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.semibold))
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(0.92))
+        .background(.ultraThinMaterial, in: Circle())
+        .overlay {
+            Circle()
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+        }
+        .accessibilityLabel(accessibilityLabel)
     }
 
     @MainActor
