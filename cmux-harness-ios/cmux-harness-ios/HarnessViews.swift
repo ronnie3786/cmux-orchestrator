@@ -2079,6 +2079,9 @@ private struct FileSearchView: View {
 
 private struct JiraTicketsView: View {
     @Bindable var store: StoreOf<HarnessFeature>
+    @Environment(\.openURL) private var openURL
+    @State private var copiedTicketKey: String?
+    @State private var copiedToastID = UUID()
 
     var body: some View {
         NavigationStack {
@@ -2097,10 +2100,10 @@ private struct JiraTicketsView: View {
                         JiraTicketRow(
                             ticket: ticket,
                             copyKeyAction: {
-                                UIPasteboard.general.string = ticket.key
+                                copyTicketKey(ticket.key)
                             },
-                            copyLinkAction: {
-                                UIPasteboard.general.string = ticket.url
+                            openLinkAction: {
+                                openJiraTicket(ticket)
                             },
                             insertAction: {
                                 store.send(.appendJiraTicketReference(ticket))
@@ -2112,6 +2115,15 @@ private struct JiraTicketsView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Jira")
             .navigationBarTitleDisplayMode(.inline)
+            .overlay(alignment: .top) {
+                if let copiedTicketKey {
+                    JiraCopyToast(ticketKey: copiedTicketKey)
+                        .padding(.top, 8)
+                        .padding(.horizontal, 20)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -2136,12 +2148,34 @@ private struct JiraTicketsView: View {
             }
         }
     }
+
+    private func copyTicketKey(_ key: String) {
+        let toastID = UUID()
+        UIPasteboard.general.string = key
+        copiedToastID = toastID
+        withAnimation(.easeInOut(duration: 0.18)) {
+            copiedTicketKey = key
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            guard copiedToastID == toastID else { return }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                copiedTicketKey = nil
+            }
+        }
+    }
+
+    private func openJiraTicket(_ ticket: JiraTicket) {
+        guard let url = URL(string: ticket.url) else { return }
+        openURL(url)
+    }
 }
 
 private struct JiraTicketRow: View {
     let ticket: JiraTicket
     let copyKeyAction: () -> Void
-    let copyLinkAction: () -> Void
+    let openLinkAction: () -> Void
     let insertAction: () -> Void
 
     var body: some View {
@@ -2162,7 +2196,7 @@ private struct JiraTicketRow: View {
                     .foregroundStyle(.primary)
                     .lineLimit(3)
 
-                HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     JiraTicketPill(text: ticket.status, systemImage: "circle.dotted")
                     if !ticket.priority.isEmpty {
                         JiraTicketPill(text: ticket.priority, systemImage: "flag")
@@ -2172,23 +2206,25 @@ private struct JiraTicketRow: View {
 
             Spacer(minLength: 8)
 
-            Button(action: copyLinkAction) {
-                Image(systemName: "link")
-                    .font(.headline.weight(.semibold))
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
-            .accessibilityLabel("Copy Jira link")
+            VStack(spacing: 12) {
+                Button(action: openLinkAction) {
+                    Image(systemName: "link")
+                        .font(.headline.weight(.semibold))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel("Open Jira ticket")
 
-            Button(action: insertAction) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: 36, height: 36)
+                Button(action: insertAction) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3.weight(.semibold))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.green)
+                .accessibilityLabel("Insert Jira ticket link")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.green)
-            .accessibilityLabel("Insert Jira ticket reference")
         }
         .padding(.vertical, 4)
     }
@@ -2200,12 +2236,33 @@ private struct JiraTicketPill: View {
 
     var body: some View {
         Label(text.isEmpty ? "Unknown" : text, systemImage: systemImage)
-            .font(.caption.weight(.semibold))
+            .font(.caption2.weight(.semibold))
             .lineLimit(1)
+            .minimumScaleFactor(0.78)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(Color.secondary.opacity(0.12), in: Capsule())
+    }
+}
+
+private struct JiraCopyToast: View {
+    let ticketKey: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text("Copied \(ticketKey)")
+                .font(.footnote.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.16), radius: 10, x: 0, y: 4)
     }
 }
 

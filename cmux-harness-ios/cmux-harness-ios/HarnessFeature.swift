@@ -829,7 +829,7 @@ struct HarnessFeature {
                 return .none
 
             case let .appendJiraTicketReference(ticket):
-                state.detailDraft = appendPromptToken(jiraPromptReference(for: ticket), to: state.detailDraft)
+                state.detailDraft = appendPromptToken(ticket.url, to: state.detailDraft)
                 state.detailTab = .terminal
                 state.detailInputFocusRequest += 1
                 state.isShowingJiraTickets = false
@@ -1008,16 +1008,6 @@ private func appendPromptToken(_ token: String, to draft: String) -> String {
         return draft + token
     }
     return draft + " " + token
-}
-
-private func jiraPromptReference(for ticket: JiraTicket) -> String {
-    [
-        "Jira: \(ticket.key)",
-        "Title: \(ticket.title)",
-        "Status: \(ticket.status)",
-        "Priority: \(ticket.priority)",
-        "URL: \(ticket.url)",
-    ].joined(separator: "\n")
 }
 
 private func matchingWorkspaceID(
