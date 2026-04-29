@@ -595,15 +595,34 @@ private struct SessionStarIndicator: View {
 }
 
 private struct SessionAutoIndicator: View {
-    let isEnabled: Bool
+    let mode: WorkspaceAutoMode
 
     var body: some View {
-        if isEnabled {
-            Image(systemName: "bolt.fill")
+        if mode.isEnabled {
+            WorkspaceAutoModeIcon(mode: mode)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 18, height: 18)
-                .accessibilityLabel("Auto enabled")
+                .foregroundStyle(mode == .superAuto ? Color.orange : Color.accentColor)
+                .frame(width: mode == .superAuto ? 26 : 18, height: 18)
+                .accessibilityLabel(mode.accessibilityLabel)
+        }
+    }
+}
+
+private struct WorkspaceAutoModeIcon: View {
+    let mode: WorkspaceAutoMode
+
+    @ViewBuilder
+    var body: some View {
+        switch mode {
+        case .off:
+            Image(systemName: "circle")
+        case .auto:
+            Image(systemName: "bolt.fill")
+        case .superAuto:
+            HStack(spacing: 1) {
+                Image(systemName: "bolt.fill")
+                Image(systemName: "bolt.fill")
+            }
         }
     }
 }
@@ -612,10 +631,11 @@ private struct SessionStatusIndicators: View {
     let workspace: Workspace
 
     var body: some View {
-        if workspace.starred || workspace.enabled {
+        let autoMode = workspace.resolvedAutoMode
+        if workspace.starred || autoMode.isEnabled {
             HStack(spacing: 4) {
                 SessionStarIndicator(isStarred: workspace.starred)
-                SessionAutoIndicator(isEnabled: workspace.enabled)
+                SessionAutoIndicator(mode: autoMode)
             }
         }
     }
@@ -627,10 +647,22 @@ private struct SessionContextMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                store.send(.toggleWorkspace(workspaceID: workspace.id, enabled: !workspace.enabled))
-            } label: {
-                Label("Auto", systemImage: workspace.enabled ? "checkmark.circle.fill" : "circle")
+            Section("Auto Mode") {
+                ForEach(WorkspaceAutoMode.allCases) { mode in
+                    Button {
+                        store.send(.setWorkspaceAutoMode(workspaceID: workspace.id, mode: mode))
+                    } label: {
+                        HStack(spacing: 8) {
+                            WorkspaceAutoModeIcon(mode: mode)
+                                .frame(width: 24)
+                            Text(mode.menuLabel)
+                            if workspace.resolvedAutoMode == mode {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
             }
 
             Button {
@@ -2521,7 +2553,14 @@ private struct AutoExpirationText: View {
     var body: some View {
         if let autoExpiresAt = workspace.autoExpiresAt, autoExpiresAt > 0 {
             TimelineView(.periodic(from: .now, by: 30)) { timeline in
-                Label(autoExpirationLabel(expiresAt: autoExpiresAt, now: timeline.date), systemImage: "timer")
+                Label(
+                    autoExpirationLabel(
+                        expiresAt: autoExpiresAt,
+                        now: timeline.date,
+                        mode: workspace.resolvedAutoMode
+                    ),
+                    systemImage: "timer"
+                )
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -2687,12 +2726,12 @@ private func costColor(_ value: String) -> Color {
     return .secondary
 }
 
-private func autoExpirationLabel(expiresAt: Double, now: Date) -> String {
+private func autoExpirationLabel(expiresAt: Double, now: Date, mode: WorkspaceAutoMode) -> String {
     let remaining = expiresAt - now.timeIntervalSince1970
     if remaining <= 0 {
-        return "Auto expired"
+        return "\(mode.label) expired"
     }
-    return "Auto \(formatRemainingDuration(remaining))"
+    return "\(mode.label) \(formatRemainingDuration(remaining))"
 }
 
 private func formatRemainingDuration(_ seconds: TimeInterval) -> String {

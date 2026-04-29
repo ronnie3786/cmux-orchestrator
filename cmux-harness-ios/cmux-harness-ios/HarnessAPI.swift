@@ -55,11 +55,23 @@ enum HarnessAPI {
         index: Int,
         enabled: Bool
     ) async throws -> BasicResponse {
+        try await setWorkspaceAutoMode(
+            baseURLString: baseURLString,
+            index: index,
+            mode: enabled ? .auto : .off
+        )
+    }
+
+    static func setWorkspaceAutoMode(
+        baseURLString: String,
+        index: Int,
+        mode: WorkspaceAutoMode
+    ) async throws -> BasicResponse {
         try await request(
             baseURLString: baseURLString,
             path: "/api/workspace",
             method: "POST",
-            body: WorkspaceToggleRequest(index: index, enabled: enabled)
+            body: WorkspaceToggleRequest(index: index, enabled: mode.isEnabled, autoMode: mode.rawValue)
         )
     }
 
@@ -552,6 +564,7 @@ private struct ToggleRequest: Encodable {
 private struct WorkspaceToggleRequest: Encodable {
     var index: Int
     var enabled: Bool
+    var autoMode: String
 }
 
 private struct WorkspaceStarRequest: Encodable {

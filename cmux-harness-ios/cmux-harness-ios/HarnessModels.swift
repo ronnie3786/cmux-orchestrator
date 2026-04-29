@@ -28,6 +28,7 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
     var name: String
     var uuid: String
     var enabled: Bool
+    var autoMode: WorkspaceAutoMode?
     var starred = false
     var autoEnabledAt: Double?
     var autoExpiresAt: Double?
@@ -68,6 +69,10 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
         return text.isEmpty ? "(no terminal data yet)" : text
     }
 
+    var resolvedAutoMode: WorkspaceAutoMode {
+        autoMode ?? (enabled ? .auto : .off)
+    }
+
     private static func shortenedFallbackTitle(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
@@ -87,6 +92,62 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
             .split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
         return components.last ?? value
+    }
+}
+
+enum WorkspaceAutoMode: String, Codable, CaseIterable, Equatable, Identifiable, Sendable {
+    case off
+    case auto
+    case superAuto = "super"
+
+    var id: String { rawValue }
+
+    var isEnabled: Bool {
+        self != .off
+    }
+
+    var label: String {
+        switch self {
+        case .off:
+            return "Off"
+        case .auto:
+            return "Auto"
+        case .superAuto:
+            return "Super"
+        }
+    }
+
+    var menuLabel: String {
+        switch self {
+        case .off:
+            return "Off"
+        case .auto:
+            return "Auto"
+        case .superAuto:
+            return "Super Auto"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .off:
+            return "circle"
+        case .auto:
+            return "bolt.fill"
+        case .superAuto:
+            return "bolt.fill"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .off:
+            return "Auto disabled"
+        case .auto:
+            return "Auto enabled"
+        case .superAuto:
+            return "Super auto enabled"
+        }
     }
 }
 
@@ -337,7 +398,7 @@ enum SessionFilter: String, CaseIterable, Equatable, Identifiable, Sendable {
         case .needsYou:
             return workspaceSessionState(for: workspace, entries: entries) == .waiting
         case .auto:
-            return workspace.enabled
+            return workspace.resolvedAutoMode.isEnabled
         }
     }
 }

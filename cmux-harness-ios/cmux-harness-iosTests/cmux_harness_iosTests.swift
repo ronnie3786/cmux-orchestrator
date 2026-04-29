@@ -365,11 +365,11 @@ struct HarnessFeatureTests {
         var state = Self.initialState()
         state.workspaces = [workspace]
         var client = HarnessClient.unimplemented
-        client.setWorkspaceEnabled = { baseURLString, index, enabled in
+        client.setWorkspaceAutoMode = { baseURLString, index, mode in
             #expect(baseURLString == Self.baseURL)
             #expect(index == workspace.index)
-            #expect(enabled)
-            return BasicResponse(ok: true, enabled: enabled, error: nil)
+            #expect(mode == .auto)
+            return BasicResponse(ok: true, enabled: mode.isEnabled, error: nil)
         }
 
         let store = TestStore(initialState: state) {
@@ -380,6 +380,33 @@ struct HarnessFeatureTests {
 
         await store.send(.toggleWorkspace(workspaceID: workspace.id, enabled: true)) {
             $0.workspaces[0].enabled = true
+            $0.workspaces[0].autoMode = .auto
+        }
+        await store.receive(\.requestFinished)
+    }
+
+    @Test
+    func setWorkspaceSuperAutoModeOptimisticallyUpdatesAndCallsClient() async {
+        let workspace = Self.workspace(enabled: false)
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        var client = HarnessClient.unimplemented
+        client.setWorkspaceAutoMode = { baseURLString, index, mode in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            #expect(mode == .superAuto)
+            return BasicResponse(ok: true, enabled: mode.isEnabled, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.setWorkspaceAutoMode(workspaceID: workspace.id, mode: .superAuto)) {
+            $0.workspaces[0].enabled = true
+            $0.workspaces[0].autoMode = .superAuto
         }
         await store.receive(\.requestFinished)
     }

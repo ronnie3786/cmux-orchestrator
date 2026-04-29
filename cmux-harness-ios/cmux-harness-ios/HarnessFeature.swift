@@ -159,6 +159,7 @@ struct HarnessFeature {
 
         case toggleGlobal(Bool)
         case toggleWorkspace(workspaceID: String, enabled: Bool)
+        case setWorkspaceAutoMode(workspaceID: String, mode: WorkspaceAutoMode)
         case toggleWorkspaceStarred(workspaceID: String, starred: Bool)
         case renameRequested(workspaceID: String)
         case commitRename
@@ -550,14 +551,40 @@ struct HarnessFeature {
                 }
 
             case let .toggleWorkspace(workspaceID, enabled):
+                let mode: WorkspaceAutoMode = enabled ? .auto : .off
                 guard let workspaceIndex = state.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
                     return .none
                 }
-                state.workspaces[workspaceIndex].enabled = enabled
+                state.workspaces[workspaceIndex].enabled = mode.isEnabled
+                state.workspaces[workspaceIndex].autoMode = mode
+                if !mode.isEnabled {
+                    state.workspaces[workspaceIndex].autoEnabledAt = nil
+                    state.workspaces[workspaceIndex].autoExpiresAt = nil
+                }
                 let workspace = state.workspaces[workspaceIndex]
-                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, enabled] send in
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, mode] send in
                     do {
-                        _ = try await client.setWorkspaceEnabled(baseURLString, workspace.index, enabled)
+                        _ = try await client.setWorkspaceAutoMode(baseURLString, workspace.index, mode)
+                        await send(.requestFinished)
+                    } catch {
+                        await send(.requestFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+
+            case let .setWorkspaceAutoMode(workspaceID, mode):
+                guard let workspaceIndex = state.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+                    return .none
+                }
+                state.workspaces[workspaceIndex].enabled = mode.isEnabled
+                state.workspaces[workspaceIndex].autoMode = mode
+                if !mode.isEnabled {
+                    state.workspaces[workspaceIndex].autoEnabledAt = nil
+                    state.workspaces[workspaceIndex].autoExpiresAt = nil
+                }
+                let workspace = state.workspaces[workspaceIndex]
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, mode] send in
+                    do {
+                        _ = try await client.setWorkspaceAutoMode(baseURLString, workspace.index, mode)
                         await send(.requestFinished)
                     } catch {
                         await send(.requestFailed(HarnessAPI.message(for: error)))
