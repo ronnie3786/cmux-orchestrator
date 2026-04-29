@@ -985,6 +985,63 @@ class TestServerResponses(unittest.TestCase):
             text=True,
         )
 
+    def test_workspace_open_root_route_opens_xcode_workspace_when_requested(self):
+        workspace_path = Path(self.tmpdir.name) / "ios-workspace"
+        xcode_workspace = workspace_path / "App.xcworkspace"
+        xcode_workspace.mkdir(parents=True)
+        engine = Mock()
+        engine._get_workspace_cwd.return_value = str(workspace_path)
+
+        with patch("cmux_harness.routes.file_browser.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            handler = self._post_json(
+                "/api/workspace-open-root",
+                {"index": 7, "editor": "xcode"},
+                engine=engine,
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {
+            "ok": True,
+            "rootPath": str(workspace_path.resolve()),
+            "editor": "xcode",
+            "targetPath": str(xcode_workspace.resolve()),
+            "targetType": "xcworkspace",
+        })
+        engine._get_workspace_cwd.assert_called_once_with(7)
+        mock_run.assert_called_once_with(
+            ["open", "-a", "Xcode", str(xcode_workspace.resolve())],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_git_status_includes_editor_targets_for_xcode_projects(self):
+        workspace_path = Path(self.tmpdir.name) / "status-ios-workspace"
+        xcode_project = workspace_path / "App.xcodeproj"
+        xcode_project.mkdir(parents=True)
+        engine = Mock()
+        engine.get_git_status.return_value = {
+            "branch": "main",
+            "cwd": str(workspace_path),
+            "staged": [],
+            "unstaged": [],
+            "untracked": [],
+            "commits": [],
+        }
+
+        handler = self._make_handler(engine, "/api/git-status?index=7")
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["editorTargets"]["vscode"]["available"])
+        self.assertEqual(body["editorTargets"]["xcode"], {
+            "available": True,
+            "targetPath": str(xcode_project.resolve()),
+            "targetType": "xcodeproj",
+        })
+
     def test_get_skills_returns_project_and_user_skill_sections(self):
         workspace_path = Path(self.tmpdir.name) / "skills-project"
         skill_path = workspace_path / ".claude" / "skills" / "ios-review" / "SKILL.md"

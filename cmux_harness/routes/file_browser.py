@@ -55,14 +55,105 @@ def _open_root_in_vscode(handler, root: Path):
     )
 
 
-def handle_open_worktree(handler, objective):
+def _xcode_target_for_root(root: Path) -> tuple[Path, str] | None:
+    if root.suffix in {".xcworkspace", ".xcodeproj"} and root.exists():
+        return root, root.suffix.removeprefix(".")
+
+    for suffix, kind in (("*.xcworkspace", "xcworkspace"), ("*.xcodeproj", "xcodeproj")):
+        matches = sorted(root.glob(suffix), key=lambda path: path.name.lower())
+        if matches:
+            return matches[0], kind
+
+    package_file = root / "Package.swift"
+    if package_file.is_file() and _package_mentions_ios(package_file):
+        return package_file, "swift-package"
+
+    return None
+
+
+def _package_mentions_ios(package_file: Path) -> bool:
+    try:
+        contents = package_file.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return any(token in contents for token in (".iOS", "iOS(", "UIKit", "SwiftUI"))
+
+
+def editor_targets_for_root(root: Path) -> dict:
+    xcode_target = _xcode_target_for_root(root)
+    xcode_data = {"available": False}
+    if xcode_target is not None:
+        target_path, target_type = xcode_target
+        xcode_data = {
+            "available": True,
+            "targetPath": str(target_path),
+            "targetType": target_type,
+        }
+    return {
+        "vscode": {"available": True, "targetPath": str(root), "targetType": "directory"},
+        "xcode": xcode_data,
+    }
+
+
+def _open_root_in_xcode(handler, root: Path):
+    xcode_target = _xcode_target_for_root(root)
+    if xcode_target is None:
+        handler._json_response(
+            {
+                "ok": False,
+                "error": "No Xcode workspace, project, or iOS Swift package found",
+                "rootPath": str(root),
+                "editor": "xcode",
+            },
+            404,
+        )
+        return
+
+    target_path, target_type = xcode_target
+    commands = [
+        ["open", "-a", "Xcode", str(target_path)],
+        ["xed", str(target_path)],
+    ]
+    last_error = None
+    for command in commands:
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            handler._json_response({
+                "ok": True,
+                "rootPath": str(root),
+                "editor": "xcode",
+                "targetPath": str(target_path),
+                "targetType": target_type,
+            })
+            return
+        except (OSError, subprocess.CalledProcessError) as exc:
+            last_error = exc
+
+    handler._json_response(
+        {"ok": False, "error": str(last_error) if last_error else "Could not open root in Xcode"},
+        500,
+    )
+
+
+def _open_root_in_editor(handler, root: Path, editor: str = "vscode"):
+    normalized = str(editor or "vscode").strip().lower()
+    if normalized in {"vscode", "vs-code", "code"}:
+        _open_root_in_vscode(handler, root)
+        return
+    if normalized == "xcode":
+        _open_root_in_xcode(handler, root)
+        return
+    handler._json_response({"ok": False, "error": "unsupported editor"}, 400)
+
+
+def handle_open_worktree(handler, objective, editor: str = "vscode"):
     root = _objective_root(handler, objective)
     if root is None:
         return
-    _open_root_in_vscode(handler, root)
+    _open_root_in_editor(handler, root, editor)
 
 
-def handle_open_root_path(handler, root_path: str, required_error: str, missing_label: str):
+def handle_open_root_path(handler, root_path: str, required_error: str, missing_label: str, editor: str = "vscode"):
     root_path = str(root_path or "").strip()
     if not root_path:
         handler._json_response({"ok": False, "error": required_error}, 400)
@@ -70,15 +161,16 @@ def handle_open_root_path(handler, root_path: str, required_error: str, missing_
     root = _existing_root(handler, root_path, missing_label)
     if root is None:
         return
-    _open_root_in_vscode(handler, root)
+    _open_root_in_editor(handler, root, editor)
 
 
-def handle_open_workspace_root(handler, workspace):
+def handle_open_workspace_root(handler, workspace, editor: str = "vscode"):
     handle_open_root_path(
         handler,
         workspace.get("rootPath"),
         "workspace rootPath required",
         "workspace root not found",
+        editor,
     )
 
 

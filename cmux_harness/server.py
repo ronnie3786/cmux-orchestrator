@@ -266,6 +266,9 @@ def make_handler(engine):
                     self._json_response({"ok": False, "error": "workspace not found"}, 404)
                     return
                 result["ok"] = True
+                cwd = result.get("cwd")
+                if cwd and os.path.isdir(cwd):
+                    result["editorTargets"] = file_browser_routes.editor_targets_for_root(Path(cwd).expanduser().resolve())
                 self._json_response(result)
             elif path.startswith("/api/screen"):
                 params = urllib.parse.parse_qs(parsed.query)
@@ -614,7 +617,7 @@ def make_handler(engine):
                 if objective is None:
                     self._json_response({"ok": False, "error": "objective not found"}, 404)
                     return
-                file_browser_routes.handle_open_worktree(self, objective)
+                file_browser_routes.handle_open_worktree(self, objective, data.get("editor", "vscode"))
             elif path.startswith("/api/workspaces/") and path.endswith("/action-buttons"):
                 workspace_id = urllib.parse.unquote(path[len("/api/workspaces/"):-len("/action-buttons")]).strip("/")
                 workspace = workspaces.read_workspace_session(workspace_id)
@@ -675,7 +678,7 @@ def make_handler(engine):
                 if workspace is None:
                     self._json_response({"ok": False, "error": "workspace not found"}, 404)
                     return
-                file_browser_routes.handle_open_workspace_root(self, workspace)
+                file_browser_routes.handle_open_workspace_root(self, workspace, data.get("editor", "vscode"))
             elif path == "/api/workspace-open-root":
                 idx = data.get("index")
                 if idx is None:
@@ -695,6 +698,7 @@ def make_handler(engine):
                     cwd,
                     "workspace cwd required",
                     "workspace cwd not found",
+                    data.get("editor", "vscode"),
                 )
             elif path == "/api/projects/pick-root":
                 project_routes.handle_post_pick_project_root(self)
