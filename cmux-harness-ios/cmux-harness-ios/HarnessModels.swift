@@ -222,6 +222,25 @@ struct ProjectFileMatch: Decodable, Equatable, Identifiable, Sendable {
     var id: String { path }
 }
 
+struct JiraTicketsResponse: Decodable, Equatable, Sendable {
+    var ok: Bool
+    var project: String?
+    var site: String?
+    var tickets: [JiraTicket]
+    var error: String?
+}
+
+struct JiraTicket: Decodable, Equatable, Identifiable, Sendable {
+    var key: String
+    var title: String
+    var status: String
+    var priority: String
+    var issueType: String
+    var url: String
+
+    var id: String { key }
+}
+
 struct AttachmentUploadResponse: Decodable, Equatable, Sendable {
     var ok: Bool
     var attachment: UploadedAttachment?

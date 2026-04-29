@@ -28,6 +28,7 @@ from .routes import objectives as objective_routes
 from .routes import projects as project_routes
 from .routes import status_summary as status_summary_routes
 from .routes import hooks as hooks_routes
+from .routes import jira as jira_routes
 from .routes import workspaces as workspace_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -319,6 +320,8 @@ def make_handler(engine):
                 file_browser_routes.handle_get_skills(self, parsed, engine=self.server.engine)
             elif path == "/api/file-search":
                 file_browser_routes.handle_search_files(self, parsed, engine=self.server.engine)
+            elif path == "/api/jira/assigned":
+                jira_routes.handle_get_assigned(self, parsed)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
                 objective = objectives.read_objective(objective_id)

@@ -200,6 +200,21 @@ enum HarnessAPI {
         )
     }
 
+    static func assignedJiraTickets(
+        baseURLString: String,
+        project: String = "IOSDOX",
+        limit: Int = 50
+    ) async throws -> JiraTicketsResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/jira/assigned",
+            queryItems: [
+                URLQueryItem(name: "project", value: project),
+                URLQueryItem(name: "limit", value: String(limit)),
+            ]
+        )
+    }
+
     static func uploadAttachment(
         baseURLString: String,
         workspaceIndex: Int,
@@ -369,6 +384,9 @@ enum HarnessAPI {
             }
             if let fileSearch = decoded as? FileSearchResponse, !fileSearch.ok {
                 throw HarnessAPIError.server(fileSearch.error ?? "File search failed")
+            }
+            if let jiraTickets = decoded as? JiraTicketsResponse, !jiraTickets.ok {
+                throw HarnessAPIError.server(jiraTickets.error ?? "Jira tickets request failed")
             }
             return decoded
         } catch let error as HarnessAPIError {

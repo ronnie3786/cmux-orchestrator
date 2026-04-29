@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct HarnessRootView: View {
@@ -60,6 +61,18 @@ struct HarnessRootView: View {
             )
         ) {
             FileSearchView(store: store)
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { store.isShowingJiraTickets },
+                set: { isPresented in
+                    if !isPresented {
+                        store.send(.dismissJiraTickets)
+                    }
+                }
+            )
+        ) {
+            JiraTicketsView(store: store)
         }
         .sheet(
             isPresented: Binding(
@@ -1116,6 +1129,22 @@ private struct DetailInputBar: View {
                 }
                 .accessibilityLabel("Add file path")
 
+                Button {
+                    store.send(.jiraTicketsTapped)
+                } label: {
+                    Image(systemName: "ticket")
+                        .font(.headline.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.92))
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                }
+                .accessibilityLabel("Add Jira ticket")
+
                 TextField(
                     "Type a message or instruction...",
                     text: $store.detailDraft,
@@ -2014,6 +2043,138 @@ private struct FileSearchView: View {
             get: { store.fileSearchQuery },
             set: { store.send(.fileSearchQueryChanged($0)) }
         )
+    }
+}
+
+private struct JiraTicketsView: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if store.isLoadingJiraTickets && store.jiraTickets.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else if let error = store.jiraTicketsError {
+                    ErrorBanner(message: error) {
+                        store.send(.loadAssignedJiraTickets)
+                    }
+                } else if store.jiraTickets.isEmpty {
+                    ContentUnavailableView("No Jira Tickets", systemImage: "ticket")
+                } else {
+                    ForEach(store.jiraTickets) { ticket in
+                        JiraTicketRow(
+                            ticket: ticket,
+                            copyKeyAction: {
+                                UIPasteboard.general.string = ticket.key
+                            },
+                            copyLinkAction: {
+                                UIPasteboard.general.string = ticket.url
+                            },
+                            insertAction: {
+                                store.send(.appendJiraTicketReference(ticket))
+                            }
+                        )
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Jira")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        store.send(.loadAssignedJiraTickets)
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(store.isLoadingJiraTickets)
+                    .accessibilityLabel("Refresh Jira tickets")
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        store.send(.dismissJiraTickets)
+                    }
+                }
+            }
+            .task {
+                if store.jiraTickets.isEmpty && !store.isLoadingJiraTickets {
+                    store.send(.loadAssignedJiraTickets)
+                }
+            }
+        }
+    }
+}
+
+private struct JiraTicketRow: View {
+    let ticket: JiraTicket
+    let copyKeyAction: () -> Void
+    let copyLinkAction: () -> Void
+    let insertAction: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Button(action: copyKeyAction) {
+                    Text(ticket.key)
+                        .font(.callout.monospaced().weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+                        .lineLimit(1)
+                        .textSelection(.disabled)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Copy \(ticket.key)")
+
+                Text(ticket.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+
+                HStack(spacing: 8) {
+                    JiraTicketPill(text: ticket.status, systemImage: "circle.dotted")
+                    if !ticket.priority.isEmpty {
+                        JiraTicketPill(text: ticket.priority, systemImage: "flag")
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: copyLinkAction) {
+                Image(systemName: "link")
+                    .font(.headline.weight(.semibold))
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .accessibilityLabel("Copy Jira link")
+
+            Button(action: insertAction) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3.weight(.semibold))
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.green)
+            .accessibilityLabel("Insert Jira ticket reference")
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct JiraTicketPill: View {
+    let text: String
+    let systemImage: String
+
+    var body: some View {
+        Label(text.isEmpty ? "Unknown" : text, systemImage: systemImage)
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.secondary.opacity(0.12), in: Capsule())
     }
 }
 
