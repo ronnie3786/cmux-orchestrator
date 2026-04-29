@@ -202,9 +202,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-git-refresh{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
 .exp-git-refresh:hover{color:var(--text);background:rgba(255,255,255,.05)}
 .exp-git-body{flex:1;overflow-y:auto;padding:4px 0}
-.git-files-cta-row{padding:10px 18px 8px;border-bottom:1px solid rgba(48,54,61,.55)}
-.git-files-cta{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;min-height:30px;padding:6px 10px;border:1px solid rgba(88,166,255,.45);border-radius:7px;background:rgba(88,166,255,.1);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer}
+.git-files-cta-row{padding:10px 18px 8px;border-bottom:1px solid rgba(48,54,61,.55);display:flex;gap:8px}
+.git-files-cta{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;min-height:30px;padding:6px 10px;border:1px solid rgba(88,166,255,.45);border-radius:7px;background:rgba(88,166,255,.1);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer}
+.git-files-cta.xcode{border-color:rgba(121,192,255,.45);background:rgba(121,192,255,.1);color:#79c0ff}
 .git-files-cta:hover{border-color:rgba(88,166,255,.7);background:rgba(88,166,255,.18);color:var(--text)}
+.git-files-cta.xcode:hover{border-color:rgba(121,192,255,.7);background:rgba(121,192,255,.18);color:var(--text)}
 .git-files-cta:disabled{opacity:.6;cursor:default}
 .git-section{padding:8px 18px 4px}
 .git-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
@@ -1769,32 +1771,42 @@ window.buildAndRun=function(){
   if(expandedWsIndex===null)return;
   postWorkspaceCommand(expandedWsIndex,{text:'/exp-project-run\n'});
 };
-function setExpandedFilesButton(label,disabled,title){
-  var btn=document.getElementById('expFilesButton');
-  if(!btn)return;
-  btn.innerHTML=label;
-  btn.disabled=!!disabled;
-  btn.dataset.busy=disabled?'true':'';
-  if(title)btn.setAttribute('title',title);
-}
-window.openExpandedFiles=function(){
-  if(expandedWsIndex===null)return;
-  setExpandedFilesButton('Opening...',true,'Opening current directory in VS Code');
-  api('POST','/api/workspace-open-root',{index:expandedWsIndex}).then(function(result){
-    if(result&&result.ok){
-      setExpandedFilesButton('Opened',true,'Opened current directory in VS Code');
-    } else {
-      var error=(result&&result.error)||'Could not open current directory in VS Code';
-      setExpandedFilesButton('Failed',true,error);
-    }
-    setTimeout(function(){
-      setExpandedFilesButton('&#128193; Files',false,'Open current directory in VS Code');
-    },1200);
-  });
-};
-function expandedFilesCtaHtml(){
-  return '<div class="git-files-cta-row"><button class="git-files-cta" id="expFilesButton" type="button" onclick="openExpandedFiles()" title="Open current directory in VS Code">&#128193; Files</button></div>';
-}
+	function setExpandedEditorButton(editor,label,disabled,title){
+	  var btn=document.getElementById(editor==='xcode'?'expXcodeButton':'expVSCodeButton');
+	  if(!btn)return;
+	  btn.innerHTML=label;
+	  btn.disabled=!!disabled;
+	  btn.dataset.busy=disabled?'true':'';
+	  if(title)btn.setAttribute('title',title);
+	}
+	window.openExpandedEditor=function(editor){
+	  if(expandedWsIndex===null)return;
+	  var isXcode=editor==='xcode';
+	  var editorName=isXcode?'Xcode':'VS Code';
+	  setExpandedEditorButton(editor,'Opening...',true,'Opening current directory in '+editorName);
+	  api('POST','/api/workspace-open-root',{index:expandedWsIndex,editor:editor}).then(function(result){
+	    if(result&&result.ok){
+	      setExpandedEditorButton(editor,'Opened',true,'Opened current directory in '+editorName);
+	    } else {
+	      var error=(result&&result.error)||'Could not open current directory in '+editorName;
+	      setExpandedEditorButton(editor,'Failed',true,error);
+	    }
+	    setTimeout(function(){
+	      setExpandedEditorButton(editor,isXcode?'Xcode':'VS Code',false,'Open current directory in '+editorName);
+	    },1200);
+	  });
+	};
+	function hasXcodeEditorTarget(editorTargets){
+	  return !!(editorTargets&&editorTargets.xcode&&editorTargets.xcode.available);
+	}
+	function expandedFilesCtaHtml(editorTargets){
+	  var html="<div class=\"git-files-cta-row\"><button class=\"git-files-cta\" id=\"expVSCodeButton\" type=\"button\" onclick=\"openExpandedEditor('vscode')\" title=\"Open current directory in VS Code\">VS Code</button>";
+	  if(hasXcodeEditorTarget(editorTargets)){
+	    html+="<button class=\"git-files-cta xcode\" id=\"expXcodeButton\" type=\"button\" onclick=\"openExpandedEditor('xcode')\" title=\"Open project in Xcode\">Xcode</button>";
+	  }
+	  html+='</div>';
+	  return html;
+	}
 var gitPollTimer=null;
 window.gitFileClick=function(file,el){
   if(!el)return;
@@ -1914,11 +1926,11 @@ window.fetchGitStatus=function(){
   if(expandedWsIndex===null)return;
   var body=document.getElementById('expGitBody');
   if(body&&!body.dataset.loaded)body.innerHTML='<div class="git-empty">Loading git status...</div>';
-  fetch('/api/git-status?index='+expandedWsIndex).then(function(r){return r.json()}).then(function(d){
-    if(!d||!d.ok){
-      if(body)body.innerHTML=expandedFilesCtaHtml()+'<div class="git-empty" style="color:var(--red)">Failed to load git status</div>';
-      return;
-    }
+	fetch('/api/git-status?index='+expandedWsIndex).then(function(r){return r.json()}).then(function(d){
+	    if(!d||!d.ok){
+	      if(body)body.innerHTML=expandedFilesCtaHtml()+'<div class="git-empty" style="color:var(--red)">Failed to load git status</div>';
+	      return;
+	    }
     var brEl=document.getElementById('expGitBranch');
     if(brEl)brEl.textContent=d.branch||'';
     if(!body)return;
@@ -1928,8 +1940,8 @@ window.fetchGitStatus=function(){
     var untracked=Array.isArray(d.untracked)?d.untracked:[];
     var commits=Array.isArray(d.commits)?d.commits:[];
     var empty=staged.length===0&&unstaged.length===0&&untracked.length===0&&commits.length===0;
-    if(empty){body.innerHTML=expandedFilesCtaHtml()+'<div class="git-empty">'+(d.cwd?'Working tree clean':'No git repo detected')+'</div>';return;}
-    var h=expandedFilesCtaHtml();
+	    if(empty){body.innerHTML=expandedFilesCtaHtml(d.editorTargets)+'<div class="git-empty">'+(d.cwd?'Working tree clean':'No git repo detected')+'</div>';return;}
+	    var h=expandedFilesCtaHtml(d.editorTargets);
     function truncPath(p){
       var parts=p.split('/');
       if(parts.length<=2)return p;
