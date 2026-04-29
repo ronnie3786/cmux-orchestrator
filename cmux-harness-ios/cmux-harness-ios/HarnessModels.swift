@@ -222,6 +222,48 @@ struct ProjectFileMatch: Decodable, Equatable, Identifiable, Sendable {
     var id: String { path }
 }
 
+struct AttachmentUploadResponse: Decodable, Equatable, Sendable {
+    var ok: Bool
+    var attachment: UploadedAttachment?
+    var error: String?
+}
+
+struct UploadedAttachment: Decodable, Equatable, Identifiable, Sendable {
+    var id: String
+    var filename: String
+    var originalFilename: String
+    var contentType: String
+    var size: Int
+    var path: String
+    var workspaceKey: String
+    var createdAt: String
+}
+
+struct TerminalAttachment: Equatable, Identifiable, Sendable {
+    var id: UUID
+    var filename: String
+    var sourceURL: URL
+    var status: TerminalAttachmentStatus
+    var uploaded: UploadedAttachment?
+    var error: String?
+
+    var displayName: String {
+        let original = uploaded?.originalFilename.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return original.isEmpty ? filename : original
+    }
+
+    var uploadedPath: String? {
+        let value = uploaded?.path.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
+}
+
+enum TerminalAttachmentStatus: String, Equatable, Sendable {
+    case uploading
+    case uploaded
+    case failed
+}
+
 struct GitDiffResponse: Decodable, Equatable, Sendable {
     var ok: Bool
     var diff: String?

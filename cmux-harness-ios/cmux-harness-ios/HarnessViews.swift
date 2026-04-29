@@ -1,5 +1,7 @@
 import ComposableArchitecture
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HarnessRootView: View {
     @Bindable var store: StoreOf<HarnessFeature>
@@ -905,17 +907,21 @@ private struct SessionDetailTabBar: View {
                 Button {
                     selection = tab
                 } label: {
-                    VStack(spacing: 8) {
-                        Label(tab.sessionLabel, systemImage: tab.systemImage)
-                            .font(.callout.weight(.semibold))
-                            .labelStyle(.titleAndIcon)
-                            .frame(maxWidth: .infinity)
-                            .foregroundStyle(selection == tab ? Color.accentColor : Color.white.opacity(0.62))
+                    VStack(spacing: 5) {
+                        Image(systemName: tab.systemImage)
+                            .font(.title3.weight(.semibold))
+
+                        Text(tab.sessionLabel)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
 
                         Capsule()
                             .fill(selection == tab ? Color.accentColor : Color.clear)
                             .frame(height: 2.5)
                     }
+                    .frame(maxWidth: .infinity, minHeight: 58)
+                    .foregroundStyle(selection == tab ? Color.accentColor : Color.white.opacity(0.62))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1094,6 +1100,10 @@ private struct DetailInputBar: View {
     let isInputFocused: FocusState<Bool>.Binding
     @State private var inputSelection: TextSelection?
     @State private var dismissedSkillAutocompleteSignature: String?
+    @State private var isShowingAttachmentOptions = false
+    @State private var isShowingPhotoPicker = false
+    @State private var isShowingFileImporter = false
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
 
     var body: some View {
         VStack(spacing: 10) {
@@ -1112,7 +1122,36 @@ private struct DetailInputBar: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            if !attachments.isEmpty {
+                AttachmentTray(
+                    attachments: attachments,
+                    removeAction: { attachment in
+                        store.send(.removeAttachment(workspaceID: workspace.id, attachmentID: attachment.id))
+                    },
+                    retryAction: { attachment in
+                        store.send(.retryAttachment(workspaceID: workspace.id, attachmentID: attachment.id))
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             HStack(spacing: 10) {
+                Button {
+                    isShowingAttachmentOptions = true
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.headline.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.92))
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                }
+                .accessibilityLabel("Attach file")
+
                 Button {
                     store.send(.fileSearchTapped)
                 } label: {
@@ -1130,7 +1169,7 @@ private struct DetailInputBar: View {
                 .accessibilityLabel("Add file path")
 
                 TextField("Type a message or instruction...", text: $store.detailDraft, selection: $inputSelection)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -1160,8 +1199,9 @@ private struct DetailInputBar: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(Color.accentColor, in: Circle())
+                .foregroundStyle(canSend ? .white : .white.opacity(0.46))
+                .background(canSend ? Color.accentColor : Color.white.opacity(0.10), in: Circle())
+                .disabled(!canSend)
             }
 
             HStack(spacing: 10) {
@@ -1187,12 +1227,101 @@ private struct DetailInputBar: View {
         .padding(.top, 6)
         .padding(.bottom, 2)
         .animation(.easeInOut(duration: 0.16), value: skillAutocompleteContext?.signature)
+        .animation(.easeInOut(duration: 0.16), value: attachments)
+        .confirmationDialog("Attach", isPresented: $isShowingAttachmentOptions) {
+            Button {
+                isShowingAttachmentOptions = false
+                Task {
+                    await Task.yield()
+                    isShowingPhotoPicker = true
+                }
+            } label: {
+                Label("Photo Library", systemImage: "photo")
+            }
+            Button {
+                isShowingAttachmentOptions = false
+                Task {
+                    await Task.yield()
+                    isShowingFileImporter = true
+                }
+            } label: {
+                Label("Files", systemImage: "folder")
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .photosPicker(
+            isPresented: $isShowingPhotoPicker,
+            selection: $selectedPhotoItems,
+            maxSelectionCount: 10,
+            matching: .images
+        )
+        .fileImporter(
+            isPresented: $isShowingFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case let .success(urls):
+                store.send(.attachmentFilesPicked(workspaceID: workspace.id, urls))
+            case let .failure(error):
+                store.send(.attachmentPickerFailed(error.localizedDescription))
+            }
+        }
+        .onChange(of: selectedPhotoItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task {
+                await importPhotoItems(items)
+                selectedPhotoItems = []
+            }
+        }
         .task(id: store.detailInputFocusRequest) {
             let request = store.detailInputFocusRequest
             guard request > 0 else { return }
             await focusInputAtEnd()
             guard !Task.isCancelled else { return }
             store.send(.detailInputFocusHandled(request))
+        }
+    }
+
+    private var attachments: [TerminalAttachment] {
+        store.terminalAttachments[workspace.id] ?? []
+    }
+
+    private var isUploadingAttachment: Bool {
+        attachments.contains { $0.status == .uploading }
+    }
+
+    private var canSend: Bool {
+        guard !isUploadingAttachment else { return false }
+        let hasMessage = !store.detailDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasUploadedAttachment = attachments.contains { $0.status == .uploaded && $0.uploadedPath != nil }
+        return hasMessage || hasUploadedAttachment
+    }
+
+    @MainActor
+    private func importPhotoItems(_ items: [PhotosPickerItem]) async {
+        var urls: [URL] = []
+        for item in items {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    continue
+                }
+                if Int64(data.count) > HarnessAPI.attachmentMaxBytes {
+                    store.send(.attachmentPickerFailed("File exceeds 20 MB limit"))
+                    continue
+                }
+                let contentType = item.supportedContentTypes.first(where: { $0.conforms(to: .image) })
+                let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
+                let filename = "photo-\(UUID().uuidString).\(fileExtension)"
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+                try data.write(to: url, options: .atomic)
+                urls.append(url)
+            } catch {
+                store.send(.attachmentPickerFailed(error.localizedDescription))
+            }
+        }
+        if !urls.isEmpty {
+            store.send(.attachmentFilesPicked(workspaceID: workspace.id, urls))
         }
     }
 
@@ -1269,6 +1398,151 @@ private struct SkillAutocompleteContext: Equatable {
         query = String(token.dropFirst())
         let startOffset = draft.distance(from: draft.startIndex, to: tokenStart)
         signature = "\(startOffset):\(String(token))"
+    }
+}
+
+private struct AttachmentTray: View {
+    let attachments: [TerminalAttachment]
+    let removeAction: (TerminalAttachment) -> Void
+    let retryAction: (TerminalAttachment) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    AttachmentChip(
+                        attachment: attachment,
+                        removeAction: {
+                            removeAction(attachment)
+                        },
+                        retryAction: {
+                            retryAction(attachment)
+                        }
+                    )
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+}
+
+private struct AttachmentChip: View {
+    let attachment: TerminalAttachment
+    let removeAction: () -> Void
+    let retryAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(attachment.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 170, alignment: .leading)
+
+                Text(statusText)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(statusColor)
+                    .lineLimit(1)
+            }
+
+            if attachment.status == .uploading {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.white.opacity(0.82))
+            } else if attachment.status == .failed {
+                Button(action: retryAction) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption.weight(.bold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel("Retry attachment upload")
+            }
+
+            Button(action: removeAction) {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.62))
+            .accessibilityLabel("Remove attachment")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 8)
+        .frame(height: 52)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: 1)
+        }
+    }
+
+    private var systemImage: String {
+        let ext = attachment.displayName.split(separator: ".").last.map { String($0).lowercased() } ?? ""
+        if ["png", "jpg", "jpeg", "heic", "gif", "webp"].contains(ext) {
+            return "photo"
+        }
+        if ext == "pdf" {
+            return "doc.richtext"
+        }
+        if ["zip", "gz", "tar"].contains(ext) {
+            return "archivebox"
+        }
+        return "doc"
+    }
+
+    private var statusText: String {
+        switch attachment.status {
+        case .uploading:
+            return "Uploading"
+        case .uploaded:
+            return "Added"
+        case .failed:
+            return attachment.error ?? "Upload failed"
+        }
+    }
+
+    private var iconColor: Color {
+        switch attachment.status {
+        case .failed:
+            return .red.opacity(0.86)
+        case .uploaded:
+            return .green.opacity(0.88)
+        case .uploading:
+            return Color.accentColor
+        }
+    }
+
+    private var statusColor: Color {
+        switch attachment.status {
+        case .failed:
+            return .red.opacity(0.82)
+        case .uploaded:
+            return .green.opacity(0.78)
+        case .uploading:
+            return .white.opacity(0.52)
+        }
+    }
+
+    private var borderColor: Color {
+        switch attachment.status {
+        case .failed:
+            return .red.opacity(0.35)
+        case .uploaded:
+            return .green.opacity(0.30)
+        case .uploading:
+            return .white.opacity(0.16)
+        }
     }
 }
 

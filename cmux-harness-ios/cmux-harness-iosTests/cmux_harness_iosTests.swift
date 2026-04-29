@@ -102,6 +102,47 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func refreshClearsDetailSelectionWhenRestoredWorkspaceIsMissing() async {
+        let selectedWorkspace = Self.workspace()
+        var remainingWorkspace = Self.workspace()
+        remainingWorkspace.uuid = "workspace-remaining"
+        remainingWorkspace.surfaceId = "surface-remaining"
+        remainingWorkspace.surfaceLabel = "Remaining"
+
+        var state = Self.initialState()
+        state.workspaces = [selectedWorkspace]
+        state.selectedWorkspaceID = selectedWorkspace.id
+        state.detailDraft = "Unsaved prompt"
+        state.fullScreenText = "current detail screen"
+        state.projectSkills = [
+            ProjectSkill(
+                name: "ios-review",
+                skillFilePath: ".claude/skills/ios-review/SKILL.md",
+                scope: "project"
+            )
+        ]
+
+        let status = Self.status(workspaces: [remainingWorkspace])
+        let updatedAt = Date(timeIntervalSince1970: 1_777_200_000)
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.date.now = updatedAt
+        }
+
+        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: []))) {
+            $0.status = status
+            $0.workspaces = [remainingWorkspace]
+            $0.logEntries = []
+            $0.lastUpdated = updatedAt
+            $0.selectedWorkspaceID = nil
+            $0.fullScreenText = nil
+            $0.detailDraft = ""
+            $0.projectSkills = []
+        }
+    }
+
+    @Test
     func workspaceIDUsesSurfaceForMultiSurfaceLabelsOnly() {
         var singleSurface = Self.workspace()
         singleSurface.surfaceId = "surface-before-refresh"
@@ -552,6 +593,7 @@ struct HarnessFeatureTests {
         var state = HarnessFeature.State()
         state.serverURLString = baseURL
         state.committedServerURLString = baseURL
+        state.selectedWorkspaceID = nil
         return state
     }
 

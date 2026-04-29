@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 enum HarnessAPIError: LocalizedError, Equatable, Sendable {
     case invalidURL
@@ -19,6 +20,7 @@ enum HarnessAPIError: LocalizedError, Equatable, Sendable {
 
 enum HarnessAPI {
     private static let jsonContentType = "application/json"
+    static let attachmentMaxBytes: Int64 = 20 * 1024 * 1024
 
     static func status(baseURLString: String) async throws -> HarnessStatus {
         try await request(baseURLString: baseURLString, path: "/api/status")
@@ -198,6 +200,66 @@ enum HarnessAPI {
         )
     }
 
+    static func uploadAttachment(
+        baseURLString: String,
+        workspaceIndex: Int,
+        workspaceUUID: String,
+        fileURL: URL,
+        filename: String? = nil
+    ) async throws -> AttachmentUploadResponse {
+        let scoped = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if scoped {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let byteCount = try fileByteCount(fileURL)
+        guard byteCount > 0 else {
+            throw HarnessAPIError.server("File is empty")
+        }
+        guard byteCount <= attachmentMaxBytes else {
+            throw HarnessAPIError.server("File exceeds 20 MB limit")
+        }
+
+        let url = try makeURL(baseURLString: baseURLString, path: "/api/attachments", queryItems: [])
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue(jsonContentType, forHTTPHeaderField: "Accept")
+        request.setValue(String(workspaceIndex), forHTTPHeaderField: "X-Cmux-Workspace-Index")
+        request.setValue(workspaceUUID, forHTTPHeaderField: "X-Cmux-Workspace-UUID")
+        request.setValue(
+            percentEncodedHeaderValue(filename?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? filename! : fileURL.lastPathComponent),
+            forHTTPHeaderField: "X-Cmux-Filename"
+        )
+        request.setValue(mimeType(for: fileURL), forHTTPHeaderField: "Content-Type")
+
+        do {
+            let (data, response) = try await uploadWithTimeout(request: request, fileURL: fileURL)
+            guard let http = response as? HTTPURLResponse else {
+                throw HarnessAPIError.transport("No HTTP response")
+            }
+            guard 200..<300 ~= http.statusCode else {
+                if let envelope = try? JSONDecoder().decode(BasicResponse.self, from: data),
+                   let message = envelope.error {
+                    throw HarnessAPIError.server(message)
+                }
+                throw HarnessAPIError.server("HTTP \(http.statusCode)")
+            }
+
+            let decoded = try JSONDecoder().decode(AttachmentUploadResponse.self, from: data)
+            if !decoded.ok {
+                throw HarnessAPIError.server(decoded.error ?? "Attachment upload failed")
+            }
+            return decoded
+        } catch let error as HarnessAPIError {
+            throw error
+        } catch {
+            throw HarnessAPIError.transport(error.localizedDescription)
+        }
+    }
+
     static func registerPushDevice(
         baseURLString: String,
         token: String,
@@ -316,6 +378,49 @@ enum HarnessAPI {
         }
     }
 
+    private static func uploadWithTimeout(request: URLRequest, fileURL: URL) async throws -> (Data, URLResponse) {
+        try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+            group.addTask {
+                try await URLSession.shared.upload(for: request, fromFile: fileURL)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+                throw HarnessAPIError.transport("Attachment upload timed out")
+            }
+            guard let result = try await group.next() else {
+                throw HarnessAPIError.transport("Attachment upload failed")
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private static func fileByteCount(_ url: URL) throws -> Int64 {
+        if let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            return Int64(size)
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        if let size = attributes[.size] as? NSNumber {
+            return size.int64Value
+        }
+        return 0
+    }
+
+    private static func mimeType(for url: URL) -> String {
+        let ext = url.pathExtension
+        guard !ext.isEmpty,
+              let type = UTType(filenameExtension: ext),
+              let mimeType = type.preferredMIMEType else {
+            return "application/octet-stream"
+        }
+        return mimeType
+    }
+
+    private static func percentEncodedHeaderValue(_ value: String) -> String {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "attachment"
+    }
+
     static func makeURL(
         baseURLString: String,
         path: String,
@@ -357,6 +462,7 @@ enum HarnessSettingsStore {
     private static let legacyDefaultServerURL = "http://localhost:9091"
     private static let defaultMigrationKey = "cmuxHarnessTailnetDefaultMigrated"
     private static let serverURLKey = "cmuxHarnessServerURL"
+    private static let lastSelectedWorkspaceIDKey = "cmuxHarnessLastSelectedWorkspaceID"
 
     static var serverURL: String {
         get {
@@ -375,6 +481,23 @@ enum HarnessSettingsStore {
         set {
             UserDefaults.standard.set(HarnessAPI.normalizedBaseURL(newValue), forKey: serverURLKey)
             UserDefaults.standard.set(true, forKey: defaultMigrationKey)
+        }
+    }
+
+    static var lastSelectedWorkspaceID: String? {
+        get {
+            guard let value = UserDefaults.standard.string(forKey: lastSelectedWorkspaceIDKey),
+                  !value.isEmpty else {
+                return nil
+            }
+            return value
+        }
+        set {
+            if let newValue, !newValue.isEmpty {
+                UserDefaults.standard.set(newValue, forKey: lastSelectedWorkspaceIDKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: lastSelectedWorkspaceIDKey)
+            }
         }
     }
 }

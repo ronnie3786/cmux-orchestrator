@@ -21,7 +21,7 @@ struct HarnessFeature {
         var sessionSearchText = ""
         var sessionFilter: SessionFilter = .all
 
-        var selectedWorkspaceID: String?
+        var selectedWorkspaceID: String? = HarnessSettingsStore.lastSelectedWorkspaceID
         var detailTab: DetailTab = .terminal
         var isDetailInfoExpanded = false
         var fullScreenText: String?
@@ -57,6 +57,7 @@ struct HarnessFeature {
         var fileSearchResults: [ProjectFileMatch] = []
         var fileSearchError: String?
         var isSearchingFiles = false
+        var terminalAttachments: [String: [TerminalAttachment]] = [:]
 
         var hasSkills: Bool {
             !projectSkills.isEmpty || !userSkills.isEmpty
@@ -178,6 +179,12 @@ struct HarnessFeature {
         case fileSearchSucceeded(workspaceID: String, query: String, FileSearchResponse)
         case fileSearchFailed(query: String, message: String)
         case appendFilePath(ProjectFileMatch)
+        case attachmentFilesPicked(workspaceID: String, [URL])
+        case attachmentUploadSucceeded(workspaceID: String, attachmentID: UUID, AttachmentUploadResponse)
+        case attachmentUploadFailed(workspaceID: String, attachmentID: UUID, String)
+        case removeAttachment(workspaceID: String, attachmentID: UUID)
+        case retryAttachment(workspaceID: String, attachmentID: UUID)
+        case attachmentPickerFailed(String)
     }
 
     var body: some Reducer<State, Action> {
@@ -189,7 +196,7 @@ struct HarnessFeature {
                 return .none
 
             case .onAppear:
-                return .merge(
+                var effects: [Effect<Action>] = [
                     .send(.refresh),
                     .run { [clock = self.clock] send in
                         while !Task.isCancelled {
@@ -199,7 +206,14 @@ struct HarnessFeature {
                         }
                     }
                     .cancellable(id: pollingCancelID, cancelInFlight: true)
-                )
+                ]
+                if state.selectedWorkspaceID != nil {
+                    effects.append(screenPollingEffect())
+                    if state.detailTab == .git {
+                        effects.append(gitPollingEffect())
+                    }
+                }
+                return .merge(effects)
 
             case .onDisappear:
                 return .merge(
@@ -238,6 +252,7 @@ struct HarnessFeature {
                 if let selected = state.selectedWorkspaceID,
                    !state.workspaces.contains(where: { $0.id == selected }) {
                     state.selectedWorkspaceID = nil
+                    HarnessSettingsStore.lastSelectedWorkspaceID = nil
                     state.isDetailInfoExpanded = false
                     state.fullScreenText = nil
                     state.gitStatus = nil
@@ -251,6 +266,7 @@ struct HarnessFeature {
                     state.fileSearchResults = []
                     state.fileSearchError = nil
                     state.isSearchingFiles = false
+                    state.terminalAttachments = [:]
                     return .merge(
                         .cancel(id: screenPollingCancelID),
                         .cancel(id: gitPollingCancelID),
@@ -364,6 +380,7 @@ struct HarnessFeature {
                     state.workspaces.first { $0.id == selectedID }
                 }
                 state.selectedWorkspaceID = id
+                HarnessSettingsStore.lastSelectedWorkspaceID = id
                 state.detailTab = .terminal
                 state.isDetailInfoExpanded = false
                 state.fullScreenText = nil
@@ -457,10 +474,18 @@ struct HarnessFeature {
 
             case .sendDetailDraft:
                 guard let workspace = state.selectedWorkspace else { return .none }
+                let attachments = state.terminalAttachments[workspace.id] ?? []
+                guard !attachments.contains(where: { $0.status == .uploading }) else {
+                    state.errorMessage = "Wait for attachment uploads to finish"
+                    return .none
+                }
+                let paths = attachments.compactMap(\.uploadedPath)
                 let message = state.detailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !message.isEmpty else { return .none }
+                guard !message.isEmpty || !paths.isEmpty else { return .none }
+                let finalMessage = (paths + (message.isEmpty ? [] : [message])).joined(separator: " ")
                 state.detailDraft = ""
-                return sendTextEffect(state: state, workspace: workspace, message: message)
+                state.terminalAttachments[workspace.id] = []
+                return sendTextEffect(state: state, workspace: workspace, message: finalMessage)
 
             case let .detailInputFocusHandled(request):
                 guard state.detailInputFocusRequest == request else { return .none }
@@ -743,6 +768,66 @@ struct HarnessFeature {
                 state.fileSearchError = nil
                 state.isSearchingFiles = false
                 return .cancel(id: fileSearchCancelID)
+
+            case let .attachmentFilesPicked(workspaceID, urls):
+                guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else { return .none }
+                let attachments = urls.map { url in
+                    TerminalAttachment(
+                        id: self.uuid(),
+                        filename: url.lastPathComponent.isEmpty ? "attachment" : url.lastPathComponent,
+                        sourceURL: url,
+                        status: .uploading,
+                        uploaded: nil,
+                        error: nil
+                    )
+                }
+                guard !attachments.isEmpty else { return .none }
+                state.terminalAttachments[workspaceID, default: []].append(contentsOf: attachments)
+                return .merge(
+                    attachments.map { attachment in
+                        uploadAttachmentEffect(state: state, workspace: workspace, attachment: attachment)
+                    }
+                )
+
+            case let .attachmentUploadSucceeded(workspaceID, attachmentID, response):
+                guard let index = state.terminalAttachments[workspaceID]?.firstIndex(where: { $0.id == attachmentID }) else {
+                    return .none
+                }
+                state.terminalAttachments[workspaceID]?[index].status = .uploaded
+                state.terminalAttachments[workspaceID]?[index].uploaded = response.attachment
+                state.terminalAttachments[workspaceID]?[index].error = nil
+                state.errorMessage = nil
+                return .none
+
+            case let .attachmentUploadFailed(workspaceID, attachmentID, message):
+                guard let index = state.terminalAttachments[workspaceID]?.firstIndex(where: { $0.id == attachmentID }) else {
+                    return .none
+                }
+                state.terminalAttachments[workspaceID]?[index].status = .failed
+                state.terminalAttachments[workspaceID]?[index].error = message
+                return .none
+
+            case let .removeAttachment(workspaceID, attachmentID):
+                state.terminalAttachments[workspaceID]?.removeAll { $0.id == attachmentID }
+                if state.terminalAttachments[workspaceID]?.isEmpty == true {
+                    state.terminalAttachments[workspaceID] = nil
+                }
+                return .none
+
+            case let .retryAttachment(workspaceID, attachmentID):
+                guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }),
+                      let index = state.terminalAttachments[workspaceID]?.firstIndex(where: { $0.id == attachmentID }) else {
+                    return .none
+                }
+                state.terminalAttachments[workspaceID]?[index].status = .uploading
+                state.terminalAttachments[workspaceID]?[index].uploaded = nil
+                state.terminalAttachments[workspaceID]?[index].error = nil
+                guard let attachment = state.terminalAttachments[workspaceID]?[index] else { return .none }
+                return uploadAttachmentEffect(state: state, workspace: workspace, attachment: attachment)
+
+            case let .attachmentPickerFailed(message):
+                state.errorMessage = message
+                return .none
             }
         }
     }
@@ -783,6 +868,35 @@ extension HarnessFeature {
         }
     }
 
+    private func uploadAttachmentEffect(
+        state: State,
+        workspace: Workspace,
+        attachment: TerminalAttachment
+    ) -> Effect<Action> {
+        .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, attachment] send in
+            do {
+                let response = try await client.uploadAttachment(
+                    baseURLString,
+                    workspace.index,
+                    workspace.uuid,
+                    attachment.sourceURL,
+                    attachment.filename
+                )
+                await send(.attachmentUploadSucceeded(
+                    workspaceID: workspace.id,
+                    attachmentID: attachment.id,
+                    response
+                ))
+            } catch {
+                await send(.attachmentUploadFailed(
+                    workspaceID: workspace.id,
+                    attachmentID: attachment.id,
+                    HarnessAPI.message(for: error)
+                ))
+            }
+        }
+    }
+
     private func clearPushApprovalEffect(state: State, workspace: Workspace) -> Effect<Action> {
         .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace] _ in
             _ = try? await client.clearPushApproval(
@@ -803,6 +917,7 @@ private let fileSearchCancelID = "cmux-harness-ios.file-search"
 private func trimDrafts(_ state: inout HarnessFeature.State) {
     let activeIDs = Set(state.workspaces.map(\.id))
     state.draftMessages = state.draftMessages.filter { activeIDs.contains($0.key) }
+    state.terminalAttachments = state.terminalAttachments.filter { activeIDs.contains($0.key) }
 }
 
 private func jiraKey(from value: String) -> String? {
