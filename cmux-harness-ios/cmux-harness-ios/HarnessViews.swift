@@ -1254,6 +1254,7 @@ private struct SkillAutocompleteContext: Equatable {
     let signature: String
 
     init?(draft: String, selection: TextSelection?) {
+        guard !draft.isEmpty else { return nil }
         let cursor = draft.insertionIndex(from: selection)
         guard cursor > draft.startIndex else { return nil }
 
@@ -1333,14 +1334,21 @@ private extension String {
     func insertionIndex(from selection: TextSelection?) -> String.Index {
         guard let selection else { return endIndex }
 
+        let proposedIndex: String.Index?
         switch selection.indices {
         case let .selection(range):
-            return range.upperBound
+            proposedIndex = range.upperBound
         case let .multiSelection(ranges):
-            return ranges.ranges.last?.upperBound ?? endIndex
+            proposedIndex = ranges.ranges.last?.upperBound
         @unknown default:
+            proposedIndex = nil
+        }
+
+        guard let proposedIndex,
+              proposedIndex == endIndex || indices.contains(proposedIndex) else {
             return endIndex
         }
+        return proposedIndex
     }
 }
 
