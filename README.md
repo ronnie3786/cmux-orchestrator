@@ -28,8 +28,25 @@ A web-based orchestrator for managing parallel Claude Code sessions across [cmux
 git clone git@github.com:ronnie3786/cmux-orchestrator.git
 cd cmux-orchestrator
 
-# Start the orchestrator
+# Start the orchestrator directly
 python3 dashboard.py
+```
+
+### Dashboard control shortcut
+
+If you use the `cmux-dashboard` helper script, it can start, stop, or restart the dashboard process:
+
+```bash
+./cmux-dashboard start
+./cmux-dashboard stop
+./cmux-dashboard restart
+```
+
+Optional port:
+
+```bash
+./cmux-dashboard start 8080
+./cmux-dashboard restart 8080
 ```
 
 Opens automatically at **http://localhost:9091**. Custom port: `python3 dashboard.py 8080`
@@ -52,6 +69,7 @@ Single-page web app — no build step, no npm, no framework.
 - **Streaming conversation** — watch the orchestrator plan, dispatch, and report in real time
 - **Plan and contract review** — review the orchestrator's plan and acceptance criteria before execution starts
 - **Approval workflow** — tasks below your severity threshold auto-approve; higher-severity actions escalate to you with approve/take-over options
+- **Prompt file references** — drag local files into the prompt input to insert their full paths, so Claude/Codex can read the referenced files
 - **Git panel** — branch, commits, staged/unstaged changes for the active objective's working directory
 - **Diff viewer** — inspect code changes inline as tasks complete
 - **Build log viewer** — view build output and errors for the active objective
@@ -60,6 +78,16 @@ Single-page web app — no build step, no npm, no framework.
 ## Configuration
 
 All settings are configurable from the dashboard UI and persist across restarts.
+
+The approval severity threshold is shared by the `/harness` Haiku auto-approval flow and the Claude Code PreToolUse hook flow:
+
+- **Level 1:** read-only project access
+- **Level 2:** file edits and safe shell commands
+- **Level 3:** known external services such as Jira, GitHub, or Slack
+- **Level 4:** ambiguous operations that need human judgment
+- **Level 5:** destructive or dangerous operations
+
+Levels at or below the configured threshold are eligible for auto-approval. Levels above it escalate to a human. The `/harness` auto mode also requires Haiku confidence of at least `0.85`, and it remembers repeated escalated approval prompts per session so the same pending human decision is not re-checked every minute.
 
 ## License
 
