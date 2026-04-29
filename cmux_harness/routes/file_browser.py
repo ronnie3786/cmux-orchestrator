@@ -242,6 +242,116 @@ def handle_search_files(handler, parsed, *, engine):
     })
 
 
+def handle_resolve_dropped_files(handler, data):
+    root_path = str(data.get("rootPath") or data.get("path") or "").strip()
+    files = data.get("files")
+    if not root_path:
+        handler._json_response({"ok": False, "error": "rootPath required"}, 400)
+        return
+    if not isinstance(files, list) or not files:
+        handler._json_response({"ok": False, "error": "files required"}, 400)
+        return
+
+    root = _existing_root(handler, root_path, "project root not found")
+    if root is None:
+        return
+
+    project_root = _project_root_for_search(root)
+    indexed_paths = _iter_project_files(project_root)
+    resolved = []
+    unresolved = []
+
+    for file_data in files[:50]:
+        if not isinstance(file_data, dict):
+            continue
+        match = _resolve_dropped_file(project_root, indexed_paths, file_data)
+        if match is None:
+            unresolved.append({"name": str(file_data.get("name") or "").strip(), "reason": "not found"})
+        elif len(match) == 1:
+            resolved.append(match[0])
+        else:
+            unresolved.append({
+                "name": str(file_data.get("name") or "").strip(),
+                "reason": "ambiguous",
+                "matches": match[:20],
+            })
+
+    paths = [item["path"] for item in resolved]
+    handler._json_response({
+        "ok": True,
+        "rootPath": str(project_root),
+        "paths": paths,
+        "resolved": resolved,
+        "unresolved": unresolved,
+    })
+
+
+def _resolve_dropped_file(root: Path, indexed_paths: list[str], file_data: dict) -> list[dict] | None:
+    name = Path(str(file_data.get("name") or "").strip()).name
+    if not name:
+        return None
+
+    relative_path = str(file_data.get("relativePath") or "").replace("\\", "/").strip("/")
+    if relative_path:
+        candidate = _candidate_for_relative_drop(root, relative_path, file_data)
+        if candidate is not None:
+            return [candidate]
+
+    matches = []
+    for rel_path in indexed_paths:
+        if Path(rel_path).name != name:
+            continue
+        candidate_path = root / rel_path
+        if not candidate_path.is_file():
+            continue
+        if not _dropped_file_metadata_matches(candidate_path, file_data):
+            continue
+        matches.append({
+            "path": str(candidate_path.resolve()),
+            "relativePath": rel_path,
+        })
+
+    if not matches:
+        return None
+    return matches
+
+
+def _candidate_for_relative_drop(root: Path, relative_path: str, file_data: dict) -> dict | None:
+    candidate_path = (root / relative_path).resolve()
+    try:
+        if os.path.commonpath([str(root), str(candidate_path)]) != str(root):
+            return None
+    except ValueError:
+        return None
+    if not candidate_path.is_file():
+        return None
+    if not _dropped_file_metadata_matches(candidate_path, file_data):
+        return None
+    return {
+        "path": str(candidate_path),
+        "relativePath": relative_path,
+    }
+
+
+def _dropped_file_metadata_matches(path: Path, file_data: dict) -> bool:
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+
+    size = file_data.get("size")
+    if isinstance(size, (int, float)) and size >= 0 and int(size) != stat.st_size:
+        return False
+
+    last_modified = file_data.get("lastModified")
+    if isinstance(last_modified, (int, float)) and last_modified > 0:
+        modified_ms = stat.st_mtime * 1000
+        if abs(modified_ms - float(last_modified)) > 2000:
+            return False
+
+    return True
+
+
 def _iter_project_files(root: Path) -> list[str]:
     git_files = _git_list_files(root)
     if git_files is not None:

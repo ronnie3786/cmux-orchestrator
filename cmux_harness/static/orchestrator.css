@@ -1350,6 +1350,10 @@
     transition: border-color .2s;
   }
   .input-box:focus-within { border-color: var(--blue-b); }
+  .input-box.drop-active {
+    border-color: var(--blue);
+    background: rgba(88, 166, 255, .12);
+  }
   .chat-input {
     flex: 1;
     background: transparent;

@@ -12,7 +12,9 @@ def make_engine():
     engine.workspace_enabled = {}
     engine.auto_policy_last_check = {}
     engine.auto_policy_last_action_fingerprint = {}
+    engine.auto_policy_pending_human_fingerprint = {}
     engine.approval_log = []
+    engine.approval_threshold = 3
     engine.session_ids = {}
     engine._save_config = lambda: None
     return engine
@@ -54,6 +56,37 @@ class TestAutoPolicy(unittest.TestCase):
         mock_log.assert_called_once()
         self.assertEqual(mock_log.call_args.args[0]["promptType"], "haiku-auto-guard")
 
+    def test_level_above_threshold_becomes_alert(self):
+        engine = make_engine()
+
+        result = engine._normalize_auto_policy_result({
+            "action": "approve",
+            "submit": "enter",
+            "level": 4,
+            "confidence": 0.95,
+            "reason": "Needs judgment.",
+        })
+
+        self.assertEqual(result["action"], "alert")
+        self.assertEqual(result["submit"], "none")
+        self.assertEqual(result["level"], 4)
+
+    def test_level_at_custom_threshold_can_approve(self):
+        engine = make_engine()
+        engine.approval_threshold = 4
+
+        result = engine._normalize_auto_policy_result({
+            "action": "approve",
+            "submit": "enter",
+            "level": 4,
+            "confidence": 0.95,
+            "reason": "Allowed by threshold.",
+        })
+
+        self.assertEqual(result["action"], "approve")
+        self.assertEqual(result["submit"], "enter")
+        self.assertEqual(result["level"], 4)
+
     def test_starred_workspace_state_persists_by_uuid(self):
         engine = make_engine()
         engine.workspaces = [{"index": 7, "uuid": "ws-1", "name": "Workspace"}]
@@ -84,6 +117,7 @@ class TestAutoPolicy(unittest.TestCase):
         mock_haiku.return_value = {
             "action": "approve",
             "submit": "enter",
+            "level": 2,
             "confidence": 0.95,
             "reason": "Low-risk read-only prompt.",
         }
@@ -100,6 +134,41 @@ class TestAutoPolicy(unittest.TestCase):
             surface_id="surface:1",
         )
         self.assertEqual(mock_log.call_args.args[0]["action"], "auto approve enter")
+        self.assertEqual(mock_log.call_args.args[0]["severityLevel"], 2)
+
+    @patch("cmux_harness.engine.push_notifications.notify_auto_mode_human_alert")
+    @patch("cmux_harness.engine.claude_cli.run_haiku")
+    def test_repeated_human_alert_does_not_recheck_haiku(self, mock_haiku, mock_notify):
+        engine = make_engine()
+        workspace_id = "ws-1"
+        engine.ws_config[workspace_id] = {
+            "autoEnabled": True,
+            "autoEnabledAt": 100.0,
+        }
+        ws = {
+            "index": 7,
+            "_real_index": 3,
+            "_surface_id": "surface:1",
+            "uuid": workspace_id,
+            "name": "Workspace",
+            "_cwd": "/repo",
+        }
+        screen = "Allow Bash command?\nrm -rf build\n(Y/n)"
+        mock_haiku.return_value = {
+            "action": "alert",
+            "submit": "none",
+            "level": 5,
+            "confidence": 0.98,
+            "reason": "Destructive command.",
+        }
+
+        with patch.object(engine, "_append_log") as mock_log:
+            engine._run_auto_policy_for_workspace(ws, screen, 200.0)
+            engine._run_auto_policy_for_workspace(ws, screen, 200.0 + 2 * 60)
+
+        mock_haiku.assert_called_once()
+        mock_log.assert_called_once()
+        mock_notify.assert_called_once()
 
 
 if __name__ == "__main__":

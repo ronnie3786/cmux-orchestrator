@@ -109,6 +109,7 @@
     draftGoal: '',
     pendingCreate: false,
     pendingSend: false,
+    chatDropDepth: 0,
     eventSource: null,
     eventTargetKey: '',
     lastEventSeq: 0,
@@ -137,6 +138,7 @@
     messagesPane: document.getElementById('messagesPane'),
     messageColumn: document.getElementById('messageColumn'),
     chatInput: document.getElementById('chatInput'),
+    inputBox: document.querySelector('.input-box'),
     sendButton: document.getElementById('sendButton'),
     inputHint: document.getElementById('inputHint'),
     sidebarForm: document.getElementById('sidebarForm'),
@@ -150,6 +152,7 @@
     settingsSaveButton: document.getElementById('settingsSaveButton'),
     settingsBaseBranch: document.getElementById('settingsBaseBranch'),
     settingsPollInterval: document.getElementById('settingsPollInterval'),
+    settingsApprovalThreshold: document.getElementById('settingsApprovalThreshold'),
     settingsReviewEnabled: document.getElementById('settingsReviewEnabled'),
     settingsContractReviewEnabled: document.getElementById('settingsContractReviewEnabled'),
     settingsReviewModel: document.getElementById('settingsReviewModel'),
@@ -1936,6 +1939,151 @@
     el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px';
   }
 
+  function setChatDropActive(active) {
+    if (!els.inputBox) return;
+    els.inputBox.classList.toggle('drop-active', !!active && !els.chatInput.disabled);
+  }
+
+  function dataTransferLooksLikeFileDrop(dataTransfer) {
+    if (!dataTransfer) return false;
+    const types = dataTransfer.types ? Array.from(dataTransfer.types) : [];
+    if (types.includes('Files')) return true;
+    if (types.includes('text/uri-list')) return true;
+    const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
+    return items.some((item) => item && item.kind === 'file');
+  }
+
+  function isAbsoluteLocalPath(value) {
+    return /^\/[^/]/.test(value) || /^[A-Za-z]:[\\/]/.test(value);
+  }
+
+  function fileUrlToPath(value) {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'file:') return '';
+      return decodeURIComponent(url.pathname || '');
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function normalizeDroppedPath(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (text.toLowerCase().startsWith('file:')) {
+      const filePath = fileUrlToPath(text);
+      return isAbsoluteLocalPath(filePath) ? filePath : '';
+    }
+    return isAbsoluteLocalPath(text) ? text : '';
+  }
+
+  function pathsFromDroppedText(value) {
+    return String(value || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .map(normalizeDroppedPath)
+      .filter(Boolean);
+  }
+
+  function droppedFileSpecs(dataTransfer) {
+    const files = dataTransfer && dataTransfer.files ? Array.from(dataTransfer.files) : [];
+    return files
+      .filter((file) => file && file.name)
+      .map((file) => ({
+        name: file.name,
+        size: typeof file.size === 'number' ? file.size : null,
+        lastModified: typeof file.lastModified === 'number' ? file.lastModified : null,
+        relativePath: file.webkitRelativePath || ''
+      }));
+  }
+
+  function directDroppedPaths(dataTransfer) {
+    const paths = [];
+    const files = dataTransfer && dataTransfer.files ? Array.from(dataTransfer.files) : [];
+    files.forEach((file) => {
+      const path = normalizeDroppedPath(file && file.path);
+      if (path) paths.push(path);
+    });
+    if (dataTransfer && dataTransfer.getData) {
+      paths.push(...pathsFromDroppedText(dataTransfer.getData('text/uri-list')));
+      paths.push(...pathsFromDroppedText(dataTransfer.getData('text/plain')));
+    }
+    return uniquePaths(paths);
+  }
+
+  function uniquePaths(paths) {
+    const seen = new Set();
+    return paths.filter((path) => {
+      const key = String(path || '').trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function formatDroppedPath(path) {
+    return '`' + String(path).replace(/`/g, '\\`') + '`';
+  }
+
+  function insertDroppedPaths(paths) {
+    const text = paths.map(formatDroppedPath).join('\n');
+    const input = els.chatInput;
+    const start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+    const end = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    const prefix = before && !/\s$/.test(before) ? '\n' : '';
+    const suffix = after && !/^\s/.test(after) ? '\n' : '';
+    const nextValue = before + prefix + text + suffix + after;
+    const nextCaret = (before + prefix + text).length;
+    input.value = nextValue;
+    input.selectionStart = nextCaret;
+    input.selectionEnd = nextCaret;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+  }
+
+  async function resolveDroppedFileSpecs(files) {
+    const rootPath = activeFilesRoot() || activeGitPath();
+    if (!rootPath || !files.length) return [];
+    const response = await api('/api/resolve-dropped-files', {
+      method: 'POST',
+      body: JSON.stringify({ rootPath, files })
+    });
+    return response && Array.isArray(response.paths) ? response.paths : [];
+  }
+
+  async function handleChatDrop(event) {
+    if (!dataTransferLooksLikeFileDrop(event.dataTransfer)) return;
+    event.preventDefault();
+    state.chatDropDepth = 0;
+    setChatDropActive(false);
+    if (els.chatInput.disabled) {
+      showToast('Select an item before dropping files');
+      return;
+    }
+
+    const directPaths = directDroppedPaths(event.dataTransfer);
+    let resolvedPaths = [];
+    const specs = droppedFileSpecs(event.dataTransfer);
+    if (specs.length) {
+      try {
+        resolvedPaths = await resolveDroppedFileSpecs(specs);
+      } catch (error) {
+        console.error('dropped file resolution failed', error);
+      }
+    }
+
+    const paths = uniquePaths(directPaths.concat(resolvedPaths));
+    if (!paths.length) {
+      showToast('Could not read a full file path from this drop');
+      return;
+    }
+    insertDroppedPaths(paths);
+    showToast(paths.length === 1 ? 'File path added' : (paths.length + ' file paths added'));
+  }
+
   function showToast(text) {
     const node = document.createElement('div');
     node.className = 'toast';
@@ -1983,6 +2131,7 @@
     const cfg = state.config || {};
     els.settingsBaseBranch.value = cfg.defaultBaseBranch || 'main';
     els.settingsPollInterval.value = cfg.pollInterval != null ? String(cfg.pollInterval) : '5';
+    els.settingsApprovalThreshold.value = cfg.approvalThreshold != null ? String(cfg.approvalThreshold) : '3';
     els.settingsReviewEnabled.checked = !!cfg.reviewEnabled;
     els.settingsContractReviewEnabled.checked = !!cfg.contractReviewEnabled;
     els.settingsReviewModel.value = cfg.reviewModel || '';
@@ -2022,6 +2171,7 @@
       const payload = {
         defaultBaseBranch: els.settingsBaseBranch.value.trim() || 'main',
         pollInterval: Number(els.settingsPollInterval.value || 5),
+        approvalThreshold: Number(els.settingsApprovalThreshold.value || 3),
         reviewEnabled: !!els.settingsReviewEnabled.checked,
         contractReviewEnabled: !!els.settingsContractReviewEnabled.checked,
         reviewModel: els.settingsReviewModel.value.trim(),
@@ -5915,6 +6065,25 @@
         sendMessage();
       }
     });
+    els.inputBox.addEventListener('dragenter', (event) => {
+      if (!dataTransferLooksLikeFileDrop(event.dataTransfer)) return;
+      event.preventDefault();
+      state.chatDropDepth += 1;
+      setChatDropActive(true);
+    });
+    els.inputBox.addEventListener('dragover', (event) => {
+      if (!dataTransferLooksLikeFileDrop(event.dataTransfer)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      setChatDropActive(true);
+    });
+    els.inputBox.addEventListener('dragleave', (event) => {
+      if (!dataTransferLooksLikeFileDrop(event.dataTransfer)) return;
+      event.preventDefault();
+      state.chatDropDepth = Math.max(0, state.chatDropDepth - 1);
+      if (state.chatDropDepth === 0) setChatDropActive(false);
+    });
+    els.inputBox.addEventListener('drop', handleChatDrop);
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && state.tourActive) {
         event.preventDefault();

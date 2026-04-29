@@ -12,6 +12,7 @@ from . import cmux_api
 from . import detection
 from . import push_notifications
 from . import review as review_mod
+from . import severity
 from . import storage
 from .orchestrator import Orchestrator
 
@@ -40,6 +41,7 @@ class HarnessEngine(threading.Thread):
         self.claude_miss_count = {} # idx -> int (consecutive polls where detect_claude_session returned False)
         self.auto_policy_last_check = {} # idx -> float
         self.auto_policy_last_action_fingerprint = {} # idx -> screen fingerprint acted on
+        self.auto_policy_pending_human_fingerprint = {} # session key -> screen fingerprint already escalated
         self.surface_map = {}    # workspace_ref -> [{"ref", "title", "pane_ref"}, ...]
         self.surface_map_ts = 0  # timestamp of last cmux tree fetch
         self.socket_connected = False   # current socket connection state
@@ -94,6 +96,7 @@ class HarnessEngine(threading.Thread):
             "defaultProjectDir": data.get("defaultProjectDir", ""),
             "defaultBaseBranch": data.get("defaultBaseBranch", "main"),
             "contractReviewEnabled": bool(data.get("contractReviewEnabled", False)),
+            "approvalThreshold": data.get("approvalThreshold", 3),
         }
 
     def _save_config(self):
@@ -107,6 +110,7 @@ class HarnessEngine(threading.Thread):
             "defaultProjectDir": self.default_project_dir,
             "defaultBaseBranch": self.default_base_branch,
             "contractReviewEnabled": self.contract_review_enabled,
+            "approvalThreshold": self.approval_threshold,
         }
         try:
             with open(storage.CONFIG_FILE, "w") as f:
@@ -266,6 +270,11 @@ class HarnessEngine(threading.Thread):
                 self.contract_review_enabled = bool(enabled)
             self._save_config()
 
+    def set_approval_threshold(self, value):
+        with self._lock:
+            self.approval_threshold = max(1, min(5, int(value)))
+            self._save_config()
+
     def set_default_objective_config(self, project_dir=None, base_branch=None):
         with self._lock:
             if project_dir is not None:
@@ -357,6 +366,7 @@ class HarnessEngine(threading.Thread):
                 "reviewModel": self.review_model,
                 "reviewBackend": self.review_backend,
                 "contractReviewEnabled": self.contract_review_enabled,
+                "approvalThreshold": self.approval_threshold,
                 "connected": self.socket_connected,
                 "lastSuccessfulPoll": self.last_successful_poll,
                 "connectionLostAt": self.connection_lost_at,
@@ -426,16 +436,23 @@ class HarnessEngine(threading.Thread):
             "You are a cautious automation policy engine for a terminal running an AI coding agent.",
             "Your job is to decide whether the terminal is waiting for an approval/input and what the harness should do.",
             "Return JSON only with exactly these keys:",
-            '{"action":"approve|submit|alert|ignore","submit":"enter|y|yes|none","confidence":0.0,"reason":"short reason"}',
+            '{"action":"approve|submit|alert|ignore","submit":"enter|y|yes|none","level":1,"confidence":0.0,"reason":"short reason"}',
             "",
             "Definitions:",
             "- approve: the terminal is clearly showing a low-risk approval prompt and the harness should submit the selected/affirmative option.",
             "- submit: the terminal is clearly waiting for a trivial continuation input such as pressing Enter.",
-            "- alert: a human should decide because the request is risky, destructive, ambiguous, asks for secrets, publishes/pushes, deletes files, changes permissions, installs/uninstalls, uses sudo, touches credentials, or has low confidence.",
+            "- alert: a human should decide because the severity level is above the shared threshold, the request asks for secrets, or confidence is low.",
             "- ignore: no approval/input is needed right now.",
             "",
+            "Use this same severity scale as the PreToolUse hook classifier:",
+            "1 — Read-only project access (reading files, searching, listing directories).",
+            "2 — Writing or editing files, safe shell commands (build, test, ls, cat, grep).",
+            "3 — External API calls to known services (fetching from Jira, GitHub, Slack).",
+            "4 — Ambiguous operations needing human judgment (multi-option selections, unknown tools, design decisions).",
+            "5 — Destructive or dangerous (deleting files, force push, dropping databases, modifying production).",
+            "",
             "Rules:",
-            "- Only choose approve or submit when the requested action is clearly safe and low-risk.",
+            f"- The shared auto-approval threshold is level {self.approval_threshold}. Only choose approve or submit when level is at or below that threshold.",
             "- If the terminal is just at a shell prompt, choose ignore.",
             "- If confidence is below 0.85, choose alert or ignore.",
             "- submit must be one of: enter, y, yes, none.",
@@ -459,10 +476,23 @@ class HarnessEngine(threading.Thread):
             confidence = float(result.get("confidence") or 0)
         except (TypeError, ValueError):
             confidence = 0.0
+        try:
+            level = int(result.get("level"))
+        except (TypeError, ValueError):
+            level = 5 if action == "alert" else 0
+        if level < 1 or level > 5:
+            level = 5 if action == "alert" else 0
         if action not in {"approve", "submit", "alert", "ignore"}:
             action = "alert"
         if submit not in {"enter", "y", "yes", "none"}:
             submit = "none"
+        if action in {"approve", "submit"} and not severity.should_auto_approve_level(level, self.approval_threshold):
+            action = "alert"
+            submit = "none"
+            if level:
+                reason = reason or f"Level {level} is above auto-approval threshold {self.approval_threshold}."
+            else:
+                reason = reason or "Missing severity level for automation decision."
         if confidence < 0.85 and action in {"approve", "submit"}:
             action = "alert"
             submit = "none"
@@ -470,9 +500,16 @@ class HarnessEngine(threading.Thread):
         return {
             "action": action,
             "submit": submit,
+            "level": level if level else None,
             "confidence": confidence,
             "reason": reason,
         }
+
+    def _auto_policy_session_key(self, idx, workspace_uuid, surface_id):
+        if workspace_uuid:
+            session_id = self.session_ids.get(idx, "")
+            return f"{workspace_uuid}:{surface_id or ''}:{session_id or ''}"
+        return str(idx)
 
     def _run_auto_policy_for_workspace(self, ws, screen, now_ts):
         idx = ws.get("index", ws.get("id"))
@@ -499,8 +536,15 @@ class HarnessEngine(threading.Thread):
         if not str(screen or "").strip():
             return
 
-        self.auto_policy_last_check[idx] = now_ts
         screen_fp = detection.fingerprint(screen)
+        session_key = self._auto_policy_session_key(idx, workspace_uuid, surface_id)
+        pending_human_fp = self.auto_policy_pending_human_fingerprint.get(session_key)
+        if pending_human_fp == screen_fp:
+            return
+        if pending_human_fp:
+            self.auto_policy_pending_human_fingerprint.pop(session_key, None)
+
+        self.auto_policy_last_check[idx] = now_ts
         prompt = self._build_auto_policy_prompt(ws, screen)
         result = claude_cli.run_haiku(prompt, timeout=25)
         decision = self._normalize_auto_policy_result(result)
@@ -527,6 +571,8 @@ class HarnessEngine(threading.Thread):
             "promptType": "haiku-auto-policy",
             "action": "",
             "reason": decision["reason"],
+            "severityLevel": decision.get("level"),
+            "approvalThreshold": self.approval_threshold,
             "confidence": decision["confidence"],
             "submit": submit,
             "screenFingerprint": screen_fp,
@@ -536,6 +582,7 @@ class HarnessEngine(threading.Thread):
             if self.auto_policy_last_action_fingerprint.get(idx) == screen_fp:
                 return
             self.auto_policy_last_action_fingerprint[idx] = screen_fp
+            self.auto_policy_pending_human_fingerprint[session_key] = screen_fp
             log_entry["action"] = "human alert"
             self._append_log(log_entry)
             push_notifications.notify_auto_mode_human_alert(
@@ -553,6 +600,7 @@ class HarnessEngine(threading.Thread):
             if self.auto_policy_last_action_fingerprint.get(idx) == screen_fp:
                 return
             self.auto_policy_last_action_fingerprint[idx] = screen_fp
+            self.auto_policy_pending_human_fingerprint[session_key] = screen_fp
             log_entry["action"] = "human alert"
             log_entry["reason"] = decision["reason"] or "Haiku requested action without a safe submit key."
             self._append_log(log_entry)
@@ -570,9 +618,9 @@ class HarnessEngine(threading.Thread):
         if self.auto_policy_last_action_fingerprint.get(idx) == screen_fp:
             return
         self.auto_policy_last_action_fingerprint[idx] = screen_fp
+        self.auto_policy_pending_human_fingerprint.pop(session_key, None)
 
         real_idx = ws.get("_real_index", idx)
-        surface_id = ws.get("_surface_id")
         cmux_api.ensure_workspace_terminal_ready(workspace_uuid=workspace_uuid, surface_id=surface_id)
         if submit == "enter":
             ok = cmux_api.cmux_send_to_workspace(

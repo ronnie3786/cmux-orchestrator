@@ -447,6 +447,7 @@ def make_handler(engine):
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
                         "contractReviewEnabled": engine.contract_review_enabled,
+                        "approvalThreshold": getattr(engine, "approval_threshold", 3),
                         "defaultProjectDir": engine.default_project_dir,
                         "defaultBaseBranch": engine.default_base_branch,
                     })
@@ -661,6 +662,8 @@ def make_handler(engine):
                 objective_routes.handle_post_create_objective(self, data, engine=self.server.engine)
             elif path == "/api/workspaces":
                 workspace_routes.handle_post_create_workspace(self, data)
+            elif path == "/api/resolve-dropped-files":
+                file_browser_routes.handle_resolve_dropped_files(self, data)
             elif path == "/api/push/register":
                 self._json_response(push_notifications.register_device(
                     data.get("token", ""),
@@ -719,6 +722,9 @@ def make_handler(engine):
                 contract_review_enabled = data.get("contractReviewEnabled")
                 if contract_review_enabled is not None:
                     engine.set_contract_review_config(enabled=contract_review_enabled)
+                approval_threshold = data.get("approvalThreshold")
+                if approval_threshold is not None:
+                    engine.set_approval_threshold(approval_threshold)
                 default_project_dir = data.get("defaultProjectDir")
                 default_base_branch = data.get("defaultBaseBranch")
                 if default_project_dir is not None or default_base_branch is not None:
@@ -735,6 +741,7 @@ def make_handler(engine):
                         "reviewModel": engine.review_model,
                         "reviewBackend": engine.review_backend,
                         "contractReviewEnabled": engine.contract_review_enabled,
+                        "approvalThreshold": getattr(engine, "approval_threshold", 3),
                         "defaultProjectDir": engine.default_project_dir,
                         "defaultBaseBranch": engine.default_base_branch,
                     })

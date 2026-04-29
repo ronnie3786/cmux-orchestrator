@@ -513,6 +513,7 @@ class TestServerResponses(unittest.TestCase):
         engine.review_model = "review-model"
         engine.review_backend = "ollama"
         engine.contract_review_enabled = False
+        engine.approval_threshold = 3
         engine.default_project_dir = "/tmp/project"
         engine.default_base_branch = "main"
         handler = self._make_handler(engine, "/api/config")
@@ -521,6 +522,7 @@ class TestServerResponses(unittest.TestCase):
 
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body["contractReviewEnabled"], False)
+        self.assertEqual(body["approvalThreshold"], 3)
 
     def test_post_config_updates_contract_review_flag(self):
         engine = MagicMock()
@@ -532,22 +534,29 @@ class TestServerResponses(unittest.TestCase):
         engine.review_model = "review-model"
         engine.review_backend = "ollama"
         engine.contract_review_enabled = False
+        engine.approval_threshold = 3
         engine.default_project_dir = "/tmp/project"
         engine.default_base_branch = "main"
 
         def _set_contract_review(enabled=None):
             engine.contract_review_enabled = bool(enabled)
 
+        def _set_approval_threshold(value):
+            engine.approval_threshold = int(value)
+
         engine.set_contract_review_config.side_effect = _set_contract_review
+        engine.set_approval_threshold.side_effect = _set_approval_threshold
         handler = self._post_json(
             "/api/config",
-            {"contractReviewEnabled": True},
+            {"contractReviewEnabled": True, "approvalThreshold": 4},
             engine=engine,
         )
 
         engine.set_contract_review_config.assert_called_once_with(enabled=True)
+        engine.set_approval_threshold.assert_called_once_with(4)
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body["contractReviewEnabled"], True)
+        self.assertEqual(body["approvalThreshold"], 4)
 
     @patch("cmux_harness.server.cmux_api.cmux_send_to_workspace", return_value=True)
     def test_post_send_supports_text_input(self, mock_send):
@@ -970,6 +979,51 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body["ok"], True)
         self.assertEqual(body["files"], [])
+
+    def test_resolve_dropped_files_returns_absolute_path_match(self):
+        repo_path = Path(self.tmpdir.name) / "repo-dropped-file"
+        target_path = repo_path / "Sources" / "DroppedTarget.swift"
+        target_path.parent.mkdir(parents=True)
+        target_path.write_text("let dropped = true\n", encoding="utf-8")
+        stat = target_path.stat()
+
+        with patch("cmux_harness.routes.file_browser.subprocess.run", side_effect=REAL_SUBPROCESS_RUN):
+            handler = self._post_json("/api/resolve-dropped-files", {
+                "rootPath": str(repo_path),
+                "files": [{
+                    "name": target_path.name,
+                    "size": stat.st_size,
+                    "lastModified": stat.st_mtime * 1000,
+                }],
+            })
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["rootPath"], str(repo_path.resolve()))
+        self.assertEqual(body["paths"], [str(target_path.resolve())])
+        self.assertEqual(body["resolved"][0]["relativePath"], "Sources/DroppedTarget.swift")
+        self.assertEqual(body["unresolved"], [])
+
+    def test_resolve_dropped_files_reports_ambiguous_basename(self):
+        repo_path = Path(self.tmpdir.name) / "repo-dropped-ambiguous"
+        first_path = repo_path / "Sources" / "SharedName.swift"
+        second_path = repo_path / "Tests" / "SharedName.swift"
+        first_path.parent.mkdir(parents=True)
+        second_path.parent.mkdir(parents=True)
+        first_path.write_text("one\n", encoding="utf-8")
+        second_path.write_text("two\n", encoding="utf-8")
+
+        with patch("cmux_harness.routes.file_browser.subprocess.run", side_effect=REAL_SUBPROCESS_RUN):
+            handler = self._post_json("/api/resolve-dropped-files", {
+                "rootPath": str(repo_path),
+                "files": [{"name": "SharedName.swift"}],
+            })
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["paths"], [])
+        self.assertEqual(body["unresolved"][0]["reason"], "ambiguous")
+        self.assertEqual(len(body["unresolved"][0]["matches"]), 2)
 
     def test_open_in_native_resolves_git_rename_to_existing_path(self):
         repo_path, _first_hash, _second_hash = self._create_git_repo_with_history("repo-open-native-rename")

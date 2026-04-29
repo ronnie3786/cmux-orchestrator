@@ -180,6 +180,16 @@
           <label class="settings-label" for="settingsPollInterval">Poll Interval (seconds)</label>
           <input class="settings-input" id="settingsPollInterval" type="number" min="2" max="30" step="1">
         </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settingsApprovalThreshold">Approval Severity Threshold</label>
+          <select class="settings-select" id="settingsApprovalThreshold">
+            <option value="1">1 - reads only</option>
+            <option value="2">2 - safe writes</option>
+            <option value="3">3 - known external</option>
+            <option value="4">4 - judgment calls</option>
+            <option value="5">5 - dangerous</option>
+          </select>
+        </div>
       </div>
       <label class="settings-toggle" for="settingsReviewEnabled">
         <input id="settingsReviewEnabled" type="checkbox">

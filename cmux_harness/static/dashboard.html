@@ -625,6 +625,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
         </select>
       </div>
     </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Approval Severity Threshold</div>
+        <div class="settings-sublabel">Levels at or below this value are auto-approved</div>
+      </div>
+      <select class="settings-select" id="settingsApprovalThreshold" onchange="saveSetting('approvalThreshold',parseInt(this.value))">
+        <option value="1">1 - reads only</option>
+        <option value="2">2 - safe writes</option>
+        <option value="3">3 - known external</option>
+        <option value="4">4 - judgment calls</option>
+        <option value="5">5 - dangerous</option>
+      </select>
+    </div>
     <div class="settings-row" style="display:none">
       <div>
         <div class="settings-label">LLM Enabled</div>
@@ -787,6 +800,7 @@ var state = {
   reviewEnabled:true,
   reviewModel:'',
   reviewBackend:'claude',
+  approvalThreshold:3,
   backendAvailability:{claude:null,lmstudio:null,ollama:null}
 };
 var logData = [];
@@ -2232,6 +2246,7 @@ function saveConfig(body){
     state.reviewEnabled=result.reviewEnabled!==undefined?!!result.reviewEnabled:state.reviewEnabled;
     state.reviewModel=result.reviewModel||state.reviewModel;
     state.reviewBackend=result.reviewBackend||state.reviewBackend;
+    state.approvalThreshold=result.approvalThreshold!==undefined?result.approvalThreshold:state.approvalThreshold;
     updateReviewEnabledUI();
     updateBackendAvailabilityUI();
     updateReviewSettingsVisibility();
@@ -2249,6 +2264,7 @@ function loadSettingsData(){
     state.reviewEnabled=status.reviewEnabled!==undefined?!!status.reviewEnabled:state.reviewEnabled;
     state.reviewModel=status.reviewModel||state.reviewModel;
     state.reviewBackend=status.reviewBackend||state.reviewBackend;
+    state.approvalThreshold=status.approvalThreshold!==undefined?status.approvalThreshold:state.approvalThreshold;
     state.ollamaAvailable=models.available!==undefined?models.available:state.ollamaAvailable;
     state.backendAvailability={
       claude:models.claudeAvailable!==undefined?models.claudeAvailable:state.backendAvailability.claude,
@@ -2256,6 +2272,7 @@ function loadSettingsData(){
       ollama:models.available!==undefined?models.available:state.backendAvailability.ollama
     };
     document.getElementById('settingsPoll').value=String(state.pollInterval);
+    document.getElementById('settingsApprovalThreshold').value=String(state.approvalThreshold);
     var llmSelect=document.getElementById('settingsModel');
     llmSelect.innerHTML='<option value="haiku">Claude Haiku</option>';
     llmSelect.value='haiku';
@@ -2327,6 +2344,7 @@ window.saveSetting=function(key,val){
   var body={};body[key]=val;
   if(key==='model')state.model=val;
   if(key==='pollInterval')state.pollInterval=val;
+  if(key==='approvalThreshold')state.approvalThreshold=val;
   saveConfig(body);
 };
 
