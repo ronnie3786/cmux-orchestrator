@@ -21,6 +21,23 @@ OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b-nvfp4")
 AUTO_APPROVE_MODEL = "haiku"
 AUTO_HAIKU_INTERVAL_SECONDS = 60
 AUTO_SESSION_MAX_SECONDS = 8 * 60 * 60
+AUTO_MODE_OFF = "off"
+AUTO_MODE_AUTO = "auto"
+AUTO_MODE_SUPER = "super"
+AUTO_MODES = {AUTO_MODE_OFF, AUTO_MODE_AUTO, AUTO_MODE_SUPER}
+
+
+def normalize_auto_mode(value=None, enabled=None):
+    raw = str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
+    if raw in {"super", "super-auto", "superauto"}:
+        return AUTO_MODE_SUPER
+    if raw in {"auto", "normal", "on", "true", "enabled"}:
+        return AUTO_MODE_AUTO
+    if raw in {"off", "none", "false", "disabled"}:
+        return AUTO_MODE_OFF
+    if enabled is True:
+        return AUTO_MODE_AUTO
+    return AUTO_MODE_OFF
 
 
 class HarnessEngine(threading.Thread):
@@ -209,9 +226,23 @@ class HarnessEngine(threading.Thread):
         with self._lock:
             self.enabled = bool(val)
 
-    def set_workspace_enabled(self, index, val):
+    def workspace_auto_mode(self, workspace_uuid):
+        if not workspace_uuid:
+            return AUTO_MODE_OFF
         with self._lock:
-            enabled = bool(val)
+            cfg = self.ws_config.get(workspace_uuid, {})
+            return normalize_auto_mode(cfg.get("autoMode"), enabled=bool(cfg.get("autoEnabled")))
+
+    def set_workspace_enabled(self, index, val, auto_mode=None):
+        with self._lock:
+            requested_enabled = bool(val)
+            if not requested_enabled:
+                mode = AUTO_MODE_OFF
+            else:
+                mode = normalize_auto_mode(auto_mode, enabled=True)
+                if mode == AUTO_MODE_OFF and auto_mode is None:
+                    mode = AUTO_MODE_AUTO
+            enabled = mode != AUTO_MODE_OFF
             self.workspace_enabled[index] = enabled
             # Persist by UUID so state survives index shifts
             ws_uuid = None
@@ -223,6 +254,7 @@ class HarnessEngine(threading.Thread):
                 if ws_uuid not in self.ws_config:
                     self.ws_config[ws_uuid] = {}
                 self.ws_config[ws_uuid]["autoEnabled"] = enabled
+                self.ws_config[ws_uuid]["autoMode"] = mode
                 if enabled:
                     self.ws_config[ws_uuid]["autoEnabledAt"] = time.time()
                 else:
@@ -322,6 +354,8 @@ class HarnessEngine(threading.Thread):
                     enabled = cfg["autoEnabled"]
                 else:
                     enabled = self.workspace_enabled.get(idx, False)
+                auto_mode = normalize_auto_mode(cfg.get("autoMode"), enabled=bool(enabled))
+                enabled = auto_mode != AUTO_MODE_OFF
                 # Build surface label for multi-surface workspaces
                 surface_label = None
                 surface_count = ws.get("_surface_count", 1)
@@ -338,9 +372,10 @@ class HarnessEngine(threading.Thread):
                     "name": ws.get("name", f"workspace-{idx}"),
                     "uuid": uuid,
                     "enabled": enabled,
+                    "autoMode": auto_mode,
                     "starred": bool(cfg.get("starred", False)),
                     "autoEnabledAt": cfg.get("autoEnabledAt", 0),
-                    "autoExpiresAt": (float(cfg.get("autoEnabledAt", 0) or 0) + AUTO_SESSION_MAX_SECONDS) if cfg.get("autoEnabledAt") else 0,
+                    "autoExpiresAt": (float(cfg.get("autoEnabledAt", 0) or 0) + AUTO_SESSION_MAX_SECONDS) if enabled and cfg.get("autoEnabledAt") else 0,
                     "customName": cfg.get("customName"),
                     "lastCheck": ws.get("_lastCheck", ""),
                     "screenTail": preview,
@@ -407,6 +442,9 @@ class HarnessEngine(threading.Thread):
             return {}
         with self._lock:
             cfg = self.ws_config.setdefault(workspace_uuid, {})
+            mode = normalize_auto_mode(cfg.get("autoMode"), enabled=bool(cfg.get("autoEnabled")))
+            cfg["autoEnabled"] = mode != AUTO_MODE_OFF
+            cfg["autoMode"] = mode
             if cfg.get("autoEnabled") and not cfg.get("autoEnabledAt"):
                 cfg["autoEnabledAt"] = time.time()
                 self._save_config()
@@ -418,6 +456,7 @@ class HarnessEngine(threading.Thread):
         with self._lock:
             cfg = self.ws_config.setdefault(workspace_uuid, {})
             cfg["autoEnabled"] = False
+            cfg["autoMode"] = AUTO_MODE_OFF
             cfg.pop("autoEnabledAt", None)
             self.workspace_enabled[idx] = False
             self._save_config()
@@ -431,7 +470,16 @@ class HarnessEngine(threading.Thread):
         })
 
     def _build_auto_policy_prompt(self, ws, screen):
+        return self._build_auto_policy_prompt_for_mode(ws, screen, AUTO_MODE_AUTO)
+
+    def _build_auto_policy_prompt_for_mode(self, ws, screen, auto_mode):
         tail = "\n".join(str(screen or "").splitlines()[-80:])
+        if auto_mode == AUTO_MODE_SUPER:
+            approval_rule = "- Super Auto mode is active: choose approve or submit for any clear approval/input request regardless of severity level."
+            alert_rule = "- Do not choose alert because a request is risky, above threshold, or low confidence. Choose alert only if there is no clear approval/input to submit."
+        else:
+            approval_rule = f"- The shared auto-approval threshold is level {self.approval_threshold}. Only choose approve or submit when level is at or below that threshold."
+            alert_rule = "- If confidence is below 0.85, choose alert or ignore."
         return "\n".join([
             "You are a cautious automation policy engine for a terminal running an AI coding agent.",
             "Your job is to decide whether the terminal is waiting for an approval/input and what the harness should do.",
@@ -452,9 +500,9 @@ class HarnessEngine(threading.Thread):
             "5 — Destructive or dangerous (deleting files, force push, dropping databases, modifying production).",
             "",
             "Rules:",
-            f"- The shared auto-approval threshold is level {self.approval_threshold}. Only choose approve or submit when level is at or below that threshold.",
+            approval_rule,
             "- If the terminal is just at a shell prompt, choose ignore.",
-            "- If confidence is below 0.85, choose alert or ignore.",
+            alert_rule,
             "- submit must be one of: enter, y, yes, none.",
             "- Never invent text to type.",
             "",
@@ -466,10 +514,12 @@ class HarnessEngine(threading.Thread):
             tail,
         ])
 
-    def _normalize_auto_policy_result(self, result):
+    def _normalize_auto_policy_result(self, result, auto_mode=AUTO_MODE_AUTO):
         if not isinstance(result, dict) or result.get("error"):
             return None
-        action = str(result.get("action") or "ignore").strip().lower()
+        super_auto = normalize_auto_mode(auto_mode, enabled=True) == AUTO_MODE_SUPER
+        raw_action = str(result.get("action") or "ignore").strip().lower()
+        action = raw_action
         submit = str(result.get("submit") or "none").strip().lower()
         reason = str(result.get("reason") or "").strip()[:240]
         try:
@@ -482,21 +532,31 @@ class HarnessEngine(threading.Thread):
             level = 5 if action == "alert" else 0
         if level < 1 or level > 5:
             level = 5 if action == "alert" else 0
+        invalid_action = action not in {"approve", "submit", "alert", "ignore"}
         if action not in {"approve", "submit", "alert", "ignore"}:
             action = "alert"
         if submit not in {"enter", "y", "yes", "none"}:
             submit = "none"
+        if super_auto and action == "alert" and not invalid_action:
+            action = "approve"
+            if submit == "none":
+                submit = "enter"
+            reason = reason or "Super Auto approved without severity threshold."
+        if super_auto and action in {"approve", "submit"} and submit == "none":
+            submit = "enter"
         if action in {"approve", "submit"} and not severity.should_auto_approve_level(level, self.approval_threshold):
-            action = "alert"
-            submit = "none"
-            if level:
-                reason = reason or f"Level {level} is above auto-approval threshold {self.approval_threshold}."
-            else:
-                reason = reason or "Missing severity level for automation decision."
+            if not super_auto:
+                action = "alert"
+                submit = "none"
+                if level:
+                    reason = reason or f"Level {level} is above auto-approval threshold {self.approval_threshold}."
+                else:
+                    reason = reason or "Missing severity level for automation decision."
         if confidence < 0.85 and action in {"approve", "submit"}:
-            action = "alert"
-            submit = "none"
-            reason = reason or "Low confidence automation decision."
+            if not super_auto:
+                action = "alert"
+                submit = "none"
+                reason = reason or "Low confidence automation decision."
         return {
             "action": action,
             "submit": submit,
@@ -517,7 +577,8 @@ class HarnessEngine(threading.Thread):
         ws_name = ws.get("name", f"workspace-{idx}")
         surface_id = ws.get("_surface_id")
         cfg = self._auto_cfg_for_workspace(workspace_uuid)
-        if not cfg.get("autoEnabled"):
+        auto_mode = normalize_auto_mode(cfg.get("autoMode"), enabled=bool(cfg.get("autoEnabled")))
+        if auto_mode == AUTO_MODE_OFF:
             return
 
         enabled_at = float(cfg.get("autoEnabledAt") or now_ts)
@@ -545,9 +606,9 @@ class HarnessEngine(threading.Thread):
             self.auto_policy_pending_human_fingerprint.pop(session_key, None)
 
         self.auto_policy_last_check[idx] = now_ts
-        prompt = self._build_auto_policy_prompt(ws, screen)
+        prompt = self._build_auto_policy_prompt_for_mode(ws, screen, auto_mode)
         result = claude_cli.run_haiku(prompt, timeout=25)
-        decision = self._normalize_auto_policy_result(result)
+        decision = self._normalize_auto_policy_result(result, auto_mode=auto_mode)
         if not decision:
             self._append_log({
                 "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -573,6 +634,7 @@ class HarnessEngine(threading.Thread):
             "reason": decision["reason"],
             "severityLevel": decision.get("level"),
             "approvalThreshold": self.approval_threshold,
+            "autoMode": auto_mode,
             "confidence": decision["confidence"],
             "submit": submit,
             "screenFingerprint": screen_fp,

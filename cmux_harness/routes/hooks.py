@@ -16,6 +16,7 @@ import os
 
 from .. import objectives
 from .. import severity
+from ..engine import AUTO_MODE_SUPER
 from ..storage import debug_log
 
 
@@ -118,6 +119,10 @@ def handle_pre_tool_use(handler, data, *, engine):
 
     # Classify severity
     threshold = getattr(engine, "approval_threshold", 3)
+    auto_mode = None
+    workspace_auto_mode = getattr(engine, "workspace_auto_mode", None)
+    if callable(workspace_auto_mode):
+        auto_mode = workspace_auto_mode(workspace_id)
     classification = severity.classify_tool_severity(
         tool_name, tool_input, spec_text=spec_text,
     )
@@ -133,9 +138,14 @@ def handle_pre_tool_use(handler, data, *, engine):
         "task_id": task_id,
         "level": level,
         "reason": reason,
+        "auto_mode": auto_mode,
         "model": classification.get("model"),
         "latency_ms": classification.get("latency_ms"),
     })
+
+    if auto_mode == AUTO_MODE_SUPER:
+        handler._json_response(_build_allow_response(level, f"Super Auto: {reason}"))
+        return
 
     # Auto-approve if within threshold
     if severity.should_auto_approve_level(level, threshold):

@@ -46,6 +46,7 @@ class TestHandlePreToolUse(unittest.TestCase):
         engine.orchestrator._pending_hook_approvals = set()
         engine.orchestrator._append_message = MagicMock()
         engine.orchestrator._log_event = MagicMock()
+        engine.workspace_auto_mode.return_value = "off"
         return engine
 
     @patch("cmux_harness.routes.hooks._resolve_context")
@@ -131,6 +132,20 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
+
+    @patch("cmux_harness.routes.hooks._resolve_context")
+    def test_super_auto_approves_above_threshold_hook(self, mock_resolve):
+        mock_resolve.return_value = {"objective_id": "obj-1", "task_id": "task-1", "workspace_id": "ws-1", "spec_text": None}
+        handler = MockHandler()
+        engine = self._make_engine(threshold=1)
+        engine.workspace_auto_mode.return_value = "super"
+        data = {"tool_name": "Bash", "tool_input": {"command": "rm -rf build"}, "cwd": "/tmp"}
+
+        handle_pre_tool_use(handler, data, engine=engine)
+
+        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
+        self.assertIn("Super Auto", handler.response["hookSpecificOutput"]["permissionDecisionReason"])
+        engine.orchestrator._append_message.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_no_escalation_message_when_no_objective(self, mock_resolve):

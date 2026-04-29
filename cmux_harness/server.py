@@ -19,7 +19,7 @@ from . import push_notifications
 from . import workspaces
 from . import review as review_mod
 from . import storage
-from .engine import OLLAMA_URL
+from .engine import AUTO_MODE_OFF, OLLAMA_URL, normalize_auto_mode
 from .routes import action_buttons as action_buttons_routes
 from .routes import build_log as build_log_routes
 from .routes import console_logs as console_logs_routes
@@ -728,14 +728,18 @@ def make_handler(engine):
             elif path == "/api/workspace":
                 idx = data.get("index")
                 enabled = data.get("enabled", True)
+                auto_mode = data.get("autoMode")
+                normalized_auto_mode = normalize_auto_mode(auto_mode, enabled=bool(enabled))
+                if auto_mode is not None:
+                    enabled = normalized_auto_mode != AUTO_MODE_OFF
                 if idx is not None:
                     idx = int(idx)
                     with engine._lock:
                         virtual_ws = engine._build_virtual_workspaces()
                     vws = next((w for w in virtual_ws if w.get("index", w.get("id")) == idx), None)
                     real_idx = vws.get("_real_index", idx) if vws else idx
-                    engine.set_workspace_enabled(real_idx, enabled)
-                self._json_response({"ok": True})
+                    engine.set_workspace_enabled(real_idx, enabled, auto_mode=normalized_auto_mode)
+                self._json_response({"ok": True, "enabled": bool(enabled), "autoMode": normalized_auto_mode})
             elif path == "/api/workspace-star":
                 idx = data.get("index")
                 starred = data.get("starred", True)
