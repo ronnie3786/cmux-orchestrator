@@ -211,6 +211,7 @@ Server runs on `http://localhost:9091` (configurable port).
 | `GET /api/status` | JSON | Full system state (all workspaces, settings, connection info) |
 | `GET /api/log` | JSON | Last 200 approval log entries (newest first) |
 | `GET /api/git-status?index=N` | JSON | Parsed git status for workspace N (branch, staged, unstaged, untracked, recent commits) |
+| `GET /api/github/pr-comments?index=N&includeResolved=false` | JSON | GitHub PR code review threads for the workspace's current branch, fetched via authenticated `gh` |
 | `GET /api/reviews` | JSON | All reviews (sorted newest, diff truncated to 500 chars) |
 | `GET /api/reviews/<session_id>` | JSON | Full review detail including complete diff |
 | `GET /api/config` | JSON | Current settings (pollInterval, model, review config) |
@@ -286,6 +287,43 @@ This is the main polling endpoint. Called every 2s (grid) or 500ms (expanded).
   "commits": [
     {"hash": "dabbf52", "message": "style: update button icon"},
     {"hash": "9282d43", "message": "fix: workspace rename"}
+  ]
+}
+```
+
+### `/api/github/pr-comments` Response Shape
+
+Uses `gh pr view` to detect the PR for the current branch, then GitHub GraphQL review threads so resolved threads can be hidden by default.
+
+```json
+{
+  "ok": true,
+  "pullRequest": {"number": 42, "title": "Ship comments", "url": "https://github.com/org/repo/pull/42"},
+  "includeResolved": false,
+  "hiddenResolvedCount": 2,
+  "files": [
+    {
+      "path": "Sources/App.swift",
+      "threadCount": 1,
+      "threads": [
+        {
+          "id": "PRRT_...",
+          "path": "Sources/App.swift",
+          "line": 18,
+          "isResolved": false,
+          "codeContext": {
+            "source": "workspace",
+            "startLine": 18,
+            "endLine": 18,
+            "lines": [
+              {"number": 16, "text": "let previous = value", "isTarget": false},
+              {"number": 18, "text": "let value = helper()", "isTarget": true}
+            ]
+          },
+          "comments": [{"author": "octocat", "body": "Use the helper.", "url": "https://github.com/..."}]
+        }
+      ]
+    }
   ]
 }
 ```

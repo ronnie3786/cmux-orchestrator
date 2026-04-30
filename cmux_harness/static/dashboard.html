@@ -208,11 +208,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-git-refresh{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
 .exp-git-refresh:hover{color:var(--text);background:rgba(255,255,255,.05)}
 .exp-git-body{flex:1;overflow-y:auto;padding:4px 0}
-.git-files-cta-row{padding:10px 18px 8px;border-bottom:1px solid rgba(48,54,61,.55);display:flex;gap:8px}
+.git-files-cta-row{padding:10px 18px 8px;border-bottom:1px solid rgba(48,54,61,.55);display:flex;gap:8px;flex-wrap:wrap}
 .git-files-cta{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;min-height:30px;padding:6px 10px;border:1px solid rgba(88,166,255,.45);border-radius:7px;background:rgba(88,166,255,.1);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer}
 .git-files-cta.xcode{border-color:rgba(121,192,255,.45);background:rgba(121,192,255,.1);color:#79c0ff}
+.git-files-cta.pr-comments{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.1);color:var(--yellow);flex-basis:100%}
 .git-files-cta:hover{border-color:rgba(88,166,255,.7);background:rgba(88,166,255,.18);color:var(--text)}
 .git-files-cta.xcode:hover{border-color:rgba(121,192,255,.7);background:rgba(121,192,255,.18);color:var(--text)}
+.git-files-cta.pr-comments:hover{border-color:rgba(210,153,34,.7);background:rgba(210,153,34,.18);color:var(--text)}
 .git-files-cta:disabled{opacity:.6;cursor:default}
 .git-section{padding:8px 18px 4px}
 .git-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
@@ -265,6 +267,49 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .diff-hl-del{background:rgba(248,81,73,.4);border-radius:2px;padding:1px 0}
 .diff-hl-add{background:rgba(63,185,80,.4);border-radius:2px;padding:1px 0}
 .diff-loading{padding:40px;text-align:center;color:var(--text-muted);font-size:13px}
+
+.pr-comments-panel{width:960px;max-height:84vh}
+.pr-comments-header{align-items:flex-start;gap:14px}
+.pr-comments-title-wrap{min-width:0}
+.pr-comments-title{font-size:15px;font-weight:800;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pr-comments-subtitle{font-size:12px;color:var(--text-muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pr-comments-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.pr-comments-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);white-space:nowrap}
+.pr-comments-toggle input{accent-color:var(--accent)}
+.pr-comments-refresh{height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);cursor:pointer}
+.pr-comments-refresh:hover{color:var(--text);border-color:var(--accent)}
+.pr-comments-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-muted)}
+.pr-comments-summary a{color:var(--accent);text-decoration:none}
+.pr-comments-file{border-bottom:1px solid rgba(48,54,61,.55)}
+.pr-comments-file:last-child{border-bottom:none}
+.pr-comments-file-title{position:sticky;top:0;z-index:1;background:var(--surface);padding:10px 18px;border-bottom:1px solid rgba(48,54,61,.55);font-family:'SF Mono',Menlo,monospace;font-size:12px;font-weight:800;color:var(--text)}
+.pr-thread{padding:14px 18px;border-bottom:1px solid rgba(48,54,61,.4)}
+.pr-thread:last-child{border-bottom:none}
+.pr-thread-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
+.pr-thread-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.pr-thread-line{font-family:'SF Mono',Menlo,monospace;font-size:11px;font-weight:800;color:var(--accent);background:rgba(88,166,255,.1);border:1px solid rgba(88,166,255,.25);border-radius:999px;padding:3px 8px}
+.pr-thread-pill{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border:1px solid var(--border);border-radius:999px;padding:3px 7px}
+.pr-thread-pill.resolved{color:var(--green);border-color:rgba(63,185,80,.35);background:rgba(63,185,80,.1)}
+.pr-thread-pill.outdated{color:var(--yellow);border-color:rgba(210,153,34,.35);background:rgba(210,153,34,.1)}
+.pr-thread-actions{display:flex;gap:8px;flex-shrink:0}
+.pr-thread-action{height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer}
+.pr-thread-action.primary{border-color:rgba(63,185,80,.4);background:rgba(63,185,80,.1);color:var(--green)}
+.pr-thread-action:hover{border-color:var(--accent);color:var(--accent)}
+.pr-thread-footer{margin-top:10px;display:flex}
+.pr-thread-request-fix{width:100%;min-height:34px;padding:7px 12px;border-radius:8px;border:1px solid rgba(63,185,80,.45);background:rgba(63,185,80,.14);color:var(--green);font-size:12px;font-weight:800;cursor:pointer}
+.pr-thread-request-fix:hover{border-color:rgba(63,185,80,.72);background:rgba(63,185,80,.22);color:var(--text)}
+.pr-thread-request-fix:disabled{opacity:.7;cursor:default}
+.pr-thread-code{margin-top:10px;padding:8px;border:1px solid rgba(48,54,61,.7);border-radius:8px;background:rgba(0,0,0,.18);overflow:auto}
+.pr-code-line{display:grid;grid-template-columns:48px minmax(max-content,1fr);gap:10px;align-items:start;padding:2px 8px;border-radius:5px;font-family:'SF Mono',Menlo,monospace;font-size:11px;line-height:1.45;color:var(--text)}
+.pr-code-line.target{background:rgba(88,166,255,.14)}
+.pr-code-ln{text-align:right;color:var(--text-muted);user-select:none}
+.pr-code-line.target .pr-code-ln{color:var(--accent);font-weight:800}
+.pr-code-text{white-space:pre}
+.pr-comment{margin-top:10px;padding:10px 12px;border:1px solid rgba(48,54,61,.7);border-radius:8px;background:rgba(0,0,0,.12)}
+.pr-comment-head{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;color:var(--text-muted)}
+.pr-comment-author{font-weight:800;color:var(--text)}
+.pr-comment-body{font-size:13px;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.pr-comment-hunk{margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(0,0,0,.2);font-family:'SF Mono',Menlo,monospace;font-size:11px;line-height:1.45;color:var(--text-muted);white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:auto}
 
 /* Inline diff header bar (inside exp-terminal) */
 .inline-diff-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1}
@@ -743,6 +788,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   </div>
 </div>
 
+<!-- PR comments modal -->
+<div class="diff-overlay" id="prCommentsOverlay" onclick="if(event.target===this)closePRComments()">
+  <div class="diff-panel pr-comments-panel">
+    <div class="diff-panel-header pr-comments-header">
+      <div class="pr-comments-title-wrap">
+        <div class="pr-comments-title" id="prCommentsTitle">PR comments</div>
+        <div class="pr-comments-subtitle" id="prCommentsSubtitle">Code review threads for the current branch.</div>
+      </div>
+      <div class="pr-comments-actions">
+        <label class="pr-comments-toggle" for="prCommentsResolvedToggle">
+          <input id="prCommentsResolvedToggle" type="checkbox" onchange="togglePRCommentsResolved(this.checked)">
+          <span>Show resolved</span>
+        </label>
+        <button class="pr-comments-refresh" type="button" onclick="refreshPRComments()" title="Refresh PR comments">&#8635;</button>
+        <button class="exp-close" onclick="closePRComments()" style="width:32px;height:32px;font-size:14px">&#10005;</button>
+      </div>
+    </div>
+    <div class="diff-panel-body" id="prCommentsBody">
+      <div class="diff-loading">Loading PR comments...</div>
+    </div>
+  </div>
+</div>
+
 <!-- New Session modal -->
 <div class="ns-overlay" id="nsOverlay" onclick="if(event.target===this)closeNewSession()">
   <div class="ns-panel">
@@ -831,6 +899,9 @@ var reviewFilters = {status:'all',time:'today',sort:'newest'};
 var mobileExpPanel = 'terminal';
 var notifiedReviewSessions = new Set();
 var lastGlobalReviewsRefresh = 0;
+var prCommentsData = null;
+var prCommentsIncludeResolved = false;
+var prCommentsLoading = false;
 
 // Request notification permission on page load
 if ('Notification' in window && Notification.permission === 'default') {
@@ -981,6 +1052,15 @@ window.setMobileExpPanel=function(panel){
 };
 
 function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+function jsArg(s){
+  return "'"+String(s||'')
+    .replace(/\\/g,'\\\\')
+    .replace(/'/g,"\\'")
+    .replace(/"/g,'&quot;')
+    .replace(/\r/g,'\\r')
+    .replace(/\n/g,'\\n')
+    .replace(/</g,'\\u003c')+"'";
+}
 
 function colorize(text){
   if(!text)return '<span style="color:var(--text-muted);font-style:italic">(no data yet)</span>';
@@ -1811,8 +1891,10 @@ window.closeExpanded=function(){
   expandedScreen=null;
   expandedMode='workspace';
   inlineDiffFile=null;
+  prCommentsData=null;
   mobileExpPanel='terminal';
   updateMobileExpPanel();
+  closePRComments();
   document.getElementById('overlay').classList.remove('visible');
   document.getElementById('escHint').style.display='none';
   document.body.style.overflow='';
@@ -1880,6 +1962,7 @@ window.buildAndRun=function(){
 	  if(hasXcodeEditorTarget(editorTargets)){
 	    html+="<button class=\"git-files-cta xcode\" id=\"expXcodeButton\" type=\"button\" onclick=\"openExpandedEditor('xcode')\" title=\"Open project in Xcode\">Xcode</button>";
 	  }
+	  html+="<button class=\"git-files-cta pr-comments\" id=\"expPRCommentsButton\" type=\"button\" onclick=\"openPRComments()\" title=\"Show GitHub code review threads for this branch\">PR comments</button>";
 	  html+='</div>';
 	  return html;
 	}
@@ -2425,6 +2508,264 @@ window.openDiff=function(file,section){
     bodyEl.innerHTML='<div class="diff-loading" style="color:var(--red)">Network error</div>';
   });
 };
+
+function setPRCommentsButton(label,disabled,title){
+  var btn=document.getElementById('expPRCommentsButton');
+  if(!btn)return;
+  btn.textContent=label;
+  btn.disabled=!!disabled;
+  if(title)btn.setAttribute('title',title);
+}
+
+window.openPRComments=function(){
+  if(expandedWsIndex===null)return;
+  document.getElementById('prCommentsOverlay').classList.add('visible');
+  var toggle=document.getElementById('prCommentsResolvedToggle');
+  if(toggle)toggle.checked=prCommentsIncludeResolved;
+  loadPRComments();
+};
+
+window.closePRComments=function(){
+  document.getElementById('prCommentsOverlay').classList.remove('visible');
+};
+
+window.refreshPRComments=function(){
+  loadPRComments();
+};
+
+window.togglePRCommentsResolved=function(value){
+  prCommentsIncludeResolved=!!value;
+  loadPRComments();
+};
+
+function loadPRComments(){
+  if(expandedWsIndex===null)return;
+  var body=document.getElementById('prCommentsBody');
+  var title=document.getElementById('prCommentsTitle');
+  var subtitle=document.getElementById('prCommentsSubtitle');
+  prCommentsLoading=true;
+  setPRCommentsButton('Loading...',true,'Loading PR comments');
+  if(title)title.textContent='PR comments';
+  if(subtitle)subtitle.textContent='Code review threads for the current branch.';
+  if(body)body.innerHTML='<div class="diff-loading">Loading PR comments...</div>';
+  fetch('/api/github/pr-comments?index='+encodeURIComponent(expandedWsIndex)+'&includeResolved='+(prCommentsIncludeResolved?'true':'false'))
+    .then(function(r){return r.json().then(function(d){d._status=r.status;return d;});})
+    .then(function(d){
+      prCommentsLoading=false;
+      setPRCommentsButton('PR comments',false,'Show GitHub code review threads for this branch');
+      if(!d||!d.ok){
+        renderPRCommentsError((d&&d.error)||'Failed to load PR comments');
+        return;
+      }
+      prCommentsData=d;
+      renderPRComments(d);
+    })
+    .catch(function(){
+      prCommentsLoading=false;
+      setPRCommentsButton('PR comments',false,'Show GitHub code review threads for this branch');
+      renderPRCommentsError('Network error loading PR comments');
+    });
+}
+
+function renderPRCommentsError(message){
+  var body=document.getElementById('prCommentsBody');
+  if(body)body.innerHTML='<div class="diff-loading" style="color:var(--red)">'+esc(message)+'</div>';
+}
+
+function renderPRComments(data){
+  var body=document.getElementById('prCommentsBody');
+  var title=document.getElementById('prCommentsTitle');
+  var subtitle=document.getElementById('prCommentsSubtitle');
+  if(!body)return;
+  var pr=data.pullRequest||{};
+  var repo=data.repository||{};
+  var files=Array.isArray(data.files)?data.files:[];
+  if(title)title.textContent='PR comments'+(pr.number?' #'+pr.number:'');
+  if(subtitle)subtitle.textContent=(repo.owner&&repo.name?repo.owner+'/'+repo.name+' · ':'')+(pr.title||'Current branch');
+  var summary='<div class="pr-comments-summary"><span>'+esc(data.returnedThreadCount||0)+' visible thread'+((data.returnedThreadCount||0)===1?'':'s');
+  if(data.hiddenResolvedCount)summary+=' · '+esc(data.hiddenResolvedCount)+' resolved hidden';
+  summary+='</span>';
+  summary+=pr.url?'<a href="'+esc(pr.url)+'" target="_blank" rel="noreferrer">Open PR</a>':'<span></span>';
+  summary+='</div>';
+  if(!files.length){
+    body.innerHTML=summary+'<div class="diff-loading">'+(data.hiddenResolvedCount?'Only resolved PR review threads found. Enable Show resolved to view them.':'No open code review threads found for this branch.')+'</div>';
+    return;
+  }
+  var html=summary;
+  files.forEach(function(fileGroup){
+    var threads=Array.isArray(fileGroup.threads)?fileGroup.threads:[];
+    html+='<div class="pr-comments-file">';
+    html+='<div class="pr-comments-file-title">'+esc(fileGroup.path||'Unknown file')+'</div>';
+    threads.forEach(function(thread){
+      html+=renderPRCommentThread(thread);
+    });
+    html+='</div>';
+  });
+  body.innerHTML=html;
+}
+
+function renderPRCommentThread(thread){
+  var comments=Array.isArray(thread.comments)?thread.comments:[];
+  var hasCodeContext=!!(thread.codeContext&&Array.isArray(thread.codeContext.lines)&&thread.codeContext.lines.length);
+  var html='<div class="pr-thread">';
+  html+='<div class="pr-thread-top">';
+  html+='<div class="pr-thread-meta"><span class="pr-thread-line">'+esc(prThreadLineLabel(thread))+'</span>';
+  if(thread.isResolved)html+='<span class="pr-thread-pill resolved">Resolved</span>';
+  if(thread.isOutdated)html+='<span class="pr-thread-pill outdated">Outdated</span>';
+  html+='</div>';
+  html+='<div class="pr-thread-actions">';
+  html+='<button class="pr-thread-action primary" type="button" onclick="insertPRCommentThread('+jsArg(thread.id)+',this)">Insert</button>';
+  html+='<button class="pr-thread-action" type="button" onclick="copyPRCommentThread('+jsArg(thread.id)+',this)">Copy</button>';
+  if(thread.url)html+='<button class="pr-thread-action" type="button" onclick="window.open('+jsArg(thread.url)+',\'_blank\',\'noreferrer\')">Open</button>';
+  html+='</div></div>';
+  html+=renderPRThreadCodeContext(thread.codeContext);
+  comments.forEach(function(comment){
+    html+='<div class="pr-comment">';
+    html+='<div class="pr-comment-head"><span class="pr-comment-author">'+esc(comment.author||'unknown')+'</span><span>'+esc(comment.createdAt?fmtTime(comment.createdAt):'')+'</span></div>';
+    html+='<div class="pr-comment-body">'+esc(comment.body||'')+'</div>';
+    if(!hasCodeContext&&comment.diffHunk)html+='<div class="pr-comment-hunk">'+esc(comment.diffHunk)+'</div>';
+    html+='</div>';
+  });
+  html+='<div class="pr-thread-footer"><button class="pr-thread-request-fix" type="button" onclick="requestFixForPRCommentThread('+jsArg(thread.id)+',this)">Request fix</button></div>';
+  html+='</div>';
+  return html;
+}
+
+function renderPRThreadCodeContext(codeContext){
+  var codeLines=codeContext&&Array.isArray(codeContext.lines)?codeContext.lines:[];
+  if(!codeLines.length)return '';
+  var html='<div class="pr-thread-code">';
+  codeLines.forEach(function(line){
+    html+='<div class="pr-code-line'+(line.isTarget?' target':'')+'">';
+    html+='<span class="pr-code-ln">'+esc(line.number||'')+'</span>';
+    html+='<span class="pr-code-text">'+esc(line.text||'')+'</span>';
+    html+='</div>';
+  });
+  html+='</div>';
+  return html;
+}
+
+function prThreadLineLabel(thread){
+  var start=thread.startLine||thread.originalStartLine;
+  var end=thread.line||thread.originalLine;
+  if(start&&end&&start!==end)return 'lines '+start+'-'+end;
+  if(end)return 'line '+end;
+  return 'file';
+}
+
+function findPRCommentThread(threadID){
+  var threads=(prCommentsData&&Array.isArray(prCommentsData.threads))?prCommentsData.threads:[];
+  for(var i=0;i<threads.length;i++){
+    if(String(threads[i].id)===String(threadID))return threads[i];
+  }
+  return null;
+}
+
+function formatPRCommentThreadPrompt(thread){
+  var data=prCommentsData||{};
+  var pr=data.pullRequest||{};
+  var comments=Array.isArray(thread.comments)?thread.comments:[];
+  var lines=[
+    'Please address this GitHub PR review thread:',
+    '',
+    'PR: '+(pr.number?'#'+pr.number+' ':'')+(pr.title||''),
+    pr.url?'PR URL: '+pr.url:'',
+    'File: '+(thread.path||''),
+    'Line: '+prThreadLineLabel(thread),
+    thread.url?'Thread URL: '+thread.url:''
+  ].filter(Boolean);
+  var codePrompt=formatPRCodeContextPrompt(thread.codeContext);
+  if(codePrompt){
+    lines.push('');
+    lines.push('Referenced code:');
+    lines.push('```');
+    lines=lines.concat(codePrompt);
+    lines.push('```');
+  }
+  comments.forEach(function(comment,idx){
+    lines.push('');
+    lines.push((idx===0?'Comment':'Reply')+' by '+(comment.author||'unknown')+':');
+    lines.push(comment.body||'');
+  });
+  return lines.join('\n');
+}
+
+function formatPRCodeContextPrompt(codeContext){
+  var codeLines=codeContext&&Array.isArray(codeContext.lines)?codeContext.lines:[];
+  if(!codeLines.length)return null;
+  return codeLines.map(function(line){
+    return (line.isTarget?'>':' ')+' '+(line.number||'')+': '+(line.text||'');
+  });
+}
+
+function compactPrompt(text){
+  return String(text||'').split(/\n+/).map(function(line){return line.trim();}).filter(Boolean).join(' ');
+}
+
+window.insertPRCommentThread=function(threadID,btn){
+  var thread=findPRCommentThread(threadID);
+  if(!thread)return;
+  var input=document.getElementById('expInput');
+  if(!input)return;
+  var prompt=compactPrompt(formatPRCommentThreadPrompt(thread));
+  input.value=input.value.trim()?input.value.trim()+' '+prompt:prompt;
+  closePRComments();
+  input.focus();
+  if(btn)btn.textContent='Inserted';
+};
+
+window.copyPRCommentThread=function(threadID,btn){
+  var thread=findPRCommentThread(threadID);
+  if(!thread)return;
+  copyText(formatPRCommentThreadPrompt(thread)).then(function(){
+    if(!btn)return;
+    var old=btn.textContent;
+    btn.textContent='Copied';
+    setTimeout(function(){btn.textContent=old;},1200);
+  });
+};
+
+window.requestFixForPRCommentThread=function(threadID,btn){
+  if(expandedWsIndex===null)return;
+  var thread=findPRCommentThread(threadID);
+  if(!thread)return;
+  var oldText=btn?btn.textContent:'';
+  if(btn){
+    btn.disabled=true;
+    btn.textContent='Requesting...';
+  }
+  postWorkspaceCommand(expandedWsIndex,{text:formatPRCommentThreadPrompt(thread)+'\n'}).then(function(resp){
+    if(resp&&resp.ok){
+      closePRComments();
+      setMobileExpPanel('terminal');
+      var term=document.getElementById('expTerminal');
+      if(term)term.scrollTop=term.scrollHeight;
+      return;
+    }
+    if(btn){
+      btn.disabled=false;
+      btn.textContent='Request failed';
+      setTimeout(function(){btn.textContent=oldText||'Request fix';},1400);
+    }
+  });
+};
+
+function copyText(text){
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    return navigator.clipboard.writeText(text);
+  }
+  var ta=document.createElement('textarea');
+  ta.value=text;
+  ta.setAttribute('readonly','');
+  ta.style.position='fixed';
+  ta.style.left='-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try{document.execCommand('copy');}catch(e){}
+  document.body.removeChild(ta);
+  return Promise.resolve();
+}
+
 window.saveSetting=function(key,val){
   var body={};body[key]=val;
   if(key==='model')state.model=val;
@@ -2703,6 +3044,7 @@ document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){
     if(_activityOpen){_activityOpen=false;document.getElementById('activityPopover').classList.remove('visible')}
     else if(document.getElementById('nsOverlay').classList.contains('visible'))closeNewSession();
+    else if(document.getElementById('prCommentsOverlay').classList.contains('visible'))closePRComments();
     else if(document.getElementById('diffOverlay').classList.contains('visible'))closeDiff();
     else if(document.getElementById('settingsOverlay').classList.contains('visible'))closeSettings();
     else closeExpanded();

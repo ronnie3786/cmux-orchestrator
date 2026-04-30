@@ -1059,6 +1059,34 @@ class TestServerResponses(unittest.TestCase):
             "targetType": "xcodeproj",
         })
 
+    def test_github_pr_comments_endpoint_fetches_for_workspace_index(self):
+        workspace_path = Path(self.tmpdir.name) / "github-pr-workspace"
+        workspace_path.mkdir(parents=True)
+        engine = Mock()
+        engine._get_workspace_cwd.return_value = str(workspace_path)
+
+        with patch("cmux_harness.routes.github.fetch_pr_review_threads") as mock_fetch:
+            mock_fetch.return_value = {
+                "cwd": str(workspace_path),
+                "repository": {"owner": "doximity", "name": "cmux-harness", "url": "https://github.com/doximity/cmux-harness"},
+                "pullRequest": {"number": 42, "title": "Ship comments", "url": "https://github.com/doximity/cmux-harness/pull/42"},
+                "includeResolved": False,
+                "threads": [],
+                "files": [],
+                "totalThreadCount": 0,
+                "returnedThreadCount": 0,
+                "resolvedThreadCount": 0,
+                "hiddenResolvedCount": 0,
+            }
+            handler = self._make_handler(engine, "/api/github/pr-comments?index=7")
+            handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["pullRequest"]["number"], 42)
+        engine._get_workspace_cwd.assert_called_once_with(7)
+        mock_fetch.assert_called_once_with(str(workspace_path), include_resolved=False)
+
     def test_get_skills_returns_project_and_user_skill_sections(self):
         workspace_path = Path(self.tmpdir.name) / "skills-project"
         skill_path = workspace_path / ".claude" / "skills" / "ios-review" / "SKILL.md"

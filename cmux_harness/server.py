@@ -24,6 +24,7 @@ from .routes import action_buttons as action_buttons_routes
 from .routes import build_log as build_log_routes
 from .routes import console_logs as console_logs_routes
 from .routes import file_browser as file_browser_routes
+from .routes import github as github_routes
 from .routes import objectives as objective_routes
 from .routes import projects as project_routes
 from .routes import status_summary as status_summary_routes
@@ -322,6 +323,8 @@ def make_handler(engine):
                 file_browser_routes.handle_search_files(self, parsed, engine=self.server.engine)
             elif path == "/api/jira/assigned":
                 jira_routes.handle_get_assigned(self, parsed)
+            elif path == "/api/github/pr-comments":
+                github_routes.handle_get_pr_comments(self, parsed, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
                 objective = objectives.read_objective(objective_id)
