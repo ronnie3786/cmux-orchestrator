@@ -644,6 +644,7 @@ private struct SessionStatusIndicators: View {
 private struct SessionContextMenu: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
+    var detailsAction: (() -> Void)? = nil
 
     var body: some View {
         Menu {
@@ -672,6 +673,14 @@ private struct SessionContextMenu: View {
             }
 
             Divider()
+
+            if let detailsAction {
+                Button {
+                    detailsAction()
+                } label: {
+                    Label("Details", systemImage: "info.circle")
+                }
+            }
 
             Button {
                 store.send(.renameRequested(workspaceID: workspace.id))
@@ -724,6 +733,7 @@ private struct WorkspaceDetailView: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
     @FocusState private var isDetailInputFocused: Bool
+    @State private var isShowingSessionDetails = false
 
     var body: some View {
         ZStack {
@@ -757,8 +767,23 @@ private struct WorkspaceDetailView: View {
             }
 
             ToolbarItem(placement: .topBarTrailing) {
-                SessionContextMenu(store: store, workspace: workspace)
+                SessionContextMenu(
+                    store: store,
+                    workspace: workspace,
+                    detailsAction: {
+                        isShowingSessionDetails = true
+                    }
+                )
             }
+        }
+        .sheet(isPresented: $isShowingSessionDetails) {
+            SessionDetailsSheet(
+                workspace: workspace,
+                sessionState: sessionState,
+                dismissAction: {
+                    isShowingSessionDetails = false
+                }
+            )
         }
     }
 
@@ -770,9 +795,6 @@ private struct WorkspaceDetailView: View {
                 store: store,
                 workspace: workspace,
                 terminalText: terminalText,
-                sessionState: sessionState,
-                showsMetadata: !isDetailInputFocused,
-                isDetailInfoExpanded: store.isDetailInfoExpanded,
                 isInputFocused: $isDetailInputFocused
             )
         case .git:
@@ -815,35 +837,10 @@ private struct DetailTerminalLayout: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
     let terminalText: String
-    let sessionState: WorkspaceSessionState
-    let showsMetadata: Bool
-    let isDetailInfoExpanded: Bool
     let isInputFocused: FocusState<Bool>.Binding
 
     var body: some View {
         VStack(spacing: 10) {
-            if showsMetadata {
-                if isDetailInfoExpanded {
-                    SessionMetadataCard(
-                        workspace: workspace,
-                        sessionState: sessionState
-                    ) {
-                        store.send(.toggleDetailInfo)
-                    }
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
-                } else {
-                    SessionDetailsDisclosureBar(
-                        workspace: workspace,
-                        sessionState: sessionState
-                    ) {
-                        store.send(.toggleDetailInfo)
-                    }
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
-                }
-            }
-
             TerminalScrollView(workspaceID: workspace.id, text: terminalText)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
@@ -947,36 +944,52 @@ private struct SessionDetailTabBar: View {
     }
 }
 
+private struct SessionDetailsSheet: View {
+    let workspace: Workspace
+    let sessionState: WorkspaceSessionState
+    let dismissAction: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                SessionDetailBackground()
+
+                ScrollView {
+                    SessionMetadataCard(
+                        workspace: workspace,
+                        sessionState: sessionState
+                    )
+                    .padding(16)
+                }
+            }
+            .navigationTitle("Session Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.black.opacity(0.92), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done", action: dismissAction)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
 private struct SessionMetadataCard: View {
     let workspace: Workspace
     let sessionState: WorkspaceSessionState
-    let detailsAction: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            HStack(alignment: .top, spacing: 12) {
-                SessionInfoItem(
-                    title: "Worktree",
-                    value: worktreeValue,
-                    systemImage: "folder"
-                )
-
-                Spacer(minLength: 12)
-
-                Button(action: detailsAction) {
-                    Label("Hide", systemImage: "chevron.up.circle")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1)
-                }
-            }
+            SessionInfoItem(
+                title: "Worktree",
+                value: worktreeValue,
+                systemImage: "folder"
+            )
 
             HStack(spacing: 12) {
                 SessionInfoItem(
@@ -1031,44 +1044,6 @@ private struct SessionMetadataCard: View {
             return cwd.abbreviatedPath(componentCount: 2)
         }
         return workspace.displayName.abbreviatedPath(componentCount: 2)
-    }
-}
-
-private struct SessionDetailsDisclosureBar: View {
-    let workspace: Workspace
-    let sessionState: WorkspaceSessionState
-    let detailsAction: () -> Void
-
-    var body: some View {
-        Button(action: detailsAction) {
-            HStack(spacing: 10) {
-                Label("Show details", systemImage: "info.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-
-                Spacer(minLength: 8)
-
-                SessionBadge(state: sessionState)
-                AutoExpirationText(workspace: workspace)
-
-                Image(systemName: "chevron.down")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.white.opacity(0.46))
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .environment(\.colorScheme, .dark)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                    }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Show session details")
     }
 }
 
@@ -1229,11 +1204,8 @@ private struct DetailInputBar: View {
                     }
                     .textInputAutocapitalization(.sentences)
                     .autocorrectionDisabled(false)
-                    .submitLabel(.send)
+                    .submitLabel(.return)
                     .focused(isInputFocused)
-                    .onSubmit {
-                        sendDetailDraftWithHaptic()
-                    }
                     .onChange(of: store.detailDraft) {
                         dismissedSkillAutocompleteSignature = nil
                         loadSkillsIfNeededForAutocomplete()

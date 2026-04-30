@@ -23,7 +23,6 @@ struct HarnessFeature {
 
         var selectedWorkspaceID: String? = HarnessSettingsStore.lastSelectedWorkspaceID
         var detailTab: DetailTab = .terminal
-        var isDetailInfoExpanded = false
         var fullScreenText: String?
         var draftMessages: [String: String] = [:]
         var detailDrafts: [String: String] = HarnessSettingsStore.detailDrafts
@@ -145,7 +144,6 @@ struct HarnessFeature {
         case selectWorkspace(String?)
         case openPushApproval(PushApprovalNotification)
         case detailTabChanged(DetailTab)
-        case toggleDetailInfo
         case screenTick
         case screenSucceeded(workspaceID: String, response: ScreenResponse)
         case screenFailed(String)
@@ -268,7 +266,6 @@ struct HarnessFeature {
                     persistDetailDraft(&state)
                     state.selectedWorkspaceID = nil
                     HarnessSettingsStore.lastSelectedWorkspaceID = nil
-                    state.isDetailInfoExpanded = false
                     state.fullScreenText = nil
                     state.gitStatus = nil
                     state.detailDraft = ""
@@ -403,7 +400,6 @@ struct HarnessFeature {
                 state.selectedWorkspaceID = id
                 HarnessSettingsStore.lastSelectedWorkspaceID = id
                 state.detailTab = .terminal
-                state.isDetailInfoExpanded = false
                 state.fullScreenText = nil
                 state.gitStatus = nil
                 state.gitError = nil
@@ -462,10 +458,6 @@ struct HarnessFeature {
                     )
                 }
                 return .cancel(id: gitPollingCancelID)
-
-            case .toggleDetailInfo:
-                state.isDetailInfoExpanded.toggle()
-                return .none
 
             case .screenTick:
                 guard let workspace = state.selectedWorkspace else { return .none }
