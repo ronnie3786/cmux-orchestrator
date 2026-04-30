@@ -516,6 +516,113 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func prCommentsSegmentLoadsThreadsAndAppendsPromptReference() async {
+        let workspace = Self.workspace()
+        let thread = Self.prThread()
+        let response = Self.prCommentsResponse(thread: thread)
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        state.detailTab = .git
+        state.detailDraft = "Also add coverage."
+        var client = HarnessClient.unimplemented
+        client.githubPRComments = { baseURLString, index, includeResolved in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            #expect(includeResolved == false)
+            return response
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.gitSegmentChanged(.prComments)) {
+            $0.gitSegment = .prComments
+        }
+        await store.receive(\.loadPRComments) {
+            $0.isLoadingPRComments = true
+            $0.prCommentsError = nil
+        }
+        await store.receive(\.prCommentsSucceeded) {
+            $0.isLoadingPRComments = false
+            $0.prCommentsResponse = response
+        }
+        await store.send(.appendPRCommentThread(thread)) {
+            $0.detailDraft = """
+            Also add coverage.
+
+            Please address this GitHub PR review thread:
+
+            PR: #42 Ship comments
+            PR URL: https://github.com/doximity/cmux-harness/pull/42
+            File: Sources/App.swift
+            Line: Line 18
+            Thread URL: https://github.com/doximity/cmux-harness/pull/42#discussion_r18
+
+            Referenced code:
+            ```
+              17: let oldValue = value
+            > 18: let value = helper()
+              19: return value
+            ```
+
+            Comment by reviewer:
+            Use the new helper.
+            """
+            $0.detailDrafts[workspace.id] = $0.detailDraft
+            $0.detailTab = .terminal
+            $0.detailInputFocusRequest = 1
+        }
+    }
+
+    @Test
+    func requestFixForPRCommentThreadSubmitsThreadAndShowsSession() async {
+        let workspace = Self.workspace()
+        let thread = Self.prThread()
+        let response = Self.prCommentsResponse(thread: thread)
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        state.detailTab = .git
+        state.gitSegment = .prComments
+        state.detailDraft = "Keep this draft."
+        state.prCommentsResponse = response
+        let expectedPrompt = thread.promptReference(pullRequest: response.pullRequest) + "\n"
+        var client = HarnessClient.unimplemented
+        client.sendText = { baseURLString, index, text, surfaceId in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            #expect(surfaceId == workspace.surfaceId)
+            #expect(text == expectedPrompt)
+            return BasicResponse(ok: true, enabled: nil, error: nil)
+        }
+        client.screen = { baseURLString, index, lines in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            #expect(lines == 200)
+            return ScreenResponse(ok: true, screen: "Request submitted", lines: lines, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.requestFixForPRCommentThread(thread)) {
+            $0.detailTab = .terminal
+        }
+        await store.receive(\.requestFinished)
+        await store.receive(\.screenTick)
+        await store.receive(\.screenSucceeded) {
+            $0.fullScreenText = "Request submitted"
+        }
+    }
+
+    @Test
     func skillsTabLoadsSkillsAndAppendsSelectedFormat() async {
         let workspace = Self.workspace()
         let projectSkill = ProjectSkill(
@@ -711,6 +818,80 @@ struct HarnessFeatureTests {
             gitDirty: true,
             surfaceCreatedAt: "2026-04-26T11:00:00Z",
             surfaceAge: 3_600
+        )
+    }
+
+    private static func prCommentsResponse(thread: GitHubPRThread) -> GitHubPRCommentsResponse {
+        GitHubPRCommentsResponse(
+            ok: true,
+            cwd: "/Users/ronnie/Code/cmux",
+            repository: GitHubRepository(
+                owner: "doximity",
+                name: "cmux-harness",
+                url: "https://github.com/doximity/cmux-harness"
+            ),
+            pullRequest: GitHubPullRequest(
+                number: 42,
+                title: "Ship comments",
+                url: "https://github.com/doximity/cmux-harness/pull/42",
+                headRefName: "feature/pr-comments",
+                baseRefName: "main",
+                state: "OPEN",
+                author: "reviewer"
+            ),
+            includeResolved: false,
+            threads: [thread],
+            files: [
+                GitHubPRFileGroup(path: "Sources/App.swift", threadCount: 1, threads: [thread])
+            ],
+            totalThreadCount: 1,
+            returnedThreadCount: 1,
+            resolvedThreadCount: 0,
+            hiddenResolvedCount: 0,
+            error: nil
+        )
+    }
+
+    private static func prThread() -> GitHubPRThread {
+        GitHubPRThread(
+            id: "thread-1",
+            path: "Sources/App.swift",
+            line: 18,
+            originalLine: 18,
+            startLine: nil,
+            originalStartLine: nil,
+            diffSide: "RIGHT",
+            startDiffSide: "",
+            subjectType: "LINE",
+            isResolved: false,
+            isOutdated: false,
+            url: "https://github.com/doximity/cmux-harness/pull/42#discussion_r18",
+            codeContext: GitHubPRCodeContext(
+                path: "Sources/App.swift",
+                source: "workspace",
+                startLine: 18,
+                endLine: 18,
+                lines: [
+                    GitHubPRCodeLine(number: 17, text: "let oldValue = value", isTarget: false),
+                    GitHubPRCodeLine(number: 18, text: "let value = helper()", isTarget: true),
+                    GitHubPRCodeLine(number: 19, text: "return value", isTarget: false),
+                ]
+            ),
+            comments: [
+                GitHubPRComment(
+                    id: "comment-1",
+                    author: "reviewer",
+                    body: "Use the new helper.",
+                    bodyText: "Use the new helper.",
+                    createdAt: "2026-04-29T12:00:00Z",
+                    updatedAt: "2026-04-29T12:00:00Z",
+                    url: "https://github.com/doximity/cmux-harness/pull/42#discussion_r18",
+                    diffHunk: "@@ -1 +1 @@",
+                    path: "Sources/App.swift",
+                    line: 18,
+                    originalLine: 18
+                )
+            ]
         )
     }
 }

@@ -25,6 +25,7 @@ struct HarnessClient: Sendable {
     var stageFile: @Sendable (String, Int, String) async throws -> BasicResponse
     var unstageFile: @Sendable (String, Int, String) async throws -> BasicResponse
     var diff: @Sendable (String, Int, String, GitFileSection) async throws -> GitDiffResponse
+    var githubPRComments: @Sendable (String, Int, Bool) async throws -> GitHubPRCommentsResponse
     var skills: @Sendable (String, Int) async throws -> SkillsResponse
     var searchFiles: @Sendable (String, Int, String) async throws -> FileSearchResponse
     var assignedJiraTickets: @Sendable (String, String, Int) async throws -> JiraTicketsResponse
@@ -87,6 +88,13 @@ extension HarnessClient {
         diff: { baseURLString, index, file, section in
             try await HarnessAPI.diff(baseURLString: baseURLString, index: index, file: file, section: section)
         },
+        githubPRComments: { baseURLString, index, includeResolved in
+            try await HarnessAPI.githubPRComments(
+                baseURLString: baseURLString,
+                index: index,
+                includeResolved: includeResolved
+            )
+        },
         skills: { baseURLString, index in
             try await HarnessAPI.skills(baseURLString: baseURLString, index: index)
         },
@@ -137,6 +145,7 @@ extension HarnessClient {
         stageFile: { _, _, _ in throw HarnessClientError.unimplemented("stageFile") },
         unstageFile: { _, _, _ in throw HarnessClientError.unimplemented("unstageFile") },
         diff: { _, _, _, _ in throw HarnessClientError.unimplemented("diff") },
+        githubPRComments: { _, _, _ in throw HarnessClientError.unimplemented("githubPRComments") },
         skills: { _, _ in throw HarnessClientError.unimplemented("skills") },
         searchFiles: { _, _, _ in throw HarnessClientError.unimplemented("searchFiles") },
         assignedJiraTickets: { _, _, _ in throw HarnessClientError.unimplemented("assignedJiraTickets") },

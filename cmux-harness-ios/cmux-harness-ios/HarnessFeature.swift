@@ -47,7 +47,12 @@ struct HarnessFeature {
         var gitStatus: GitStatus?
         var gitError: String?
         var isLoadingGit = false
+        var gitSegment: GitDetailSegment = .status
         var diffSheet: DiffSheet?
+        var prCommentsResponse: GitHubPRCommentsResponse?
+        var prCommentsError: String?
+        var isLoadingPRComments = false
+        var includeResolvedPRComments = false
         var projectSkills: [ProjectSkill] = []
         var userSkills: [ProjectSkill] = []
         var skillsError: String?
@@ -166,12 +171,19 @@ struct HarnessFeature {
         case gitTick
         case gitSucceeded(workspaceID: String, GitStatus)
         case gitFailed(String)
+        case gitSegmentChanged(GitDetailSegment)
         case stageFile(String)
         case unstageFile(String)
         case requestDiff(file: String, section: GitFileSection)
         case diffSucceeded(file: String, section: GitFileSection, diff: String)
         case diffFailed(file: String, section: GitFileSection, message: String)
         case closeDiff
+        case setPRCommentsIncludeResolved(Bool)
+        case loadPRComments
+        case prCommentsSucceeded(workspaceID: String, GitHubPRCommentsResponse)
+        case prCommentsFailed(String)
+        case appendPRCommentThread(GitHubPRThread)
+        case requestFixForPRCommentThread(GitHubPRThread)
         case loadSkills
         case skillsSucceeded(workspaceID: String, SkillsResponse)
         case skillsFailed(String)
@@ -221,7 +233,11 @@ struct HarnessFeature {
                 if state.selectedWorkspaceID != nil {
                     effects.append(screenPollingEffect())
                     if state.detailTab == .git {
-                        effects.append(gitPollingEffect())
+                        if state.gitSegment == .prComments {
+                            effects.append(.send(.loadPRComments))
+                        } else {
+                            effects.append(gitPollingEffect())
+                        }
                     }
                 }
                 return .merge(effects)
@@ -231,6 +247,7 @@ struct HarnessFeature {
                     .cancel(id: pollingCancelID),
                     .cancel(id: screenPollingCancelID),
                     .cancel(id: gitPollingCancelID),
+                    .cancel(id: prCommentsCancelID),
                     .cancel(id: fileSearchCancelID),
                     .cancel(id: jiraTicketsCancelID)
                 )
@@ -268,6 +285,11 @@ struct HarnessFeature {
                     HarnessSettingsStore.lastSelectedWorkspaceID = nil
                     state.fullScreenText = nil
                     state.gitStatus = nil
+                    state.gitSegment = .status
+                    state.prCommentsResponse = nil
+                    state.prCommentsError = nil
+                    state.isLoadingPRComments = false
+                    state.includeResolvedPRComments = false
                     state.detailDraft = ""
                     state.projectSkills = []
                     state.userSkills = []
@@ -286,6 +308,7 @@ struct HarnessFeature {
                     return .merge(
                         .cancel(id: screenPollingCancelID),
                         .cancel(id: gitPollingCancelID),
+                        .cancel(id: prCommentsCancelID),
                         .cancel(id: fileSearchCancelID),
                         .cancel(id: jiraTicketsCancelID)
                     )
@@ -403,7 +426,12 @@ struct HarnessFeature {
                 state.fullScreenText = nil
                 state.gitStatus = nil
                 state.gitError = nil
+                state.gitSegment = .status
                 state.diffSheet = nil
+                state.prCommentsResponse = nil
+                state.prCommentsError = nil
+                state.isLoadingPRComments = false
+                state.includeResolvedPRComments = false
                 loadDetailDraft(for: id, into: &state)
                 state.projectSkills = []
                 state.userSkills = []
@@ -422,6 +450,7 @@ struct HarnessFeature {
                     return .merge(
                         .cancel(id: screenPollingCancelID),
                         .cancel(id: gitPollingCancelID),
+                        .cancel(id: prCommentsCancelID),
                         .cancel(id: fileSearchCancelID),
                         .cancel(id: jiraTicketsCancelID)
                     )
@@ -429,7 +458,8 @@ struct HarnessFeature {
                 var effects: [Effect<Action>] = [
                     .send(.screenTick),
                     screenPollingEffect(),
-                    .cancel(id: gitPollingCancelID)
+                    .cancel(id: gitPollingCancelID),
+                    .cancel(id: prCommentsCancelID)
                 ]
                 if let workspaceToClear {
                     effects.append(clearPushApprovalEffect(state: state, workspace: workspaceToClear))
@@ -449,15 +479,29 @@ struct HarnessFeature {
             case let .detailTabChanged(tab):
                 state.detailTab = tab
                 if tab == .git {
-                    return .merge(.send(.gitTick), gitPollingEffect())
+                    if state.gitSegment == .prComments {
+                        return .merge(
+                            .send(.loadPRComments),
+                            .cancel(id: gitPollingCancelID)
+                        )
+                    }
+                    return .merge(
+                        .send(.gitTick),
+                        gitPollingEffect(),
+                        .cancel(id: prCommentsCancelID)
+                    )
                 }
                 if tab == .skills {
                     return .merge(
                         .send(.loadSkills),
-                        .cancel(id: gitPollingCancelID)
+                        .cancel(id: gitPollingCancelID),
+                        .cancel(id: prCommentsCancelID)
                     )
                 }
-                return .cancel(id: gitPollingCancelID)
+                return .merge(
+                    .cancel(id: gitPollingCancelID),
+                    .cancel(id: prCommentsCancelID)
+                )
 
             case .screenTick:
                 guard let workspace = state.selectedWorkspace else { return .none }
@@ -660,6 +704,22 @@ struct HarnessFeature {
                 state.gitError = message
                 return .none
 
+            case let .gitSegmentChanged(segment):
+                state.gitSegment = segment
+                switch segment {
+                case .status:
+                    return .merge(
+                        .send(.gitTick),
+                        gitPollingEffect(),
+                        .cancel(id: prCommentsCancelID)
+                    )
+                case .prComments:
+                    return .merge(
+                        .send(.loadPRComments),
+                        .cancel(id: gitPollingCancelID)
+                    )
+                }
+
             case let .stageFile(file):
                 guard let workspace = state.selectedWorkspace else { return .none }
                 return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, file] send in
@@ -710,6 +770,69 @@ struct HarnessFeature {
             case .closeDiff:
                 state.diffSheet = nil
                 return .none
+
+            case let .setPRCommentsIncludeResolved(includeResolved):
+                guard state.includeResolvedPRComments != includeResolved else { return .none }
+                state.includeResolvedPRComments = includeResolved
+                state.prCommentsError = nil
+                return .send(.loadPRComments)
+
+            case .loadPRComments:
+                guard let workspace = state.selectedWorkspace else { return .none }
+                state.isLoadingPRComments = state.prCommentsResponse == nil
+                state.prCommentsError = nil
+                return .run {
+                    [
+                        client = self.harnessClient,
+                        baseURLString = state.committedServerURLString,
+                        workspace,
+                        includeResolved = state.includeResolvedPRComments
+                    ] send in
+                    do {
+                        let response = try await client.githubPRComments(
+                            baseURLString,
+                            workspace.index,
+                            includeResolved
+                        )
+                        await send(.prCommentsSucceeded(workspaceID: workspace.id, response))
+                    } catch {
+                        await send(.prCommentsFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+                .cancellable(id: prCommentsCancelID, cancelInFlight: true)
+
+            case let .prCommentsSucceeded(workspaceID, response):
+                guard state.selectedWorkspaceID == workspaceID else { return .none }
+                state.isLoadingPRComments = false
+                state.prCommentsError = nil
+                state.prCommentsResponse = response
+                return .none
+
+            case let .prCommentsFailed(message):
+                state.isLoadingPRComments = false
+                state.prCommentsError = message
+                return .none
+
+            case let .appendPRCommentThread(thread):
+                state.detailDraft = appendPromptBlock(
+                    formatPRCommentThreadPrompt(thread: thread, response: state.prCommentsResponse),
+                    to: state.detailDraft
+                )
+                persistDetailDraft(&state)
+                state.detailTab = .terminal
+                state.detailInputFocusRequest += 1
+                return .none
+
+            case let .requestFixForPRCommentThread(thread):
+                guard let workspace = state.selectedWorkspace else { return .none }
+                let message = formatPRCommentThreadPrompt(thread: thread, response: state.prCommentsResponse)
+                state.detailTab = .terminal
+                state.errorMessage = nil
+                return .merge(
+                    sendTextEffect(state: state, workspace: workspace, message: message),
+                    .cancel(id: gitPollingCancelID),
+                    .cancel(id: prCommentsCancelID)
+                )
 
             case .loadSkills:
                 guard let workspace = state.selectedWorkspace else { return .none }
@@ -1008,6 +1131,7 @@ extension HarnessFeature {
 private let pollingCancelID = "cmux-harness-ios.polling"
 private let screenPollingCancelID = "cmux-harness-ios.screen-polling"
 private let gitPollingCancelID = "cmux-harness-ios.git-polling"
+private let prCommentsCancelID = "cmux-harness-ios.pr-comments"
 private let fileSearchCancelID = "cmux-harness-ios.file-search"
 private let jiraTicketsCancelID = "cmux-harness-ios.jira-tickets"
 
@@ -1050,6 +1174,20 @@ private func appendPromptToken(_ token: String, to draft: String) -> String {
         return draft + token
     }
     return draft + " " + token
+}
+
+private func appendPromptBlock(_ block: String, to draft: String) -> String {
+    let trimmedBlock = block.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedDraft.isEmpty else { return trimmedBlock }
+    return trimmedDraft + "\n\n" + trimmedBlock
+}
+
+private func formatPRCommentThreadPrompt(
+    thread: GitHubPRThread,
+    response: GitHubPRCommentsResponse?
+) -> String {
+    thread.promptReference(pullRequest: response?.pullRequest)
 }
 
 private func matchingWorkspaceID(

@@ -193,6 +193,21 @@ enum HarnessAPI {
         )
     }
 
+    static func githubPRComments(
+        baseURLString: String,
+        index: Int,
+        includeResolved: Bool = false
+    ) async throws -> GitHubPRCommentsResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/github/pr-comments",
+            queryItems: [
+                URLQueryItem(name: "index", value: String(index)),
+                URLQueryItem(name: "includeResolved", value: includeResolved ? "true" : "false"),
+            ]
+        )
+    }
+
     static func skills(baseURLString: String, index: Int) async throws -> SkillsResponse {
         try await request(
             baseURLString: baseURLString,
@@ -390,6 +405,9 @@ enum HarnessAPI {
             }
             if let git = decoded as? GitStatus, git.ok == false {
                 throw HarnessAPIError.server(git.error ?? "Git status failed")
+            }
+            if let prComments = decoded as? GitHubPRCommentsResponse, !prComments.ok {
+                throw HarnessAPIError.server(prComments.error ?? "GitHub PR comments request failed")
             }
             if let skills = decoded as? SkillsResponse, !skills.ok {
                 throw HarnessAPIError.server(skills.error ?? "Skills request failed")
