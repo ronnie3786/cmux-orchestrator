@@ -7,9 +7,9 @@ from cmux_harness import claude_cli
 
 class TestClaudeCli(unittest.TestCase):
 
-    @patch("cmux_harness.claude_cli.shutil.which", return_value="claude")
+    @patch("cmux_harness.claude_cli.claude_binary_candidates", return_value=["claude"])
     @patch("cmux_harness.claude_cli.subprocess.run")
-    def test_run_claude_print_returns_stdout(self, mock_run, _mock_which):
+    def test_run_claude_print_returns_stdout(self, mock_run, _mock_candidates):
         mock_run.return_value = subprocess.CompletedProcess(
             args=["claude", "--print", "-p", "hello"],
             returncode=0,
@@ -28,6 +28,68 @@ class TestClaudeCli(unittest.TestCase):
             check=True,
         )
 
+    @patch("cmux_harness.claude_cli.claude_binary_candidates", return_value=[
+        "/Applications/cmux.app/Contents/Resources/bin/claude",
+        "/Users/ronnierocha/.local/bin/claude",
+    ])
+    @patch("cmux_harness.claude_cli.subprocess.run")
+    def test_run_claude_print_falls_back_when_first_binary_is_not_logged_in(self, mock_run, _mock_candidates):
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(
+                returncode=1,
+                cmd=["/Applications/cmux.app/Contents/Resources/bin/claude", "--print", "-p", "hello"],
+                stderr="Not logged in · Please run /login",
+            ),
+            subprocess.CompletedProcess(
+                args=["/Users/ronnierocha/.local/bin/claude", "--print", "-p", "hello"],
+                returncode=0,
+                stdout="ok\n",
+                stderr="",
+            ),
+        ]
+
+        result = claude_cli.run_claude_print("hello", timeout=12)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0],
+            ["/Applications/cmux.app/Contents/Resources/bin/claude", "--print", "-p", "hello"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["/Users/ronnierocha/.local/bin/claude", "--print", "-p", "hello"],
+        )
+
+    @patch("cmux_harness.claude_cli.claude_binary_candidates", return_value=[
+        "/Users/ronnierocha/.local/bin/claude",
+        "/opt/homebrew/bin/claude",
+    ])
+    @patch("cmux_harness.claude_cli.subprocess.run")
+    def test_run_claude_print_falls_back_when_first_binary_is_stale(self, mock_run, _mock_candidates):
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(
+                returncode=1,
+                cmd=["/Users/ronnierocha/.local/bin/claude", "--print", "-p", "hello"],
+                stderr="Your version of Claude Code needs an update. Please run: claude update",
+            ),
+            subprocess.CompletedProcess(
+                args=["/opt/homebrew/bin/claude", "--print", "-p", "hello"],
+                returncode=0,
+                stdout="ok\n",
+                stderr="",
+            ),
+        ]
+
+        result = claude_cli.run_claude_print("hello", timeout=12)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["/opt/homebrew/bin/claude", "--print", "-p", "hello"],
+        )
+
     @patch("cmux_harness.claude_cli.subprocess.run")
     def test_run_haiku_handles_timeout(self, mock_run):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd=["claude"], timeout=30)
@@ -37,9 +99,9 @@ class TestClaudeCli(unittest.TestCase):
         self.assertEqual(result["type"], "claude_cli_error")
         self.assertIn("timed out", result["error"])
 
-    @patch("cmux_harness.claude_cli.shutil.which", return_value="claude")
+    @patch("cmux_harness.claude_cli.claude_binary_candidates", return_value=["claude"])
     @patch("cmux_harness.claude_cli.subprocess.run")
-    def test_run_haiku_retries_without_model_on_external_api_key_error(self, mock_run, _mock_which):
+    def test_run_haiku_retries_without_model_on_external_api_key_error(self, mock_run, _mock_candidates):
         mock_run.side_effect = [
             subprocess.CalledProcessError(
                 returncode=2,

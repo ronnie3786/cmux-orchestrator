@@ -1,13 +1,12 @@
 import json
 import os
 import re
-import shutil
-import subprocess
 import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import claude_cli
 from .storage import debug_log, read_review_file, write_review_file
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -209,32 +208,26 @@ def run_review_claude(prompt, model_override=None):
     """Run review via Claude CLI. Returns (parsed_dict_or_None, error_string, model_used).
     Falls back to run_review_ollama if the claude binary is not found.
     """
-    claude_bin = shutil.which("claude")
-    if not claude_bin:
+    candidates = claude_cli.claude_binary_candidates()
+    if not candidates:
         debug_log({"event": "review_claude_missing", "fallback": "ollama"})
         return run_review_ollama(prompt, model=model_override)
 
     model_used = model_override or "claude"
-    debug_log({"event": "review_claude_start", "binary": claude_bin})
+    debug_log({"event": "review_claude_start", "binary": candidates[0], "candidateCount": len(candidates)})
     try:
-        result = subprocess.run(
-            [claude_bin, "--print", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        raw = (result.stdout or "").strip()
-        if result.returncode != 0 and not raw:
-            err = (result.stderr or "").strip() or f"claude exited with {result.returncode}"
-            debug_log({"event": "review_claude_error", "error": err})
-            return None, err, model_used
+        raw = claude_cli.run_claude_print(prompt, timeout=120)
         parsed = parse_review_json(raw)
         if parsed is None:
             err = "invalid JSON response from Claude"
-            debug_log({"event": "review_claude_parse_error", "raw": raw[:2000], "stderr": (result.stderr or "")[:1000]})
+            debug_log({"event": "review_claude_parse_error", "raw": raw[:2000]})
             return None, err, model_used
         debug_log({"event": "review_claude_success", "keys": sorted(parsed.keys())})
         return parsed, "", model_used
+    except claude_cli.ClaudeCliError as e:
+        msg = str(e)
+        debug_log({"event": "review_claude_error", "error": msg})
+        return None, msg, model_used
     except Exception as e:
         msg = str(e)
         debug_log({"event": "review_claude_exception", "error": msg})
