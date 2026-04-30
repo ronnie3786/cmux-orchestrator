@@ -466,6 +466,126 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func newSessionFromWorkspaceCreatesShellInWorkspaceDirectoryAndSelectsIt() async {
+        let sourceWorkspace = Self.workspace()
+        var createdWorkspace = Self.workspace()
+        createdWorkspace.index = 3
+        createdWorkspace.uuid = "workspace-created"
+        createdWorkspace.name = "_ iOS App Shell"
+        createdWorkspace.customName = "_ iOS App Shell"
+        createdWorkspace.surfaceId = "surface-created"
+        createdWorkspace.surfaceLabel = nil
+        createdWorkspace.cwd = sourceWorkspace.cwd
+        createdWorkspace.branch = sourceWorkspace.branch
+
+        var state = Self.initialState()
+        state.workspaces = [sourceWorkspace]
+        state.selectedWorkspaceID = sourceWorkspace.id
+
+        let response = NewSessionResponse(
+            ok: true,
+            workspace: NewSessionResponse.CreatedWorkspace(
+                index: createdWorkspace.index,
+                uuid: createdWorkspace.uuid
+            ),
+            worktreePath: sourceWorkspace.cwd,
+            branchName: "",
+            error: nil
+        )
+        let status = Self.status(workspaces: [sourceWorkspace, createdWorkspace])
+        let updatedAt = Date(timeIntervalSince1970: 1_777_300_000)
+        let clock = TestClock()
+        var client = HarnessClient.unimplemented
+        client.createSession = { baseURLString, projectPath, branchName, jiraURL, prompt, mode, sessionName in
+            #expect(baseURLString == Self.baseURL)
+            #expect(projectPath == "/Users/ronnie/Code/cmux")
+            #expect(branchName.isEmpty)
+            #expect(jiraURL.isEmpty)
+            #expect(prompt.isEmpty)
+            #expect(mode == .shell)
+            #expect(sessionName == "_ iOS App Shell")
+            return response
+        }
+        client.status = { baseURLString in
+            #expect(baseURLString == Self.baseURL)
+            return status
+        }
+        client.log = { baseURLString in
+            #expect(baseURLString == Self.baseURL)
+            return []
+        }
+        client.screen = { baseURLString, index, lines in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == createdWorkspace.index)
+            #expect(lines == 200)
+            return ScreenResponse(ok: true, screen: "created shell", lines: lines, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.date.now = updatedAt
+            $0.harnessClient = client
+        }
+
+        await store.send(.newSessionFromWorkspaceTapped(workspaceID: sourceWorkspace.id)) {
+            $0.isCreatingSession = true
+            $0.quickSessionCreation = QuickSessionCreation(
+                workspaceID: sourceWorkspace.id,
+                directoryPath: "/Users/ronnie/Code/cmux",
+                phase: .creating
+            )
+        }
+        await store.receive(\.createNewSessionSucceeded) {
+            $0.isCreatingSession = false
+            $0.quickSessionCreation?.phase = .switching
+            $0.pendingCreatedWorkspaceSelection = PendingCreatedWorkspaceSelection(
+                uuid: "workspace-created",
+                index: 3
+            )
+        }
+        await clock.advance(by: .milliseconds(750))
+        await store.receive(\.refresh)
+        await store.receive(\.refreshSucceeded) {
+            $0.status = status
+            $0.workspaces = [sourceWorkspace, createdWorkspace]
+            $0.logEntries = []
+            $0.lastUpdated = updatedAt
+            $0.quickSessionCreation = nil
+            $0.pendingCreatedWorkspaceSelection = nil
+        }
+        await store.receive(\.selectWorkspace) {
+            $0.selectedWorkspaceID = createdWorkspace.id
+            $0.detailDraft = ""
+        }
+        await store.receive(\.screenTick)
+        await store.receive(\.screenSucceeded) {
+            $0.fullScreenText = "created shell"
+        }
+        await store.send(.selectWorkspace(nil)) {
+            $0.selectedWorkspaceID = nil
+            $0.fullScreenText = nil
+        }
+    }
+
+    @Test
+    func newSessionFromWorkspaceRequiresDetectedDirectory() async {
+        var workspace = Self.workspace()
+        workspace.cwd = nil
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        }
+
+        await store.send(.newSessionFromWorkspaceTapped(workspaceID: workspace.id)) {
+            $0.errorMessage = "Couldn't find a directory for this session yet."
+        }
+    }
+
+    @Test
     func jiraUrlAutofillsBranchNameWhenEmpty() async {
         let store = TestStore(initialState: Self.initialState()) {
             HarnessFeature()

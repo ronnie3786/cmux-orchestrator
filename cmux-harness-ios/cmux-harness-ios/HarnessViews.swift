@@ -43,7 +43,15 @@ struct HarnessRootView: View {
                 .zIndex(20)
             }
         }
+        .overlay {
+            if let quickSessionCreation = store.quickSessionCreation {
+                SessionCreationProgressOverlay(creation: quickSessionCreation)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .zIndex(30)
+            }
+        }
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: pushBridge.banner?.id)
+        .animation(.easeInOut(duration: 0.18), value: store.quickSessionCreation)
         .sheet(isPresented: $store.isShowingSettings) {
             SettingsView(store: store)
         }
@@ -124,6 +132,69 @@ struct HarnessRootView: View {
         store.send(.openPushApproval(notification))
         pushBridge.dismissBanner()
         PushNotificationBridge.clearApplicationBadge()
+    }
+}
+
+private struct SessionCreationProgressOverlay: View {
+    let creation: QuickSessionCreation
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.46)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(.white)
+                    .scaleEffect(1.08)
+
+                VStack(spacing: 6) {
+                    Text(title)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    Text(message)
+                        .font(.subheadline)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+            .frame(maxWidth: 330)
+            .background {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    }
+            }
+            .shadow(color: .black.opacity(0.28), radius: 22, x: 0, y: 14)
+            .padding(24)
+        }
+    }
+
+    private var title: String {
+        switch creation.phase {
+        case .creating:
+            return "Starting New Session"
+        case .switching:
+            return "Opening New Session"
+        }
+    }
+
+    private var message: String {
+        switch creation.phase {
+        case .creating:
+            let directory = creation.directoryPath.abbreviatedPath(componentCount: 3)
+            return "Creating a shell session in \(directory). We'll switch you over when it's ready."
+        case .switching:
+            return "The session is ready. Switching you over now."
+        }
     }
 }
 
@@ -537,7 +608,13 @@ private struct WorkspaceCardView: View {
 
                 Spacer(minLength: 8)
 
-                SessionContextMenu(store: store, workspace: workspace)
+                SessionContextMenu(
+                    store: store,
+                    workspace: workspace,
+                    newSessionAction: {
+                        store.send(.newSessionFromWorkspaceTapped(workspaceID: workspace.id))
+                    }
+                )
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -644,6 +721,7 @@ private struct SessionStatusIndicators: View {
 private struct SessionContextMenu: View {
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
+    var newSessionAction: (() -> Void)? = nil
     var detailsAction: (() -> Void)? = nil
 
     var body: some View {
@@ -672,8 +750,6 @@ private struct SessionContextMenu: View {
                 Label("Star", systemImage: workspace.starred ? "star.fill" : "star")
             }
 
-            Divider()
-
             if let detailsAction {
                 Button {
                     detailsAction()
@@ -686,6 +762,17 @@ private struct SessionContextMenu: View {
                 store.send(.renameRequested(workspaceID: workspace.id))
             } label: {
                 Label("Rename", systemImage: "pencil")
+            }
+
+            if let newSessionAction {
+                Divider()
+
+                Button {
+                    newSessionAction()
+                } label: {
+                    Label("New Session", systemImage: "plus.rectangle")
+                }
+                .disabled(store.isCreatingSession || store.quickSessionCreation != nil)
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -770,6 +857,9 @@ private struct WorkspaceDetailView: View {
                 SessionContextMenu(
                     store: store,
                     workspace: workspace,
+                    newSessionAction: {
+                        store.send(.newSessionFromWorkspaceTapped(workspaceID: workspace.id))
+                    },
                     detailsAction: {
                         isShowingSessionDetails = true
                     }

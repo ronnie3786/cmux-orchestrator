@@ -1,6 +1,22 @@
 import ComposableArchitecture
 import Foundation
 
+enum QuickSessionCreationPhase: Equatable, Sendable {
+    case creating
+    case switching
+}
+
+struct QuickSessionCreation: Equatable, Sendable {
+    var workspaceID: String
+    var directoryPath: String
+    var phase: QuickSessionCreationPhase
+}
+
+struct PendingCreatedWorkspaceSelection: Equatable, Sendable {
+    var uuid: String?
+    var index: Int?
+}
+
 @Reducer
 struct HarnessFeature {
     @Dependency(\.continuousClock) var clock
@@ -33,6 +49,8 @@ struct HarnessFeature {
         var isShowingSettings = false
         var isShowingNewSession = false
         var isCreatingSession = false
+        var quickSessionCreation: QuickSessionCreation?
+        var pendingCreatedWorkspaceSelection: PendingCreatedWorkspaceSelection?
         var newSessionMode: NewSessionMode = .claude
         var newSessionProjectPath = "~/Documents/Development/Doximity-Claude"
         var newSessionBranchName = ""
@@ -140,6 +158,7 @@ struct HarnessFeature {
         case settingsButtonTapped
         case dismissSettings
         case newSessionButtonTapped
+        case newSessionFromWorkspaceTapped(workspaceID: String)
         case dismissNewSession
         case newSessionJiraChanged(String)
         case createNewSession
@@ -278,6 +297,14 @@ struct HarnessFeature {
                     state.pendingPushApproval = nil
                     return .send(.selectWorkspace(workspaceID))
                 }
+                if let pendingSelection = state.pendingCreatedWorkspaceSelection,
+                   let workspaceID = matchingWorkspaceID(for: pendingSelection, in: state) {
+                    state.pendingCreatedWorkspaceSelection = nil
+                    state.quickSessionCreation = nil
+                    state.sessionSearchText = ""
+                    state.sessionFilter = .all
+                    return .send(.selectWorkspace(workspaceID))
+                }
                 if let selected = state.selectedWorkspaceID,
                    !state.workspaces.contains(where: { $0.id == selected }) {
                     persistDetailDraft(&state)
@@ -350,8 +377,41 @@ struct HarnessFeature {
                 state.newSessionPrompt = ""
                 state.newSessionName = "Shell"
                 state.newSessionError = nil
+                state.quickSessionCreation = nil
+                state.pendingCreatedWorkspaceSelection = nil
                 state.isShowingNewSession = true
                 return .none
+
+            case let .newSessionFromWorkspaceTapped(workspaceID):
+                guard !state.isCreatingSession, state.quickSessionCreation == nil else {
+                    return .none
+                }
+                guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else {
+                    return .none
+                }
+                guard let projectPath = workspaceDirectory(for: workspace) else {
+                    state.errorMessage = "Couldn't find a directory for this session yet."
+                    return .none
+                }
+                let sessionName = shellSessionName(for: workspace)
+                state.isCreatingSession = true
+                state.quickSessionCreation = QuickSessionCreation(
+                    workspaceID: workspaceID,
+                    directoryPath: projectPath,
+                    phase: .creating
+                )
+                state.pendingCreatedWorkspaceSelection = nil
+                state.newSessionError = nil
+                state.errorMessage = nil
+                return createSessionEffect(
+                    state: state,
+                    projectPath: projectPath,
+                    branchName: "",
+                    jiraURL: "",
+                    prompt: "",
+                    mode: .shell,
+                    sessionName: sessionName
+                )
 
             case .dismissNewSession:
                 state.isShowingNewSession = false
@@ -375,44 +435,39 @@ struct HarnessFeature {
                 let sessionName = state.newSessionName.trimmingCharacters(in: .whitespacesAndNewlines)
                 state.isCreatingSession = true
                 state.newSessionError = nil
-                return .run {
-                    [
-                        client = self.harnessClient,
-                        baseURLString = state.committedServerURLString,
-                        projectPath,
-                        branchName = state.newSessionBranchName.trimmingCharacters(in: .whitespacesAndNewlines),
-                        jiraURL = state.newSessionJiraURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                        prompt = state.newSessionPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                        mode = state.newSessionMode,
-                        sessionName
-                    ] send in
-                    do {
-                        let response = try await client.createSession(
-                            baseURLString,
-                            projectPath,
-                            branchName,
-                            jiraURL,
-                            prompt,
-                            mode,
-                            sessionName.isEmpty ? "Shell" : sessionName
-                        )
-                        await send(.createNewSessionSucceeded(response))
-                    } catch {
-                        await send(.createNewSessionFailed(HarnessAPI.message(for: error)))
-                    }
-                }
+                return createSessionEffect(
+                    state: state,
+                    projectPath: projectPath,
+                    branchName: state.newSessionBranchName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    jiraURL: state.newSessionJiraURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                    prompt: state.newSessionPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                    mode: state.newSessionMode,
+                    sessionName: sessionName.isEmpty ? "Shell" : sessionName
+                )
 
-            case .createNewSessionSucceeded:
+            case let .createNewSessionSucceeded(response):
+                let shouldSelectCreatedSession = state.quickSessionCreation != nil
                 state.isCreatingSession = false
                 state.isShowingNewSession = false
+                if shouldSelectCreatedSession {
+                    state.quickSessionCreation?.phase = .switching
+                    state.pendingCreatedWorkspaceSelection = pendingCreatedWorkspaceSelection(from: response)
+                }
                 return .run { [clock = self.clock] send in
                     try? await clock.sleep(for: .milliseconds(750))
                     await send(.refresh)
                 }
 
             case let .createNewSessionFailed(message):
+                let wasQuickCreate = state.quickSessionCreation != nil
                 state.isCreatingSession = false
-                state.newSessionError = message
+                state.quickSessionCreation = nil
+                state.pendingCreatedWorkspaceSelection = nil
+                if wasQuickCreate {
+                    state.errorMessage = "Couldn't start a new session: \(message)"
+                } else {
+                    state.newSessionError = message
+                }
                 return .none
 
             case let .selectWorkspace(id):
@@ -1075,6 +1130,33 @@ extension HarnessFeature {
         .cancellable(id: gitPollingCancelID, cancelInFlight: true)
     }
 
+    private func createSessionEffect(
+        state: State,
+        projectPath: String,
+        branchName: String,
+        jiraURL: String,
+        prompt: String,
+        mode: NewSessionMode,
+        sessionName: String
+    ) -> Effect<Action> {
+        .run { [client = self.harnessClient, baseURLString = state.committedServerURLString] send in
+            do {
+                let response = try await client.createSession(
+                    baseURLString,
+                    projectPath,
+                    branchName,
+                    jiraURL,
+                    prompt,
+                    mode,
+                    sessionName
+                )
+                await send(.createNewSessionSucceeded(response))
+            } catch {
+                await send(.createNewSessionFailed(HarnessAPI.message(for: error)))
+            }
+        }
+    }
+
     private func sendTextEffect(state: State, workspace: Workspace, message: String) -> Effect<Action> {
         .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, message] send in
             do {
@@ -1183,6 +1265,33 @@ private func appendPromptBlock(_ block: String, to draft: String) -> String {
     return trimmedDraft + "\n\n" + trimmedBlock
 }
 
+private func trimmedNonEmpty(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+private func workspaceDirectory(for workspace: Workspace) -> String? {
+    trimmedNonEmpty(workspace.cwd)
+}
+
+private func shellSessionName(for workspace: Workspace) -> String {
+    let baseName = workspace.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !baseName.isEmpty else { return "_ Shell" }
+    if baseName.range(of: "shell", options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+        return "_ \(baseName)"
+    }
+    return "_ \(baseName) Shell"
+}
+
+private func pendingCreatedWorkspaceSelection(
+    from response: NewSessionResponse
+) -> PendingCreatedWorkspaceSelection? {
+    let uuid = trimmedNonEmpty(response.workspace?.uuid)
+    let index = response.workspace?.index
+    guard uuid != nil || index != nil else { return nil }
+    return PendingCreatedWorkspaceSelection(uuid: uuid, index: index)
+}
+
 private func formatPRCommentThreadPrompt(
     thread: GitHubPRThread,
     response: GitHubPRCommentsResponse?
@@ -1206,6 +1315,21 @@ private func matchingWorkspaceID(
     }
     if !notification.workspaceUUID.isEmpty,
        let match = state.workspaces.first(where: { $0.uuid == notification.workspaceUUID }) {
+        return match.id
+    }
+    return nil
+}
+
+private func matchingWorkspaceID(
+    for selection: PendingCreatedWorkspaceSelection,
+    in state: HarnessFeature.State
+) -> String? {
+    if let uuid = selection.uuid,
+       let match = state.workspaces.first(where: { $0.uuid == uuid }) {
+        return match.id
+    }
+    if let index = selection.index,
+       let match = state.workspaces.first(where: { $0.index == index }) {
         return match.id
     }
     return nil
