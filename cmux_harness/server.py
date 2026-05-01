@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -19,6 +20,7 @@ from . import push_notifications
 from . import workspaces
 from . import review as review_mod
 from . import storage
+from . import tailscale
 from .engine import AUTO_MODE_OFF, OLLAMA_URL, normalize_auto_mode
 from .routes import action_buttons as action_buttons_routes
 from .routes import build_log as build_log_routes
@@ -34,8 +36,9 @@ from .routes import workspaces as workspace_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_FILES = {
-    "/": ("orchestrator.html", "text/html; charset=utf-8"),
+    "/": ("home.html", "text/html; charset=utf-8"),
     "/harness": ("dashboard.html", "text/html; charset=utf-8"),
+    "/orchestrator": ("orchestrator.html", "text/html; charset=utf-8"),
     "/orchestrator.css": ("orchestrator.css", "text/css; charset=utf-8"),
     "/orchestrator.js": ("orchestrator.js", "application/javascript; charset=utf-8"),
 }
@@ -49,12 +52,14 @@ def _read_static_file(filename, fallback):
 
 
 DASHBOARD_HTML = _read_static_file("dashboard.html", "<html><body><h1>dashboard.html not found</h1></body></html>")
+HOME_HTML = _read_static_file("home.html", "<html><body><h1>home.html not found</h1></body></html>")
 ORCHESTRATOR_HTML = _read_static_file("orchestrator.html", "<html><body><h1>orchestrator.html not found</h1></body></html>")
 ORCHESTRATOR_CSS = _read_static_file("orchestrator.css", "/* orchestrator.css not found */\n")
 ORCHESTRATOR_JS = _read_static_file("orchestrator.js", "console.error('orchestrator.js not found');\n")
 _STATIC_CONTENT = {
-    "/": ORCHESTRATOR_HTML,
+    "/": HOME_HTML,
     "/harness": DASHBOARD_HTML,
+    "/orchestrator": ORCHESTRATOR_HTML,
     "/orchestrator.css": ORCHESTRATOR_CSS,
     "/orchestrator.js": ORCHESTRATOR_JS,
 }
@@ -71,6 +76,53 @@ def _human_file_size(size):
                 return f"{int(value)} {unit}"
             return f"{value:.1f} {unit}"
         value /= 1024.0
+
+
+def _normalize_tailscale_host(value):
+    host = str(value or "").strip()
+    if not host:
+        return ""
+    if "://" in host:
+        parsed = urllib.parse.urlparse(host)
+        host = parsed.netloc or parsed.path
+    host = host.strip().strip("/")
+    if "/" in host:
+        host = host.split("/", 1)[0]
+    if host.count(":") == 1:
+        host = host.split(":", 1)[0]
+    return host
+
+
+def _server_lan_addresses():
+    addresses = set()
+
+    def add_host(host):
+        if not host:
+            return
+        try:
+            for info in socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM):
+                address = info[4][0]
+                if address and not address.startswith("127."):
+                    addresses.add(address)
+        except OSError:
+            return
+
+    add_host(socket.gethostname())
+    add_host(socket.getfqdn())
+    add_host(f"{socket.gethostname()}.local")
+
+    # UDP connect only asks the kernel which local interface would route traffic.
+    # It does not send packets, and works even without internet connectivity.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("10.255.255.255", 1))
+            address = probe.getsockname()[0]
+            if address and not address.startswith("127."):
+                addresses.add(address)
+    except OSError:
+        pass
+
+    return sorted(addresses)
 
 
 def make_handler(engine):
@@ -239,12 +291,66 @@ def make_handler(engine):
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     return False
 
+        def _network_payload(self):
+            port = int(getattr(self.server, "server_address", ("", 9091))[1] or 9091)
+            lan_addresses = _server_lan_addresses()
+            hostname = socket.gethostname()
+            local_name = f"{hostname}.local" if hostname else ""
+            tailscale_host = ""
+            with engine._lock:
+                network_settings = getattr(engine, "network_settings", {}) or {}
+                tailscale_host = _normalize_tailscale_host(network_settings.get("tailscaleHost", ""))
+            tailscale_status = tailscale.detect_tailscale(port=port)
+
+            status = {}
+            try:
+                status = engine.get_status() or {}
+            except Exception:
+                status = {}
+
+            detected_tailscale_host = tailscale_status.get("dnsName") or tailscale_status.get("tailscaleIPv4") or ""
+            active_tailscale_host = tailscale_host or detected_tailscale_host
+            tailscale_harness_url = f"http://{active_tailscale_host}:{port}/harness" if active_tailscale_host else ""
+            detected_tailscale_url = f"http://{detected_tailscale_host}:{port}/harness" if detected_tailscale_host else ""
+            return {
+                "ok": True,
+                "port": port,
+                "hostname": hostname,
+                "localName": local_name,
+                "bonjourType": "_cmux-harness._tcp",
+                "lanAddresses": lan_addresses,
+                "tailscaleHost": tailscale_host,
+                "tailscale": {
+                    **tailscale_status,
+                    "savedHost": tailscale_host,
+                    "activeHost": active_tailscale_host,
+                },
+                "urls": {
+                    "home": f"http://localhost:{port}/",
+                    "harness": f"http://localhost:{port}/harness",
+                    "orchestrator": f"http://localhost:{port}/orchestrator",
+                    "localHarness": f"http://{local_name}:{port}/harness" if local_name else "",
+                    "lanHarness": [f"http://{address}:{port}/harness" for address in lan_addresses],
+                    "tailscaleHarness": tailscale_harness_url,
+                    "detectedTailscaleHarness": detected_tailscale_url,
+                    "tailscaleIpHarness": tailscale_status.get("urls", {}).get("ipHarness", ""),
+                },
+                "cmux": {
+                    "socketFound": bool(status.get("socketFound")),
+                    "connected": bool(status.get("connected")),
+                    "workspaceCount": len(status.get("workspaces") or []),
+                    "staleData": bool(status.get("staleData")),
+                },
+            }
+
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             if self._serve_static(path):
                 return
-            if path == "/api/events":
+            if path == "/api/network":
+                self._json_response(self._network_payload())
+            elif path == "/api/events":
                 self._serve_events(parsed)
             elif path == "/api/status":
                 self._json_response(engine.get_status())
@@ -785,6 +891,11 @@ def make_handler(engine):
                     data.get("workspaceUUID", ""),
                     data.get("surfaceID", ""),
                 ))
+            elif path == "/api/network":
+                tailscale_host = _normalize_tailscale_host(data.get("tailscaleHost", ""))
+                if hasattr(engine, "set_network_settings"):
+                    engine.set_network_settings(tailscale_host=tailscale_host)
+                self._json_response(self._network_payload())
             elif path == "/api/workspace":
                 idx = data.get("index")
                 enabled = data.get("enabled", True)

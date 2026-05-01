@@ -6,6 +6,7 @@ import webbrowser
 from http.server import ThreadingHTTPServer
 
 from cmux_harness import attachments
+from cmux_harness.discovery import BonjourAdvertiser
 from cmux_harness.engine import HarnessEngine
 from cmux_harness.server import make_handler
 
@@ -29,13 +30,22 @@ def main():
     server = ThreadingHTTPServer(("0.0.0.0", port), handler_class)
     server.engine = engine
 
-    print(f"⚡ cmux Orchestrator: http://localhost:{port}")
+    advertiser = BonjourAdvertiser(port)
+    advertised = advertiser.start()
+
+    print(f"⚡ cmux harness home: http://localhost:{port}")
+    print(f"   Harness:      http://localhost:{port}/harness")
+    print(f"   Orchestrator: http://localhost:{port}/orchestrator")
+    if advertised:
+        print("   LAN discovery: Bonjour service _cmux-harness._tcp")
     webbrowser.open(f"http://localhost:{port}")
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down.")
+    finally:
+        advertiser.stop()
         server.server_close()
 
 

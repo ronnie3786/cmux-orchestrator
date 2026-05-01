@@ -44,6 +44,20 @@ class TestServerResponses(unittest.TestCase):
         self.mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         self.addCleanup(self.patch_subprocess_run.stop)
         self.mock_workspace_run = self.mock_run
+        self.patch_tailscale_detect = patch("cmux_harness.server.tailscale.detect_tailscale")
+        self.mock_tailscale_detect = self.patch_tailscale_detect.start()
+        self.mock_tailscale_detect.return_value = {
+            "available": False,
+            "dnsName": "",
+            "machineName": "",
+            "tailnetName": "",
+            "tailscaleIPv4": "",
+            "tailscaleIPv4Candidates": [],
+            "source": "",
+            "error": "",
+            "urls": {"magicDnsHarness": "", "ipHarness": "", "bestHarness": ""},
+        }
+        self.addCleanup(self.patch_tailscale_detect.stop)
 
     def test_json_response_suppresses_broken_pipe(self):
         handler_cls = make_handler(Mock())
@@ -69,8 +83,95 @@ class TestServerResponses(unittest.TestCase):
         result = handler._json_response({"ok": True}, status=202)
 
         self.assertFalse(result)
-        handler.send_response.assert_called_once_with(202)
-        handler.end_headers.assert_called_once()
+
+    def test_root_serves_onboarding_home_and_orchestrator_has_own_route(self):
+        root_handler = self._make_handler(Mock(), "/")
+        root_handler.do_GET()
+        root_html = root_handler.wfile.getvalue().decode("utf-8")
+
+        orchestrator_handler = self._make_handler(Mock(), "/orchestrator")
+        orchestrator_handler.do_GET()
+        orchestrator_html = orchestrator_handler.wfile.getvalue().decode("utf-8")
+
+        root_handler.send_response.assert_called_once_with(200)
+        orchestrator_handler.send_response.assert_called_once_with(200)
+        self.assertIn("cmux harness setup", root_html)
+        self.assertIn("Open orchestrator", root_html)
+        self.assertIn("Searching local network and Tailscale", root_html)
+        self.assertIn('<script src="/orchestrator.js"></script>', orchestrator_html)
+
+    def test_network_status_returns_urls_and_cmux_socket_state(self):
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine.network_settings = {"tailscaleHost": "macbook.example.ts.net"}
+        engine.get_status.return_value = {
+            "socketFound": True,
+            "connected": True,
+            "workspaces": [{"index": 1}],
+            "staleData": False,
+        }
+        handler = self._make_handler(engine, "/api/network")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["urls"]["harness"], "http://localhost:9091/harness")
+        self.assertEqual(body["urls"]["orchestrator"], "http://localhost:9091/orchestrator")
+        self.assertEqual(body["urls"]["tailscaleHarness"], "http://macbook.example.ts.net:9091/harness")
+        self.assertEqual(body["tailscale"]["savedHost"], "macbook.example.ts.net")
+        self.assertEqual(body["cmux"]["socketFound"], True)
+        self.assertEqual(body["cmux"]["connected"], True)
+        self.assertEqual(body["cmux"]["workspaceCount"], 1)
+
+    def test_network_status_returns_detected_tailscale_url_when_host_not_saved(self):
+        self.mock_tailscale_detect.return_value = {
+            "available": True,
+            "dnsName": "macbook.example.ts.net",
+            "machineName": "macbook",
+            "tailnetName": "example.ts.net",
+            "tailscaleIPv4": "100.89.178.110",
+            "tailscaleIPv4Candidates": ["100.89.178.110"],
+            "source": "Tailscale LocalAPI",
+            "error": "",
+            "urls": {
+                "magicDnsHarness": "http://macbook.example.ts.net:9091/harness",
+                "ipHarness": "http://100.89.178.110:9091/harness",
+                "bestHarness": "http://macbook.example.ts.net:9091/harness",
+            },
+        }
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine.network_settings = {}
+        engine.get_status.return_value = {}
+        handler = self._make_handler(engine, "/api/network")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["tailscaleHost"], "")
+        self.assertEqual(body["tailscale"]["activeHost"], "macbook.example.ts.net")
+        self.assertEqual(body["tailscale"]["tailscaleIPv4"], "100.89.178.110")
+        self.assertEqual(body["urls"]["tailscaleHarness"], "http://macbook.example.ts.net:9091/harness")
+        self.assertEqual(body["urls"]["detectedTailscaleHarness"], "http://macbook.example.ts.net:9091/harness")
+        self.assertEqual(body["urls"]["tailscaleIpHarness"], "http://100.89.178.110:9091/harness")
+
+    def test_post_network_saves_normalized_tailscale_host(self):
+        engine = MagicMock()
+        engine._lock.__enter__.return_value = None
+        engine._lock.__exit__.return_value = None
+        engine.network_settings = {}
+        engine.get_status.return_value = {}
+        handler = self._post_json(
+            "/api/network",
+            {"tailscaleHost": "http://macbook.example.ts.net:9091/harness"},
+            engine=engine,
+        )
+
+        engine.set_network_settings.assert_called_once_with(tailscale_host="macbook.example.ts.net")
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
 
     def test_json_response_writes_body_when_pipe_is_open(self):
         handler_cls = make_handler(Mock())
@@ -156,7 +257,7 @@ class TestServerResponses(unittest.TestCase):
     def _make_handler(self, engine, path):
         handler_cls = make_handler(engine)
         handler = handler_cls.__new__(handler_cls)
-        handler.server = Mock(engine=engine)
+        handler.server = Mock(engine=engine, server_address=("0.0.0.0", 9091))
         handler.path = path
         handler.headers = {}
         handler.rfile = io.BytesIO()

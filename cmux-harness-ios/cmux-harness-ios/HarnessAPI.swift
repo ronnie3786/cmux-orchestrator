@@ -345,10 +345,10 @@ enum HarnessAPI {
         return error.localizedDescription
     }
 
-    static func normalizedBaseURL(_ value: String) -> String {
+    nonisolated static func normalizedBaseURL(_ value: String) -> String {
         var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            trimmed = HarnessSettingsStore.defaultServerURL
+            return ""
         }
         if !trimmed.contains("://") {
             trimmed = "http://" + trimmed
@@ -357,6 +357,25 @@ enum HarnessAPI {
             trimmed.removeLast()
         }
         return trimmed
+    }
+
+    nonisolated static func harnessURLFromHost(_ value: String, defaultPort: Int = 9091) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.contains("://") {
+            return normalizedBaseURL(trimmed)
+        }
+
+        var host = trimmed
+        if let slashIndex = host.firstIndex(of: "/") {
+            host = String(host[..<slashIndex])
+        }
+        host = host.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !host.isEmpty else { return "" }
+
+        let needsPort = !host.contains(":")
+        let hostAndPort = needsPort ? "\(host):\(defaultPort)" : host
+        return "http://\(hostAndPort)/harness"
     }
 
     private static func request<T: Decodable>(
@@ -469,12 +488,15 @@ enum HarnessAPI {
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "attachment"
     }
 
-    static func makeURL(
+    nonisolated static func makeURL(
         baseURLString: String,
         path: String,
         queryItems: [URLQueryItem]
     ) throws -> URL {
         let normalized = normalizedBaseURL(baseURLString)
+        guard !normalized.isEmpty else {
+            throw HarnessAPIError.invalidURL
+        }
         guard var components = URLComponents(string: normalized) else {
             throw HarnessAPIError.invalidURL
         }
@@ -494,7 +516,7 @@ enum HarnessAPI {
         return url
     }
 
-    private static func apiBasePath(from path: String) -> String {
+    nonisolated private static func apiBasePath(from path: String) -> String {
         var basePath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         if basePath == "harness" {
             basePath = ""
@@ -506,30 +528,44 @@ enum HarnessAPI {
 }
 
 enum HarnessSettingsStore {
-    static let defaultServerURL = "http://doximity-m4.tail1db61d.ts.net:9091/harness"
-    private static let legacyDefaultServerURL = "http://localhost:9091"
-    private static let defaultMigrationKey = "cmuxHarnessTailnetDefaultMigrated"
     private static let serverURLKey = "cmuxHarnessServerURL"
+    private static let tailscaleHostKey = "cmuxHarnessTailscaleHost"
     private static let lastSelectedWorkspaceIDKey = "cmuxHarnessLastSelectedWorkspaceID"
     private static let detailDraftsKey = "cmuxHarnessDetailDrafts"
 
-    static var serverURL: String {
+    static var serverURL: String? {
         get {
             guard let value = UserDefaults.standard.string(forKey: serverURLKey) else {
-                return HarnessAPI.normalizedBaseURL(defaultServerURL)
+                return nil
             }
             let normalized = HarnessAPI.normalizedBaseURL(value)
-            if normalized == legacyDefaultServerURL, !UserDefaults.standard.bool(forKey: defaultMigrationKey) {
-                let replacement = HarnessAPI.normalizedBaseURL(defaultServerURL)
-                UserDefaults.standard.set(replacement, forKey: serverURLKey)
-                UserDefaults.standard.set(true, forKey: defaultMigrationKey)
-                return replacement
-            }
-            return normalized
+            return normalized.isEmpty ? nil : normalized
         }
         set {
-            UserDefaults.standard.set(HarnessAPI.normalizedBaseURL(newValue), forKey: serverURLKey)
-            UserDefaults.standard.set(true, forKey: defaultMigrationKey)
+            guard let newValue else {
+                UserDefaults.standard.removeObject(forKey: serverURLKey)
+                return
+            }
+            let normalized = HarnessAPI.normalizedBaseURL(newValue)
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: serverURLKey)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: serverURLKey)
+            }
+        }
+    }
+
+    static var tailscaleHost: String {
+        get {
+            UserDefaults.standard.string(forKey: tailscaleHostKey) ?? ""
+        }
+        set {
+            let value = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty {
+                UserDefaults.standard.removeObject(forKey: tailscaleHostKey)
+            } else {
+                UserDefaults.standard.set(value, forKey: tailscaleHostKey)
+            }
         }
     }
 
