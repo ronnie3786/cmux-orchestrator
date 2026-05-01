@@ -183,6 +183,41 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .exp-close:hover{border-color:var(--red);color:var(--red)}
 .btn-build-run{background:rgba(63,185,80,.15);border-color:var(--green);color:var(--green);font-weight:600}
 .btn-build-run:hover{background:rgba(63,185,80,.25);border-color:var(--green);color:var(--green)}
+.btn-build-log{background:rgba(88,166,255,.12);border-color:rgba(88,166,255,.55);color:var(--accent);font-weight:600}
+.btn-build-log:hover,.btn-build-log.active{background:rgba(88,166,255,.2);border-color:var(--accent);color:var(--text)}
+.btn-console-log{background:rgba(188,140,255,.12);border-color:rgba(188,140,255,.55);color:var(--purple);font-weight:600}
+.btn-console-log:hover,.btn-console-log.active{background:rgba(188,140,255,.2);border-color:var(--purple);color:var(--text)}
+.harness-build-log-panel{position:fixed;left:50%;bottom:0;z-index:1002;width:min(1180px,calc(100vw - 48px));max-height:46vh;display:flex;flex-direction:column;background:#05070a;border:1px solid var(--border);border-bottom:none;border-radius:14px 14px 0 0;box-shadow:0 -20px 60px rgba(0,0,0,.55);transform:translate(-50%,110%);transition:transform .18s ease;overflow:hidden}
+.harness-build-log-panel.open{transform:translate(-50%,0)}
+.harness-build-log-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}
+.harness-build-log-title{font-size:13px;font-weight:800;color:var(--text)}
+.harness-build-log-meta{margin-top:3px;font-size:11px;color:var(--text-muted)}
+.harness-build-log-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.harness-build-log-select{height:30px;padding:0 9px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px}
+.harness-build-log-toggle{height:30px;display:flex;align-items:center;gap:7px;padding:0 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);font-size:12px;font-weight:700;cursor:pointer}
+.harness-build-log-toggle.active{border-color:rgba(63,185,80,.45);background:rgba(63,185,80,.12);color:var(--green)}
+.harness-build-log-dot{width:7px;height:7px;border-radius:50%;background:var(--text-muted)}
+.harness-build-log-toggle.active .harness-build-log-dot{background:var(--green);box-shadow:0 0 8px rgba(63,185,80,.55)}
+.harness-build-log-icon{width:30px;height:30px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);cursor:pointer;font-size:14px}
+.harness-build-log-icon:hover{border-color:var(--accent);color:var(--text)}
+.harness-build-log-icon:disabled,.harness-build-log-toggle:disabled,.harness-build-log-select:disabled{opacity:.55;cursor:default}
+.harness-build-log-body{position:relative;flex:1;min-height:150px;overflow:auto;padding:12px 16px;background:#05070a;font-family:'JetBrains Mono','SF Mono',monospace;font-size:12px;line-height:1.65;color:#c9d1d9}
+.harness-build-log-line{white-space:pre-wrap;word-break:break-word}
+.harness-console-log-match{background:rgba(210,153,34,.35);color:#f8e3a1;border-radius:3px;padding:0 2px}
+.harness-console-log-filter-bar{min-height:46px;padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(255,255,255,.015)}
+.harness-console-log-custom{min-width:220px;flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono','SF Mono',monospace;font-size:11px;outline:none}
+.harness-console-log-custom:focus{border-color:var(--accent)}
+.harness-console-log-apply{border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;padding:7px 12px;font-size:11px;cursor:pointer}
+.harness-console-log-apply:hover{border-color:var(--accent)}
+.harness-build-log-state{min-height:150px;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--text-muted);text-align:center;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;font-size:13px}
+.harness-build-log-state.stack{flex-direction:column;gap:8px;padding:18px}
+.harness-build-log-error{max-width:820px;color:var(--red);font-family:'JetBrains Mono','SF Mono',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.harness-build-log-spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(139,148,158,.35);border-top-color:var(--accent);animation:buildLogSpin .8s linear infinite}
+@keyframes buildLogSpin{to{transform:rotate(360deg)}}
+.harness-build-log-retry{padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;cursor:pointer}
+.harness-build-log-retry:hover{border-color:var(--accent)}
+.harness-build-log-badge{position:absolute;right:14px;bottom:12px;display:none;padding:6px 10px;border-radius:999px;border:1px solid rgba(88,166,255,.45);background:rgba(88,166,255,.15);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer}
+.harness-build-log-badge.visible{display:block}
 .exp-terminal{flex:1;overflow-y:auto;padding:16px 24px;font-family:'JetBrains Mono','SF Mono',monospace;font-size:13px;line-height:1.8;background:rgba(0,0,0,.15);white-space:pre-wrap;word-break:break-all}
 .exp-terminal.activity-list{padding:0;background:var(--bg);font-family:inherit;white-space:normal;word-break:normal}
 .exp-terminal.activity-list .act-item{padding:14px 18px}
@@ -471,10 +506,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   .exp-meta{display:none}
   .exp-header-actions{display:contents}
   .exp-header-actions.hidden{display:contents!important}
-  .exp-header-actions.hidden .auto-toggle,.exp-header-actions.hidden .btn-build-run{display:none!important}
+  .exp-header-actions.hidden .auto-toggle,.exp-header-actions.hidden .btn-build-run,.exp-header-actions.hidden .btn-build-log,.exp-header-actions.hidden .btn-console-log{display:none!important}
   .exp-header-actions .auto-toggle{grid-column:3;grid-row:1;justify-self:end;min-height:32px;padding:0 8px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:rgba(255,255,255,.06)}
   .exp-header-actions .btn{min-height:32px;padding:0 8px}
-  .exp-header-actions .btn-build-run{display:none}
+  .exp-header-actions .btn-build-run,.exp-header-actions .btn-build-log,.exp-header-actions .btn-console-log{display:none}
   .exp-header-actions .btn:last-child{grid-column:1;grid-row:1;justify-self:start;border:0;background:transparent;color:var(--accent);font-size:0}
   .exp-header-actions .btn:last-child::before{content:'Back';font-size:16px;font-weight:700}
   .mobile-exp-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(13,17,23,.92)}
@@ -496,6 +531,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   .expanded-panel.mobile-panel-git .exp-activity,.expanded-panel.mobile-panel-activity .exp-git{display:none}
   .exp-git{border-right:none;border-bottom:0}
   .exp-activity{border-top:0}
+  .harness-build-log-panel{left:0;right:0;bottom:0;width:100vw;max-height:52vh;border-left:none;border-right:none;border-radius:16px 16px 0 0;transform:translateY(110%)}
+  .harness-build-log-panel.open{transform:translateY(0)}
+  .harness-build-log-header{flex-direction:column;align-items:stretch;gap:10px}
+  .harness-build-log-actions{justify-content:flex-start}
+  .harness-build-log-body{min-height:180px;font-size:11px}
+  .harness-console-log-custom{min-width:0;width:100%}
   .diff-overlay.visible,.settings-overlay.visible,.ns-overlay.visible{align-items:flex-end}
   .diff-panel,.settings-panel,.ns-panel{width:100vw;max-width:100vw;border:none;border-radius:16px 16px 0 0}
   .diff-panel{max-height:85dvh}
@@ -596,6 +637,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
             <div class="toggle-track"></div>
           </div>
           <button class="btn btn-build-run" style="font-size:12px" onclick="buildAndRun()">&#9654; Build &amp; Run</button>
+          <button class="btn btn-build-log" id="expBuildLogButton" style="font-size:12px" onclick="toggleHarnessBuildLog()">&#9108; Build Log</button>
+          <button class="btn btn-console-log" id="expConsoleLogButton" style="font-size:12px" onclick="toggleHarnessConsoleLog()">&gt;_ Console</button>
           <button class="btn" style="font-size:12px" onclick="closeExpanded()">&#10005; Close</button>
         </div>
       </div>
@@ -645,6 +688,58 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
       </div>
     </div>
   </div>
+  <section class="harness-build-log-panel" id="harnessBuildLogPanel" aria-label="Build log panel">
+    <div class="harness-build-log-header">
+      <div>
+        <div class="harness-build-log-title" id="harnessBuildLogTitle">Build Log</div>
+        <div class="harness-build-log-meta" id="harnessBuildLogMeta">Open a session to view logs.</div>
+      </div>
+      <div class="harness-build-log-actions">
+        <select class="harness-build-log-select" id="harnessBuildLogFile" aria-label="Build log file" onchange="setHarnessBuildLogFile(this.value)">
+          <option value="build.log">build.log</option>
+          <option value="prebuild.log">prebuild.log</option>
+        </select>
+        <button class="harness-build-log-toggle active" id="harnessBuildLogAuto" type="button" onclick="toggleHarnessBuildLogAuto()" aria-pressed="true">
+          <span>Auto</span>
+          <span class="harness-build-log-dot"></span>
+        </button>
+        <button class="harness-build-log-icon" id="harnessBuildLogRefresh" type="button" onclick="fetchHarnessBuildLog(true)" aria-label="Refresh build log">&#8635;</button>
+        <button class="harness-build-log-icon" type="button" onclick="closeHarnessBuildLog()" aria-label="Close build log">&#10005;</button>
+      </div>
+    </div>
+    <div class="harness-build-log-body" id="harnessBuildLogBody" onscroll="onHarnessBuildLogScroll()">
+      <div id="harnessBuildLogContent"></div>
+      <button class="harness-build-log-badge" id="harnessBuildLogNewOutput" type="button" onclick="scrollHarnessBuildLogToBottom()">New output</button>
+    </div>
+  </section>
+  <section class="harness-build-log-panel" id="harnessConsoleLogPanel" aria-label="Console log panel">
+    <div class="harness-build-log-header">
+      <div>
+        <div class="harness-build-log-title" id="harnessConsoleLogTitle">Console Logs</div>
+        <div class="harness-build-log-meta" id="harnessConsoleLogMeta">Open a session to view logs.</div>
+      </div>
+      <div class="harness-build-log-actions">
+        <select class="harness-build-log-select" id="harnessConsoleLogFile" aria-label="Console log file" onchange="setHarnessConsoleLogFile(this.value)">
+          <option value="">No files</option>
+        </select>
+        <button class="harness-build-log-toggle active" id="harnessConsoleLogAuto" type="button" onclick="toggleHarnessConsoleLogAuto()" aria-pressed="true">
+          <span>Auto</span>
+          <span class="harness-build-log-dot"></span>
+        </button>
+        <button class="harness-build-log-icon" id="harnessConsoleLogRefresh" type="button" onclick="fetchHarnessConsoleLog(true)" aria-label="Refresh console log">&#8635;</button>
+        <button class="harness-build-log-icon" type="button" onclick="closeHarnessConsoleLog()" aria-label="Close console log">&#10005;</button>
+      </div>
+    </div>
+    <div class="harness-console-log-filter-bar">
+      <select class="harness-build-log-select" id="harnessConsoleLogPreset" aria-label="Console log filter preset" onchange="applyHarnessConsoleLogPreset(this.value)"></select>
+      <input class="harness-console-log-custom" id="harnessConsoleLogCustom" type="text" placeholder="Custom regex filter" oninput="draftHarnessConsoleLogFilter(this.value)" onkeydown="if(event.key==='Enter')applyHarnessConsoleLogDraftFilter()">
+      <button class="harness-console-log-apply" type="button" onclick="applyHarnessConsoleLogDraftFilter()">Apply</button>
+    </div>
+    <div class="harness-build-log-body" id="harnessConsoleLogBody" onscroll="onHarnessConsoleLogScroll()">
+      <div id="harnessConsoleLogContent"></div>
+      <button class="harness-build-log-badge" id="harnessConsoleLogNewOutput" type="button" onclick="scrollHarnessConsoleLogToBottom()">New output</button>
+    </div>
+  </section>
 </div>
 <div class="esc-hint" id="escHint"><kbd style="padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.1);font-family:inherit;font-size:10px">esc</kbd> to close</div>
 
@@ -866,6 +961,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 
 <script>
 (function(){
+var CONSOLE_LOG_PRESETS=[
+  {id:'all',label:'All',pattern:''},
+  {id:'analytics',label:'Analytics',pattern:'analytics event:'},
+  {id:'analytics_names',label:'Analytics names only',pattern:'Track analytics event:|Screen analytics event:'},
+  {id:'network',label:'Network',pattern:'Starting fetch|Starting mutation|Result of fetch|Result of mutation'},
+  {id:'errors',label:'Errors',pattern:' E '},
+  {id:'graphql',label:'GraphQL',pattern:'\\(doxx:GraphQL\\)'},
+  {id:'messaging',label:'Messaging',pattern:'MessagingConversation:'},
+  {id:'custom',label:'Custom',pattern:null}
+];
 var state = {
   enabled:false,
   workspaces:[],
@@ -902,6 +1007,33 @@ var lastGlobalReviewsRefresh = 0;
 var prCommentsData = null;
 var prCommentsIncludeResolved = false;
 var prCommentsLoading = false;
+var harnessBuildLog = {
+  open:false,
+  auto:false,
+  file:'build.log',
+  data:null,
+  loading:false,
+  error:'',
+  timer:null,
+  pinned:true,
+  hasNewOutput:false,
+  lastSignature:''
+};
+var harnessConsoleLog = {
+  open:false,
+  auto:false,
+  file:null,
+  filter:'',
+  draftFilter:'',
+  preset:'all',
+  data:null,
+  loading:false,
+  error:'',
+  timer:null,
+  pinned:true,
+  hasNewOutput:false,
+  lastSignature:''
+};
 
 // Request notification permission on page load
 if ('Notification' in window && Notification.permission === 'default') {
@@ -1866,6 +1998,10 @@ window.openExpanded=function(idx){
   expandedWsSurfaceId=ws?ws.surfaceId:null;
   expandedReview=null;
   expandedScreen=null;
+  resetHarnessBuildLogState();
+  resetHarnessConsoleLogState();
+  renderHarnessBuildLog();
+  renderHarnessConsoleLog();
   document.getElementById('overlay').classList.add('visible');
   document.getElementById('escHint').style.display='block';
   document.body.style.overflow='hidden';
@@ -1890,6 +2026,10 @@ window.closeExpanded=function(){
   expandedReview=null;
   expandedScreen=null;
   expandedMode='workspace';
+  resetHarnessBuildLogState();
+  resetHarnessConsoleLogState();
+  renderHarnessBuildLog();
+  renderHarnessConsoleLog();
   inlineDiffFile=null;
   prCommentsData=null;
   mobileExpPanel='terminal';
@@ -1929,6 +2069,623 @@ window.buildAndRun=function(){
   if(expandedWsIndex===null)return;
   postWorkspaceCommand(expandedWsIndex,{text:'/exp-project-run\n'});
 };
+
+function currentExpandedWorkspace(){
+  if(expandedMode!=='workspace'||expandedWsIndex===null)return null;
+  var ws=null;
+  if(expandedWsUuid){
+    ws=state.workspaces.find(function(w){
+      return w.uuid===expandedWsUuid&&(w.surfaceId||null)===(expandedWsSurfaceId||null);
+    });
+    if(ws&&ws.index!==expandedWsIndex)expandedWsIndex=ws.index;
+  }
+  if(!ws)ws=state.workspaces.find(function(w){return w.index===expandedWsIndex});
+  return ws||null;
+}
+
+function currentExpandedWorkspacePath(){
+  var ws=currentExpandedWorkspace();
+  return ws&&ws.cwd?String(ws.cwd):'';
+}
+
+function currentExpandedWorkspaceQuery(){
+  var ws=currentExpandedWorkspace();
+  if(!ws)return '';
+  var query='index='+encodeURIComponent(ws.index);
+  if(ws.cwd)query+='&path='+encodeURIComponent(ws.cwd);
+  return query;
+}
+
+function currentExpandedWorkspacePayload(extra){
+  var ws=currentExpandedWorkspace();
+  var payload={};
+  if(ws)payload.index=ws.index;
+  if(ws&&ws.cwd)payload.path=ws.cwd;
+  Object.keys(extra||{}).forEach(function(key){payload[key]=extra[key]});
+  return payload;
+}
+
+function harnessBuildLogTargetKey(){
+  var ws=currentExpandedWorkspace();
+  if(!ws)return '';
+  return String(ws.uuid||ws.index||'')+'::'+String(ws.surfaceId||'')+'::'+String(ws.index||'')+'::'+String(ws.cwd||'');
+}
+
+function harnessConsoleLogTargetKey(){
+  return harnessBuildLogTargetKey();
+}
+
+function harnessBuildLogSignature(data){
+  if(!data||!data.exists)return '';
+  return [
+    data.fileSize||0,
+    data.totalLines||0,
+    Array.isArray(data.lines)?data.lines.join('\n'):''
+  ].join('::');
+}
+
+function harnessConsoleLogSignature(data){
+  if(!data||!data.exists)return '';
+  return [
+    data.activeFile||'',
+    data.fileSize||0,
+    data.totalLines||0,
+    data.matchedLines||0,
+    Array.isArray(data.lines)?data.lines.join('\n'):''
+  ].join('::');
+}
+
+function harnessConsolePresetById(id){
+  return CONSOLE_LOG_PRESETS.find(function(preset){return preset.id===id})||CONSOLE_LOG_PRESETS[0];
+}
+
+function harnessConsolePresetForPattern(pattern){
+  var value=String(pattern||'');
+  return CONSOLE_LOG_PRESETS.find(function(preset){return preset.pattern===value&&preset.pattern!==null})||harnessConsolePresetById('custom');
+}
+
+function isHarnessBuildLogPinned(){
+  var body=document.getElementById('harnessBuildLogBody');
+  if(!body)return true;
+  return body.scrollTop+body.clientHeight>=body.scrollHeight-20;
+}
+
+function renderHarnessBuildLogBadge(){
+  var badge=document.getElementById('harnessBuildLogNewOutput');
+  if(badge)badge.className='harness-build-log-badge'+(harnessBuildLog.hasNewOutput?' visible':'');
+}
+
+function renderHarnessConsoleLogBadge(){
+  var badge=document.getElementById('harnessConsoleLogNewOutput');
+  if(badge)badge.className='harness-build-log-badge'+(harnessConsoleLog.hasNewOutput?' visible':'');
+}
+
+window.scrollHarnessBuildLogToBottom=function(){
+  var body=document.getElementById('harnessBuildLogBody');
+  if(!body)return;
+  body.scrollTop=body.scrollHeight;
+  harnessBuildLog.pinned=true;
+  harnessBuildLog.hasNewOutput=false;
+  renderHarnessBuildLogBadge();
+};
+
+window.onHarnessBuildLogScroll=function(){
+  harnessBuildLog.pinned=isHarnessBuildLogPinned();
+  if(harnessBuildLog.pinned&&harnessBuildLog.hasNewOutput){
+    harnessBuildLog.hasNewOutput=false;
+    renderHarnessBuildLogBadge();
+  }
+};
+
+function isHarnessConsoleLogPinned(){
+  var body=document.getElementById('harnessConsoleLogBody');
+  if(!body)return true;
+  return body.scrollTop+body.clientHeight>=body.scrollHeight-20;
+}
+
+window.scrollHarnessConsoleLogToBottom=function(){
+  var body=document.getElementById('harnessConsoleLogBody');
+  if(!body)return;
+  body.scrollTop=body.scrollHeight;
+  harnessConsoleLog.pinned=true;
+  harnessConsoleLog.hasNewOutput=false;
+  renderHarnessConsoleLogBadge();
+};
+
+window.onHarnessConsoleLogScroll=function(){
+  harnessConsoleLog.pinned=isHarnessConsoleLogPinned();
+  if(harnessConsoleLog.pinned&&harnessConsoleLog.hasNewOutput){
+    harnessConsoleLog.hasNewOutput=false;
+    renderHarnessConsoleLogBadge();
+  }
+};
+
+function renderHarnessConsoleLogLine(line,pattern){
+  var text=String(line==null?'':line);
+  if(!pattern)return '<div class="harness-build-log-line">'+esc(text)+'</div>';
+  var matcher;
+  try{matcher=new RegExp(pattern,'ig');}catch(error){return '<div class="harness-build-log-line">'+esc(text)+'</div>';}
+  var html='';
+  var cursor=0;
+  var matched=false;
+  var guard=0;
+  while(guard<5000){
+    var match=matcher.exec(text);
+    if(!match)break;
+    var value=String(match[0]||'');
+    var index=Number(match.index||0);
+    if(!value){matcher.lastIndex=index+1;guard+=1;continue;}
+    matched=true;
+    html+=esc(text.slice(cursor,index));
+    html+='<mark class="harness-console-log-match">'+esc(value)+'</mark>';
+    cursor=index+value.length;
+    guard+=1;
+  }
+  if(!matched)return '<div class="harness-build-log-line">'+esc(text)+'</div>';
+  html+=esc(text.slice(cursor));
+  return '<div class="harness-build-log-line">'+html+'</div>';
+}
+
+function renderHarnessBuildLog(){
+  var panel=document.getElementById('harnessBuildLogPanel');
+  var content=document.getElementById('harnessBuildLogContent');
+  if(!panel||!content)return;
+  var ws=currentExpandedWorkspace();
+  var hasTarget=!!ws;
+  var title=document.getElementById('harnessBuildLogTitle');
+  var meta=document.getElementById('harnessBuildLogMeta');
+  var fileSelect=document.getElementById('harnessBuildLogFile');
+  var autoButton=document.getElementById('harnessBuildLogAuto');
+  var refreshButton=document.getElementById('harnessBuildLogRefresh');
+  var openButton=document.getElementById('expBuildLogButton');
+  var fileLabel=harnessBuildLog.file||'build.log';
+  var targetName=ws?sessionDisplayName(ws):'No session selected';
+
+  panel.classList.toggle('open',harnessBuildLog.open);
+  if(openButton)openButton.classList.toggle('active',harnessBuildLog.open);
+  if(title)title.textContent='Build Log';
+  if(fileSelect){
+    fileSelect.value=fileLabel;
+    fileSelect.disabled=!hasTarget;
+  }
+  if(autoButton){
+    autoButton.classList.toggle('active',!!harnessBuildLog.auto);
+    autoButton.disabled=!hasTarget;
+    autoButton.setAttribute('aria-pressed',harnessBuildLog.auto?'true':'false');
+  }
+  if(refreshButton)refreshButton.disabled=!hasTarget||!!harnessBuildLog.loading;
+
+  if(!hasTarget){
+    if(meta)meta.textContent='Open a session to view logs.';
+    content.innerHTML='<div class="harness-build-log-state">No session selected.</div>';
+    harnessBuildLog.hasNewOutput=false;
+    renderHarnessBuildLogBadge();
+    return;
+  }
+
+  if(harnessBuildLog.loading&&!harnessBuildLog.data){
+    if(meta)meta.textContent=targetName+' - '+fileLabel;
+    content.innerHTML='<div class="harness-build-log-state"><div class="harness-build-log-spinner"></div><div>Loading build log...</div></div>';
+    harnessBuildLog.hasNewOutput=false;
+    renderHarnessBuildLogBadge();
+    return;
+  }
+
+  if(harnessBuildLog.error){
+    if(meta)meta.textContent=targetName+' - '+fileLabel;
+    content.innerHTML='<div class="harness-build-log-state stack"><div>Failed to read build log.</div><div class="harness-build-log-error">'+esc(harnessBuildLog.error)+'</div><button class="harness-build-log-retry" type="button" onclick="fetchHarnessBuildLog(true)">Retry</button></div>';
+    renderHarnessBuildLogBadge();
+    return;
+  }
+
+  var data=harnessBuildLog.data;
+  if(!data||!data.exists){
+    if(meta)meta.textContent=targetName+' - '+fileLabel;
+    content.innerHTML='<div class="harness-build-log-state">No build log yet. Run Build &amp; Run to see output here.</div>';
+    harnessBuildLog.hasNewOutput=false;
+    renderHarnessBuildLogBadge();
+    return;
+  }
+
+  var totalLines=Number(data.totalLines||0);
+  var fileSize=data.fileSizeHuman||'0 B';
+  if(meta)meta.textContent=fileLabel+' - '+fileSize+' - '+totalLines+' lines';
+  var lines=Array.isArray(data.lines)?data.lines:[];
+  content.innerHTML=lines.length
+    ? lines.map(function(line){return '<div class="harness-build-log-line">'+esc(line)+'</div>';}).join('')
+    : '<div class="harness-build-log-state">Log file is empty.</div>';
+  renderHarnessBuildLogBadge();
+}
+
+function renderHarnessConsoleLog(){
+  var panel=document.getElementById('harnessConsoleLogPanel');
+  var content=document.getElementById('harnessConsoleLogContent');
+  if(!panel||!content)return;
+  var ws=currentExpandedWorkspace();
+  var hasTarget=!!ws;
+  var data=harnessConsoleLog.data;
+  var files=data&&Array.isArray(data.files)?data.files:[];
+  var activeFile=harnessConsoleLog.file||(data&&data.activeFile)||(files[0]||'');
+  var preset=harnessConsolePresetById(harnessConsoleLog.preset);
+  var targetName=ws?sessionDisplayName(ws):'No session selected';
+  var title=document.getElementById('harnessConsoleLogTitle');
+  var meta=document.getElementById('harnessConsoleLogMeta');
+  var fileSelect=document.getElementById('harnessConsoleLogFile');
+  var autoButton=document.getElementById('harnessConsoleLogAuto');
+  var refreshButton=document.getElementById('harnessConsoleLogRefresh');
+  var openButton=document.getElementById('expConsoleLogButton');
+  var presetSelect=document.getElementById('harnessConsoleLogPreset');
+  var customInput=document.getElementById('harnessConsoleLogCustom');
+
+  panel.classList.toggle('open',harnessConsoleLog.open);
+  if(openButton)openButton.classList.toggle('active',harnessConsoleLog.open);
+  if(title)title.textContent=activeFile?'Console Logs - '+activeFile:'Console Logs';
+  if(autoButton){
+    autoButton.classList.toggle('active',!!harnessConsoleLog.auto);
+    autoButton.disabled=!hasTarget;
+    autoButton.setAttribute('aria-pressed',harnessConsoleLog.auto?'true':'false');
+  }
+  if(refreshButton)refreshButton.disabled=!hasTarget||!!harnessConsoleLog.loading;
+  if(fileSelect){
+    fileSelect.disabled=!hasTarget||files.length<=1;
+    fileSelect.innerHTML=files.length?files.map(function(file){return '<option value="'+esc(file)+'">'+esc(file)+'</option>';}).join(''):'<option value="">No files</option>';
+    fileSelect.value=activeFile;
+  }
+  if(presetSelect){
+    presetSelect.innerHTML=CONSOLE_LOG_PRESETS.map(function(item){return '<option value="'+esc(item.id)+'">'+esc(item.label)+'</option>';}).join('');
+    presetSelect.value=preset.id;
+    presetSelect.disabled=!hasTarget;
+  }
+  if(customInput){
+    customInput.value=harnessConsoleLog.draftFilter;
+    customInput.disabled=!hasTarget;
+  }
+
+  if(!hasTarget){
+    if(meta)meta.textContent='Open a session to view logs.';
+    content.innerHTML='<div class="harness-build-log-state">No session selected.</div>';
+    harnessConsoleLog.hasNewOutput=false;
+    renderHarnessConsoleLogBadge();
+    return;
+  }
+  if(harnessConsoleLog.loading&&!data){
+    if(meta)meta.textContent=targetName+(activeFile?' - '+activeFile:'');
+    content.innerHTML='<div class="harness-build-log-state"><div class="harness-build-log-spinner"></div><div>Loading console logs...</div></div>';
+    harnessConsoleLog.hasNewOutput=false;
+    renderHarnessConsoleLogBadge();
+    return;
+  }
+  if(harnessConsoleLog.error){
+    if(meta)meta.textContent=targetName+(activeFile?' - '+activeFile:'');
+    content.innerHTML='<div class="harness-build-log-state stack"><div>Failed to read console logs.</div><div class="harness-build-log-error">'+esc(harnessConsoleLog.error)+'</div><button class="harness-build-log-retry" type="button" onclick="fetchHarnessConsoleLog(true)">Retry</button></div>';
+    renderHarnessConsoleLogBadge();
+    return;
+  }
+  if(!data||!data.exists){
+    if(meta)meta.textContent=targetName+' - waiting for .build/logs/*.log';
+    content.innerHTML='<div class="harness-build-log-state">No console logs yet. Run the app to see runtime output here.</div>';
+    harnessConsoleLog.hasNewOutput=false;
+    renderHarnessConsoleLogBadge();
+    return;
+  }
+
+  var totalLines=Number(data.totalLines||0);
+  var matchedLines=Number(data.matchedLines||0);
+  var fileSize=data.fileSizeHuman||'0 B';
+  var filterLabel=harnessConsoleLog.filter?' - '+matchedLines+' matches':'';
+  if(meta)meta.textContent=(data.activeFile||activeFile)+' - '+fileSize+' - '+totalLines+' lines'+filterLabel;
+  var lines=Array.isArray(data.lines)?data.lines:[];
+  content.innerHTML=lines.length
+    ? lines.map(function(line){return renderHarnessConsoleLogLine(line,harnessConsoleLog.filter);}).join('')
+    : '<div class="harness-build-log-state">'+(harnessConsoleLog.filter?'No lines matched the current filter.':'Log file is empty.')+'</div>';
+  renderHarnessConsoleLogBadge();
+}
+
+function stopHarnessBuildLogPoll(){
+  if(harnessBuildLog.timer){
+    clearInterval(harnessBuildLog.timer);
+    harnessBuildLog.timer=null;
+  }
+}
+
+function stopHarnessConsoleLogPoll(){
+  if(harnessConsoleLog.timer){
+    clearInterval(harnessConsoleLog.timer);
+    harnessConsoleLog.timer=null;
+  }
+}
+
+function startHarnessBuildLogPoll(){
+  stopHarnessBuildLogPoll();
+  if(!harnessBuildLog.open||!harnessBuildLog.auto||!currentExpandedWorkspace())return;
+  harnessBuildLog.timer=setInterval(function(){
+    window.fetchHarnessBuildLog(false);
+  },3000);
+}
+
+function startHarnessConsoleLogPoll(){
+  stopHarnessConsoleLogPoll();
+  if(!harnessConsoleLog.open||!harnessConsoleLog.auto||!currentExpandedWorkspace())return;
+  harnessConsoleLog.timer=setInterval(function(){
+    window.fetchHarnessConsoleLog(false);
+  },3000);
+}
+
+function resetHarnessBuildLogState(){
+  stopHarnessBuildLogPoll();
+  harnessBuildLog.open=false;
+  harnessBuildLog.auto=false;
+  harnessBuildLog.file='build.log';
+  harnessBuildLog.data=null;
+  harnessBuildLog.loading=false;
+  harnessBuildLog.error='';
+  harnessBuildLog.pinned=true;
+  harnessBuildLog.hasNewOutput=false;
+  harnessBuildLog.lastSignature='';
+}
+
+function resetHarnessConsoleLogState(){
+  stopHarnessConsoleLogPoll();
+  harnessConsoleLog.open=false;
+  harnessConsoleLog.auto=false;
+  harnessConsoleLog.file=null;
+  harnessConsoleLog.filter='';
+  harnessConsoleLog.draftFilter='';
+  harnessConsoleLog.preset='all';
+  harnessConsoleLog.data=null;
+  harnessConsoleLog.loading=false;
+  harnessConsoleLog.error='';
+  harnessConsoleLog.pinned=true;
+  harnessConsoleLog.hasNewOutput=false;
+  harnessConsoleLog.lastSignature='';
+}
+
+window.fetchHarnessBuildLog=function(forceRender){
+  var ws=currentExpandedWorkspace();
+  if(!ws){
+    harnessBuildLog.data=null;
+    harnessBuildLog.loading=false;
+    harnessBuildLog.error='';
+    harnessBuildLog.lastSignature='';
+    harnessBuildLog.hasNewOutput=false;
+    if(forceRender)renderHarnessBuildLog();
+    return Promise.resolve(null);
+  }
+
+  var targetKey=harnessBuildLogTargetKey();
+  var wasPinned=isHarnessBuildLogPinned();
+  harnessBuildLog.pinned=wasPinned;
+  if(!harnessBuildLog.data)harnessBuildLog.loading=true;
+  harnessBuildLog.error='';
+  if(forceRender)renderHarnessBuildLog();
+
+  var path='/api/workspace-build-log?'+currentExpandedWorkspaceQuery()+'&lines=300&file='+encodeURIComponent(harnessBuildLog.file||'build.log');
+  return api('GET',path).then(function(data){
+    if(harnessBuildLogTargetKey()!==targetKey)return null;
+    if(!data)throw new Error('Network error');
+    if(data.ok===false)throw new Error(data.error||'Failed to read build log');
+    var nextSignature=harnessBuildLogSignature(data);
+    var changed=!!harnessBuildLog.lastSignature&&harnessBuildLog.lastSignature!==nextSignature;
+    harnessBuildLog.data=data;
+    harnessBuildLog.lastSignature=nextSignature;
+    harnessBuildLog.loading=false;
+    harnessBuildLog.error='';
+    renderHarnessBuildLog();
+    if(changed&&!wasPinned){
+      harnessBuildLog.hasNewOutput=true;
+      renderHarnessBuildLogBadge();
+    }else if(wasPinned){
+      setTimeout(window.scrollHarnessBuildLogToBottom,0);
+    }
+    return data;
+  }).catch(function(error){
+    if(harnessBuildLogTargetKey()!==targetKey)return null;
+    harnessBuildLog.loading=false;
+    harnessBuildLog.error=(error&&error.message)||'Failed to read build log';
+    renderHarnessBuildLog();
+    return null;
+  });
+};
+
+window.fetchHarnessConsoleLog=function(forceRender){
+  var ws=currentExpandedWorkspace();
+  if(!ws){
+    harnessConsoleLog.data=null;
+    harnessConsoleLog.loading=false;
+    harnessConsoleLog.error='';
+    harnessConsoleLog.lastSignature='';
+    harnessConsoleLog.hasNewOutput=false;
+    if(forceRender)renderHarnessConsoleLog();
+    return Promise.resolve(null);
+  }
+  var targetKey=harnessConsoleLogTargetKey();
+  var wasPinned=isHarnessConsoleLogPinned();
+  harnessConsoleLog.pinned=wasPinned;
+  if(!harnessConsoleLog.data)harnessConsoleLog.loading=true;
+  harnessConsoleLog.error='';
+  if(forceRender)renderHarnessConsoleLog();
+
+  var path='/api/workspace-console-logs?'+currentExpandedWorkspaceQuery()+'&lines=500';
+  if(harnessConsoleLog.file)path+='&file='+encodeURIComponent(harnessConsoleLog.file);
+  if(harnessConsoleLog.filter)path+='&filter='+encodeURIComponent(harnessConsoleLog.filter);
+  return api('GET',path).then(function(data){
+    if(harnessConsoleLogTargetKey()!==targetKey)return null;
+    if(!data)throw new Error('Network error');
+    if(data.ok===false)throw new Error(data.error||'Failed to read console logs');
+    var nextSignature=harnessConsoleLogSignature(data);
+    var changed=!!harnessConsoleLog.lastSignature&&harnessConsoleLog.lastSignature!==nextSignature;
+    harnessConsoleLog.data=data;
+    harnessConsoleLog.lastSignature=nextSignature;
+    harnessConsoleLog.loading=false;
+    harnessConsoleLog.error='';
+    if(!harnessConsoleLog.file&&data.activeFile)harnessConsoleLog.file=data.activeFile;
+    if(harnessConsoleLog.file&&data.files&&!data.files.includes(harnessConsoleLog.file)){
+      harnessConsoleLog.file=data.activeFile||data.files[0]||null;
+    }
+    renderHarnessConsoleLog();
+    if(changed&&!wasPinned){
+      harnessConsoleLog.hasNewOutput=true;
+      renderHarnessConsoleLogBadge();
+    }else if(wasPinned){
+      setTimeout(window.scrollHarnessConsoleLogToBottom,0);
+    }
+    return data;
+  }).catch(function(error){
+    if(harnessConsoleLogTargetKey()!==targetKey)return null;
+    harnessConsoleLog.loading=false;
+    harnessConsoleLog.error=(error&&error.message)||'Failed to read console logs';
+    renderHarnessConsoleLog();
+    return null;
+  });
+};
+
+window.toggleHarnessBuildLog=function(){
+  harnessBuildLog.open=!harnessBuildLog.open;
+  if(!harnessBuildLog.open){
+    harnessBuildLog.auto=false;
+    harnessBuildLog.hasNewOutput=false;
+    stopHarnessBuildLogPoll();
+    renderHarnessBuildLog();
+    return;
+  }
+  if(harnessConsoleLog.open)closeHarnessConsoleLog();
+  harnessBuildLog.auto=true;
+  renderHarnessBuildLog();
+  window.fetchHarnessBuildLog(true);
+  startHarnessBuildLogPoll();
+};
+
+window.toggleHarnessConsoleLog=function(){
+  harnessConsoleLog.open=!harnessConsoleLog.open;
+  if(!harnessConsoleLog.open){
+    harnessConsoleLog.auto=false;
+    harnessConsoleLog.hasNewOutput=false;
+    stopHarnessConsoleLogPoll();
+    renderHarnessConsoleLog();
+    return;
+  }
+  if(harnessBuildLog.open)closeHarnessBuildLog();
+  harnessConsoleLog.auto=true;
+  renderHarnessConsoleLog();
+  window.fetchHarnessConsoleLog(true);
+  startHarnessConsoleLogPoll();
+};
+
+window.closeHarnessConsoleLog=function(){
+  if(!harnessConsoleLog.open)return;
+  harnessConsoleLog.open=false;
+  harnessConsoleLog.auto=false;
+  harnessConsoleLog.hasNewOutput=false;
+  stopHarnessConsoleLogPoll();
+  renderHarnessConsoleLog();
+};
+
+window.toggleHarnessConsoleLogAuto=function(){
+  if(!currentExpandedWorkspace())return;
+  harnessConsoleLog.auto=!harnessConsoleLog.auto;
+  renderHarnessConsoleLog();
+  if(harnessConsoleLog.auto){
+    window.fetchHarnessConsoleLog(false);
+    startHarnessConsoleLogPoll();
+  }else{
+    stopHarnessConsoleLogPoll();
+  }
+};
+
+window.setHarnessConsoleLogFile=function(filename){
+  var nextFile=String(filename||'').trim()||null;
+  if(harnessConsoleLog.file===nextFile)return;
+  harnessConsoleLog.file=nextFile;
+  harnessConsoleLog.data=null;
+  harnessConsoleLog.loading=false;
+  harnessConsoleLog.error='';
+  harnessConsoleLog.lastSignature='';
+  harnessConsoleLog.hasNewOutput=false;
+  renderHarnessConsoleLog();
+  if(harnessConsoleLog.open){
+    window.fetchHarnessConsoleLog(true);
+    startHarnessConsoleLogPoll();
+  }
+};
+
+function setHarnessConsoleLogFilter(pattern,presetName){
+  var nextPattern=String(pattern||'');
+  var nextPreset=presetName||harnessConsolePresetForPattern(nextPattern).id;
+  harnessConsoleLog.filter=nextPattern;
+  harnessConsoleLog.draftFilter=nextPattern;
+  harnessConsoleLog.preset=nextPreset;
+  harnessConsoleLog.data=null;
+  harnessConsoleLog.loading=false;
+  harnessConsoleLog.error='';
+  harnessConsoleLog.lastSignature='';
+  harnessConsoleLog.hasNewOutput=false;
+  renderHarnessConsoleLog();
+  if(harnessConsoleLog.open){
+    window.fetchHarnessConsoleLog(true);
+    startHarnessConsoleLogPoll();
+  }
+}
+
+window.applyHarnessConsoleLogPreset=function(presetName){
+  var preset=harnessConsolePresetById(presetName);
+  if(preset.id==='custom'){
+    var input=document.getElementById('harnessConsoleLogCustom');
+    var pattern=String(input&&input.value||'').trim();
+    setHarnessConsoleLogFilter(pattern,harnessConsolePresetForPattern(pattern).id);
+    return;
+  }
+  setHarnessConsoleLogFilter(preset.pattern||'',preset.id);
+};
+
+window.draftHarnessConsoleLogFilter=function(pattern){
+  harnessConsoleLog.draftFilter=String(pattern||'');
+  harnessConsoleLog.preset=harnessConsolePresetForPattern(harnessConsoleLog.draftFilter).id;
+  var select=document.getElementById('harnessConsoleLogPreset');
+  if(select)select.value=harnessConsoleLog.preset;
+};
+
+window.applyHarnessConsoleLogDraftFilter=function(){
+  var input=document.getElementById('harnessConsoleLogCustom');
+  var pattern=String(input&&input.value||'').trim();
+  setHarnessConsoleLogFilter(pattern,harnessConsolePresetForPattern(pattern).id);
+};
+
+window.closeHarnessBuildLog=function(){
+  if(!harnessBuildLog.open)return;
+  harnessBuildLog.open=false;
+  harnessBuildLog.auto=false;
+  harnessBuildLog.hasNewOutput=false;
+  stopHarnessBuildLogPoll();
+  renderHarnessBuildLog();
+};
+
+window.toggleHarnessBuildLogAuto=function(){
+  if(!currentExpandedWorkspace())return;
+  harnessBuildLog.auto=!harnessBuildLog.auto;
+  renderHarnessBuildLog();
+  if(harnessBuildLog.auto){
+    window.fetchHarnessBuildLog(false);
+    startHarnessBuildLogPoll();
+  }else{
+    stopHarnessBuildLogPoll();
+  }
+};
+
+window.setHarnessBuildLogFile=function(filename){
+  var nextFile=filename==='prebuild.log'?'prebuild.log':'build.log';
+  if(harnessBuildLog.file===nextFile)return;
+  harnessBuildLog.file=nextFile;
+  harnessBuildLog.data=null;
+  harnessBuildLog.loading=false;
+  harnessBuildLog.error='';
+  harnessBuildLog.lastSignature='';
+  harnessBuildLog.hasNewOutput=false;
+  renderHarnessBuildLog();
+  if(harnessBuildLog.open){
+    window.fetchHarnessBuildLog(true);
+    startHarnessBuildLogPoll();
+  }
+};
 	function setExpandedEditorButton(editor,label,disabled,title){
 	  var btn=document.getElementById(editor==='xcode'?'expXcodeButton':'expVSCodeButton');
 	  if(!btn)return;
@@ -1942,7 +2699,7 @@ window.buildAndRun=function(){
 	  var isXcode=editor==='xcode';
 	  var editorName=isXcode?'Xcode':'VS Code';
 	  setExpandedEditorButton(editor,'Opening...',true,'Opening current directory in '+editorName);
-	  api('POST','/api/workspace-open-root',{index:expandedWsIndex,editor:editor}).then(function(result){
+	  api('POST','/api/workspace-open-root',currentExpandedWorkspacePayload({editor:editor})).then(function(result){
 	    if(result&&result.ok){
 	      setExpandedEditorButton(editor,'Opened',true,'Opened current directory in '+editorName);
 	    } else {
@@ -1989,7 +2746,7 @@ window.showInlineDiff=function(file,section){
   inlineDiffFile=file;
   var termEl=document.getElementById('expTerminal');
   termEl.innerHTML='<div class="inline-diff-bar"><span class="inline-diff-bar-title">\u0394 '+esc(file)+'</span><button class="inline-diff-bar-close" onclick="closeInlineDiff()">&#10005; Close</button></div><div class="diff-loading">Loading diff\u2026</div>';
-  fetch('/api/git-diff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:expandedWsIndex,file:file,section:section})})
+  fetch(currentExpandedWorkspacePath()?'/api/git-diff-path':'/api/git-diff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentExpandedWorkspacePayload({file:file,section:section}))})
   .then(function(r){return r.json()})
   .then(function(d){
     if(inlineDiffFile!==file)return;
@@ -2036,8 +2793,10 @@ window.closeInlineDiff=function(){
     hideMenu();
     if(!_ctxFile||expandedWsIndex===null)return;
     if(action==='diff'){openDiff(_ctxFile,_ctxSection);return;}
-    var endpoint=action==='stage'?'/api/git-stage':action==='unstage'?'/api/git-unstage':'/api/git-open-file';
-    fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:expandedWsIndex,file:_ctxFile})})
+    var hasPath=!!currentExpandedWorkspacePath();
+    var endpoint=action==='stage'?(hasPath?'/api/git-stage-path':'/api/git-stage'):action==='unstage'?(hasPath?'/api/git-unstage-path':'/api/git-unstage'):'/api/open-in-native';
+    if(action==='open')endpoint='/api/open-in-native';
+    fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentExpandedWorkspacePayload({cwd:currentExpandedWorkspacePath(),file:_ctxFile}))})
     .then(function(r){return r.json()})
     .then(function(d){if(d.ok)fetchGitStatus();})
     .catch(function(){});
@@ -2085,7 +2844,8 @@ window.fetchGitStatus=function(){
   if(expandedWsIndex===null)return;
   var body=document.getElementById('expGitBody');
   if(body&&!body.dataset.loaded)body.innerHTML='<div class="git-empty">Loading git status...</div>';
-	fetch('/api/git-status?index='+expandedWsIndex).then(function(r){return r.json()}).then(function(d){
+	var gitPath=currentExpandedWorkspacePath()?'/api/git-status-path?path='+encodeURIComponent(currentExpandedWorkspacePath()):'/api/git-status?index='+expandedWsIndex;
+	fetch(gitPath).then(function(r){return r.json()}).then(function(d){
 	    if(!d||!d.ok){
 	      if(body)body.innerHTML=expandedFilesCtaHtml()+'<div class="git-empty" style="color:var(--red)">Failed to load git status</div>';
 	      return;
@@ -2204,6 +2964,9 @@ function updateExpanded(){
     termEl.innerHTML=colorize(expandedScreen||ws.screenFull||ws.screenTail);
     if(wasAtBottom)termEl.scrollTop=termEl.scrollHeight;
   }
+
+  renderHarnessBuildLog();
+  renderHarnessConsoleLog();
 
   // Activity feed for this workspace
   var wsLog=logData.filter(function(e){return e.workspace===expandedWsIndex});
@@ -2495,7 +3258,7 @@ window.openDiff=function(file,section){
   titleEl.textContent=file;
   bodyEl.innerHTML='<div class="diff-loading">Loading diff\u2026</div>';
   overlay.classList.add('visible');
-  fetch('/api/git-diff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:expandedWsIndex,file:file,section:section})})
+  fetch(currentExpandedWorkspacePath()?'/api/git-diff-path':'/api/git-diff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentExpandedWorkspacePayload({file:file,section:section}))})
   .then(function(r){return r.json()})
   .then(function(d){
     if(d.ok){

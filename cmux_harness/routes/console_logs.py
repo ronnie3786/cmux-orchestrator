@@ -107,6 +107,25 @@ def handle_get_console_logs(handler, objective, parsed, *, re_module, human_file
     )
 
 
+def handle_get_console_logs_for_root(
+    handler,
+    root_path: str,
+    parsed,
+    *,
+    re_module,
+    human_file_size,
+    missing_error: str = "rootPath required",
+):
+    _handle_get_console_logs(
+        handler,
+        str(root_path or "").strip(),
+        parsed,
+        re_module=re_module,
+        human_file_size=human_file_size,
+        missing_error=missing_error,
+    )
+
+
 def handle_get_workspace_console_logs(handler, workspace, parsed, *, re_module, human_file_size):
     root_path = str(workspace.get("rootPath") or "").strip()
     _handle_get_console_logs(

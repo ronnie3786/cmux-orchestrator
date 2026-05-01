@@ -297,6 +297,59 @@ def make_handler(engine):
                         workspace_uuid=ws_uuid, surface_id=sid
                     ) or ""
                 self._json_response({"ok": True, "screen": screen, "lines": lines})
+            elif path == "/api/workspace-build-log":
+                params = urllib.parse.parse_qs(parsed.query)
+                idx_str = params.get("index", [None])[0]
+                root_path = self._resolve_git_path(params.get("path", [""])[0])
+                if idx_str is None and root_path is None:
+                    self._json_response({"ok": False, "error": "index required"}, 400)
+                    return
+                if root_path is not None:
+                    cwd = root_path
+                else:
+                    try:
+                        idx = int(idx_str)
+                    except (TypeError, ValueError):
+                        self._json_response({"ok": False, "error": "invalid index"}, 400)
+                        return
+                    cwd = engine._get_workspace_cwd(idx)
+                if not cwd:
+                    self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                    return
+                build_log_routes.handle_get_build_log_for_root(
+                    self,
+                    cwd,
+                    parsed,
+                    human_file_size=_human_file_size,
+                    missing_error="workspace cwd required",
+                )
+            elif path == "/api/workspace-console-logs":
+                params = urllib.parse.parse_qs(parsed.query)
+                idx_str = params.get("index", [None])[0]
+                root_path = self._resolve_git_path(params.get("path", [""])[0])
+                if idx_str is None and root_path is None:
+                    self._json_response({"ok": False, "error": "index required"}, 400)
+                    return
+                if root_path is not None:
+                    cwd = root_path
+                else:
+                    try:
+                        idx = int(idx_str)
+                    except (TypeError, ValueError):
+                        self._json_response({"ok": False, "error": "invalid index"}, 400)
+                        return
+                    cwd = engine._get_workspace_cwd(idx)
+                if not cwd:
+                    self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
+                    return
+                console_logs_routes.handle_get_console_logs_for_root(
+                    self,
+                    cwd,
+                    parsed,
+                    re_module=re,
+                    human_file_size=_human_file_size,
+                    missing_error="workspace cwd required",
+                )
             elif path == "/api/reviews":
                 reviews = []
                 for review in storage.list_reviews():
@@ -687,15 +740,19 @@ def make_handler(engine):
                 file_browser_routes.handle_open_workspace_root(self, workspace, data.get("editor", "vscode"))
             elif path == "/api/workspace-open-root":
                 idx = data.get("index")
-                if idx is None:
+                root_path = self._resolve_git_path(data.get("path"))
+                if idx is None and root_path is None:
                     self._json_response({"ok": False, "error": "index required"}, 400)
                     return
-                try:
-                    idx = int(idx)
-                except (TypeError, ValueError):
-                    self._json_response({"ok": False, "error": "invalid index"}, 400)
-                    return
-                cwd = engine._get_workspace_cwd(idx)
+                if root_path is not None:
+                    cwd = root_path
+                else:
+                    try:
+                        idx = int(idx)
+                    except (TypeError, ValueError):
+                        self._json_response({"ok": False, "error": "invalid index"}, 400)
+                        return
+                    cwd = engine._get_workspace_cwd(idx)
                 if not cwd:
                     self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
                     return

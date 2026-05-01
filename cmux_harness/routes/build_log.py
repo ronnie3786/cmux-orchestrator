@@ -24,7 +24,13 @@ def _handle_get_build_log(handler, root_path: str, parsed, *, human_file_size, m
         handler._json_response({"ok": False, "error": missing_error}, 400)
         return
     log_path = Path(root_path) / ".build" / filename
-    if not log_path.exists() or not log_path.is_file():
+    try:
+        log_exists = log_path.exists()
+        log_is_file = log_path.is_file() if log_exists else False
+    except OSError as exc:
+        handler._json_response({"ok": False, "error": str(exc)}, 500)
+        return
+    if not log_exists or not log_is_file:
         handler._json_response({
             "exists": False,
             "lines": [],
@@ -77,6 +83,23 @@ def handle_get_build_log(handler, objective, parsed, *, human_file_size):
         parsed,
         human_file_size=human_file_size,
         missing_error="objective worktreePath required",
+    )
+
+
+def handle_get_build_log_for_root(
+    handler,
+    root_path: str,
+    parsed,
+    *,
+    human_file_size,
+    missing_error: str = "rootPath required",
+):
+    _handle_get_build_log(
+        handler,
+        str(root_path or "").strip(),
+        parsed,
+        human_file_size=human_file_size,
+        missing_error=missing_error,
     )
 
 

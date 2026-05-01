@@ -1522,6 +1522,47 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(body["totalLines"], 3)
         self.assertEqual(body["truncated"], False)
 
+    def test_get_live_workspace_build_log_returns_tail_lines_by_index(self):
+        root_path = Path(self.tmpdir.name) / "live-workspace-build-log"
+        log_path = root_path / ".build" / "build.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
+        engine = Mock()
+        engine._get_workspace_cwd.return_value = str(root_path)
+        handler = self._make_handler(engine, "/api/workspace-build-log?index=7")
+
+        handler.do_GET()
+
+        engine._get_workspace_cwd.assert_called_once_with(7)
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["lines"], ["line 1", "line 2", "line 3"])
+        self.assertEqual(body["totalLines"], 3)
+
+    def test_get_live_workspace_build_log_uses_path_when_provided(self):
+        root_path = Path(self.tmpdir.name) / "live-workspace-build-log-path"
+        log_path = root_path / ".build" / "build.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("path line\n", encoding="utf-8")
+        engine = Mock()
+        handler = self._make_handler(engine, f"/api/workspace-build-log?path={root_path}")
+
+        handler.do_GET()
+
+        engine._get_workspace_cwd.assert_not_called()
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["lines"], ["path line"])
+
+    def test_get_live_workspace_build_log_requires_index(self):
+        handler = self._make_handler(Mock(), "/api/workspace-build-log")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(400)
+        self.assertEqual(body, {"ok": False, "error": "index required"})
+
     def test_get_workspace_console_logs_returns_tail_lines(self):
         root_path = Path(self.tmpdir.name) / "workspace-console-tail"
         workspace = self._create_workspace(root_path=root_path, name="Console Workspace")
@@ -1538,6 +1579,24 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(body["activeFile"], "console.log")
         self.assertEqual(body["lines"], ["line 2", "line 3"])
         self.assertEqual(body["matchedLines"], 4)
+
+    def test_get_live_workspace_console_logs_returns_filtered_lines_by_path(self):
+        root_path = Path(self.tmpdir.name) / "live-workspace-console-path"
+        log_path = root_path / ".build" / "logs" / "analytics.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("noise\nanalytics event: tap\nanalytics event: view\n", encoding="utf-8")
+        engine = Mock()
+        handler = self._make_handler(engine, f"/api/workspace-console-logs?path={root_path}&filter=analytics&lines=1")
+
+        handler.do_GET()
+
+        engine._get_workspace_cwd.assert_not_called()
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["files"], ["analytics.log"])
+        self.assertEqual(body["activeFile"], "analytics.log")
+        self.assertEqual(body["lines"], ["analytics event: view"])
+        self.assertEqual(body["matchedLines"], 2)
 
     def test_get_workspace_status_summary_returns_workspace_payload(self):
         root_path = Path(self.tmpdir.name) / "workspace-status-summary"
