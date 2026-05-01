@@ -636,6 +636,51 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func appendingDiffLineReviewCommentInsertsPromptAndClosesDiff() async {
+        let workspace = Self.workspace()
+        let diffID = UUID(uuidString: "A11CE000-DEAD-BEEF-DEAD-BEEFDEADBEEF")!
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        state.detailTab = .git
+        state.detailDraft = "Existing note."
+        state.diffSheet = DiffSheet(
+            id: diffID,
+            file: "Sources/App.swift",
+            section: .unstaged,
+            diff: "@@ -10,2 +10,2 @@\n-let old = value\n+let new = value",
+            isLoading: false
+        )
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        }
+
+        await store.send(.appendDiffLineReviewComment(DiffLineReviewComment(
+            file: "Sources/App.swift",
+            lineNumber: 11,
+            side: .new,
+            code: "let new = value",
+            comment: "Use the validated value here."
+        ))) {
+            $0.detailDraft = """
+            Existing note.
+
+            Please address this review comment:
+
+            File: Sources/App.swift
+            Line: 11 (new)
+            Code: let new = value
+            Comment: Use the validated value here.
+            """
+            $0.detailDrafts[workspace.id] = $0.detailDraft
+            $0.detailTab = .terminal
+            $0.diffSheet = nil
+            $0.detailInputFocusRequest = 1
+        }
+    }
+
+    @Test
     func prCommentsSegmentLoadsThreadsAndAppendsPromptReference() async {
         let workspace = Self.workspace()
         let thread = Self.prThread()

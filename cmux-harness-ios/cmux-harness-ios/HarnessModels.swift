@@ -489,6 +489,31 @@ struct DiffSheet: Equatable, Identifiable, Sendable {
     var error: String?
 }
 
+enum DiffLineCommentSide: String, Equatable, Sendable {
+    case old
+    case new
+    case context
+
+    var promptLabel: String {
+        switch self {
+        case .old:
+            return "old"
+        case .new:
+            return "new"
+        case .context:
+            return "context"
+        }
+    }
+}
+
+struct DiffLineReviewComment: Equatable, Sendable {
+    var file: String
+    var lineNumber: Int?
+    var side: DiffLineCommentSide
+    var code: String
+    var comment: String
+}
+
 enum WorkspaceSessionState: String, Equatable, Sendable {
     case session
     case waiting

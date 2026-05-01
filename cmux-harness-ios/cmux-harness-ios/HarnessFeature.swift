@@ -197,6 +197,7 @@ struct HarnessFeature {
         case diffSucceeded(file: String, section: GitFileSection, diff: String)
         case diffFailed(file: String, section: GitFileSection, message: String)
         case closeDiff
+        case appendDiffLineReviewComment(DiffLineReviewComment)
         case setPRCommentsIncludeResolved(Bool)
         case loadPRComments
         case prCommentsSucceeded(workspaceID: String, GitHubPRCommentsResponse)
@@ -826,6 +827,17 @@ struct HarnessFeature {
                 state.diffSheet = nil
                 return .none
 
+            case let .appendDiffLineReviewComment(reviewComment):
+                state.detailDraft = appendPromptBlock(
+                    formatDiffLineReviewPrompt(reviewComment),
+                    to: state.detailDraft
+                )
+                persistDetailDraft(&state)
+                state.detailTab = .terminal
+                state.diffSheet = nil
+                state.detailInputFocusRequest += 1
+                return .none
+
             case let .setPRCommentsIncludeResolved(includeResolved):
                 guard state.includeResolvedPRComments != includeResolved else { return .none }
                 state.includeResolvedPRComments = includeResolved
@@ -1297,6 +1309,23 @@ private func formatPRCommentThreadPrompt(
     response: GitHubPRCommentsResponse?
 ) -> String {
     thread.promptReference(pullRequest: response?.pullRequest)
+}
+
+private func formatDiffLineReviewPrompt(_ reviewComment: DiffLineReviewComment) -> String {
+    let comment = reviewComment.comment.trimmingCharacters(in: .whitespacesAndNewlines)
+    let code = reviewComment.code.isEmpty ? "(blank line)" : reviewComment.code
+    let line = reviewComment.lineNumber.map {
+        "\($0) (\(reviewComment.side.promptLabel))"
+    } ?? reviewComment.side.promptLabel
+
+    return """
+    Please address this review comment:
+
+    File: \(reviewComment.file)
+    Line: \(line)
+    Code: \(code)
+    Comment: \(comment)
+    """
 }
 
 private func matchingWorkspaceID(
