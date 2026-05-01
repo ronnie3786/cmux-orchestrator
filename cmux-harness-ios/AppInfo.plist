@@ -48,6 +48,8 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your cmux harness server.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record voice notes to attach to cmux session messages.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
