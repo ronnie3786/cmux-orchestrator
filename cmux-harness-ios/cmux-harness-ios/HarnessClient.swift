@@ -28,7 +28,8 @@ struct HarnessClient: Sendable {
     var githubPRComments: @Sendable (String, Int, Bool) async throws -> GitHubPRCommentsResponse
     var skills: @Sendable (String, Int) async throws -> SkillsResponse
     var searchFiles: @Sendable (String, Int, String) async throws -> FileSearchResponse
-    var assignedJiraTickets: @Sendable (String, String, Int) async throws -> JiraTicketsResponse
+    var assignedJiraTickets: @Sendable (String, String?, Int) async throws -> JiraTicketsResponse
+    var jiraTicket: @Sendable (String, String) async throws -> JiraTicketResponse
     var uploadAttachment: @Sendable (String, Int, String, URL, String?) async throws -> AttachmentUploadResponse
     var clearPushApproval: @Sendable (String, String, String, String?) async throws -> BasicResponse
 }
@@ -104,6 +105,9 @@ extension HarnessClient {
         assignedJiraTickets: { baseURLString, project, limit in
             try await HarnessAPI.assignedJiraTickets(baseURLString: baseURLString, project: project, limit: limit)
         },
+        jiraTicket: { baseURLString, query in
+            try await HarnessAPI.jiraTicket(baseURLString: baseURLString, query: query)
+        },
         uploadAttachment: { baseURLString, workspaceIndex, workspaceUUID, fileURL, filename in
             try await HarnessAPI.uploadAttachment(
                 baseURLString: baseURLString,
@@ -149,6 +153,7 @@ extension HarnessClient {
         skills: { _, _ in throw HarnessClientError.unimplemented("skills") },
         searchFiles: { _, _, _ in throw HarnessClientError.unimplemented("searchFiles") },
         assignedJiraTickets: { _, _, _ in throw HarnessClientError.unimplemented("assignedJiraTickets") },
+        jiraTicket: { _, _ in throw HarnessClientError.unimplemented("jiraTicket") },
         uploadAttachment: { _, _, _, _, _ in throw HarnessClientError.unimplemented("uploadAttachment") },
         clearPushApproval: { _, _, _, _ in throw HarnessClientError.unimplemented("clearPushApproval") }
     )

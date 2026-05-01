@@ -6,10 +6,10 @@ import subprocess
 
 
 DEFAULT_JIRA_SITE = "doximity.atlassian.net"
-DEFAULT_PROJECT_KEY = "IOSDOX"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 _PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_JIRA_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9_]+-\d+)\b", re.IGNORECASE)
 
 
 class JiraRouteError(Exception):
@@ -20,7 +20,7 @@ class JiraRouteError(Exception):
 
 def handle_get_assigned(handler, parsed):
     params = handler.parse_qs(parsed.query)
-    project = str(params.get("project", [DEFAULT_PROJECT_KEY])[0] or "").strip().upper()
+    project = str(params.get("project", [""])[0] or "").strip().upper()
     site = str(params.get("site", [DEFAULT_JIRA_SITE])[0] or "").strip() or DEFAULT_JIRA_SITE
 
     try:
@@ -37,14 +37,51 @@ def handle_get_assigned(handler, parsed):
 
     handler._json_response({
         "ok": True,
-        "project": project,
+        "project": project or None,
+        "projects": ticket_projects(tickets),
         "site": site,
         "tickets": tickets,
     })
 
 
-def fetch_assigned_tickets(*, project: str = DEFAULT_PROJECT_KEY, limit: int = DEFAULT_LIMIT, site: str = DEFAULT_JIRA_SITE):
+def handle_get_issue(handler, parsed):
+    params = handler.parse_qs(parsed.query)
+    query = str(params.get("q", params.get("key", [""]))[0] or "").strip()
+    site = str(params.get("site", [DEFAULT_JIRA_SITE])[0] or "").strip() or DEFAULT_JIRA_SITE
+    key = extract_jira_key(query)
+    if not key:
+        handler._json_response({"ok": False, "error": "valid Jira key or URL required"}, 400)
+        return
+
+    try:
+        ticket = fetch_ticket(key=key, site=site)
+    except JiraRouteError as exc:
+        handler._json_response({"ok": False, "error": str(exc)}, exc.status)
+        return
+
+    handler._json_response({
+        "ok": True,
+        "site": site,
+        "ticket": ticket,
+    })
+
+
+def fetch_assigned_tickets(*, project: str = "", limit: int = DEFAULT_LIMIT, site: str = DEFAULT_JIRA_SITE):
     jql = build_assigned_jql(project)
+    return normalize_workitems(run_workitem_search(jql, limit=limit), site=site)
+
+
+def fetch_ticket(*, key: str, site: str = DEFAULT_JIRA_SITE):
+    key = normalize_jira_key(key)
+    if not key:
+        raise JiraRouteError("invalid Jira key", 400)
+    tickets = normalize_workitems(run_workitem_search(build_issue_jql(key), limit=1), site=site)
+    if not tickets:
+        raise JiraRouteError(f"Jira ticket {key} not found", 404)
+    return tickets[0]
+
+
+def run_workitem_search(jql: str, *, limit: int = DEFAULT_LIMIT):
     command = [
         "acli",
         "jira",
@@ -85,10 +122,10 @@ def fetch_assigned_tickets(*, project: str = DEFAULT_PROJECT_KEY, limit: int = D
     if not isinstance(data, list):
         raise JiraRouteError("Jira returned an unexpected response", 502)
 
-    return normalize_workitems(data, site=site)
+    return data
 
 
-def build_assigned_jql(project: str = DEFAULT_PROJECT_KEY) -> str:
+def build_assigned_jql(project: str = "") -> str:
     project = str(project or "").strip().upper()
     if not project:
         project_clause = ""
@@ -103,6 +140,27 @@ def build_assigned_jql(project: str = DEFAULT_PROJECT_KEY) -> str:
         ' AND (statusCategory = "In Progress" OR status = "Selected for Development")'
         " ORDER BY updated DESC"
     )
+
+
+def build_issue_jql(key: str) -> str:
+    key = normalize_jira_key(key)
+    if not key:
+        raise JiraRouteError("invalid Jira key", 400)
+    return f"key = {key}"
+
+
+def extract_jira_key(value: str):
+    match = _JIRA_KEY_RE.search(str(value or ""))
+    if not match:
+        return None
+    return normalize_jira_key(match.group(1))
+
+
+def normalize_jira_key(value: str):
+    key = str(value or "").strip().upper()
+    if not _JIRA_KEY_RE.fullmatch(key):
+        return None
+    return key
 
 
 def normalize_workitems(workitems, *, site: str = DEFAULT_JIRA_SITE):
@@ -123,6 +181,7 @@ def normalize_workitems(workitems, *, site: str = DEFAULT_JIRA_SITE):
 
         tickets.append({
             "key": key,
+            "projectKey": project_key_from_issue_key(key),
             "title": title,
             "status": status,
             "priority": priority,
@@ -131,6 +190,22 @@ def normalize_workitems(workitems, *, site: str = DEFAULT_JIRA_SITE):
         })
 
     return sorted(tickets, key=lambda ticket: ticket["key"].casefold())
+
+
+def ticket_projects(tickets) -> list[str]:
+    projects = {
+        str(ticket.get("projectKey") or "").strip().upper()
+        for ticket in tickets
+        if isinstance(ticket, dict)
+    }
+    return sorted(project for project in projects if project)
+
+
+def project_key_from_issue_key(key: str) -> str:
+    value = str(key or "").strip().upper()
+    if "-" not in value:
+        return ""
+    return value.split("-", 1)[0]
 
 
 def normalize_site(site: str) -> str:

@@ -3059,17 +3059,50 @@ private struct JiraTicketsView: View {
     var body: some View {
         NavigationStack {
             List {
-                if store.isLoadingJiraTickets && store.jiraTickets.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, alignment: .center)
-                } else if let error = store.jiraTicketsError {
-                    ErrorBanner(message: error) {
-                        store.send(.loadAssignedJiraTickets)
+                Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 10) {
+                            TextField("Jira key or URL", text: jiraLookupBinding)
+                                .textInputAutocapitalization(.characters)
+                                .autocorrectionDisabled()
+                                .submitLabel(.search)
+                                .onSubmit {
+                                    resolveLookup()
+                                }
+
+                            Button {
+                                resolveLookup()
+                            } label: {
+                                if store.isResolvingJiraTicket {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .frame(width: 34, height: 34)
+                                } else {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.headline.weight(.semibold))
+                                        .frame(width: 34, height: 34)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canResolveLookup)
+                            .accessibilityLabel("Look up Jira ticket")
+                        }
+
+                        if let error = store.jiraLookupError {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
                     }
-                } else if store.jiraTickets.isEmpty {
-                    ContentUnavailableView("No Jira Tickets", systemImage: "ticket")
-                } else {
-                    ForEach(store.jiraTickets) { ticket in
+                    .padding(.vertical, 4)
+                } header: {
+                    Text("Exact Lookup")
+                } footer: {
+                    Text("Paste a Jira key or browse URL from any project.")
+                }
+
+                if let ticket = store.resolvedJiraTicket {
+                    Section("Lookup Result") {
                         JiraTicketRow(
                             ticket: ticket,
                             copyKeyAction: {
@@ -3084,6 +3117,8 @@ private struct JiraTicketsView: View {
                         )
                     }
                 }
+
+                assignedTicketsContent
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Jira")
@@ -3120,6 +3155,87 @@ private struct JiraTicketsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var assignedTicketsContent: some View {
+        if store.isLoadingJiraTickets && store.jiraTickets.isEmpty {
+            Section("Assigned") {
+                ProgressView()
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        } else if let error = store.jiraTicketsError {
+            Section("Assigned") {
+                ErrorBanner(message: error) {
+                    store.send(.loadAssignedJiraTickets)
+                }
+            }
+        } else if store.jiraTickets.isEmpty {
+            Section("Assigned") {
+                ContentUnavailableView("No Assigned Tickets", systemImage: "ticket")
+            }
+        } else {
+            ForEach(groupedAssignedTickets, id: \.project) { group in
+                Section(group.project) {
+                    ForEach(group.tickets) { ticket in
+                        JiraTicketRow(
+                            ticket: ticket,
+                            copyKeyAction: {
+                                copyTicketKey(ticket.key)
+                            },
+                            openLinkAction: {
+                                openJiraTicket(ticket)
+                            },
+                            insertAction: {
+                                store.send(.appendJiraTicketReference(ticket))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private var jiraLookupBinding: Binding<String> {
+        Binding(
+            get: { store.jiraLookupQuery },
+            set: { store.send(.jiraLookupQueryChanged($0)) }
+        )
+    }
+
+    private var canResolveLookup: Bool {
+        !store.jiraLookupQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.isResolvingJiraTicket
+    }
+
+    private var groupedAssignedTickets: [(project: String, tickets: [JiraTicket])] {
+        let groups = Dictionary(grouping: store.jiraTickets) { ticket in
+            projectKey(for: ticket)
+        }
+        return groups
+            .map { project, tickets in
+                (
+                    project: project,
+                    tickets: tickets.sorted { lhs, rhs in
+                        lhs.key.localizedCaseInsensitiveCompare(rhs.key) == .orderedAscending
+                    }
+                )
+            }
+            .sorted { lhs, rhs in
+                lhs.project.localizedCaseInsensitiveCompare(rhs.project) == .orderedAscending
+            }
+    }
+
+    private func resolveLookup() {
+        guard canResolveLookup else { return }
+        store.send(.resolveJiraTicket)
+    }
+
+    private func projectKey(for ticket: JiraTicket) -> String {
+        if let projectKey = ticket.projectKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !projectKey.isEmpty {
+            return projectKey
+        }
+        return ticket.key.split(separator: "-", maxSplits: 1).first.map(String.init) ?? "Other"
     }
 
     private func copyTicketKey(_ key: String) {
@@ -3190,13 +3306,13 @@ private struct JiraTicketRow: View {
                 .accessibilityLabel("Open Jira ticket")
 
                 Button(action: insertAction) {
-                    Image(systemName: "plus.circle.fill")
+                    Image(systemName: "text.badge.plus")
                         .font(.title3.weight(.semibold))
                         .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.green)
-                .accessibilityLabel("Insert Jira ticket link")
+                .accessibilityLabel("Insert Jira ticket context")
             }
         }
         .padding(.vertical, 4)

@@ -229,15 +229,30 @@ enum HarnessAPI {
 
     static func assignedJiraTickets(
         baseURLString: String,
-        project: String = "IOSDOX",
+        project: String? = nil,
         limit: Int = 50
     ) async throws -> JiraTicketsResponse {
-        try await request(
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let project = project?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !project.isEmpty {
+            queryItems.append(URLQueryItem(name: "project", value: project))
+        }
+        return try await request(
             baseURLString: baseURLString,
             path: "/api/jira/assigned",
+            queryItems: queryItems
+        )
+    }
+
+    static func jiraTicket(
+        baseURLString: String,
+        query: String
+    ) async throws -> JiraTicketResponse {
+        return try await request(
+            baseURLString: baseURLString,
+            path: "/api/jira/issue",
             queryItems: [
-                URLQueryItem(name: "project", value: project),
-                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: "q", value: query),
             ]
         )
     }
@@ -417,6 +432,9 @@ enum HarnessAPI {
             }
             if let jiraTickets = decoded as? JiraTicketsResponse, !jiraTickets.ok {
                 throw HarnessAPIError.server(jiraTickets.error ?? "Jira tickets request failed")
+            }
+            if let jiraTicket = decoded as? JiraTicketResponse, !jiraTicket.ok {
+                throw HarnessAPIError.server(jiraTicket.error ?? "Jira ticket request failed")
             }
             return decoded
         } catch let error as HarnessAPIError {

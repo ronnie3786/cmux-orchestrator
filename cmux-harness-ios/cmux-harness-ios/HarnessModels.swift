@@ -286,13 +286,22 @@ struct ProjectFileMatch: Decodable, Equatable, Identifiable, Sendable {
 struct JiraTicketsResponse: Decodable, Equatable, Sendable {
     var ok: Bool
     var project: String?
+    var projects: [String]? = nil
     var site: String?
     var tickets: [JiraTicket]
     var error: String?
 }
 
+struct JiraTicketResponse: Decodable, Equatable, Sendable {
+    var ok: Bool
+    var site: String?
+    var ticket: JiraTicket?
+    var error: String?
+}
+
 struct JiraTicket: Decodable, Equatable, Identifiable, Sendable {
     var key: String
+    var projectKey: String? = nil
     var title: String
     var status: String
     var priority: String

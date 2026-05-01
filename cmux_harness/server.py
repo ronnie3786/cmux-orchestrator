@@ -376,6 +376,8 @@ def make_handler(engine):
                 file_browser_routes.handle_search_files(self, parsed, engine=self.server.engine)
             elif path == "/api/jira/assigned":
                 jira_routes.handle_get_assigned(self, parsed)
+            elif path == "/api/jira/issue":
+                jira_routes.handle_get_issue(self, parsed)
             elif path == "/api/github/pr-comments":
                 github_routes.handle_get_pr_comments(self, parsed, engine=self.server.engine)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):

@@ -910,6 +910,129 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func jiraLookupResolvesAnyKeyAndInsertsCompactMetadata() async {
+        let workspace = Self.workspace()
+        let ticket = JiraTicket(
+            key: "FINDER-42",
+            projectKey: "FINDER",
+            title: "Support exact Jira lookup",
+            status: "In Progress",
+            priority: "High",
+            issueType: "Story",
+            url: "https://doximity.atlassian.net/browse/FINDER-42"
+        )
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        state.detailDraft = "Existing context."
+        state.isShowingJiraTickets = true
+        state.jiraLookupQuery = "https://doximity.atlassian.net/browse/finder-42"
+        var client = HarnessClient.unimplemented
+        client.jiraTicket = { baseURLString, query in
+            #expect(baseURLString == Self.baseURL)
+            #expect(query == "https://doximity.atlassian.net/browse/finder-42")
+            return JiraTicketResponse(ok: true, site: "doximity.atlassian.net", ticket: ticket, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.resolveJiraTicket) {
+            $0.isResolvingJiraTicket = true
+            $0.jiraLookupError = nil
+            $0.resolvedJiraTicket = nil
+        }
+        await store.receive(\.jiraTicketResolved) {
+            $0.isResolvingJiraTicket = false
+            $0.resolvedJiraTicket = ticket
+            $0.jiraLookupQuery = "FINDER-42"
+        }
+        await store.send(.appendJiraTicketReference(ticket)) {
+            $0.detailDraft = """
+            Existing context.
+
+            Jira: FINDER-42
+            Title: Support exact Jira lookup
+            URL: https://doximity.atlassian.net/browse/FINDER-42
+            Status: In Progress
+            Priority: High
+            Type: Story
+
+            Please use this ticket as context.
+            """
+            $0.detailDrafts[workspace.id] = $0.detailDraft
+            $0.detailTab = .terminal
+            $0.detailInputFocusRequest = 1
+            $0.isShowingJiraTickets = false
+            $0.jiraLookupQuery = ""
+            $0.resolvedJiraTicket = nil
+            $0.jiraLookupError = nil
+            $0.isResolvingJiraTicket = false
+        }
+    }
+
+    @Test
+    func assignedJiraTicketsLoadsWithoutProjectFilter() async {
+        let workspace = Self.workspace()
+        let tickets = [
+            JiraTicket(
+                key: "FINDER-42",
+                projectKey: "FINDER",
+                title: "Finder work",
+                status: "In Progress",
+                priority: "High",
+                issueType: "Bug",
+                url: "https://doximity.atlassian.net/browse/FINDER-42"
+            ),
+            JiraTicket(
+                key: "IOSDOX-10",
+                projectKey: "IOSDOX",
+                title: "iOS work",
+                status: "Selected for Development",
+                priority: "Low",
+                issueType: "Story",
+                url: "https://doximity.atlassian.net/browse/IOSDOX-10"
+            ),
+        ]
+        let response = JiraTicketsResponse(
+            ok: true,
+            project: nil,
+            projects: ["FINDER", "IOSDOX"],
+            site: "doximity.atlassian.net",
+            tickets: tickets,
+            error: nil
+        )
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        var client = HarnessClient.unimplemented
+        client.assignedJiraTickets = { baseURLString, project, limit in
+            #expect(baseURLString == Self.baseURL)
+            #expect(project == nil)
+            #expect(limit == 50)
+            return response
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.loadAssignedJiraTickets) {
+            $0.isLoadingJiraTickets = true
+            $0.jiraTicketsError = nil
+        }
+        await store.receive(\.assignedJiraTicketsSucceeded) {
+            $0.isLoadingJiraTickets = false
+            $0.jiraTickets = tickets
+        }
+    }
+
+    @Test
     func harnessUrlBuildsApiRequestsAtServerRoot() throws {
         let statusURL = try HarnessAPI.makeURL(
             baseURLString: Self.baseURL,

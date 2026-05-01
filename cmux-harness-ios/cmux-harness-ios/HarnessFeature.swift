@@ -84,6 +84,10 @@ struct HarnessFeature {
         var jiraTickets: [JiraTicket] = []
         var jiraTicketsError: String?
         var isLoadingJiraTickets = false
+        var jiraLookupQuery = ""
+        var resolvedJiraTicket: JiraTicket?
+        var jiraLookupError: String?
+        var isResolvingJiraTicket = false
         var terminalAttachments: [String: [TerminalAttachment]] = [:]
 
         var hasSkills: Bool {
@@ -220,6 +224,10 @@ struct HarnessFeature {
         case loadAssignedJiraTickets
         case assignedJiraTicketsSucceeded(JiraTicketsResponse)
         case assignedJiraTicketsFailed(String)
+        case jiraLookupQueryChanged(String)
+        case resolveJiraTicket
+        case jiraTicketResolved(JiraTicketResponse)
+        case jiraTicketResolveFailed(String)
         case appendJiraTicketReference(JiraTicket)
         case attachmentFilesPicked(workspaceID: String, [URL])
         case attachmentUploadSucceeded(workspaceID: String, attachmentID: UUID, AttachmentUploadResponse)
@@ -332,13 +340,18 @@ struct HarnessFeature {
                     state.jiraTickets = []
                     state.jiraTicketsError = nil
                     state.isLoadingJiraTickets = false
+                    state.jiraLookupQuery = ""
+                    state.resolvedJiraTicket = nil
+                    state.jiraLookupError = nil
+                    state.isResolvingJiraTicket = false
                     state.terminalAttachments = [:]
                     return .merge(
                         .cancel(id: screenPollingCancelID),
                         .cancel(id: gitPollingCancelID),
                         .cancel(id: prCommentsCancelID),
                         .cancel(id: fileSearchCancelID),
-                        .cancel(id: jiraTicketsCancelID)
+                        .cancel(id: jiraTicketsCancelID),
+                        .cancel(id: jiraLookupCancelID)
                     )
                 }
                 return .none
@@ -502,13 +515,18 @@ struct HarnessFeature {
                 state.jiraTickets = []
                 state.jiraTicketsError = nil
                 state.isLoadingJiraTickets = false
+                state.jiraLookupQuery = ""
+                state.resolvedJiraTicket = nil
+                state.jiraLookupError = nil
+                state.isResolvingJiraTicket = false
                 guard id != nil else {
                     return .merge(
                         .cancel(id: screenPollingCancelID),
                         .cancel(id: gitPollingCancelID),
                         .cancel(id: prCommentsCancelID),
                         .cancel(id: fileSearchCancelID),
-                        .cancel(id: jiraTicketsCancelID)
+                        .cancel(id: jiraTicketsCancelID),
+                        .cancel(id: jiraLookupCancelID)
                     )
                 }
                 var effects: [Effect<Action>] = [
@@ -1011,20 +1029,28 @@ struct HarnessFeature {
                 state.isShowingJiraTickets = true
                 state.jiraTicketsError = nil
                 state.isLoadingJiraTickets = state.jiraTickets.isEmpty
+                state.jiraLookupError = nil
                 return .send(.loadAssignedJiraTickets)
 
             case .dismissJiraTickets:
                 state.isShowingJiraTickets = false
                 state.jiraTicketsError = nil
                 state.isLoadingJiraTickets = false
-                return .cancel(id: jiraTicketsCancelID)
+                state.jiraLookupQuery = ""
+                state.resolvedJiraTicket = nil
+                state.jiraLookupError = nil
+                state.isResolvingJiraTicket = false
+                return .merge(
+                    .cancel(id: jiraTicketsCancelID),
+                    .cancel(id: jiraLookupCancelID)
+                )
 
             case .loadAssignedJiraTickets:
                 state.isLoadingJiraTickets = true
                 state.jiraTicketsError = nil
                 return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString] send in
                     do {
-                        let response = try await client.assignedJiraTickets(baseURLString, "IOSDOX", 50)
+                        let response = try await client.assignedJiraTickets(baseURLString, nil, 50)
                         await send(.assignedJiraTicketsSucceeded(response))
                     } catch {
                         await send(.assignedJiraTicketsFailed(HarnessAPI.message(for: error)))
@@ -1045,15 +1071,66 @@ struct HarnessFeature {
                 state.jiraTicketsError = message
                 return .none
 
+            case let .jiraLookupQueryChanged(query):
+                state.jiraLookupQuery = query
+                state.resolvedJiraTicket = nil
+                state.jiraLookupError = nil
+                return .none
+
+            case .resolveJiraTicket:
+                let query = state.jiraLookupQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !query.isEmpty else {
+                    state.jiraLookupError = "Enter a Jira key or URL"
+                    state.resolvedJiraTicket = nil
+                    return .none
+                }
+                state.isResolvingJiraTicket = true
+                state.jiraLookupError = nil
+                state.resolvedJiraTicket = nil
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, query] send in
+                    do {
+                        let response = try await client.jiraTicket(baseURLString, query)
+                        await send(.jiraTicketResolved(response))
+                    } catch {
+                        await send(.jiraTicketResolveFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+                .cancellable(id: jiraLookupCancelID, cancelInFlight: true)
+
+            case let .jiraTicketResolved(response):
+                state.isResolvingJiraTicket = false
+                if let ticket = response.ticket {
+                    state.resolvedJiraTicket = ticket
+                    state.jiraLookupQuery = ticket.key
+                    state.jiraLookupError = nil
+                } else {
+                    state.resolvedJiraTicket = nil
+                    state.jiraLookupError = response.error ?? "Jira ticket not found"
+                }
+                return .none
+
+            case let .jiraTicketResolveFailed(message):
+                state.isResolvingJiraTicket = false
+                state.resolvedJiraTicket = nil
+                state.jiraLookupError = message
+                return .none
+
             case let .appendJiraTicketReference(ticket):
-                state.detailDraft = appendPromptToken(ticket.url, to: state.detailDraft)
+                state.detailDraft = appendPromptBlock(formatJiraTicketPrompt(ticket), to: state.detailDraft)
                 persistDetailDraft(&state)
                 state.detailTab = .terminal
                 state.detailInputFocusRequest += 1
                 state.isShowingJiraTickets = false
                 state.jiraTicketsError = nil
                 state.isLoadingJiraTickets = false
-                return .cancel(id: jiraTicketsCancelID)
+                state.jiraLookupQuery = ""
+                state.resolvedJiraTicket = nil
+                state.jiraLookupError = nil
+                state.isResolvingJiraTicket = false
+                return .merge(
+                    .cancel(id: jiraTicketsCancelID),
+                    .cancel(id: jiraLookupCancelID)
+                )
 
             case let .attachmentFilesPicked(workspaceID, urls):
                 guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else { return .none }
@@ -1228,6 +1305,7 @@ private let gitPollingCancelID = "cmux-harness-ios.git-polling"
 private let prCommentsCancelID = "cmux-harness-ios.pr-comments"
 private let fileSearchCancelID = "cmux-harness-ios.file-search"
 private let jiraTicketsCancelID = "cmux-harness-ios.jira-tickets"
+private let jiraLookupCancelID = "cmux-harness-ios.jira-lookup"
 
 private func trimDrafts(_ state: inout HarnessFeature.State) {
     let activeIDs = Set(state.workspaces.map(\.id))
@@ -1309,6 +1387,26 @@ private func formatPRCommentThreadPrompt(
     response: GitHubPRCommentsResponse?
 ) -> String {
     thread.promptReference(pullRequest: response?.pullRequest)
+}
+
+private func formatJiraTicketPrompt(_ ticket: JiraTicket) -> String {
+    var lines = [
+        "Jira: \(ticket.key)",
+        "Title: \(ticket.title.isEmpty ? "(no title)" : ticket.title)",
+        "URL: \(ticket.url)",
+    ]
+    if !ticket.status.isEmpty {
+        lines.append("Status: \(ticket.status)")
+    }
+    if !ticket.priority.isEmpty {
+        lines.append("Priority: \(ticket.priority)")
+    }
+    if !ticket.issueType.isEmpty {
+        lines.append("Type: \(ticket.issueType)")
+    }
+    lines.append("")
+    lines.append("Please use this ticket as context.")
+    return lines.joined(separator: "\n")
 }
 
 private func formatDiffLineReviewPrompt(_ reviewComment: DiffLineReviewComment) -> String {
