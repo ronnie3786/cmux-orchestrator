@@ -3615,15 +3615,19 @@ private struct DiffSheetView: View {
                     ContentUnavailableView(error, systemImage: "exclamationmark.triangle")
                 } else {
                     GeometryReader { proxy in
-                        ScrollView([.vertical, .horizontal]) {
+                        ScrollView(.vertical) {
                             LazyVStack(alignment: .leading, spacing: 0) {
+                                DiffCommentInstructionNote()
+                                    .padding(.horizontal, 12)
+                                    .padding(.bottom, 8)
+
                                 ForEach(parseUnifiedDiffLines(diffSheet.diff)) { line in
                                     DiffLineRow(line: line) {
                                         selectedLine = line
                                     }
                                 }
                             }
-                            .frame(minWidth: proxy.size.width, alignment: .leading)
+                            .frame(width: proxy.size.width, alignment: .leading)
                             .padding(.vertical, 8)
                         }
                         .background(Color(.systemBackground))
@@ -3649,8 +3653,33 @@ private struct DiffSheetView: View {
                     store.send(.appendDiffLineReviewComment(reviewComment))
                 }
             )
-            .presentationDetents([.height(360), .medium])
+            .presentationDetents([.height(460), .medium])
             .presentationDragIndicator(.visible)
+            .presentationBackground(Color(.systemBackground))
+        }
+    }
+}
+
+private struct DiffCommentInstructionNote: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "text.bubble")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+
+            Text("Tap a line of code to add a comment or instruction to send.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 1)
         }
     }
 }
@@ -3755,7 +3784,7 @@ private struct DiffLineRow: View {
     }
 
     private var rowContent: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             Text(line.oldLineNumber.map(String.init) ?? "")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(gutterColor)
@@ -3776,17 +3805,11 @@ private struct DiffLineRow: View {
             Text(line.displayText)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(diffColor(for: line.raw))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 6)
                 .padding(.trailing, 12)
-
-            if line.isCommentable {
-                Image(systemName: "text.bubble")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.secondary.opacity(0.62))
-                    .padding(.horizontal, 10)
-            }
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minHeight: line.kind == .hunk ? 32 : 28, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3813,7 +3836,6 @@ private struct DiffLineRow: View {
 
 private struct DiffLineCommentSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @FocusState private var isCommentFocused: Bool
     @State private var comment = ""
 
     let file: String
@@ -3836,7 +3858,6 @@ private struct DiffLineCommentSheet: View {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .strokeBorder(Color(.separator).opacity(0.45), lineWidth: 1)
                         }
-                        .focused($isCommentFocused)
 
                     if comment.isEmpty {
                         Text("Comment")
@@ -3861,6 +3882,7 @@ private struct DiffLineCommentSheet: View {
             .padding(18)
             .navigationTitle("Review Comment")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Color(.systemBackground).ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
@@ -3868,10 +3890,8 @@ private struct DiffLineCommentSheet: View {
                     }
                 }
             }
-            .task {
-                await Task.yield()
-                isCommentFocused = true
-            }
+            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 
@@ -3891,16 +3911,16 @@ private struct DiffLineCommentSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: 0) {
                 Text(line.marker.isEmpty ? " " : line.marker)
                     .font(.system(.caption, design: .monospaced).weight(.bold))
                     .foregroundStyle(diffColor(for: line.raw))
-                    .frame(width: 14)
 
-                Text(line.code.isEmpty ? "(blank line)" : line.code)
+                Text(" \(previewCode)")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.primary)
-                    .lineLimit(3)
+                    .lineLimit(8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -3915,6 +3935,11 @@ private struct DiffLineCommentSheet: View {
     private var lineLabel: String {
         guard let lineNumber = line.reviewLineNumber else { return line.reviewSide.promptLabel }
         return "\(lineNumber) \(line.reviewSide.promptLabel)"
+    }
+
+    private var previewCode: String {
+        let code = line.code.trimmingCharacters(in: .whitespaces)
+        return code.isEmpty ? "(blank line)" : code
     }
 
     private var trimmedComment: String {
