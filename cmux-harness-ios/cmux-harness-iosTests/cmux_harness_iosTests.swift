@@ -586,6 +586,68 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func pickedAttachmentAddsUploadChipAndMarksUploaded() async {
+        let workspace = Self.workspace()
+        let attachmentID = UUID(uuidString: "A77AC000-DEAD-BEEF-DEAD-BEEFDEADBEEF")!
+        let fileURL = URL(fileURLWithPath: "/tmp/photo-test.jpg")
+        let uploaded = UploadedAttachment(
+            id: "attachment-1",
+            filename: "photo-test.jpg",
+            originalFilename: "photo-test.jpg",
+            contentType: "image/jpeg",
+            size: 1024,
+            path: "/tmp/cmux/attachment-1/photo-test.jpg",
+            workspaceKey: workspace.uuid,
+            createdAt: "2026-04-30T12:00:00Z"
+        )
+        let response = AttachmentUploadResponse(ok: true, attachment: uploaded, error: nil)
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.selectedWorkspaceID = workspace.id
+        var client = HarnessClient.unimplemented
+        client.uploadAttachment = { baseURLString, workspaceIndex, workspaceUUID, url, filename in
+            #expect(baseURLString == Self.baseURL)
+            #expect(workspaceIndex == workspace.index)
+            #expect(workspaceUUID == workspace.uuid)
+            #expect(url == fileURL)
+            #expect(filename == "photo-test.jpg")
+            return response
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+            $0.uuid = .constant(attachmentID)
+        }
+
+        await store.send(.attachmentFilesPicked(workspaceID: workspace.id, [fileURL])) {
+            $0.terminalAttachments[workspace.id] = [
+                TerminalAttachment(
+                    id: attachmentID,
+                    filename: "photo-test.jpg",
+                    sourceURL: fileURL,
+                    status: .uploading,
+                    uploaded: nil,
+                    error: nil
+                ),
+            ]
+        }
+        await store.receive(\.attachmentUploadSucceeded) {
+            $0.terminalAttachments[workspace.id] = [
+                TerminalAttachment(
+                    id: attachmentID,
+                    filename: "photo-test.jpg",
+                    sourceURL: fileURL,
+                    status: .uploaded,
+                    uploaded: uploaded,
+                    error: nil
+                ),
+            ]
+        }
+    }
+
+    @Test
     func jiraUrlAutofillsBranchNameWhenEmpty() async {
         let store = TestStore(initialState: Self.initialState()) {
             HarnessFeature()

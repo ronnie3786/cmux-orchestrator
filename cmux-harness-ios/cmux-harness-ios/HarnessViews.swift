@@ -1176,18 +1176,26 @@ private enum HarnessHaptics {
     }
 }
 
+private enum AttachmentInputSheet: String, Identifiable {
+    case photoLibrary
+    case voiceRecorder
+
+    var id: String { rawValue }
+}
+
 private struct DetailInputBar: View {
+    private static let inputActionVisualSize: CGFloat = 44
+    private static let inputActionHitSlop: CGFloat = 10
+
     @Bindable var store: StoreOf<HarnessFeature>
     let workspace: Workspace
     let isInputFocused: FocusState<Bool>.Binding
     @State private var inputSelection: TextSelection?
     @State private var dismissedSkillAutocompleteSignature: String?
-    @State private var isActionMenuExpanded = false
+    @State private var isActionMenuExpanded = true
     @State private var isShowingAttachmentOptions = false
-    @State private var isShowingVoiceRecorder = false
-    @State private var isShowingPhotoPicker = false
+    @State private var activeAttachmentSheet: AttachmentInputSheet?
     @State private var isShowingFileImporter = false
-    @State private var selectedPhotoItems: [PhotosPickerItem] = []
 
     var body: some View {
         VStack(spacing: 10) {
@@ -1227,30 +1235,45 @@ private struct DetailInputBar: View {
                     ) {
                         isShowingAttachmentOptions = true
                     }
+                    .confirmationDialog("Attach", isPresented: $isShowingAttachmentOptions) {
+                        Button {
+                            HarnessHaptics.inputCTA()
+                            isShowingAttachmentOptions = false
+                            Task {
+                                await Task.yield()
+                                activeAttachmentSheet = .photoLibrary
+                            }
+                        } label: {
+                            Label("Photo Library", systemImage: "photo")
+                        }
+                        Button {
+                            HarnessHaptics.inputCTA()
+                            isShowingAttachmentOptions = false
+                            Task {
+                                await Task.yield()
+                                isShowingFileImporter = true
+                            }
+                        } label: {
+                            Label("Files", systemImage: "folder")
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    }
 
                     inputActionButton(
                         systemImage: "mic.fill",
                         accessibilityLabel: "Record voice note"
                     ) {
-                        isShowingVoiceRecorder = true
+                        activeAttachmentSheet = .voiceRecorder
                     }
 
-                    Button {
-                        HarnessHaptics.inputCTA()
-                        store.send(.fileSearchTapped)
-                    } label: {
+                    inputActionButton(
+                        accessibilityLabel: "Add file path"
+                    ) {
                         Text("@")
                             .font(.headline.monospaced().weight(.bold))
-                            .frame(width: 44, height: 44)
+                    } action: {
+                        store.send(.fileSearchTapped)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.92))
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay {
-                        Circle()
-                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                    }
-                    .accessibilityLabel("Add file path")
 
                     inputActionButton(
                         systemImage: "ticket",
@@ -1266,25 +1289,17 @@ private struct DetailInputBar: View {
             }
 
             HStack(alignment: .bottom, spacing: 10) {
-                Button {
-                    HarnessHaptics.inputCTA()
+                inputActionButton(
+                    accessibilityLabel: isActionMenuExpanded ? "Hide input actions" : "Show input actions"
+                ) {
+                    Image(systemName: "chevron.up")
+                        .font(.headline.weight(.semibold))
+                        .rotationEffect(.degrees(isActionMenuExpanded ? 180 : 0))
+                } action: {
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                         isActionMenuExpanded.toggle()
                     }
-                } label: {
-                    Image(systemName: "chevron.up")
-                        .font(.headline.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                        .rotationEffect(.degrees(isActionMenuExpanded ? 180 : 0))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.92))
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                }
-                .accessibilityLabel(isActionMenuExpanded ? "Hide input actions" : "Show input actions")
 
                 TextField(
                     "Type a message or instruction...",
@@ -1353,48 +1368,35 @@ private struct DetailInputBar: View {
         .animation(.easeInOut(duration: 0.16), value: skillAutocompleteContext?.signature)
         .animation(.easeInOut(duration: 0.16), value: attachments)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: isActionMenuExpanded)
-        .confirmationDialog("Attach", isPresented: $isShowingAttachmentOptions) {
-            Button {
-                HarnessHaptics.inputCTA()
-                isShowingAttachmentOptions = false
-                Task {
-                    await Task.yield()
-                    isShowingPhotoPicker = true
-                }
-            } label: {
-                Label("Photo Library", systemImage: "photo")
+        .onChange(of: isInputFocused.wrappedValue) { _, isFocused in
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                isActionMenuExpanded = !isFocused
             }
-            Button {
-                HarnessHaptics.inputCTA()
-                isShowingAttachmentOptions = false
-                Task {
-                    await Task.yield()
-                    isShowingFileImporter = true
+        }
+        .sheet(item: $activeAttachmentSheet) { sheet in
+            switch sheet {
+            case .photoLibrary:
+                PhotoLibraryPicker(maxSelectionCount: 10) { summary in
+                    activeAttachmentSheet = nil
+                    handlePhotoImport(summary)
                 }
-            } label: {
-                Label("Files", systemImage: "folder")
+                .ignoresSafeArea()
+
+            case .voiceRecorder:
+                VoiceNoteRecorderSheet(
+                    saveAction: { url in
+                        store.send(.attachmentFilesPicked(workspaceID: workspace.id, [url]))
+                        activeAttachmentSheet = nil
+                    },
+                    discardAction: {
+                        activeAttachmentSheet = nil
+                    }
+                )
+                .presentationDetents([.height(540)])
+                .presentationDragIndicator(.hidden)
+                .interactiveDismissDisabled(true)
             }
-            Button("Cancel", role: .cancel) {}
         }
-        .sheet(isPresented: $isShowingVoiceRecorder) {
-            VoiceNoteRecorderSheet(
-                saveAction: { url in
-                    store.send(.attachmentFilesPicked(workspaceID: workspace.id, [url]))
-                    isShowingVoiceRecorder = false
-                },
-                discardAction: {
-                    isShowingVoiceRecorder = false
-                }
-            )
-            .presentationDetents([.height(430), .medium])
-            .presentationDragIndicator(.visible)
-        }
-        .photosPicker(
-            isPresented: $isShowingPhotoPicker,
-            selection: $selectedPhotoItems,
-            maxSelectionCount: 10,
-            matching: .images
-        )
         .fileImporter(
             isPresented: $isShowingFileImporter,
             allowedContentTypes: [.item],
@@ -1405,13 +1407,6 @@ private struct DetailInputBar: View {
                 store.send(.attachmentFilesPicked(workspaceID: workspace.id, urls))
             case let .failure(error):
                 store.send(.attachmentPickerFailed(error.localizedDescription))
-            }
-        }
-        .onChange(of: selectedPhotoItems) { _, items in
-            guard !items.isEmpty else { return }
-            Task {
-                await importPhotoItems(items)
-                selectedPhotoItems = []
             }
         }
         .task(id: store.detailInputFocusRequest) {
@@ -1444,54 +1439,57 @@ private struct DetailInputBar: View {
         store.send(.sendDetailDraft)
     }
 
+    private func handlePhotoImport(_ summary: PhotoImportSummary) {
+        if !summary.urls.isEmpty {
+            store.send(.attachmentFilesPicked(workspaceID: workspace.id, summary.urls))
+        }
+        if let message = summary.warningMessage {
+            store.send(.attachmentPickerFailed(message))
+        }
+    }
+
     private func inputActionButton(
         systemImage: String,
         accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        inputActionButton(
+            accessibilityLabel: accessibilityLabel
+        ) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.semibold))
+        } action: {
+            action()
+        }
+    }
+
+    private func inputActionButton<Label: View>(
+        accessibilityLabel: String,
+        @ViewBuilder label: @escaping () -> Label,
         action: @escaping () -> Void
     ) -> some View {
         Button {
             HarnessHaptics.inputCTA()
             action()
         } label: {
-            Image(systemName: systemImage)
-                .font(.headline.weight(.semibold))
-                .frame(width: 44, height: 44)
+            ZStack {
+                Circle()
+                    .fill(.ultraThinMaterial)
+
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+
+                label()
+                    .frame(width: Self.inputActionVisualSize, height: Self.inputActionVisualSize)
+            }
+            .frame(width: Self.inputActionVisualSize, height: Self.inputActionVisualSize)
+            .padding(Self.inputActionHitSlop)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(0.92))
-        .background(.ultraThinMaterial, in: Circle())
-        .overlay {
-            Circle()
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-        }
+        .padding(-Self.inputActionHitSlop)
         .accessibilityLabel(accessibilityLabel)
-    }
-
-    @MainActor
-    private func importPhotoItems(_ items: [PhotosPickerItem]) async {
-        var urls: [URL] = []
-        for item in items {
-            do {
-                guard let data = try await item.loadTransferable(type: Data.self) else {
-                    continue
-                }
-                if Int64(data.count) > HarnessAPI.attachmentMaxBytes {
-                    store.send(.attachmentPickerFailed("File exceeds 20 MB limit"))
-                    continue
-                }
-                let contentType = item.supportedContentTypes.first(where: { $0.conforms(to: .image) })
-                let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
-                let filename = "photo-\(UUID().uuidString).\(fileExtension)"
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-                try data.write(to: url, options: .atomic)
-                urls.append(url)
-            } catch {
-                store.send(.attachmentPickerFailed(error.localizedDescription))
-            }
-        }
-        if !urls.isEmpty {
-            store.send(.attachmentFilesPicked(workspaceID: workspace.id, urls))
-        }
     }
 
     @MainActor
@@ -1724,6 +1722,131 @@ private struct AttachmentChip: View {
     }
 }
 
+private struct PhotoImportSummary {
+    var urls: [URL] = []
+    var failedCount = 0
+    var oversizedCount = 0
+
+    static let empty = PhotoImportSummary()
+
+    var warningMessage: String? {
+        var messages: [String] = []
+        if oversizedCount > 0 {
+            messages.append(oversizedCount == 1 ? "Photo exceeds 20 MB limit" : "\(oversizedCount) photos exceed 20 MB limit")
+        }
+        if failedCount > 0 {
+            messages.append(failedCount == 1 ? "Selected photo could not be loaded" : "\(failedCount) selected photos could not be loaded")
+        }
+        return messages.isEmpty ? nil : messages.joined(separator: ". ")
+    }
+}
+
+private enum PhotoImportError: LocalizedError {
+    case unreadablePhoto
+
+    var errorDescription: String? {
+        "Selected photo could not be loaded"
+    }
+}
+
+private struct PhotoLibraryPicker: UIViewControllerRepresentable {
+    let maxSelectionCount: Int
+    let completion: (PhotoImportSummary) -> Void
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = maxSelectionCount
+        configuration.preferredAssetRepresentationMode = .current
+
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(completion: completion)
+    }
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        private let completion: (PhotoImportSummary) -> Void
+        private var didFinish = false
+
+        init(completion: @escaping (PhotoImportSummary) -> Void) {
+            self.completion = completion
+        }
+
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            guard !didFinish else { return }
+            didFinish = true
+            picker.dismiss(animated: true)
+
+            guard !results.isEmpty else {
+                completion(.empty)
+                return
+            }
+
+            Task {
+                let summary = await Self.importPhotos(from: results)
+                await MainActor.run {
+                    completion(summary)
+                }
+            }
+        }
+
+        private static func importPhotos(from results: [PHPickerResult]) async -> PhotoImportSummary {
+            var summary = PhotoImportSummary()
+            for result in results {
+                do {
+                    let photo = try await loadImageData(from: result.itemProvider)
+                    guard Int64(photo.data.count) <= HarnessAPI.attachmentMaxBytes else {
+                        summary.oversizedCount += 1
+                        continue
+                    }
+
+                    let url = temporaryPhotoURL(contentType: photo.contentType)
+                    try photo.data.write(to: url, options: .atomic)
+                    summary.urls.append(url)
+                } catch {
+                    summary.failedCount += 1
+                }
+            }
+            return summary
+        }
+
+        private static func loadImageData(from provider: NSItemProvider) async throws -> LoadedPhoto {
+            guard let contentType = provider.registeredTypeIdentifiers
+                .compactMap(UTType.init)
+                .first(where: { $0.conforms(to: .image) }) else {
+                throw PhotoImportError.unreadablePhoto
+            }
+
+            return try await withCheckedThrowingContinuation { continuation in
+                provider.loadDataRepresentation(forTypeIdentifier: contentType.identifier) { data, error in
+                    if let data {
+                        continuation.resume(returning: LoadedPhoto(data: data, contentType: contentType))
+                    } else {
+                        continuation.resume(throwing: error ?? PhotoImportError.unreadablePhoto)
+                    }
+                }
+            }
+        }
+
+        private static func temporaryPhotoURL(contentType: UTType) -> URL {
+            let fileExtension = contentType.preferredFilenameExtension ?? "jpg"
+            let filename = "photo-\(UUID().uuidString).\(fileExtension)"
+            return FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        }
+    }
+
+    private struct LoadedPhoto {
+        let data: Data
+        let contentType: UTType
+    }
+}
+
 private enum VoiceNoteRecorderStatus: Equatable {
     case idle
     case recording
@@ -1750,6 +1873,10 @@ private final class VoiceNoteRecorder: NSObject, ObservableObject, AVAudioRecord
 
     var isRecording: Bool {
         status == .recording
+    }
+
+    var hasStartedRecording: Bool {
+        status == .recording || outputURL != nil || elapsedTime > 0
     }
 
     var canSave: Bool {
@@ -2039,6 +2166,7 @@ private struct VoiceNoteRecorderSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var recorder = VoiceNoteRecorder()
     @State private var didSave = false
+    @State private var isShowingDiscardConfirmation = false
 
     let saveAction: (URL) -> Void
     let discardAction: () -> Void
@@ -2082,11 +2210,15 @@ private struct VoiceNoteRecorderSheet: View {
                 Spacer(minLength: 4)
 
                 HStack(spacing: 12) {
-                    Button(role: .destructive) {
+                    Button(role: recorder.hasStartedRecording ? .destructive : nil) {
                         HarnessHaptics.inputCTA()
-                        discardRecording()
+                        if recorder.hasStartedRecording {
+                            isShowingDiscardConfirmation = true
+                        } else {
+                            closeWithoutRecording()
+                        }
                     } label: {
-                        Label("Discard", systemImage: "trash")
+                        Label(recorder.hasStartedRecording ? "Discard" : "Close", systemImage: recorder.hasStartedRecording ? "trash" : "xmark")
                             .frame(maxWidth: .infinity, minHeight: 46)
                     }
                     .buttonStyle(.bordered)
@@ -2106,12 +2238,14 @@ private struct VoiceNoteRecorderSheet: View {
             .padding(.vertical, 20)
             .navigationTitle("Voice Note")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") {
-                        discardRecording()
-                    }
+            .confirmationDialog("Discard voice note?", isPresented: $isShowingDiscardConfirmation, titleVisibility: .visible) {
+                Button("Discard Recording", role: .destructive) {
+                    HarnessHaptics.inputCTA()
+                    discardRecording()
                 }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will delete the current voice note.")
             }
             .onDisappear {
                 if !didSave {
@@ -2213,6 +2347,13 @@ private struct VoiceNoteRecorderSheet: View {
         didSave = true
         recorder.resetAfterSaving()
         saveAction(url)
+        dismiss()
+    }
+
+    private func closeWithoutRecording() {
+        didSave = false
+        recorder.discard()
+        discardAction()
         dismiss()
     }
 
