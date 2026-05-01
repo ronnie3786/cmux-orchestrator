@@ -2,6 +2,8 @@ import ComposableArchitecture
 import Foundation
 
 struct HarnessClient: Sendable {
+    var discoverServers: @Sendable () async -> [DiscoveredHarnessServer]
+    var probeServer: @Sendable (String) async -> Bool
     var status: @Sendable (String) async throws -> HarnessStatus
     var log: @Sendable (String) async throws -> [LogEntry]
     var screen: @Sendable (String, Int, Int) async throws -> ScreenResponse
@@ -36,6 +38,17 @@ struct HarnessClient: Sendable {
 
 extension HarnessClient {
     nonisolated static let live = Self(
+        discoverServers: {
+            await HarnessServerDiscovery.discover()
+        },
+        probeServer: { baseURLString in
+            do {
+                _ = try await HarnessAPI.status(baseURLString: baseURLString)
+                return true
+            } catch {
+                return false
+            }
+        },
         status: { baseURLString in
             try await HarnessAPI.status(baseURLString: baseURLString)
         },
@@ -134,6 +147,8 @@ enum HarnessClientError: Error, Equatable, Sendable {
 
 extension HarnessClient {
     nonisolated static let unimplemented = Self(
+        discoverServers: { [] },
+        probeServer: { _ in false },
         status: { _ in throw HarnessClientError.unimplemented("status") },
         log: { _ in throw HarnessClientError.unimplemented("log") },
         screen: { _, _, _ in throw HarnessClientError.unimplemented("screen") },

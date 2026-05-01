@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>cmux harness setup</title>
+<style>
+:root{color-scheme:dark;--ink:#f3f7ef;--muted:#9aa89f;--paper:#080c0f;--card:#11181b;--line:#2a3938;--green:#58d68d;--red:#ff6b61;--amber:#f3b862;--blue:#63c8ff;--shadow:0 24px 90px rgba(0,0,0,.48);--radius:28px}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;font-family:"Avenir Next","Gill Sans","Trebuchet MS",sans-serif;color:var(--ink);background:radial-gradient(circle at 8% -4%,rgba(88,214,141,.24) 0 18%,transparent 34%),radial-gradient(circle at 92% 8%,rgba(99,200,255,.2) 0 17%,transparent 33%),radial-gradient(circle at 56% 100%,rgba(243,184,98,.13) 0 18%,transparent 38%),linear-gradient(145deg,#070a0d 0%,#0d1418 52%,#11120f 100%);overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(203,255,224,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(203,255,224,.045) 1px,transparent 1px);background-size:44px 44px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.58),transparent 80%)}
+a{color:inherit}
+.wrap{width:min(1180px,calc(100vw - 34px));margin:0 auto;padding:32px 0 48px;position:relative}
+.hero{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(320px,.88fr);gap:22px;align-items:stretch;margin-top:18px}
+.panel{background:linear-gradient(180deg,rgba(22,32,35,.9),rgba(13,19,22,.88));border:1px solid rgba(168,255,212,.16);border-radius:var(--radius);box-shadow:var(--shadow);backdrop-filter:blur(18px)}
+.hero-main{padding:42px;position:relative;overflow:hidden}
+.hero-main::after{content:"";position:absolute;width:280px;height:280px;border-radius:999px;right:-96px;top:-100px;background:conic-gradient(from 130deg,#58d68d,#63c8ff,#f3b862,#58d68d);opacity:.2;filter:blur(.5px)}
+.eyebrow{font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(40px,7vw,78px);line-height:.92;margin:14px 0 18px;letter-spacing:-.07em;max-width:780px}
+.lede{font-size:19px;line-height:1.55;color:#b8c5bd;max-width:720px;margin:0 0 28px}
+.actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:26px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:0 18px;border-radius:16px;border:1px solid rgba(168,255,212,.16);background:#162023;color:var(--ink);font-weight:800;text-decoration:none;cursor:pointer;box-shadow:0 10px 28px rgba(0,0,0,.26);transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease,background .16s ease}
+.btn:hover{transform:translateY(-2px);box-shadow:0 18px 38px rgba(0,0,0,.34);border-color:rgba(88,214,141,.5);background:#1b292c}
+.btn.primary{background:linear-gradient(135deg,#58d68d,#2fbf9f);color:#06100d;border-color:rgba(150,255,205,.62)}
+.btn.blue{background:rgba(99,200,255,.14);border-color:rgba(99,200,255,.34);color:#d9f4ff}
+.status-panel{padding:26px;display:flex;flex-direction:column;gap:14px}
+.status-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.status-title h2{font-size:22px;margin:0;letter-spacing:-.03em}
+.pill{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 11px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(168,255,212,.12);font-size:12px;font-weight:800;color:var(--muted)}
+.dot{width:10px;height:10px;border-radius:999px;background:#66736d}
+.dot.ok{background:var(--green);box-shadow:0 0 0 5px rgba(88,214,141,.12),0 0 22px rgba(88,214,141,.34)}
+.dot.warn{background:var(--amber);box-shadow:0 0 0 5px rgba(243,184,98,.12),0 0 22px rgba(243,184,98,.24)}
+.dot.err{background:var(--red);box-shadow:0 0 0 5px rgba(255,107,97,.12),0 0 22px rgba(255,107,97,.24)}
+.dot.loading{width:14px;height:14px;background:transparent;border:2px solid rgba(184,197,189,.22);border-top-color:var(--green);box-shadow:none;animation:spin .76s linear infinite}
+.checks{display:grid;gap:10px}
+.check{display:grid;grid-template-columns:auto 1fr;gap:12px;padding:14px;border-radius:18px;background:rgba(255,255,255,.045);border:1px solid rgba(168,255,212,.09)}
+.check strong{display:block;font-size:14px;margin-bottom:3px}
+.check span{display:block;color:var(--muted);font-size:13px;line-height:1.35}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:22px}
+.card{padding:26px}
+.card h2{font-size:25px;margin:0 0 10px;letter-spacing:-.04em}
+.card p{color:var(--muted);line-height:1.55;margin:0 0 18px}
+.steps{display:grid;gap:12px;margin-top:20px}
+.step{display:grid;grid-template-columns:34px 1fr;gap:13px;align-items:start}
+.num{width:34px;height:34px;border-radius:12px;background:rgba(88,214,141,.16);border:1px solid rgba(88,214,141,.34);color:#baffd3;display:flex;align-items:center;justify-content:center;font-weight:900}
+.step-title{font-weight:900;margin-bottom:4px}
+.step-copy{color:var(--muted);line-height:1.45}
+.url-list{display:grid;gap:10px;margin-top:14px}
+.url-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 10px 10px 14px;border-radius:16px;background:rgba(5,9,11,.52);border:1px solid rgba(168,255,212,.1)}
+.url-loading{display:flex;align-items:center;gap:12px;padding:14px;border-radius:16px;background:rgba(5,9,11,.52);border:1px solid rgba(168,255,212,.1)}
+.spinner{width:18px;height:18px;flex:0 0 auto;border-radius:999px;border:2px solid rgba(184,197,189,.22);border-top-color:var(--blue);animation:spin .76s linear infinite}
+code{font-family:"SF Mono","Menlo","Consolas",monospace;font-size:12px;color:#b7f8d0;word-break:break-all}
+.copy{height:34px;padding:0 11px;border-radius:11px;border:1px solid rgba(168,255,212,.16);background:#1b2628;color:var(--ink);font-weight:800;cursor:pointer}
+.field{display:grid;gap:8px;margin-top:14px}
+label{font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+input{width:100%;height:48px;border-radius:15px;border:1px solid rgba(168,255,212,.16);background:rgba(5,9,11,.62);padding:0 14px;font:inherit;color:var(--ink);outline:none}
+input::placeholder{color:#64736d}
+input:focus{border-color:rgba(88,214,141,.72);box-shadow:0 0 0 4px rgba(88,214,141,.1)}
+.inline-form{display:flex;gap:10px;align-items:center;margin-top:10px}
+.inline-form input{min-width:0}
+.small{font-size:13px;color:var(--muted);line-height:1.45}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;padding:12px 16px;border-radius:999px;background:#e8fff1;color:#07110d;font-weight:800;box-shadow:0 16px 48px rgba(0,0,0,.36);transition:opacity .18s ease,transform .18s ease;z-index:20}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.dot.loading,.spinner{animation:none;border-color:rgba(88,214,141,.46)}}
+@media (max-width:860px){.hero,.grid{grid-template-columns:1fr}.hero-main{padding:30px}.status-panel{padding:22px}.actions .btn{flex:1 1 100%}.inline-form{flex-direction:column}.inline-form .btn{width:100%}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div class="hero-main panel">
+      <div class="eyebrow">cmux harness setup</div>
+      <h1>Get your Mac ready for remote control.</h1>
+      <p class="lede">This home page checks the pieces that matter: the Python server, cmux Automation mode, LAN discovery, and the optional Tailscale URL you can use from outside your local network.</p>
+      <div class="actions">
+        <a class="btn primary" href="/harness">Open cmux harness</a>
+        <a class="btn blue" href="/orchestrator">Open orchestrator</a>
+      </div>
+    </div>
+
+    <aside class="status-panel panel" aria-label="Connectivity status">
+      <div class="status-title">
+        <h2>Connectivity</h2>
+        <span class="pill"><span class="dot loading" id="serverDot"></span><span id="serverText">Checking</span></span>
+      </div>
+      <div class="checks">
+        <div class="check">
+          <span class="dot loading" id="serverCheckDot"></span>
+          <div><strong>Harness server</strong><span id="serverUrl">Starting at localhost...</span></div>
+        </div>
+        <div class="check">
+          <span class="dot loading" id="cmuxDot"></span>
+          <div><strong>cmux Automation socket</strong><span id="cmuxStatus">Checking cmux socket API...</span></div>
+        </div>
+        <div class="check">
+          <span class="dot loading" id="lanDot"></span>
+          <div><strong>LAN discovery</strong><span id="lanStatus">Checking local network URLs...</span></div>
+        </div>
+        <div class="check">
+          <span class="dot loading" id="tailscaleDot"></span>
+          <div><strong>Tailscale</strong><span id="tailscaleStatus">Checking Tailscale status and local interfaces...</span></div>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <section class="grid">
+    <div class="card panel">
+      <h2>1. Configure cmux</h2>
+      <p>cmux needs Automation mode enabled so the harness can read sessions and send approved input.</p>
+      <div class="steps">
+        <div class="step"><div class="num">1</div><div><div class="step-title">Open cmux Settings</div><div class="step-copy">In the Mac app, open <strong>Settings</strong>, then choose <strong>Automation</strong>.</div></div></div>
+        <div class="step"><div class="num">2</div><div><div class="step-title">Enable the socket API</div><div class="step-copy">Set socket control to <strong>automation</strong>. Restart cmux if this page still reports that the socket is missing.</div></div></div>
+        <div class="step"><div class="num">3</div><div><div class="step-title">Keep this server running</div><div class="step-copy">The iOS app talks to this Python server, not directly to cmux.</div></div></div>
+      </div>
+    </div>
+
+    <div class="card panel">
+      <h2>2. Connect from iPhone</h2>
+      <p>Use LAN when you are on the same Wi-Fi. Add Tailscale when you want the iOS app to work away from home or office.</p>
+      <div class="url-list" id="urlList">
+        <div class="url-loading"><span class="spinner"></span><div><div class="small">Searching local network and Tailscale</div><code>Checking localhost, LAN, Bonjour, and Tailscale URLs...</code></div></div>
+      </div>
+      <div class="field">
+        <label for="tailscaleHost">Tailscale MagicDNS host or IP</label>
+        <div class="inline-form">
+          <input id="tailscaleHost" type="text" placeholder="cmux-mac.your-tailnet.ts.net" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+          <button class="btn" id="saveTailscale" type="button">Save</button>
+        </div>
+        <div class="small">This is optional. Install Tailscale on the Mac and iPhone, sign into the same tailnet, then use the detected URL or enter the Mac device name shown by Tailscale. Tip: set a stable Tailscale machine name like <code>cmux-mac</code> and turn off OS-hostname auto-generation so this URL does not change when your Mac hostname changes.</div>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast">Copied</div>
+<script>
+const state={network:null,loading:false};
+const els={
+  serverDot:document.getElementById('serverDot'),
+  serverCheckDot:document.getElementById('serverCheckDot'),
+  serverText:document.getElementById('serverText'),
+  serverUrl:document.getElementById('serverUrl'),
+  cmuxDot:document.getElementById('cmuxDot'),
+  cmuxStatus:document.getElementById('cmuxStatus'),
+  lanDot:document.getElementById('lanDot'),
+  lanStatus:document.getElementById('lanStatus'),
+  tailscaleDot:document.getElementById('tailscaleDot'),
+  tailscaleStatus:document.getElementById('tailscaleStatus'),
+  tailscaleHost:document.getElementById('tailscaleHost'),
+  saveTailscale:document.getElementById('saveTailscale'),
+  urlList:document.getElementById('urlList'),
+  toast:document.getElementById('toast')
+};
+
+function dot(el,kind){el.className='dot '+kind}
+function showToast(text){els.toast.textContent=text;els.toast.classList.add('show');setTimeout(()=>els.toast.classList.remove('show'),1500)}
+function copyText(text){navigator.clipboard.writeText(text).then(()=>showToast('Copied URL')).catch(()=>showToast('Copy failed'))}
+function loadingUrls(){
+  return '<div class="url-loading"><span class="spinner"></span><div><div class="small">Searching local network and Tailscale</div><code>Checking localhost, LAN, Bonjour, and Tailscale URLs...</code></div></div>';
+}
+function urlRow(label,url){
+  if(!url)return '';
+  return '<div class="url-row"><div><div class="small">'+label+'</div><code>'+escapeHtml(url)+'</code></div><button class="copy" type="button" data-copy="'+escapeHtml(url)+'">Copy</button></div>';
+}
+function escapeHtml(value){return String(value||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]))}
+function renderLoading(){
+  dot(els.serverDot,'loading');
+  dot(els.serverCheckDot,'loading');
+  dot(els.cmuxDot,'loading');
+  dot(els.lanDot,'loading');
+  dot(els.tailscaleDot,'loading');
+  els.serverText.textContent='Checking';
+  els.serverUrl.textContent='Starting at localhost...';
+  els.cmuxStatus.textContent='Checking cmux socket API...';
+  els.lanStatus.textContent='Scanning local network addresses...';
+  els.tailscaleStatus.textContent='Checking Tailscale status and local interfaces...';
+  els.urlList.innerHTML=loadingUrls();
+}
+function render(){
+  const data=state.network||{};
+  const urls=data.urls||{};
+  dot(els.serverDot,'ok');
+  dot(els.serverCheckDot,'ok');
+  els.serverText.textContent='Online';
+  els.serverUrl.textContent=urls.home||'Server is online';
+
+  const cmux=data.cmux||{};
+  if(cmux.socketFound&&cmux.connected){dot(els.cmuxDot,'ok');els.cmuxStatus.textContent='Socket API connected. '+(cmux.workspaceCount||0)+' workspace rows visible.'}
+  else if(cmux.socketFound){dot(els.cmuxDot,'warn');els.cmuxStatus.textContent='Socket exists, waiting for a successful cmux poll.'}
+  else{dot(els.cmuxDot,'err');els.cmuxStatus.textContent='Socket not found. Enable cmux Settings > Automation > socket API.'}
+
+  const lan=(urls.lanHarness||[]);
+  if(lan.length){dot(els.lanDot,'ok');els.lanStatus.textContent='LAN URLs detected. Bonjour service: '+(data.bonjourType||'_cmux-harness._tcp')}
+  else{dot(els.lanDot,'warn');els.lanStatus.textContent='No LAN address detected yet. Same-device localhost still works.'}
+
+  const tailscale=data.tailscale||{};
+  const detectedTailscaleHost=tailscale.dnsName||tailscale.tailscaleIPv4||'';
+  if(data.tailscaleHost){dot(els.tailscaleDot,'ok');els.tailscaleStatus.textContent='Saved: '+data.tailscaleHost}
+  else if(detectedTailscaleHost){dot(els.tailscaleDot,'ok');els.tailscaleStatus.textContent='Detected '+detectedTailscaleHost+' via '+(tailscale.source||'Tailscale')}
+  else{dot(els.tailscaleDot,'warn');els.tailscaleStatus.textContent='Optional. Tailscale was not detected yet; you can enter it manually.'}
+  if(tailscale.tailnetName&&!els.tailscaleHost.value){els.tailscaleHost.placeholder='cmux-mac.'+tailscale.tailnetName}
+  if(document.activeElement!==els.tailscaleHost){els.tailscaleHost.value=data.tailscaleHost||tailscale.dnsName||tailscale.tailscaleIPv4||''}
+
+  let html='';
+  html+=urlRow('This Mac',urls.harness);
+  html+=urlRow('Local name',urls.localHarness);
+  lan.forEach((url,index)=>{html+=urlRow('LAN '+(index+1),url)});
+  html+=urlRow(data.tailscaleHost?'Tailscale saved':'Tailscale detected',urls.tailscaleHarness);
+  if(data.tailscaleHost&&urls.detectedTailscaleHarness&&urls.detectedTailscaleHarness!==urls.tailscaleHarness){html+=urlRow('Tailscale detected',urls.detectedTailscaleHarness)}
+  if(urls.tailscaleIpHarness&&urls.tailscaleIpHarness!==urls.tailscaleHarness&&urls.tailscaleIpHarness!==urls.detectedTailscaleHarness){html+=urlRow('Tailscale IP fallback',urls.tailscaleIpHarness)}
+  els.urlList.innerHTML=html||'<div class="small">No URLs available yet.</div>';
+}
+async function loadNetwork(){
+  if(state.loading)return;
+  const firstLoad=!state.network;
+  state.loading=true;
+  if(firstLoad)renderLoading();
+  else{dot(els.serverDot,'loading');els.serverText.textContent='Refreshing'}
+  try{
+    const response=await fetch('/api/network');
+    state.network=await response.json();
+    render();
+  }catch(error){
+    dot(els.serverDot,'err');
+    dot(els.serverCheckDot,'err');
+    dot(els.cmuxDot,'warn');
+    dot(els.lanDot,'warn');
+    dot(els.tailscaleDot,'warn');
+    els.serverText.textContent='Offline';
+    els.serverUrl.textContent='Could not load network status.';
+    els.cmuxStatus.textContent='Connection check did not complete.';
+    els.lanStatus.textContent='LAN URLs could not be loaded yet.';
+    els.tailscaleStatus.textContent='Tailscale status could not be loaded yet.';
+    els.urlList.innerHTML='<div class="url-loading"><span class="dot err"></span><div><div class="small">Network check failed</div><code>Refresh the page or confirm the server is still running.</code></div></div>';
+  }finally{
+    state.loading=false;
+  }
+}
+async function saveTailscale(){
+  els.saveTailscale.disabled=true;
+  try{
+    const response=await fetch('/api/network',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tailscaleHost:els.tailscaleHost.value.trim()})});
+    state.network=await response.json();
+    render();
+    showToast('Tailscale host saved');
+  }catch(error){
+    showToast('Save failed');
+  }finally{
+    els.saveTailscale.disabled=false;
+  }
+}
+document.addEventListener('click',event=>{
+  const button=event.target.closest('[data-copy]');
+  if(button)copyText(button.getAttribute('data-copy'));
+});
+els.saveTailscale.addEventListener('click',saveTailscale);
+loadNetwork();
+setInterval(loadNetwork,4000);
+</script>
+</body>
+</html>

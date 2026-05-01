@@ -1110,11 +1110,11 @@ struct HarnessFeatureTests {
             ]
         )
 
-        #expect(statusURL.absoluteString == "http://doximity-m4.tail1db61d.ts.net:9091/api/status")
-        #expect(screenURL.absoluteString == "http://doximity-m4.tail1db61d.ts.net:9091/api/screen?index=2&lines=200")
+        #expect(statusURL.absoluteString == "http://macbook.local:9091/api/status")
+        #expect(screenURL.absoluteString == "http://macbook.local:9091/api/screen?index=2&lines=200")
     }
 
-    private static let baseURL = "http://doximity-m4.tail1db61d.ts.net:9091/harness"
+    private static let baseURL = "http://macbook.local:9091/harness"
 
     private static func initialState() -> HarnessFeature.State {
         var state = HarnessFeature.State()

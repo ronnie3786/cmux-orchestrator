@@ -118,6 +118,7 @@ final class PushNotificationBridge: NSObject, ObservableObject, UIApplicationDel
 
     private func registerDeviceToken(_ token: String) async {
         let bundleID = Bundle.main.bundleIdentifier ?? ""
+        guard let serverURL = HarnessSettingsStore.serverURL else { return }
         #if DEBUG
         let environment = "sandbox"
         #else
@@ -125,7 +126,7 @@ final class PushNotificationBridge: NSObject, ObservableObject, UIApplicationDel
         #endif
         do {
             _ = try await HarnessAPI.registerPushDevice(
-                baseURLString: HarnessSettingsStore.serverURL,
+                baseURLString: serverURL,
                 token: token,
                 bundleID: bundleID,
                 environment: environment

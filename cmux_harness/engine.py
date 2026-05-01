@@ -71,6 +71,7 @@ class HarnessEngine(threading.Thread):
         self.review_model = OLLAMA_DEFAULT_MODEL
         self.review_backend = "ollama"
         self.contract_review_enabled = False
+        self.network_settings = {}
         self.callback_base_url = ""
         self.approval_threshold = 3
         self.default_project_dir = ""
@@ -95,6 +96,7 @@ class HarnessEngine(threading.Thread):
         self.default_project_dir = extra_config.get("defaultProjectDir", self.default_project_dir) or ""
         self.default_base_branch = extra_config.get("defaultBaseBranch", self.default_base_branch) or "main"
         self.contract_review_enabled = bool(extra_config.get("contractReviewEnabled", self.contract_review_enabled))
+        self.network_settings = extra_config.get("networkSettings", {}) or {}
         try:
             self.approval_threshold = int(extra_config.get("approvalThreshold", self.approval_threshold))
         except (TypeError, ValueError):
@@ -114,6 +116,7 @@ class HarnessEngine(threading.Thread):
             "defaultBaseBranch": data.get("defaultBaseBranch", "main"),
             "contractReviewEnabled": bool(data.get("contractReviewEnabled", False)),
             "approvalThreshold": data.get("approvalThreshold", 3),
+            "networkSettings": data.get("networkSettings", {}) if isinstance(data.get("networkSettings", {}), dict) else {},
         }
 
     def _save_config(self):
@@ -128,6 +131,7 @@ class HarnessEngine(threading.Thread):
             "defaultBaseBranch": self.default_base_branch,
             "contractReviewEnabled": self.contract_review_enabled,
             "approvalThreshold": self.approval_threshold,
+            "networkSettings": self.network_settings,
         }
         try:
             with open(storage.CONFIG_FILE, "w") as f:
@@ -313,6 +317,18 @@ class HarnessEngine(threading.Thread):
                 self.default_project_dir = str(project_dir).strip()
             if base_branch is not None:
                 self.default_base_branch = str(base_branch).strip() or "main"
+            self._save_config()
+
+    def set_network_settings(self, tailscale_host=None):
+        with self._lock:
+            if not isinstance(self.network_settings, dict):
+                self.network_settings = {}
+            if tailscale_host is not None:
+                value = str(tailscale_host).strip()
+                if value:
+                    self.network_settings["tailscaleHost"] = value
+                else:
+                    self.network_settings.pop("tailscaleHost", None)
             self._save_config()
 
     def set_custom_name(self, index, name):

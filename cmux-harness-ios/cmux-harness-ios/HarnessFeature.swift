@@ -26,8 +26,13 @@ struct HarnessFeature {
 
     @ObservableState
     struct State: Equatable {
-        var serverURLString = HarnessSettingsStore.serverURL
-        var committedServerURLString = HarnessSettingsStore.serverURL
+        var serverURLString = HarnessSettingsStore.serverURL ?? ""
+        var committedServerURLString = HarnessSettingsStore.serverURL ?? ""
+        var tailscaleHostString = HarnessSettingsStore.tailscaleHost
+        var isDiscoveringServer = false
+        var discoveredServers: [DiscoveredHarnessServer] = []
+        var serverSetupMessage: String?
+        var serverSetupError: String?
         var status: HarnessStatus?
         var workspaces: [Workspace] = []
         var logEntries: [LogEntry] = []
@@ -140,6 +145,10 @@ struct HarnessFeature {
             status?.socketFound == true
         }
 
+        var isServerConfigured: Bool {
+            !committedServerURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
         func sessionState(for workspace: Workspace) -> WorkspaceSessionState {
             workspaceSessionState(for: workspace, entries: logEntries)
         }
@@ -157,6 +166,13 @@ struct HarnessFeature {
         case refreshSucceeded(RefreshPayload)
         case refreshFailed(String)
         case saveServerTapped
+        case discoverServer
+        case serverDiscoverySucceeded([DiscoveredHarnessServer])
+        case serverDiscoveryFailed(String)
+        case useDiscoveredServer(DiscoveredHarnessServer)
+        case probeTailscaleHostTapped
+        case tailscaleProbeSucceeded(String)
+        case tailscaleProbeFailed(String)
         case clearError
 
         case settingsButtonTapped
@@ -247,28 +263,10 @@ struct HarnessFeature {
                 return .none
 
             case .onAppear:
-                var effects: [Effect<Action>] = [
-                    .send(.refresh),
-                    .run { [clock = self.clock] send in
-                        while !Task.isCancelled {
-                            try? await clock.sleep(for: .seconds(2))
-                            guard !Task.isCancelled else { return }
-                            await send(.refresh)
-                        }
-                    }
-                    .cancellable(id: pollingCancelID, cancelInFlight: true)
-                ]
-                if state.selectedWorkspaceID != nil {
-                    effects.append(screenPollingEffect())
-                    if state.detailTab == .git {
-                        if state.gitSegment == .prComments {
-                            effects.append(.send(.loadPRComments))
-                        } else {
-                            effects.append(gitPollingEffect())
-                        }
-                    }
+                guard state.isServerConfigured else {
+                    return .send(.discoverServer)
                 }
-                return .merge(effects)
+                return configuredStartupEffects(state: state)
 
             case .onDisappear:
                 return .merge(
@@ -281,6 +279,10 @@ struct HarnessFeature {
                 )
 
             case .refresh:
+                guard state.isServerConfigured else {
+                    state.isRefreshing = false
+                    return .none
+                }
                 state.isRefreshing = state.workspaces.isEmpty
                 return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString] send in
                     do {
@@ -363,15 +365,95 @@ struct HarnessFeature {
 
             case .saveServerTapped:
                 let normalized = HarnessAPI.normalizedBaseURL(state.serverURLString)
+                guard !normalized.isEmpty else {
+                    state.serverSetupError = "Server URL is required."
+                    state.errorMessage = "Server URL is required."
+                    return .none
+                }
                 state.serverURLString = normalized
                 state.committedServerURLString = normalized
                 HarnessSettingsStore.serverURL = normalized
                 state.isShowingSettings = false
                 state.errorMessage = nil
-                return .send(.refresh)
+                state.serverSetupError = nil
+                state.serverSetupMessage = "Saved \(normalized)"
+                return configuredStartupEffects(state: state)
+
+            case .discoverServer:
+                guard !state.isDiscoveringServer else { return .none }
+                state.isDiscoveringServer = true
+                state.serverSetupError = nil
+                state.serverSetupMessage = "Looking for a running cmux harness server..."
+                return discoverServerEffect(tailscaleHost: state.tailscaleHostString)
+
+            case let .serverDiscoverySucceeded(servers):
+                state.isDiscoveringServer = false
+                state.discoveredServers = servers
+                if servers.isEmpty {
+                    state.serverSetupMessage = nil
+                    state.serverSetupError = "No running server was found. Start dashboard.py on your Mac, or enter the URL manually."
+                } else {
+                    state.serverSetupMessage = "Found \(servers.count) server\(servers.count == 1 ? "" : "s")."
+                    state.serverSetupError = nil
+                }
+                return .none
+
+            case let .serverDiscoveryFailed(message):
+                state.isDiscoveringServer = false
+                state.serverSetupMessage = nil
+                state.serverSetupError = message
+                return .none
+
+            case let .useDiscoveredServer(server):
+                let normalized = HarnessAPI.normalizedBaseURL(server.urlString)
+                guard !normalized.isEmpty else { return .none }
+                state.serverURLString = normalized
+                state.committedServerURLString = normalized
+                HarnessSettingsStore.serverURL = normalized
+                state.isDiscoveringServer = false
+                state.discoveredServers = []
+                state.serverSetupError = nil
+                let sourceName = server.source == .tailscale ? "Tailscale" : "LAN"
+                state.serverSetupMessage = "Connected with \(sourceName): \(normalized)"
+                return configuredStartupEffects(state: state)
+
+            case .probeTailscaleHostTapped:
+                let host = state.tailscaleHostString.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !host.isEmpty else {
+                    state.serverSetupError = "Enter your Mac's Tailscale MagicDNS host first."
+                    return .none
+                }
+                HarnessSettingsStore.tailscaleHost = host
+                state.tailscaleHostString = host
+                state.isDiscoveringServer = true
+                state.serverSetupError = nil
+                state.serverSetupMessage = "Checking Tailscale host..."
+                return .run { [client = self.harnessClient, urlString = HarnessAPI.harnessURLFromHost(host)] send in
+                    let ok = await client.probeServer(urlString)
+                    if ok {
+                        await send(.tailscaleProbeSucceeded(urlString))
+                    } else {
+                        await send(.tailscaleProbeFailed("Could not reach \(urlString). Confirm Tailscale is connected on both devices and the server is running."))
+                    }
+                }
+
+            case let .tailscaleProbeSucceeded(urlString):
+                state.isDiscoveringServer = false
+                return .send(.useDiscoveredServer(DiscoveredHarnessServer(
+                    name: "Tailscale",
+                    urlString: urlString,
+                    source: .tailscale
+                )))
+
+            case let .tailscaleProbeFailed(message):
+                state.isDiscoveringServer = false
+                state.serverSetupMessage = nil
+                state.serverSetupError = message
+                return .none
 
             case .clearError:
                 state.errorMessage = nil
+                state.serverSetupError = nil
                 return .none
 
             case .settingsButtonTapped:
@@ -1197,6 +1279,55 @@ struct HarnessFeature {
 }
 
 extension HarnessFeature {
+    private func configuredStartupEffects(state: State) -> Effect<Action> {
+        var effects: [Effect<Action>] = [
+            .send(.refresh),
+            .run { [clock = self.clock] send in
+                while !Task.isCancelled {
+                    try? await clock.sleep(for: .seconds(2))
+                    guard !Task.isCancelled else { return }
+                    await send(.refresh)
+                }
+            }
+            .cancellable(id: pollingCancelID, cancelInFlight: true)
+        ]
+        if state.selectedWorkspaceID != nil {
+            effects.append(screenPollingEffect())
+            if state.detailTab == .git {
+                if state.gitSegment == .prComments {
+                    effects.append(.send(.loadPRComments))
+                } else {
+                    effects.append(gitPollingEffect())
+                }
+            }
+        }
+        return .merge(effects)
+    }
+
+    private func discoverServerEffect(tailscaleHost: String) -> Effect<Action> {
+        .run { [client = self.harnessClient, tailscaleHost] send in
+            let host = tailscaleHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !host.isEmpty {
+                let tailscaleURL = HarnessAPI.harnessURLFromHost(host)
+                if await client.probeServer(tailscaleURL) {
+                    await send(.useDiscoveredServer(DiscoveredHarnessServer(
+                        name: "Tailscale",
+                        urlString: tailscaleURL,
+                        source: .tailscale
+                    )))
+                    return
+                }
+            }
+
+            let discovered = await client.discoverServers()
+            if let first = discovered.first {
+                await send(.useDiscoveredServer(first))
+            } else {
+                await send(.serverDiscoverySucceeded(discovered))
+            }
+        }
+    }
+
     private func screenPollingEffect() -> Effect<Action> {
         .run { [clock = self.clock] send in
             while !Task.isCancelled {
