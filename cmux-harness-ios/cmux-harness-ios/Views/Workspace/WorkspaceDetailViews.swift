@@ -17,6 +17,16 @@ struct WorkspaceDetailView: View {
             SessionDetailBackground()
 
             VStack(spacing: 0) {
+                if store.isDemoMode && !isDetailInputFocused {
+                    DemoModeBanner {
+                        store.send(.exitDemoModeTapped)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
                 if !isDetailInputFocused {
                     SessionDetailTabBar(selection: detailTabBinding)
                         .transition(.move(edge: .top).combined(with: .opacity))

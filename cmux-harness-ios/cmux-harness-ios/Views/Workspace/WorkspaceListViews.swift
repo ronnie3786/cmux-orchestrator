@@ -224,12 +224,37 @@ struct DashboardSummaryView: View {
                     .foregroundStyle(.white.opacity(0.62))
                     .labelStyle(.titleAndIcon)
             }
+
+            if store.isDemoMode {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("This is simulated iPhone-only data. Connect your own Mac dashboard when you are ready.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        store.send(.exitDemoModeTapped)
+                    } label: {
+                        Label("Connect Real Server", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.black))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.black)
+                    .background(Color.orange, in: Capsule())
+                }
+                .padding(.top, 2)
+            }
         }
         .padding(16)
         .background(HomeGlassCard(cornerRadius: 18))
     }
 
     private var connectionState: ConnectionDot.State {
+        if store.isDemoMode {
+            return .demo
+        }
         if store.isConnected {
             return .connected
         }
@@ -240,6 +265,9 @@ struct DashboardSummaryView: View {
     }
 
     private var connectionTitle: String {
+        if store.isDemoMode {
+            return "Local Demo Mode"
+        }
         if store.isConnected {
             return "Connected"
         }

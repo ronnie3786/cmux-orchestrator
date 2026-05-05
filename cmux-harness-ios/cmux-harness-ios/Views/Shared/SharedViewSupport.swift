@@ -120,6 +120,7 @@ struct AutoExpirationText: View {
 
 struct ConnectionDot: View {
     enum State {
+        case demo
         case connected
         case reconnecting
         case offline
@@ -136,6 +137,8 @@ struct ConnectionDot: View {
 
     private var color: Color {
         switch state {
+        case .demo:
+            return .orange
         case .connected:
             return .green
         case .reconnecting:

@@ -2,6 +2,68 @@ import ComposableArchitecture
 import Foundation
 
 extension HarnessFeature {
+    private func cancelRuntimeEffects() -> Effect<Action> {
+        .merge(
+            .cancel(id: pollingCancelID),
+            .cancel(id: screenPollingCancelID),
+            .cancel(id: gitPollingCancelID),
+            .cancel(id: prCommentsCancelID),
+            .cancel(id: fileSearchCancelID),
+            .cancel(id: jiraTicketsCancelID),
+            .cancel(id: jiraLookupCancelID)
+        )
+    }
+
+    private func resetSessionData(_ state: inout State) {
+        state.status = nil
+        state.workspaces = []
+        state.logEntries = []
+        state.isRefreshing = false
+        state.lastUpdated = nil
+        state.sessionSearchText = ""
+        state.sessionFilter = .all
+        state.selectedWorkspaceID = nil
+        state.detailTab = .terminal
+        state.fullScreenText = nil
+        state.draftMessages = [:]
+        state.detailDrafts = state.isDemoMode ? [:] : HarnessSettingsStore.detailDrafts
+        state.detailDraft = ""
+        state.pendingPushApproval = nil
+        state.isShowingNewSession = false
+        state.isCreatingSession = false
+        state.quickSessionCreation = nil
+        state.pendingCreatedWorkspaceSelection = nil
+        state.renameWorkspaceID = nil
+        state.renameText = ""
+        state.gitStatus = nil
+        state.gitError = nil
+        state.isLoadingGit = false
+        state.gitSegment = .status
+        state.diffSheet = nil
+        state.prCommentsResponse = nil
+        state.prCommentsError = nil
+        state.isLoadingPRComments = false
+        state.includeResolvedPRComments = false
+        state.projectSkills = []
+        state.userSkills = []
+        state.skillsError = nil
+        state.isLoadingSkills = false
+        state.isShowingFileSearch = false
+        state.fileSearchQuery = ""
+        state.fileSearchResults = []
+        state.fileSearchError = nil
+        state.isSearchingFiles = false
+        state.isShowingJiraTickets = false
+        state.jiraTickets = []
+        state.jiraTicketsError = nil
+        state.isLoadingJiraTickets = false
+        state.jiraLookupQuery = ""
+        state.resolvedJiraTicket = nil
+        state.jiraLookupError = nil
+        state.isResolvingJiraTicket = false
+        state.terminalAttachments = [:]
+    }
+
     func reduceConnection(into state: inout State, action: Action) -> Effect<Action> {
         switch action {
             case .binding:
@@ -15,14 +77,7 @@ extension HarnessFeature {
                 return configuredStartupEffects(state: state)
 
             case .onDisappear:
-                return .merge(
-                    .cancel(id: pollingCancelID),
-                    .cancel(id: screenPollingCancelID),
-                    .cancel(id: gitPollingCancelID),
-                    .cancel(id: prCommentsCancelID),
-                    .cancel(id: fileSearchCancelID),
-                    .cancel(id: jiraTicketsCancelID)
-                )
+                return cancelRuntimeEffects()
 
             case .refresh:
                 guard state.isServerConfigured else {
@@ -116,6 +171,8 @@ extension HarnessFeature {
                     state.errorMessage = "Server URL is required."
                     return .none
                 }
+                state.isDemoMode = false
+                HarnessSettingsStore.isLocalDemoMode = false
                 state.serverURLString = normalized
                 state.committedServerURLString = normalized
                 HarnessSettingsStore.serverURL = normalized
@@ -125,6 +182,35 @@ extension HarnessFeature {
                 state.serverSetupMessage = "Saved \(normalized)"
                 return configuredStartupEffects(state: state)
 
+            case .startLocalDemoTapped:
+                state.isDemoMode = true
+                HarnessSettingsStore.isLocalDemoMode = true
+                state.committedServerURLString = HarnessLocalDemo.baseURL
+                state.isShowingSettings = false
+                state.errorMessage = nil
+                state.serverSetupError = nil
+                state.serverSetupMessage = "Local demo mode is running on this iPhone."
+                state.discoveredServers = []
+                resetSessionData(&state)
+                HarnessSettingsStore.lastSelectedWorkspaceID = nil
+                return configuredStartupEffects(state: state)
+
+            case .exitDemoModeTapped:
+                state.isDemoMode = false
+                HarnessSettingsStore.isLocalDemoMode = false
+                state.committedServerURLString = ""
+                state.serverURLString = ""
+                state.isShowingSettings = false
+                state.errorMessage = nil
+                state.serverSetupError = nil
+                state.serverSetupMessage = "Demo closed. Looking for your cmux harness server..."
+                resetSessionData(&state)
+                HarnessSettingsStore.lastSelectedWorkspaceID = nil
+                return .merge(
+                    cancelRuntimeEffects(),
+                    .send(.discoverServer)
+                )
+
             case .useDemoServerTapped:
                 let normalized = HarnessAPI.normalizedBaseURL(state.demoServerURLString)
                 guard !normalized.isEmpty else {
@@ -132,6 +218,8 @@ extension HarnessFeature {
                     state.errorMessage = "Demo server URL is not configured for this build."
                     return .none
                 }
+                state.isDemoMode = false
+                HarnessSettingsStore.isLocalDemoMode = false
                 state.serverURLString = normalized
                 state.committedServerURLString = normalized
                 HarnessSettingsStore.serverURL = normalized
@@ -169,6 +257,8 @@ extension HarnessFeature {
             case let .useDiscoveredServer(server):
                 let normalized = HarnessAPI.normalizedBaseURL(server.urlString)
                 guard !normalized.isEmpty else { return .none }
+                state.isDemoMode = false
+                HarnessSettingsStore.isLocalDemoMode = false
                 state.serverURLString = normalized
                 state.committedServerURLString = normalized
                 HarnessSettingsStore.serverURL = normalized

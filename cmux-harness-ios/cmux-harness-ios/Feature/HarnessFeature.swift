@@ -27,7 +27,10 @@ struct HarnessFeature {
     @ObservableState
     struct State: Equatable {
         var serverURLString = HarnessSettingsStore.serverURL ?? ""
-        var committedServerURLString = HarnessSettingsStore.serverURL ?? ""
+        var committedServerURLString = HarnessSettingsStore.isLocalDemoMode
+            ? HarnessLocalDemo.baseURL
+            : HarnessSettingsStore.serverURL ?? ""
+        var isDemoMode = HarnessSettingsStore.isLocalDemoMode
         var demoServerURLString = HarnessSettingsStore.demoServerURL
         var tailscaleHostString = HarnessSettingsStore.tailscaleHost
         var isDiscoveringServer = false
@@ -147,7 +150,7 @@ struct HarnessFeature {
         }
 
         var isServerConfigured: Bool {
-            !committedServerURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            isDemoMode || !committedServerURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
 
         func sessionState(for workspace: Workspace) -> WorkspaceSessionState {
@@ -167,6 +170,8 @@ struct HarnessFeature {
         case refreshSucceeded(RefreshPayload)
         case refreshFailed(String)
         case saveServerTapped
+        case startLocalDemoTapped
+        case exitDemoModeTapped
         case useDemoServerTapped
         case discoverServer
         case serverDiscoverySucceeded([DiscoveredHarnessServer])
@@ -267,6 +272,8 @@ struct HarnessFeature {
                  .refreshSucceeded(_),
                  .refreshFailed(_),
                  .saveServerTapped,
+                 .startLocalDemoTapped,
+                 .exitDemoModeTapped,
                  .useDemoServerTapped,
                  .discoverServer,
                  .serverDiscoverySucceeded(_),

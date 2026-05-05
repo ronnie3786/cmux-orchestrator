@@ -12,6 +12,17 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if store.isDemoMode {
+                    Section("Demo Mode") {
+                        Text("You are viewing simulated sessions stored locally on this iPhone. No commands are being sent to a Mac.")
+                            .foregroundStyle(.secondary)
+
+                        Button("Connect Real Server") {
+                            store.send(.exitDemoModeTapped)
+                        }
+                    }
+                }
+
                 Section("Server") {
                     TextField("Server URL", text: $store.serverURLString)
                         .textInputAutocapitalization(.never)

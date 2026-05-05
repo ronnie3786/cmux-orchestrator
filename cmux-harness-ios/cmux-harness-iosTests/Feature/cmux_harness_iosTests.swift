@@ -4,6 +4,7 @@ import SwiftUI
 import Testing
 @testable import cmux_harness_ios
 
+@Suite(.serialized)
 @MainActor
 struct HarnessFeatureTests {
     @Test
@@ -180,6 +181,122 @@ struct HarnessFeatureTests {
         #expect(state.selectedWorkspaceID == workspaceID)
         #expect(state.detailDraft == "Remember this prompt")
         #expect(state.detailDrafts[workspaceID] == "Remember this prompt")
+    }
+
+    @Test
+    func localDemoModeStartsWithReservedBaseURLAndExitReturnsToDiscovery() async {
+        let oldServerURL = HarnessSettingsStore.serverURL
+        let oldDemoMode = HarnessSettingsStore.isLocalDemoMode
+        let oldSelectedWorkspaceID = HarnessSettingsStore.lastSelectedWorkspaceID
+        let oldDrafts = HarnessSettingsStore.detailDrafts
+        defer {
+            HarnessSettingsStore.serverURL = oldServerURL
+            HarnessSettingsStore.isLocalDemoMode = oldDemoMode
+            HarnessSettingsStore.lastSelectedWorkspaceID = oldSelectedWorkspaceID
+            HarnessSettingsStore.detailDrafts = oldDrafts
+        }
+        HarnessSettingsStore.serverURL = nil
+        HarnessSettingsStore.isLocalDemoMode = false
+        HarnessSettingsStore.lastSelectedWorkspaceID = "previous-real-workspace"
+        HarnessSettingsStore.detailDrafts = [:]
+
+        let workspace = Self.workspace()
+        let status = Self.status(workspaces: [workspace])
+        let updatedAt = Date(timeIntervalSince1970: 1_777_400_000)
+        let clock = TestClock()
+        var client = HarnessClient.unimplemented
+        client.status = { baseURLString in
+            #expect(baseURLString == HarnessLocalDemo.baseURL)
+            return status
+        }
+        client.log = { baseURLString in
+            #expect(baseURLString == HarnessLocalDemo.baseURL)
+            return []
+        }
+        client.probeServer = { _ in false }
+        client.discoverServers = { [] }
+
+        var state = HarnessFeature.State()
+        state.serverURLString = ""
+        state.committedServerURLString = ""
+        state.isDemoMode = false
+        state.selectedWorkspaceID = nil
+        state.detailDrafts = [:]
+        state.detailDraft = ""
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.date.now = updatedAt
+            $0.harnessClient = client
+        }
+
+        await store.send(.startLocalDemoTapped) {
+            $0.isDemoMode = true
+            $0.committedServerURLString = HarnessLocalDemo.baseURL
+            $0.errorMessage = nil
+            $0.serverSetupError = nil
+            $0.serverSetupMessage = "Local demo mode is running on this iPhone."
+            $0.discoveredServers = []
+        }
+        await store.receive(\.refresh) {
+            $0.isRefreshing = true
+        }
+        await store.receive(\.refreshSucceeded) {
+            $0.isRefreshing = false
+            $0.status = status
+            $0.workspaces = [workspace]
+            $0.logEntries = []
+            $0.lastUpdated = updatedAt
+        }
+
+        await store.send(.exitDemoModeTapped) {
+            $0.isDemoMode = false
+            $0.committedServerURLString = ""
+            $0.status = nil
+            $0.workspaces = []
+            $0.logEntries = []
+            $0.lastUpdated = nil
+            $0.serverSetupMessage = "Demo closed. Looking for your cmux harness server..."
+        }
+        await store.receive(\.discoverServer) {
+            $0.isDiscoveringServer = true
+            $0.serverSetupError = nil
+            $0.serverSetupMessage = "Looking for a running cmux harness server..."
+        }
+        await store.receive(\.serverDiscoverySucceeded) {
+            $0.isDiscoveringServer = false
+            $0.discoveredServers = []
+            $0.serverSetupMessage = nil
+            $0.serverSetupError = "No running server was found. Start dashboard.py on your Mac, or enter the URL manually."
+        }
+    }
+
+    @Test
+    func localDemoClientReturnsSimulatedSessionsAndAcceptsPrompt() async throws {
+        let client = HarnessClient.localDemo
+        let status = try await client.status(HarnessLocalDemo.baseURL)
+
+        #expect(status.connected == true)
+        #expect(status.socketFound)
+        #expect(status.workspaces.count >= 3)
+        #expect(status.workspaces[0].surfaceTitle == "Local Demo")
+
+        let workspace = status.workspaces[0]
+        _ = try await client.sendText(
+            HarnessLocalDemo.baseURL,
+            workspace.index,
+            "show me the onboarding changes\n",
+            workspace.surfaceId
+        )
+        let screen = try await client.screen(HarnessLocalDemo.baseURL, workspace.index, 200)
+        let prComments = try await client.githubPRComments(HarnessLocalDemo.baseURL, workspace.index, false)
+        let jiraTickets = try await client.assignedJiraTickets(HarnessLocalDemo.baseURL, nil, 50)
+
+        #expect(screen.screen.contains("Demo response"))
+        #expect(prComments.pullRequest?.title == "Add iPhone dashboard onboarding")
+        #expect(jiraTickets.tickets.map(\.key).contains("APP-1042"))
     }
 
     @Test
@@ -1090,7 +1207,7 @@ struct HarnessFeatureTests {
         }
         await store.receive(\.assignedJiraTicketsSucceeded) {
             $0.isLoadingJiraTickets = false
-            $0.jiraTickets = tickets
+            $0.jiraTickets = [tickets[1], tickets[0]]
         }
     }
 
@@ -1120,6 +1237,7 @@ struct HarnessFeatureTests {
         var state = HarnessFeature.State()
         state.serverURLString = baseURL
         state.committedServerURLString = baseURL
+        state.isDemoMode = false
         state.selectedWorkspaceID = nil
         state.detailDrafts = [:]
         state.detailDraft = ""

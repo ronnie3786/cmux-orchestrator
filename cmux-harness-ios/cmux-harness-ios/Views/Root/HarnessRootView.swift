@@ -142,3 +142,62 @@ struct HarnessRootView: View {
         PushNotificationBridge.clearApplicationBadge()
     }
 }
+
+struct DemoModeBanner: View {
+    let exitAction: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.black)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Local Demo Mode")
+                    .font(.caption.weight(.black))
+                    .lineLimit(1)
+
+                Text("Simulated data. No Mac is connected.")
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(.black)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: exitAction) {
+                Text("Connect Real Server")
+                    .font(.caption.weight(.black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .foregroundStyle(.white)
+                    .background(Color.black.opacity(0.84), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.orange,
+                            Color.yellow.opacity(0.92),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+                }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}

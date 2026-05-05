@@ -10,7 +10,11 @@ extension HarnessFeature {
                     state.workspaces.first { $0.id == selectedID }
                 }
                 state.selectedWorkspaceID = id
-                HarnessSettingsStore.lastSelectedWorkspaceID = id
+                if state.isDemoMode {
+                    HarnessSettingsStore.lastSelectedWorkspaceID = nil
+                } else {
+                    HarnessSettingsStore.lastSelectedWorkspaceID = id
+                }
                 state.detailTab = .terminal
                 state.fullScreenText = nil
                 state.gitStatus = nil

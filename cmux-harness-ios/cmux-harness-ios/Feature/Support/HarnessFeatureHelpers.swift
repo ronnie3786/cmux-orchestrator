@@ -17,6 +17,7 @@ func persistDetailDraft(_ state: inout HarnessFeature.State) {
     } else {
         state.detailDrafts[workspaceID] = state.detailDraft
     }
+    guard !state.isDemoMode else { return }
     HarnessSettingsStore.detailDrafts = state.detailDrafts
 }
 

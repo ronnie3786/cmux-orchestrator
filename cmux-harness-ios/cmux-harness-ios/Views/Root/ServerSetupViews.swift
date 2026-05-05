@@ -24,7 +24,7 @@ struct ServerSetupView: View {
                             .foregroundStyle(.green.opacity(0.8))
 
                         Text("Connect to your Mac.")
-                            .font(.system(size: 46, weight: .black, design: .rounded))
+                            .font(.system(size: 44, weight: .heavy))
                             .foregroundStyle(.white)
                             .minimumScaleFactor(0.72)
 
@@ -34,9 +34,41 @@ struct ServerSetupView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if !store.demoServerURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(.black)
+                                .frame(width: 42, height: 42)
+                                .background(Color.orange, in: Circle())
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Try Local Demo Mode")
+                                    .font(.headline.weight(.bold))
+                                    .foregroundStyle(.white)
+
+                                Text("No Mac server required. The app will show simulated cmux sessions, terminal output, Git, GitHub, and Jira data stored locally on this iPhone.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.white.opacity(0.7))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        Button {
+                            store.send(.startLocalDemoTapped)
+                        } label: {
+                            Label("Start Local Demo", systemImage: "play.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(ServerSetupDemoButtonStyle())
+                    }
+                    .padding(18)
+                    .background(ServerSetupDemoCard())
+
+                    if showsHostedReviewDemo,
+                       !store.demoServerURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Review Demo")
+                            Text("Hosted Review Demo")
                                 .font(.headline.weight(.bold))
                                 .foregroundStyle(.white)
 
@@ -59,11 +91,16 @@ struct ServerSetupView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Server URL")
+                        Text("Use Local Server URL")
                             .font(.headline.weight(.bold))
                             .foregroundStyle(.white)
 
-                        TextField("http://macbook.local:9091/harness", text: $store.serverURLString)
+                        Text("Enter the URL for the computer running the cmux dashboard. Use localhost from the simulator, or your Mac's LAN/Tailscale URL from a physical iPhone.")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.68))
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        TextField("your-mac.local:9091/harness", text: $store.serverURLString)
                             .textInputAutocapitalization(.never)
                             .keyboardType(.URL)
                             .autocorrectionDisabled()
@@ -79,7 +116,7 @@ struct ServerSetupView: View {
                         Button {
                             store.send(.saveServerTapped)
                         } label: {
-                            Label("Save Server URL", systemImage: "checkmark.circle.fill")
+                            Label("Use Server URL", systemImage: "checkmark.circle.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(ServerSetupPrimaryButtonStyle())
@@ -186,6 +223,10 @@ struct ServerSetupView: View {
         }
         .preferredColorScheme(.dark)
     }
+
+    private var showsHostedReviewDemo: Bool {
+        false
+    }
 }
 
 struct ServerSetupBackground: View {
@@ -228,6 +269,28 @@ struct ServerSetupCard: View {
     }
 }
 
+struct ServerSetupDemoCard: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.orange.opacity(0.28),
+                        Color.green.opacity(0.12),
+                        Color.white.opacity(0.08),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(Color.orange.opacity(0.55), lineWidth: 1)
+            }
+            .shadow(color: Color.orange.opacity(0.18), radius: 24, x: 0, y: 14)
+    }
+}
+
 struct ServerSetupPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -235,6 +298,16 @@ struct ServerSetupPrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(.black)
             .padding(.vertical, 14)
             .background(Color.green.opacity(configuration.isPressed ? 0.75 : 0.92), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+struct ServerSetupDemoButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.heavy))
+            .foregroundStyle(.black)
+            .padding(.vertical, 14)
+            .background(Color.orange.opacity(configuration.isPressed ? 0.78 : 0.96), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

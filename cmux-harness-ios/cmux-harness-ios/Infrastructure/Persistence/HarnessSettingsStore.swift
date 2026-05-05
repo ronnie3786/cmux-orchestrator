@@ -6,6 +6,7 @@ enum HarnessSettingsStore {
     private static let lastSelectedWorkspaceIDKey = "cmuxHarnessLastSelectedWorkspaceID"
     private static let detailDraftsKey = "cmuxHarnessDetailDrafts"
     private static let demoServerURLInfoKey = "CMUXDemoServerURL"
+    private static let localDemoModeKey = "cmuxHarnessLocalDemoMode"
 
     static var demoServerURL: String {
         let configured = Bundle.main.object(forInfoDictionaryKey: demoServerURLInfoKey) as? String ?? ""
@@ -39,6 +40,15 @@ enum HarnessSettingsStore {
             } else {
                 UserDefaults.standard.set(normalized, forKey: serverURLKey)
             }
+        }
+    }
+
+    static var isLocalDemoMode: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: localDemoModeKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: localDemoModeKey)
         }
     }
 
