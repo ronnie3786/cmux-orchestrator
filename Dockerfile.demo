@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY cmux_harness ./cmux_harness
+COPY demo_dashboard.py ./demo_dashboard.py
+
+ENV PORT=9097
+EXPOSE 9097
+
+CMD ["python", "demo_dashboard.py"]

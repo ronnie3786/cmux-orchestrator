@@ -125,6 +125,22 @@ extension HarnessFeature {
                 state.serverSetupMessage = "Saved \(normalized)"
                 return configuredStartupEffects(state: state)
 
+            case .useDemoServerTapped:
+                let normalized = HarnessAPI.normalizedBaseURL(state.demoServerURLString)
+                guard !normalized.isEmpty else {
+                    state.serverSetupError = "Demo server URL is not configured for this build."
+                    state.errorMessage = "Demo server URL is not configured for this build."
+                    return .none
+                }
+                state.serverURLString = normalized
+                state.committedServerURLString = normalized
+                HarnessSettingsStore.serverURL = normalized
+                state.isShowingSettings = false
+                state.errorMessage = nil
+                state.serverSetupError = nil
+                state.serverSetupMessage = "Connected to demo server."
+                return configuredStartupEffects(state: state)
+
             case .discoverServer:
                 guard !state.isDiscoveringServer else { return .none }
                 state.isDiscoveringServer = true

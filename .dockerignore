@@ -1,0 +1,7 @@
+**
+!Dockerfile.demo
+!demo_dashboard.py
+!cmux_harness/
+!cmux_harness/**
+cmux_harness/**/__pycache__/
+cmux_harness/**/*.pyc

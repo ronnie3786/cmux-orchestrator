@@ -28,6 +28,7 @@ struct HarnessFeature {
     struct State: Equatable {
         var serverURLString = HarnessSettingsStore.serverURL ?? ""
         var committedServerURLString = HarnessSettingsStore.serverURL ?? ""
+        var demoServerURLString = HarnessSettingsStore.demoServerURL
         var tailscaleHostString = HarnessSettingsStore.tailscaleHost
         var isDiscoveringServer = false
         var discoveredServers: [DiscoveredHarnessServer] = []
@@ -166,6 +167,7 @@ struct HarnessFeature {
         case refreshSucceeded(RefreshPayload)
         case refreshFailed(String)
         case saveServerTapped
+        case useDemoServerTapped
         case discoverServer
         case serverDiscoverySucceeded([DiscoveredHarnessServer])
         case serverDiscoveryFailed(String)
@@ -265,6 +267,7 @@ struct HarnessFeature {
                  .refreshSucceeded(_),
                  .refreshFailed(_),
                  .saveServerTapped,
+                 .useDemoServerTapped,
                  .discoverServer,
                  .serverDiscoverySucceeded(_),
                  .serverDiscoveryFailed(_),

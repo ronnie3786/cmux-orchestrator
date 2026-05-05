@@ -34,6 +34,30 @@ struct ServerSetupView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
+                    if !store.demoServerURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Review Demo")
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(.white)
+
+                            Text(store.demoServerURLString)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.white.opacity(0.62))
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+
+                            Button {
+                                store.send(.useDemoServerTapped)
+                            } label: {
+                                Label("Use Demo Server", systemImage: "play.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(ServerSetupPrimaryButtonStyle())
+                        }
+                        .padding(18)
+                        .background(ServerSetupCard())
+                    }
+
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Server URL")
                             .font(.headline.weight(.bold))

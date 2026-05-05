@@ -5,6 +5,20 @@ enum HarnessSettingsStore {
     private static let tailscaleHostKey = "cmuxHarnessTailscaleHost"
     private static let lastSelectedWorkspaceIDKey = "cmuxHarnessLastSelectedWorkspaceID"
     private static let detailDraftsKey = "cmuxHarnessDetailDrafts"
+    private static let demoServerURLInfoKey = "CMUXDemoServerURL"
+
+    static var demoServerURL: String {
+        let configured = Bundle.main.object(forInfoDictionaryKey: demoServerURLInfoKey) as? String ?? ""
+        let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("$(") else {
+            #if DEBUG
+            return "http://localhost:9097/harness"
+            #else
+            return ""
+            #endif
+        }
+        return HarnessAPI.normalizedBaseURL(trimmed)
+    }
 
     static var serverURL: String? {
         get {
