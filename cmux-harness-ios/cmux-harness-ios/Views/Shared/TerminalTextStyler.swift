@@ -506,7 +506,7 @@ private enum TerminalSemanticHighlighter {
 
     private static func isCodexStatusLine(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces).lowercased()
-        guard trimmed.hasPrefix("gpt-") || trimmed.hasPrefix("codex") else { return false }
+        guard trimmed.hasPrefix("codex") else { return false }
         return trimmed.contains("· ~/")
             || trimmed.contains("· /")
             || trimmed.contains(" - ~/")

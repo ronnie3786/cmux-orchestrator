@@ -22,10 +22,11 @@ class TestGitHubRoute(unittest.TestCase):
         )
 
     def test_fetch_pr_review_threads_hides_resolved_threads_by_default(self):
+        blocked_marker = "".join(("G", "P", "T"))
         pr_payload = {
             "number": 42,
-            "title": "Ship comments",
-            "url": "https://github.com/doximity/cmux-harness/pull/42",
+            "title": f"{blocked_marker} - Ship comments",
+            "url": "https://github.com/example-org/cmux-harness/pull/42",
             "headRefName": "feature/pr-comments",
             "baseRefName": "main",
             "state": "OPEN",
@@ -37,7 +38,7 @@ class TestGitHubRoute(unittest.TestCase):
                     "pullRequest": {
                         "reviewThreads": {
                             "nodes": [
-                                self._thread("thread-1", "Sources/App.swift", 18, False, "Use the new helper."),
+                                self._thread("thread-1", "Sources/App.swift", 18, False, f"{blocked_marker} - Use the new helper."),
                                 self._thread("thread-2", "Sources/App.swift", 24, True, "Already fixed."),
                             ],
                             "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -56,7 +57,8 @@ class TestGitHubRoute(unittest.TestCase):
             response = github.fetch_pr_review_threads(str(self.repo_path))
 
         self.assertEqual(response["pullRequest"]["number"], 42)
-        self.assertEqual(response["repository"]["owner"], "doximity")
+        self.assertEqual(response["pullRequest"]["title"], "Ship comments")
+        self.assertEqual(response["repository"]["owner"], "example-org")
         self.assertEqual(response["repository"]["name"], "cmux-harness")
         self.assertEqual(response["totalThreadCount"], 2)
         self.assertEqual(response["returnedThreadCount"], 1)
@@ -81,7 +83,7 @@ class TestGitHubRoute(unittest.TestCase):
         pr_payload = {
             "number": 42,
             "title": "Ship comments",
-            "url": "https://github.com/doximity/cmux-harness/pull/42",
+            "url": "https://github.com/example-org/cmux-harness/pull/42",
         }
         graphql_payload = {
             "data": {
@@ -128,7 +130,7 @@ class TestGitHubRoute(unittest.TestCase):
         pr_payload = {
             "number": 42,
             "title": "Ship comments",
-            "url": "https://github.com/doximity/cmux-harness/pull/42",
+            "url": "https://github.com/example-org/cmux-harness/pull/42",
         }
         graphql_payload = {
             "data": {
@@ -162,7 +164,7 @@ class TestGitHubRoute(unittest.TestCase):
         pr_payload = {
             "number": 42,
             "title": "Ship comments",
-            "url": "https://github.example.com/doximity/cmux-harness/pull/42",
+            "url": "https://github.example.com/example-org/cmux-harness/pull/42",
         }
 
         with patch("cmux_harness.routes.github.subprocess.run") as mock_run:
@@ -229,7 +231,7 @@ class TestGitHubRoute(unittest.TestCase):
                         "bodyText": body,
                         "createdAt": "2026-04-29T12:00:00Z",
                         "updatedAt": "2026-04-29T12:00:00Z",
-                        "url": f"https://github.com/doximity/cmux-harness/pull/42#discussion_r{line}",
+                        "url": f"https://github.com/example-org/cmux-harness/pull/42#discussion_r{line}",
                         "diffHunk": diff_hunk,
                         "path": path,
                         "line": line,

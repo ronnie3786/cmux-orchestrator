@@ -58,6 +58,39 @@ class TestServerResponses(unittest.TestCase):
             "urls": {"magicDnsHarness": "", "ipHarness": "", "bestHarness": ""},
         }
         self.addCleanup(self.patch_tailscale_detect.stop)
+        self.patch_cli_requirements = patch("cmux_harness.server.dependencies.check_cli_requirements")
+        self.mock_cli_requirements = self.patch_cli_requirements.start()
+        self.mock_cli_requirements.return_value = {
+            "ok": False,
+            "checkedAt": "2026-05-05T00:00:00Z",
+            "items": [
+                {
+                    "id": "github",
+                    "name": "GitHub CLI",
+                    "command": "gh",
+                    "available": True,
+                    "configured": True,
+                    "ok": True,
+                    "status": "ok",
+                    "summary": "gh is installed and authenticated for github.com.",
+                    "whyRequired": "GitHub PR comments use gh.",
+                    "setupHint": "Run gh auth login.",
+                },
+                {
+                    "id": "atlassian",
+                    "name": "Atlassian CLI",
+                    "command": "acli",
+                    "available": False,
+                    "configured": False,
+                    "ok": False,
+                    "status": "missing",
+                    "summary": "acli is not installed or is not on PATH.",
+                    "whyRequired": "Jira tickets use acli.",
+                    "setupHint": "Run acli jira auth login.",
+                },
+            ],
+        }
+        self.addCleanup(self.patch_cli_requirements.stop)
 
     def test_json_response_suppresses_broken_pipe(self):
         handler_cls = make_handler(Mock())
@@ -96,8 +129,12 @@ class TestServerResponses(unittest.TestCase):
         root_handler.send_response.assert_called_once_with(200)
         orchestrator_handler.send_response.assert_called_once_with(200)
         self.assertIn("cmux harness setup", root_html)
-        self.assertIn("Open orchestrator", root_html)
+        self.assertNotIn("Open orchestrator", root_html)
         self.assertIn("Searching local network and Tailscale", root_html)
+        self.assertIn("Connectivity", root_html)
+        self.assertIn("GitHub CLI", root_html)
+        self.assertIn("Atlassian CLI", root_html)
+        self.assertIn("chevron", root_html)
         self.assertIn('<script src="/orchestrator.js"></script>', orchestrator_html)
 
     def test_network_status_returns_urls_and_cmux_socket_state(self):
@@ -123,6 +160,8 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(body["cmux"]["socketFound"], True)
         self.assertEqual(body["cmux"]["connected"], True)
         self.assertEqual(body["cmux"]["workspaceCount"], 1)
+        self.assertEqual(body["requirements"]["items"][0]["id"], "github")
+        self.assertEqual(body["requirements"]["items"][1]["id"], "atlassian")
 
     def test_network_status_returns_detected_tailscale_url_when_host_not_saved(self):
         self.mock_tailscale_detect.return_value = {
@@ -1169,8 +1208,8 @@ class TestServerResponses(unittest.TestCase):
         with patch("cmux_harness.routes.github.fetch_pr_review_threads") as mock_fetch:
             mock_fetch.return_value = {
                 "cwd": str(workspace_path),
-                "repository": {"owner": "doximity", "name": "cmux-harness", "url": "https://github.com/doximity/cmux-harness"},
-                "pullRequest": {"number": 42, "title": "Ship comments", "url": "https://github.com/doximity/cmux-harness/pull/42"},
+                "repository": {"owner": "example-org", "name": "cmux-harness", "url": "https://github.com/example-org/cmux-harness"},
+                "pullRequest": {"number": 42, "title": "Ship comments", "url": "https://github.com/example-org/cmux-harness/pull/42"},
                 "includeResolved": False,
                 "threads": [],
                 "files": [],

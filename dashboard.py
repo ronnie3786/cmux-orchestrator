@@ -35,7 +35,6 @@ def main():
 
     print(f"⚡ cmux harness home: http://localhost:{port}")
     print(f"   Harness:      http://localhost:{port}/harness")
-    print(f"   Orchestrator: http://localhost:{port}/orchestrator")
     if advertised:
         print("   LAN discovery: Bonjour service _cmux-harness._tcp")
     webbrowser.open(f"http://localhost:{port}")

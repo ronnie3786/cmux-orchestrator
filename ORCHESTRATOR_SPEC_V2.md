@@ -534,11 +534,11 @@ If a worker dies mid-task:
 
 ## Known Implementation Challenges
 
-### Challenge 1: Streaming progress to the chat in real-time
+### Challenge 1: Keeping chat progress current
 
-The chat needs new messages to appear as they happen, not on page refresh. The current harness HTTP server only handles simple request/response polling. For a chat UI, we need either Server-Sent Events (SSE) or WebSocket to push updates to the browser. SSE is simpler and sufficient for one-directional updates (server → browser). This is new plumbing that doesn't exist in the current server.
+The chat needs new messages to appear quickly without a page refresh. The current harness HTTP server handles request/response polling, so the UI should keep using short polling for objective messages and active workspace state.
 
-**Mitigation:** SSE endpoint (`GET /api/events`) that streams new chat messages as they're generated. Browser JS opens an EventSource connection and appends messages to the chat. Fallback: polling `/api/objective/<id>/messages` every 2s for MVP.
+**Mitigation:** Poll `/api/objective/<id>/messages` on a short interval and merge newly returned messages into the chat. Keep the payload append-only so the browser can avoid full rerenders.
 
 ### Challenge 2: Parsing planner output reliably
 
@@ -624,11 +624,11 @@ Ordered by risk reduction — tackle the hardest/most fragile pieces first:
 | **P0** | #2 — Plan parsing reliability | Everything downstream depends on this. If parsing is unreliable, nothing works. Need prompt engineering + validation + testing. | Medium |
 | **P0** | #3 — progress.md compliance | Core progress tracking depends on this. Need fallback signals (git commits, screen activity) for when workers don't update the file. | Medium |
 | **P1** | #7 — Race condition fix | Easy mutex. Prevents rare but hard-to-debug input corruption. | Low |
-| **P1** | #1 — SSE for live chat updates | Required for the chat UI to feel responsive. Can use polling as interim. | Medium |
+| **P1** | #1 — Faster polling and merge logic | Required for the chat UI to feel responsive without changing the transport. | Medium |
 | **P2** | #4 — Chat history persistence | Nice-to-have for MVP. Can start with messages.jsonl append log. | Low |
 | **P2** | #5 — Multi-objective support | MVP works with 1 objective at a time. Add parallelism after core pipeline is proven. | Medium |
 
-**MVP scope:** P0 items + polling-based chat (skip SSE). Get the pipeline working end-to-end with one objective, prove it's reliable, then add polish.
+**MVP scope:** P0 items + polling-based chat. Get the pipeline working end-to-end with one objective, prove it's reliable, then add polish.
 
 ---
 

@@ -29,7 +29,7 @@ Add a build log viewer panel to the orchestrator UI that shows the contents of `
 }
 ```
 
-**Important:** The file can be 2.4MB+. The endpoint MUST NOT load the full file into a list. Use `deque(maxlen=lines)` to stream through the file keeping only the tail.
+**Important:** The file can be 2.4MB+. The endpoint MUST NOT load the full file into a list. Use `deque(maxlen=lines)` to scan through the file keeping only the tail.
 
 **File location in `server.py`:** Add as a new `elif` branch in `do_GET`, right after the action-buttons GET handler. Follow the same pattern (extract objective_id from URL, read objective, 404 if not found).
 

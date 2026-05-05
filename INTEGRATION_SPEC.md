@@ -398,7 +398,7 @@ Each chunk builds on the previous. A is the foundation (message system + state m
 ## What This Spec Does NOT Cover (future work)
 
 - **Chat UI** — The frontend HTML/JS for rendering messages, plan cards, approval cards, progress bars. That's a separate spec (likely a big dashboard.html rewrite or a new page).
-- **SSE/WebSocket for real-time updates** — MVP uses polling `/api/objectives/{id}/messages`. SSE is P1 polish.
+- **Real-time update transport** — MVP uses polling `/api/objectives/{id}/messages`. Keep transport changes out of scope until polling becomes a measured bottleneck.
 - **Multiple concurrent objectives** — MVP supports one active objective at a time.
 - **Objective cancellation** — Stop an in-progress objective, kill workers, clean up worktrees.
 - **Plan editing** — Let Ronnie modify the parsed plan before execution starts.

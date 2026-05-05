@@ -80,74 +80,11 @@ class Orchestrator:
         self._task_last_progress = {}
         self._pending_hook_approvals = set()  # task IDs with unresolved hook escalations
         self._lock = threading.Lock()
-        self._event_cv = threading.Condition()
-        self._event_seq = 0
-        self._events = []
         self._orchestrator_response_pattern = re.compile(r"(?:^|\n)\s*(?:❯(?:\s|$)|[>›](?:\s|$)|Model:)", re.MULTILINE)
         self._reconcile_workspace_state_on_startup()
         self._reconcile_objective_state_on_startup()
         self._idle_sweep_thread = threading.Thread(target=self._idle_sweep, daemon=True)
         self._idle_sweep_thread.start()
-
-    def _publish_event(self, event):
-        if not isinstance(event, dict):
-            return None
-        payload = dict(event)
-        payload.setdefault("timestamp", _utc_now_iso())
-        with self._event_cv:
-            self._event_seq += 1
-            payload["seq"] = self._event_seq
-            self._events.append(payload)
-            if len(self._events) > 1000:
-                self._events = self._events[-1000:]
-            self._event_cv.notify_all()
-        return payload
-
-    def wait_events_after(self, after_seq=0, timeout=15.0, target_type="", target_id=""):
-        try:
-            after_seq = int(after_seq or 0)
-        except (TypeError, ValueError):
-            after_seq = 0
-        target_type = str(target_type or "").strip().lower()
-        target_id = str(target_id or "").strip()
-        deadline = time.time() + max(0.1, float(timeout or 0))
-
-        def _matches(event):
-            if target_type and str(event.get("targetType") or "").lower() != target_type:
-                return False
-            if target_id and str(event.get("targetId") or "") != target_id:
-                return False
-            return True
-
-        with self._event_cv:
-            while True:
-                events = [
-                    dict(event)
-                    for event in self._events
-                    if int(event.get("seq") or 0) > after_seq and _matches(event)
-                ]
-                if events:
-                    return events
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    return []
-                self._event_cv.wait(remaining)
-
-    def _publish_workspace_turn_event(self, workspace_id):
-        if not workspace_id:
-            return
-        try:
-            turn = workspaces.get_active_workspace_turn(workspace_id)
-        except OSError:
-            turn = None
-        self._publish_event(
-            {
-                "kind": "active_turn",
-                "targetType": "workspace",
-                "targetId": str(workspace_id),
-                "turn": turn,
-            }
-        )
 
     def _debug_log_path(self, objective_id):
         return objectives.get_objective_dir(objective_id) / "debug.jsonl"
@@ -217,14 +154,6 @@ class Orchestrator:
             messages = self._messages.setdefault(objective_id, [])
             messages.append(msg)
         self._persist_message(objective_id, msg)
-        self._publish_event(
-            {
-                "kind": "message",
-                "targetType": "objective",
-                "targetId": str(objective_id),
-                "message": msg,
-            }
-        )
         return msg
 
     def _append_workspace_message(self, workspace_id, msg_type, content, metadata=None):
@@ -243,14 +172,6 @@ class Orchestrator:
             workspaces.sync_workspace_conversation_context(workspace_id)
         except (FileNotFoundError, OSError):
             pass
-        self._publish_event(
-            {
-                "kind": "message",
-                "targetType": "workspace",
-                "targetId": str(workspace_id),
-                "message": msg,
-            }
-        )
         return msg
 
     def _format_approval_action(self, action):
@@ -1005,7 +926,6 @@ class Orchestrator:
             )
         except FileNotFoundError:
             return
-        self._publish_workspace_turn_event(workspace_id)
         self._append_workspace_debug(
             workspace_id,
             "error",
@@ -1060,7 +980,6 @@ class Orchestrator:
                 "lastError": "Workspace reply callback timed out.",
             },
         )
-        self._publish_workspace_turn_event(workspace_id)
         self._append_workspace_debug(
             workspace_id,
             "warn",
@@ -1194,8 +1113,6 @@ class Orchestrator:
                             },
                         )
                     workspaces.update_workspace_turn(workspace_id, turn_id, updates)
-                    self._publish_workspace_turn_event(workspace_id)
-
                     # Track consecutive "waiting" cycles with unchanged screen
                     if updates.get("progressState") == "waiting" and snapshot_hash == previous_hash:
                         consecutive_waiting += 1
@@ -1280,7 +1197,6 @@ class Orchestrator:
                 "completedAt": _utc_now_iso(),
             },
         )
-        self._publish_workspace_turn_event(workspace_id)
         workspaces.update_workspace_session(
             workspace_id,
             {
@@ -1657,7 +1573,6 @@ class Orchestrator:
         if workspace is None:
             return
         turn = workspaces.create_workspace_turn(workspace_id, user_message=message)
-        self._publish_workspace_turn_event(workspace_id)
         self._append_workspace_debug(
             workspace_id,
             "info",

@@ -510,7 +510,7 @@ NOT_WAITING = [
     {
         "id": "notwait_04_tool_running",
         "category": "not_waiting",
-        "description": "Claude Code executing a Bash tool (output streaming)",
+        "description": "Claude Code executing a Bash tool with live output",
         "screen": """\
   ⚡ Bash  npm test -- --coverage
 

@@ -12,6 +12,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;background-im
 a{color:inherit}
 .wrap{width:min(1180px,calc(100vw - 34px));margin:0 auto;padding:32px 0 48px;position:relative}
 .hero{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(320px,.88fr);gap:22px;align-items:stretch;margin-top:18px}
+.hero>*{min-width:0}
 .panel{background:linear-gradient(180deg,rgba(22,32,35,.9),rgba(13,19,22,.88));border:1px solid rgba(168,255,212,.16);border-radius:var(--radius);box-shadow:var(--shadow);backdrop-filter:blur(18px)}
 .hero-main{padding:42px;position:relative;overflow:hidden}
 .hero-main::after{content:"";position:absolute;width:280px;height:280px;border-radius:999px;right:-96px;top:-100px;background:conic-gradient(from 130deg,#58d68d,#63c8ff,#f3b862,#58d68d);opacity:.2;filter:blur(.5px)}
@@ -23,7 +24,7 @@ h1{font-size:clamp(40px,7vw,78px);line-height:.92;margin:14px 0 18px;letter-spac
 .btn:hover{transform:translateY(-2px);box-shadow:0 18px 38px rgba(0,0,0,.34);border-color:rgba(88,214,141,.5);background:#1b292c}
 .btn.primary{background:linear-gradient(135deg,#58d68d,#2fbf9f);color:#06100d;border-color:rgba(150,255,205,.62)}
 .btn.blue{background:rgba(99,200,255,.14);border-color:rgba(99,200,255,.34);color:#d9f4ff}
-.status-panel{padding:26px;display:flex;flex-direction:column;gap:14px}
+.status-panel{padding:26px;display:flex;flex-direction:column;gap:14px;min-width:0;overflow:hidden}
 .status-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .status-title h2{font-size:22px;margin:0;letter-spacing:-.03em}
 .pill{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 11px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(168,255,212,.12);font-size:12px;font-weight:800;color:var(--muted)}
@@ -32,10 +33,25 @@ h1{font-size:clamp(40px,7vw,78px);line-height:.92;margin:14px 0 18px;letter-spac
 .dot.warn{background:var(--amber);box-shadow:0 0 0 5px rgba(243,184,98,.12),0 0 22px rgba(243,184,98,.24)}
 .dot.err{background:var(--red);box-shadow:0 0 0 5px rgba(255,107,97,.12),0 0 22px rgba(255,107,97,.24)}
 .dot.loading{width:14px;height:14px;background:transparent;border:2px solid rgba(184,197,189,.22);border-top-color:var(--green);box-shadow:none;animation:spin .76s linear infinite}
-.checks{display:grid;gap:10px}
-.check{display:grid;grid-template-columns:auto 1fr;gap:12px;padding:14px;border-radius:18px;background:rgba(255,255,255,.045);border:1px solid rgba(168,255,212,.09)}
+.checks{display:grid;gap:10px;min-width:0}
+.check{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;padding:14px;border-radius:18px;background:rgba(255,255,255,.045);border:1px solid rgba(168,255,212,.09);min-width:0}
+.check>div{min-width:0}
 .check strong{display:block;font-size:14px;margin-bottom:3px}
-.check span{display:block;color:var(--muted);font-size:13px;line-height:1.35}
+.check span{display:block;color:var(--muted);font-size:13px;line-height:1.35;overflow-wrap:anywhere}
+#requirementsList{display:grid;gap:10px;min-width:0}
+.requirement-card{width:100%;min-width:0;border-radius:18px;background:rgba(255,255,255,.045);border:1px solid rgba(168,255,212,.09);overflow:hidden}
+.requirement-card[open]{background:rgba(5,9,11,.42);border-color:rgba(168,255,212,.18)}
+.requirement-card summary{list-style:none;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:14px;cursor:pointer}
+.requirement-card summary::-webkit-details-marker{display:none}
+.requirement-card summary>div{min-width:0}
+.requirement-card strong{display:block;font-size:14px;margin-bottom:3px}
+.requirement-card span{display:block;color:var(--muted);font-size:13px;line-height:1.35;overflow-wrap:anywhere}
+.chevron{width:18px;height:18px;color:var(--muted);transition:transform .16s ease,color .16s ease}
+.requirement-card[open] .chevron{transform:rotate(180deg);color:var(--ink)}
+.requirement-details{min-width:0;max-width:100%;padding:0 14px 14px 36px;color:var(--muted);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.requirement-details p{margin:0 0 12px;overflow-wrap:anywhere}
+.requirement-details code{color:#d0ecff;white-space:pre-wrap;overflow-wrap:anywhere}
+.diagnostic{max-width:100%;white-space:pre-wrap;overflow:auto;overflow-wrap:anywhere;max-height:140px;margin-top:10px;padding:10px;border-radius:12px;background:rgba(0,0,0,.26);border:1px solid rgba(255,255,255,.08);color:#cbd8d0}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:22px}
 .card{padding:26px}
 .card h2{font-size:25px;margin:0 0 10px;letter-spacing:-.04em}
@@ -72,10 +88,9 @@ input:focus{border-color:rgba(88,214,141,.72);box-shadow:0 0 0 4px rgba(88,214,1
     <div class="hero-main panel">
       <div class="eyebrow">cmux harness setup</div>
       <h1>Get your Mac ready for remote control.</h1>
-      <p class="lede">This home page checks the pieces that matter: the Python server, cmux Automation mode, LAN discovery, and the optional Tailscale URL you can use from outside your local network.</p>
+      <p class="lede">This home page checks the pieces that matter: the Python server, cmux Automation mode, LAN discovery, optional Tailscale access, and the local CLI tools that unlock GitHub and Jira features.</p>
       <div class="actions">
         <a class="btn primary" href="/harness">Open cmux harness</a>
-        <a class="btn blue" href="/orchestrator">Open orchestrator</a>
       </div>
     </div>
 
@@ -100,6 +115,14 @@ input:focus{border-color:rgba(88,214,141,.72);box-shadow:0 0 0 4px rgba(88,214,1
         <div class="check">
           <span class="dot loading" id="tailscaleDot"></span>
           <div><strong>Tailscale</strong><span id="tailscaleStatus">Checking Tailscale status and local interfaces...</span></div>
+        </div>
+        <div id="requirementsList">
+          <details class="requirement-card">
+            <summary><span class="dot loading"></span><div><strong>GitHub CLI</strong><span>Checking gh authentication...</span></div><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M5.2 7.2a1 1 0 0 1 1.4 0L10 10.6l3.4-3.4a1 1 0 1 1 1.4 1.4l-4.1 4.1a1 1 0 0 1-1.4 0L5.2 8.6a1 1 0 0 1 0-1.4Z"/></svg></summary>
+          </details>
+          <details class="requirement-card">
+            <summary><span class="dot loading"></span><div><strong>Atlassian CLI</strong><span>Checking Jira workitem access...</span></div><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M5.2 7.2a1 1 0 0 1 1.4 0L10 10.6l3.4-3.4a1 1 0 1 1 1.4 1.4l-4.1 4.1a1 1 0 0 1-1.4 0L5.2 8.6a1 1 0 0 1 0-1.4Z"/></svg></summary>
+          </details>
         </div>
       </div>
     </aside>
@@ -147,6 +170,7 @@ const els={
   lanStatus:document.getElementById('lanStatus'),
   tailscaleDot:document.getElementById('tailscaleDot'),
   tailscaleStatus:document.getElementById('tailscaleStatus'),
+  requirementsList:document.getElementById('requirementsList'),
   tailscaleHost:document.getElementById('tailscaleHost'),
   saveTailscale:document.getElementById('saveTailscale'),
   urlList:document.getElementById('urlList'),
@@ -164,6 +188,35 @@ function urlRow(label,url){
   return '<div class="url-row"><div><div class="small">'+label+'</div><code>'+escapeHtml(url)+'</code></div><button class="copy" type="button" data-copy="'+escapeHtml(url)+'">Copy</button></div>';
 }
 function escapeHtml(value){return String(value||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]))}
+function requirementKind(item){
+  if(item&&item.ok)return 'ok';
+  return 'err';
+}
+function requirementCard(item,openIds){
+  const id=escapeHtml(item.id||item.command||item.name);
+  const kind=requirementKind(item);
+  const open=openIds.has(String(item.id||''))?' open':'';
+  const version=item.version?'<p><strong>Version:</strong> <code>'+escapeHtml(item.version)+'</code></p>':'';
+  const path=item.path?'<p><strong>Path:</strong> <code>'+escapeHtml(item.path)+'</code></p>':'';
+  const diagnostic=item.diagnostic?'<div class="diagnostic">'+escapeHtml(item.diagnostic)+'</div>':'';
+  return '<details class="requirement-card" data-requirement="'+id+'"'+open+'>'+
+    '<summary><span class="dot '+kind+'"></span><div><strong>'+escapeHtml(item.name||item.command)+'</strong><span>'+escapeHtml(item.summary||'Status unavailable')+'</span></div><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M5.2 7.2a1 1 0 0 1 1.4 0L10 10.6l3.4-3.4a1 1 0 1 1 1.4 1.4l-4.1 4.1a1 1 0 0 1-1.4 0L5.2 8.6a1 1 0 0 1 0-1.4Z"/></svg></summary>'+
+    '<div class="requirement-details">'+
+      '<p><strong>Why this matters:</strong> '+escapeHtml(item.whyRequired||'This local tool unlocks integration features through the server.')+'</p>'+
+      '<p><strong>How to fix:</strong> '+escapeHtml(item.setupHint||'Install and authenticate this CLI, then refresh this page.')+'</p>'+
+      '<p><strong>Diagnostic check:</strong> <code>'+escapeHtml(item.check||item.command||'')+'</code></p>'+
+      version+path+diagnostic+
+    '</div></details>';
+}
+function renderRequirements(requirements){
+  const items=(requirements&&requirements.items)||[];
+  const openIds=new Set(Array.from(document.querySelectorAll('.requirement-card[open]')).map(card=>card.getAttribute('data-requirement')||''));
+  if(!items.length){
+    els.requirementsList.innerHTML='<div class="small">Tooling checks are not available yet.</div>';
+    return;
+  }
+  els.requirementsList.innerHTML=items.map(item=>requirementCard(item,openIds)).join('');
+}
 function renderLoading(){
   dot(els.serverDot,'loading');
   dot(els.serverCheckDot,'loading');
@@ -210,6 +263,7 @@ function render(){
   if(data.tailscaleHost&&urls.detectedTailscaleHarness&&urls.detectedTailscaleHarness!==urls.tailscaleHarness){html+=urlRow('Tailscale detected',urls.detectedTailscaleHarness)}
   if(urls.tailscaleIpHarness&&urls.tailscaleIpHarness!==urls.tailscaleHarness&&urls.tailscaleIpHarness!==urls.detectedTailscaleHarness){html+=urlRow('Tailscale IP fallback',urls.tailscaleIpHarness)}
   els.urlList.innerHTML=html||'<div class="small">No URLs available yet.</div>';
+  renderRequirements(data.requirements);
 }
 async function loadNetwork(){
   if(state.loading)return;

@@ -4,8 +4,10 @@ import json
 import re
 import subprocess
 
+from ..text_sanitizer import clean_external_text
 
-DEFAULT_JIRA_SITE = "doximity.atlassian.net"
+
+DEFAULT_JIRA_SITE = "example.atlassian.net"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 _PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -174,7 +176,7 @@ def normalize_workitems(workitems, *, site: str = DEFAULT_JIRA_SITE):
         if not key or not isinstance(fields, dict):
             continue
 
-        title = str(fields.get("summary") or "").strip()
+        title = clean_external_text(fields.get("summary"))
         status = _field_name(fields.get("status"))
         priority = _field_name(fields.get("priority"))
         issue_type = _field_name(fields.get("issuetype"))

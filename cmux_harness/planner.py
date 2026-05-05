@@ -28,7 +28,7 @@ acli jira workitem {ticket_id}
 
 After reading the ticket, check for:
 
-1. **GraphQL APIs** — if the ticket mentions any GraphQL types, queries, mutations, or schema names, invoke the `dox-graphql` skill (`Skill(skill: "dox-graphql")`) and use it to pull real schema context for those APIs before writing the plan.
+1. **GraphQL APIs** — if the ticket mentions any GraphQL types, queries, mutations, or schema names, use the project-specific GraphQL schema tooling or skill if one is available, and pull real schema context for those APIs before writing the plan.
 
 2. **Figma designs** — if the ticket contains any Figma URLs (figma.com/...), invoke the `figma:figma-use` skill first, then use `mcp__plugin_figma_figma__get_design_context` to fetch design context for each URL.
 

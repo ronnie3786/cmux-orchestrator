@@ -58,7 +58,7 @@ struct HarnessFeature {
         var quickSessionCreation: QuickSessionCreation?
         var pendingCreatedWorkspaceSelection: PendingCreatedWorkspaceSelection?
         var newSessionMode: NewSessionMode = .claude
-        var newSessionProjectPath = "~/Documents/Development/Doximity-Claude"
+        var newSessionProjectPath = "~/Documents/Development/sample-app"
         var newSessionBranchName = ""
         var newSessionJiraURL = ""
         var newSessionPrompt = ""

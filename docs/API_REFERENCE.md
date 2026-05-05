@@ -482,7 +482,7 @@ These are methods on `HarnessEngine` and helper modules that run server-side.
 | **Pinned status** | `workspace.list` → `pinned` | User intent signal |
 | **Notifications** | `notification.list` | Claude Code "Waiting" notifications with structured data |
 | **Hooks** | `set-hook` / `claude-hook` | Event-driven triggers instead of polling |
-| **Pipe pane** | `pipe-pane --command <cmd>` | Stream terminal output to a process in real-time |
+| **Pipe pane** | `pipe-pane --command <cmd>` | Send terminal output to a process as it changes |
 | **find-window** | `cmux find-window --content <query>` | Search terminal content across all workspaces |
 | **Workspace creation** | `cmux new-workspace --name <t> --cwd <p> --command <c>` | One-shot workspace creation with full config (vs our multi-step v2 flow) |
 | **Notifications (create)** | `notification.create` | Push notifications to specific workspaces |
@@ -507,9 +507,9 @@ These fire on Claude Code lifecycle events. Could replace our polling-based `has
 
 Register shell commands to run on cmux events. Could trigger harness actions without polling.
 
-### `cmux pipe-pane` (streaming output)
+### `cmux pipe-pane` (live output)
 
-Pipes terminal output to a shell command in real-time. Could feed a persistent process that logs or analyzes terminal output as it happens, rather than snapshot-based polling.
+Pipes terminal output to a shell command as it happens. Could feed a persistent process that logs or analyzes terminal output, rather than snapshot-based polling.
 
 ### `cmux read-screen --scrollback --lines N`
 

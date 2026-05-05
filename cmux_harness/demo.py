@@ -270,10 +270,10 @@ class DemoSessionState:
             ),
             self._workspace(
                 index=2,
-                name="Doximity Claude",
+                name="Example Mobile App",
                 custom_name="Apple review checklist",
                 branch="qa/apple-review",
-                cwd="/Users/demo/Code/doximity-ios",
+                cwd="/Users/demo/Code/example-ios",
                 auto_mode="off",
                 starred=False,
                 git_dirty=False,

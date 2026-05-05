@@ -1178,7 +1178,7 @@ class TestReviewRework(unittest.TestCase):
         self._create_task_files(
             objective["id"],
             "task-1",
-            result_text="Created IOSDOX-25752 and linked it to the branch.",
+            result_text="Created APP-25752 and linked it to the branch.",
             contract_text="""## Acceptance Criteria
 1. The Jira ticket exists with the requested metadata and links.
 
@@ -1202,7 +1202,7 @@ class TestReviewRework(unittest.TestCase):
                         {
                             "criterion": "The Jira ticket exists with the requested metadata and links.",
                             "result": "pass",
-                            "evidence": "IOSDOX-25752 was created and linked correctly.",
+                            "evidence": "APP-25752 was created and linked correctly.",
                         }
                     ],
                     "issues": [],

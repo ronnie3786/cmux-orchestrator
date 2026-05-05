@@ -15,6 +15,7 @@ import uuid
 
 from . import attachments
 from . import cmux_api
+from . import dependencies
 from . import objectives
 from . import push_notifications
 from . import workspaces
@@ -241,56 +242,6 @@ def make_handler(engine):
                 return False
             return True
 
-        def _serve_events(self, parsed):
-            params = urllib.parse.parse_qs(parsed.query)
-            target_type = params.get("targetType", [""])[0]
-            target_id = params.get("targetId", [""])[0]
-            try:
-                after = int(params.get("after", ["0"])[0] or 0)
-            except (TypeError, ValueError):
-                after = 0
-            if after <= 0:
-                try:
-                    after = int(self.headers.get("Last-Event-ID", "0") or 0)
-                except (TypeError, ValueError):
-                    after = 0
-
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Connection", "keep-alive")
-                self.send_header("X-Accel-Buffering", "no")
-                self.end_headers()
-                self.wfile.write(b": connected\n\n")
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                return False
-
-            while True:
-                try:
-                    events = self.server.engine.orchestrator.wait_events_after(
-                        after,
-                        timeout=15.0,
-                        target_type=target_type,
-                        target_id=target_id,
-                    )
-                    if not events:
-                        self.wfile.write(b": heartbeat\n\n")
-                        self.wfile.flush()
-                        continue
-                    for event in events:
-                        after = max(after, int(event.get("seq") or 0))
-                        body = json.dumps(event).encode("utf-8")
-                        self.wfile.write(f"id: {after}\n".encode("utf-8"))
-                        self.wfile.write(f"event: {event.get('kind') or 'message'}\n".encode("utf-8"))
-                        self.wfile.write(b"data: ")
-                        self.wfile.write(body)
-                        self.wfile.write(b"\n\n")
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    return False
-
         def _network_payload(self):
             port = int(getattr(self.server, "server_address", ("", 9091))[1] or 9091)
             lan_addresses = _server_lan_addresses()
@@ -341,6 +292,7 @@ def make_handler(engine):
                     "workspaceCount": len(status.get("workspaces") or []),
                     "staleData": bool(status.get("staleData")),
                 },
+                "requirements": dependencies.check_cli_requirements(),
             }
 
         def do_GET(self):
@@ -350,8 +302,6 @@ def make_handler(engine):
                 return
             if path == "/api/network":
                 self._json_response(self._network_payload())
-            elif path == "/api/events":
-                self._serve_events(parsed)
             elif path == "/api/status":
                 self._json_response(engine.get_status())
             elif path == "/api/log":
@@ -1080,7 +1030,7 @@ def make_handler(engine):
                     return
                 self._json_response({"ok": True})
             elif path == "/api/new-session":
-                project_path = data.get("projectPath", "~/Documents/Development/Doximity-Claude")
+                project_path = data.get("projectPath", "~/Documents/Development/sample-app")
                 branch_name = data.get("branchName", "")
                 jira_url = data.get("jiraUrl", "")
                 prompt = data.get("prompt", "")

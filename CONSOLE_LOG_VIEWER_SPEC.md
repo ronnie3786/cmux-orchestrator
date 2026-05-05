@@ -2,7 +2,7 @@
 
 ## Overview
 
-Add a console/runtime log viewer to the orchestrator UI that lets the user browse and filter live simulator logs from the app. When `exp-project-run --console` runs (e.g. via the "Build & Run" action button), it streams logs to `.build/logs/<sim-name>.log` on disk — always **unfiltered**. This viewer reads those files and applies server-side filtering so the user can slice through thousands of log lines from the browser.
+Add a console/runtime log viewer to the orchestrator UI that lets the user browse and filter live simulator logs from the app. When `exp-project-run --console` runs (e.g. via the "Build & Run" action button), it writes logs to `.build/logs/<sim-name>.log` on disk — always **unfiltered**. This viewer reads those files and applies server-side filtering so the user can slice through thousands of log lines from the browser.
 
 This is distinct from the **build log viewer** (which shows xcodebuild output from `.build/build.log`). The console log viewer shows **runtime app logs** — analytics events, network requests, errors, messaging activity, etc.
 

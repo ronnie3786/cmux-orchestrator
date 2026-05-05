@@ -653,9 +653,9 @@ struct HarnessFeatureTests {
             HarnessFeature()
         }
 
-        await store.send(.newSessionJiraChanged("https://doximity.atlassian.net/browse/iosdox-24180")) {
-            $0.newSessionJiraURL = "https://doximity.atlassian.net/browse/iosdox-24180"
-            $0.newSessionBranchName = "IOSDOX-24180"
+        await store.send(.newSessionJiraChanged("https://example.atlassian.net/browse/app-24180")) {
+            $0.newSessionJiraURL = "https://example.atlassian.net/browse/app-24180"
+            $0.newSessionBranchName = "APP-24180"
         }
     }
 
@@ -784,10 +784,10 @@ struct HarnessFeatureTests {
             Please address this GitHub PR review thread:
 
             PR: #42 Ship comments
-            PR URL: https://github.com/doximity/cmux-harness/pull/42
+            PR URL: https://github.com/example-org/cmux-harness/pull/42
             File: Sources/App.swift
             Line: Line 18
-            Thread URL: https://github.com/doximity/cmux-harness/pull/42#discussion_r18
+            Thread URL: https://github.com/example-org/cmux-harness/pull/42#discussion_r18
 
             Referenced code:
             ```
@@ -975,25 +975,25 @@ struct HarnessFeatureTests {
     func jiraLookupResolvesAnyKeyAndInsertsCompactMetadata() async {
         let workspace = Self.workspace()
         let ticket = JiraTicket(
-            key: "FINDER-42",
-            projectKey: "FINDER",
+            key: "WEB-42",
+            projectKey: "WEB",
             title: "Support exact Jira lookup",
             status: "In Progress",
             priority: "High",
             issueType: "Story",
-            url: "https://doximity.atlassian.net/browse/FINDER-42"
+            url: "https://example.atlassian.net/browse/WEB-42"
         )
         var state = Self.initialState()
         state.workspaces = [workspace]
         state.selectedWorkspaceID = workspace.id
         state.detailDraft = "Existing context."
         state.isShowingJiraTickets = true
-        state.jiraLookupQuery = "https://doximity.atlassian.net/browse/finder-42"
+        state.jiraLookupQuery = "https://example.atlassian.net/browse/web-42"
         var client = HarnessClient.unimplemented
         client.jiraTicket = { baseURLString, query in
             #expect(baseURLString == Self.baseURL)
-            #expect(query == "https://doximity.atlassian.net/browse/finder-42")
-            return JiraTicketResponse(ok: true, site: "doximity.atlassian.net", ticket: ticket, error: nil)
+            #expect(query == "https://example.atlassian.net/browse/web-42")
+            return JiraTicketResponse(ok: true, site: "example.atlassian.net", ticket: ticket, error: nil)
         }
 
         let store = TestStore(initialState: state) {
@@ -1010,15 +1010,15 @@ struct HarnessFeatureTests {
         await store.receive(\.jiraTicketResolved) {
             $0.isResolvingJiraTicket = false
             $0.resolvedJiraTicket = ticket
-            $0.jiraLookupQuery = "FINDER-42"
+            $0.jiraLookupQuery = "WEB-42"
         }
         await store.send(.appendJiraTicketReference(ticket)) {
             $0.detailDraft = """
             Existing context.
 
-            Jira: FINDER-42
+            Jira: WEB-42
             Title: Support exact Jira lookup
-            URL: https://doximity.atlassian.net/browse/FINDER-42
+            URL: https://example.atlassian.net/browse/WEB-42
             Status: In Progress
             Priority: High
             Type: Story
@@ -1041,29 +1041,29 @@ struct HarnessFeatureTests {
         let workspace = Self.workspace()
         let tickets = [
             JiraTicket(
-                key: "FINDER-42",
-                projectKey: "FINDER",
+                key: "WEB-42",
+                projectKey: "WEB",
                 title: "Finder work",
                 status: "In Progress",
                 priority: "High",
                 issueType: "Bug",
-                url: "https://doximity.atlassian.net/browse/FINDER-42"
+                url: "https://example.atlassian.net/browse/WEB-42"
             ),
             JiraTicket(
-                key: "IOSDOX-10",
-                projectKey: "IOSDOX",
+                key: "APP-10",
+                projectKey: "APP",
                 title: "iOS work",
                 status: "Selected for Development",
                 priority: "Low",
                 issueType: "Story",
-                url: "https://doximity.atlassian.net/browse/IOSDOX-10"
+                url: "https://example.atlassian.net/browse/APP-10"
             ),
         ]
         let response = JiraTicketsResponse(
             ok: true,
             project: nil,
-            projects: ["FINDER", "IOSDOX"],
-            site: "doximity.atlassian.net",
+            projects: ["APP", "WEB"],
+            site: "example.atlassian.net",
             tickets: tickets,
             error: nil
         )
@@ -1176,14 +1176,14 @@ struct HarnessFeatureTests {
             ok: true,
             cwd: "/Users/ronnie/Code/cmux",
             repository: GitHubRepository(
-                owner: "doximity",
+                owner: "example-org",
                 name: "cmux-harness",
-                url: "https://github.com/doximity/cmux-harness"
+                url: "https://github.com/example-org/cmux-harness"
             ),
             pullRequest: GitHubPullRequest(
                 number: 42,
                 title: "Ship comments",
-                url: "https://github.com/doximity/cmux-harness/pull/42",
+                url: "https://github.com/example-org/cmux-harness/pull/42",
                 headRefName: "feature/pr-comments",
                 baseRefName: "main",
                 state: "OPEN",
@@ -1215,7 +1215,7 @@ struct HarnessFeatureTests {
             subjectType: "LINE",
             isResolved: false,
             isOutdated: false,
-            url: "https://github.com/doximity/cmux-harness/pull/42#discussion_r18",
+            url: "https://github.com/example-org/cmux-harness/pull/42#discussion_r18",
             codeContext: GitHubPRCodeContext(
                 path: "Sources/App.swift",
                 source: "workspace",
@@ -1235,7 +1235,7 @@ struct HarnessFeatureTests {
                     bodyText: "Use the new helper.",
                     createdAt: "2026-04-29T12:00:00Z",
                     updatedAt: "2026-04-29T12:00:00Z",
-                    url: "https://github.com/doximity/cmux-harness/pull/42#discussion_r18",
+                    url: "https://github.com/example-org/cmux-harness/pull/42#discussion_r18",
                     diffHunk: "@@ -1 +1 @@",
                     path: "Sources/App.swift",
                     line: 18,

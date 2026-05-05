@@ -6,6 +6,8 @@ import re
 import subprocess
 from typing import Any
 
+from ..text_sanitizer import clean_external_text
+
 
 DEFAULT_TIMEOUT_SECONDS = 20
 MAX_THREAD_PAGES = 20
@@ -104,7 +106,7 @@ def fetch_pr_review_threads(cwd: str, *, include_resolved: bool = False) -> dict
         },
         "pullRequest": {
             "number": number,
-            "title": str(pr.get("title") or ""),
+            "title": clean_external_text(pr.get("title")),
             "url": str(pr.get("url") or ""),
             "headRefName": str(pr.get("headRefName") or ""),
             "baseRefName": str(pr.get("baseRefName") or ""),
@@ -302,14 +304,15 @@ def _comment_nodes(node: dict[str, Any]) -> list[Any]:
 def _normalize_comment(comment: Any) -> dict[str, Any] | None:
     if not isinstance(comment, dict):
         return None
-    body = str(comment.get("body") or comment.get("bodyText") or "").strip()
+    body = clean_external_text(comment.get("body") or comment.get("bodyText"))
     if not body:
         return None
+    body_text = clean_external_text(comment.get("bodyText") or body)
     return {
         "id": str(comment.get("id") or ""),
         "author": _author_login(comment.get("author")),
         "body": body,
-        "bodyText": str(comment.get("bodyText") or body).strip(),
+        "bodyText": body_text,
         "createdAt": str(comment.get("createdAt") or ""),
         "updatedAt": str(comment.get("updatedAt") or ""),
         "url": str(comment.get("url") or ""),

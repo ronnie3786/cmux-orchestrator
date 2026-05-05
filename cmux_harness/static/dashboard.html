@@ -864,8 +864,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
       </div>
       <input class="settings-select" id="settingsCwd" type="text"
         style="width:100%;min-width:0;font-family:inherit"
-        placeholder="~/Documents/Development/Doximity-Claude"
-        onchange="defaultCwd=this.value.trim()||'~/Documents/Development/Doximity-Claude'">
+        placeholder="~/Documents/Development/sample-app"
+        onchange="defaultCwd=this.value.trim()||'~/Documents/Development/sample-app'">
     </div>
   </div>
 </div>
@@ -917,7 +917,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     <div class="ns-row">
       <div class="ns-label">Project</div>
       <select class="ns-select" id="nsProject">
-        <option value="~/Documents/Development/Doximity-Claude">Doximity-Claude</option>
+        <option value="~/Documents/Development/sample-app">sample-app</option>
         <option value="~/Documents/Development/claude-code-tools">claude-code-tools</option>
       </select>
     </div>
@@ -925,13 +925,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     <div class="ns-row">
       <div class="ns-label">JIRA Ticket URL <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
       <div class="ns-sublabel">Extracts ticket key for branch name</div>
-      <input class="ns-input" id="nsJiraUrl" type="text" placeholder="https://doximity.atlassian.net/browse/IOSDOX-..." oninput="onNsJiraInput()" autocomplete="off">
+      <input class="ns-input" id="nsJiraUrl" type="text" placeholder="https://example.atlassian.net/browse/APP-..." oninput="onNsJiraInput()" autocomplete="off">
     </div>
 
     <div class="ns-row">
       <div class="ns-label">Branch Name <span id="nsBranchReq" style="color:var(--red);font-weight:400;display:none">(required)</span></div>
       <div class="ns-sublabel">Git worktree branch &mdash; auto-filled from JIRA key</div>
-      <input class="ns-input" id="nsBranchName" type="text" placeholder="e.g. IOSDOX-24180" oninput="onNsBranchInput()" autocomplete="off">
+      <input class="ns-input" id="nsBranchName" type="text" placeholder="e.g. APP-24180" oninput="onNsBranchInput()" autocomplete="off">
     </div>
 
     <div class="ns-row">
@@ -967,7 +967,7 @@ var CONSOLE_LOG_PRESETS=[
   {id:'analytics_names',label:'Analytics names only',pattern:'Track analytics event:|Screen analytics event:'},
   {id:'network',label:'Network',pattern:'Starting fetch|Starting mutation|Result of fetch|Result of mutation'},
   {id:'errors',label:'Errors',pattern:' E '},
-  {id:'graphql',label:'GraphQL',pattern:'\\(doxx:GraphQL\\)'},
+  {id:'graphql',label:'GraphQL',pattern:'\\(app:GraphQL\\)'},
   {id:'messaging',label:'Messaging',pattern:'MessagingConversation:'},
   {id:'custom',label:'Custom',pattern:null}
 ];
@@ -3538,7 +3538,7 @@ window.saveSetting=function(key,val){
 };
 
 // ─── New session ───
-var defaultCwd='~/Documents/Development/Doximity-Claude';
+var defaultCwd='~/Documents/Development/sample-app';
 window.newSession=function(){
   openNewSession();
 };

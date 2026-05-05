@@ -5,7 +5,7 @@
     { id: 'analytics_names', label: 'Analytics names only', pattern: 'Track analytics event:|Screen analytics event:' },
     { id: 'network', label: 'Network', pattern: 'Starting fetch|Starting mutation|Result of fetch|Result of mutation' },
     { id: 'errors', label: 'Errors', pattern: ' E ' },
-    { id: 'graphql', label: 'GraphQL', pattern: '\\(doxx:GraphQL\\)' },
+    { id: 'graphql', label: 'GraphQL', pattern: '\\(app:GraphQL\\)' },
     { id: 'messaging', label: 'Messaging', pattern: 'MessagingConversation:' },
     { id: 'custom', label: 'Custom', pattern: null }
   ];
@@ -110,9 +110,6 @@
     pendingCreate: false,
     pendingSend: false,
     chatDropDepth: 0,
-    eventSource: null,
-    eventTargetKey: '',
-    lastEventSeq: 0,
     pollers: {
       objectives: null,
       messages: null,
@@ -963,73 +960,6 @@
     if (state.activeWorkspaceId) return { kind: 'workspace', id: state.activeWorkspaceId };
     if (state.activeObjectiveId) return { kind: 'objective', id: state.activeObjectiveId };
     return null;
-  }
-
-  function currentTargetKey() {
-    const target = currentActiveTarget();
-    return target ? (target.kind + ':' + target.id) : '';
-  }
-
-  function closeEventStream() {
-    if (state.eventSource) {
-      state.eventSource.close();
-      state.eventSource = null;
-    }
-    state.eventTargetKey = '';
-  }
-
-  function applyRealtimeEvent(event) {
-    if (!event || typeof event !== 'object') return;
-    const seq = Number(event.seq || 0);
-    if (seq > state.lastEventSeq) state.lastEventSeq = seq;
-    const target = currentActiveTarget();
-    if (!target) return;
-    if (String(event.targetType || '') !== target.kind || String(event.targetId || '') !== String(target.id)) return;
-    if (event.kind === 'message' && event.message) {
-      state.messages = mergeIncomingMessages(state.messages, [event.message]);
-      const last = state.messages[state.messages.length - 1];
-      state.lastMessageTimestamp = last ? last.timestamp : null;
-      state.typing = false;
-      renderMessages();
-    } else if (event.kind === 'active_turn') {
-      state.activeWorkspaceTurn = event.turn && typeof event.turn === 'object' ? event.turn : null;
-      if (state.activeWorkspaceTurn) state.typing = false;
-      renderMessages();
-      renderInputState();
-    }
-  }
-
-  function handleRealtimeMessage(messageEvent) {
-    try {
-      applyRealtimeEvent(JSON.parse(messageEvent.data || '{}'));
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
-  function connectEventStream() {
-    if (!window.EventSource) return;
-    const target = currentActiveTarget();
-    const key = currentTargetKey();
-    if (!target) {
-      closeEventStream();
-      return;
-    }
-    if (state.eventSource && state.eventTargetKey === key) return;
-    closeEventStream();
-    const query = [
-      'targetType=' + encodeURIComponent(target.kind),
-      'targetId=' + encodeURIComponent(target.id),
-      'after=' + encodeURIComponent(String(state.lastEventSeq || 0))
-    ].join('&');
-    const source = new EventSource('/api/events?' + query);
-    source.addEventListener('message', handleRealtimeMessage);
-    source.addEventListener('active_turn', handleRealtimeMessage);
-    source.onerror = () => {
-      // EventSource reconnects automatically. Existing polling remains as fallback.
-    };
-    state.eventSource = source;
-    state.eventTargetKey = key;
   }
 
   function currentTargetApiBase() {
@@ -5019,7 +4949,6 @@
   }
 
   function render() {
-    connectEventStream();
     renderSidebar();
     renderContext();
     renderBuildLog();
@@ -5165,7 +5094,6 @@
     resetBuildLogState();
     resetConsoleLogState();
     resetStatusSummaryState();
-    connectEventStream();
     await Promise.all([
       pollActiveObjective(false),
       pollMessages(false)
@@ -5232,7 +5160,6 @@
     resetStatusSummaryState();
     if (!state.activeWorkspaceId) {
       state.activeWorkspace = null;
-      closeEventStream();
       if (forceAll) render();
       return;
     }
@@ -5241,7 +5168,6 @@
     if (state.activeWorkspace && state.activeWorkspace.projectId) {
       state.projectExpansion = Object.assign({}, state.projectExpansion, { [state.activeWorkspace.projectId]: true });
     }
-    connectEventStream();
     await Promise.all([
       pollMessages(false),
       pollActiveWorkspaceTurn(false),
@@ -5647,7 +5573,7 @@
     {
       target: 'contextStrip',
       title: 'Context Strip',
-      body: 'Shows the current item\u2019s status, branch, and quick actions. The Git button opens diffs, Status shows a task summary, and Build Log / Console Log stream live output.',
+      body: 'Shows the current item\u2019s status, branch, and quick actions. The Git button opens diffs, Status shows a task summary, and Build Log / Console Log show live output.',
       side: 'bottom'
     },
     {

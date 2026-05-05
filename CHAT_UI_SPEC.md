@@ -6,7 +6,7 @@
 
 ## Overview
 
-Replace the current `dashboard.html` (2363-line session monitoring view) with a **chat-first orchestrator UI**. The user gives goals in natural language, sees live progress as structured cards in a chat timeline, and can intervene at any point. Think "ChatGPT meets CI dashboard" — conversational input, structured output.
+Replace the current `dashboard.html` (2363-line session monitoring view) with a **chat-first orchestrator UI**. The user gives goals in natural language, sees live progress as structured cards in a chat timeline, and can intervene at any point. Think conversational control meets CI dashboard: natural-language input, structured output.
 
 **Design reference:** `mockups/option-e-cowork.html` — this is the approved visual direction. Match its layout, colors, typography, and card designs exactly.
 
@@ -209,7 +209,7 @@ Fonts: Inter (UI) + JetBrains Mono (code/status)
 |--------|------|---------|
 | `GET` | `/api/objectives` | List all objectives |
 | `GET` | `/api/objectives/{id}` | Get single objective with tasks |
-| `GET` | `/api/objectives/{id}/messages` | Get message stream (supports `?after=` for incremental) |
+| `GET` | `/api/objectives/{id}/messages` | Get message list (supports `?after=` for incremental polling) |
 | `GET` | `/api/objectives/{id}/tasks/{taskId}/screen` | Get worker terminal screen |
 | `POST` | `/api/objectives` | Create objective `{ goal, projectDir, baseBranch }` |
 | `POST` | `/api/objectives/{id}/start` | Start the pipeline |
