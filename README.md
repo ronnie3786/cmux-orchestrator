@@ -20,7 +20,7 @@ This project is in active development. The main supported workflow today is the 
 - A local server that talks to cmux through the cmux Automation socket.
 - A setup homepage at `http://localhost:9091/` that checks server, cmux, LAN, Tailscale, GitHub CLI, and Atlassian CLI readiness.
 - A harness dashboard at `http://localhost:9091/harness` for live session monitoring and controls.
-- An iOS app that connects to the same local server over LAN or Tailscale.
+- An iOS app that connects to the same local server over LAN or Tailscale, with a local demo mode for trying the mobile UI without a Mac server.
 - Git status/diff views, PR comment lookup, Jira ticket lookup, file references, attachment upload, and prompt helpers.
 
 ## Requirements
@@ -133,14 +133,22 @@ Keep `python3 dashboard.py` running while using the dashboard or iOS app.
 
 ## Run The iOS App Locally
 
+Open `cmux-harness-ios/cmux-harness-ios.xcodeproj` in Xcode, select the `cmux-harness-ios` scheme, choose an iOS simulator or physical iPhone, then run the app. Configure signing if you are using a real device.
+
+### Try Local Demo Mode
+
+On the setup screen, tap **Start Local Demo** to explore the iOS app without starting `dashboard.py` or connecting to a Mac.
+
+Local demo mode runs entirely inside the iOS app. It uses simulated cmux sessions, terminal output, Git status and diffs, GitHub PR comments, Jira tickets, file search, skills, attachments, and prompt flows. No commands are sent to your Mac, and no network server is required.
+
+While demo mode is active, the app shows a **Local Demo Mode** banner. Tap **Connect Real Server** from that banner, the session list, or Settings to leave demo mode and return to server discovery.
+
+### Connect To Your Mac Server
+
 1. Start the server with `python3 dashboard.py`.
 2. Confirm the homepage at `http://localhost:9091/` shows the harness server and cmux socket as healthy.
-3. Open `cmux-harness-ios/cmux-harness-ios.xcodeproj` in Xcode.
-4. Select the `cmux-harness-ios` scheme.
-5. Select an iOS simulator or a physical iPhone.
-6. Configure signing if using a real device.
-7. Run the app.
-8. Allow Local Network access when iOS prompts for it.
+3. Run the iOS app.
+4. Allow Local Network access when iOS prompts for it.
 
 On first launch, enter or discover the server URL. Use:
 
