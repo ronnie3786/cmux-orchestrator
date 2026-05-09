@@ -21,6 +21,22 @@ func persistDetailDraft(_ state: inout HarnessFeature.State) {
     HarnessSettingsStore.detailDrafts = state.detailDrafts
 }
 
+func feedItem(_ item: FeedItem, matches workspace: Workspace) -> Bool {
+    let workspaceID = trimmedNonEmpty(item.workspaceID)
+    let surfaceID = trimmedNonEmpty(item.surfaceID)
+    if let workspaceID, workspaceID == workspace.uuid || workspaceID == workspace.id {
+        return true
+    }
+    if let surfaceID, surfaceID == workspace.surfaceId {
+        return true
+    }
+    return false
+}
+
+func feedItems(for workspace: Workspace, in state: HarnessFeature.State) -> [FeedItem] {
+    state.feedItems.filter { feedItem($0, matches: workspace) }
+}
+
 func jiraKey(from value: String) -> String? {
     let pattern = #"([A-Z]+-\d+)"#
     guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {

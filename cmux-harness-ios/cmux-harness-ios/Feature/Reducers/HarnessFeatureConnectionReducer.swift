@@ -89,7 +89,8 @@ extension HarnessFeature {
                     do {
                         async let status = client.status(baseURLString)
                         async let log = client.log(baseURLString)
-                        let payload = try await RefreshPayload(status: status, log: log)
+                        let feed = FeedResponse(ok: true, items: [], error: nil)
+                        let payload = try await RefreshPayload(status: status, log: log, feed: feed)
                         await send(.refreshSucceeded(payload))
                     } catch {
                         await send(.refreshFailed(HarnessAPI.message(for: error)))
@@ -102,6 +103,7 @@ extension HarnessFeature {
                 state.status = payload.status
                 state.workspaces = payload.status.workspaces
                 state.logEntries = payload.log
+                state.feedItems = payload.feed.items
                 state.lastUpdated = self.now
                 trimDrafts(&state)
                 if let pendingPushApproval = state.pendingPushApproval,
@@ -306,6 +308,21 @@ extension HarnessFeature {
             case .clearError:
                 state.errorMessage = nil
                 state.serverSetupError = nil
+                return .none
+
+            case let .replyToFeed(requestID, kind, action, mode, selections):
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString] send in
+                    do {
+                        _ = try await client.replyToFeed(baseURLString, requestID, kind, action, mode, selections)
+                        await send(.feedReplySucceeded(requestID))
+                        await send(.refresh)
+                    } catch {
+                        await send(.requestFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+
+            case let .feedReplySucceeded(requestID):
+                state.feedItems.removeAll { $0.requestID == requestID }
                 return .none
 
         default:

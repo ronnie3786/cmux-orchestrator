@@ -40,6 +40,7 @@ struct HarnessFeature {
         var status: HarnessStatus?
         var workspaces: [Workspace] = []
         var logEntries: [LogEntry] = []
+        var feedItems: [FeedItem] = []
         var isRefreshing = false
         var lastUpdated: Date?
         var errorMessage: String?
@@ -123,7 +124,7 @@ struct HarnessFeature {
         var visibleWorkspaces: [Workspace] {
             let searchText = sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
             return sortedWorkspaces.filter { workspace in
-                sessionFilter.includes(workspace, entries: logEntries)
+                sessionFilterIncludes(workspace)
                 && (searchText.isEmpty || workspace.matchesSearch(searchText))
             }
         }
@@ -154,11 +155,22 @@ struct HarnessFeature {
         }
 
         func sessionState(for workspace: Workspace) -> WorkspaceSessionState {
-            workspaceSessionState(for: workspace, entries: logEntries)
+            return workspaceSessionState(for: workspace, entries: logEntries)
         }
 
         func latestLog(for workspace: Workspace) -> LogEntry? {
             latestRelevantLog(for: workspace, entries: logEntries)
+        }
+
+        private func sessionFilterIncludes(_ workspace: Workspace) -> Bool {
+            switch sessionFilter {
+            case .all:
+                return true
+            case .needsYou:
+                return sessionState(for: workspace) == .waiting
+            case .auto:
+                return workspace.resolvedAutoMode.isEnabled
+            }
         }
     }
 
@@ -181,6 +193,8 @@ struct HarnessFeature {
         case tailscaleProbeSucceeded(String)
         case tailscaleProbeFailed(String)
         case clearError
+        case replyToFeed(requestID: String, kind: String, action: String?, mode: String?, selections: [String]?)
+        case feedReplySucceeded(String)
 
         case settingsButtonTapped
         case dismissSettings
@@ -282,7 +296,9 @@ struct HarnessFeature {
                  .probeTailscaleHostTapped,
                  .tailscaleProbeSucceeded(_),
                  .tailscaleProbeFailed(_),
-                 .clearError:
+                 .clearError,
+                 .replyToFeed(requestID: _, kind: _, action: _, mode: _, selections: _),
+                 .feedReplySucceeded(_):
                 return reduceConnection(into: &state, action: action)
 
             case .settingsButtonTapped,

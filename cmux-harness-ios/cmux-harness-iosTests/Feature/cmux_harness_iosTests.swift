@@ -91,7 +91,7 @@ struct HarnessFeatureTests {
             $0.date.now = updatedAt
         }
 
-        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: []))) {
+        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: [], feed: FeedResponse(ok: true, items: [], error: nil)))) {
             $0.status = status
             $0.workspaces = [refreshedWorkspace]
             $0.logEntries = []
@@ -131,7 +131,7 @@ struct HarnessFeatureTests {
             $0.date.now = updatedAt
         }
 
-        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: []))) {
+        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: [], feed: FeedResponse(ok: true, items: [], error: nil)))) {
             $0.status = status
             $0.workspaces = [remainingWorkspace]
             $0.logEntries = []

@@ -59,6 +59,14 @@ struct PushApprovalClearRequest: Encodable {
     var surfaceID: String
 }
 
+struct FeedReplyRequest: Encodable {
+    var requestID: String
+    var kind: String
+    var action: String?
+    var mode: String?
+    var selections: [String]?
+}
+
 struct AnyEncodable: Encodable {
     private let encodeValue: (Encoder) throws -> Void
 

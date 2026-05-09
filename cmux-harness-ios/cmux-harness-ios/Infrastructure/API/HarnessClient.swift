@@ -14,6 +14,8 @@ struct HarnessClient: Sendable {
     var probeServer: @Sendable (String) async -> Bool
     var status: @Sendable (String) async throws -> HarnessStatus
     var log: @Sendable (String) async throws -> [LogEntry]
+    var feed: @Sendable (String) async throws -> FeedResponse
+    var replyToFeed: @Sendable (String, String, String, String?, String?, [String]?) async throws -> BasicResponse
     var screen: @Sendable (String, Int, Int) async throws -> ScreenResponse
     var setGlobalEnabled: @Sendable (String, Bool) async throws -> BasicResponse
     var setWorkspaceEnabled: @Sendable (String, Int, Bool) async throws -> BasicResponse
@@ -80,6 +82,25 @@ extension HarnessClient {
                     return await demoStore.log()
                 }
                 return try await HarnessAPI.log(baseURLString: baseURLString)
+            },
+            feed: { baseURLString in
+                if HarnessLocalDemo.isDemoURL(baseURLString) {
+                    return await demoStore.feed()
+                }
+                return try await HarnessAPI.feed(baseURLString: baseURLString)
+            },
+            replyToFeed: { baseURLString, requestID, kind, action, mode, selections in
+                if HarnessLocalDemo.isDemoURL(baseURLString) {
+                    return await demoStore.replyToFeed(requestID: requestID)
+                }
+                return try await HarnessAPI.replyToFeed(
+                    baseURLString: baseURLString,
+                    requestID: requestID,
+                    kind: kind,
+                    action: action,
+                    mode: mode,
+                    selections: selections
+                )
             },
             screen: { baseURLString, index, lines in
                 if HarnessLocalDemo.isDemoURL(baseURLString) {
@@ -271,6 +292,8 @@ extension HarnessClient {
             probeServer: { HarnessLocalDemo.isDemoURL($0) },
             status: { _ in await store.status() },
             log: { _ in await store.log() },
+            feed: { _ in await store.feed() },
+            replyToFeed: { _, requestID, _, _, _, _ in await store.replyToFeed(requestID: requestID) },
             screen: { _, index, lines in await store.screen(index: index, lines: lines) },
             setGlobalEnabled: { _, enabled in await store.setGlobalEnabled(enabled) },
             setWorkspaceEnabled: { _, index, enabled in await store.setWorkspaceEnabled(index: index, enabled: enabled) },
@@ -319,12 +342,14 @@ private actor LocalDemoHarnessStore {
     private var workspaces: [Workspace]
     private var screenByIndex: [Int: String]
     private var logEntries: [LogEntry]
+    private var feedItems: [FeedItem]
 
     init() {
         let seeds = Self.seedWorkspaces()
         self.workspaces = seeds
         self.screenByIndex = Dictionary(uniqueKeysWithValues: seeds.map { ($0.index, Self.seedScreen(for: $0.index)) })
         self.logEntries = Self.seedLogEntries()
+        self.feedItems = Self.seedFeedItems()
     }
 
     func status() -> HarnessStatus {
@@ -356,6 +381,15 @@ private actor LocalDemoHarnessStore {
 
     func log() -> [LogEntry] {
         logEntries
+    }
+
+    func feed() -> FeedResponse {
+        FeedResponse(ok: true, items: feedItems, error: nil)
+    }
+
+    func replyToFeed(requestID: String) -> BasicResponse {
+        feedItems.removeAll { $0.requestID == requestID }
+        return BasicResponse(ok: true, enabled: nil, error: nil)
     }
 
     func screen(index: Int, lines: Int) -> ScreenResponse {
@@ -948,6 +982,23 @@ private actor LocalDemoHarnessStore {
         ]
     }
 
+    private static func seedFeedItems() -> [FeedItem] {
+        [
+            FeedItem(
+                requestID: "demo-feed-1",
+                kind: "permission",
+                title: "Bash command",
+                message: "Claude wants to run the test suite.",
+                command: "swift test",
+                workspaceID: "demo-ws-0",
+                surfaceID: nil,
+                agent: "Claude Code",
+                createdAt: isoTimestamp(),
+                options: nil
+            ),
+        ]
+    }
+
     private static func tail(_ text: String, maxLines: Int) -> String {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         return lines.suffix(maxLines).joined(separator: "\n")
@@ -968,6 +1019,8 @@ extension HarnessClient {
         probeServer: { _ in false },
         status: { _ in throw HarnessClientError.unimplemented("status") },
         log: { _ in throw HarnessClientError.unimplemented("log") },
+        feed: { _ in throw HarnessClientError.unimplemented("feed") },
+        replyToFeed: { _, _, _, _, _, _ in throw HarnessClientError.unimplemented("replyToFeed") },
         screen: { _, _, _ in throw HarnessClientError.unimplemented("screen") },
         setGlobalEnabled: { _, _ in throw HarnessClientError.unimplemented("setGlobalEnabled") },
         setWorkspaceEnabled: { _, _, _ in throw HarnessClientError.unimplemented("setWorkspaceEnabled") },

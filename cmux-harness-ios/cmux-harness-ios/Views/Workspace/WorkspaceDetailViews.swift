@@ -115,7 +115,7 @@ struct WorkspaceDetailView: View {
     }
 
     private var sessionState: WorkspaceSessionState {
-        workspaceSessionState(for: workspace, entries: store.logEntries)
+        return workspaceSessionState(for: workspace, entries: store.logEntries)
     }
 
     private var activityEntries: [LogEntry] {

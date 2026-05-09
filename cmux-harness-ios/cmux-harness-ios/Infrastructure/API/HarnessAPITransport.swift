@@ -40,6 +40,9 @@ extension HarnessAPI {
             if let screen = decoded as? ScreenResponse, !screen.ok {
                 throw HarnessAPIError.server(screen.error ?? "Screen request failed")
             }
+            if let feed = decoded as? FeedResponse, !feed.ok {
+                throw HarnessAPIError.server(feed.error ?? "Feed request failed")
+            }
             if let diff = decoded as? GitDiffResponse, !diff.ok {
                 throw HarnessAPIError.server(diff.error ?? "Diff request failed")
             }

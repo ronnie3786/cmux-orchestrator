@@ -426,7 +426,7 @@ struct WorkspaceCardView: View {
     }
 
     private var sessionState: WorkspaceSessionState {
-        workspaceSessionState(for: workspace, entries: store.logEntries)
+        return workspaceSessionState(for: workspace, entries: store.logEntries)
     }
 
     private var isExpanded: Bool {
