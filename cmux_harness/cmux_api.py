@@ -408,6 +408,189 @@ def cmux_notifications():
     return _parse_notifications(result)
 
 
+def _first_present(item, keys, default=""):
+    for key in keys:
+        value = item.get(key)
+        if value is not None and value != "":
+            return value
+    return default
+
+
+def _infer_feed_kind(item):
+    raw_kind = str(_first_present(item, ["kind", "type", "request_type", "requestType", "category"], "")).strip()
+    normalized = raw_kind.lower().replace("-", "_").replace(" ", "_")
+    if "permission" in normalized:
+        return "permission"
+    if "exit_plan" in normalized or "plan" in normalized:
+        return "plan"
+    if "question" in normalized or "select" in normalized:
+        return "question"
+    return normalized or "item"
+
+
+def _is_actionable_feed_item(item):
+    """Return True for feed entries that can currently be replied to.
+
+    ``feed.list`` includes historical telemetry such as toolUse, toolResult,
+    sessionStart, and expired requests. The harness UI should only surface
+    unresolved requests supported by the feed reply methods.
+    """
+    if not isinstance(item, dict):
+        return False
+
+    kind = _infer_feed_kind(item)
+    if kind not in {"permission", "plan", "question"}:
+        return False
+
+    request_id = str(_first_present(item, ["request_id", "requestId", "requestID"], "") or "").strip()
+    if not request_id:
+        return False
+
+    if item.get("resolved_at") or item.get("resolvedAt"):
+        return False
+
+    status = str(_first_present(item, ["status", "state"], "") or "").strip().lower()
+    if status in {"telemetry", "expired", "resolved", "approved", "denied", "rejected", "completed"}:
+        return False
+
+    return True
+
+
+def _normalize_feed_item(item):
+    """Normalize a cmux Feed item while preserving the raw payload.
+
+    cmux Feed was added after the harness, and its payload may grow over time.
+    The harness keeps stable top-level fields for UI clients but includes raw so
+    new fields are still available without a server deploy.
+    """
+    if not isinstance(item, dict):
+        return None
+    request_id = str(_first_present(item, [
+        "request_id", "requestId", "requestID",
+    ], "") or "")
+    workspace_id = str(_first_present(item, [
+        "workspace_id", "workspaceId", "workspace_uuid", "workspaceUUID",
+    ], "") or "")
+    surface_id = str(_first_present(item, [
+        "surface_id", "surfaceId", "tab_id", "tabId",
+    ], "") or "")
+    title = str(_first_present(item, [
+        "title", "label", "summary", "tool_name", "toolName",
+    ], "") or "")
+    message = str(_first_present(item, [
+        "message", "body", "prompt", "question", "description", "text", "content",
+    ], "") or "")
+    command = str(_first_present(item, [
+        "command", "tool_input", "toolInput", "toolPreview", "tool_preview",
+    ], "") or "")
+    options = _first_present(item, ["options", "choices", "selections"], [])
+    if not isinstance(options, list):
+        options = []
+    return {
+        "requestID": request_id,
+        "kind": _infer_feed_kind(item),
+        "title": title,
+        "message": message,
+        "command": command,
+        "workspaceID": workspace_id,
+        "surfaceID": surface_id,
+        "agent": str(_first_present(item, ["agent", "source", "app"], "") or ""),
+        "status": str(_first_present(item, ["status", "state"], "") or ""),
+        "createdAt": str(_first_present(item, ["created_at", "createdAt", "timestamp", "time"], "") or ""),
+        "options": options,
+        "raw": item,
+    }
+
+
+def _parse_feed_items(result):
+    """Return normalized Feed items from feed.list result."""
+    if result is None:
+        return []
+    if isinstance(result, list):
+        items = result
+    elif isinstance(result, dict):
+        items = result.get("items") or result.get("feed") or result.get("requests") or []
+    else:
+        return []
+    parsed = []
+    for item in items:
+        if not _is_actionable_feed_item(item):
+            continue
+        normalized = _normalize_feed_item(item)
+        if normalized is not None:
+            parsed.append(normalized)
+    return parsed
+
+
+def cmux_feed_items():
+    """Fetch cmux Feed items via v2 API."""
+    result = _v2_request("feed.list", {})
+    if result is None:
+        return None
+    return _parse_feed_items(result)
+
+
+def cmux_feed_reply(kind, request_id, action=None, mode=None, selections=None):
+    """Reply to a cmux Feed item.
+
+    Supported cmux methods:
+    - feed.permission.reply: request_id + mode once|always|all|bypass|deny
+    - feed.exit_plan.reply: request_id + mode ultraplan|bypassPermissions|autoAccept|manual|deny
+    - feed.question.reply: request_id + selections: [string]
+    """
+    kind = str(kind or "").strip().lower().replace("-", "_")
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        return {"ok": False, "error": "requestID required"}
+
+    action = str(action or "").strip().lower()
+    mode = str(mode or "").strip()
+    if kind == "permission":
+        permission_mode = mode or {
+            "approve": "once",
+            "allow": "once",
+            "once": "once",
+            "always": "always",
+            "all": "all",
+            "bypass": "bypass",
+            "deny": "deny",
+            "reject": "deny",
+        }.get(action, "once")
+        result = _v2_request("feed.permission.reply", {
+            "request_id": request_id,
+            "mode": permission_mode,
+        })
+    elif kind in {"plan", "exit_plan", "exitplan"}:
+        plan_mode = mode or {
+            "approve": "autoAccept",
+            "accept": "autoAccept",
+            "auto": "autoAccept",
+            "manual": "manual",
+            "ultraplan": "ultraplan",
+            "bypass": "bypassPermissions",
+            "deny": "deny",
+            "reject": "deny",
+        }.get(action, "autoAccept")
+        result = _v2_request("feed.exit_plan.reply", {
+            "request_id": request_id,
+            "mode": plan_mode,
+        })
+    elif kind == "question":
+        selected = selections if isinstance(selections, list) else []
+        if not selected and action:
+            selected = [action]
+        result = _v2_request("feed.question.reply", {
+            "request_id": request_id,
+            "selections": [str(item) for item in selected],
+        })
+    else:
+        return {"ok": False, "error": f"unsupported feed kind: {kind or 'unknown'}"}
+
+    if result is None:
+        return {"ok": False, "error": "cmux feed reply failed"}
+    return {"ok": True, "result": result}
+
+
 def _parse_debug_terminals(result):
     """Parse a debug.terminals v2 response into a dict indexed by surface UUID.
     Returns {surface_uuid: {surface_title, git_dirty, surface_created_at,

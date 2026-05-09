@@ -196,6 +196,37 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(body["urls"]["detectedTailscaleHarness"], "http://macbook.example.ts.net:9091/harness")
         self.assertEqual(body["urls"]["tailscaleIpHarness"], "http://100.89.178.110:9091/harness")
 
+    def test_feed_returns_cmux_feed_items(self):
+        engine = MagicMock()
+        with patch("cmux_harness.server.cmux_api.cmux_feed_items", return_value=[
+            {"requestID": "req-1", "kind": "permission", "title": "Approve command"},
+        ]):
+            handler = self._make_handler(engine, "/api/feed")
+            handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["items"][0]["requestID"], "req-1")
+
+    def test_feed_reply_posts_to_cmux(self):
+        engine = MagicMock()
+        with patch("cmux_harness.server.cmux_api.cmux_feed_reply", return_value={"ok": True}) as mock_reply:
+            handler = self._post_json(
+                "/api/feed/reply",
+                {"requestID": "req-1", "kind": "permission", "action": "approve"},
+                engine=engine,
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        mock_reply.assert_called_once_with(
+            "permission",
+            "req-1",
+            action="approve",
+            mode=None,
+            selections=None,
+        )
+
     def test_post_network_saves_normalized_tailscale_host(self):
         engine = MagicMock()
         engine._lock.__enter__.return_value = None

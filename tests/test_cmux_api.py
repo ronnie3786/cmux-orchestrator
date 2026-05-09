@@ -6,6 +6,8 @@ from cmux_harness.cmux_api import (
     _parse_tree_data,
     _parse_notifications,
     _parse_debug_terminals,
+    _parse_feed_items,
+    cmux_feed_reply,
     _v2_request,
 )
 
@@ -203,6 +205,103 @@ class TestParseDebugTerminals(unittest.TestCase):
         result = [{"surface_id": "UUID-1", "surface_title": "test"}]
         parsed = _parse_debug_terminals(result)
         self.assertEqual(len(parsed), 1)
+        self.assertIn("UUID-1", parsed)
+
+
+class TestParseFeedItems(unittest.TestCase):
+
+    def test_normalizes_permission_request(self):
+        parsed = _parse_feed_items({
+            "items": [{
+                "request_id": "req-1",
+                "type": "permission",
+                "status": "pending",
+                "title": "Bash command",
+                "message": "Run tests?",
+                "command": "pytest",
+                "workspace_id": "ws-1",
+                "surface_id": "surf-1",
+            }],
+        })
+
+        self.assertEqual(len(parsed), 1)
+        item = parsed[0]
+        self.assertEqual(item["requestID"], "req-1")
+        self.assertEqual(item["kind"], "permission")
+        self.assertEqual(item["title"], "Bash command")
+        self.assertEqual(item["message"], "Run tests?")
+        self.assertEqual(item["command"], "pytest")
+        self.assertEqual(item["workspaceID"], "ws-1")
+        self.assertEqual(item["surfaceID"], "surf-1")
+        self.assertEqual(item["raw"]["request_id"], "req-1")
+
+    def test_infers_plan_and_question_items(self):
+        parsed = _parse_feed_items([
+            {"request_id": "plan-1", "kind": "exit-plan", "status": "pending", "prompt": "Approve plan?"},
+            {"request_id": "q-1", "requestType": "question", "status": "pending", "question": "Pick one", "options": ["A", "B"]},
+        ])
+
+        self.assertEqual([item["kind"] for item in parsed], ["plan", "question"])
+        self.assertEqual(parsed[1]["options"], ["A", "B"])
+
+    def test_skips_telemetry_and_expired_feed_history(self):
+        parsed = _parse_feed_items([
+            {"id": "event-1", "kind": "sessionStart", "status": "telemetry"},
+            {"id": "event-2", "kind": "toolUse", "status": "telemetry", "tool_input": "{}"},
+            {
+                "request_id": "expired-1",
+                "kind": "permissionRequest",
+                "status": "expired",
+                "resolved_at": "2026-05-06T20:03:12Z",
+            },
+            {"request_id": "active-1", "kind": "permissionRequest", "status": "pending"},
+        ])
+
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["requestID"], "active-1")
+        self.assertEqual(parsed[0]["kind"], "permission")
+
+    def test_empty_or_invalid_feed(self):
+        self.assertEqual(_parse_feed_items({"items": []}), [])
+        self.assertEqual(_parse_feed_items(None), [])
+        self.assertEqual(_parse_feed_items({"items": ["bad"]}), [])
+
+
+class TestFeedReply(unittest.TestCase):
+
+    def test_permission_reply_maps_approve_to_once(self):
+        with patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True}) as mock_request:
+            result = cmux_feed_reply("permission", "req-1", action="approve")
+
+        self.assertTrue(result["ok"])
+        mock_request.assert_called_once_with("feed.permission.reply", {
+            "request_id": "req-1",
+            "mode": "once",
+        })
+
+    def test_plan_reply_maps_approve_to_auto_accept(self):
+        with patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True}) as mock_request:
+            result = cmux_feed_reply("plan", "req-1", action="approve")
+
+        self.assertTrue(result["ok"])
+        mock_request.assert_called_once_with("feed.exit_plan.reply", {
+            "request_id": "req-1",
+            "mode": "autoAccept",
+        })
+
+    def test_question_reply_sends_selections(self):
+        with patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True}) as mock_request:
+            result = cmux_feed_reply("question", "req-1", selections=["A"])
+
+        self.assertTrue(result["ok"])
+        mock_request.assert_called_once_with("feed.question.reply", {
+            "request_id": "req-1",
+            "selections": ["A"],
+        })
+
+    def test_missing_request_id_is_error(self):
+        result = cmux_feed_reply("permission", "", action="approve")
+        self.assertFalse(result["ok"])
 
 
 class TestV2Request(unittest.TestCase):

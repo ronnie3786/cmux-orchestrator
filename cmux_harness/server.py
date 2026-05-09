@@ -306,6 +306,12 @@ def make_handler(engine):
                 self._json_response(engine.get_status())
             elif path == "/api/log":
                 self._json_response(engine.get_log())
+            elif path == "/api/feed":
+                items = cmux_api.cmux_feed_items()
+                if items is None:
+                    self._json_response({"ok": False, "items": [], "error": "cmux feed unavailable"}, 503)
+                    return
+                self._json_response({"ok": True, "items": items})
             elif path.startswith("/api/git-status"):
                 params = urllib.parse.parse_qs(parsed.query)
                 if path == "/api/git-status-path":
@@ -983,6 +989,16 @@ def make_handler(engine):
                     with engine._lock:
                         engine.fingerprints.pop(idx, None)
                 self._json_response({"ok": ok})
+            elif path == "/api/feed/reply":
+                request_id = data.get("requestID") or data.get("requestId") or data.get("request_id")
+                result = cmux_api.cmux_feed_reply(
+                    data.get("kind"),
+                    request_id,
+                    action=data.get("action"),
+                    mode=data.get("mode"),
+                    selections=data.get("selections"),
+                )
+                self._json_response(result, 200 if result.get("ok") else 400)
             elif path.startswith("/api/reviews/") and path.endswith("/rerun"):
                 session_id = urllib.parse.unquote(path[len("/api/reviews/"):-len("/rerun")]).rstrip("/")
                 review_path = storage.get_review_path(session_id)

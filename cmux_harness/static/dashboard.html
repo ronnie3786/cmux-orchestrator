@@ -26,6 +26,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.4}}
 .conn-status{font-size:12px;color:var(--yellow);margin-left:4px}
 .stale-banner{display:none;align-items:center;justify-content:center;padding:10px 28px;background:rgba(210,153,34,.1);border-bottom:1px solid rgba(210,153,34,.3);color:var(--yellow);font-size:13px;gap:8px}
+.feed-panel{display:none;margin:16px 28px 0;border:1px solid rgba(210,153,34,.35);border-radius:12px;background:rgba(210,153,34,.08);overflow:hidden}
+.feed-panel.visible{display:block}
+.feed-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid rgba(210,153,34,.2);color:var(--yellow);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.feed-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:10px;padding:12px}
+.feed-item{border:1px solid rgba(255,255,255,.09);border-radius:10px;background:rgba(13,17,23,.75);padding:12px;display:flex;flex-direction:column;gap:8px}
+.feed-item-title{font-size:13px;font-weight:700;color:var(--text)}
+.feed-item-meta{font-size:11px;color:var(--text-muted)}
+.feed-item-body,.feed-item-command{font-size:12px;line-height:1.45;color:var(--text-muted);overflow-wrap:anywhere}
+.feed-item-command{font-family:'JetBrains Mono','SF Mono','Menlo',monospace;color:#c9d1d9;background:rgba(0,0,0,.25);border-radius:8px;padding:8px;max-height:96px;overflow:auto}
+.feed-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.feed-btn{padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;cursor:pointer}
+.feed-btn:hover{border-color:var(--accent);color:var(--accent)}
+.feed-btn.primary{background:var(--yellow);border-color:var(--yellow);color:#111;font-weight:700}
+.feed-answer{min-width:180px;flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;outline:none}
 .card.stale{opacity:.45;pointer-events:auto}
 .topbar-stats{display:flex;gap:20px}
 .stat{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted)}
@@ -580,6 +594,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 </div>
 
 <div class="stale-banner" id="staleBanner">&#9888; Showing stale data — cmux connection lost. Attempting to reconnect...</div>
+<div class="feed-panel" id="feedPanel">
+  <div class="feed-header">
+    <span><span id="feedCount">0</span> cmux Feed item<span id="feedPlural">s</span> need attention</span>
+  </div>
+  <div class="feed-list" id="feedList"></div>
+</div>
 <div class="mobile-harness-title" id="mobileHarnessTitle">
   <div class="mobile-harness-eyebrow">Command Center</div>
   <h1>Sessions</h1>
@@ -986,6 +1006,9 @@ var state = {
   backendAvailability:{claude:null,lmstudio:null,ollama:null}
 };
 var logData = [];
+var feedUiEnabled = false;
+var feedItems = [];
+var prevFeedIds = {};
 var expandedWsIndex = null;
 var expandedWsUuid = null;
 var expandedWsSurfaceId = null;
@@ -1051,6 +1074,83 @@ var WORKSPACE_CONTROL_KEYS={up:'up',down:'down',tab:'tab',enter:'enter'};
 function findWorkspaceByIndex(idx){
   return state.workspaces.find(function(w){return w.index===idx});
 }
+
+function feedWorkspaceMatches(item,w){
+  if(!item||!w)return false;
+  var wsId=String(item.workspaceID||'');
+  var surfaceId=String(item.surfaceID||'');
+  return (!!wsId&&wsId===String(w.uuid||'')) ||
+    (!!surfaceId&&surfaceId===String(w.surfaceId||'')) ||
+    (!!wsId&&wsId===String(w.id||''));
+}
+
+function feedItemsForWorkspace(w){
+  return feedItems.filter(function(item){return feedWorkspaceMatches(item,w)});
+}
+
+function feedItemTitle(item){
+  var kind=String(item.kind||'item');
+  if(item.title)return item.title;
+  if(kind==='permission')return 'Permission request';
+  if(kind==='plan')return 'Plan approval';
+  if(kind==='question')return 'Question';
+  return 'Feed item';
+}
+
+function feedItemSummary(item){
+  return item.message||item.command||feedItemTitle(item);
+}
+
+function renderFeedItem(item){
+  var id=esc(item.requestID||'');
+  var kind=esc(item.kind||'item');
+  var html='<div class="feed-item" data-feed-id="'+id+'">';
+  html+='<div class="feed-item-title">'+esc(feedItemTitle(item))+'</div>';
+  html+='<div class="feed-item-meta">'+esc((item.agent?item.agent+' · ':'')+(item.kind||'item'))+'</div>';
+  if(item.message)html+='<div class="feed-item-body">'+esc(item.message)+'</div>';
+  if(item.command)html+='<div class="feed-item-command">'+esc(item.command)+'</div>';
+  html+='<div class="feed-actions">';
+  if(item.kind==='permission'){
+    html+='<button class="feed-btn primary" onclick="replyFeed(\''+id+'\',\''+kind+'\',\'approve\')">Approve once</button>';
+    html+='<button class="feed-btn" onclick="replyFeed(\''+id+'\',\''+kind+'\',\'deny\')">Deny</button>';
+  }else if(item.kind==='plan'){
+    html+='<button class="feed-btn primary" onclick="replyFeed(\''+id+'\',\''+kind+'\',\'approve\')">Approve plan</button>';
+    html+='<button class="feed-btn" onclick="replyFeed(\''+id+'\',\''+kind+'\',\'manual\')">Manual</button>';
+    html+='<button class="feed-btn" onclick="replyFeed(\''+id+'\',\''+kind+'\',\'deny\')">Deny</button>';
+  }else if(item.kind==='question'){
+    var inputId='feed-answer-'+String(item.requestID||'').replace(/[^a-zA-Z0-9_-]/g,'_');
+    html+='<input class="feed-answer" id="'+esc(inputId)+'" type="text" placeholder="Answer..." onkeydown="if(event.key===\'Enter\')replyFeed(\''+id+'\',\''+kind+'\',\'answer\',this.value)">';
+    html+='<button class="feed-btn primary" onclick="replyFeed(\''+id+'\',\''+kind+'\',\'answer\',document.getElementById(\''+esc(inputId)+'\').value)">Reply</button>';
+  }
+  html+='</div></div>';
+  return html;
+}
+
+function renderFeedPanel(){
+  var panel=document.getElementById('feedPanel');
+  var list=document.getElementById('feedList');
+  if(!panel||!list)return;
+  panel.classList.toggle('visible',feedUiEnabled&&feedItems.length>0&&currentView==='center');
+  document.getElementById('feedCount').textContent=feedItems.length;
+  document.getElementById('feedPlural').textContent=feedItems.length===1?'':'s';
+  list.innerHTML=feedItems.map(renderFeedItem).join('');
+}
+
+window.replyFeed=function(requestID,kind,action,value){
+  var payload={requestID:requestID,kind:kind,action:action};
+  if(kind==='question')payload.selections=[String(value||'').trim()].filter(Boolean);
+  if(kind==='plan'&&action==='manual')payload.mode='manual';
+  api('POST','/api/feed/reply',payload).then(function(result){
+    if(result&&result.ok){
+      feedItems=feedItems.filter(function(item){return item.requestID!==requestID});
+      renderFeedPanel();
+      buildGrid();
+      updatePageTitle();
+    }else if(result&&result.error){
+      notify('cmux Feed reply failed',result.error,'feed-reply-error');
+    }
+  });
+};
 
 function pathBasename(value){
   var text=String(value||'').trim();
@@ -1501,6 +1601,9 @@ function updatePageTitle() {
   state.workspaces.forEach(function(w) {
     if (classifyWs(w) === 'waiting') waitingCount++;
   });
+  waitingCount += feedItems.filter(function(item){
+    return !state.workspaces.some(function(w){return feedWorkspaceMatches(item,w)});
+  }).length;
   var unreadCount = getUnreadReviewCount();
   var badgeCount = currentView==='reviews' ? unreadCount : waitingCount;
   var baseTitle = currentView==='reviews' ? 'cmux harness \u2014 Reviews' : 'cmux harness \u2014 Command Center';
@@ -1509,6 +1612,13 @@ function updatePageTitle() {
 
 function checkNotifications(newWorkspaces) {
   if (!notificationsEnabled) return;
+  feedItems.forEach(function(item){
+    var id=item.requestID||'';
+    if(id&&!prevFeedIds[id]){
+      notify('cmux needs your attention',feedItemSummary(item),'feed-'+id);
+    }
+    if(id)prevFeedIds[id]=true;
+  });
   newWorkspaces.forEach(function(w) {
     var idx = w.index;
     var newStatus = classifyWs(w);
@@ -1741,6 +1851,9 @@ function buildGrid(){
     var s=classifyWs(w);
     if(s==='waiting')waiting++;
   });
+  waiting+=feedItems.filter(function(item){
+    return !ws.some(function(w){return feedWorkspaceMatches(item,w)});
+  }).length;
   document.getElementById('statSessions').textContent=ws.length;
   document.getElementById('statWaiting').textContent=waiting;
   updateMobileHarnessSummary(ws.length,waiting);
@@ -1769,6 +1882,7 @@ function buildGrid(){
     var cardClass='card'+(isWaiting?' needs-attention':'')+(isStale?' stale':'');
     var badgeClass='badge '+(isWaiting?'badge-waiting':'badge-neutral');
     var badgeText=isWaiting?'Needs You':'Session';
+    var workspaceFeedItems=feedItemsForWorkspace(w);
     var autoMode=workspaceAutoMode(w);
     var autoOn=autoMode!=='off';
     var autoClass='auto-toggle'+(autoOn?' on':'')+(autoMode==='super'?' super':'');
@@ -1803,6 +1917,9 @@ function buildGrid(){
     html+='</div>';
 
     html+='<div class="card-terminal">'+colorize(w.screenTail)+'</div>';
+    if(workspaceFeedItems.length){
+      html+='<div class="feed-list" style="padding:12px;border-top:1px solid var(--border)">'+workspaceFeedItems.map(renderFeedItem).join('')+'</div>';
+    }
 
     html+='<div class="card-footer">';
     html+='<input type="search" class="card-input" placeholder="Send message..." id="input-'+w.index+'" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" onkeydown="if(event.key===\'Enter\')sendToWs('+w.index+')">';
@@ -1899,11 +2016,15 @@ function buildGrid(){
       }
       var autoToggle=card.querySelector('.auto-toggle');
       applyAutoModeClass(autoToggle,mode);
+      var oldFeed=card.querySelector('.feed-list');
+      var currentFeed=feedItemsForWorkspace(w);
+      if(oldFeed&&currentFeed.length===0)oldFeed.remove();
     });
   }
 }
 
 function classifyWs(w){
+  if(feedItemsForWorkspace(w).length>0)return 'waiting';
   // Check if any recent log entry flagged this workspace as needs_human
   var recent=logData.filter(function(e){return e.workspace===w.index});
   if(recent.length>0){
@@ -1914,6 +2035,8 @@ function classifyWs(w){
 }
 
 function getWaitReason(w){
+  var feed=feedItemsForWorkspace(w);
+  if(feed.length>0)return feedItemSummary(feed[0]);
   var recent=logData.filter(function(e){return e.workspace===w.index});
   if(recent.length>0){
     var last=recent[0];
@@ -3820,9 +3943,11 @@ function refresh(){
     lastGlobalReviewsRefresh=Date.now();
     refreshReviews();
   }
-  Promise.all([api('GET','/api/status'),api('GET','/api/log')]).then(function(results){
+  var feedRequest=feedUiEnabled?api('GET','/api/feed'):Promise.resolve({ok:true,items:[]});
+  Promise.all([api('GET','/api/status'),api('GET','/api/log'),feedRequest]).then(function(results){
     var status=results[0];
     var log=results[1];
+    var feed=results[2];
     if(!status){document.getElementById('connDot').className='conn-dot err';return}
     // Connection state handling
     var wasConnected = state.connected;
@@ -3853,8 +3978,10 @@ function refresh(){
     state.socketFound=status.socketFound;
     state.ollamaAvailable=status.ollamaAvailable!==undefined?status.ollamaAvailable:state.ollamaAvailable;
     logData=log||[];
+    feedItems=feed&&feed.ok&&Array.isArray(feed.items)?feed.items:[];
     updateOllamaStatus();
     checkNotifications(state.workspaces);
+    renderFeedPanel();
     buildGrid();
     updatePageTitle();
     updateActivityFeed(logData);
