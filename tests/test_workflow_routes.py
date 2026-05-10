@@ -238,6 +238,41 @@ class TestWorkflowRoutes(unittest.TestCase):
         self.assertEqual(briefing["watchlist"][0]["sourcePreflightId"], preflight["id"])
         self.assertEqual(briefing["watchlist"][0]["nextAction"], "Watch planner output")
 
+    def test_flow_proof_tracks_preflight_launch_review_and_done(self):
+        repo = Path(self.tmpdir.name) / "repo-flow"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+        idea = workflow.create_idea({"title": "Prove web objective path"})
+        preflight = workflow.create_preflight({
+            "sourceType": "idea",
+            "sourceId": idea["id"],
+            "requiredContext": [{"id": "open_questions", "label": "Open questions", "state": "resolved", "required": True}],
+        })
+
+        ready = workflow.command_center_payload()["flowProof"]
+        self.assertTrue(ready["active"])
+        self.assertEqual(ready["currentStage"], "launch")
+        self.assertEqual(ready["progressPercent"], 33)
+
+        objective, error = workflow.launch_preflight_objective(preflight["id"], {"projectDir": str(repo), "baseBranch": "main"})
+        self.assertIsNone(error)
+        running = workflow.command_center_payload()["flowProof"]
+        self.assertEqual(running["currentStage"], "review")
+        self.assertEqual(running["target"]["id"], objective["id"])
+        self.assertEqual(running["target"]["sourcePreflightId"], preflight["id"])
+
+        objectives.update_objective(objective["id"], {"status": "review"})
+        review = workflow.command_center_payload()["flowProof"]
+        self.assertEqual(review["currentStage"], "done")
+        self.assertEqual(review["progressPercent"], 83)
+
+        objectives.update_objective(objective["id"], {"status": "completed"})
+        done = workflow.command_center_payload()["flowProof"]
+        self.assertEqual(done["currentStage"], "done")
+        self.assertEqual(done["progressPercent"], 100)
+        self.assertIn("Full web-first path proved", done["summary"])
+
     def test_checkin_synthesizes_signals_health_and_recommended_action(self):
         self._write_objective(status="completed")
         workflow.create_idea({"title": "Product shell"})

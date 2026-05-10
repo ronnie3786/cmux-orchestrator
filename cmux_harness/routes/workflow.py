@@ -870,6 +870,104 @@ def launch_preflight_objective(preflight_id: str, data: dict):
     return objective, None
 
 
+
+
+def _status_is_done(status: str) -> bool:
+    return str(status or "").lower() in {"completed", "done", "accepted"}
+
+def _status_reached_review(status: str) -> bool:
+    return str(status or "").lower() in {"review", "reviewing", "completed", "done", "accepted"}
+
+def _status_reached_running(status: str) -> bool:
+    return str(status or "").lower() in {"planning", "running", "executing", "started", "active", "in_progress", "review", "reviewing", "completed", "done", "accepted"}
+
+def flow_proof_payload(idea_items: list[dict], preflight_items: list[dict], objective_items: list[dict], jira_items: list[dict]) -> dict:
+    """Summarize the single web-first proof path for the UI.
+
+    This keeps the product honest: the web app should always be able to show where
+    a real objective flow is in intake -> context -> launch -> run -> review -> done.
+    """
+    objective_by_id = {item.get("id"): item for item in objective_items if item.get("id")}
+    launched_preflights = [item for item in preflight_items if item.get("objectiveId")]
+    candidate_preflight = launched_preflights[0] if launched_preflights else (preflight_items[0] if preflight_items else {})
+    candidate_objective = objective_by_id.get(candidate_preflight.get("objectiveId")) if candidate_preflight else None
+    if not candidate_objective and objective_items:
+        candidate_objective = objective_items[0]
+    source_item = candidate_preflight or candidate_objective or (idea_items[0] if idea_items else (jira_items[0] if jira_items else {}))
+
+    if not source_item:
+        return {
+            "active": False,
+            "title": "No proof flow started yet.",
+            "summary": "Capture an idea or start a pre-flight from Jira to prove the web path.",
+            "progressPercent": 0,
+            "currentStage": "intake",
+            "target": {},
+            "steps": [
+                {"id": "intake", "label": "Intake", "state": "current"},
+                {"id": "context", "label": "Context", "state": "waiting"},
+                {"id": "launch", "label": "Launch", "state": "waiting"},
+                {"id": "running", "label": "Run", "state": "waiting"},
+                {"id": "review", "label": "Review", "state": "waiting"},
+                {"id": "done", "label": "Done", "state": "waiting"},
+            ],
+        }
+
+    status = candidate_objective.get("status") if isinstance(candidate_objective, dict) else ""
+    missing = candidate_preflight.get("missingRequirements", []) if isinstance(candidate_preflight, dict) else []
+    context_missing = [item for item in missing if item.get("id") not in {"project", "goal"}]
+    has_preflight = bool(candidate_preflight)
+    has_objective = bool(candidate_objective)
+    context_done = has_objective or (has_preflight and not context_missing)
+    launch_done = has_objective
+    running_done = has_objective and _status_reached_running(status)
+    review_done = has_objective and _status_reached_review(status)
+    done_done = has_objective and _status_is_done(status)
+    step_defs = [
+        ("intake", "Intake", True),
+        ("context", "Context", context_done),
+        ("launch", "Launch", launch_done),
+        ("running", "Run", running_done),
+        ("review", "Review", review_done),
+        ("done", "Done", done_done),
+    ]
+    first_waiting = next((step_id for step_id, _label, done in step_defs if not done), "done")
+    steps = []
+    for step_id, label, done in step_defs:
+        if done:
+            state = "done"
+        elif step_id == first_waiting:
+            state = "current"
+        else:
+            state = "waiting"
+        steps.append({"id": step_id, "label": label, "state": state})
+    completed = len([step for step in steps if step["state"] == "done"])
+    current = next((step for step in steps if step["state"] == "current"), steps[-1])
+    title = (candidate_objective or candidate_preflight or source_item).get("title") or (candidate_objective or candidate_preflight or source_item).get("summary") or "Web objective flow"
+    if done_done:
+        summary = "Full web-first path proved through accepted completion."
+    elif review_done:
+        summary = "Objective is review-ready. The final handoff step is visible in the web UI."
+    elif running_done:
+        summary = "Objective launched and running from the web flow."
+    elif context_done:
+        summary = "Context is ready. Launch is the next proof step."
+    else:
+        summary = "Context needs to be cleared before launch."
+    return {
+        "active": True,
+        "title": title,
+        "summary": summary,
+        "progressPercent": int(round((completed / len(steps)) * 100)),
+        "currentStage": current["id"],
+        "target": {
+            "type": "objective" if has_objective else ("preflight" if has_preflight else source_item.get("type", "work")),
+            "id": (candidate_objective or candidate_preflight or source_item).get("id"),
+            "sourcePreflightId": candidate_preflight.get("id") if isinstance(candidate_preflight, dict) else "",
+        },
+        "steps": steps,
+    }
+
 def _jira_card(ticket: dict):
     return {
         "id": ticket.get("key"),
@@ -903,6 +1001,7 @@ def command_center_payload(*, engine=None):
     workspace_items = workspaces.list_workspace_sessions()
     active_preflight_items = [card for card in preflight_items if card.get("lane") != "launched"]
     cards = idea_items + active_preflight_items + jira_items + objective_items
+    flow_proof = flow_proof_payload(idea_items, preflight_items, objective_items, jira_items)
     lanes = []
     lane_defs = [
         ("ideas", "Ideas / Pre-Jira"),
@@ -959,6 +1058,7 @@ def command_center_payload(*, engine=None):
         "assignedJira": {**jira_result, "cards": jira_items},
         "decisions": decision_items[:6],
         "latestCheckIns": checkins,
+        "flowProof": flow_proof,
     }
 
 
@@ -1060,6 +1160,7 @@ def briefing_payload(*, engine=None):
         "nextActions": next_actions[:4],
         "watchlist": watchlist,
         "recentCheckIns": command.get("latestCheckIns", [])[:5],
+        "flowProof": command.get("flowProof", {}),
     }
 
 

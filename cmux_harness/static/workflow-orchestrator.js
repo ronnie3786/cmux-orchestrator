@@ -126,6 +126,27 @@ function renderMetrics() {
   $('#decisionCount').textContent = state.commandCenter?.decisions?.length || 0;
 }
 
+
+function renderFlowProof() {
+  const flow = state.commandCenter?.flowProof || {};
+  const steps = flow.steps || [];
+  const percent = Math.max(0, Math.min(100, Number(flow.progressPercent || 0)));
+  $('#flowProof').innerHTML = `
+    <div>
+      <p class="eyebrow">End-to-end proof</p>
+      <h3>${escapeHtml(flow.title || 'No proof flow started yet.')}</h3>
+      <p>${escapeHtml(flow.summary || 'Capture an idea, clear context, launch an objective, review it, then mark it done.')}</p>
+    </div>
+    <div class="flow-meter" aria-label="${escapeHtml(percent)} percent complete">
+      <strong>${escapeHtml(percent)}%</strong>
+      <span>${escapeHtml((flow.currentStage || 'intake').replaceAll('_', ' '))}</span>
+    </div>
+    <ol class="flow-steps">
+      ${steps.map((step) => `<li class="${escapeHtml(step.state || 'waiting')}"><span>${escapeHtml(step.label)}</span></li>`).join('')}
+    </ol>
+  `;
+}
+
 function renderBoard() {
   const lanes = state.commandCenter?.lanes || [];
   $('#board').innerHTML = lanes.map((lane) => {
@@ -359,6 +380,7 @@ function renderAll() {
   renderSidebar();
   renderHero();
   renderMetrics();
+  renderFlowProof();
   renderBoard();
   renderIdeas();
   renderDecisions();
