@@ -170,6 +170,9 @@ function renderBoard() {
   $$('[data-objective-checkin]').forEach((button) => {
     button.addEventListener('click', () => checkObjective(button.dataset.objectiveCheckin));
   });
+  $$('[data-preflight-source]').forEach((button) => {
+    button.addEventListener('click', () => createPreflight(button.dataset));
+  });
 }
 
 function projectOptionsHtml(selectedPath = '') {
@@ -287,6 +290,22 @@ function renderWorkCard(card) {
           ${['review', 'completed', 'done', 'accepted'].includes(card.status) ? '' : `<button class="mini-button primary" data-objective-status="review" data-summary="Ready for Ronnie to inspect." data-id="${escapeHtml(card.id)}">Mark review-ready</button>`}
           <a class="mini-link" href="/api/objectives/${encodeURIComponent(card.id)}" target="_blank" rel="noreferrer">Open objective data</a>
           ${card.sourcePreflightId ? `<span class="mini-pill">From pre-flight</span>` : ''}
+        </div>
+      </article>
+    `;
+  }
+  if (card.type === 'jira') {
+    const ticketKey = card.key || card.id || '';
+    const ticketTitle = card.ticketTitle || String(card.title || '').replace(`${ticketKey}:`, '').trim();
+    return `
+      <article class="work-card">
+        <strong>${escapeHtml(card.title)}</strong>
+        <p>${escapeHtml(card.ticketStatus || card.summary || 'Assigned Jira ticket')}</p>
+        ${badgeHtml(card.contextHealth?.badges || [])}
+        <span class="status-chip">${escapeHtml(card.status || 'Jira')}</span>
+        <div class="card-actions compact">
+          ${card.url ? `<a class="mini-link" href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">Open Jira</a>` : ''}
+          <button class="mini-button primary" data-preflight-source="jira" data-id="${escapeHtml(ticketKey)}" data-title="${escapeHtml(ticketTitle)}" data-summary="${escapeHtml(card.ticketStatus || card.summary || '')}" data-url="${escapeHtml(card.url || card.ticketUrl || '')}">Start pre-flight</button>
         </div>
       </article>
     `;

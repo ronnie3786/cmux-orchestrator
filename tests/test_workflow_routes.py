@@ -85,6 +85,30 @@ class TestWorkflowRoutes(unittest.TestCase):
         self.assertEqual(context_cards[0]["contextHealth"]["state"], "needs_attention")
 
 
+    def test_jira_command_card_preserves_ticket_fields_for_web_preflight(self):
+        self.mock_fetch_jira.return_value = {
+            "ok": True,
+            "tickets": [{
+                "key": "ENG-456",
+                "title": "Thread Jira into web intake",
+                "status": "To Do",
+                "priority": "High",
+                "issueType": "Task",
+                "url": "https://jira.example/ENG-456",
+            }],
+            "error": None,
+        }
+
+        payload = workflow.command_center_payload()
+        card = {lane["id"]: lane for lane in payload["lanes"]}["intake"]["cards"][0]
+
+        self.assertEqual(card["type"], "jira")
+        self.assertEqual(card["key"], "ENG-456")
+        self.assertEqual(card["ticketTitle"], "Thread Jira into web intake")
+        self.assertEqual(card["ticketStatus"], "To Do")
+        self.assertEqual(card["ticketUrl"], "https://jira.example/ENG-456")
+
+
     def test_preflight_from_idea_surfaces_in_context_lane(self):
         idea = workflow.create_idea({"title": "Voice-first Jira intake", "summary": "Needs context before launch."})
 
