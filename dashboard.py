@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """cmux Auto-Approve Dashboard — entry point."""
 
+import os
 import sys
 import webbrowser
 from http.server import ThreadingHTTPServer
@@ -37,7 +38,8 @@ def main():
     print(f"   Harness:      http://localhost:{port}/harness")
     if advertised:
         print("   LAN discovery: Bonjour service _cmux-harness._tcp")
-    webbrowser.open(f"http://localhost:{port}")
+    if os.environ.get("CMUX_HARNESS_NO_BROWSER", "").strip().lower() not in {"1", "true", "yes"}:
+        webbrowser.open(f"http://localhost:{port}")
 
     try:
         server.serve_forever()
