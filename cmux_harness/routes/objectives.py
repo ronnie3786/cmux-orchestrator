@@ -175,12 +175,37 @@ def handle_delete_objective(handler, objective_id, *, engine):
 
 
 def handle_patch_objective(handler, objective_id, data):
+    updates = {}
     goal = (data.get("goal") or "").strip()
-    if not goal:
-        handler._json_response({"ok": False, "error": "goal is required"}, 400)
+    if goal:
+        updates["goal"] = goal
+    status = (data.get("status") or "").strip().lower()
+    if status:
+        allowed_statuses = {
+            "intake",
+            "planning",
+            "running",
+            "active",
+            "in_progress",
+            "review",
+            "reviewing",
+            "completed",
+            "done",
+            "accepted",
+            "blocked",
+        }
+        if status not in allowed_statuses:
+            handler._json_response({"ok": False, "error": "unsupported objective status"}, 400)
+            return
+        updates["status"] = status
+    summary = (data.get("summary") or "").strip()
+    if summary:
+        updates["summary"] = summary
+    if not updates:
+        handler._json_response({"ok": False, "error": "goal, status, or summary is required"}, 400)
         return
     try:
-        updated = objectives.update_objective(objective_id, {"goal": goal})
+        updated = objectives.update_objective(objective_id, updates)
     except FileNotFoundError:
         handler._json_response({"ok": False, "error": "objective not found"}, 404)
         return

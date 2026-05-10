@@ -102,11 +102,20 @@ def _safe_legacy_root(root_path: str | None) -> str:
     return cwd or str(OBJECTIVES_DIR.parent)
 
 
+def _project_with_root_health(project: dict) -> dict:
+    enriched = dict(project)
+    root_path = str(enriched.get("rootPath") or "")
+    root = Path(root_path).expanduser() if root_path else None
+    enriched["rootExists"] = bool(root and root.is_dir())
+    enriched["rootUsable"] = bool(enriched["rootExists"] and (root / ".git").exists())
+    return enriched
+
+
 def _find_project_by_root_path(root_path: str) -> dict | None:
     normalized = _normalize_path(root_path)
     if not normalized:
         return None
-    for project in list_projects():
+    for project in list_projects(include_missing_roots=True):
         if _normalize_path(project.get("rootPath")) == normalized:
             return project
     return None
@@ -205,7 +214,7 @@ def read_project(project_id: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def list_projects() -> list[dict]:
+def list_projects(include_missing_roots: bool = False) -> list[dict]:
     try:
         _projects_dir().mkdir(parents=True, exist_ok=True)
         project_dirs = sorted((p for p in _projects_dir().iterdir() if p.is_dir()), key=lambda p: p.name)
@@ -215,7 +224,9 @@ def list_projects() -> list[dict]:
     for project_dir in project_dirs:
         project = read_project(project_dir.name)
         if project is not None:
-            projects.append(project)
+            enriched = _project_with_root_health(project)
+            if include_missing_roots or enriched.get("rootExists"):
+                projects.append(enriched)
     return projects
 
 

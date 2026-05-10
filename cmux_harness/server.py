@@ -34,6 +34,7 @@ from .routes import status_summary as status_summary_routes
 from .routes import hooks as hooks_routes
 from .routes import jira as jira_routes
 from .routes import workspaces as workspace_routes
+from .routes import workflow as workflow_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_FILES = {
@@ -42,6 +43,10 @@ _STATIC_FILES = {
     "/orchestrator": ("orchestrator.html", "text/html; charset=utf-8"),
     "/orchestrator.css": ("orchestrator.css", "text/css; charset=utf-8"),
     "/orchestrator.js": ("orchestrator.js", "application/javascript; charset=utf-8"),
+    "/workflow-orchestrator": ("workflow-orchestrator.html", "text/html; charset=utf-8"),
+    "/workflow-orchestrator.html": ("workflow-orchestrator.html", "text/html; charset=utf-8"),
+    "/workflow-orchestrator.css": ("workflow-orchestrator.css", "text/css; charset=utf-8"),
+    "/workflow-orchestrator.js": ("workflow-orchestrator.js", "application/javascript; charset=utf-8"),
 }
 
 
@@ -57,12 +62,19 @@ HOME_HTML = _read_static_file("home.html", "<html><body><h1>home.html not found<
 ORCHESTRATOR_HTML = _read_static_file("orchestrator.html", "<html><body><h1>orchestrator.html not found</h1></body></html>")
 ORCHESTRATOR_CSS = _read_static_file("orchestrator.css", "/* orchestrator.css not found */\n")
 ORCHESTRATOR_JS = _read_static_file("orchestrator.js", "console.error('orchestrator.js not found');\n")
+WORKFLOW_ORCHESTRATOR_HTML = _read_static_file("workflow-orchestrator.html", "<html><body><h1>workflow-orchestrator.html not found</h1></body></html>")
+WORKFLOW_ORCHESTRATOR_CSS = _read_static_file("workflow-orchestrator.css", "/* workflow-orchestrator.css not found */\n")
+WORKFLOW_ORCHESTRATOR_JS = _read_static_file("workflow-orchestrator.js", "console.error('workflow-orchestrator.js not found');\n")
 _STATIC_CONTENT = {
     "/": HOME_HTML,
     "/harness": DASHBOARD_HTML,
     "/orchestrator": ORCHESTRATOR_HTML,
     "/orchestrator.css": ORCHESTRATOR_CSS,
     "/orchestrator.js": ORCHESTRATOR_JS,
+    "/workflow-orchestrator": WORKFLOW_ORCHESTRATOR_HTML,
+    "/workflow-orchestrator.html": WORKFLOW_ORCHESTRATOR_HTML,
+    "/workflow-orchestrator.css": WORKFLOW_ORCHESTRATOR_CSS,
+    "/workflow-orchestrator.js": WORKFLOW_ORCHESTRATOR_JS,
 }
 
 _HARNESS_ALLOWED_KEYS = {"up", "down", "tab", "enter"}
@@ -280,6 +292,7 @@ def make_handler(engine):
                     "home": f"http://localhost:{port}/",
                     "harness": f"http://localhost:{port}/harness",
                     "orchestrator": f"http://localhost:{port}/orchestrator",
+                    "workflowOrchestrator": f"http://localhost:{port}/workflow-orchestrator",
                     "localHarness": f"http://{local_name}:{port}/harness" if local_name else "",
                     "lanHarness": [f"http://{address}:{port}/harness" for address in lan_addresses],
                     "tailscaleHarness": tailscale_harness_url,
@@ -432,6 +445,29 @@ def make_handler(engine):
                 objective_routes.handle_list_objectives(self)
             elif path == "/api/workspaces":
                 workspace_routes.handle_list_workspaces(self)
+            elif path == "/api/command-center":
+                workflow_routes.handle_get_command_center(self, parsed, engine=self.server.engine)
+            elif path == "/api/briefing":
+                workflow_routes.handle_get_briefing(self, parsed, engine=self.server.engine)
+            elif path == "/api/ideas":
+                workflow_routes.handle_get_ideas(self, parsed)
+            elif path.startswith("/api/ideas/"):
+                idea_id = urllib.parse.unquote(path[len("/api/ideas/"):]).strip("/")
+                workflow_routes.handle_get_idea(self, idea_id)
+            elif path == "/api/preflights":
+                workflow_routes.handle_get_preflights(self, parsed)
+            elif path.startswith("/api/preflights/"):
+                preflight_id = urllib.parse.unquote(path[len("/api/preflights/"):]).strip("/")
+                workflow_routes.handle_get_preflight(self, preflight_id)
+            elif path == "/api/decisions":
+                workflow_routes.handle_get_decisions(self, parsed)
+            elif path.startswith("/api/decisions/"):
+                decision_id = urllib.parse.unquote(path[len("/api/decisions/"):]).strip("/")
+                workflow_routes.handle_get_decision(self, decision_id)
+            elif path == "/api/check-ins":
+                workflow_routes.handle_get_checkins(self, parsed)
+            elif path == "/api/context-health/attention":
+                workflow_routes.handle_context_attention(self)
             elif path == "/api/skills":
                 file_browser_routes.handle_get_skills(self, parsed, engine=self.server.engine)
             elif path == "/api/file-search":
@@ -442,6 +478,9 @@ def make_handler(engine):
                 jira_routes.handle_get_issue(self, parsed)
             elif path == "/api/github/pr-comments":
                 github_routes.handle_get_pr_comments(self, parsed, engine=self.server.engine)
+            elif path.startswith("/api/objectives/") and path.endswith("/context-health"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/context-health")]).strip("/")
+                workflow_routes.handle_get_context_health(self, objective_id)
             elif path.startswith("/api/objectives/") and path.endswith("/action-buttons"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/action-buttons")]).strip("/")
                 objective = objectives.read_objective(objective_id)
@@ -829,12 +868,52 @@ def make_handler(engine):
                 )
             elif path == "/api/projects/pick-root":
                 project_routes.handle_post_pick_project_root(self)
+            elif path.startswith("/api/decisions/"):
+                prefix = path[len("/api/decisions/"):].strip("/")
+                parts = prefix.split("/")
+                decision_id = urllib.parse.unquote(parts[0])
+                action = parts[1] if len(parts) > 1 else "patch"
+                if action not in {"approve", "reject", "snooze", "patch"}:
+                    self.send_error(404)
+                    return
+                workflow_routes.handle_patch_decision(self, decision_id, data, action=action)
             elif path == "/api/projects":
                 project_routes.handle_post_create_project(self, data)
             elif path == "/api/objectives":
                 objective_routes.handle_post_create_objective(self, data, engine=self.server.engine)
             elif path == "/api/workspaces":
                 workspace_routes.handle_post_create_workspace(self, data)
+            elif path == "/api/ideas":
+                workflow_routes.handle_post_idea(self, data)
+            elif path == "/api/preflights":
+                workflow_routes.handle_post_preflight(self, data)
+            elif path.startswith("/api/preflights/") and path.endswith("/launch-objective"):
+                preflight_id = urllib.parse.unquote(path[len("/api/preflights/"):-len("/launch-objective")]).strip("/")
+                workflow_routes.handle_launch_preflight_objective(self, preflight_id, data)
+            elif path == "/api/decisions":
+                workflow_routes.handle_post_decision(self, data)
+            elif path == "/api/check-ins":
+                workflow_routes.handle_post_checkin(self, data, engine=self.server.engine)
+            elif path.startswith("/api/objectives/") and path.endswith("/check-in"):
+                objective_id = urllib.parse.unquote(path[len("/api/objectives/"):-len("/check-in")]).strip("/")
+                if objectives.read_objective(objective_id) is None:
+                    self._json_response({"ok": False, "error": "objective not found"}, 404)
+                    return
+                payload = dict(data)
+                payload.update({"targetType": "objective", "targetId": objective_id})
+                workflow_routes.handle_post_checkin(self, payload, engine=self.server.engine)
+            elif path.startswith("/api/objectives/") and "/context-health/" in path:
+                prefix = path[len("/api/objectives/"):]
+                objective_part, suffix = prefix.split("/context-health/", 1)
+                objective_id = urllib.parse.unquote(objective_part).strip("/")
+                suffix = suffix.strip("/")
+                parts = suffix.split("/")
+                dimension_id = urllib.parse.unquote(parts[0])
+                action = parts[1] if len(parts) > 1 else "patch"
+                if action not in {"resolve", "reopen", "wait", "patch"}:
+                    self.send_error(404)
+                    return
+                workflow_routes.handle_patch_context_health(self, objective_id, dimension_id, data, action=action)
             elif path == "/api/resolve-dropped-files":
                 file_browser_routes.handle_resolve_dropped_files(self, data)
             elif path == "/api/push/register":
@@ -1479,6 +1558,25 @@ def make_handler(engine):
                 project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
                 project_routes.handle_patch_project(self, project_id, data)
                 return
+            if path.startswith("/api/ideas/"):
+                idea_id = urllib.parse.unquote(path[len("/api/ideas/"):]).strip("/")
+                workflow_routes.handle_patch_idea(self, idea_id, data)
+                return
+            if path.startswith("/api/preflights/"):
+                preflight_id = urllib.parse.unquote(path[len("/api/preflights/"):]).strip("/")
+                workflow_routes.handle_patch_preflight(self, preflight_id, data)
+                return
+            if path.startswith("/api/decisions/"):
+                decision_id = urllib.parse.unquote(path[len("/api/decisions/"):]).strip("/")
+                workflow_routes.handle_patch_decision(self, decision_id, data)
+                return
+            if path.startswith("/api/objectives/") and "/context-health/" in path:
+                prefix = path[len("/api/objectives/"):]
+                objective_part, suffix = prefix.split("/context-health/", 1)
+                objective_id = urllib.parse.unquote(objective_part).strip("/")
+                dimension_id = urllib.parse.unquote(suffix.strip("/").split("/")[0])
+                workflow_routes.handle_patch_context_health(self, objective_id, dimension_id, data)
+                return
             if path.startswith("/api/objectives/"):
                 objective_id = urllib.parse.unquote(path[len("/api/objectives/"):]).strip("/")
                 objective = objectives.read_objective(objective_id)
@@ -1502,6 +1600,14 @@ def make_handler(engine):
             if path.startswith("/api/projects/"):
                 project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
                 project_routes.handle_delete_project(self, project_id)
+                return
+            if path.startswith("/api/ideas/"):
+                idea_id = urllib.parse.unquote(path[len("/api/ideas/"):]).strip("/")
+                workflow_routes.handle_delete_idea(self, idea_id)
+                return
+            if path.startswith("/api/preflights/"):
+                preflight_id = urllib.parse.unquote(path[len("/api/preflights/"):]).strip("/")
+                workflow_routes.handle_delete_preflight(self, preflight_id)
                 return
             if path.startswith("/api/objectives/") and "/action-buttons/" in path:
                 parts = path.split("/")

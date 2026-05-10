@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workflow Orchestrator</title>
+  <link rel="stylesheet" href="/workflow-orchestrator.css" />
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">R</div>
+        <div>
+          <h1>Workflow</h1>
+          <p>Orchestrator</p>
+        </div>
+      </div>
+
+      <button class="primary-action" id="newWorkButton">New work</button>
+
+      <nav class="nav" aria-label="Workflow navigation">
+        <button class="active" data-view="command">Command Center <span id="needsCount">0</span></button>
+        <button data-view="ideas">Ideas + Jira <span id="ideasCount">0</span></button>
+        <button data-view="decisions">Decisions <span id="decisionCount">0</span></button>
+        <button data-view="briefing">Briefing <span>now</span></button>
+      </nav>
+
+      <section class="sidebar-section">
+        <div class="section-title">Ideas</div>
+        <div id="sidebarIdeas" class="sidebar-list"></div>
+      </section>
+
+      <section class="sidebar-section">
+        <div class="section-title">Assigned Jira</div>
+        <div id="sidebarJira" class="sidebar-list"></div>
+      </section>
+
+      <div class="sidebar-note">
+        <strong>Focus rule</strong>
+        <span>Show the one thing that needs Ronnie, hide the rest until asked.</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Ronnie Rocha</p>
+          <h2 id="pageTitle">Command Center</h2>
+        </div>
+        <div class="top-actions">
+          <input id="searchInput" class="search" placeholder="Search work, ideas, Jira..." />
+          <button class="ghost-button" id="checkAllButton">Check all</button>
+          <button class="ghost-button" id="focusButton">Focus mode</button>
+          <button class="voice-button" id="voiceButton">🎙 Voice</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="view active" id="view-command">
+          <section class="hero-card">
+            <div>
+              <p class="eyebrow">Top priority</p>
+              <h3 id="topTitle">Loading...</h3>
+              <p id="topSummary">Checking current work.</p>
+              <div class="hero-actions">
+                <button class="primary-action small" id="topActionButton">Review</button>
+                <button class="ghost-button" id="refreshButton">Refresh</button>
+              </div>
+            </div>
+            <div class="hero-meter">
+              <strong id="heroNeeds">0</strong>
+              <span>needs Ronnie</span>
+            </div>
+          </section>
+
+          <section class="metrics" id="metrics"></section>
+
+          <section class="board-shell">
+            <div class="board-head">
+              <div>
+                <h3>Work board</h3>
+                <p>Compact lanes backed by the new product APIs.</p>
+              </div>
+            </div>
+            <div class="board" id="board"></div>
+          </section>
+        </div>
+
+        <div class="view" id="view-ideas">
+          <section class="hero-card single">
+            <div>
+              <p class="eyebrow">Ideas + assigned Jira</p>
+              <h3>Capture rough work and keep assigned tickets visible.</h3>
+              <p>Ideas can become brainstorms, research tasks, Jira drafts, or objectives. Assigned Jira tickets sit beside them so intake does not hide real work.</p>
+            </div>
+            <button class="primary-action small" id="addIdeaButton">Add idea</button>
+          </section>
+          <div class="split-grid">
+            <section class="panel">
+              <h3>Ideas</h3>
+              <div id="ideasList" class="stack"></div>
+            </section>
+            <section class="panel">
+              <h3>Assigned Jira</h3>
+              <div id="jiraList" class="stack"></div>
+            </section>
+          </div>
+        </div>
+
+        <div class="view" id="view-decisions">
+          <section class="hero-card single">
+            <div>
+              <p class="eyebrow">Decision Queue</p>
+              <h3>Human judgment, not terminal archaeology.</h3>
+              <p>Each decision should have a recommendation, risk, options, and a safe action preview for future voice approval.</p>
+            </div>
+          </section>
+          <div id="decisionList" class="stack wide"></div>
+        </div>
+
+        <div class="view" id="view-briefing">
+          <section class="hero-card single">
+            <div>
+              <p class="eyebrow">Briefing</p>
+              <h3 id="briefingTitle">Current state</h3>
+              <p id="briefingSummary">The orchestrator will summarize check-ins, blockers, decisions, and assigned Jira here.</p>
+            </div>
+          </section>
+          <section class="panel">
+            <h3>Latest check-ins</h3>
+            <div id="checkinList" class="stack"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="ideaDialog" class="dialog">
+    <form method="dialog" id="ideaForm">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">New idea</p>
+          <h3>Capture without committing to Jira yet.</h3>
+        </div>
+        <button class="icon-button" value="cancel">×</button>
+      </div>
+      <label>Title<input name="title" required placeholder="Voice-first ticket intake" /></label>
+      <label>Notes<textarea name="summary" placeholder="What should the orchestrator remember?"></textarea></label>
+      <div class="dialog-actions">
+        <button class="ghost-button" value="cancel">Cancel</button>
+        <button class="primary-action small" value="default">Save idea</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="voiceDialog" class="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">Voice preview</p>
+        <h3>Realtime 2 will drive these APIs.</h3>
+      </div>
+      <button class="icon-button" id="closeVoiceButton">×</button>
+    </div>
+    <p class="dialog-copy">Voice will start read-only, then gain local context updates, Jira previews, and agent launches behind explicit confirmation.</p>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+  <script src="/workflow-orchestrator.js"></script>
+</body>
+</html>

@@ -137,6 +137,21 @@ class TestServerResponses(unittest.TestCase):
         self.assertIn("chevron", root_html)
         self.assertIn('<script src="/orchestrator.js"></script>', orchestrator_html)
 
+    def test_workflow_orchestrator_serves_html_alias_and_assets(self):
+        for path, expected in [
+            ("/workflow-orchestrator", "Workflow Orchestrator"),
+            ("/workflow-orchestrator.html", "Workflow Orchestrator"),
+            ("/workflow-orchestrator.css", "--paper: #ffffff"),
+            ("/workflow-orchestrator.js", "api('/api/command-center')"),
+        ]:
+            with self.subTest(path=path):
+                handler = self._make_handler(Mock(), path)
+                handler.do_GET()
+                body = handler.wfile.getvalue().decode("utf-8")
+
+                handler.send_response.assert_called_once_with(200)
+                self.assertIn(expected, body)
+
     def test_network_status_returns_urls_and_cmux_socket_state(self):
         engine = MagicMock()
         engine._lock.__enter__.return_value = None
@@ -155,6 +170,7 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body["urls"]["harness"], "http://localhost:9091/harness")
         self.assertEqual(body["urls"]["orchestrator"], "http://localhost:9091/orchestrator")
+        self.assertEqual(body["urls"]["workflowOrchestrator"], "http://localhost:9091/workflow-orchestrator")
         self.assertEqual(body["urls"]["tailscaleHarness"], "http://macbook.example.ts.net:9091/harness")
         self.assertEqual(body["tailscale"]["savedHost"], "macbook.example.ts.net")
         self.assertEqual(body["cmux"]["socketFound"], True)
@@ -324,6 +340,39 @@ class TestServerResponses(unittest.TestCase):
         self.assertFalse(old_file.exists())
         self.assertTrue(new_file.exists())
 
+    def test_briefing_endpoint_returns_product_briefing(self):
+        with patch("cmux_harness.routes.workflow.briefing_payload") as mock_briefing:
+            mock_briefing.return_value = {
+                "ok": True,
+                "headline": "No urgent handoff right now.",
+                "counts": {"needsRonnie": 0},
+                "nextActions": [],
+                "watchlist": [],
+                "recentCheckIns": [],
+            }
+            handler = self._make_handler(Mock(), "/api/briefing")
+
+            handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(200)
+        self.assertEqual(body["headline"], "No urgent handoff right now.")
+        mock_briefing.assert_called_once()
+
+    def test_preflight_launch_objective_endpoint_returns_created_objective(self):
+        with patch("cmux_harness.routes.workflow.launch_preflight_objective") as mock_launch:
+            mock_launch.return_value = ({"id": "obj-123", "goal": "Ship it"}, None)
+            handler = self._post_json(
+                "/api/preflights/preflight-123/launch-objective",
+                {"projectDir": str(Path(self.tmpdir.name) / "repo"), "baseBranch": "main"},
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(201)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["objective"]["id"], "obj-123")
+        mock_launch.assert_called_once()
+
     def _make_handler(self, engine, path):
         handler_cls = make_handler(engine)
         handler = handler_cls.__new__(handler_cls)
@@ -478,6 +527,32 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True})
 
+    def test_patch_objective_endpoint_can_move_objective_to_review(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        body = json.dumps({"status": "review", "summary": "Ready for Ronnie to inspect."}).encode("utf-8")
+        handler = self._make_handler(Mock(), "/api/objectives/" + objective["id"])
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_PATCH()
+
+        updated = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(updated["status"], "review")
+        self.assertEqual(updated["summary"], "Ready for Ronnie to inspect.")
+
+    def test_patch_objective_endpoint_can_accept_completed_handoff(self):
+        objective = objectives.create_objective("Ship feature", "/tmp/project")
+        body = json.dumps({"status": "completed", "summary": "Reviewed and accepted from the web handoff."}).encode("utf-8")
+        handler = self._make_handler(Mock(), "/api/objectives/" + objective["id"])
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_PATCH()
+
+        updated = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(updated["status"], "completed")
+        self.assertEqual(updated["summary"], "Reviewed and accepted from the web handoff.")
+
     def test_projects_crud_endpoints(self):
         root_path = Path(self.tmpdir.name) / "server-project"
         root_path.mkdir()
@@ -502,6 +577,8 @@ class TestServerResponses(unittest.TestCase):
         list_handler.do_GET()
         listed = json.loads(list_handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual([item["id"] for item in listed], [created["id"]])
+        self.assertEqual(listed[0]["rootExists"], True)
+        self.assertEqual(listed[0]["rootUsable"], False)
 
         patch_payload = {"name": "Renamed Project", "defaultBaseBranch": "main"}
         patch_body = json.dumps(patch_payload).encode("utf-8")
@@ -519,6 +596,24 @@ class TestServerResponses(unittest.TestCase):
         delete_handler.do_DELETE()
         deleted = json.loads(delete_handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(deleted, {"ok": True})
+
+    def test_projects_endpoint_hides_missing_roots_from_picker(self):
+        live_root = Path(self.tmpdir.name) / "live-project"
+        stale_root = Path(self.tmpdir.name) / "stale-project"
+        live_root.mkdir()
+        stale_root.mkdir()
+        live = objectives.create_project("Live", str(live_root), "main")
+        stale = objectives.create_project("Stale", str(stale_root), "main")
+        stale_root.rmdir()
+
+        handler = self._make_handler(Mock(), "/api/projects")
+        handler.do_GET()
+
+        listed = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual([item["id"] for item in listed], [live["id"]])
+        self.assertEqual(objectives.read_project(stale["id"])["id"], stale["id"])
+        archived = objectives.list_projects(include_missing_roots=True)
+        self.assertEqual({item["id"]: item["rootExists"] for item in archived}, {live["id"]: True, stale["id"]: False})
 
     def test_create_project_endpoint_rejects_duplicate_root_path(self):
         root_path = Path(self.tmpdir.name) / "duplicate-server-project"
