@@ -2,7 +2,89 @@
 
 Complete catalog of every API available to this project: the cmux socket/CLI APIs we consume, and the harness HTTP APIs we expose.
 
+This document is also the safety contract for agents testing against Ronnie's real cmux dashboard. Read-only probes are allowed. Mutating calls against live Jira, GitHub, git workspaces, cmux sessions, terminal panes, approvals, notifications, or local config are not allowed unless Ronnie explicitly performs or approves that specific test.
+
 ---
+
+## Live Dashboard Targets
+
+Known dashboard targets:
+
+- Static orchestrator mock: `http://100.89.93.84:8788/orchestrator-app-mock.html`
+- Local harness default: `http://localhost:9091/harness`
+- Tailscale harness default if running on the Mac Studio: `http://100.89.93.84:9091/harness`
+
+These URLs are runtime targets, not guaranteed always-on services. Before relying on any live target, run a read-only health check:
+
+```bash
+curl -fsS --max-time 5 http://100.89.93.84:8788/orchestrator-app-mock.html >/dev/null
+curl -fsS --max-time 5 http://100.89.93.84:8788/api/status | python3 -m json.tool | head -n 80
+```
+
+If the live dashboard is not reachable, continue with local tests and mocked adapters. Do not start, stop, rename, close, or modify real cmux sessions just to make a test pass.
+
+### Safe Live Verification Rules
+
+Allowed against the live dashboard:
+
+- `GET` HTML/static pages.
+- `GET /api/status`
+- `GET /api/network`
+- `GET /api/log`
+- `GET /api/feed`
+- `GET /api/config`
+- `GET /api/models`
+- `GET /api/workspaces`
+- `GET /api/command-center`
+- `GET /api/briefing`
+- `GET /api/objectives`
+- `GET /api/projects`
+- `GET /api/ideas`
+- `GET /api/preflights`
+- `GET /api/decisions`
+- `GET /api/check-ins`
+- `GET /api/context-health/attention`
+- `GET /api/skills`
+- `GET /api/file-search` with narrow, harmless queries.
+- `GET /api/jira/assigned`
+- `GET /api/jira/issue`
+- `GET /api/github/pr-comments`
+- `GET /api/git-status?index=N`
+- `GET /api/git-status-path?path=<absolute-path>`
+- `GET /api/screen?index=N` when needed for read-only inspection.
+- `POST /api/git-diff` and `POST /api/git-diff-path` because these return diff text and do not mutate git state.
+- cmux CLI read-only commands such as `cmux tree --all --json`, `cmux read-screen --scrollback --lines N`, `cmux capture-pane --scrollback --lines N`, and `cmux find-window --content <query>`.
+
+Not allowed against live data without Ronnie testing manually or giving explicit permission:
+
+- Sending terminal input or prompts.
+- Creating, closing, killing, restarting, renaming, selecting, or modifying cmux sessions/workspaces/surfaces.
+- Toggling auto-approve or changing harness config.
+- Starting objectives, sessions, workspaces, or coding agents.
+- Approving plans, hooks, contracts, or task prompts.
+- Posting Jira comments, transitioning Jira tickets, or editing Jira data.
+- Posting GitHub comments/reviews, changing PR state, or pushing commits.
+- Staging, unstaging, committing, resetting, deleting, opening files in native apps, or any destructive git/file action.
+- Registering/clearing push notifications.
+- Mutating projects, objectives, ideas, preflights, decisions, check-ins, context-health, action buttons, attachments, or dropped files.
+
+### Remaining Functionality Ronnie Should Test Manually
+
+These should be implemented with mocked/unit tests first, then verified by Ronnie in the real dashboard:
+
+- New task creates a real cmux workspace/session.
+- Launching Codex, Claude Code, or OpenCode in a session.
+- Sending follow-up prompts into an active cmux session.
+- Attaching an orphan live cmux pane to a task.
+- Killing or restarting a cmux session.
+- Jira ticket transitions.
+- Jira comment preview and post flow.
+- GitHub PR reply/review preview and post flow.
+- Git staging, unstaging, commits, or any branch-changing operation.
+- Approval flows that would submit external or terminal actions.
+- Proactive watcher behavior over a 10-minute interval against live accounts.
+
+Agents should report this list, plus anything newly discovered during implementation, as `Needs Ronnie live test` instead of testing it themselves.
 
 ## Part 1: cmux APIs (what we can read from cmux)
 
@@ -208,12 +290,57 @@ Server runs on `http://localhost:9091` (configurable port).
 | Endpoint | Returns | Description |
 |---|---|---|
 | `GET /` | HTML | Dashboard single-page app |
+| `GET /harness` | HTML | Main cmux harness dashboard |
+| `GET /orchestrator-app-mock.html` | HTML | Current static orchestrator dashboard mock when served on the mock server |
+| `GET /api/network` | JSON | LAN/Tailscale/network reachability information |
 | `GET /api/status` | JSON | Full system state (all workspaces, settings, connection info) |
 | `GET /api/log` | JSON | Last 200 approval log entries (newest first) |
+| `GET /api/feed` | JSON | Activity/feed entries used by dashboard surfaces |
 | `GET /api/git-status?index=N` | JSON | Parsed git status for workspace N (branch, staged, unstaged, untracked, recent commits) |
+| `GET /api/git-status-path?path=<path>` | JSON | Parsed git status for an explicit local path |
+| `GET /api/screen?index=N&surfaceId=<id>` | JSON/text | Read terminal screen text for a workspace/surface |
+| `GET /api/workspace-build-log?index=N` | JSON | Build log derived from workspace context |
+| `GET /api/workspace-console-logs?index=N` | JSON | Console log data derived from workspace context |
 | `GET /api/github/pr-comments?index=N&includeResolved=false` | JSON | GitHub PR code review threads for the workspace's current branch, fetched via authenticated `gh` |
 | `GET /api/reviews` | JSON | All reviews (sorted newest, diff truncated to 500 chars) |
 | `GET /api/reviews/<session_id>` | JSON | Full review detail including complete diff |
+| `GET /api/projects` | JSON | Workflow project list |
+| `GET /api/projects/<project_id>` | JSON | Workflow project detail |
+| `GET /api/objectives` | JSON | Existing objective list for the older command-center model |
+| `GET /api/objectives/<objective_id>` | JSON | Existing objective detail |
+| `GET /api/objectives/<objective_id>/context-health` | JSON | Context-health summary for an objective |
+| `GET /api/objectives/<objective_id>/action-buttons` | JSON | Configured action buttons for an objective |
+| `GET /api/objectives/<objective_id>/build-log` | JSON | Objective build log |
+| `GET /api/objectives/<objective_id>/console-logs` | JSON | Objective console logs |
+| `GET /api/objectives/<objective_id>/status-summary` | JSON | Objective status summary |
+| `GET /api/objectives/<objective_id>/screen` | JSON/text | Objective workspace screen text |
+| `GET /api/objectives/<objective_id>/tasks/<task_id>/screen` | JSON/text | Task-specific workspace screen text in the old objective model |
+| `GET /api/objectives/<objective_id>/messages` | JSON | Objective message history |
+| `GET /api/objectives/<objective_id>/debug` | JSON | Debug payload for an objective |
+| `GET /api/workspaces` | JSON | Workflow workspace list |
+| `GET /api/workspaces/<workspace_id>` | JSON | Workflow workspace detail |
+| `GET /api/workspaces/<workspace_id>/build-log` | JSON | Workspace build log |
+| `GET /api/workspaces/<workspace_id>/console-logs` | JSON | Workspace console logs |
+| `GET /api/workspaces/<workspace_id>/status-summary` | JSON | Workspace status summary |
+| `GET /api/workspaces/<workspace_id>/messages` | JSON | Workspace message history |
+| `GET /api/workspaces/<workspace_id>/active-turn` | JSON | Current active turn for a workspace |
+| `GET /api/workspaces/<workspace_id>/screen` | JSON/text | Workspace screen text |
+| `GET /api/workspaces/<workspace_id>/debug` | JSON | Debug payload for a workspace |
+| `GET /api/workspaces/<workspace_id>/action-buttons` | JSON | Configured action buttons for a workspace |
+| `GET /api/command-center` | JSON | Existing command-center aggregate state |
+| `GET /api/briefing` | JSON | Existing briefing aggregate |
+| `GET /api/ideas` | JSON | Idea list |
+| `GET /api/ideas/<idea_id>` | JSON | Idea detail |
+| `GET /api/preflights` | JSON | Preflight list |
+| `GET /api/preflights/<preflight_id>` | JSON | Preflight detail |
+| `GET /api/decisions` | JSON | Decision list |
+| `GET /api/decisions/<decision_id>` | JSON | Decision detail |
+| `GET /api/check-ins` | JSON | Check-in list |
+| `GET /api/context-health/attention` | JSON | Items needing context-health attention |
+| `GET /api/skills` | JSON | Available skills metadata |
+| `GET /api/file-search` | JSON | File search results |
+| `GET /api/jira/assigned?limit=N` | JSON | Jira issues assigned to Ronnie |
+| `GET /api/jira/issue?q=KEY_OR_QUERY` | JSON | Jira issue lookup/search |
 | `GET /api/config` | JSON | Current settings (pollInterval, model, review config) |
 | `GET /api/models` | JSON | Available Ollama models + LM Studio/Claude availability |
 
@@ -221,18 +348,84 @@ Server runs on `http://localhost:9091` (configurable port).
 
 | Endpoint | Body | Returns | Description |
 |---|---|---|---|
+| `POST /api/attachments` | multipart/form-data | JSON | Upload attachments for local workflow use |
 | `POST /api/toggle` | `{enabled: bool}` | `{ok, enabled}` | Enable/disable global auto-approve |
+| `POST /api/objectives/<objective_id>/start` | `{}` or launch payload | JSON | Start objective work in old objective model |
+| `POST /api/objectives/<objective_id>/tasks/<task_id>/approve` | approval payload | JSON | Approve an objective task prompt/action |
+| `POST /api/objectives/<objective_id>/approve-hook` | approval payload | JSON | Approve hook action |
+| `POST /api/objectives/<objective_id>/approve-plan` | approval payload | JSON | Approve plan |
+| `POST /api/objectives/<objective_id>/approve-contracts` | approval payload | JSON | Approve contracts |
+| `POST /api/objectives/<objective_id>/message` | `{message}` | JSON | Send message into an objective workflow |
+| `POST /api/objectives/<objective_id>/action-buttons` | button payload | JSON | Create/update objective action buttons |
+| `POST /api/objectives/<objective_id>/action-inject` | injection payload | JSON | Inject configured action text into objective workspace |
+| `POST /api/objectives/<objective_id>/open-worktree` | `{}` | JSON | Open objective worktree locally |
+| `POST /api/workspaces/<workspace_id>/action-buttons` | button payload | JSON | Create/update workspace action buttons |
+| `POST /api/workspaces/<workspace_id>/action-inject` | injection payload | JSON | Inject configured action text into workspace |
+| `POST /api/workspaces/<workspace_id>/start` | launch payload | JSON | Start workspace work |
+| `POST /api/workspaces/<workspace_id>/turns/<turn_id>/finalize` | finalize payload | JSON | Finalize/report a workspace turn |
+| `POST /api/workspaces/<workspace_id>/message` | `{message}` | JSON | Send message into a workspace |
+| `POST /api/workspaces/<workspace_id>/open-root` | `{}` | JSON | Open workspace root locally |
+| `POST /api/workspace-open-root` | workspace payload | JSON | Open root for a workspace by index/id |
+| `POST /api/projects/pick-root` | path payload | JSON | Choose a project root |
+| `POST /api/projects` | project payload | JSON | Create project |
+| `POST /api/objectives` | objective payload | JSON | Create objective |
+| `POST /api/workspaces` | workspace payload | JSON | Create workflow workspace record |
+| `POST /api/ideas` | idea payload | JSON | Create idea |
+| `POST /api/preflights` | preflight payload | JSON | Create preflight |
+| `POST /api/preflights/<preflight_id>/launch-objective` | launch payload | JSON | Launch objective from preflight |
+| `POST /api/decisions` | decision payload | JSON | Create decision |
+| `POST /api/check-ins` | check-in payload | JSON | Create check-in |
+| `POST /api/objectives/<objective_id>/check-in` | check-in payload | JSON | Create objective check-in |
+| `POST /api/objectives/<objective_id>/context-health/<item_id>` | context-health payload | JSON | Mutate objective context-health item |
+| `POST /api/resolve-dropped-files` | file payload | JSON | Resolve dropped files into local references |
+| `POST /api/push/register` | push token payload | JSON | Register push notifications |
+| `POST /api/push/clear` | push token payload | JSON | Clear push notification registrations |
+| `POST /api/network` | network payload | JSON | Update network-related server config |
 | `POST /api/workspace` | `{index, enabled}` | `{ok}` | Toggle auto-approve for one workspace |
+| `POST /api/workspace-star` | `{index, starred}` | JSON | Star/unstar workspace |
 | `POST /api/config` | `{pollInterval?, model?, reviewEnabled?, reviewModel?, reviewBackend?}` | `{ok, ...settings}` | Update settings |
 | `POST /api/rename` | `{index, name}` | `{ok}` | Rename a workspace |
 | `POST /api/send` | `{index, text, surfaceId?}` | `{ok}` | Send text input to a workspace terminal |
+| `POST /api/feed/reply` | reply payload | JSON | Reply to a feed item |
 | `POST /api/new-session` | `{cwd?, command?}` | `{ok, workspace: {index, uuid}}` | Create workspace, cd, launch Claude |
 | `POST /api/git-stage` | `{index, file}` | `{ok}` | `git add` a file in workspace's cwd |
+| `POST /api/git-stage-path` | `{path, file}` | `{ok}` | `git add` by explicit path |
 | `POST /api/git-unstage` | `{index, file}` | `{ok}` | `git reset HEAD` a file in workspace's cwd |
+| `POST /api/git-unstage-path` | `{path, file}` | `{ok}` | `git reset HEAD` by explicit path |
 | `POST /api/git-open-file` | `{index, file}` | `{ok}` | Open a file with macOS `open` command |
+| `POST /api/open-in-native` | path payload | JSON | Open a local file or directory in a native app |
 | `POST /api/git-diff` | `{index, file, section?}` | `{ok, diff}` | Get diff for a specific file (staged/unstaged/untracked) |
+| `POST /api/git-diff-path` | `{path, file, section?}` | `{ok, diff}` | Get diff for a file by explicit path |
+| `POST /api/file-content` | path payload | JSON | Read local file content through server constraints |
+| `POST /api/git-commit-files` | commit payload | JSON | Commit selected files |
+| `POST /api/git-commit-diff` | commit payload | JSON | Commit current diff |
+| `POST /api/hooks/pre-tool-use` | Claude hook payload | JSON | Claude Code PreToolUse hook receiver |
 | `POST /api/reviews/<id>/rerun` | `{model?, backend?}` | `{ok}` | Re-trigger review with optional model override |
 | `POST /api/reviews/<id>/dismiss` | `{}` | `{ok}` | Set review status to "dismissed" |
+
+### PATCH Endpoints
+
+| Endpoint | Body | Returns | Description |
+|---|---|---|---|
+| `PATCH /api/projects/<project_id>` | project patch | JSON | Update project |
+| `PATCH /api/ideas/<idea_id>` | idea patch | JSON | Update idea |
+| `PATCH /api/preflights/<preflight_id>` | preflight patch | JSON | Update preflight |
+| `PATCH /api/decisions/<decision_id>` | decision patch | JSON | Update decision |
+| `PATCH /api/objectives/<objective_id>/context-health/<item_id>` | context-health patch | JSON | Update context-health item |
+| `PATCH /api/objectives/<objective_id>` | objective patch | JSON | Update objective |
+| `PATCH /api/workspaces/<workspace_id>` | workspace patch | JSON | Update workspace |
+
+### DELETE Endpoints
+
+| Endpoint | Returns | Description |
+|---|---|---|
+| `DELETE /api/projects/<project_id>` | JSON | Delete project |
+| `DELETE /api/ideas/<idea_id>` | JSON | Delete idea |
+| `DELETE /api/preflights/<preflight_id>` | JSON | Delete preflight |
+| `DELETE /api/objectives/<objective_id>/action-buttons/<button_id>` | JSON | Delete objective action button |
+| `DELETE /api/workspaces/<workspace_id>/action-buttons/<button_id>` | JSON | Delete workspace action button |
+| `DELETE /api/objectives/<objective_id>` | JSON | Delete objective |
+| `DELETE /api/workspaces/<workspace_id>` | JSON | Delete workspace |
 
 ### `/api/status` Response Shape
 

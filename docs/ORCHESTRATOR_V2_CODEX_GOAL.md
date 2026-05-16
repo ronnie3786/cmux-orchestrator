@@ -28,6 +28,8 @@ Important existing docs:
 - `docs/COPILOTKIT_INTEGRATION.md`
 - `docs/API_REFERENCE.md`
 
+Before touching live APIs, read `docs/API_REFERENCE.md`, especially `Live Dashboard Targets` and `Safe Live Verification Rules`.
+
 Important existing code:
 
 - `cmux_harness/server.py`
@@ -466,6 +468,14 @@ This goal is complete when all items below are true.
   9. ask agent for status
 
 ## Required Verification Commands
+
+Live dashboard/API verification must be read-only unless Ronnie explicitly tests or approves the specific action.
+
+Allowed live checks include static page loads, `GET` status/list/detail endpoints, read-only git status/diff endpoints, and read-only cmux CLI inspection such as `tree`, `read-screen`, `capture-pane`, and `find-window`.
+
+Do not test live mutating behavior yourself. That includes sending terminal prompts, creating/killing/restarting sessions, changing harness config, approving actions, Jira comments/transitions, GitHub comments/reviews, git staging/commits/resets, push notification registration, or external posts.
+
+When a required feature cannot be safely tested by the agent against live data, mark it as `Needs Ronnie live test` in the final report with exact reproduction steps.
 
 Run the repo's available Python tests:
 
