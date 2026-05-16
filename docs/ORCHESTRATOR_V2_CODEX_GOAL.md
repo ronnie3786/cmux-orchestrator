@@ -27,8 +27,11 @@ Important existing docs:
 - `docs/ORCHESTRATOR_V2_SPEC.md`
 - `docs/COPILOTKIT_INTEGRATION.md`
 - `docs/API_REFERENCE.md`
+- `docs/ORCHESTRATOR_V2_DESIGN_GUIDE.md`
 
 Before touching live APIs, read `docs/API_REFERENCE.md`, especially `Live Dashboard Targets` and `Safe Live Verification Rules`.
+
+Before building UI, read `docs/ORCHESTRATOR_V2_DESIGN_GUIDE.md` and use the six bundled screenshots in `docs/assets/orchestrator-v2/` as the visual reference.
 
 Important existing code:
 

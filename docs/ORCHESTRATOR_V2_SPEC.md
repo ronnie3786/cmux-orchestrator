@@ -10,6 +10,8 @@ The source of truth is a local Task model. Jira tickets, GitHub PRs, cmux sessio
 
 The top-level orchestrator agent can be reached through chat and voice. It reads the same task/session state the UI renders, can inspect active cmux sessions, and can take approved actions through backend tools.
 
+Visual reference lives in `docs/ORCHESTRATOR_V2_DESIGN_GUIDE.md`. The six screenshot assets are bundled under `docs/assets/orchestrator-v2/` and should be treated as the concrete layout target for V2.
+
 ## Core Architecture Decisions
 
 - Frontend: React app.
