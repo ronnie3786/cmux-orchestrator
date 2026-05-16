@@ -459,6 +459,9 @@ This goal is complete when all items below are true.
 - New storage/repository tests exist and pass.
 - New cmux adapter tests exist with mocked CLI.
 - New frontend build passes.
+- Browser-based QA has been run against the implemented app.
+- Browser screenshots have been captured for the main V2 states and compared against `docs/ORCHESTRATOR_V2_DESIGN_GUIDE.md`.
+- Browser QA verifies the app is nonblank, navigable, visually aligned with the six bundled reference screenshots, and free of obvious layout overlap at desktop size.
 - At least one end-to-end happy path is covered:
   1. create task
   2. create cmux session
@@ -496,6 +499,41 @@ npm run test -- --run
 ```
 
 If a dev server is needed for browser QA, start it and verify the Tailscale URL when reporting status.
+
+## Browser QA Requirements
+
+Codex must use its available browser access to test the built UI before calling the goal complete.
+
+Required browser checks:
+
+- Open the implemented V2 app in a browser.
+- Verify the app renders without a blank screen or console-blocking runtime error.
+- Capture screenshots of the implemented equivalents for:
+  - home task board
+  - new task modal
+  - approval card state
+  - cmux session view
+  - git diff split view
+  - git diff unified view
+- Compare those screenshots against the references in `docs/assets/orchestrator-v2/` and the notes in `docs/ORCHESTRATOR_V2_DESIGN_GUIDE.md`.
+- Verify core navigation:
+  - task board to New Task modal and back
+  - task board to cmux session view and back
+  - task board to git diff view and back
+  - split/unified diff toggle
+  - left rail collapse/expand
+- Verify form validation for required task fields.
+- Verify loading, empty, and error states for live data sections where practical.
+- Verify the UI remains usable at desktop size and at one narrower viewport.
+
+Browser QA must respect the live safety rules:
+
+- Use mocked/local seeded data for mutating workflows whenever possible.
+- Live API checks must remain read-only.
+- Do not send terminal prompts, create/kill/restart live cmux sessions, post to Jira/GitHub, mutate git state, toggle config, or approve real actions during browser QA.
+- If a flow cannot be safely verified without real mutation, document it as `Needs Ronnie live test` with exact browser steps.
+
+When reporting completion, include the browser-tested URL, viewports tested, screenshot paths if saved, visual mismatches found/fixed, and remaining `Needs Ronnie live test` items.
 
 ## Implementation Guidance
 
