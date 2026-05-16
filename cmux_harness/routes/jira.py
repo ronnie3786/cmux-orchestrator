@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+from pathlib import Path
 
 from ..text_sanitizer import clean_external_text
 
 
-DEFAULT_JIRA_SITE = "example.atlassian.net"
+FALLBACK_JIRA_SITE = "example.atlassian.net"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 _PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -23,7 +25,7 @@ class JiraRouteError(Exception):
 def handle_get_assigned(handler, parsed):
     params = handler.parse_qs(parsed.query)
     project = str(params.get("project", [""])[0] or "").strip().upper()
-    site = str(params.get("site", [DEFAULT_JIRA_SITE])[0] or "").strip() or DEFAULT_JIRA_SITE
+    site = str(params.get("site", [default_jira_site()])[0] or "").strip() or default_jira_site()
 
     try:
         limit = int(str(params.get("limit", [str(DEFAULT_LIMIT)])[0] or str(DEFAULT_LIMIT)))
@@ -49,7 +51,7 @@ def handle_get_assigned(handler, parsed):
 def handle_get_issue(handler, parsed):
     params = handler.parse_qs(parsed.query)
     query = str(params.get("q", params.get("key", [""]))[0] or "").strip()
-    site = str(params.get("site", [DEFAULT_JIRA_SITE])[0] or "").strip() or DEFAULT_JIRA_SITE
+    site = str(params.get("site", [default_jira_site()])[0] or "").strip() or default_jira_site()
     key = extract_jira_key(query)
     if not key:
         handler._json_response({"ok": False, "error": "valid Jira key or URL required"}, 400)
@@ -68,12 +70,12 @@ def handle_get_issue(handler, parsed):
     })
 
 
-def fetch_assigned_tickets(*, project: str = "", limit: int = DEFAULT_LIMIT, site: str = DEFAULT_JIRA_SITE):
+def fetch_assigned_tickets(*, project: str = "", limit: int = DEFAULT_LIMIT, site: str | None = None):
     jql = build_assigned_jql(project)
     return normalize_workitems(run_workitem_search(jql, limit=limit), site=site)
 
 
-def fetch_ticket(*, key: str, site: str = DEFAULT_JIRA_SITE):
+def fetch_ticket(*, key: str, site: str | None = None):
     key = normalize_jira_key(key)
     if not key:
         raise JiraRouteError("invalid Jira key", 400)
@@ -165,7 +167,7 @@ def normalize_jira_key(value: str):
     return key
 
 
-def normalize_workitems(workitems, *, site: str = DEFAULT_JIRA_SITE):
+def normalize_workitems(workitems, *, site: str | None = None):
     tickets = []
     normalized_site = normalize_site(site)
     for item in workitems:
@@ -210,8 +212,40 @@ def project_key_from_issue_key(key: str) -> str:
     return value.split("-", 1)[0]
 
 
-def normalize_site(site: str) -> str:
-    value = str(site or DEFAULT_JIRA_SITE).strip()
+def default_jira_site() -> str:
+    """Return the active Jira Cloud site, preferring local acli auth config.
+
+    The web UI uses this to build browser links. The acli command already knows
+    which Atlassian tenant to query, so hard-coding example.atlassian.net here
+    creates working ticket data with broken links.
+    """
+    for env_name in ("CMUX_JIRA_SITE", "JIRA_SITE", "ATLASSIAN_SITE"):
+        value = normalize_site(os.environ.get(env_name), fallback="")
+        if value:
+            return value
+
+    config_site = _read_acli_jira_site()
+    if config_site:
+        return config_site
+
+    return FALLBACK_JIRA_SITE
+
+
+def _read_acli_jira_site() -> str:
+    config_path = Path.home() / ".config" / "acli" / "jira_config.yaml"
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+    match = re.search(r"(?m)^\s*-?\s*site:\s*([^\s#]+)", text)
+    if not match:
+        return ""
+    return normalize_site(match.group(1), fallback="")
+
+
+def normalize_site(site: str | None, *, fallback: str | None = None) -> str:
+    value = str(site or (default_jira_site() if fallback is None else fallback) or "").strip()
     value = re.sub(r"^https?://", "", value)
     return value.strip("/")
 

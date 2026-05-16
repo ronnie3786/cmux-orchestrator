@@ -1,6 +1,8 @@
 import json
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from cmux_harness.routes import jira
@@ -67,6 +69,29 @@ class TestJiraRoute(unittest.TestCase):
         ]
 
         self.assertEqual(jira.ticket_projects(tickets), ["APP", "WEB"])
+
+    def test_default_jira_site_reads_active_acli_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".config" / "acli"
+            config_dir.mkdir(parents=True)
+            (config_dir / "jira_config.yaml").write_text(
+                "version: 1\nprofiles:\n    - site: doximity.atlassian.net\n      auth_type: oauth\n",
+                encoding="utf-8",
+            )
+
+            with patch("cmux_harness.routes.jira.Path.home", return_value=Path(tmp)), \
+                    patch.dict("cmux_harness.routes.jira.os.environ", {}, clear=True):
+                self.assertEqual(jira.default_jira_site(), "doximity.atlassian.net")
+                tickets = jira.normalize_workitems([{
+                    "key": "IOSDOX-26059",
+                    "fields": {"summary": "Recorder bug"},
+                }])
+
+        self.assertEqual(tickets[0]["url"], "https://doximity.atlassian.net/browse/IOSDOX-26059")
+
+    def test_default_jira_site_allows_env_override(self):
+        with patch.dict("cmux_harness.routes.jira.os.environ", {"CMUX_JIRA_SITE": "https://override.atlassian.net/"}, clear=True):
+            self.assertEqual(jira.default_jira_site(), "override.atlassian.net")
 
     def test_fetch_assigned_tickets_uses_acli_json_output_without_default_project_filter(self):
         payload = [

@@ -85,6 +85,15 @@ def cards(payload: dict[str, Any], lane_id: str) -> list[dict[str, Any]]:
     return lane(payload, lane_id).get("cards", [])
 
 
+def assert_flow_stage(payload: dict[str, Any], expected_stage: str, *, target_id: str | None = None, min_progress: int = 0) -> None:
+    flow = payload.get("flowProof") or {}
+    assert_true(flow.get("active"), f"flowProof was not active: {flow}")
+    assert_true(flow.get("currentStage") == expected_stage, f"flowProof stage expected {expected_stage}, got {flow.get('currentStage')}: {flow}")
+    assert_true(flow.get("progressPercent", 0) >= min_progress, f"flowProof progress below {min_progress}: {flow}")
+    if target_id:
+        assert_true(flow.get("target", {}).get("id") == target_id, f"flowProof target expected {target_id}, got {flow.get('target')}")
+
+
 def create_git_repo(root: Path) -> Path:
     repo = root / "repo"
     repo.mkdir(parents=True)
@@ -144,6 +153,7 @@ def main() -> int:
             "requiredContext": required_context,
         }).get("preflight")
         assert_true(preflight.get("launchReady"), f"preflight was not launch ready: {preflight.get('missingRequirements')}")
+        assert_flow_stage(client.get("/api/command-center"), "launch", target_id=preflight["id"], min_progress=33)
 
         objective = client.post(f"/api/preflights/{urllib.parse.quote(preflight['id'])}/launch-objective", {}).get("objective")
         assert_true(objective and objective.get("id"), "launch did not return objective.id")
@@ -153,6 +163,7 @@ def main() -> int:
         running_cards = [card for card in cards(running, "running") if card.get("id") == objective["id"]]
         assert_true(len(running_cards) == 1, "launched objective did not appear exactly once in Running")
         assert_true(running_cards[0].get("sourcePreflightId") == preflight["id"], "running card missing source preflight")
+        assert_flow_stage(running, "review", target_id=objective["id"], min_progress=66)
 
         client.post(f"/api/objectives/{urllib.parse.quote(objective['id'])}/check-in", {"summary": "Live E2E check-in before review handoff."})
         client.patch(f"/api/objectives/{urllib.parse.quote(objective['id'])}", {
@@ -161,8 +172,10 @@ def main() -> int:
         })
         review = client.get("/api/command-center")
         assert_true(any(card.get("id") == objective["id"] for card in cards(review, "review")), "objective did not move to Review")
+        assert_flow_stage(review, "done", target_id=objective["id"], min_progress=83)
         briefing = client.get("/api/briefing")
         assert_true(briefing.get("counts", {}).get("reviewReady", 0) >= 1, "briefing did not count review-ready objective")
+        assert_flow_stage(briefing, "done", target_id=objective["id"], min_progress=83)
 
         client.patch(f"/api/objectives/{urllib.parse.quote(objective['id'])}", {
             "status": "completed",
@@ -171,6 +184,7 @@ def main() -> int:
         done = client.get("/api/command-center")
         assert_true(any(card.get("id") == objective["id"] for card in cards(done, "done")), "objective did not move to Done")
         assert_true(done.get("summary", {}).get("completed", 0) >= 1, "completed count did not increment")
+        assert_flow_stage(done, "done", target_id=objective["id"], min_progress=100)
 
         print("verified flow: idea -> preflight -> launch -> running -> review -> done")
         print(f"created ids: {json.dumps(created, sort_keys=True)}")

@@ -165,7 +165,13 @@ button { cursor: pointer; }
 }
 .sidebar-note strong { display: block; color: var(--ink); margin-bottom: 5px; }
 
-.main { min-width: 0; display: grid; grid-template-rows: 80px 1fr; }
+.main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 80px minmax(0, 1fr);
+  overflow: hidden;
+}
 .topbar {
   display: flex;
   align-items: center;
@@ -196,7 +202,14 @@ button { cursor: pointer; }
 }
 .search:focus { border-color: rgba(156, 44, 243, .45); box-shadow: 0 0 0 4px rgba(156,44,243,.08); }
 
-.content { overflow: auto; padding: 30px 34px 90px; }
+.content {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 30px 34px 90px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 .view { display: none; }
 .view.active { display: block; }
 
