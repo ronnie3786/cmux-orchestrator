@@ -59,7 +59,7 @@ class CmuxCli:
     def list_sessions(self) -> list[dict[str, Any]]:
         if _fake_enabled():
             return _fake_sessions()
-        result = self.run(["tree", "--all", "--json"], timeout=8)
+        result = self.run(["--id-format", "both", "tree", "--all", "--json"], timeout=8)
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError as exc:
@@ -144,8 +144,10 @@ class CmuxCli:
         command = LAUNCH_COMMANDS[launch_type]
         if command:
             args.extend(["--command", command])
-        result = self.run(args, timeout=15)
+        result = self.run(["--id-format", "both", *args], timeout=15)
         session = parse_new_workspace_output(result.stdout)
+        if not session.get("workspaceId"):
+            session = self._find_created_session(str(title or "New Task")) or session
         session.setdefault("title", str(title or "New Task"))
         session.setdefault("cwd", os.path.expanduser(cwd))
         session.setdefault("launchType", launch_type)
@@ -156,9 +158,10 @@ class CmuxCli:
             raise CmuxCliError("workspaceId required", 400)
         if _fake_enabled():
             return {"ok": True, "fake": True}
-        args = ["send-text", "--workspace", workspace_id, "--text", str(text or "")]
+        args = ["send", "--workspace", workspace_id]
         if surface_id:
             args.extend(["--surface", surface_id])
+        args.append(str(text or ""))
         self.run(args, timeout=8)
         return {"ok": True}
 
@@ -167,11 +170,24 @@ class CmuxCli:
             raise CmuxCliError("workspaceId required", 400)
         if _fake_enabled():
             return {"ok": True, "fake": True}
-        args = ["send-key", "--workspace", workspace_id, "--key", str(key or "").lower()]
+        args = ["send-key", "--workspace", workspace_id]
         if surface_id:
             args.extend(["--surface", surface_id])
+        args.append(str(key or "").lower())
         self.run(args, timeout=8)
         return {"ok": True}
+
+    def _find_created_session(self, title: str) -> dict[str, Any] | None:
+        title_key = str(title or "").strip().casefold()
+        if not title_key:
+            return None
+        matches = [
+            session for session in self.list_sessions()
+            if str(session.get("title") or "").strip().casefold() == title_key
+        ]
+        if not matches:
+            return None
+        return sorted(matches, key=lambda item: item.get("workspaceIndex") or -1)[-1]
 
     def inspect_session(self, session: dict[str, Any], screen_text: str = "") -> dict[str, Any]:
         text = f"{session.get('title', '')} {session.get('runningKind', '')} {screen_text[:2000]}".lower()
@@ -217,8 +233,8 @@ def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:
         for workspace in window.get("workspaces", []) or []:
             if not isinstance(workspace, dict):
                 continue
-            workspace_id = str(workspace.get("uuid") or workspace.get("id") or "")
             workspace_ref = str(workspace.get("ref") or "")
+            workspace_id = str(workspace.get("uuid") or workspace.get("id") or workspace_ref)
             workspace_title = str(workspace.get("title") or workspace.get("name") or "")
             cwd = str(workspace.get("current_directory") or workspace.get("cwd") or "")
             workspace_index = workspace.get("index")
@@ -255,10 +271,11 @@ def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:
                         "workspaceId": workspace_id,
                         "workspaceRef": workspace_ref,
                         "workspaceIndex": workspace_index,
-                        "surfaceId": surface_id,
+                        "surfaceId": surface_id or surface_ref,
                         "surfaceRef": surface_ref,
                         "paneId": pane_id,
-                        "title": surface_title or workspace_title,
+                        "title": workspace_title or surface_title,
+                        "surfaceTitle": surface_title,
                         "cwd": cwd,
                         "active": True,
                         "runningKind": "",

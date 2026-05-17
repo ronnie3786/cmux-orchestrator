@@ -34,6 +34,8 @@ class TestCmuxCli(unittest.TestCase):
         self.assertEqual(len(sessions), 1)
         self.assertEqual(sessions[0]["workspaceId"], "workspace-1")
         self.assertEqual(sessions[0]["surfaceId"], "surface-1")
+        self.assertEqual(sessions[0]["title"], "Ship UI")
+        self.assertEqual(sessions[0]["surfaceTitle"], "Codex")
         self.assertEqual(sessions[0]["cwd"], "/repo")
 
     def test_list_sessions_invokes_project_relative_cli_path(self):
@@ -49,7 +51,7 @@ class TestCmuxCli(unittest.TestCase):
             sessions = cmux_cli.CmuxCli(executable="/custom/cmux").list_sessions()
 
         self.assertEqual(sessions[0]["workspaceId"], "workspace-1")
-        self.assertEqual(mock_run.call_args.args[0], ["/custom/cmux", "tree", "--all", "--json"])
+        self.assertEqual(mock_run.call_args.args[0], ["/custom/cmux", "--id-format", "both", "tree", "--all", "--json"])
 
     def test_create_session_maps_launch_type_to_command(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,6 +71,7 @@ class TestCmuxCli(unittest.TestCase):
 
         args = mock_run.call_args.args[0]
         self.assertEqual(session["workspaceId"], "workspace-2")
+        self.assertEqual(args[:4], ["/custom/cmux", "--id-format", "both", "new-workspace"])
         self.assertIn("--command", args)
         self.assertIn("codex", args)
 
@@ -83,7 +86,8 @@ class TestCmuxCli(unittest.TestCase):
                     launch_type="Empty shell",
                 )
 
-        args = mock_run.call_args.args[0]
+        args = mock_run.call_args_list[0].args[0]
+        self.assertEqual(args[:4], ["/custom/cmux", "--id-format", "both", "new-workspace"])
         self.assertNotIn("--command", args)
         self.assertNotIn("codex", args)
         self.assertNotIn("claude", args)
@@ -99,6 +103,30 @@ class TestCmuxCli(unittest.TestCase):
         self.assertEqual(
             mock_run.call_args.args[0],
             ["/custom/cmux", "read-screen", "--scrollback", "--lines", "50", "--workspace", "workspace-1", "--surface", "surface-1"],
+        )
+
+    def test_send_text_uses_current_cmux_send_command_shape(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("cmux_harness.cmux_cli.Path.exists", return_value=True), \
+                patch("cmux_harness.cmux_cli.subprocess.run", return_value=completed) as mock_run:
+            result = cmux_cli.CmuxCli(executable="/custom/cmux").send_text("workspace-1", "echo hi", surface_id="surface-1")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            ["/custom/cmux", "send", "--workspace", "workspace-1", "--surface", "surface-1", "echo hi"],
+        )
+
+    def test_send_key_uses_current_cmux_send_key_command_shape(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("cmux_harness.cmux_cli.Path.exists", return_value=True), \
+                patch("cmux_harness.cmux_cli.subprocess.run", return_value=completed) as mock_run:
+            result = cmux_cli.CmuxCli(executable="/custom/cmux").send_key("workspace-1", "Enter", surface_id="surface-1")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            ["/custom/cmux", "send-key", "--workspace", "workspace-1", "--surface", "surface-1", "enter"],
         )
 
 
