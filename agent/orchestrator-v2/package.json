@@ -1,0 +1,15 @@
+{
+  "name": "cmux-orchestrator-v2-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@ai-sdk/fireworks": "^2.0.52",
+    "ai": "^6.0.184",
+    "zod": "^4.4.3"
+  }
+}

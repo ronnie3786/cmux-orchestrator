@@ -1,6 +1,6 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AppShell } from "./App.jsx";
 
 vi.mock("@copilotkit/react-core", () => ({
@@ -24,7 +24,7 @@ const bootstrap = {
     tags: [{ tag: "frontend" }],
     pendingApprovals: []
   }],
-  history: [],
+  history: [{ id: "task_done", title: "Finished task", status: "Done", priority: "Low", workspaceDir: "/repo", updatedAt: new Date().toISOString(), jiraLinks: [], pullRequestLinks: [], cmuxSessionLinks: [], tags: [] }],
   leftRail: {
     assignedJira: { ok: true, items: [{ key: "APP-1", title: "Ticket", status: "In Progress", url: "https://jira.example/APP-1" }] },
     openPrs: { ok: true, items: [{ number: 12, title: "PR", branch: "orchestrator-v2", url: "https://github.com/org/repo/pull/12" }] },
@@ -75,5 +75,18 @@ describe("AppShell", () => {
     expect(screen.getAllByText("APP-1").length).toBeGreaterThan(0);
     expect(screen.getAllByText("#12").length).toBeGreaterThan(0);
     expect(screen.getByText("Orphaned cmux sessions")).toBeTruthy();
+    expect(screen.getByText("Done / Archived")).toBeTruthy();
+    expect(screen.getByText("Voice Mode")).toBeTruthy();
+    expect(screen.getByText("Text chat")).toBeTruthy();
+  });
+
+  it("defaults new tasks to empty shell launch type", async () => {
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getAllByText("Ship V2").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByLabelText("Add from Jira Tickets"));
+
+    const emptyShell = screen.getByText("Empty shell").closest("button");
+    expect(emptyShell.className).toContain("active");
   });
 });

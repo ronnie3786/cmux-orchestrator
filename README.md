@@ -70,6 +70,13 @@ Useful routes:
 ```text
 http://localhost:9091/        # setup, checks, connection URLs
 http://localhost:9091/harness # main cmux harness dashboard
+http://localhost:9091/orchestrator-v2 # Orchestrator V2 production-local runtime
+```
+
+`python3 dashboard.py` also supervises the Orchestrator V2 watcher and Node/Vercel AI SDK sidecar when the sidecar package is installed. Run the redacted production readiness check with:
+
+```bash
+scripts/orchestrator_v2_health.py
 ```
 
 Optional custom port:

@@ -233,6 +233,80 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertIn("Jira linked task is To Do", body["message"]["content"])
         self.assertIn("Session summary line", body["message"]["content"])
 
+    def test_agent_tools_include_send_key_goal_read_and_not_implemented_capabilities(self):
+        task = self._json_body(self._post_json("/api/orchestrator-v2/tasks", {
+            "title": "Tool surface",
+            "workspaceDir": str(self.workspace),
+            "sessionLaunchType": "Empty shell",
+        }))["task"]
+        self.cmux.send_key.return_value = {"ok": True}
+
+        key_handler = self._post_json("/api/orchestrator-v2/agent/tools/send_cmux_key", {
+            "runId": "run-tools",
+            "args": {"workspaceId": "workspace-created", "surfaceId": "surface-created", "key": "enter"},
+        })
+        goal_handler = self._post_json("/api/orchestrator-v2/agent/tools/read_goal_markdown", {
+            "runId": "run-tools",
+            "args": {"taskId": task["id"]},
+        })
+        unsupported_handler = self._post_json("/api/orchestrator-v2/agent/tools/kill_cmux_session", {
+            "runId": "run-tools",
+            "args": {"workspaceId": "workspace-created"},
+        })
+
+        self.assertTrue(self._json_body(key_handler)["result"]["ok"])
+        self.assertIn("Tool surface", self._json_body(goal_handler)["result"]["goal"]["content"])
+        unsupported = self._json_body(unsupported_handler)["result"]
+        self.assertEqual(unsupported["status"], "not_implemented")
+        tool_runs = v2.get_repository().list_tool_runs(run_id="run-tools")
+        self.assertIn("not_implemented", {item["status"] for item in tool_runs})
+
+    def test_jira_comment_tool_creates_approval_and_approval_executes_stored_payload(self):
+        approval_handler = self._post_json("/api/orchestrator-v2/agent/tools/post_jira_comment", {
+            "runId": "run-jira",
+            "args": {"key": "APP-123", "body": "Ready for review"},
+        })
+        approval = self._json_body(approval_handler)["result"]["approval"]
+
+        with patch("cmux_harness.routes.orchestrator_v2.jira_routes.post_comment", return_value={"id": "comment-1"}) as mock_post:
+            decision_handler = self._post_json(f"/api/orchestrator-v2/approvals/{approval['id']}/decision", {"status": "approved"})
+
+        decided = self._json_body(decision_handler)["approval"]
+        self.assertEqual(decided["status"], "approved")
+        self.assertEqual(decided["execution"]["key"], "APP-123")
+        mock_post.assert_called_once_with(key="APP-123", body="Ready for review")
+
+    def test_agent_run_and_agui_event_routes_persist_contract_events(self):
+        self._post_json("/api/orchestrator-v2/agent/runs", {"runId": "run-agui", "mode": "text", "input": {"message": "hi"}})
+        self._post_json("/api/orchestrator-v2/agent/agui-events", {
+            "runId": "run-agui",
+            "events": [{"type": "RUN_STARTED", "runId": "run-agui"}],
+        })
+        handler = self._make_handler("/api/orchestrator-v2/agui/runs/run-agui/events")
+        handler.do_GET()
+
+        body = self._json_body(handler)
+        self.assertEqual(body["events"][0]["type"], "RUN_STARTED")
+
+    def test_voice_local_fake_pipeline_and_capabilities_are_redacted(self):
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {"CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "1"}):
+            transcribe = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
+                "audioBase64": "AA==",
+                "fixtureText": "hello from mic",
+            })
+            speak = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": "hello"})
+
+        self.assertEqual(self._json_body(transcribe)["text"], "hello from mic")
+        self.assertEqual(self._json_body(speak)["provider"], "piper")
+
+    def test_voice_provider_failures_return_json_errors(self):
+        with patch("cmux_harness.orchestrator_v2_voice.speak_local_payload", side_effect=RuntimeError("Piper binary is not available")):
+            handler = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": "hello"})
+
+        body = self._json_body(handler)
+        self.assertFalse(body["ok"])
+        self.assertIn("Piper binary", body["error"])
+
     def test_copilotkit_info_supports_rest_and_single_endpoint_shapes(self):
         get_handler = self._make_handler("/api/orchestrator-v2/copilotkit/info")
         get_handler.do_GET()

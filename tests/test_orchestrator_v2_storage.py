@@ -108,6 +108,27 @@ class TestOrchestratorV2Storage(unittest.TestCase):
         self.assertEqual(audit[0]["action"], "update_goal_markdown")
         self.assertEqual(activity[0]["kind"], "goal_updated")
 
+    def test_agent_runs_agui_events_and_tool_runs_are_persistent(self):
+        self.repo.create_agent_run("run-1", mode="text", input_payload={"message": "status"})
+        self.repo.record_agui_event("run-1", {"type": "RUN_STARTED", "runId": "run-1"})
+        self.repo.record_tool_run("run-1", "list_tasks", {}, {"count": 0})
+        finished = self.repo.finish_agent_run("run-1", status="completed", output_payload={"text": "done"})
+
+        self.assertEqual(finished["status"], "completed")
+        self.assertEqual(self.repo.list_agui_events("run-1")[0]["type"], "RUN_STARTED")
+        self.assertEqual(self.repo.list_tool_runs(run_id="run-1")[0]["toolName"], "list_tasks")
+
+    def test_secret_shaped_values_are_redacted_before_persistence(self):
+        self.repo.append_chat_message("user", "token sk-1234567890abcdefSECRET should disappear", {"Authorization": "Bearer abcdefghijklmnop"})
+        self.repo.record_tool_run("run-2", "secret_tool", {"apiKey": "fw_abcdefghijklmnop"}, {"token": "ek_abcdefghijklmnop"})
+
+        message = self.repo.list_chat_messages()[0]
+        tool_run = self.repo.list_tool_runs(run_id="run-2")[0]
+
+        self.assertIn("[REDACTED]", message["content"])
+        self.assertEqual(tool_run["input"]["apiKey"], "[REDACTED]")
+        self.assertEqual(tool_run["output"]["token"], "[REDACTED]")
+
 
 if __name__ == "__main__":
     unittest.main()

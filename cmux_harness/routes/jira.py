@@ -85,6 +85,72 @@ def fetch_ticket(*, key: str, site: str | None = None):
     return tickets[0]
 
 
+def post_comment(*, key: str, body: str) -> dict:
+    key = normalize_jira_key(key)
+    if not key:
+        raise JiraRouteError("invalid Jira key", 400)
+    text = str(body or "").strip()
+    if not text:
+        raise JiraRouteError("comment body required", 400)
+    command = [
+        "acli",
+        "jira",
+        "workitem",
+        "comment",
+        "create",
+        "--key",
+        key,
+        "--body",
+        text,
+        "--json",
+    ]
+    return _run_json_command(command, default={"key": key})
+
+
+def transition_status(*, key: str, status: str) -> dict:
+    key = normalize_jira_key(key)
+    if not key:
+        raise JiraRouteError("invalid Jira key", 400)
+    target_status = clean_external_text(status)
+    if not target_status:
+        raise JiraRouteError("target status required", 400)
+    command = [
+        "acli",
+        "jira",
+        "workitem",
+        "transition",
+        "--key",
+        key,
+        "--status",
+        target_status,
+        "--yes",
+        "--json",
+    ]
+    return _run_json_command(command, default={"key": key, "status": target_status})
+
+
+def _run_json_command(command: list[str], *, default: dict | None = None) -> dict:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
+    except FileNotFoundError as exc:
+        raise JiraRouteError("acli is not installed or is not on PATH", 500) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise JiraRouteError("Jira request timed out", 504) from exc
+    except OSError as exc:
+        raise JiraRouteError(f"Jira request failed: {exc}", 500) from exc
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "Jira request failed").strip()
+        raise JiraRouteError(message, 502)
+    text = (result.stdout or "").strip()
+    if not text:
+        return default or {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {**(default or {}), "raw": clean_external_text(text)}
+    return payload if isinstance(payload, dict) else {"items": payload}
+
+
 def run_workitem_search(jql: str, *, limit: int = DEFAULT_LIMIT):
     command = [
         "acli",

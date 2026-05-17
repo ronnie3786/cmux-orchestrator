@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import storage
+from .orchestrator_v2_security import redact_text, redact_value
 
 
 DATA_DIR = storage.LOG_DIR / "orchestrator-v2"
@@ -60,7 +61,7 @@ def default_goals_dir() -> Path:
 
 
 def _json_dumps(value: Any) -> str:
-    return json.dumps(value if value is not None else {}, sort_keys=True)
+    return json.dumps(redact_value(value if value is not None else {}), sort_keys=True)
 
 
 def _json_loads(value: str | None, default: Any):
@@ -263,6 +264,34 @@ CREATE TABLE IF NOT EXISTS agent_tool_runs (
     requires_approval INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id TEXT PRIMARY KEY,
+    mode TEXT NOT NULL DEFAULT 'text',
+    status TEXT NOT NULL DEFAULT 'running',
+    input_json TEXT NOT NULL DEFAULT '{}',
+    output_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agui_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS task_memory_notes (
+    id TEXT PRIMARY KEY,
+    task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    source_run_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'summary',
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS approval_requests (
@@ -729,12 +758,13 @@ class V2Repository:
     def append_chat_message(self, role: str, content: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         message_id = safe_id("chat")
         created_at = now_iso()
+        safe_content = redact_text(content)
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO global_chat_messages (id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?)",
-                (message_id, str(role or "user"), str(content or ""), _json_dumps(metadata or {}), created_at),
+                (message_id, str(role or "user"), safe_content, _json_dumps(metadata or {}), created_at),
             )
-        return {"id": message_id, "role": role, "content": content, "metadata": metadata or {}, "createdAt": created_at}
+        return {"id": message_id, "role": role, "content": safe_content, "metadata": redact_value(metadata or {}), "createdAt": created_at}
 
     def list_chat_messages(self, *, limit: int = 100) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit or 100), 500))
@@ -753,6 +783,95 @@ class V2Repository:
                     "createdAt": row["created_at"],
                 })
             return messages
+
+    def create_agent_run(self, run_id: str, *, mode: str = "text", input_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        created_at = now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_runs (id, mode, status, input_json, output_json, created_at, updated_at)
+                VALUES (?, ?, 'running', ?, '{}', ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    mode = excluded.mode,
+                    input_json = excluded.input_json,
+                    updated_at = excluded.updated_at
+                """,
+                (str(run_id), str(mode or "text"), _json_dumps(input_payload or {}), created_at, created_at),
+            )
+            self._activity(conn, "agent_run_started", "Agent run started", str(mode or "text"), "agent_run", str(run_id), run_id=str(run_id))
+        return self.get_agent_run(run_id) or {}
+
+    def finish_agent_run(self, run_id: str, *, status: str = "completed", output_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        updated_at = now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET status = ?, output_json = ?, updated_at = ? WHERE id = ?",
+                (str(status or "completed"), _json_dumps(output_payload or {}), updated_at, str(run_id)),
+            )
+            self._activity(conn, "agent_run_finished", "Agent run finished", str(status or "completed"), "agent_run", str(run_id), run_id=str(run_id))
+        return self.get_agent_run(run_id) or {}
+
+    def get_agent_run(self, run_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM agent_runs WHERE id = ?", (str(run_id),)).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": row["id"],
+                "mode": row["mode"],
+                "status": row["status"],
+                "input": _json_loads(row["input_json"], {}),
+                "output": _json_loads(row["output_json"], {}),
+                "createdAt": row["created_at"],
+                "updatedAt": row["updated_at"],
+            }
+
+    def record_agui_event(self, run_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        event_id = str(event.get("id") or safe_id("agui"))
+        event_type = str(event.get("type") or event.get("eventType") or "CUSTOM")
+        created_at = now_iso()
+        payload = dict(event)
+        payload.setdefault("id", event_id)
+        payload.setdefault("runId", str(run_id or event.get("runId") or ""))
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO agui_events (id, run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                (event_id, str(run_id or payload.get("runId") or ""), event_type, _json_dumps(payload), created_at),
+            )
+        return {"id": event_id, "runId": str(run_id or payload.get("runId") or ""), "type": event_type, "event": redact_value(payload), "createdAt": created_at}
+
+    def record_agui_events(self, run_id: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [self.record_agui_event(run_id, event) for event in events if isinstance(event, dict)]
+
+    def list_agui_events(self, run_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit or 500), 1000))
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agui_events WHERE run_id = ? ORDER BY created_at ASC LIMIT ?",
+                (str(run_id), limit),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "runId": row["run_id"],
+                    "type": row["event_type"],
+                    "event": _json_loads(row["payload_json"], {}),
+                    "createdAt": row["created_at"],
+                }
+                for row in rows
+            ]
+
+    def list_tool_runs(self, *, run_id: str = "", limit: int = 200) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit or 200), 500))
+        with self.connect() as conn:
+            if run_id:
+                rows = conn.execute(
+                    "SELECT * FROM agent_tool_runs WHERE run_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (str(run_id), limit),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM agent_tool_runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            return [self._tool_run_from_row(row) for row in rows]
 
     def record_tool_run(
         self,
@@ -1227,6 +1346,19 @@ class V2Repository:
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
             "decidedAt": row["decided_at"],
+        }
+
+    def _tool_run_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "runId": row["run_id"],
+            "toolName": row["tool_name"],
+            "input": _json_loads(row["input_json"], {}),
+            "output": _json_loads(row["output_json"], {}),
+            "status": row["status"],
+            "requiresApproval": bool(row["requires_approval"]),
+            "createdAt": row["created_at"],
+            "completedAt": row["completed_at"],
         }
 
     def _activity_from_row(self, row: sqlite3.Row) -> dict[str, Any]:

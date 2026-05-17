@@ -174,23 +174,37 @@ class CmuxCli:
         return {"ok": True}
 
     def inspect_session(self, session: dict[str, Any], screen_text: str = "") -> dict[str, Any]:
-        title = f"{session.get('title', '')} {screen_text[:400]}".lower()
-        if "claude" in title:
+        text = f"{session.get('title', '')} {session.get('runningKind', '')} {screen_text[:2000]}".lower()
+        if "claude" in text or "claude code" in text:
             running = "Claude Code"
-        elif "opencode" in title:
+        elif "opencode" in text or "open code" in text:
             running = "OpenCode"
-        elif "codex" in title:
+        elif "codex" in text:
             running = "Codex"
         else:
             running = "Shell"
+        state = "idle"
+        if re_search(r"\b(npm|yarn|pnpm|pytest|xcodebuild|swift\s+test|gradle|mvn|bundle\s+exec)\b", text):
+            state = "running_tool"
+        elif re_search(r"\b(error|failed|traceback|exception)\b", text):
+            state = "error"
+        elif re_search(r"\b(pass|passed|success|completed)\b", text):
+            state = "completed_recently"
         return {
             "workspaceId": session.get("workspaceId", ""),
             "surfaceId": session.get("surfaceId", ""),
             "runningKind": running,
+            "state": state,
             "active": bool(session.get("active", True)),
             "title": session.get("title", ""),
             "cwd": session.get("cwd", ""),
+            "freshness": "live" if screen_text else "snapshot",
         }
+
+
+def re_search(pattern: str, text: str) -> bool:
+    import re
+    return re.search(pattern, text, flags=re.IGNORECASE) is not None
 
 
 def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:

@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from .. import cmux_cli
+from .. import orchestrator_v2_runtime
 from .. import orchestrator_v2_storage as v2
+from .. import orchestrator_v2_voice
+from ..orchestrator_v2_security import redact_text
 from . import jira as jira_routes
 
 
@@ -26,6 +29,16 @@ def handle_get(handler, parsed, *, engine) -> bool:
         if path == "/api/orchestrator-v2/bootstrap":
             payload = bootstrap_payload(repo=repo)
             handler._json_response({"ok": True, **payload})
+            return True
+        if path == "/api/orchestrator-v2/health":
+            payload = orchestrator_v2_runtime.health_payload(repo=repo)
+            handler._json_response(payload, 200 if payload.get("ok") else 503)
+            return True
+        if path == "/api/orchestrator-v2/ai/capabilities":
+            handler._json_response({"ok": True, **agent_capabilities_payload()})
+            return True
+        if path == "/api/orchestrator-v2/agent/tools":
+            handler._json_response({"ok": True, "tools": agent_tool_specs()})
             return True
         if path == "/api/orchestrator-v2/copilotkit/info":
             handler._json_response(copilotkit_info_payload())
@@ -105,10 +118,20 @@ def handle_get(handler, parsed, *, engine) -> bool:
             limit = int(str(params.get("limit", ["100"])[0] or "100"))
             handler._json_response({"ok": True, "audit": repo.list_audit_events(limit=limit)})
             return True
+        if path == "/api/orchestrator-v2/agent/tool-runs":
+            params = handler.parse_qs(parsed.query)
+            limit = int(str(params.get("limit", ["200"])[0] or "200"))
+            run_id = str(params.get("runId", [""])[0] or "")
+            handler._json_response({"ok": True, "toolRuns": repo.list_tool_runs(run_id=run_id, limit=limit)})
+            return True
         if path == "/api/orchestrator-v2/chat/messages":
             handler._json_response({"ok": True, "messages": repo.list_chat_messages()})
             return True
-    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError) as exc:
+        if path.startswith("/api/orchestrator-v2/agui/runs/") and path.endswith("/events"):
+            run_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/agui/runs/"):-len("/events")]).strip("/")
+            handler._json_response({"ok": True, "runId": run_id, "events": repo.list_agui_events(run_id)})
+            return True
+    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError, RuntimeError, ValueError) as exc:
         handler._json_response({"ok": False, "error": str(exc)}, getattr(exc, "status", 500))
         return True
     return False
@@ -118,6 +141,62 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
     path = parsed.path
     repo = v2.get_repository()
     try:
+        if path in {"/api/orchestrator-v2/ai/chat", "/api/orchestrator-v2/agui/run"}:
+            sidecar_path = path[len("/api/orchestrator-v2"):]
+            return orchestrator_v2_runtime.proxy_stream(handler, f"/api/orchestrator-v2{sidecar_path}", data)
+        if path == "/api/orchestrator-v2/agent/context":
+            handler._json_response({"ok": True, **agent_context_payload(repo=repo)})
+            return True
+        if path == "/api/orchestrator-v2/agent/transcript":
+            message = repo.append_chat_message(
+                str(data.get("role") or "user"),
+                str(data.get("content") or ""),
+                data.get("metadata") if isinstance(data.get("metadata"), dict) else {},
+            )
+            handler._json_response({"ok": True, "message": message}, 201)
+            return True
+        if path == "/api/orchestrator-v2/agent/runs":
+            run = repo.create_agent_run(
+                str(data.get("runId") or data.get("id") or v2.safe_id("run")),
+                mode=str(data.get("mode") or "text"),
+                input_payload=data.get("input") if isinstance(data.get("input"), dict) else data,
+            )
+            handler._json_response({"ok": True, "run": run}, 201)
+            return True
+        if path.startswith("/api/orchestrator-v2/agent/runs/") and path.endswith("/finish"):
+            run_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/agent/runs/"):-len("/finish")]).strip("/")
+            run = repo.finish_agent_run(
+                run_id,
+                status=str(data.get("status") or "completed"),
+                output_payload=data.get("output") if isinstance(data.get("output"), dict) else data,
+            )
+            handler._json_response({"ok": True, "run": run})
+            return True
+        if path == "/api/orchestrator-v2/agent/agui-events":
+            events = data.get("events") if isinstance(data.get("events"), list) else [data.get("event") or data]
+            stored = repo.record_agui_events(str(data.get("runId") or ""), events)
+            handler._json_response({"ok": True, "events": stored}, 201)
+            return True
+        if path == "/api/orchestrator-v2/realtime/session":
+            tools = realtime_tool_specs()
+            payload = orchestrator_v2_voice.realtime_client_secret_payload({**data, "tools": tools})
+            handler._json_response(payload)
+            return True
+        if path == "/api/orchestrator-v2/realtime/tool":
+            tool_name = str(data.get("toolName") or data.get("name") or "")
+            payload = run_agent_tool(repo, tool_name, data, engine=engine)
+            handler._json_response({"ok": True, "tool": tool_name, "result": payload})
+            return True
+        if path == "/api/orchestrator-v2/voice/local/transcribe":
+            payload = orchestrator_v2_voice.transcribe_local_payload(data)
+            if payload.get("text"):
+                repo.append_chat_message("user", str(payload["text"]), {"mode": "local_voice", "source": "stt"})
+            handler._json_response(payload)
+            return True
+        if path == "/api/orchestrator-v2/voice/local/speak":
+            payload = orchestrator_v2_voice.speak_local_payload(data)
+            handler._json_response(payload)
+            return True
         if path == "/api/orchestrator-v2/tasks":
             payload = dict(data or {})
             workspace_dir = str(payload.get("workspaceDir") or "").strip()
@@ -224,7 +303,11 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             return True
         if path.startswith("/api/orchestrator-v2/approvals/") and path.endswith("/decision"):
             request_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/approvals/"):-len("/decision")]).strip("/")
+            before = repo.get_approval_request(request_id)
             approval = repo.decide_approval_request(request_id, str(data.get("status") or ""))
+            execution = execute_approved_payload(repo, before, approval) if approval.get("status") == "approved" else None
+            if execution is not None:
+                approval["execution"] = execution
             handler._json_response({"ok": True, "approval": approval})
             return True
         if path == "/api/orchestrator-v2/watcher/run":
@@ -239,15 +322,13 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             if data.get("method") == "info":
                 handler._json_response(copilotkit_info_payload())
                 return True
-            payload = handle_chat_turn(repo, data)
-            handler._json_response({"ok": True, **payload})
-            return True
+            return orchestrator_v2_runtime.proxy_stream(handler, "/api/orchestrator-v2/copilotkit", data)
         if path.startswith("/api/orchestrator-v2/agent/tools/"):
             tool_name = urllib.parse.unquote(path[len("/api/orchestrator-v2/agent/tools/"):]).strip("/")
             payload = run_agent_tool(repo, tool_name, data, engine=engine)
             handler._json_response({"ok": True, "tool": tool_name, "result": payload})
             return True
-    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError) as exc:
+    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError, RuntimeError, ValueError) as exc:
         handler._json_response({"ok": False, "error": str(exc)}, getattr(exc, "status", 500))
         return True
     return False
@@ -265,7 +346,11 @@ def handle_patch(handler, parsed, data: dict[str, Any], *, engine) -> bool:
                 return True
         if path.startswith("/api/orchestrator-v2/approvals/"):
             request_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/approvals/"):]).strip("/")
+            before = repo.get_approval_request(request_id)
             approval = repo.decide_approval_request(request_id, str(data.get("status") or ""))
+            execution = execute_approved_payload(repo, before, approval) if approval.get("status") == "approved" else None
+            if execution is not None:
+                approval["execution"] = execution
             handler._json_response({"ok": True, "approval": approval})
             return True
     except (v2.V2StorageError, OrchestratorV2RouteError) as exc:
@@ -312,6 +397,7 @@ def bootstrap_payload(*, repo: v2.V2Repository) -> dict[str, Any]:
         "taskStatuses": sorted(v2.TASK_STATUSES),
         "taskPriorities": sorted(v2.TASK_PRIORITIES),
         "sessionLaunchTypes": ["Empty shell", "Codex", "Claude Code", "OpenCode"],
+        "agentCapabilities": agent_capabilities_payload(),
     }
 
 
@@ -328,10 +414,109 @@ def copilotkit_info_payload() -> dict[str, Any]:
                 },
             }
         },
-        "audioFileTranscriptionEnabled": False,
-        "a2uiEnabled": True,
-        "openGenerativeUIEnabled": True,
+        "audioFileTranscriptionEnabled": True,
+        "aguiEnabled": True,
+        "controlledGenerativeUIEnabled": True,
+        "a2uiEnabled": False,
+        "openGenerativeUIEnabled": False,
     }
+
+
+def agent_capabilities_payload() -> dict[str, Any]:
+    health = orchestrator_v2_runtime.health_payload(repo=v2.get_repository())
+    unsupported = sorted(name for name, spec in agent_tool_specs().items() if spec.get("status") == "not_implemented")
+    return {
+        "provider": "fireworks",
+        "model": os.environ.get("ORCHESTRATOR_V2_AGENT_MODEL") or "accounts/fireworks/models/minimax-m2p7",
+        "streaming": True,
+        "agui": True,
+        "voiceModes": {
+            "text": {"available": True},
+            "realtime": health["checks"]["openaiRealtime"],
+            "local": {
+                "available": bool(health["checks"]["fasterWhisper"]["available"] and health["checks"]["piper"]["available"]),
+                "stt": health["checks"]["fasterWhisper"],
+                "tts": health["checks"]["piper"],
+                "elevenlabs": health["checks"]["elevenlabs"],
+            },
+        },
+        "tools": agent_tool_specs(),
+        "unsupported": unsupported,
+        "health": health,
+    }
+
+
+def agent_context_payload(*, repo: v2.V2Repository) -> dict[str, Any]:
+    return {
+        "tasks": repo.list_tasks(),
+        "history": repo.list_tasks(include_history=True),
+        "approvals": repo.list_approval_requests(status="pending"),
+        "activity": repo.list_activity_events(limit=100),
+        "audit": repo.list_audit_events(limit=50),
+        "chatMessages": repo.list_chat_messages(limit=80),
+        "toolRuns": repo.list_tool_runs(limit=100),
+        "leftRail": left_rail_payload(),
+    }
+
+
+def agent_tool_specs() -> dict[str, dict[str, Any]]:
+    available = "available"
+    approval = "approval_required"
+    not_impl = "not_implemented"
+    specs: dict[str, dict[str, Any]] = {
+        "list_tasks": {"status": available, "kind": "read"},
+        "get_task": {"status": available, "kind": "read"},
+        "search_tasks": {"status": available, "kind": "read"},
+        "list_cmux_sessions": {"status": available, "kind": "read"},
+        "read_cmux_session": {"status": available, "kind": "read"},
+        "search_cmux_sessions": {"status": available, "kind": "read"},
+        "inspect_cmux_session": {"status": available, "kind": "read"},
+        "summarize_task_sessions": {"status": available, "kind": "local_update"},
+        "read_goal_markdown": {"status": available, "kind": "read"},
+        "find_jira_ticket": {"status": available, "kind": "read"},
+        "list_assigned_jira": {"status": available, "kind": "read"},
+        "list_my_open_prs": {"status": available, "kind": "read"},
+        "list_my_draft_prs": {"status": available, "kind": "read"},
+        "list_prs_waiting_for_review": {"status": available, "kind": "read"},
+        "get_git_status": {"status": available, "kind": "read"},
+        "get_git_diff": {"status": available, "kind": "read"},
+        "create_task": {"status": available, "kind": "local_update"},
+        "update_task_status": {"status": available, "kind": "local_update"},
+        "update_task_priority": {"status": available, "kind": "local_update"},
+        "update_task_tags": {"status": available, "kind": "local_update"},
+        "attach_jira_to_task": {"status": available, "kind": "local_update"},
+        "attach_pr_to_task": {"status": available, "kind": "local_update"},
+        "attach_cmux_session_to_task": {"status": available, "kind": "local_update"},
+        "detach_cmux_session_from_task": {"status": available, "kind": "local_update"},
+        "create_cmux_session": {"status": available, "kind": "local_update"},
+        "launch_coding_agent": {"status": available, "kind": "local_update"},
+        "send_cmux_prompt": {"status": available, "kind": "local_update"},
+        "send_cmux_key": {"status": available, "kind": "local_update"},
+        "update_goal_markdown": {"status": available, "kind": "local_update"},
+        "create_approval_request": {"status": available, "kind": "local_update"},
+        "post_jira_comment": {"status": approval, "kind": "external_write", "requiresApproval": True},
+        "transition_jira_status": {"status": available, "kind": "external_write", "requiresApproval": False},
+        "post_pr_reply": {"status": not_impl, "kind": "external_write"},
+        "submit_pr_review": {"status": not_impl, "kind": "external_write"},
+        "run_destructive_git_operation": {"status": not_impl, "kind": "external_write"},
+        "kill_cmux_session": {"status": not_impl, "kind": "cmux_lifecycle"},
+        "restart_cmux_session": {"status": not_impl, "kind": "cmux_lifecycle"},
+    }
+    return specs
+
+
+def realtime_tool_specs() -> list[dict[str, Any]]:
+    tools = []
+    for name, spec in agent_tool_specs().items():
+        if spec["status"] == "not_implemented":
+            continue
+        tools.append({
+            "type": "function",
+            "name": name,
+            "description": f"Run Orchestrator V2 backend tool {name} through the audited local Python safety layer.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+        })
+    return tools
 
 
 def left_rail_payload() -> dict[str, Any]:
@@ -520,20 +705,70 @@ def run_watcher_once(*, repo: v2.V2Repository) -> dict[str, Any]:
     run_id = v2.safe_id("watch")
     sessions: list[dict[str, Any]] = []
     session_error = ""
+    provider_results: dict[str, Any] = {}
+    for name, fn in [
+        ("list_assigned_jira", list_assigned_jira),
+        ("list_my_open_prs", list_my_open_prs),
+        ("list_my_draft_prs", list_my_draft_prs),
+        ("list_prs_waiting_for_review", list_prs_waiting_for_review),
+    ]:
+        try:
+            value = fn()
+            provider_results[name] = value
+            repo.record_tool_run(run_id, name, {"watcher": True}, value, actor="watcher")
+        except Exception as exc:
+            provider_results[name] = {"ok": False, "error": redact_text(exc)}
+            repo.record_tool_run(run_id, name, {"watcher": True}, provider_results[name], actor="watcher", status="error")
     try:
         sessions = get_cmux_cli().list_sessions()
         orphans = repo.record_cmux_snapshots(sessions)
     except Exception as exc:
         session_error = str(exc)
         orphans = repo.list_orphans()
+    inspections: list[dict[str, Any]] = []
+    for session in sessions[:30]:
+        try:
+            screen = get_cmux_cli().read_session(str(session.get("workspaceId") or ""), str(session.get("surfaceId") or ""), lines=80)
+        except Exception:
+            screen = ""
+        try:
+            inspections.append(get_cmux_cli().inspect_session(session, screen_text=screen))
+        except Exception as exc:
+            inspections.append({"workspaceId": session.get("workspaceId", ""), "error": redact_text(exc)})
+    refreshed_summaries = 0
+    for task in repo.list_tasks():
+        texts = []
+        for link in task.get("cmuxSessionLinks", []):
+            try:
+                texts.append(get_cmux_cli().read_session(link["workspaceId"], link.get("surfaceId", ""), lines=160))
+            except Exception:
+                continue
+        if texts:
+            repo.summarize_task_sessions(task["id"], texts)
+            refreshed_summaries += 1
     repo.record_tool_run(
         run_id,
         "proactive_watcher",
         {"manual": True},
-        {"sessions": len(sessions), "orphans": len(orphans), "sessionError": session_error},
+        {
+            "sessions": len(sessions),
+            "orphans": len(orphans),
+            "inspections": inspections,
+            "refreshedSummaries": refreshed_summaries,
+            "sessionError": session_error,
+            "providers": provider_results,
+        },
         actor="watcher",
     )
-    return {"runId": run_id, "sessions": sessions, "orphans": orphans, "sessionError": session_error}
+    return {
+        "runId": run_id,
+        "sessions": sessions,
+        "orphans": orphans,
+        "inspections": inspections,
+        "refreshedSummaries": refreshed_summaries,
+        "providerResults": provider_results,
+        "sessionError": session_error,
+    }
 
 
 def handle_chat_turn(repo: v2.V2Repository, data: dict[str, Any]) -> dict[str, Any]:
@@ -601,6 +836,8 @@ def _agent_search_queries(text: str) -> list[str]:
 def run_agent_tool(repo: v2.V2Repository, tool_name: str, data: dict[str, Any], *, engine) -> Any:
     run_id = str(data.get("runId") or v2.safe_id("toolrun"))
     args = data.get("args") if isinstance(data.get("args"), dict) else data
+    tool_status = "completed"
+    requires_approval = False
     if tool_name == "list_tasks":
         result = {"tasks": repo.list_tasks(include_history=bool(args.get("includeHistory")), query=str(args.get("q") or ""))}
     elif tool_name == "get_task":
@@ -617,9 +854,19 @@ def run_agent_tool(repo: v2.V2Repository, tool_name: str, data: dict[str, Any], 
     elif tool_name == "search_cmux_sessions":
         result = {"matches": get_cmux_cli().search_sessions(str(args.get("query") or ""))}
     elif tool_name == "inspect_cmux_session":
-        result = get_cmux_cli().inspect_session(args)
+        session = args.get("session") if isinstance(args.get("session"), dict) else args
+        screen = str(args.get("screen") or "")
+        if not screen and session.get("workspaceId"):
+            try:
+                screen = get_cmux_cli().read_session(str(session.get("workspaceId") or ""), str(session.get("surfaceId") or ""), lines=int(args.get("lines") or 120))
+            except cmux_cli.CmuxCliError:
+                screen = ""
+        result = get_cmux_cli().inspect_session(session, screen_text=screen)
+        result["screenExcerpt"] = "\n".join(screen.splitlines()[-20:])
     elif tool_name == "summarize_task_sessions":
         result = repo.summarize_task_sessions(str(args.get("taskId") or ""), [str(item) for item in args.get("sessionTexts") or []])
+    elif tool_name == "read_goal_markdown":
+        result = {"goal": repo.read_goal(str(args.get("taskId") or ""))}
     elif tool_name == "find_jira_ticket":
         result = {"ticket": find_jira_ticket(str(args.get("query") or args.get("key") or ""))}
     elif tool_name == "list_assigned_jira":
@@ -660,14 +907,98 @@ def run_agent_tool(repo: v2.V2Repository, tool_name: str, data: dict[str, Any], 
         result = {"session": get_cmux_cli().create_session(title=str(args.get("title") or "Agent Session"), cwd=str(args.get("workspaceDir") or args.get("cwd") or ""), launch_type=v2.normalize_launch_type(args.get("launchType")))}
     elif tool_name == "send_cmux_prompt":
         result = get_cmux_cli().send_text(str(args.get("workspaceId") or ""), str(args.get("prompt") or ""), surface_id=str(args.get("surfaceId") or ""))
+    elif tool_name == "send_cmux_key":
+        result = get_cmux_cli().send_key(str(args.get("workspaceId") or ""), str(args.get("key") or ""), surface_id=str(args.get("surfaceId") or ""))
     elif tool_name == "update_goal_markdown":
         result = {"goal": repo.update_goal(str(args.get("taskId") or ""), str(args.get("content") or ""), actor="agent")}
     elif tool_name == "create_approval_request":
         result = {"approval": repo.create_approval_request(args, actor="agent")}
+    elif tool_name == "post_jira_comment":
+        approval_payload = jira_comment_approval_payload(args, run_id=run_id)
+        result = {"approval": repo.create_approval_request(approval_payload, actor="agent")}
+        tool_status = "requires_approval"
+        requires_approval = True
+    elif tool_name == "transition_jira_status":
+        key = str(args.get("key") or args.get("issueKey") or "").strip()
+        target_status = str(args.get("status") or args.get("targetStatus") or "").strip()
+        transition = jira_routes.transition_status(key=key, status=target_status)
+        result = {"transition": transition, "key": key.upper(), "targetStatus": target_status}
+    elif tool_name in {
+        "post_pr_reply",
+        "submit_pr_review",
+        "run_destructive_git_operation",
+        "kill_cmux_session",
+        "restart_cmux_session",
+    }:
+        result = not_implemented_result(tool_name)
+        tool_status = "not_implemented"
     else:
         raise OrchestratorV2RouteError(f"unknown agent tool: {tool_name}", 404)
-    repo.record_tool_run(run_id, tool_name, args, result, actor="agent")
+    repo.record_tool_run(run_id, tool_name, args, result, actor="agent", status=tool_status, requires_approval=requires_approval)
     return result
+
+
+def jira_comment_approval_payload(args: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    key = str(args.get("key") or args.get("issueKey") or "").strip().upper()
+    body = str(args.get("body") or args.get("comment") or "").strip()
+    if not key:
+        raise OrchestratorV2RouteError("Jira key required", 400)
+    if not body:
+        raise OrchestratorV2RouteError("Jira comment body required", 400)
+    return {
+        "runId": run_id,
+        "taskId": str(args.get("taskId") or "").strip() or None,
+        "kind": "post_jira_comment",
+        "title": f"Post Jira comment on {key}",
+        "summary": body,
+        "impact": "External write",
+        "payload": {
+            "runId": run_id,
+            "toolName": "post_jira_comment",
+            "key": key,
+            "body": body,
+            "requestedAction": "Post Jira comment",
+            "reversible": False,
+        },
+    }
+
+
+def not_implemented_result(tool_name: str) -> dict[str, Any]:
+    messages = {
+        "post_pr_reply": "PR replies are not implemented in this production pass.",
+        "submit_pr_review": "PR reviews are not implemented in this production pass.",
+        "run_destructive_git_operation": "Destructive git operations are not implemented in this production pass.",
+        "kill_cmux_session": "cmux kill is intentionally not implemented in this production pass.",
+        "restart_cmux_session": "cmux restart is intentionally not implemented in this production pass.",
+    }
+    return {
+        "ok": False,
+        "status": "not_implemented",
+        "capability": tool_name,
+        "message": messages.get(tool_name, f"{tool_name} is not implemented."),
+        "suggestedNextStep": "Track this as a future Orchestrator V2 capability instead of simulating success.",
+    }
+
+
+def execute_approved_payload(repo: v2.V2Repository, before: dict[str, Any] | None, approval: dict[str, Any]) -> dict[str, Any] | None:
+    stored = before or approval
+    if not stored or stored.get("kind") != "post_jira_comment":
+        return None
+    payload = stored.get("payload") if isinstance(stored.get("payload"), dict) else {}
+    key = str(payload.get("key") or "").strip().upper()
+    body = str(payload.get("body") or "").strip()
+    if not key or not body:
+        return {"tool": "post_jira_comment", "status": "skipped", "reason": "stored reviewed payload is incomplete"}
+    result = jira_routes.post_comment(key=key, body=body)
+    run_id = str(payload.get("runId") or stored.get("runId") or approval.get("id") or "")
+    repo.record_tool_run(
+        run_id,
+        "post_jira_comment.execute",
+        {"approvalId": approval.get("id"), "key": key, "body": body},
+        {"result": result, "key": key},
+        actor="agent",
+    )
+    return {"tool": "post_jira_comment", "key": key, "result": result}
 
 
 def read_git_diff(engine, cwd: str, file: str, section: str) -> str:

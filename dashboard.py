@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 from cmux_harness import attachments
 from cmux_harness.discovery import BonjourAdvertiser
 from cmux_harness.engine import HarnessEngine
+from cmux_harness.orchestrator_v2_runtime import OrchestratorV2Sidecar
 from cmux_harness.orchestrator_v2_watcher import OrchestratorV2Watcher
 from cmux_harness.server import make_handler
 
@@ -34,11 +35,16 @@ def main():
 
     advertiser = BonjourAdvertiser(port)
     advertised = advertiser.start()
+    v2_sidecar = OrchestratorV2Sidecar(python_port=port)
+    sidecar_started = v2_sidecar.start()
     v2_watcher = OrchestratorV2Watcher(interval_seconds=600)
     v2_watcher.start()
 
     print(f"⚡ cmux harness home: http://localhost:{port}")
     print(f"   Harness:      http://localhost:{port}/harness")
+    print(f"   Orchestrator V2: http://localhost:{port}/orchestrator-v2")
+    if sidecar_started:
+        print("   Orchestrator V2 agent sidecar: started")
     if advertised:
         print("   LAN discovery: Bonjour service _cmux-harness._tcp")
     if os.environ.get("CMUX_HARNESS_NO_BROWSER", "").strip().lower() not in {"1", "true", "yes"}:
@@ -50,6 +56,7 @@ def main():
         print("\nShutting down.")
     finally:
         v2_watcher.stop()
+        v2_sidecar.stop()
         advertiser.stop()
         server.server_close()
 

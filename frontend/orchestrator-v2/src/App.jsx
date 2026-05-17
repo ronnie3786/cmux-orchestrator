@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Archive,
@@ -47,7 +47,7 @@ import "./styles.css";
 const API_ROOT = "/api/orchestrator-v2";
 const STATUSES = ["Backlog", "Investigating", "To Do", "Running", "In Progress", "Blocked", "In Review", "Done", "Archived"];
 const PRIORITIES = ["Low", "Medium", "High"];
-const LAUNCH_TYPES = ["Codex", "Claude Code", "OpenCode"];
+const LAUNCH_TYPES = ["Empty shell", "Codex", "Claude Code", "OpenCode"];
 
 function initialUiState() {
   if (typeof window === "undefined") return { selectedView: { kind: "board" }, modalState: null };
@@ -75,6 +75,86 @@ function api(path, options = {}) {
   });
 }
 
+async function streamAgent(path, payload, onEvent) {
+  const response = await fetch(`${API_ROOT}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {})
+  });
+  if (!response.ok || !response.body) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Agent request failed: ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+    for (const part of parts) {
+      const dataLine = part.split("\n").find((line) => line.startsWith("data:"));
+      if (!dataLine) continue;
+      try {
+        onEvent(JSON.parse(dataLine.slice(5).trim()));
+      } catch {
+        // Ignore malformed stream chunks; the backend persists the canonical run events.
+      }
+    }
+  }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result || "").split(",")[1] || "");
+    reader.onerror = () => reject(reader.error || new Error("Failed to read audio"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function stopStream(stream) {
+  stream?.getTracks?.().forEach((track) => track.stop());
+}
+
+function realtimeClientSecretValue(payload) {
+  return payload?.clientSecret?.value ||
+    payload?.clientSecret?.client_secret?.value ||
+    payload?.clientSecret?.secret?.value ||
+    payload?.value ||
+    "";
+}
+
+function parseToolArguments(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+function realtimeToolCallFromEvent(event) {
+  if (event?.type === "response.function_call_arguments.done") {
+    return {
+      callId: event.call_id || event.callId || event.item_id,
+      name: event.name,
+      arguments: parseToolArguments(event.arguments)
+    };
+  }
+  if (event?.type === "response.output_item.done" && event.item?.type === "function_call") {
+    return {
+      callId: event.item.call_id || event.item.callId || event.item.id,
+      name: event.item.name,
+      arguments: parseToolArguments(event.item.arguments)
+    };
+  }
+  return null;
+}
+
 function itemsOf(section) {
   if (Array.isArray(section)) return section;
   return Array.isArray(section?.items) ? section.items : [];
@@ -82,12 +162,23 @@ function itemsOf(section) {
 
 function AppShell() {
   const initialUi = useMemo(() => initialUiState(), []);
+  const realtimeRef = useRef(null);
+  const localRecorderRef = useRef(null);
+  const localChunksRef = useRef([]);
+  const localStreamRef = useRef(null);
+  const audioRef = useRef(null);
   const [tasks, setTasks] = useState([]);
   const [history, setHistory] = useState([]);
   const [leftRail, setLeftRail] = useState({});
   const [activity, setActivity] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
+  const [agentCapabilities, setAgentCapabilities] = useState(null);
+  const [generatedPanels, setGeneratedPanels] = useState([]);
+  const [agentStreaming, setAgentStreaming] = useState(false);
+  const [voiceMode, setVoiceMode] = useState("text");
+  const [voiceState, setVoiceState] = useState({ status: "idle", message: "", localTranscript: "" });
+  const [voiceSettings, setVoiceSettings] = useState({ pushToTalk: true, ttsProvider: "piper" });
   const [orphans, setOrphans] = useState([]);
   const [selectedView, setSelectedView] = useState(initialUi.selectedView);
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -108,6 +199,7 @@ function AppShell() {
     setActivity(bootstrap.activity || []);
     setApprovals(bootstrap.approvals || []);
     setChatMessages(bootstrap.chatMessages || []);
+    setAgentCapabilities(bootstrap.agentCapabilities || null);
     setOrphans(orphanPayload.orphans || []);
   };
 
@@ -177,6 +269,253 @@ function AppShell() {
     await refresh();
   };
 
+  const handleAgentEvent = (event) => {
+    if (event.type === "TEXT_MESSAGE_START") {
+      setChatMessages((current) => [...current, { id: event.messageId, role: "assistant", content: "", streaming: true }]);
+      return;
+    }
+    if (event.type === "TEXT_MESSAGE_CONTENT") {
+      setChatMessages((current) => current.map((message) => (
+        message.id === event.messageId ? { ...message, content: `${message.content || ""}${event.delta || ""}` } : message
+      )));
+      return;
+    }
+    if (event.type === "TEXT_MESSAGE_END") {
+      setChatMessages((current) => current.map((message) => (
+        message.id === event.messageId ? { ...message, streaming: false } : message
+      )));
+      return;
+    }
+    if (event.type === "TOOL_CALL_START") {
+      setActivity((current) => [{
+        id: event.toolCallId,
+        runId: event.runId,
+        kind: "tool_call",
+        title: event.toolCallName,
+        summary: "running",
+        createdAt: event.timestamp
+      }, ...current]);
+      return;
+    }
+    if (event.type === "TOOL_CALL_RESULT") {
+      setActivity((current) => current.map((item) => (
+        item.id === event.toolCallId ? { ...item, summary: event.result?.status || "completed" } : item
+      )));
+      return;
+    }
+    if (event.name === "ORCHESTRATOR_PANEL" && event.value?.component) {
+      setGeneratedPanels((current) => [{ id: event.id, runId: event.runId, ...event.value }, ...current].slice(0, 8));
+    }
+  };
+
+  const sendAgentMessage = async (message, mode = voiceMode) => {
+    const text = message.trim();
+    if (!text) return;
+    setAgentStreaming(true);
+    setError("");
+    setChatMessages((current) => [...current, { role: "user", content: text }]);
+    let assistantText = "";
+    try {
+      await streamAgent("/ai/chat", {
+        message: text,
+        mode,
+        context: {
+          selectedTaskId: selectedTask?.id,
+          visiblePanel: selectedView.kind,
+          voiceMode
+        }
+      }, (event) => {
+        if (event.type === "TEXT_MESSAGE_CONTENT") assistantText += event.delta || "";
+        handleAgentEvent(event);
+      });
+      await refresh();
+      return assistantText;
+    } catch (err) {
+      setError(err.message);
+      setChatMessages((current) => [...current, { role: "assistant", content: err.message }]);
+      return "";
+    } finally {
+      setAgentStreaming(false);
+    }
+  };
+
+  const runRealtimeToolCall = async (call, channel) => {
+    if (!call?.name) return;
+    try {
+      const result = await api("/realtime/tool", {
+        method: "POST",
+        body: JSON.stringify({
+          runId: `realtime_${Date.now().toString(36)}`,
+          toolName: call.name,
+          args: call.arguments || {}
+        })
+      });
+      channel?.send(JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: call.callId,
+          output: JSON.stringify(result.result || result)
+        }
+      }));
+      channel?.send(JSON.stringify({ type: "response.create" }));
+      await refresh();
+    } catch (err) {
+      setVoiceState((current) => ({ ...current, status: "error", message: err.message }));
+    }
+  };
+
+  const handleRealtimeEvent = async (event, channel) => {
+    if (event?.type === "conversation.item.input_audio_transcription.completed" && event.transcript) {
+      setChatMessages((current) => [...current, { role: "user", content: event.transcript }]);
+      await api("/agent/transcript", {
+        method: "POST",
+        body: JSON.stringify({ role: "user", content: event.transcript, metadata: { mode: "realtime_voice" } })
+      }).catch(() => {});
+    }
+    if ((event?.type === "response.audio_transcript.done" || event?.type === "response.output_text.done") && (event.transcript || event.text)) {
+      const content = event.transcript || event.text;
+      setChatMessages((current) => [...current, { role: "assistant", content }]);
+      await api("/agent/transcript", {
+        method: "POST",
+        body: JSON.stringify({ role: "assistant", content, metadata: { mode: "realtime_voice" } })
+      }).catch(() => {});
+    }
+    const call = realtimeToolCallFromEvent(event);
+    if (call) await runRealtimeToolCall(call, channel);
+  };
+
+  const startRealtimeSession = async () => {
+    setVoiceState({ status: "connecting", message: "Connecting GPT Realtime 2", localTranscript: "" });
+    const session = await api("/realtime/session", { method: "POST", body: JSON.stringify({}) });
+    const token = realtimeClientSecretValue(session);
+    if (!token) throw new Error("Realtime client secret missing from backend response");
+    const pc = new RTCPeerConnection();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    localStreamRef.current = stream;
+    const remoteAudio = audioRef.current || new Audio();
+    remoteAudio.autoplay = true;
+    audioRef.current = remoteAudio;
+    pc.ontrack = (event) => {
+      remoteAudio.srcObject = event.streams[0];
+    };
+    stream.getTracks().forEach((track) => {
+      track.enabled = true;
+      pc.addTrack(track, stream);
+    });
+    const channel = pc.createDataChannel("oai-events");
+    channel.onopen = () => setVoiceState({
+      status: "connected",
+      message: `Realtime 2 connected with ${session.voice || "marin"} voice`,
+      localTranscript: "",
+      pushToTalk: voiceSettings.pushToTalk
+    });
+    channel.onmessage = (message) => {
+      try {
+        handleRealtimeEvent(JSON.parse(message.data), channel);
+      } catch {
+        setVoiceState((current) => ({ ...current, message: "Realtime event could not be parsed" }));
+      }
+    };
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
+      method: "POST",
+      body: offer.sdp,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/sdp"
+      }
+    });
+    if (!sdpResponse.ok) throw new Error(`Realtime WebRTC connection failed: HTTP ${sdpResponse.status}`);
+    await pc.setRemoteDescription({ type: "answer", sdp: await sdpResponse.text() });
+    realtimeRef.current = { pc, channel, stream };
+  };
+
+  const startLocalRecording = async () => {
+    if (localRecorderRef.current?.state === "recording") {
+      localRecorderRef.current.stop();
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    localStreamRef.current = stream;
+    const recorder = new MediaRecorder(stream);
+    localChunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data?.size) localChunksRef.current.push(event.data);
+    };
+    recorder.onstop = async () => {
+      try {
+        setVoiceState({ status: "transcribing", message: "Transcribing local audio", localTranscript: "" });
+        const blob = new Blob(localChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const audioBase64 = await blobToBase64(blob);
+        const transcript = await api("/voice/local/transcribe", {
+          method: "POST",
+          body: JSON.stringify({ audioBase64, filename: "voice.webm", mimeType: blob.type })
+        });
+        setVoiceState({ status: "thinking", message: "Running local voice request through Fireworks", localTranscript: transcript.text || "" });
+        const assistantText = await sendAgentMessage(transcript.text || "", "local");
+        if (assistantText) {
+          setVoiceState((current) => ({ ...current, status: "speaking", message: "Generating local speech output" }));
+          const spoken = await api("/voice/local/speak", {
+            method: "POST",
+            body: JSON.stringify({ text: assistantText, provider: voiceSettings.ttsProvider })
+          });
+          const player = new Audio(`data:${spoken.mimeType};base64,${spoken.audioBase64}`);
+          audioRef.current = player;
+          await player.play().catch(() => {});
+        }
+        setVoiceState((current) => ({ ...current, status: "ready", message: "Local voice turn complete" }));
+      } catch (err) {
+        setVoiceState({ status: "error", message: err.message, localTranscript: "" });
+      } finally {
+        stopStream(stream);
+        localRecorderRef.current = null;
+      }
+    };
+    localRecorderRef.current = recorder;
+    recorder.start();
+    setVoiceState({ status: "recording", message: "Recording local voice", localTranscript: "" });
+  };
+
+  const startVoiceSession = async () => {
+    if (voiceMode === "realtime") {
+      try {
+        await startRealtimeSession();
+      } catch (err) {
+        realtimeRef.current?.channel?.close?.();
+        realtimeRef.current?.pc?.close?.();
+        stopStream(realtimeRef.current?.stream);
+        stopStream(localStreamRef.current);
+        realtimeRef.current = null;
+        localStreamRef.current = null;
+        setVoiceState({ status: "error", message: err.message, localTranscript: "" });
+      }
+      return;
+    }
+    if (voiceMode === "local") {
+      try {
+        await startLocalRecording();
+      } catch (err) {
+        setVoiceState({ status: "error", message: err.message, localTranscript: "" });
+      }
+    }
+  };
+
+  const stopVoiceSession = () => {
+    if (localRecorderRef.current?.state === "recording") {
+      localRecorderRef.current.stop();
+      return;
+    }
+    realtimeRef.current?.channel?.close?.();
+    realtimeRef.current?.pc?.close?.();
+    stopStream(realtimeRef.current?.stream);
+    stopStream(localStreamRef.current);
+    realtimeRef.current = null;
+    localStreamRef.current = null;
+    setVoiceState((current) => ({ ...current, status: "idle", message: "Voice session stopped" }));
+  };
+
   const selectedTask = useMemo(
     () => tasks.concat(history).find((task) => task.id === selectedView.taskId),
     [tasks, history, selectedView.taskId]
@@ -193,7 +532,19 @@ function AppShell() {
 
   return (
     <CopilotKit runtimeUrl={`${API_ROOT}/copilotkit`} showDevConsole={false} enableInspector={false} useSingleEndpoint={false}>
-      <CopilotBridge tasks={tasks} selectedTask={selectedTask} openTaskView={openTaskView} />
+      <CopilotBridge
+        tasks={tasks}
+        selectedTask={selectedTask}
+        approvals={approvals}
+        activity={activity}
+        voiceMode={voiceMode}
+        openTaskView={openTaskView}
+        refresh={refresh}
+        setGeneratedPanels={setGeneratedPanels}
+        setVoiceMode={setVoiceMode}
+        startVoiceSession={startVoiceSession}
+        stopVoiceSession={stopVoiceSession}
+      />
       <div className={`app-shell ${railCollapsed ? "rail-mini" : ""}`}>
         <LeftRail
           collapsed={railCollapsed}
@@ -207,11 +558,16 @@ function AppShell() {
           <TopBar
             onChat={(message) => {
               setSelectedView({ kind: "board" });
-              return api("/chat", { method: "POST", body: JSON.stringify({ message }) }).then((result) => {
-                setChatMessages((current) => [...current, { role: "user", content: message }, result.message]);
-                setToast("Agent status updated");
-              });
+              return sendAgentMessage(message);
             }}
+            streaming={agentStreaming}
+            voiceMode={voiceMode}
+            setVoiceMode={setVoiceMode}
+            voiceState={voiceState}
+            voiceSettings={voiceSettings}
+            setVoiceSettings={setVoiceSettings}
+            onStartVoice={startVoiceSession}
+            onStopVoice={stopVoiceSession}
           />
           {error && <div className="error-strip">{error}</div>}
           {loading ? (
@@ -219,6 +575,7 @@ function AppShell() {
           ) : selectedView.kind === "board" ? (
             <TaskBoard
               tasks={tasks}
+              history={history}
               approvals={approvals}
               orphans={orphans}
               onNewTask={() => setModalState({ mode: "new" })}
@@ -239,6 +596,7 @@ function AppShell() {
           ) : (
             <TaskBoard
               tasks={tasks}
+              history={history}
               approvals={approvals}
               orphans={orphans}
               onNewTask={() => setModalState({ mode: "new" })}
@@ -251,16 +609,24 @@ function AppShell() {
               onApprovalDecision={decideApproval}
             />
           )}
+          <GeneratedPanelStack
+            panels={generatedPanels}
+            tasks={tasks}
+            approvals={approvals}
+            voiceMode={voiceMode}
+            voiceState={voiceState}
+            voiceSettings={voiceSettings}
+            onDismiss={(id) => setGeneratedPanels((current) => current.filter((panel) => panel.id !== id))}
+            onOpenView={openTaskView}
+            onApprovalDecision={decideApproval}
+          />
         </main>
         <RightDock
           messages={chatMessages}
           activity={activity}
-          onSend={(message) =>
-            api("/chat", { method: "POST", body: JSON.stringify({ message }) }).then((result) => {
-              setChatMessages((current) => [...current, { role: "user", content: message }, result.message]);
-              setActivity((current) => [{ kind: "agent_reply", title: "Agent replied", summary: message, createdAt: new Date().toISOString() }, ...current]);
-            })
-          }
+          generatedPanels={generatedPanels}
+          streaming={agentStreaming}
+          onSend={sendAgentMessage}
         />
         {modalState && (
           <NewTaskModal
@@ -276,10 +642,26 @@ function AppShell() {
   );
 }
 
-function CopilotBridge({ tasks, selectedTask, openTaskView }) {
+function CopilotBridge({ tasks, selectedTask, approvals, activity, voiceMode, openTaskView, refresh, setGeneratedPanels, setVoiceMode, startVoiceSession, stopVoiceSession }) {
   useCopilotReadable({
-    description: "Current Orchestrator V2 task state",
-    value: { tasks, selectedTask }
+    description: "Current Orchestrator V2 task, approval, panel, voice, cmux, git, and activity state",
+    value: {
+      tasks,
+      selectedTask,
+      approvals,
+      recentActivity: activity.slice(0, 20),
+      visiblePanel: selectedTask ? "task-detail" : "board",
+      voiceMode
+    }
+  });
+  useCopilotAction({
+    name: "openTask",
+    description: "Open a task by id.",
+    parameters: [{ name: "taskId", type: "string", required: true }],
+    handler: ({ taskId }) => {
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) openTaskView("session", task);
+    }
   });
   useCopilotAction({
     name: "openTaskGoal",
@@ -290,6 +672,79 @@ function CopilotBridge({ tasks, selectedTask, openTaskView }) {
       if (task) openTaskView("goal", task);
     }
   });
+  useCopilotAction({
+    name: "openTaskSession",
+    description: "Open the cmux session view for a task by id.",
+    parameters: [{ name: "taskId", type: "string", required: true }],
+    handler: ({ taskId }) => {
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) openTaskView("session", task);
+    }
+  });
+  useCopilotAction({
+    name: "openTaskDiff",
+    description: "Open the git diff view for a task by id.",
+    parameters: [{ name: "taskId", type: "string", required: true }],
+    handler: ({ taskId }) => {
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) openTaskView("diff", task);
+    }
+  });
+  useCopilotAction({
+    name: "focusApproval",
+    description: "Show an approval panel by id.",
+    parameters: [{ name: "approvalId", type: "string", required: true }],
+    handler: ({ approvalId }) => {
+      const approval = approvals.find((item) => item.id === approvalId);
+      if (approval) setGeneratedPanels((current) => [{ id: `approval-${approval.id}`, component: "JiraCommentApprovalPanel", props: approval }, ...current]);
+    }
+  });
+  useCopilotAction({
+    name: "showGeneratedPanel",
+    description: "Show a controlled Orchestrator V2 generated panel.",
+    parameters: [
+      { name: "component", type: "string", required: true },
+      { name: "props", type: "object", required: false }
+    ],
+    handler: ({ component, props }) => {
+      setGeneratedPanels((current) => [{ id: `panel-${Date.now()}`, component, props: props || {} }, ...current]);
+    }
+  });
+  useCopilotAction({
+    name: "replaceGeneratedPanel",
+    description: "Replace generated panels with one controlled panel.",
+    parameters: [
+      { name: "component", type: "string", required: true },
+      { name: "props", type: "object", required: false }
+    ],
+    handler: ({ component, props }) => setGeneratedPanels([{ id: `panel-${Date.now()}`, component, props: props || {} }])
+  });
+  useCopilotAction({
+    name: "dismissGeneratedPanel",
+    description: "Dismiss a generated panel by id.",
+    parameters: [{ name: "panelId", type: "string", required: true }],
+    handler: ({ panelId }) => setGeneratedPanels((current) => current.filter((panel) => panel.id !== panelId))
+  });
+  useCopilotAction({
+    name: "setBoardFilter",
+    description: "Set the current board filter. The current UI accepts the request and refreshes data.",
+    parameters: [{ name: "filter", type: "string", required: true }],
+    handler: () => refresh()
+  });
+  useCopilotAction({
+    name: "refreshOrchestratorData",
+    description: "Refresh Orchestrator V2 data.",
+    parameters: [],
+    handler: refresh
+  });
+  useCopilotAction({
+    name: "switchVoiceMode",
+    description: "Switch voice mode.",
+    parameters: [{ name: "mode", type: "string", required: true }],
+    handler: ({ mode }) => setVoiceMode(["text", "realtime", "local"].includes(mode) ? mode : "text")
+  });
+  useCopilotAction({ name: "startVoiceSession", description: "Start the current voice session.", parameters: [], handler: startVoiceSession });
+  useCopilotAction({ name: "stopVoiceSession", description: "Stop the current voice session.", parameters: [], handler: stopVoiceSession });
   return null;
 }
 
@@ -371,7 +826,7 @@ function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggl
   );
 }
 
-function TopBar({ onChat }) {
+function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceSettings, setVoiceSettings, onStartVoice, onStopVoice }) {
   const [value, setValue] = useState("");
   const send = () => {
     const message = value.trim();
@@ -388,16 +843,43 @@ function TopBar({ onChat }) {
           onKeyDown={(event) => event.key === "Enter" && send()}
           placeholder="Ask anything or say a command..."
         />
-        <button className="icon-btn" onClick={send} aria-label="Send command"><Send size={17} /></button>
+        <button className="icon-btn" onClick={send} aria-label="Send command" disabled={streaming}>{streaming ? <RefreshCw size={17} className="spin" /> : <Send size={17} />}</button>
       </div>
-      <button className="mic-btn" aria-label="Voice command"><Mic size={20} /></button>
+      <div className="voice-controls">
+        <div className="segmented voice-mode-picker" role="tablist" aria-label="Voice mode">
+          {["text", "realtime", "local"].map((mode) => (
+            <button key={mode} className={voiceMode === mode ? "active" : ""} onClick={() => setVoiceMode(mode)}>{mode === "realtime" ? "Realtime 2" : mode === "local" ? "Local" : "Text"}</button>
+          ))}
+        </div>
+        <label className="voice-toggle">
+          <input
+            type="checkbox"
+            checked={voiceSettings.pushToTalk}
+            onChange={(event) => setVoiceSettings((current) => ({ ...current, pushToTalk: event.target.checked }))}
+          />
+          <span>Push to talk</span>
+        </label>
+        {voiceMode === "local" && (
+          <select
+            aria-label="Local TTS provider"
+            value={voiceSettings.ttsProvider}
+            onChange={(event) => setVoiceSettings((current) => ({ ...current, ttsProvider: event.target.value }))}
+          >
+            <option value="piper">Piper</option>
+            <option value="elevenlabs">ElevenLabs Jessica</option>
+          </select>
+        )}
+        <button className={`mic-btn ${voiceState.status}`} aria-label="Voice command" onClick={["connected", "ready", "recording", "transcribing", "thinking", "speaking"].includes(voiceState.status) ? onStopVoice : onStartVoice}>
+          {voiceState.status === "connecting" ? <RefreshCw size={20} className="spin" /> : <Mic size={20} />}
+        </button>
+      </div>
       <button className="icon-btn" aria-label="Notifications"><Bell size={18} /></button>
       <div className="avatar">AK</div>
     </header>
   );
 }
 
-function TaskBoard({ tasks, approvals, orphans, onNewTask, onOrphanTask, onOpenView, onUpdateTask, onAttachJira, onResyncJira, onAttachPr, onApprovalDecision }) {
+function TaskBoard({ tasks, history = [], approvals, orphans, onNewTask, onOrphanTask, onOpenView, onUpdateTask, onAttachJira, onResyncJira, onAttachPr, onApprovalDecision }) {
   const activeApprovals = approvals.filter((approval) => approval.status === "pending");
   const unassignedApprovals = activeApprovals.filter((approval) => !(approval.taskId || approval.task_id));
   const approvalForTask = (task, index) => {
@@ -416,7 +898,7 @@ function TaskBoard({ tasks, approvals, orphans, onNewTask, onOrphanTask, onOpenV
         <div className="board-controls">
           <button className="subtle-btn">Sort: Recent Activity</button>
           <button className="icon-btn active"><Grid2X2 size={17} /></button>
-          <button className="icon-btn"><List size={17} /></button>
+          <button className="icon-btn" disabled title="List view is not available in this production pass"><List size={17} /></button>
         </div>
       </div>
       {tasks.length === 0 ? (
@@ -443,6 +925,26 @@ function TaskBoard({ tasks, approvals, orphans, onNewTask, onOrphanTask, onOpenV
         </div>
       )}
       <OrphanPanel orphans={orphans} onOrphanTask={onOrphanTask} />
+      <HistoryStrip tasks={history.filter((task) => ["Done", "Archived"].includes(task.status))} />
+    </section>
+  );
+}
+
+function HistoryStrip({ tasks }) {
+  if (!tasks.length) return null;
+  return (
+    <section className="history-strip">
+      <div className="panel-heading"><h2>Done / Archived</h2><span>{tasks.length}</span></div>
+      <div className="history-list">
+        {tasks.slice(0, 8).map((task) => (
+          <div className="history-row" key={task.id}>
+            <Check size={14} />
+            <strong>{task.title}</strong>
+            <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+            <small>{relativeAge(task.updatedAt)}</small>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -533,6 +1035,7 @@ function CopyRow({ label, value }) {
 }
 
 function ApprovalCard({ approval, onReview, onDecision }) {
+  const payload = approval.payload || {};
   return (
     <div className="approval-card">
       <div className="approval-title">
@@ -542,11 +1045,15 @@ function ApprovalCard({ approval, onReview, onDecision }) {
       </div>
       <p>{approval.summary || approval.title}</p>
       <div className="approval-details">
-        {approval.payload?.workspace && <><span>Affected workspace</span><b>{approval.payload.workspace}</b></>}
-        {approval.payload?.branch && <><span>Branch</span><b>{approval.payload.branch}</b></>}
-        <span>Requested action</span><b>{approval.payload?.requestedAction || approval.kind}</b>
+        {payload.workspace && <><span>Affected workspace</span><b>{payload.workspace}</b></>}
+        {payload.branch && <><span>Branch</span><b>{payload.branch}</b></>}
+        {payload.key && <><span>Target</span><b>{payload.key}</b></>}
+        <span>Backend tool</span><b>{payload.toolName || approval.kind}</b>
+        <span>Requested action</span><b>{payload.requestedAction || approval.kind}</b>
+        <span>Reversible</span><b>{payload.reversible === false ? "No" : "Depends"}</b>
         <span>Reason</span><b>{approval.title}</b>
       </div>
+      {payload.body && <pre className="approval-payload-preview">{payload.body}</pre>}
       <div className="approval-actions">
         <button className="subtle-btn" onClick={onReview}><FileCode2 size={14} />Review Diff</button>
         <button className="approve-btn" onClick={() => onDecision(approval, "approved")}><Check size={14} />Approve</button>
@@ -620,7 +1127,7 @@ function SessionView({ task, onBack, onOpenDiff }) {
         </div>
         <div className="header-actions">
           <button className="subtle-btn"><Lightbulb size={15} />Explain Output</button>
-          <button className="subtle-btn"><RefreshCw size={15} />Restart Session</button>
+          <button className="subtle-btn" disabled title="cmux restart is not implemented in this production pass"><RefreshCw size={15} />Restart Session</button>
           <button className="subtle-btn" onClick={onOpenDiff}><FileCode2 size={15} />Open Diff</button>
           <button className="agent-btn"><Sparkles size={15} />Ask Agent</button>
           <button className="icon-btn"><MoreHorizontal size={17} /></button>
@@ -919,8 +1426,156 @@ function GoalView({ task, onBack, onSaved }) {
   );
 }
 
-function RightDock({ messages, activity, onSend }) {
+function GeneratedPanelStack({ panels, tasks, approvals, voiceMode, voiceState, voiceSettings, onDismiss, onOpenView, onApprovalDecision }) {
+  const combinedPanels = [
+    {
+      id: "voice-state",
+      component: "VoiceModePanel",
+      props: { mode: voiceMode, state: voiceState, settings: voiceSettings }
+    },
+    ...approvals.filter((approval) => approval.status === "pending").slice(0, 2).map((approval) => ({
+      id: `approval-panel-${approval.id}`,
+      component: "JiraCommentApprovalPanel",
+      props: approval
+    })),
+    ...panels
+  ];
+  if (!combinedPanels.length) return null;
+  return (
+    <section className="generated-panel-stack" aria-label="Agent generated panels">
+      {combinedPanels.slice(0, 6).map((panel) => (
+        <GeneratedPanel
+          key={panel.id}
+          panel={panel}
+          tasks={tasks}
+          onDismiss={onDismiss}
+          onOpenView={onOpenView}
+          onApprovalDecision={onApprovalDecision}
+        />
+      ))}
+    </section>
+  );
+}
+
+function GeneratedPanel({ panel, tasks, onDismiss, onOpenView, onApprovalDecision }) {
+  const props = panel.props || {};
+  const close = panel.id === "voice-state" ? null : <button className="icon-btn small" onClick={() => onDismiss(panel.id)}><X size={13} /></button>;
+  if (panel.component === "TaskStatusPanel") return <PanelFrame title="Task Status" close={close}><TaskStatusPanel tasks={props.tasks || tasks} onOpenView={onOpenView} /></PanelFrame>;
+  if (panel.component === "CmuxSessionInspectorPanel") return <PanelFrame title="cmux Inspector" close={close}><CmuxSessionInspectorPanel {...props} /></PanelFrame>;
+  if (panel.component === "GitDiffSummaryPanel") return <PanelFrame title="Git Diff Summary" close={close}><GitDiffSummaryPanel {...props} /></PanelFrame>;
+  if (panel.component === "GoalDraftPanel") return <PanelFrame title="Goal Draft" close={close}><GoalDraftPanel {...props} /></PanelFrame>;
+  if (panel.component === "JiraCommentApprovalPanel") return <PanelFrame title="Jira Comment Approval" close={close}><JiraCommentApprovalPanel approval={props} onApprovalDecision={onApprovalDecision} /></PanelFrame>;
+  if (panel.component === "JiraTransitionPanel") return <PanelFrame title="Jira Transition" close={close}><JiraTransitionPanel {...props} /></PanelFrame>;
+  if (panel.component === "VoiceModePanel") return <PanelFrame title="Voice Mode" close={close}><VoiceModePanel {...props} /></PanelFrame>;
+  if (panel.component === "ToolRunTimeline") return <PanelFrame title="Tool Timeline" close={close}><ToolRunTimeline {...props} /></PanelFrame>;
+  if (panel.component === "NotImplementedCapabilityPanel") return <PanelFrame title="Not Implemented" close={close}><NotImplementedCapabilityPanel {...props} /></PanelFrame>;
+  return null;
+}
+
+function PanelFrame({ title, close, children }) {
+  return (
+    <article className="generated-panel">
+      <div className="generated-panel-head"><Sparkles size={14} /><strong>{title}</strong>{close}</div>
+      {children}
+    </article>
+  );
+}
+
+function TaskStatusPanel({ tasks, onOpenView }) {
+  return (
+    <div className="panel-task-list">
+      {(tasks || []).slice(0, 4).map((task) => (
+        <button key={task.id} onClick={() => onOpenView("session", task)}>
+          <strong>{task.title}</strong>
+          <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+          <small>{task.jiraLinks?.[0]?.key || task.cmuxSessionLinks?.[0]?.workspaceId || "durable state"}</small>
+        </button>
+      ))}
+      {!(tasks || []).length && <div className="panel-empty">No matching tasks</div>}
+    </div>
+  );
+}
+
+function CmuxSessionInspectorPanel({ workspaceId, runningKind, state, screenExcerpt, freshness }) {
+  return (
+    <div className="cmux-inspector-panel">
+      <div><b>{workspaceId || "Unknown session"}</b><span>{runningKind || "Shell"}</span><span>{state || "snapshot"}</span><span>{freshness || "unknown"}</span></div>
+      <pre>{screenExcerpt || "No live screen excerpt available."}</pre>
+    </div>
+  );
+}
+
+function GitDiffSummaryPanel(props) {
+  const staged = props.staged || [];
+  const unstaged = props.unstaged || [];
+  const untracked = props.untracked || [];
+  return (
+    <div className="git-summary-panel">
+      <div className="metric-row"><span>Staged</span><b>{staged.length}</b><span>Modified</span><b>{unstaged.length}</b><span>Untracked</span><b>{untracked.length}</b></div>
+      <p>{props.diff ? "Diff content is loaded for the selected file." : "Status grouped by changed file risk."}</p>
+    </div>
+  );
+}
+
+function GoalDraftPanel({ path, content }) {
+  return <pre className="goal-draft-panel">{content || path || "No goal draft content."}</pre>;
+}
+
+function JiraCommentApprovalPanel({ approval, onApprovalDecision }) {
+  const payload = approval.payload || {};
+  return (
+    <div className="jira-approval-panel">
+      <div className="approval-details">
+        <span>Tool</span><b>{payload.toolName || approval.kind}</b>
+        <span>Target</span><b>{payload.key || approval.taskId || "Jira issue"}</b>
+        <span>Status</span><b>{approval.status}</b>
+      </div>
+      <pre>{payload.body || approval.summary || "No preview body"}</pre>
+      {approval.status === "pending" && (
+        <div className="approval-actions">
+          <button className="approve-btn" onClick={() => onApprovalDecision(approval, "approved")}><Check size={14} />Approve</button>
+          <button className="deny-btn" onClick={() => onApprovalDecision(approval, "denied")}><X size={14} />Deny</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JiraTransitionPanel({ key, targetStatus, transition }) {
+  return <div className="transition-panel"><b>{key || transition?.key}</b><span>{targetStatus || transition?.status || "transition requested"}</span></div>;
+}
+
+function VoiceModePanel({ mode, state, settings }) {
+  return (
+    <div className="voice-mode-panel">
+      <span className={`voice-state-dot ${state?.status || "idle"}`} />
+      <b>{mode === "realtime" ? "GPT Realtime 2" : mode === "local" ? "Local STT / Fireworks / Piper" : "Text chat"}</b>
+      <span>{state?.status || "idle"}</span>
+      {mode !== "text" && <span>{settings?.pushToTalk ? "push-to-talk" : "open mic"}</span>}
+      {mode === "local" && <span>{settings?.ttsProvider === "elevenlabs" ? "Jessica" : "Piper"}</span>}
+      <small>{state?.message || "Shared global transcript is active."}</small>
+    </div>
+  );
+}
+
+function ToolRunTimeline({ runId, status, dryRun }) {
+  return <div className="tool-timeline-panel"><b>{runId}</b><span>{status || "running"}</span>{dryRun && <small>Dry-run fallback used until Fireworks is configured.</small>}</div>;
+}
+
+function NotImplementedCapabilityPanel({ capability, message, suggestedNextStep }) {
+  return (
+    <div className="not-implemented-panel">
+      <ShieldAlert size={16} />
+      <b>{capability}</b>
+      <span>{message}</span>
+      <small>{suggestedNextStep}</small>
+    </div>
+  );
+}
+
+function RightDock({ messages, activity, generatedPanels, streaming, onSend }) {
   const [message, setMessage] = useState("");
+  const groupedActivity = useMemo(() => groupActivity(activity), [activity]);
   const submit = (event) => {
     event.preventDefault();
     const text = message.trim();
@@ -933,20 +1588,31 @@ function RightDock({ messages, activity, onSend }) {
       <div className="dock-section chat-section">
         <div className="panel-heading"><h2>Global Chat</h2><span>{messages.length}</span></div>
         <div className="chat-log">
-          {messages.slice(-8).map((item, index) => <div className={`chat-message ${item.role}`} key={`${item.role}-${index}`}>{item.content}</div>)}
+          {messages.slice(-14).map((item, index) => <div className={`chat-message ${item.role} ${item.streaming ? "streaming" : ""}`} key={item.id || `${item.role}-${index}`}>{item.content}</div>)}
         </div>
         <form className="chat-form" onSubmit={submit}>
           <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ask status..." />
-          <button><Send size={16} /></button>
+          <button disabled={streaming}>{streaming ? <RefreshCw size={16} className="spin" /> : <Send size={16} />}</button>
         </form>
+      </div>
+      <div className="dock-section generated-mini-section">
+        <div className="panel-heading"><h2>Generated Panels</h2><span>{generatedPanels.length}</span></div>
+        <div className="generated-mini-list">
+          {generatedPanels.slice(0, 5).map((panel) => <div key={panel.id}><Sparkles size={12} /><span>{panel.component}</span></div>)}
+          {!generatedPanels.length && <div className="dock-empty">No generated panels yet</div>}
+        </div>
       </div>
       <div className="dock-section activity-section">
         <div className="panel-heading"><h2>Activity</h2><span>{activity.length}</span></div>
         <div className="activity-list">
-          {activity.slice(0, 12).map((item) => (
-            <div className="activity-row" key={item.id || `${item.kind}-${item.createdAt}`}>
-              <Circle size={9} />
-              <div><strong>{item.title}</strong><span>{item.summary || item.kind}</span></div>
+          {groupedActivity.slice(0, 8).map((group) => (
+            <div className="activity-group" key={group.id}>
+              <div className="activity-group-head"><Circle size={9} /><strong>{group.title}</strong><span>{group.items.length}</span></div>
+              {group.items.slice(0, 4).map((item) => (
+                <div className="activity-row" key={item.id || `${item.kind}-${item.createdAt}`}>
+                  <div><strong>{item.title}</strong><span>{item.summary || item.kind}</span></div>
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -960,7 +1626,7 @@ function NewTaskModal({ mode, orphan, onClose, onSubmit }) {
     title: orphan?.title || "",
     workspaceDir: orphan?.cwd || "",
     jiraUrl: "",
-    launchType: "Codex",
+    launchType: "Empty shell",
     status: "To Do",
     priority: "Medium"
   });
@@ -1085,6 +1751,21 @@ function displayWorkspacePath(value) {
   return text;
 }
 
+function groupActivity(activity) {
+  const groups = [];
+  const byRun = new Map();
+  for (const item of activity || []) {
+    const runId = item.runId || item.run_id || "manual";
+    if (!byRun.has(runId)) {
+      const group = { id: runId, title: runId === "manual" ? "Manual activity" : `Run ${runId}`, items: [] };
+      byRun.set(runId, group);
+      groups.push(group);
+    }
+    byRun.get(runId).items.push(item);
+  }
+  return groups;
+}
+
 function sessionViewSessions(task) {
   const sessions = task.cmuxSessionLinks || [];
   const title = String(task.title || "").toLowerCase();
@@ -1121,6 +1802,7 @@ function inferTaskTitle(jiraUrl) {
 
 function launchDescription(type) {
   return {
+    "Empty shell": "Start with no coding agent attached",
     Codex: "Best for general coding tasks",
     "Claude Code": "Strong reasoning and code understanding",
     OpenCode: "Fast, lightweight and open"
