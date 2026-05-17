@@ -3,6 +3,9 @@ __pycache__/
 .DS_Store
 *.log
 *.jsonl
+.env
+.env.*
+!.env.example
 docs/superpowers/
 .superpowers/
 tmp/
