@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 from cmux_harness import attachments
 from cmux_harness.discovery import BonjourAdvertiser
 from cmux_harness.engine import HarnessEngine
+from cmux_harness.orchestrator_v2_watcher import OrchestratorV2Watcher
 from cmux_harness.server import make_handler
 
 
@@ -33,6 +34,8 @@ def main():
 
     advertiser = BonjourAdvertiser(port)
     advertised = advertiser.start()
+    v2_watcher = OrchestratorV2Watcher(interval_seconds=600)
+    v2_watcher.start()
 
     print(f"⚡ cmux harness home: http://localhost:{port}")
     print(f"   Harness:      http://localhost:{port}/harness")
@@ -46,6 +49,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down.")
     finally:
+        v2_watcher.stop()
         advertiser.stop()
         server.server_close()
 

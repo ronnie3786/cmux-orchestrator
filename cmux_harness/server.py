@@ -32,6 +32,7 @@ from .routes import objectives as objective_routes
 from .routes import projects as project_routes
 from .routes import status_summary as status_summary_routes
 from .routes import hooks as hooks_routes
+from .routes import orchestrator_v2 as orchestrator_v2_routes
 from .routes import jira as jira_routes
 from .routes import workspaces as workspace_routes
 from .routes import workflow as workflow_routes
@@ -254,6 +255,46 @@ def make_handler(engine):
                 return False
             return True
 
+        def _serve_orchestrator_v2_static(self, path):
+            if path in {"/orchestrator-v2", "/orchestrator-v2/"}:
+                target = _STATIC_DIR / "orchestrator-v2" / "index.html"
+            elif path.startswith("/orchestrator-v2/"):
+                relative = path[len("/orchestrator-v2/"):].strip("/")
+                target = _STATIC_DIR / "orchestrator-v2" / (relative or "index.html")
+                try:
+                    root = (_STATIC_DIR / "orchestrator-v2").resolve()
+                    resolved = target.resolve()
+                    if os.path.commonpath([str(root), str(resolved)]) != str(root):
+                        return False
+                    target = resolved
+                except ValueError:
+                    return False
+            else:
+                return False
+            if not target.exists() or not target.is_file():
+                return False
+            content_type = {
+                ".html": "text/html; charset=utf-8",
+                ".js": "application/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".svg": "image/svg+xml",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".json": "application/json",
+            }.get(target.suffix.lower(), "application/octet-stream")
+            body = target.read_bytes()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return False
+            return True
+
         def _network_payload(self):
             port = int(getattr(self.server, "server_address", ("", 9091))[1] or 9091)
             lan_addresses = _server_lan_addresses()
@@ -293,6 +334,7 @@ def make_handler(engine):
                     "harness": f"http://localhost:{port}/harness",
                     "orchestrator": f"http://localhost:{port}/orchestrator",
                     "workflowOrchestrator": f"http://localhost:{port}/workflow-orchestrator",
+                    "orchestratorV2": f"http://localhost:{port}/orchestrator-v2",
                     "localHarness": f"http://{local_name}:{port}/harness" if local_name else "",
                     "lanHarness": [f"http://{address}:{port}/harness" for address in lan_addresses],
                     "tailscaleHarness": tailscale_harness_url,
@@ -311,10 +353,15 @@ def make_handler(engine):
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
+            if self._serve_orchestrator_v2_static(path):
+                return
             if self._serve_static(path):
                 return
             if path == "/api/network":
                 self._json_response(self._network_payload())
+            elif path.startswith("/api/orchestrator-v2"):
+                if not orchestrator_v2_routes.handle_get(self, parsed, engine=self.server.engine):
+                    self.send_error(404)
             elif path == "/api/status":
                 self._json_response(engine.get_status())
             elif path == "/api/log":
@@ -703,11 +750,16 @@ def make_handler(engine):
                 self.send_error(404)
 
         def do_POST(self):
-            path = urllib.parse.urlparse(self.path).path
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
             if path == "/api/attachments":
                 self._handle_post_attachment()
                 return
             data = self._read_body()
+            if path.startswith("/api/orchestrator-v2"):
+                if not orchestrator_v2_routes.handle_post(self, parsed, data, engine=self.server.engine):
+                    self.send_error(404)
+                return
             if path == "/api/toggle":
                 engine.set_enabled(data.get("enabled", False))
                 self._json_response({"ok": True, "enabled": engine.enabled})
@@ -1552,8 +1604,13 @@ def make_handler(engine):
                 self.send_error(404)
 
         def do_PATCH(self):
-            path = urllib.parse.urlparse(self.path).path
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
             data = self._read_body()
+            if path.startswith("/api/orchestrator-v2"):
+                if not orchestrator_v2_routes.handle_patch(self, parsed, data, engine=self.server.engine):
+                    self.send_error(404)
+                return
             if path.startswith("/api/projects/"):
                 project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
                 project_routes.handle_patch_project(self, project_id, data)
@@ -1596,7 +1653,12 @@ def make_handler(engine):
             self.send_error(404)
 
         def do_DELETE(self):
-            path = urllib.parse.urlparse(self.path).path
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            if path.startswith("/api/orchestrator-v2"):
+                if not orchestrator_v2_routes.handle_delete(self, parsed, engine=self.server.engine):
+                    self.send_error(404)
+                return
             if path.startswith("/api/projects/"):
                 project_id = urllib.parse.unquote(path[len("/api/projects/"):]).strip("/")
                 project_routes.handle_delete_project(self, project_id)
