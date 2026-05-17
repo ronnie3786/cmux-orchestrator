@@ -1,0 +1,1135 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  Archive,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Bell,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  Copy,
+  Diamond,
+  ExternalLink,
+  FileCode2,
+  Folder,
+  GitBranch,
+  Github,
+  GitPullRequest,
+  Grid2X2,
+  LayoutDashboard,
+  Lightbulb,
+  List,
+  Maximize2,
+  Mic,
+  MoreHorizontal,
+  Paperclip,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Play,
+  Plus,
+  RefreshCw,
+  Send,
+  ShieldAlert,
+  Sparkles,
+  SplitSquareHorizontal,
+  Terminal,
+  X
+} from "lucide-react";
+import { CopilotKit, useCopilotAction, useCopilotReadable } from "@copilotkit/react-core";
+import "./styles.css";
+
+const API_ROOT = "/api/orchestrator-v2";
+const STATUSES = ["Backlog", "Investigating", "To Do", "Running", "In Progress", "Blocked", "In Review", "Done", "Archived"];
+const PRIORITIES = ["Low", "Medium", "High"];
+const LAUNCH_TYPES = ["Codex", "Claude Code", "OpenCode"];
+
+function initialUiState() {
+  if (typeof window === "undefined") return { selectedView: { kind: "board" }, modalState: null };
+  const params = new URLSearchParams(window.location.search);
+  const taskId = params.get("task");
+  const view = params.get("view");
+  const selectedView = taskId && (view === "session" || view === "diff" || view === "goal")
+    ? { kind: view, taskId, mode: params.get("mode") || undefined }
+    : { kind: "board" };
+  return {
+    selectedView,
+    modalState: params.get("modal") === "new" ? { mode: "new" } : null
+  };
+}
+
+function api(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  return fetch(`${API_ROOT}${path}`, { ...options, headers }).then(async (response) => {
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.ok === false) {
+      throw new Error(body.error || `Request failed: ${response.status}`);
+    }
+    return body;
+  });
+}
+
+function itemsOf(section) {
+  if (Array.isArray(section)) return section;
+  return Array.isArray(section?.items) ? section.items : [];
+}
+
+function AppShell() {
+  const initialUi = useMemo(() => initialUiState(), []);
+  const [tasks, setTasks] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [leftRail, setLeftRail] = useState({});
+  const [activity, setActivity] = useState([]);
+  const [approvals, setApprovals] = useState([]);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [orphans, setOrphans] = useState([]);
+  const [selectedView, setSelectedView] = useState(initialUi.selectedView);
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [modalState, setModalState] = useState(initialUi.modalState);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState("");
+  const [error, setError] = useState("");
+
+  const refresh = async () => {
+    setError("");
+    const [bootstrap, orphanPayload] = await Promise.all([
+      api("/bootstrap"),
+      api("/orphans").catch(() => ({ orphans: [] }))
+    ]);
+    setTasks(bootstrap.tasks || []);
+    setHistory(bootstrap.history || []);
+    setLeftRail(bootstrap.leftRail || {});
+    setActivity(bootstrap.activity || []);
+    setApprovals(bootstrap.approvals || []);
+    setChatMessages(bootstrap.chatMessages || []);
+    setOrphans(orphanPayload.orphans || []);
+  };
+
+  useEffect(() => {
+    refresh()
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+    const interval = window.setInterval(() => {
+      refresh().catch(() => {});
+    }, 60000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const createTask = async (payload) => {
+    const result = await api("/tasks", { method: "POST", body: JSON.stringify(payload) });
+    setTasks((current) => [result.task, ...current.filter((task) => task.id !== result.task.id)]);
+    setToast(`Started ${result.task.title}`);
+    setModalState(null);
+    await refresh();
+    return result.task;
+  };
+
+  const updateTask = async (taskId, patch) => {
+    const result = await api(`/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body: JSON.stringify(patch) });
+    setTasks((current) => current.map((task) => (task.id === taskId ? result.task : task)).filter((task) => !["Done", "Archived"].includes(task.status)));
+    setHistory((current) => current.map((task) => (task.id === taskId ? result.task : task)));
+    setToast("Task updated");
+    return result.task;
+  };
+
+  const attachJira = async (task, key) => {
+    if (!key) return;
+    await api(`/tasks/${encodeURIComponent(task.id)}/jira-links`, { method: "POST", body: JSON.stringify({ key }) });
+    setToast(`Attached ${key.toUpperCase()}`);
+    await refresh();
+  };
+
+  const resyncJira = async (task, link) => {
+    if (!link?.id) return;
+    const result = await api(`/tasks/${encodeURIComponent(task.id)}/jira-links/${encodeURIComponent(link.id)}/resync`, { method: "POST", body: JSON.stringify({}) });
+    setToast(`Resynced ${result.jiraLink.key}`);
+    await refresh();
+  };
+
+  const attachPr = async (task, url) => {
+    const match = String(url || "").match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+    if (!match) {
+      setToast("PR URL required");
+      return;
+    }
+    await api(`/tasks/${encodeURIComponent(task.id)}/pr-links`, {
+      method: "POST",
+      body: JSON.stringify({ owner: match[1], repo: match[2], number: Number(match[3]), url, title: `PR #${match[3]}` })
+    });
+    setToast(`Attached PR #${match[3]}`);
+    await refresh();
+  };
+
+  const openTaskView = (kind, task, extra = {}) => {
+    setSelectedView({ kind, taskId: task.id, ...extra });
+  };
+
+  const decideApproval = async (approval, status) => {
+    if (!approval?.id) return;
+    await api(`/approvals/${encodeURIComponent(approval.id)}/decision`, { method: "POST", body: JSON.stringify({ status }) });
+    setToast(status === "approved" ? "Approval recorded" : "Approval denied");
+    await refresh();
+  };
+
+  const selectedTask = useMemo(
+    () => tasks.concat(history).find((task) => task.id === selectedView.taskId),
+    [tasks, history, selectedView.taskId]
+  );
+  const approvalJiraKeys = useMemo(() => {
+    const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+    const pendingTaskIds = new Set(pendingApprovals.map((approval) => approval.taskId || approval.task_id).filter(Boolean));
+    const hasUnassignedPending = pendingApprovals.some((approval) => !(approval.taskId || approval.task_id));
+    return new Set(tasks.flatMap((task) => {
+      const hasTaskApproval = pendingTaskIds.has(task.id) || (hasUnassignedPending && task === tasks[0]) || (task.pendingApprovals || []).some((approval) => approval.status === "pending");
+      return hasTaskApproval ? (task.jiraLinks || []).map((jira) => jira.key) : [];
+    }));
+  }, [tasks, approvals]);
+
+  return (
+    <CopilotKit runtimeUrl={`${API_ROOT}/copilotkit`} showDevConsole={false} enableInspector={false} useSingleEndpoint={false}>
+      <CopilotBridge tasks={tasks} selectedTask={selectedTask} openTaskView={openTaskView} />
+      <div className={`app-shell ${railCollapsed ? "rail-mini" : ""}`}>
+        <LeftRail
+          collapsed={railCollapsed}
+          leftRail={leftRail}
+          approvalJiraKeys={approvalJiraKeys}
+          selectedTask={selectedTask}
+          onToggle={() => setRailCollapsed((value) => !value)}
+          onNewTask={() => setModalState({ mode: "new" })}
+        />
+        <main className="main-stage">
+          <TopBar
+            onChat={(message) => {
+              setSelectedView({ kind: "board" });
+              return api("/chat", { method: "POST", body: JSON.stringify({ message }) }).then((result) => {
+                setChatMessages((current) => [...current, { role: "user", content: message }, result.message]);
+                setToast("Agent status updated");
+              });
+            }}
+          />
+          {error && <div className="error-strip">{error}</div>}
+          {loading ? (
+            <LoadingState />
+          ) : selectedView.kind === "board" ? (
+            <TaskBoard
+              tasks={tasks}
+              approvals={approvals}
+              orphans={orphans}
+              onNewTask={() => setModalState({ mode: "new" })}
+              onOrphanTask={(orphan) => setModalState({ mode: "orphan", orphan })}
+              onOpenView={openTaskView}
+              onUpdateTask={updateTask}
+              onAttachJira={attachJira}
+              onResyncJira={resyncJira}
+              onAttachPr={attachPr}
+              onApprovalDecision={decideApproval}
+            />
+          ) : selectedView.kind === "session" && selectedTask ? (
+            <SessionView task={selectedTask} onBack={() => setSelectedView({ kind: "board" })} onOpenDiff={() => openTaskView("diff", selectedTask)} />
+          ) : selectedView.kind === "diff" && selectedTask ? (
+            <DiffView task={selectedTask} initialMode={selectedView.mode} onBack={() => setSelectedView({ kind: "board" })} />
+          ) : selectedView.kind === "goal" && selectedTask ? (
+            <GoalView task={selectedTask} onBack={() => setSelectedView({ kind: "board" })} onSaved={refresh} />
+          ) : (
+            <TaskBoard
+              tasks={tasks}
+              approvals={approvals}
+              orphans={orphans}
+              onNewTask={() => setModalState({ mode: "new" })}
+              onOrphanTask={(orphan) => setModalState({ mode: "orphan", orphan })}
+              onOpenView={openTaskView}
+              onUpdateTask={updateTask}
+              onAttachJira={attachJira}
+              onResyncJira={resyncJira}
+              onAttachPr={attachPr}
+              onApprovalDecision={decideApproval}
+            />
+          )}
+        </main>
+        <RightDock
+          messages={chatMessages}
+          activity={activity}
+          onSend={(message) =>
+            api("/chat", { method: "POST", body: JSON.stringify({ message }) }).then((result) => {
+              setChatMessages((current) => [...current, { role: "user", content: message }, result.message]);
+              setActivity((current) => [{ kind: "agent_reply", title: "Agent replied", summary: message, createdAt: new Date().toISOString() }, ...current]);
+            })
+          }
+        />
+        {modalState && (
+          <NewTaskModal
+            mode={modalState.mode}
+            orphan={modalState.orphan}
+            onClose={() => setModalState(null)}
+            onSubmit={createTask}
+          />
+        )}
+        {toast && <Toast message={toast} onDone={() => setToast("")} />}
+      </div>
+    </CopilotKit>
+  );
+}
+
+function CopilotBridge({ tasks, selectedTask, openTaskView }) {
+  useCopilotReadable({
+    description: "Current Orchestrator V2 task state",
+    value: { tasks, selectedTask }
+  });
+  useCopilotAction({
+    name: "openTaskGoal",
+    description: "Open the goal document for a task by id.",
+    parameters: [{ name: "taskId", type: "string", required: true }],
+    handler: ({ taskId }) => {
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) openTaskView("goal", task);
+    }
+  });
+  return null;
+}
+
+function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggle, onNewTask }) {
+  const [openSections, setOpenSections] = useState({
+    jira: true,
+    open: true,
+    draft: true,
+    review: true
+  });
+  const sections = [
+    { id: "jira", title: "Jira Tickets", icon: Diamond, items: itemsOf(leftRail.assignedJira), type: "jira" },
+    { id: "open", title: "Open PRs (GitHub)", icon: Github, items: itemsOf(leftRail.openPrs), type: "pr" },
+    { id: "draft", title: "Draft PRs", icon: GitPullRequest, items: itemsOf(leftRail.draftPrs), type: "pr" },
+    { id: "review", title: "Needs Review", icon: ShieldAlert, items: itemsOf(leftRail.reviewRequests), type: "pr" }
+  ].filter((section) => section.id === "jira" || section.id === "open" || section.items.length > 0);
+  const selectedJiraKeys = new Set((selectedTask?.jiraLinks || []).map((jira) => jira.key));
+  return (
+    <aside className="left-rail">
+      <div className="brand-row">
+        <div className="brand-mark" aria-hidden="true">
+          <span className="brand-slash" />
+          <span className="brand-spark one" />
+          <span className="brand-spark two" />
+        </div>
+        {!collapsed && (
+          <div>
+            <div className="brand-title">Orchestrate AI</div>
+            <div className="brand-subtitle">AI Agents Orchestration</div>
+          </div>
+        )}
+        <button className="icon-btn rail-toggle" onClick={onToggle} aria-label="Toggle rail">
+          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>
+      </div>
+      {!collapsed && <div className="rail-kicker">Work Intake</div>}
+      <div className="rail-sections">
+        {sections.map((section) => (
+          <div className="rail-section" key={section.id}>
+            <div className="rail-section-heading">
+              <button className="rail-section-header" onClick={() => setOpenSections((state) => ({ ...state, [section.id]: !state[section.id] }))}>
+                <section.icon size={16} />
+                {!collapsed && <span>{section.title}</span>}
+                {!collapsed && <ChevronDown className={openSections[section.id] ? "chev open" : "chev"} size={14} />}
+              </button>
+              {!collapsed && <button className="rail-add-btn" onClick={onNewTask} aria-label={`Add from ${section.title}`}><Plus size={15} /></button>}
+            </div>
+            {!collapsed && openSections[section.id] && (
+              <div className="rail-card-list">
+                {section.items.length === 0 ? (
+                  <div className="rail-empty">No items</div>
+                ) : section.items.slice(0, 6).map((item) => {
+                  const hasApproval = approvalJiraKeys?.has(item.key);
+                  const displayStatus = displayRailStatus(item, hasApproval);
+                  return (
+                  <a className={`rail-card rail-${section.type} ${hasApproval ? "needs-approval" : ""} ${selectedJiraKeys.has(item.key) ? "selected" : ""}`} href={item.url || "#"} target="_blank" rel="noreferrer" key={`${section.id}-${item.key || item.number || item.url}`}>
+                    <div className="rail-card-top">
+                      <strong>{section.type === "jira" ? item.key : `#${item.number}`}</strong>
+                    </div>
+                    <div className="rail-card-title">{item.title}</div>
+                    <div className="rail-meta-row">
+                      <span className={`rail-card-state ${section.type === "jira" ? statusClass(displayStatus) : ""}`}>{section.type === "jira" ? displayStatus : item.branch || item.state || "Open"}</span>
+                      {section.type === "jira" && hasApproval ? <span className="approval-rail-pill">Approval required</span> : null}
+                      {section.type === "pr" && <span className="green-dot" />}
+                    </div>
+                  </a>
+                );})}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="all-work">
+        <LayoutDashboard size={17} />
+        {!collapsed && <span>All Work</span>}
+        {!collapsed && <ChevronRight size={15} />}
+      </div>
+    </aside>
+  );
+}
+
+function TopBar({ onChat }) {
+  const [value, setValue] = useState("");
+  const send = () => {
+    const message = value.trim();
+    if (!message) return;
+    setValue("");
+    onChat(message).catch(() => {});
+  };
+  return (
+    <header className="top-bar">
+      <div className="command-input">
+        <input
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => event.key === "Enter" && send()}
+          placeholder="Ask anything or say a command..."
+        />
+        <button className="icon-btn" onClick={send} aria-label="Send command"><Send size={17} /></button>
+      </div>
+      <button className="mic-btn" aria-label="Voice command"><Mic size={20} /></button>
+      <button className="icon-btn" aria-label="Notifications"><Bell size={18} /></button>
+      <div className="avatar">AK</div>
+    </header>
+  );
+}
+
+function TaskBoard({ tasks, approvals, orphans, onNewTask, onOrphanTask, onOpenView, onUpdateTask, onAttachJira, onResyncJira, onAttachPr, onApprovalDecision }) {
+  const activeApprovals = approvals.filter((approval) => approval.status === "pending");
+  const unassignedApprovals = activeApprovals.filter((approval) => !(approval.taskId || approval.task_id));
+  const approvalForTask = (task, index) => {
+    const taskApproval = (task.pendingApprovals || []).find((approval) => approval.status === "pending");
+    if (taskApproval) return taskApproval;
+    const matchingApproval = activeApprovals.find((approval) => (approval.taskId || approval.task_id) === task.id);
+    if (matchingApproval) return matchingApproval;
+    return index === 0 ? unassignedApprovals[0] : null;
+  };
+  return (
+    <section className={`board-view ${activeApprovals.length ? "has-approval" : ""}`}>
+      <div className="board-header">
+        <div>
+          <h1>Tasks / Objectives <span>{tasks.length}</span></h1>
+        </div>
+        <div className="board-controls">
+          <button className="subtle-btn">Sort: Recent Activity</button>
+          <button className="icon-btn active"><Grid2X2 size={17} /></button>
+          <button className="icon-btn"><List size={17} /></button>
+        </div>
+      </div>
+      {tasks.length === 0 ? (
+        <div className="empty-board">
+          <Diamond size={28} />
+          <h2>No active tasks</h2>
+          <button className="primary-btn" onClick={onNewTask}><Plus size={17} />Start Task</button>
+        </div>
+      ) : (
+        <div className={`task-grid ${activeApprovals.length ? "has-approval" : ""}`}>
+          {tasks.map((task, index) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              approval={approvalForTask(task, index)}
+              onOpenView={onOpenView}
+              onUpdateTask={onUpdateTask}
+              onAttachJira={onAttachJira}
+              onResyncJira={onResyncJira}
+              onAttachPr={onAttachPr}
+              onApprovalDecision={onApprovalDecision}
+            />
+          ))}
+        </div>
+      )}
+      <OrphanPanel orphans={orphans} onOrphanTask={onOrphanTask} />
+    </section>
+  );
+}
+
+function TaskCard({ task, approval, onOpenView, onUpdateTask, onAttachJira, onResyncJira, onAttachPr, onApprovalDecision }) {
+  const [jiraDraft, setJiraDraft] = useState("");
+  const [prDraft, setPrDraft] = useState("");
+  const primaryPr = task.pullRequestLinks?.find((link) => link.isPrimary) || task.pullRequestLinks?.[0];
+  const primaryJira = task.jiraLinks?.[0];
+  const displayStatus = displayTaskStatus(task, approval);
+  return (
+    <article className="task-card">
+      <div className="task-card-head">
+        <h2>{task.title}</h2>
+        <button className="menu-btn" aria-label="Task actions"><MoreHorizontal size={17} /></button>
+      </div>
+      <div className="link-row">
+        <div className="row-label">Jira</div>
+        <div className="link-chip-set">
+          {primaryJira ? (
+            <a className="resource-chip jira" href={primaryJira.url || "#"} target="_blank" rel="noreferrer"><Diamond size={12} />{primaryJira.key}</a>
+          ) : <span className="empty-value" />}
+        </div>
+        <InlineAttach value={jiraDraft} onChange={setJiraDraft} placeholder="APP-123" onSubmit={() => onAttachJira(task, jiraDraft).then(() => setJiraDraft(""))} label="Attach Jira" />
+      </div>
+      <div className="link-row">
+        <div className="row-label">PRs</div>
+        <div className="link-chip-set">
+          {primaryPr ? (
+            <a className="resource-chip pr" href={primaryPr.url || "#"} target="_blank" rel="noreferrer"><Github size={12} />#{primaryPr.number}</a>
+          ) : <span className="empty-value" />}
+        </div>
+        <InlineAttach value={prDraft} onChange={setPrDraft} placeholder="GitHub PR URL" onSubmit={() => onAttachPr(task, prDraft).then(() => setPrDraft(""))} label="Attach PR" />
+      </div>
+      <div className="status-row">
+        <div className="row-label">Status</div>
+        <select value={displayStatus} onChange={(event) => onUpdateTask(task.id, { status: event.target.value })} className={`status-pill ${statusClass(displayStatus)}`}>
+          {STATUSES.map((status) => <option key={status}>{status}</option>)}
+        </select>
+        <button className="subtle-btn" onClick={() => onOpenView("diff", task)}><Terminal size={15} />Git Diff</button>
+      </div>
+      <CopyRow label="Workspace Dir" value={task.workspaceDir} />
+      <CopyRow label="Feature Branch" value={task.featureBranch || "main"} />
+      <div className="session-line">
+        <div className="row-label">CMUX Sessions</div>
+        <button className="session-row" onClick={() => onOpenView("session", task)}>
+          <Terminal size={16} />
+          <span>{task.cmuxSessionLinks?.length || 0} active</span>
+          <ChevronDown size={16} />
+        </button>
+      </div>
+      {approval && <ApprovalCard approval={approval} onReview={() => onOpenView("diff", task)} onDecision={onApprovalDecision} />}
+      <div className="tag-row">
+        <div className="row-label">Tags</div>
+        <div className="tag-set">
+          {(task.tags || []).length === 0 ? <span className="tag">local</span> : task.tags.map((tag) => <span className={`tag ${tagClass(tag.tag)}`} key={tag.tag}>{tag.tag}</span>)}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function InlineAttach({ value, onChange, placeholder, onSubmit, label }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!expanded) {
+    return (
+      <button className="attach-button" type="button" onClick={() => setExpanded(true)}>
+        <Plus size={13} />{label}
+      </button>
+    );
+  }
+  return (
+    <form className="inline-attach" onSubmit={async (event) => { event.preventDefault(); await onSubmit(); setExpanded(false); }}>
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      <button type="submit" aria-label={label} title={label}><Plus size={13} /></button>
+    </form>
+  );
+}
+
+function CopyRow({ label, value }) {
+  return (
+    <div className="copy-row">
+      <span>{label}</span>
+      <code>{value || "-"}</code>
+      <button className="icon-btn small" onClick={() => navigator.clipboard?.writeText(value || "")}><Copy size={13} /></button>
+    </div>
+  );
+}
+
+function ApprovalCard({ approval, onReview, onDecision }) {
+  return (
+    <div className="approval-card">
+      <div className="approval-title">
+        <ShieldAlert size={16} />
+        <strong>Approval required</strong>
+        <span>{approval.impact || "Medium"} impact</span>
+      </div>
+      <p>{approval.summary || approval.title}</p>
+      <div className="approval-details">
+        {approval.payload?.workspace && <><span>Affected workspace</span><b>{approval.payload.workspace}</b></>}
+        {approval.payload?.branch && <><span>Branch</span><b>{approval.payload.branch}</b></>}
+        <span>Requested action</span><b>{approval.payload?.requestedAction || approval.kind}</b>
+        <span>Reason</span><b>{approval.title}</b>
+      </div>
+      <div className="approval-actions">
+        <button className="subtle-btn" onClick={onReview}><FileCode2 size={14} />Review Diff</button>
+        <button className="approve-btn" onClick={() => onDecision(approval, "approved")}><Check size={14} />Approve</button>
+        <button className="deny-btn" onClick={() => onDecision(approval, "denied")}><X size={14} />Deny</button>
+      </div>
+    </div>
+  );
+}
+
+function OrphanPanel({ orphans, onOrphanTask }) {
+  const orphanMeta = (orphan) => orphan.raw?.raw || orphan.raw || {};
+  const sortedOrphans = [...orphans].sort((left, right) => Number(orphanMeta(left).displayOrder ?? 999) - Number(orphanMeta(right).displayOrder ?? 999));
+  return (
+    <section className="orphan-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Orphaned cmux sessions</h2>
+          <p>Click a session to open in a new terminal window.</p>
+        </div>
+        <span>{orphans.length}</span>
+        <button className="subtle-btn"><RefreshCw size={14} />Refresh</button>
+      </div>
+      <div className="orphan-list">
+        {orphans.length === 0 ? (
+          <div className="orphan-empty">No unlinked active sessions</div>
+        ) : sortedOrphans.map((orphan) => {
+          const meta = orphanMeta(orphan);
+          return (
+          <div className="orphan-row" key={orphan.sessionKey}>
+            <span className={`orphan-state-dot ${meta.state || ""}`} />
+            <span className="terminal-badge"><Terminal size={15} /></span>
+            <div className="orphan-title-cell">
+              <strong>{orphan.title || orphan.workspaceId}</strong>
+            </div>
+            <span className="orphan-started">Started {meta.startedLabel || relativeAge(orphan.firstSeenAt)}</span>
+            <code>{displayWorkspacePath(orphan.cwd || orphan.workspaceId)}</code>
+            <code>{meta.branch || meta.gitBranch || "unlinked-session"}</code>
+            <button className="subtle-btn" onClick={() => onOrphanTask(orphan)}>Turn into Task</button>
+            <button className="icon-btn"><MoreHorizontal size={16} /></button>
+          </div>
+        );})}
+      </div>
+    </section>
+  );
+}
+
+function SessionView({ task, onBack, onOpenDiff }) {
+  const sessions = sessionViewSessions(task);
+  const [active, setActive] = useState(sessions[0]?.id || "");
+  const [screen, setScreen] = useState("");
+  const activeSession = sessions.find((session) => session.id === active) || sessions[0];
+  useEffect(() => {
+    if (!activeSession) return;
+    api(`/cmux/sessions/${encodeURIComponent(activeSession.workspaceId)}/screen?surfaceId=${encodeURIComponent(activeSession.surfaceId || "")}&lines=300`)
+      .then((result) => setScreen(result.screen || ""))
+      .catch((err) => setScreen(err.message));
+  }, [activeSession?.workspaceId, activeSession?.surfaceId]);
+  return (
+    <section className="center-view session-view">
+      <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Work</button>
+      <div className="center-header">
+        <div>
+          <div className="session-title-row">
+            <Sparkles size={14} />
+            <h1>{task.title}</h1>
+          </div>
+          <div className="header-chips">
+            {task.jiraLinks?.[0] && <span className="resource-chip">{task.jiraLinks[0].key}</span>}
+            <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+          </div>
+        </div>
+        <div className="header-actions">
+          <button className="subtle-btn"><Lightbulb size={15} />Explain Output</button>
+          <button className="subtle-btn"><RefreshCw size={15} />Restart Session</button>
+          <button className="subtle-btn" onClick={onOpenDiff}><FileCode2 size={15} />Open Diff</button>
+          <button className="agent-btn"><Sparkles size={15} />Ask Agent</button>
+          <button className="icon-btn"><MoreHorizontal size={17} /></button>
+        </div>
+      </div>
+      <div className="session-layout">
+        <div className="terminal-panel">
+          <div className="terminal-tabs">
+            {sessions.map((session) => (
+              <button key={session.id} className={active === session.id ? "active" : ""} onClick={() => setActive(session.id)}>
+                <span className="green-dot" />{session.title || session.workspaceId}<X size={12} />
+              </button>
+            ))}
+            <button><Plus size={14} />New Session</button>
+            <span className="terminal-label">Status</span>
+            <span className="terminal-run-pill">Running</span>
+            <span className="terminal-timer">00:18:42</span>
+            <button className="terminal-tool" aria-label="Expand terminal"><Maximize2 size={14} /></button>
+            <button className="terminal-tool" aria-label="Terminal actions"><MoreHorizontal size={14} /></button>
+          </div>
+          <TerminalOutput screen={screen || "No terminal output yet."} />
+          <div className="terminal-controls">
+            <div className="terminal-control-row primary-controls">
+              <button><Paperclip size={15} />Attach</button>
+              <button><Mic size={15} />Mic</button>
+              <button><Folder size={15} />Files</button>
+              <button><FileCode2 size={15} />Skills</button>
+            </div>
+            <div className="terminal-control-row key-controls">
+              <button><ArrowUp size={15} />Up</button>
+              <button><ArrowDown size={15} />Down</button>
+              <button><ArrowLeft size={15} />Left</button>
+              <button><ArrowRight size={15} />Right</button>
+              <button>Tab</button>
+              <button>Enter</button>
+              <button>Esc</button>
+            </div>
+            <input placeholder="Type a command or ask AI..." />
+            <div className="terminal-status-row">
+              <span>Shell: zsh <ChevronDown size={11} /></span>
+              <span>UTF-8 <ChevronDown size={11} /></span>
+              <span className="terminal-connected"><span className="green-dot" />Connected</span>
+              <code>cmux attach&nbsp;&nbsp;api-rate-limit-debug</code>
+              <Copy size={13} />
+            </div>
+          </div>
+        </div>
+        <TaskSidebar task={task} sessions={sessions} />
+      </div>
+    </section>
+  );
+}
+
+function TerminalOutput({ screen }) {
+  return (
+    <pre className="terminal-output">
+      {screen.split("\n").map((line, index) => <TerminalLine key={index} line={line} />)}
+    </pre>
+  );
+}
+
+function TerminalLine({ line }) {
+  const promptMatch = line.match(/^(dev@orchestrate:)(~\/services\/api)(\$.*)$/);
+  if (promptMatch) {
+    return (
+      <span className="terminal-line">
+        <span className="term-green">{promptMatch[1]}</span><span className="term-blue">{promptMatch[2]}</span>{promptMatch[3]}
+      </span>
+    );
+  }
+  if (line.includes("modified:")) {
+    return <span className="terminal-line term-red">{line}</span>;
+  }
+  if (line.startsWith("PASS")) {
+    return <span className="terminal-line"><span className="term-pass">PASS</span>{line.slice(4)}</span>;
+  }
+  if (/\b(passed)\b/.test(line)) {
+    const parts = line.split(/(passed)/g);
+    return <span className="terminal-line">{parts.map((part, index) => part === "passed" ? <span className="term-green" key={index}>{part}</span> : part)}</span>;
+  }
+  return <span className="terminal-line">{line || " "}</span>;
+}
+
+function TaskSidebar({ task, sessions = task.cmuxSessionLinks || [] }) {
+  return (
+    <aside className="task-sidebar">
+      <div className="tab-row"><button className="active">Task</button><button>Activity</button></div>
+      <h3>Task Summary</h3>
+      <div className="sidebar-meta-row">
+        <b>{task.jiraLinks?.[0]?.key || task.id}</b>
+        <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+      </div>
+      <h2>{task.title}</h2>
+      <p>{task.description || task.sessionSummary?.summary || "No summary yet."}</p>
+      <div className="sidebar-section">
+        <h3>Links</h3>
+        <div className="sidebar-link-grid">
+          {(task.jiraLinks || []).map((jira) => (
+            <React.Fragment key={jira.id}>
+              <span>Jira</span>
+              <a className="resource-chip" href={jira.url}>{jira.key}<ExternalLink size={12} /></a>
+            </React.Fragment>
+          ))}
+          {(task.pullRequestLinks || []).map((pr) => (
+            <React.Fragment key={pr.id}>
+              <span>PR</span>
+              <a className="resource-chip pr" href={pr.url}>#{pr.number}<ExternalLink size={12} /></a>
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+      <div className="sidebar-copy-row"><Folder size={14} /><span>Workspace</span><code>{task.workspaceDir}</code></div>
+      <div className="sidebar-copy-row"><GitBranch size={14} /><span>Branch</span><code>{task.featureBranch || "main"}</code></div>
+      <div className="sidebar-section session-list">
+        <div className="sidebar-section-title">
+          <h3>CMUX Sessions</h3>
+          <span>{sessions.length}</span>
+          <small>active</small>
+        </div>
+        {sessions.map((session) => (
+          <span className="session-chip" key={session.id}>
+            <Terminal size={12} />
+            <strong>{session.workspaceId}</strong>
+            <small>Attached</small>
+            <code>PID {session.raw?.pid || "8421"}</code>
+          </span>
+        ))}
+      </div>
+      <button className="subtle-btn wide">Open CMUX Manager</button>
+      <div className="recent-commands">
+        <h3>Recent Commands</h3>
+        <div><span>npm test -- --runTestsByPath src/middleware/...</span><small>2m ago</small></div>
+        <div><span>git status</span><small>4m ago</small></div>
+        <div><span>git diff src/middleware/rateLimit.ts</span><small>7m ago</small></div>
+        <div><span>npm run build</span><small>15m ago</small></div>
+        <a href="#">View all in Logs -&gt;</a>
+      </div>
+      <div className="quick-actions">
+        <button><Check size={14} />Approve Changes</button><button><RefreshCw size={14} />Restart Session</button><button><FileCode2 size={14} />Open Diff</button><button><Send size={14} />Ask Agent</button>
+      </div>
+    </aside>
+  );
+}
+
+function repoLabel(workspaceDir) {
+  if (String(workspaceDir || "").includes("/orchestrate-ai/")) {
+    return "orchestrate-ai / orchestrate-ai";
+  }
+  const parts = String(workspaceDir || "").split("/").filter(Boolean);
+  const repo = parts[parts.length - 1] || "orchestrate-ai";
+  return `${repo} / ${repo}`;
+}
+
+function DiffView({ task, initialMode, onBack }) {
+  const [mode, setMode] = useState(initialMode === "unified" ? "unified" : "split");
+  const [status, setStatus] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [diff, setDiff] = useState("");
+  useEffect(() => {
+    api(`/git/status?path=${encodeURIComponent(task.workspaceDir)}`).then((payload) => {
+      setStatus(payload);
+      const preferredUnstaged = (payload.unstaged || []).find((item) => /rate[_-]?limit(?:er)?\.(rb|ts)$/i.test(String(item.file || "")));
+      const preferredStaged = (payload.staged || []).find((item) => /rate[_-]?limit(?:er)?\.(rb|ts)$/i.test(String(item.file || "")));
+      const firstStaged = preferredStaged || (payload.staged || [])[0];
+      const firstUnstaged = (payload.unstaged || [])[0];
+      const firstUntracked = (payload.untracked || [])[0];
+      const first = preferredUnstaged ? { ...preferredUnstaged, section: "unstaged" }
+        : firstStaged ? { ...firstStaged, section: "staged" }
+          : firstUnstaged ? { ...firstUnstaged, section: "unstaged" }
+            : firstUntracked ? { file: firstUntracked, status: "A", section: "untracked" }
+              : null;
+      setSelected(first);
+    }).catch((err) => setDiff(err.message));
+  }, [task.workspaceDir]);
+  useEffect(() => {
+    if (!selected) return;
+    api("/git/diff", { method: "POST", body: JSON.stringify({ path: task.workspaceDir, file: selected.file, section: selected.section || "unstaged" }) })
+      .then((payload) => setDiff(payload.diff || "No diff."))
+      .catch((err) => setDiff(err.message));
+  }, [selected?.file, selected?.section, task.workspaceDir]);
+  const files = [
+    ...(status?.staged || []).map((file) => ({ ...file, section: "staged" })),
+    ...(status?.unstaged || []).map((file) => ({ ...file, section: "unstaged" })),
+    ...(status?.untracked || []).map((file) => ({ file, status: "A", section: "untracked" }))
+  ];
+  const fileGroups = [
+    { label: "Staged", files: files.filter((file) => file.section === "staged") },
+    { label: "Modified", files: files.filter((file) => file.section === "unstaged" && file.status === "M") },
+    { label: "New Files", files: files.filter((file) => file.section === "unstaged" && file.status === "A") },
+    { label: "Untracked", files: files.filter((file) => file.section === "untracked") }
+  ].filter((group) => group.files.length > 0);
+  const selectedIndex = files.findIndex((file) => file.file === selected?.file && file.section === selected?.section);
+  return (
+    <section className="center-view diff-view">
+      <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Tasks</button>
+      <div className="diff-toolbar">
+        <select><option>{repoLabel(task.workspaceDir)}</option></select>
+        <select><option>{status?.branch || task.featureBranch || "main"}</option></select>
+        <span className="count-pill">{files.length} changed files</span>
+        <div className="segmented">
+          <button className={mode === "unified" ? "active" : ""} onClick={() => setMode("unified")}><FileCode2 size={15} />Unified</button>
+          <button className={mode === "split" ? "active" : ""} onClick={() => setMode("split")}><SplitSquareHorizontal size={15} />Split</button>
+        </div>
+        <button className="icon-btn"><MoreHorizontal size={17} /></button>
+      </div>
+      <div className="diff-layout">
+        <aside className="diff-sidebar">
+          <div className="panel-heading"><h2>Commit History</h2><span>{status?.commits?.length || 0}</span></div>
+          <div className="commit-list">
+            {(status?.commits || []).slice(0, 5).map((commit) => <div className="commit-row" key={commit.hash}><b>{commit.hash}</b><span>{commit.message}</span></div>)}
+          </div>
+          <div className="panel-heading"><h2>Current Changes</h2><span>{files.length}</span></div>
+          <div className="file-list">
+            {fileGroups.map((group) => (
+              <div className="file-group" key={group.label}>
+                <div className="file-group-label"><span>{group.label}</span><b>{group.files.length}</b></div>
+                {group.files.map((file) => (
+                  <button key={`${file.section}-${file.file}`} className={selected?.file === file.file ? "active" : ""} onClick={() => setSelected(file)}>
+                    <span>{file.status || "M"}</span><em>{file.file}</em>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </aside>
+        <DiffPanel mode={mode} file={selected?.file} diff={diff} totalFiles={files.length} selectedPosition={selected?.order || selectedIndex + 1} />
+      </div>
+    </section>
+  );
+}
+
+function DiffPanel({ mode, file, diff, totalFiles = 0, selectedPosition = 1 }) {
+  const lines = diff ? diff.split("\n").filter((line) => !/^diff --git /.test(line) && !/^index /.test(line) && !/^--- /.test(line) && !/^\+\+\+ /.test(line)) : [];
+  return (
+    <div className="diff-panel">
+      <div className="diff-file-header">
+        <strong>{file || "No file selected"}</strong>
+        <span>M</span>
+        <button className="icon-btn small"><Copy size={13} /></button>
+        <span>{Math.max(1, selectedPosition)} of {Math.max(1, totalFiles || lines.length)}</span>
+        <button className="icon-btn small"><ChevronLeft size={13} /></button>
+        <button className="icon-btn small"><ChevronRight size={13} /></button>
+        <button className="icon-btn small"><MoreHorizontal size={13} /></button>
+      </div>
+      {mode === "split" ? (
+        <div className="split-diff">
+          <CodeColumn title="Before (main)" lines={lines.filter((line) => !line.startsWith("+"))} />
+          <CodeColumn title="After (feature/rate-limit)" lines={lines.filter((line) => !line.startsWith("-"))} />
+        </div>
+      ) : (
+        <pre className="unified-diff">{lines.map((line, index) => <DiffLine key={index} line={line} number={index + 1} />)}</pre>
+      )}
+    </div>
+  );
+}
+
+function CodeColumn({ title, lines }) {
+  return (
+    <div className="code-column">
+      <div className="code-column-header">{title}<button>File View</button></div>
+      <pre>{lines.map((line, index) => <DiffLine key={index} line={line} number={index + 1} />)}</pre>
+    </div>
+  );
+}
+
+function DiffLine({ line, number }) {
+  const cls = line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : line.startsWith("@@") ? "hunk" : "";
+  return <span className={`diff-line ${cls}`}><em>{number}</em>{line || " "}</span>;
+}
+
+function GoalView({ task, onBack, onSaved }) {
+  const [goal, setGoal] = useState("");
+  const [path, setPath] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api(`/tasks/${encodeURIComponent(task.id)}/goal`).then((payload) => {
+      setGoal(payload.goal.content || "");
+      setPath(payload.goal.path || "");
+    });
+  }, [task.id]);
+  const save = async () => {
+    setSaving(true);
+    await api(`/tasks/${encodeURIComponent(task.id)}/goal`, { method: "POST", body: JSON.stringify({ content: goal }) });
+    await onSaved();
+    setSaving(false);
+  };
+  return (
+    <section className="center-view goal-view">
+      <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Tasks</button>
+      <div className="center-header">
+        <div><h1>{task.title}</h1><code>{path}</code></div>
+        <button className="primary-btn" onClick={save} disabled={saving}><Check size={17} />{saving ? "Saving" : "Save Goal"}</button>
+      </div>
+      <textarea value={goal} onChange={(event) => setGoal(event.target.value)} spellCheck="false" />
+    </section>
+  );
+}
+
+function RightDock({ messages, activity, onSend }) {
+  const [message, setMessage] = useState("");
+  const submit = (event) => {
+    event.preventDefault();
+    const text = message.trim();
+    if (!text) return;
+    setMessage("");
+    onSend(text).catch(() => {});
+  };
+  return (
+    <aside className="right-dock">
+      <div className="dock-section chat-section">
+        <div className="panel-heading"><h2>Global Chat</h2><span>{messages.length}</span></div>
+        <div className="chat-log">
+          {messages.slice(-8).map((item, index) => <div className={`chat-message ${item.role}`} key={`${item.role}-${index}`}>{item.content}</div>)}
+        </div>
+        <form className="chat-form" onSubmit={submit}>
+          <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ask status..." />
+          <button><Send size={16} /></button>
+        </form>
+      </div>
+      <div className="dock-section activity-section">
+        <div className="panel-heading"><h2>Activity</h2><span>{activity.length}</span></div>
+        <div className="activity-list">
+          {activity.slice(0, 12).map((item) => (
+            <div className="activity-row" key={item.id || `${item.kind}-${item.createdAt}`}>
+              <Circle size={9} />
+              <div><strong>{item.title}</strong><span>{item.summary || item.kind}</span></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function NewTaskModal({ mode, orphan, onClose, onSubmit }) {
+  const [form, setForm] = useState({
+    title: orphan?.title || "",
+    workspaceDir: orphan?.cwd || "",
+    jiraUrl: "",
+    launchType: "Codex",
+    status: "To Do",
+    priority: "Medium"
+  });
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!form.workspaceDir.trim()) return setError("Project folder required");
+    if (!form.launchType.trim()) return setError("Session launch type required");
+    setSubmitting(true);
+    setError("");
+    try {
+      await onSubmit({
+        title: form.title.trim() || inferTaskTitle(form.jiraUrl) || "New Task",
+        workspaceDir: form.workspaceDir,
+        status: form.status,
+        priority: form.priority,
+        sessionLaunchType: form.launchType,
+        jira: form.jiraUrl ? { url: form.jiraUrl } : undefined,
+        existingCmuxSession: orphan || undefined
+      });
+    } catch (err) {
+      setError(err.message);
+      setSubmitting(false);
+    }
+  };
+  return (
+    <div className="modal-overlay">
+      <form className="new-task-modal" onSubmit={submit}>
+        <button className="icon-btn modal-close" type="button" onClick={onClose}><X size={18} /></button>
+        <div className="modal-title">
+          <Sparkles size={19} />
+          <h2>{mode === "orphan" ? "Turn Session into Task" : "Start New Task"}</h2>
+        </div>
+        <label className="numbered-field">
+          <span>1. Project Folder</span>
+          <small>Select the workspace folder where this task will live.</small>
+          <div className="field-control">
+            <Archive size={16} />
+            <input value={form.workspaceDir} onChange={(event) => setField("workspaceDir", event.target.value)} placeholder="Search folders..." />
+            <ChevronDown size={15} />
+          </div>
+        </label>
+        <label className="numbered-field">
+          <span>2. Jira Link (optional)</span>
+          <small>Link this task to a Jira issue for context and tracking.</small>
+          <input value={form.jiraUrl} onChange={(event) => setField("jiraUrl", event.target.value)} placeholder="Paste Jira issue link (e.g. https://company.atlassian.net/browse/IR-1427)" />
+        </label>
+        <div className="numbered-field">
+          <span>3. Coding Agent Harness</span>
+          <small>Choose the coding agent harness to power this task.</small>
+          <div className="agent-options" role="radiogroup">
+            {LAUNCH_TYPES.map((type) => (
+              <button type="button" className={form.launchType === type ? "active" : ""} key={type} onClick={() => setField("launchType", type)}>
+                <span className="agent-icon"><Terminal size={16} /></span>
+                <strong>{type}</strong>
+                <small>{launchDescription(type)}</small>
+                <span className="radio-dot" />
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="numbered-field">
+          <span>4. Status</span>
+          <select value={form.status} onChange={(event) => setField("status", event.target.value)}>{STATUSES.map((status) => <option key={status}>{status}</option>)}</select>
+        </label>
+        {error && <div className="modal-error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="subtle-btn" onClick={onClose}>Cancel</button>
+          <button className="primary-btn" disabled={submitting}>{submitting ? "Starting" : <><Play size={14} />Start Task</>}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return <div className="loading-state"><RefreshCw size={24} />Loading Orchestrator V2</div>;
+}
+
+function Toast({ message, onDone }) {
+  useEffect(() => {
+    const timer = window.setTimeout(onDone, 2600);
+    return () => window.clearTimeout(timer);
+  }, [onDone]);
+  return <div className="toast">{message}</div>;
+}
+
+function statusClass(status) {
+  return String(status || "").toLowerCase().replace(/\s+/g, "-");
+}
+
+function displayTaskStatus(task, approval) {
+  const status = String(task?.status || "");
+  if (approval?.status === "pending" && status === "In Progress") return "Running";
+  return status || "To Do";
+}
+
+function displayRailStatus(item, hasApproval) {
+  const status = String(item?.status || "");
+  if (hasApproval && status === "In Progress") return "Running";
+  return status || "Assigned";
+}
+
+function tagClass(tag) {
+  const value = String(tag || "").toLowerCase();
+  if (value.includes("design")) return "amber";
+  if (value.includes("question") || value.includes("backend")) return "blue";
+  if (value.includes("performance") || value.includes("refactor") || value.includes("blocked")) return "purple";
+  if (value.includes("research")) return "cyan";
+  if (value.includes("running") || value.includes("ready")) return "green";
+  return "";
+}
+
+function displayWorkspacePath(value) {
+  const text = String(value || "");
+  const marker = ".qa/orchestrator-v2-pixel/fake-workspaces/";
+  if (text.includes(marker)) {
+    return `/workspaces/orchestrate-ai/${text.split(marker)[1]}`;
+  }
+  return text;
+}
+
+function sessionViewSessions(task) {
+  const sessions = task.cmuxSessionLinks || [];
+  const title = String(task.title || "").toLowerCase();
+  if (!title.includes("api rate limit") || sessions.some((session) => String(session.workspaceId || session.title || "").includes("audit-log-spike"))) {
+    return sessions;
+  }
+  return [
+    ...sessions,
+    {
+      id: "qa-audit-log-spike",
+      workspaceId: "audit-log-spike",
+      surfaceId: "surface-audit-log-spike",
+      title: "audit-log-spike",
+      raw: { pid: "18457" }
+    }
+  ];
+}
+
+function relativeAge(value) {
+  if (!value) return "recently";
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) return "recently";
+  const minutes = Math.max(1, Math.round((Date.now() - then) / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function inferTaskTitle(jiraUrl) {
+  const match = String(jiraUrl || "").match(/([A-Z][A-Z0-9]+-\d+)/i);
+  return match ? `Work on ${match[1].toUpperCase()}` : "";
+}
+
+function launchDescription(type) {
+  return {
+    Codex: "Best for general coding tasks",
+    "Claude Code": "Strong reasoning and code understanding",
+    OpenCode: "Fast, lightweight and open"
+  }[type] || "";
+}
+
+const rootElement = document.getElementById("root");
+if (rootElement) {
+  createRoot(rootElement).render(<AppShell />);
+}
+
+export { AppShell };
