@@ -49,8 +49,8 @@ Recommended for full functionality:
 Clone the repo:
 
 ```bash
-git clone git@github.com:ronnie3786/cmux-harness.git
-cd cmux-harness
+git clone git@github.com:ronnie3786/cmux-orchestrator.git
+cd cmux-orchestrator
 ```
 
 Start the local server:
@@ -78,6 +78,14 @@ http://localhost:9091/orchestrator-v2 # Orchestrator V2 production-local runtime
 ```bash
 scripts/orchestrator_v2_health.py
 ```
+
+For the Orchestrator V2 local Piper voice path, install the local voice wrapper and model once per machine:
+
+```bash
+scripts/orchestrator_v2_setup_piper.py
+```
+
+The setup script stores Piper assets under `~/.cmux-harness/orchestrator-v2/piper` and writes only non-secret local path entries to `.env.local`.
 
 Optional custom port:
 
