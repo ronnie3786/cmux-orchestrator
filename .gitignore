@@ -8,3 +8,6 @@ docs/superpowers/
 tmp/
 xcuserdata/
 *.xcuserstate
+
+.qa/
+node_modules/
