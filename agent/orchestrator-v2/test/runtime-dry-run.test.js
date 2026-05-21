@@ -117,3 +117,62 @@ test("dry run creates Jira comment approval panel", async () => {
   assert.deepEqual(client.toolRuns[0].args, { key: "APP-123", body: "Ready for review" });
   assert.ok(events.some((item) => item.name === "ORCHESTRATOR_PANEL" && item.value.component === "JiraCommentApprovalPanel"));
 });
+
+test("task progress questions inspect live cmux output before answering", async () => {
+  process.env.ORCHESTRATOR_V2_AGENT_DRY_RUN = "1";
+  class GroundedClient extends FakeClient {
+    async context() {
+      return {
+        tasks: [{
+          id: "task_live",
+          title: "GPT Live View",
+          status: "In Progress",
+          workspaceDir: "/Volumes/PROJECTS/Development/Doximity-Claude/.claude/worktrees/live-visual-ai-gpt-5-5",
+          cmuxSessionLinks: [{
+            workspaceId: "workspace:22",
+            surfaceId: "surface:30",
+            title: "live-visual-ai-gpt-5-5",
+            cwd: "/Volumes/PROJECTS/Development/Doximity-Claude/.claude/worktrees/live-visual-ai-gpt-5-5",
+            active: true
+          }]
+        }],
+        chatMessages: [{
+          role: "assistant",
+          content: "The coding agent is still searching through feature/podcast worktrees."
+        }]
+      };
+    }
+    async runTool(runId, toolName, args) {
+      this.toolRuns.push({ runId, toolName, args });
+      if (toolName === "inspect_cmux_session") {
+        return {
+          ok: true,
+          result: {
+            state: "running_tool",
+            runningKind: "Codex",
+            screenExcerpt: [
+              "Fixed simulator trust issue with Proxyman CA.",
+              "Rerunning Live Visual AI Maestro baseline flow.",
+              "xcodebuild is running the iOS verification target."
+            ].join("\n")
+          }
+        };
+      }
+      return super.runTool(runId, toolName, args);
+    }
+  }
+  const client = new GroundedClient();
+  const events = [];
+
+  const result = await runAgentChat({
+    client,
+    input: { runId: "run_grounded", message: "How's the GPT live view task coming?" },
+    emit: (payload) => events.push(payload)
+  });
+
+  assert.ok(client.toolRuns.some((toolRun) => toolRun.toolName === "inspect_cmux_session"));
+  assert.match(result.text, /GPT Live View/);
+  assert.match(result.text, /xcodebuild|Maestro/);
+  assert.doesNotMatch(result.text, /feature\/podcast/);
+  assert.equal(client.messages.at(-1).metadata.provider, "grounded-status");
+});

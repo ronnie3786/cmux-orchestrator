@@ -197,15 +197,23 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             payload = orchestrator_v2_voice.speak_local_payload(data)
             handler._json_response(payload)
             return True
+        if path == "/api/orchestrator-v2/folder-picker":
+            handler._json_response({"ok": True, "path": choose_project_folder(data)})
+            return True
         if path == "/api/orchestrator-v2/tasks":
             payload = dict(data or {})
+            session = payload.get("existingCmuxSession") if isinstance(payload.get("existingCmuxSession"), dict) else None
             workspace_dir = str(payload.get("workspaceDir") or "").strip()
+            if not workspace_dir and session is not None:
+                workspace_dir = session_cwd(session)
+                payload["workspaceDir"] = workspace_dir
             if not workspace_dir:
                 raise OrchestratorV2RouteError("workspaceDir required", 400)
             if not os.path.isdir(os.path.expanduser(workspace_dir)):
                 raise OrchestratorV2RouteError(f"workspaceDir not found: {workspace_dir}", 400)
+            if session is not None and not str(payload.get("title") or "").strip():
+                payload["title"] = str(session.get("title") or session.get("workspaceId") or "New Task")
             launch_type = v2.normalize_launch_type(payload.get("sessionLaunchType") or payload.get("launchType"))
-            session = payload.get("existingCmuxSession") if isinstance(payload.get("existingCmuxSession"), dict) else None
             if session is None:
                 session = get_cmux_cli().create_session(
                     title=str(payload.get("title") or "New Task"),
@@ -287,6 +295,21 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             )
             repo.record_cmux_snapshots([session])
             handler._json_response({"ok": True, "session": session}, 201)
+            return True
+        if path.startswith("/api/orchestrator-v2/cmux/sessions/") and path.endswith("/input"):
+            workspace_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/cmux/sessions/"):-len("/input")]).strip("/")
+            surface_id = str(data.get("surfaceId") or "")
+            text = data.get("text")
+            key = str(data.get("key") or "").strip().lower()
+            if not workspace_id:
+                raise OrchestratorV2RouteError("workspaceId required", 400)
+            if text is None and not key:
+                raise OrchestratorV2RouteError("text or key required", 400)
+            if text is not None:
+                result = get_cmux_cli().send_text(workspace_id, str(text), surface_id=surface_id)
+            else:
+                result = get_cmux_cli().send_key(workspace_id, key, surface_id=surface_id)
+            handler._json_response({"ok": True, "result": result})
             return True
         if path == "/api/orchestrator-v2/git/diff":
             target = _resolve_body_path(data)
@@ -584,13 +607,12 @@ def find_jira_ticket(query: str) -> dict[str, Any] | None:
 
 
 def list_my_open_prs() -> dict[str, Any]:
-    prs = _run_gh_pr_list(["pr", "list", "--author", "@me", "--state", "open"])
-    prs = [pr for pr in prs if not pr.get("isDraft")]
+    prs = _run_gh_pr_list(["search", "prs", "--author", "@me", "--state", "open", "--sort", "updated", "--limit", "100"])
     return {"ok": True, "items": prs}
 
 
 def list_my_draft_prs() -> dict[str, Any]:
-    prs = _run_gh_pr_list(["pr", "list", "--author", "@me", "--state", "open"])
+    prs = _run_gh_pr_list(["search", "prs", "--author", "@me", "--state", "open", "--draft", "--sort", "updated", "--limit", "100"])
     prs = [pr for pr in prs if pr.get("isDraft")]
     return {"ok": True, "items": prs}
 
@@ -654,12 +676,10 @@ def _run_gh_pr_list(args: list[str]) -> list[dict[str, Any]]:
         if args[:1] == ["search"]:
             return []
         return prs
-    command = [
-        "gh",
-        *args,
-        "--json",
-        "number,title,url,headRefName,isDraft,state,author,repository",
-    ]
+    json_fields = "number,title,url,isDraft,state,author,repository"
+    if args[:1] != ["search"]:
+        json_fields = f"{json_fields},headRefName"
+    command = ["gh", *args, "--json", json_fields]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
     except FileNotFoundError as exc:
@@ -679,6 +699,39 @@ def _run_gh_pr_list(args: list[str]) -> list[dict[str, Any]]:
     return [normalize_pr(item) for item in payload if isinstance(item, dict)]
 
 
+def choose_project_folder(data: dict[str, Any]) -> str:
+    prompt = str(data.get("prompt") or "Select project folder").replace('"', "'")
+    current_path = str(data.get("currentPath") or data.get("path") or "").strip()
+    script = f'POSIX path of (choose folder with prompt "{prompt}"'
+    if current_path and os.path.isdir(os.path.expanduser(current_path)):
+        script += f' default location POSIX file "{os.path.expanduser(current_path)}"'
+    script += ")"
+    try:
+        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=120, check=False)
+    except FileNotFoundError as exc:
+        raise OrchestratorV2RouteError("macOS folder picker is unavailable", 501) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise OrchestratorV2RouteError("folder picker timed out", 504) from exc
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "Folder selection cancelled").strip()
+        if "User canceled" in message:
+            raise OrchestratorV2RouteError("Folder selection cancelled", 499)
+        raise OrchestratorV2RouteError(redact_text(message), 500)
+    return str(result.stdout or "").strip()
+
+
+def session_cwd(session: dict[str, Any]) -> str:
+    raw = session.get("raw") if isinstance(session.get("raw"), dict) else {}
+    workspace = raw.get("workspace") if isinstance(raw.get("workspace"), dict) else {}
+    return str(
+        session.get("cwd")
+        or session.get("currentDirectory")
+        or workspace.get("current_directory")
+        or workspace.get("cwd")
+        or ""
+    ).strip()
+
+
 def _fake_providers_enabled() -> bool:
     return os.environ.get("CMUX_ORCHESTRATOR_V2_FAKE_PROVIDERS", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -687,6 +740,8 @@ def normalize_pr(item: dict[str, Any]) -> dict[str, Any]:
     repo = item.get("repository") if isinstance(item.get("repository"), dict) else {}
     owner = repo.get("owner") if isinstance(repo.get("owner"), dict) else {}
     author = item.get("author") if isinstance(item.get("author"), dict) else {}
+    name_with_owner = str(repo.get("nameWithOwner") or repo.get("name_with_owner") or "")
+    split_owner, _, split_repo = name_with_owner.partition("/")
     return {
         "number": item.get("number"),
         "title": str(item.get("title") or ""),
@@ -694,8 +749,8 @@ def normalize_pr(item: dict[str, Any]) -> dict[str, Any]:
         "branch": str(item.get("headRefName") or ""),
         "isDraft": bool(item.get("isDraft")),
         "state": str(item.get("state") or ""),
-        "owner": str(owner.get("login") or repo.get("owner") or ""),
-        "repo": str(repo.get("name") or ""),
+        "owner": str(owner.get("login") or repo.get("owner") or split_owner or ""),
+        "repo": str(repo.get("name") or split_repo or ""),
         "author": str(author.get("login") or ""),
         "raw": item,
     }

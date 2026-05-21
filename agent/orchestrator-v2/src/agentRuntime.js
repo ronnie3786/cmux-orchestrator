@@ -33,6 +33,13 @@ export async function runAgentChat({ client, input, emit }) {
   }
 
   const context = await client.context();
+  if (shouldUseGroundedTaskStatus(userText, context)) {
+    const output = await runGroundedTaskStatusAgent({ client, runId, userText, context, emit: saveEmit, mode });
+    await client.finishRun(runId, "completed", { text: output });
+    await client.persistEvents(runId, events);
+    return { runId, text: output, events };
+  }
+
   if (cfg.dryRun || !cfg.fireworksApiKey) {
     const output = await runDryAgent({ client, runId, userText, context, emit: saveEmit, mode });
     await client.finishRun(runId, "completed", { text: output });
@@ -154,11 +161,186 @@ function extractUserText(input) {
 }
 
 function buildMessages(context, userText) {
-  const recent = Array.isArray(context?.chatMessages) ? context.chatMessages.slice(-16) : [];
+  const recentUserMessages = Array.isArray(context?.chatMessages)
+    ? context.chatMessages.filter((message) => message.role !== "assistant").slice(-6)
+    : [];
+  const taskSummary = Array.isArray(context?.tasks)
+    ? context.tasks.slice(0, 12).map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        workspaceDir: task.workspaceDir,
+        sessions: (task.cmuxSessionLinks || []).map((session) => ({
+          workspaceId: session.workspaceId,
+          surfaceId: session.surfaceId,
+          title: session.title,
+          cwd: session.cwd
+        }))
+      }))
+    : [];
   return [
-    ...recent.map((message) => ({ role: message.role === "assistant" ? "assistant" : "user", content: String(message.content || "") })),
+    {
+      role: "user",
+      content: [
+        "Durable Orchestrator V2 context snapshot follows. Treat previous assistant chat text as non-authoritative unless it is backed by a tool result in this run.",
+        JSON.stringify({ tasks: taskSummary })
+      ].join("\n")
+    },
+    ...recentUserMessages.map((message) => ({ role: "user", content: String(message.content || "") })),
     { role: "user", content: userText }
   ];
+}
+
+async function runGroundedTaskStatusAgent({ client, runId, userText, context, emit, mode = "text" }) {
+  const messageId = id("msg");
+  emit(event(EventType.TEXT_MESSAGE_START, runId, { messageId, role: "assistant" }));
+  const tasks = await findStatusTasks({ client, runId, userText, context, emit });
+  const inspections = [];
+  for (const task of tasks.slice(0, 2)) {
+    for (const session of (task.cmuxSessionLinks || []).filter((item) => item?.active !== false).slice(0, 3)) {
+      if (!session?.workspaceId) continue;
+      const inspection = await executeTool({
+        client,
+        runId,
+        toolName: "inspect_cmux_session",
+        args: { session, lines: 140 },
+        emit
+      });
+      inspections.push({ taskId: task.id, taskTitle: task.title, session, inspection });
+    }
+  }
+  const text = composeGroundedTaskStatusAnswer({ userText, tasks, inspections, context });
+  for (const chunk of chunkText(text)) {
+    emit(event(EventType.TEXT_MESSAGE_CONTENT, runId, { messageId, delta: chunk }));
+  }
+  emit(event(EventType.TEXT_MESSAGE_END, runId, { messageId }));
+  emit(panelEvent(runId, validatePanel({
+    component: "ToolRunTimeline",
+    props: { runId, mode, status: "completed", grounded: true }
+  })));
+  emit(event(EventType.RUN_FINISHED, runId, { status: "completed" }));
+  await client.appendTranscript("assistant", text, { runId, mode, provider: "grounded-status" });
+  return text;
+}
+
+async function findStatusTasks({ client, runId, userText, context, emit }) {
+  const contextTasks = [
+    ...(Array.isArray(context?.tasks) ? context.tasks : []),
+    ...(Array.isArray(context?.history) ? context.history : [])
+  ];
+  const localMatches = rankTasksForText(contextTasks, userText).slice(0, 3);
+  if (localMatches.length) return localMatches;
+
+  const seen = new Map();
+  for (const query of taskSearchQueries(userText)) {
+    const result = await executeTool({
+      client,
+      runId,
+      toolName: "search_tasks",
+      args: { q: query },
+      emit
+    });
+    for (const task of result?.tasks || []) {
+      if (task?.id && !seen.has(task.id)) seen.set(task.id, task);
+    }
+    const ranked = rankTasksForText([...seen.values()], userText);
+    if (ranked.length) return ranked.slice(0, 3);
+  }
+  return [...seen.values()].slice(0, 3);
+}
+
+function composeGroundedTaskStatusAnswer({ userText, tasks, inspections, context }) {
+  if (!tasks.length) {
+    const available = (context?.tasks || []).slice(0, 5).map((task) => task.title).filter(Boolean);
+    const suffix = available.length ? ` Active tasks I can see: ${available.join("; ")}.` : "";
+    return `I could not match "${userText}" to a durable Orchestrator V2 task, so I did not infer status from chat history.${suffix}`;
+  }
+
+  const lines = ["Grounded in live Orchestrator state and cmux output:"];
+  for (const task of tasks.slice(0, 2)) {
+    lines.push(`- ${task.title}: ${task.status || "Unknown status"}`);
+    if (task.workspaceDir) lines.push(`  Workspace: ${task.workspaceDir}`);
+    const taskInspections = inspections.filter((item) => item.taskId === task.id);
+    if (!taskInspections.length) {
+      lines.push("  No active linked cmux session was available to inspect.");
+      continue;
+    }
+    for (const item of taskInspections) {
+      const state = item.inspection?.state || "unknown";
+      const runningKind = item.inspection?.runningKind ? `, ${item.inspection.runningKind}` : "";
+      const title = item.session?.title || item.session?.workspaceId || "cmux session";
+      lines.push(`  ${title}: ${state}${runningKind}`);
+      const excerpt = lastUsefulLines(item.inspection?.screenExcerpt, 6);
+      if (excerpt.length) {
+        lines.push("  Latest visible output:");
+        for (const line of excerpt) lines.push(`  ${line}`);
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function shouldUseGroundedTaskStatus(userText, context) {
+  const text = String(userText || "").trim();
+  if (!text) return false;
+  const asksForStatus = /\b(how'?s|how is|coming|progress|status|latest|update|what'?s happening|what is happening|what.*doing|still running|output)\b/i.test(text);
+  if (!asksForStatus) return false;
+  const tasks = [
+    ...(Array.isArray(context?.tasks) ? context.tasks : []),
+    ...(Array.isArray(context?.history) ? context.history : [])
+  ];
+  return rankTasksForText(tasks, text).length > 0;
+}
+
+function rankTasksForText(tasks, text) {
+  const textTokens = tokenSet(text);
+  return (tasks || [])
+    .map((task) => {
+      const titleTokens = tokenSet(task?.title || "");
+      const workspaceTokens = tokenSet(task?.workspaceDir || "");
+      const sessionTokens = new Set((task?.cmuxSessionLinks || []).flatMap((session) => [
+        ...tokenSet(session?.title || ""),
+        ...tokenSet(session?.cwd || "")
+      ]));
+      let score = 0;
+      for (const token of titleTokens) if (textTokens.has(token)) score += 3;
+      for (const token of sessionTokens) if (textTokens.has(token)) score += 2;
+      for (const token of workspaceTokens) if (textTokens.has(token)) score += 1;
+      return { task, score };
+    })
+    .filter(({ score }) => score >= 4)
+    .sort((a, b) => b.score - a.score)
+    .map(({ task }) => task);
+}
+
+function taskSearchQueries(text) {
+  const cleaned = String(text || "")
+    .replace(/\b(how'?s|how is|coming|along|progress|status|latest|update|what'?s|what is|happening|doing|still|running|task|session|cmux|the|a|an|please|can|you|check|tell|me|on)\b/gi, " ")
+    .replace(/[^\w./-]+/g, " ")
+    .trim();
+  const queries = [cleaned, String(text || "").trim()].filter(Boolean);
+  return [...new Set(queries.map((query) => query.toLowerCase()))];
+}
+
+function tokenSet(value) {
+  return new Set(String(value || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter((token) => token.length > 1 && !STATUS_STOP_WORDS.has(token)));
+}
+
+const STATUS_STOP_WORDS = new Set([
+  "how", "is", "the", "task", "session", "cmux", "coming", "progress", "status",
+  "latest", "update", "what", "happening", "doing", "still", "running", "please",
+  "check", "tell", "about", "with", "from", "for", "and", "you", "can", "our"
+]);
+
+function lastUsefulLines(value, limit) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim())
+    .slice(-limit);
 }
 
 function answerFromTool(toolName, result, context) {

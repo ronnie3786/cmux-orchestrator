@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from cmux_harness import orchestrator_v2_storage as v2
+from cmux_harness.routes import orchestrator_v2
 from cmux_harness.server import make_handler
 
 
@@ -114,6 +115,84 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertFalse(body["ok"])
         self.assertEqual(body["error"], "workspaceDir required")
 
+    def test_create_task_from_existing_cmux_session_inherits_workspace_without_launching(self):
+        handler = self._post_json("/api/orchestrator-v2/tasks", {
+            "title": "Loose shell",
+            "status": "Running",
+            "existingCmuxSession": {
+                "workspaceId": "loose",
+                "surfaceId": "surface-loose",
+                "title": "Loose shell",
+                "cwd": str(self.workspace),
+            },
+        })
+
+        body = self._json_body(handler)
+
+        handler.send_response.assert_called_once_with(201)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["task"]["workspaceDir"], str(self.workspace))
+        self.assertEqual(body["task"]["cmuxSessionLinks"][0]["workspaceId"], "loose")
+        self.cmux.create_session.assert_not_called()
+
+    def test_create_task_from_existing_cmux_session_inherits_session_title(self):
+        handler = self._post_json("/api/orchestrator-v2/tasks", {
+            "status": "Running",
+            "existingCmuxSession": {
+                "workspaceId": "loose",
+                "surfaceId": "surface-loose",
+                "title": "Loose shell",
+                "cwd": str(self.workspace),
+            },
+        })
+
+        body = self._json_body(handler)
+
+        handler.send_response.assert_called_once_with(201)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["task"]["title"], "Loose shell")
+        self.cmux.create_session.assert_not_called()
+
+    def test_folder_picker_route_returns_native_selection(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=f"{self.workspace}\n",
+            stderr="",
+        )
+        with patch("cmux_harness.routes.orchestrator_v2.subprocess.run", return_value=completed) as mock_run:
+            handler = self._post_json("/api/orchestrator-v2/folder-picker", {"currentPath": str(self.workspace)})
+
+        body = self._json_body(handler)
+
+        handler.send_response.assert_called_once_with(200)
+        self.assertEqual(body["path"], str(self.workspace))
+        self.assertEqual(mock_run.call_args.args[0][:2], ["osascript", "-e"])
+
+    def test_cmux_session_input_route_sends_text_to_session(self):
+        self.cmux.send_text.return_value = {"ok": True}
+
+        handler = self._post_json("/api/orchestrator-v2/cmux/sessions/workspace-created/input", {
+            "surfaceId": "surface-created",
+            "text": "git status\n",
+        })
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.cmux.send_text.assert_called_once_with("workspace-created", "git status\n", surface_id="surface-created")
+
+    def test_cmux_session_input_route_sends_key_to_session(self):
+        self.cmux.send_key.return_value = {"ok": True}
+
+        handler = self._post_json("/api/orchestrator-v2/cmux/sessions/workspace-created/input", {
+            "surfaceId": "surface-created",
+            "key": "enter",
+        })
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.cmux.send_key.assert_called_once_with("workspace-created", "enter", surface_id="surface-created")
+
     def test_task_goal_route_updates_markdown(self):
         created = self._json_body(self._post_json("/api/orchestrator-v2/tasks", {
             "title": "Goal route",
@@ -198,6 +277,33 @@ class TestOrchestratorV2Routes(unittest.TestCase):
 
         self.assertTrue(body["ok"])
         self.assertEqual([item["workspaceId"] for item in body["orphans"]], ["loose"])
+
+    def test_open_pr_provider_uses_search_fields_and_includes_drafts(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps([{
+                "number": 11252,
+                "title": "Draft PR",
+                "url": "https://github.com/doximity/iOS-Doximity/pull/11252",
+                "isDraft": True,
+                "state": "open",
+                "author": {"login": "ronnie3786"},
+                "repository": {"name": "iOS-Doximity", "nameWithOwner": "doximity/iOS-Doximity"},
+            }]),
+            stderr="",
+        )
+
+        with patch("cmux_harness.routes.orchestrator_v2.subprocess.run", return_value=completed) as mock_run:
+            payload = orchestrator_v2.list_my_open_prs()
+
+        args = mock_run.call_args.args[0]
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["items"][0]["number"], 11252)
+        self.assertTrue(payload["items"][0]["isDraft"])
+        self.assertEqual(payload["items"][0]["owner"], "doximity")
+        self.assertNotIn("headRefName", args)
+        self.assertIn("--limit", args)
 
     def test_agent_chat_answers_from_task_state_and_records_messages(self):
         self._post_json("/api/orchestrator-v2/tasks", {

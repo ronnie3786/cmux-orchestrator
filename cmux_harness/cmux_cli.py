@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -64,7 +65,33 @@ class CmuxCli:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError as exc:
             raise CmuxCliError("cmux tree returned invalid JSON", 502) from exc
-        return parse_tree_sessions(payload)
+        sessions = parse_tree_sessions(payload)
+        return self._enrich_session_cwds(sessions)
+
+    def _enrich_session_cwds(self, sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        missing_or_weak = [
+            session for session in sessions
+            if session.get("surfaceRef") and not _is_existing_dir(str(session.get("cwd") or ""))
+        ]
+        if not missing_or_weak:
+            return sessions
+        try:
+            result = self.run(["top", "--all", "--processes", "--format", "tsv"], timeout=8, check=False)
+        except CmuxCliError:
+            return sessions
+        surface_pids = parse_top_surface_processes(result.stdout or "")
+        cwd_cache: dict[str, str] = {}
+        for session in missing_or_weak:
+            surface_ref = str(session.get("surfaceRef") or "")
+            for pid in surface_pids.get(surface_ref, []):
+                cwd = cwd_cache.get(pid)
+                if cwd is None:
+                    cwd = process_cwd(pid)
+                    cwd_cache[pid] = cwd
+                if _is_existing_dir(cwd):
+                    session["cwd"] = cwd
+                    break
+        return sessions
 
     def read_session(self, workspace_id: str, surface_id: str = "", *, lines: int = 200) -> str:
         if not workspace_id:
@@ -219,8 +246,75 @@ class CmuxCli:
 
 
 def re_search(pattern: str, text: str) -> bool:
-    import re
     return re.search(pattern, text, flags=re.IGNORECASE) is not None
+
+
+def infer_cwd_from_titles(*titles: str) -> str:
+    home = str(Path.home())
+    candidates: list[str] = []
+    for title in titles:
+        text = str(title or "").strip()
+        if not text:
+            continue
+        for value in _title_path_candidates(text, home):
+            if value not in candidates:
+                candidates.append(value)
+    for candidate in candidates:
+        expanded = os.path.expanduser(candidate)
+        if os.path.isdir(expanded):
+            return expanded
+    return ""
+
+
+def _title_path_candidates(title: str, home: str) -> list[str]:
+    values: list[str] = []
+    text = title.strip()
+    if text.startswith("~/"):
+        values.append(os.path.expanduser(text))
+    if text.startswith("/"):
+        values.append(text)
+    for match in re.finditer(r"(?:…|\.{3})(/[^\s]+)", text):
+        suffix = match.group(1)
+        values.append(f"{home}{suffix}")
+        if suffix.startswith("/Documents/Development/"):
+            values.append(f"{home}{suffix}")
+        if suffix.startswith("/.claude/") or suffix.startswith("/.codex/"):
+            values.append(f"{home}{suffix}")
+    if re.match(r"^[A-Za-z0-9_.-]+$", text):
+        values.append(str(Path(home) / "Documents" / "Development" / text))
+    return values
+
+
+def _is_existing_dir(value: str) -> bool:
+    return bool(value and os.path.isdir(os.path.expanduser(value)))
+
+
+def parse_top_surface_processes(text: str) -> dict[str, list[str]]:
+    surface_pids: dict[str, list[str]] = {}
+    for line in str(text or "").splitlines():
+        columns = line.split("\t")
+        if len(columns) < 6:
+            continue
+        kind = columns[3]
+        item_id = columns[4]
+        parent = columns[5]
+        if kind != "process" or not item_id.isdigit() or not parent.startswith("surface:"):
+            continue
+        surface_pids.setdefault(parent, []).append(item_id)
+    return surface_pids
+
+
+def process_cwd(pid: str) -> str:
+    try:
+        result = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    for line in (result.stdout or "").splitlines():
+        if line.startswith("n/") or line.startswith("n~"):
+            return line[1:].strip()
+    return ""
 
 
 def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:
@@ -240,6 +334,7 @@ def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:
             workspace_index = workspace.get("index")
             panes = workspace.get("panes") if isinstance(workspace.get("panes"), list) else []
             if not panes and workspace_id:
+                inferred_cwd = cwd or infer_cwd_from_titles(workspace_title)
                 sessions.append({
                     "workspaceId": workspace_id,
                     "workspaceRef": workspace_ref,
@@ -248,7 +343,7 @@ def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:
                     "surfaceRef": "",
                     "paneId": "",
                     "title": workspace_title,
-                    "cwd": cwd,
+                    "cwd": inferred_cwd,
                     "active": True,
                     "runningKind": "",
                     "raw": workspace,
@@ -267,6 +362,7 @@ def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:
                     surface_id = str(surface.get("id") or surface.get("uuid") or surface.get("ref") or "")
                     surface_ref = str(surface.get("ref") or "")
                     surface_title = str(surface.get("title") or workspace_title)
+                    inferred_cwd = cwd or infer_cwd_from_titles(surface_title, workspace_title)
                     sessions.append({
                         "workspaceId": workspace_id,
                         "workspaceRef": workspace_ref,
@@ -276,7 +372,7 @@ def parse_tree_sessions(payload: Any) -> list[dict[str, Any]]:
                         "paneId": pane_id,
                         "title": workspace_title or surface_title,
                         "surfaceTitle": surface_title,
-                        "cwd": cwd,
+                        "cwd": inferred_cwd,
                         "active": True,
                         "runningKind": "",
                         "raw": {"workspace": workspace, "pane": pane, "surface": surface},

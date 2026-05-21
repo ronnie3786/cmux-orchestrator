@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Archive,
   ArrowDown,
@@ -15,6 +17,7 @@ import {
   Circle,
   Copy,
   Diamond,
+  Edit3,
   ExternalLink,
   FileCode2,
   Folder,
@@ -179,15 +182,23 @@ function AppShell() {
   const [voiceMode, setVoiceMode] = useState("text");
   const [voiceState, setVoiceState] = useState({ status: "idle", message: "", localTranscript: "" });
   const [voiceSettings, setVoiceSettings] = useState({ pushToTalk: true, ttsProvider: "piper" });
+  const [proactiveUpdates, setProactiveUpdates] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("orchestrator-v2-proactive-updates") !== "off";
+  });
   const [orphans, setOrphans] = useState([]);
   const [selectedView, setSelectedView] = useState(initialUi.selectedView);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [modalState, setModalState] = useState(initialUi.modalState);
+  const [dockWidth, setDockWidth] = useState(() => {
+    if (typeof window === "undefined") return 360;
+    return clamp(Number(window.localStorage.getItem("orchestrator-v2-dock-width") || 360), 300, 640);
+  });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setError("");
     const [bootstrap, orphanPayload] = await Promise.all([
       api("/bootstrap"),
@@ -201,17 +212,26 @@ function AppShell() {
     setChatMessages(bootstrap.chatMessages || []);
     setAgentCapabilities(bootstrap.agentCapabilities || null);
     setOrphans(orphanPayload.orphans || []);
-  };
+  }, []);
 
   useEffect(() => {
     refresh()
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+  }, [refresh]);
+
+  useEffect(() => {
+    window.localStorage?.setItem("orchestrator-v2-proactive-updates", proactiveUpdates ? "on" : "off");
+    if (!proactiveUpdates) return undefined;
     const interval = window.setInterval(() => {
       refresh().catch(() => {});
     }, 60000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [proactiveUpdates, refresh]);
+
+  useEffect(() => {
+    window.localStorage?.setItem("orchestrator-v2-dock-width", String(dockWidth));
+  }, [dockWidth]);
 
   const createTask = async (payload) => {
     const result = await api("/tasks", { method: "POST", body: JSON.stringify(payload) });
@@ -530,6 +550,21 @@ function AppShell() {
     }));
   }, [tasks, approvals]);
 
+  const startDockResize = (event) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = dockWidth;
+    const onMove = (moveEvent) => {
+      setDockWidth(clamp(startWidth + startX - moveEvent.clientX, 300, 640));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   return (
     <CopilotKit runtimeUrl={`${API_ROOT}/copilotkit`} showDevConsole={false} enableInspector={false} useSingleEndpoint={false}>
       <CopilotBridge
@@ -545,7 +580,7 @@ function AppShell() {
         startVoiceSession={startVoiceSession}
         stopVoiceSession={stopVoiceSession}
       />
-      <div className={`app-shell ${railCollapsed ? "rail-mini" : ""}`}>
+      <div className={`app-shell ${railCollapsed ? "rail-mini" : ""}`} style={{ "--dock-width": `${dockWidth}px` }}>
         <LeftRail
           collapsed={railCollapsed}
           leftRail={leftRail}
@@ -566,6 +601,12 @@ function AppShell() {
             voiceState={voiceState}
             voiceSettings={voiceSettings}
             setVoiceSettings={setVoiceSettings}
+            proactiveUpdates={proactiveUpdates}
+            setProactiveUpdates={(enabled) => {
+              setProactiveUpdates(enabled);
+              setToast(enabled ? "Proactive updates on" : "Proactive updates off");
+              if (enabled) refresh().catch(() => {});
+            }}
             onStartVoice={startVoiceSession}
             onStopVoice={stopVoiceSession}
           />
@@ -627,6 +668,7 @@ function AppShell() {
           generatedPanels={generatedPanels}
           streaming={agentStreaming}
           onSend={sendAgentMessage}
+          onResizeStart={startDockResize}
         />
         {modalState && (
           <NewTaskModal
@@ -799,19 +841,21 @@ function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggl
                 ) : section.items.slice(0, 6).map((item) => {
                   const hasApproval = approvalJiraKeys?.has(item.key);
                   const displayStatus = displayRailStatus(item, hasApproval);
+                  const isDraftPr = section.type === "pr" && item.isDraft;
                   return (
-                  <a className={`rail-card rail-${section.type} ${hasApproval ? "needs-approval" : ""} ${selectedJiraKeys.has(item.key) ? "selected" : ""}`} href={item.url || "#"} target="_blank" rel="noreferrer" key={`${section.id}-${item.key || item.number || item.url}`}>
-                    <div className="rail-card-top">
-                      <strong>{section.type === "jira" ? item.key : `#${item.number}`}</strong>
-                    </div>
-                    <div className="rail-card-title">{item.title}</div>
-                    <div className="rail-meta-row">
-                      <span className={`rail-card-state ${section.type === "jira" ? statusClass(displayStatus) : ""}`}>{section.type === "jira" ? displayStatus : item.branch || item.state || "Open"}</span>
-                      {section.type === "jira" && hasApproval ? <span className="approval-rail-pill">Approval required</span> : null}
-                      {section.type === "pr" && <span className="green-dot" />}
-                    </div>
-                  </a>
-                );})}
+                    <a className={`rail-card rail-${section.type} ${hasApproval ? "needs-approval" : ""} ${selectedJiraKeys.has(item.key) ? "selected" : ""}`} href={item.url || "#"} target="_blank" rel="noreferrer" key={`${section.id}-${item.key || item.number || item.url}`}>
+                      <div className="rail-card-top">
+                        <strong>{section.type === "jira" ? item.key : `#${item.number}`}</strong>
+                      </div>
+                      <div className="rail-card-title">{item.title}</div>
+                      <div className="rail-meta-row">
+                        <span className={`rail-card-state ${section.type === "jira" ? statusClass(displayStatus) : isDraftPr ? "pr-draft" : "pr-open"}`}>{section.type === "jira" ? displayStatus : isDraftPr ? "Draft" : item.branch || item.state || "Open"}</span>
+                        {section.type === "jira" && hasApproval ? <span className="approval-rail-pill">Approval required</span> : null}
+                        {section.type === "pr" && <span className={isDraftPr ? "gray-dot" : "green-dot"} />}
+                      </div>
+                    </a>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -826,8 +870,11 @@ function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggl
   );
 }
 
-function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceSettings, setVoiceSettings, onStartVoice, onStopVoice }) {
+function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceSettings, setVoiceSettings, proactiveUpdates, setProactiveUpdates, onStartVoice, onStopVoice }) {
   const [value, setValue] = useState("");
+  const voiceActionStops = ["connected", "ready", "recording"].includes(voiceState.status);
+  const voiceProcessing = ["connecting", "transcribing", "thinking", "speaking"].includes(voiceState.status);
+  const voiceLabel = voiceStateLabel(voiceMode, voiceState.status);
   const send = () => {
     const message = value.trim();
     if (!message) return;
@@ -859,6 +906,15 @@ function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceS
           />
           <span>Push to talk</span>
         </label>
+        <label className="proactive-toggle" title="When off, the dashboard stops its automatic background refresh loop. Manual actions still refresh the data they change.">
+          <span>Proactive updates</span>
+          <input
+            type="checkbox"
+            checked={proactiveUpdates}
+            onChange={(event) => setProactiveUpdates(event.target.checked)}
+            aria-label="Toggle proactive updates"
+          />
+        </label>
         {voiceMode === "local" && (
           <select
             aria-label="Local TTS provider"
@@ -869,8 +925,18 @@ function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceS
             <option value="elevenlabs">ElevenLabs Jessica</option>
           </select>
         )}
-        <button className={`mic-btn ${voiceState.status}`} aria-label="Voice command" onClick={["connected", "ready", "recording", "transcribing", "thinking", "speaking"].includes(voiceState.status) ? onStopVoice : onStartVoice}>
-          {voiceState.status === "connecting" ? <RefreshCw size={20} className="spin" /> : <Mic size={20} />}
+        <div className={`voice-status ${voiceState.status}`}>
+          <span className={`voice-state-dot ${voiceState.status}`} />
+          <span>{voiceLabel}</span>
+        </div>
+        <button
+          className={`mic-btn ${voiceMode} ${voiceState.status}`}
+          aria-label={voiceActionStops ? "Stop voice input" : "Start voice input"}
+          aria-pressed={["connected", "ready", "recording"].includes(voiceState.status)}
+          disabled={voiceProcessing && voiceMode === "local"}
+          onClick={voiceActionStops ? onStopVoice : onStartVoice}
+        >
+          {voiceProcessing ? <RefreshCw size={20} className="spin" /> : <Mic size={20} />}
         </button>
       </div>
       <button className="icon-btn" aria-label="Notifications"><Bell size={18} /></button>
@@ -952,14 +1018,61 @@ function HistoryStrip({ tasks }) {
 function TaskCard({ task, approval, onOpenView, onUpdateTask, onAttachJira, onResyncJira, onAttachPr, onApprovalDecision }) {
   const [jiraDraft, setJiraDraft] = useState("");
   const [prDraft, setPrDraft] = useState("");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(task.title || "");
+  const [savingTitle, setSavingTitle] = useState(false);
   const primaryPr = task.pullRequestLinks?.find((link) => link.isPrimary) || task.pullRequestLinks?.[0];
   const primaryJira = task.jiraLinks?.[0];
   const displayStatus = displayTaskStatus(task, approval);
+  useEffect(() => {
+    if (!editingTitle) setTitleDraft(task.title || "");
+  }, [editingTitle, task.title]);
+  const saveTitle = async (event) => {
+    event.preventDefault();
+    const nextTitle = titleDraft.trim();
+    if (!nextTitle || nextTitle === task.title) {
+      setTitleDraft(task.title || "");
+      setEditingTitle(false);
+      return;
+    }
+    setSavingTitle(true);
+    try {
+      await onUpdateTask(task.id, { title: nextTitle });
+      setEditingTitle(false);
+    } finally {
+      setSavingTitle(false);
+    }
+  };
   return (
     <article className="task-card">
       <div className="task-card-head">
-        <h2>{task.title}</h2>
-        <button className="menu-btn" aria-label="Task actions"><MoreHorizontal size={17} /></button>
+        {editingTitle ? (
+          <form className="task-title-edit" onSubmit={saveTitle}>
+            <input
+              value={titleDraft}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setTitleDraft(task.title || "");
+                  setEditingTitle(false);
+                }
+              }}
+              aria-label="Task name"
+              autoFocus
+            />
+            <button type="submit" className="menu-btn" aria-label="Save task name" disabled={savingTitle || !titleDraft.trim()}>
+              {savingTitle ? <RefreshCw size={15} className="spin" /> : <Check size={15} />}
+            </button>
+            <button type="button" className="menu-btn" aria-label="Cancel rename" onClick={() => { setTitleDraft(task.title || ""); setEditingTitle(false); }}>
+              <X size={15} />
+            </button>
+          </form>
+        ) : (
+          <>
+            <h2>{task.title}</h2>
+            <button className="menu-btn" type="button" aria-label="Rename task" title="Rename task" onClick={() => setEditingTitle(true)}><Edit3 size={15} /></button>
+          </>
+        )}
       </div>
       <div className="link-row">
         <div className="row-label">Jira</div>
@@ -1104,13 +1217,41 @@ function SessionView({ task, onBack, onOpenDiff }) {
   const sessions = sessionViewSessions(task);
   const [active, setActive] = useState(sessions[0]?.id || "");
   const [screen, setScreen] = useState("");
+  const [command, setCommand] = useState("");
+  const [sending, setSending] = useState(false);
   const activeSession = sessions.find((session) => session.id === active) || sessions[0];
-  useEffect(() => {
-    if (!activeSession) return;
-    api(`/cmux/sessions/${encodeURIComponent(activeSession.workspaceId)}/screen?surfaceId=${encodeURIComponent(activeSession.surfaceId || "")}&lines=300`)
+  const refreshScreen = () => {
+    if (!activeSession) return Promise.resolve();
+    return api(`/cmux/sessions/${encodeURIComponent(activeSession.workspaceId)}/screen?surfaceId=${encodeURIComponent(activeSession.surfaceId || "")}&lines=300`)
       .then((result) => setScreen(result.screen || ""))
       .catch((err) => setScreen(err.message));
+  };
+  useEffect(() => {
+    refreshScreen();
   }, [activeSession?.workspaceId, activeSession?.surfaceId]);
+  const sendInput = async (payload) => {
+    if (!activeSession || sending) return;
+    setSending(true);
+    try {
+      await api(`/cmux/sessions/${encodeURIComponent(activeSession.workspaceId)}/input`, {
+        method: "POST",
+        body: JSON.stringify({ surfaceId: activeSession.surfaceId || "", ...payload })
+      });
+      await refreshScreen();
+      window.setTimeout(refreshScreen, 350);
+    } catch (err) {
+      setScreen(err.message);
+    } finally {
+      setSending(false);
+    }
+  };
+  const submitCommand = () => {
+    const text = command.trim();
+    if (!text) return;
+    setCommand("");
+    sendInput({ text: `${text}\n` });
+  };
+  const sendKey = (key) => sendInput({ key });
   return (
     <section className="center-view session-view">
       <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Work</button>
@@ -1157,15 +1298,31 @@ function SessionView({ task, onBack, onOpenDiff }) {
               <button><FileCode2 size={15} />Skills</button>
             </div>
             <div className="terminal-control-row key-controls">
-              <button><ArrowUp size={15} />Up</button>
-              <button><ArrowDown size={15} />Down</button>
-              <button><ArrowLeft size={15} />Left</button>
-              <button><ArrowRight size={15} />Right</button>
-              <button>Tab</button>
-              <button>Enter</button>
-              <button>Esc</button>
+              <button onClick={() => sendKey("up")} disabled={sending}><ArrowUp size={15} />Up</button>
+              <button onClick={() => sendKey("down")} disabled={sending}><ArrowDown size={15} />Down</button>
+              <button onClick={() => sendKey("left")} disabled={sending}><ArrowLeft size={15} />Left</button>
+              <button onClick={() => sendKey("right")} disabled={sending}><ArrowRight size={15} />Right</button>
+              <button onClick={() => sendKey("tab")} disabled={sending}>Tab</button>
+              <button onClick={() => sendKey("enter")} disabled={sending}>Enter</button>
+              <button onClick={() => sendKey("escape")} disabled={sending}>Esc</button>
             </div>
-            <input placeholder="Type a command or ask AI..." />
+            <div className="terminal-command-row">
+              <input
+                value={command}
+                onChange={(event) => setCommand(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    submitCommand();
+                  }
+                }}
+                placeholder="Type a command or ask AI..."
+                disabled={!activeSession || sending}
+              />
+              <button className="terminal-send-btn" onClick={submitCommand} disabled={!command.trim() || !activeSession || sending} aria-label="Send terminal command">
+                {sending ? <RefreshCw size={15} className="spin" /> : <Send size={15} />}
+              </button>
+            </div>
             <div className="terminal-status-row">
               <span>Shell: zsh <ChevronDown size={11} /></span>
               <span>UTF-8 <ChevronDown size={11} /></span>
@@ -1573,8 +1730,9 @@ function NotImplementedCapabilityPanel({ capability, message, suggestedNextStep 
   );
 }
 
-function RightDock({ messages, activity, generatedPanels, streaming, onSend }) {
+function RightDock({ messages, activity, generatedPanels, streaming, onSend, onResizeStart }) {
   const [message, setMessage] = useState("");
+  const [activityCollapsed, setActivityCollapsed] = useState(false);
   const groupedActivity = useMemo(() => groupActivity(activity), [activity]);
   const submit = (event) => {
     event.preventDefault();
@@ -1584,11 +1742,16 @@ function RightDock({ messages, activity, generatedPanels, streaming, onSend }) {
     onSend(text).catch(() => {});
   };
   return (
-    <aside className="right-dock">
+    <aside className={`right-dock ${activityCollapsed ? "activity-collapsed" : ""}`}>
+      <div className="dock-resizer" onPointerDown={onResizeStart} role="separator" aria-orientation="vertical" aria-label="Resize global chat" />
       <div className="dock-section chat-section">
         <div className="panel-heading"><h2>Global Chat</h2><span>{messages.length}</span></div>
         <div className="chat-log">
-          {messages.slice(-14).map((item, index) => <div className={`chat-message ${item.role} ${item.streaming ? "streaming" : ""}`} key={item.id || `${item.role}-${index}`}>{item.content}</div>)}
+          {messages.map((item, index) => (
+            <div className={`chat-message ${item.role} ${item.streaming ? "streaming" : ""}`} key={item.id || `${item.role}-${index}`}>
+              <MarkdownMessage content={item.content} />
+            </div>
+          ))}
         </div>
         <form className="chat-form" onSubmit={submit}>
           <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ask status..." />
@@ -1603,28 +1766,57 @@ function RightDock({ messages, activity, generatedPanels, streaming, onSend }) {
         </div>
       </div>
       <div className="dock-section activity-section">
-        <div className="panel-heading"><h2>Activity</h2><span>{activity.length}</span></div>
-        <div className="activity-list">
-          {groupedActivity.slice(0, 8).map((group) => (
-            <div className="activity-group" key={group.id}>
-              <div className="activity-group-head"><Circle size={9} /><strong>{group.title}</strong><span>{group.items.length}</span></div>
-              {group.items.slice(0, 4).map((item) => (
-                <div className="activity-row" key={item.id || `${item.kind}-${item.createdAt}`}>
-                  <div><strong>{item.title}</strong><span>{item.summary || item.kind}</span></div>
-                </div>
-              ))}
-            </div>
-          ))}
+        <div className="panel-heading activity-heading">
+          <h2>Activity</h2>
+          <button
+            className="activity-collapse-btn"
+            type="button"
+            onClick={() => setActivityCollapsed((collapsed) => !collapsed)}
+            aria-label={activityCollapsed ? "Expand activity" : "Collapse activity"}
+            aria-expanded={!activityCollapsed}
+          >
+            {activityCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+            <span>{activity.length}</span>
+          </button>
         </div>
+        {!activityCollapsed && (
+          <div className="activity-list">
+            {groupedActivity.slice(0, 8).map((group) => (
+              <div className="activity-group" key={group.id}>
+                <div className="activity-group-head"><Circle size={9} /><strong>{group.title}</strong><span>{group.items.length}</span></div>
+                {group.items.slice(0, 4).map((item) => (
+                  <div className="activity-row" key={item.id || `${item.kind}-${item.createdAt}`}>
+                    <div><strong>{item.title}</strong><span>{item.summary || item.kind}</span></div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </aside>
   );
 }
 
+function MarkdownMessage({ content }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        table: ({ children }) => <div className="markdown-table-wrap"><table>{children}</table></div>
+      }}
+    >
+      {String(content || "")}
+    </ReactMarkdown>
+  );
+}
+
 function NewTaskModal({ mode, orphan, onClose, onSubmit }) {
+  const isOrphan = Boolean(mode === "orphan" && orphan);
+  const inheritedWorkspace = orphanProjectDir(orphan);
   const [form, setForm] = useState({
     title: orphan?.title || "",
-    workspaceDir: orphan?.cwd || "",
+    workspaceDir: inheritedWorkspace,
     jiraUrl: "",
     launchType: "Empty shell",
     status: "To Do",
@@ -1632,11 +1824,24 @@ function NewTaskModal({ mode, orphan, onClose, onSubmit }) {
   });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [pickingFolder, setPickingFolder] = useState(false);
   const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const pickFolder = async () => {
+    setPickingFolder(true);
+    setError("");
+    try {
+      const result = await api("/folder-picker", { method: "POST", body: JSON.stringify({ currentPath: form.workspaceDir }) });
+      if (result.path) setField("workspaceDir", result.path);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPickingFolder(false);
+    }
+  };
   const submit = async (event) => {
     event.preventDefault();
     if (!form.workspaceDir.trim()) return setError("Project folder required");
-    if (!form.launchType.trim()) return setError("Session launch type required");
+    if (!isOrphan && !form.launchType.trim()) return setError("Session launch type required");
     setSubmitting(true);
     setError("");
     try {
@@ -1645,7 +1850,7 @@ function NewTaskModal({ mode, orphan, onClose, onSubmit }) {
         workspaceDir: form.workspaceDir,
         status: form.status,
         priority: form.priority,
-        sessionLaunchType: form.launchType,
+        sessionLaunchType: isOrphan ? "Empty shell" : form.launchType,
         jira: form.jiraUrl ? { url: form.jiraUrl } : undefined,
         existingCmuxSession: orphan || undefined
       });
@@ -1664,19 +1869,30 @@ function NewTaskModal({ mode, orphan, onClose, onSubmit }) {
         </div>
         <label className="numbered-field">
           <span>1. Project Folder</span>
-          <small>Select the workspace folder where this task will live.</small>
-          <div className="field-control">
+          <small>{isOrphan ? "Inherited from the running cmux session." : "Select the workspace folder where this task will live."}</small>
+          <div className={`field-control ${isOrphan ? "locked" : "folder-picker-control"}`} onClick={isOrphan ? undefined : pickFolder}>
             <Archive size={16} />
-            <input value={form.workspaceDir} onChange={(event) => setField("workspaceDir", event.target.value)} placeholder="Search folders..." />
-            <ChevronDown size={15} />
+            <input
+              value={form.workspaceDir}
+              onChange={(event) => setField("workspaceDir", event.target.value)}
+              placeholder="Choose a project folder..."
+              readOnly
+            />
+            {isOrphan ? (
+              <ShieldAlert size={15} />
+            ) : (
+              <button type="button" className="folder-picker-btn" onClick={(event) => { event.stopPropagation(); pickFolder(); }} disabled={pickingFolder}>
+                {pickingFolder ? <RefreshCw size={15} className="spin" /> : <Folder size={15} />}
+              </button>
+            )}
           </div>
         </label>
         <label className="numbered-field">
-          <span>2. Jira Link (optional)</span>
+          <span>{isOrphan ? "2. Jira Link (optional)" : "2. Jira Link (optional)"}</span>
           <small>Link this task to a Jira issue for context and tracking.</small>
           <input value={form.jiraUrl} onChange={(event) => setField("jiraUrl", event.target.value)} placeholder="Paste Jira issue link (e.g. https://company.atlassian.net/browse/IR-1427)" />
         </label>
-        <div className="numbered-field">
+        {!isOrphan && <div className="numbered-field">
           <span>3. Coding Agent Harness</span>
           <small>Choose the coding agent harness to power this task.</small>
           <div className="agent-options" role="radiogroup">
@@ -1689,9 +1905,9 @@ function NewTaskModal({ mode, orphan, onClose, onSubmit }) {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
         <label className="numbered-field">
-          <span>4. Status</span>
+          <span>{isOrphan ? "3. Status" : "4. Status"}</span>
           <select value={form.status} onChange={(event) => setField("status", event.target.value)}>{STATUSES.map((status) => <option key={status}>{status}</option>)}</select>
         </label>
         {error && <div className="modal-error">{error}</div>}
@@ -1718,6 +1934,27 @@ function Toast({ message, onDone }) {
 
 function statusClass(status) {
   return String(status || "").toLowerCase().replace(/\s+/g, "-");
+}
+
+function clamp(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.max(min, Math.min(max, number));
+}
+
+function voiceStateLabel(mode, status) {
+  if (mode === "text") return "Text only";
+  return {
+    idle: "Mic off",
+    connecting: "Connecting",
+    connected: "Listening",
+    ready: "Ready",
+    recording: "Listening",
+    transcribing: "Processing audio",
+    thinking: "Thinking",
+    speaking: "Speaking",
+    error: "Needs attention"
+  }[status] || "Mic off";
 }
 
 function displayTaskStatus(task, approval) {
@@ -1749,6 +1986,18 @@ function displayWorkspacePath(value) {
     return `/workspaces/orchestrate-ai/${text.split(marker)[1]}`;
   }
   return text;
+}
+
+function orphanProjectDir(orphan) {
+  const raw = orphan?.raw?.workspace || orphan?.raw?.raw?.workspace || orphan?.raw || {};
+  return String(
+    orphan?.cwd ||
+    orphan?.currentDirectory ||
+    raw.current_directory ||
+    raw.cwd ||
+    raw.currentDirectory ||
+    ""
+  );
 }
 
 function groupActivity(activity) {

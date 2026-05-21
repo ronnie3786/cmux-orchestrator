@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """cmux Auto-Approve Dashboard — entry point."""
 
+import errno
 import os
 import sys
 import webbrowser
@@ -12,6 +13,28 @@ from cmux_harness.engine import HarnessEngine
 from cmux_harness.orchestrator_v2_runtime import OrchestratorV2Sidecar
 from cmux_harness.orchestrator_v2_watcher import OrchestratorV2Watcher
 from cmux_harness.server import make_handler
+
+
+_CLIENT_DISCONNECT_ERRNOS = {
+    errno.EBADF,
+    errno.ECONNABORTED,
+    errno.ECONNRESET,
+    errno.EPIPE,
+}
+
+
+class DashboardHTTPServer(ThreadingHTTPServer):
+    """Threaded server that treats browser disconnects as normal traffic."""
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+            return
+        if isinstance(exc, OSError) and exc.errno in _CLIENT_DISCONNECT_ERRNOS:
+            return
+        super().handle_error(request, client_address)
 
 
 def main():
@@ -30,7 +53,7 @@ def main():
 
     handler_class = make_handler(engine)
 
-    server = ThreadingHTTPServer(("0.0.0.0", port), handler_class)
+    server = DashboardHTTPServer(("0.0.0.0", port), handler_class)
     server.engine = engine
 
     advertiser = BonjourAdvertiser(port)

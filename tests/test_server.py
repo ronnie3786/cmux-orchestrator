@@ -1,6 +1,8 @@
+import errno
 import io
 import json
 import os
+import socketserver
 import subprocess
 import tempfile
 import time
@@ -13,6 +15,7 @@ from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
 from cmux_harness import workspaces
 from cmux_harness.server import make_handler
+from dashboard import DashboardHTTPServer
 
 REAL_SUBPROCESS_RUN = subprocess.run
 
@@ -116,6 +119,26 @@ class TestServerResponses(unittest.TestCase):
         result = handler._json_response({"ok": True}, status=202)
 
         self.assertFalse(result)
+
+    def test_dashboard_server_suppresses_client_disconnect_errors(self):
+        server = DashboardHTTPServer.__new__(DashboardHTTPServer)
+        with patch.object(socketserver.BaseServer, "handle_error") as base_handle_error:
+            try:
+                raise OSError(errno.EBADF, "Bad file descriptor")
+            except OSError:
+                server.handle_error(object(), ("127.0.0.1", 54378))
+
+        base_handle_error.assert_not_called()
+
+    def test_dashboard_server_keeps_real_request_errors_visible(self):
+        server = DashboardHTTPServer.__new__(DashboardHTTPServer)
+        with patch.object(socketserver.BaseServer, "handle_error") as base_handle_error:
+            try:
+                raise ValueError("route failed")
+            except ValueError:
+                server.handle_error(object(), ("127.0.0.1", 54378))
+
+        base_handle_error.assert_called_once()
 
     def test_root_serves_onboarding_home_and_orchestrator_has_own_route(self):
         root_handler = self._make_handler(Mock(), "/")

@@ -298,16 +298,19 @@ def default_jira_site() -> str:
 
 
 def _read_acli_jira_site() -> str:
-    config_path = Path.home() / ".config" / "acli" / "jira_config.yaml"
-    try:
-        text = config_path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
+    for config_path in (
+        Path.home() / ".config" / "atlassian-cli" / "jira_config.yaml",
+        Path.home() / ".config" / "acli" / "jira_config.yaml",
+    ):
+        try:
+            text = config_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
 
-    match = re.search(r"(?m)^\s*-?\s*site:\s*([^\s#]+)", text)
-    if not match:
-        return ""
-    return normalize_site(match.group(1), fallback="")
+        match = re.search(r"(?m)^\s*-?\s*site:\s*([^\s#]+)", text)
+        if match:
+            return normalize_site(match.group(1), fallback="")
+    return ""
 
 
 def normalize_site(site: str | None, *, fallback: str | None = None) -> str:

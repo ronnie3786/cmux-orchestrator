@@ -72,7 +72,7 @@ class TestJiraRoute(unittest.TestCase):
 
     def test_default_jira_site_reads_active_acli_config(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".config" / "acli"
+            config_dir = Path(tmp) / ".config" / "atlassian-cli"
             config_dir.mkdir(parents=True)
             (config_dir / "jira_config.yaml").write_text(
                 "version: 1\nprofiles:\n    - site: doximity.atlassian.net\n      auth_type: oauth\n",
@@ -88,6 +88,19 @@ class TestJiraRoute(unittest.TestCase):
                 }])
 
         self.assertEqual(tickets[0]["url"], "https://doximity.atlassian.net/browse/IOSDOX-26059")
+
+    def test_default_jira_site_supports_legacy_acli_config_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".config" / "acli"
+            config_dir.mkdir(parents=True)
+            (config_dir / "jira_config.yaml").write_text(
+                "version: 1\nprofiles:\n    - site: legacy.atlassian.net\n",
+                encoding="utf-8",
+            )
+
+            with patch("cmux_harness.routes.jira.Path.home", return_value=Path(tmp)), \
+                    patch.dict("cmux_harness.routes.jira.os.environ", {}, clear=True):
+                self.assertEqual(jira.default_jira_site(), "legacy.atlassian.net")
 
     def test_default_jira_site_allows_env_override(self):
         with patch.dict("cmux_harness.routes.jira.os.environ", {"CMUX_JIRA_SITE": "https://override.atlassian.net/"}, clear=True):
