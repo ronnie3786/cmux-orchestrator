@@ -19,6 +19,29 @@ LAUNCH_COMMANDS = {
     "OpenCode": "opencode",
 }
 
+_TERMINAL_KEY_ALIASES = {
+    "arrowleft": "left",
+    "arrow-left": "left",
+    "arrowright": "right",
+    "arrow-right": "right",
+    "esc": "escape",
+    "bckspc": "backspace",
+    "del": "backspace",
+    "delete": "backspace",
+}
+
+_TERMINAL_KEY_TEXT = {
+    "left": "\x1b[D",
+    "right": "\x1b[C",
+    "escape": "\x1b",
+    "backspace": "\x7f",
+}
+
+
+def _normalize_terminal_key(key: str) -> str:
+    value = str(key or "").strip().lower()
+    return _TERMINAL_KEY_ALIASES.get(value, value)
+
 
 class CmuxCliError(RuntimeError):
     def __init__(self, message: str, status: int = 500):
@@ -200,8 +223,15 @@ class CmuxCli:
         args = ["send-key", "--workspace", workspace_id]
         if surface_id:
             args.extend(["--surface", surface_id])
-        args.append(str(key or "").lower())
-        self.run(args, timeout=8)
+        normalized_key = _normalize_terminal_key(key)
+        args.append(normalized_key)
+        try:
+            self.run(args, timeout=8)
+        except CmuxCliError:
+            text_key = _TERMINAL_KEY_TEXT.get(normalized_key)
+            if text_key is None:
+                raise
+            return self.send_text(workspace_id, text_key, surface_id=surface_id)
         return {"ok": True}
 
     def _find_created_session(self, title: str) -> dict[str, Any] | None:

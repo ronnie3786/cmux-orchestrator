@@ -966,36 +966,49 @@ class TestServerResponses(unittest.TestCase):
 
     @patch("cmux_harness.server.cmux_api.cmux_send_to_workspace", return_value=True)
     def test_post_send_supports_navigation_keys(self, mock_send):
-        engine = MagicMock()
-        engine._lock.__enter__.return_value = None
-        engine._lock.__exit__.return_value = None
-        engine._build_virtual_workspaces.return_value = [{
-            "index": 7,
-            "_real_index": 3,
-            "uuid": "ws-123",
-            "_surface_id": "surface:1",
-            "name": "Workspace 7",
-        }]
-        engine.fingerprints = {}
+        for key in ["up", "down", "tab", "enter", "left", "right", "escape", "backspace"]:
+            with self.subTest(key=key):
+                mock_send.reset_mock()
+                engine = MagicMock()
+                engine._lock = MagicMock()
+                engine._lock.__enter__.return_value = None
+                engine._lock.__exit__.return_value = None
+                engine._build_virtual_workspaces.return_value = [{
+                    "index": 7,
+                    "_real_index": 3,
+                    "uuid": "ws-123",
+                    "_surface_id": "surface:1",
+                    "name": "Workspace 7",
+                }]
+                engine.fingerprints = {}
 
-        handler = self._post_json("/api/send", {"index": 7, "key": "tab"}, engine=engine)
+                handler = self._post_json("/api/send", {"index": 7, "key": key}, engine=engine)
 
-        mock_send.assert_called_once_with(
-            3,
-            0,
-            text=None,
-            key="tab",
-            workspace_uuid="ws-123",
-            surface_id="surface:1",
-        )
-        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(body, {"ok": True})
+                mock_send.assert_called_once_with(
+                    3,
+                    0,
+                    text=None,
+                    key=key,
+                    workspace_uuid="ws-123",
+                    surface_id="surface:1",
+                )
+                body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+                self.assertEqual(body, {"ok": True})
 
     def test_post_send_rejects_unsupported_keys(self):
-        handler = self._post_json("/api/send", {"index": 7, "key": "left"}, engine=Mock())
+        handler = self._post_json("/api/send", {"index": 7, "key": "home"}, engine=Mock())
 
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(body, {"ok": False, "error": "unsupported key: left"})
+        self.assertEqual(body, {"ok": False, "error": "unsupported key: home"})
+
+    def test_dashboard_exposes_extended_terminal_control_keys(self):
+        html = Path("cmux_harness/static/dashboard.html").read_text(encoding="utf-8")
+
+        for key in ["up", "down", "tab", "enter", "left", "right", "escape", "backspace"]:
+            with self.subTest(key=key):
+                self.assertIn(f"{key}:'{key}'", html)
+                self.assertIn(f"sendExpKey('{key}')", html)
+                self.assertIn(f"sendWsKey('+w.index+',\\'{key}\\')", html)
 
     def test_post_workspace_star_maps_virtual_index_to_real_workspace(self):
         engine = MagicMock()

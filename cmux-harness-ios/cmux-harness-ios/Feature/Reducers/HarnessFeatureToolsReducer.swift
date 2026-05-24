@@ -31,10 +31,11 @@ extension HarnessFeature {
                 return .none
 
             case let .appendSkillInvocation(skill):
-                state.detailDraft = appendPromptToken("/\(skill.name)", to: state.detailDraft)
-                persistDetailDraft(&state)
-                state.detailTab = .terminal
-                state.detailInputFocusRequest += 1
+                appendSkillInvocation(skill, prefix: "/", state: &state)
+                return .none
+
+            case let .appendCodexSkillInvocation(skill):
+                appendSkillInvocation(skill, prefix: "$", state: &state)
                 return .none
 
             case let .appendSkillFilePath(skill):
@@ -221,4 +222,11 @@ extension HarnessFeature {
             return .none
         }
     }
+}
+
+private func appendSkillInvocation(_ skill: ProjectSkill, prefix: String, state: inout HarnessFeature.State) {
+    state.detailDraft = appendPromptToken("\(prefix)\(skill.name)", to: state.detailDraft)
+    persistDetailDraft(&state)
+    state.detailTab = .terminal
+    state.detailInputFocusRequest += 1
 }

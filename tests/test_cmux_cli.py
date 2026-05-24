@@ -191,6 +191,23 @@ class TestCmuxCli(unittest.TestCase):
             ["/custom/cmux", "send-key", "--workspace", "workspace-1", "--surface", "surface-1", "enter"],
         )
 
+    def test_send_key_falls_back_to_control_sequence_for_extended_terminal_key(self):
+        failure = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="unsupported key")
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("cmux_harness.cmux_cli.Path.exists", return_value=True), \
+                patch("cmux_harness.cmux_cli.subprocess.run", side_effect=[failure, completed]) as mock_run:
+            result = cmux_cli.CmuxCli(executable="/custom/cmux").send_key("workspace-1", "left", surface_id="surface-1")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0],
+            ["/custom/cmux", "send-key", "--workspace", "workspace-1", "--surface", "surface-1", "left"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["/custom/cmux", "send", "--workspace", "workspace-1", "--surface", "surface-1", "\x1b[D"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

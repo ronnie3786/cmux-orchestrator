@@ -95,6 +95,12 @@ struct SkillMenuRow: View {
             }
 
             Button {
+                store.send(.appendCodexSkillInvocation(skill))
+            } label: {
+                Label("Codex CLI", systemImage: "dollarsign.circle")
+            }
+
+            Button {
                 store.send(.appendSkillFilePath(skill))
             } label: {
                 Label("File Path", systemImage: "doc.text")

@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Circle,
   Copy,
+  Delete,
   Diamond,
   Edit3,
   ExternalLink,
@@ -1305,6 +1306,7 @@ function SessionView({ task, onBack, onOpenDiff }) {
               <button onClick={() => sendKey("tab")} disabled={sending}>Tab</button>
               <button onClick={() => sendKey("enter")} disabled={sending}>Enter</button>
               <button onClick={() => sendKey("escape")} disabled={sending}>Esc</button>
+              <button onClick={() => sendKey("backspace")} disabled={sending}><Delete size={15} />Bkspc</button>
             </div>
             <div className="terminal-command-row">
               <input

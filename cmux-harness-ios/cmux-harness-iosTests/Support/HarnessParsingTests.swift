@@ -52,6 +52,7 @@ struct HarnessParsingTests {
         let context = SkillAutocompleteContext(draft: draft, selection: nil)
 
         #expect(context?.query == "ios")
+        #expect(context?.invocationPrefix == "/")
         #expect(context?.signature == "11:/ios")
         if let range = context?.range {
             #expect(String(draft[range]) == "/ios")
@@ -59,8 +60,34 @@ struct HarnessParsingTests {
     }
 
     @Test
-    func skillAutocompleteContextIgnoresNonSlashTokens() {
+    func skillAutocompleteContextUsesTrailingDollarToken() {
+        let draft = "Please run $ios"
+        let context = SkillAutocompleteContext(draft: draft, selection: nil)
+
+        #expect(context?.query == "ios")
+        #expect(context?.invocationPrefix == "$")
+        #expect(context?.signature == "11:$ios")
+        if let range = context?.range {
+            #expect(String(draft[range]) == "$ios")
+        }
+    }
+
+    @Test
+    func skillAutocompleteContextIgnoresNonTriggerTokens() {
         #expect(SkillAutocompleteContext(draft: "Please run ios", selection: nil) == nil)
         #expect(SkillAutocompleteContext(draft: "Please run /ios now", selection: nil) == nil)
+        #expect(SkillAutocompleteContext(draft: "Please run $ios now", selection: nil) == nil)
+    }
+
+    @Test
+    func harnessKeyRowsExposeExtendedTerminalControls() {
+        #expect(HarnessKey.inputRows == [
+            [.up, .down, .tab, .enter],
+            [.left, .right, .escape, .backspace],
+        ])
+        #expect(HarnessKey.backspace.rawValue == "backspace")
+        #expect(HarnessKey.backspace.label == "Bkspc")
+        #expect(HarnessKey.escape.label == "Esc")
+        #expect(HarnessKey.escape.systemImage == "x.square")
     }
 }

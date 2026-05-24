@@ -132,6 +132,22 @@ describe("AppShell", () => {
     ));
   });
 
+  it("sends backspace from the terminal key controls", async () => {
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getByText("1 active")).toBeTruthy());
+    fireEvent.click(screen.getByText("1 active"));
+    fireEvent.click(await screen.findByText("Bkspc"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/cmux/sessions/workspace-1/input",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ surfaceId: "surface-1", key: "backspace" })
+      })
+    ));
+  });
+
   it("opens the git context menu and stages or unstages files", async () => {
     const statusPayload = {
       ok: true,

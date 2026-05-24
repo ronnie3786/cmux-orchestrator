@@ -317,12 +317,12 @@ class TestOrchestratorV2Routes(unittest.TestCase):
 
         handler = self._post_json("/api/orchestrator-v2/cmux/sessions/workspace-created/input", {
             "surfaceId": "surface-created",
-            "key": "enter",
+            "key": "backspace",
         })
         body = self._json_body(handler)
 
         self.assertTrue(body["ok"])
-        self.cmux.send_key.assert_called_once_with("workspace-created", "enter", surface_id="surface-created")
+        self.cmux.send_key.assert_called_once_with("workspace-created", "backspace", surface_id="surface-created")
 
     def test_task_goal_route_updates_markdown(self):
         created = self._json_body(self._post_json("/api/orchestrator-v2/tasks", {

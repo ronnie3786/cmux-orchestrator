@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 struct SkillAutocompleteContext: Equatable {
     let range: Range<String.Index>
     let query: String
+    let invocationPrefix: String
     let signature: String
 
     init?(draft: String, selection: TextSelection?) {
@@ -18,13 +19,16 @@ struct SkillAutocompleteContext: Equatable {
 
         let prefix = draft[..<cursor]
         let tokenStart = prefix.lastIndex(where: { $0.isWhitespace }).map { draft.index(after: $0) } ?? draft.startIndex
-        guard tokenStart < cursor, draft[tokenStart] == "/" else { return nil }
+        guard tokenStart < cursor else { return nil }
+        let trigger = draft[tokenStart]
+        guard trigger == "/" || trigger == "$" else { return nil }
 
         let token = draft[tokenStart..<cursor]
         guard !token.contains(where: { $0.isWhitespace }) else { return nil }
 
         range = tokenStart..<cursor
         query = String(token.dropFirst())
+        invocationPrefix = String(trigger)
         let startOffset = draft.distance(from: draft.startIndex, to: tokenStart)
         signature = "\(startOffset):\(String(token))"
     }
@@ -32,6 +36,7 @@ struct SkillAutocompleteContext: Equatable {
 
 struct SkillAutocompletePanel: View {
     let suggestions: [ProjectSkill]
+    let invocationPrefix: String
     let cancelAction: () -> Void
     let selectAction: (ProjectSkill) -> Void
 
@@ -62,7 +67,7 @@ struct SkillAutocompletePanel: View {
                     selectAction(skill)
                 } label: {
                     HStack(spacing: 10) {
-                        Text("/\(skill.name)")
+                        Text("\(invocationPrefix)\(skill.name)")
                             .font(.subheadline.monospaced().weight(.semibold))
                             .foregroundStyle(.white.opacity(0.94))
                             .lineLimit(1)

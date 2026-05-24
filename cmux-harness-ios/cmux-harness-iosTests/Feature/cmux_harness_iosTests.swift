@@ -1023,10 +1023,15 @@ struct HarnessFeatureTests {
             $0.detailTab = .terminal
             $0.detailInputFocusRequest = 1
         }
-        await store.send(.appendSkillFilePath(projectSkill)) {
-            $0.detailDraft = "Review this /ios-review `.claude/skills/ios-review/SKILL.md`"
-            $0.detailDrafts[workspace.id] = "Review this /ios-review `.claude/skills/ios-review/SKILL.md`"
+        await store.send(.appendCodexSkillInvocation(projectSkill)) {
+            $0.detailDraft = "Review this /ios-review $ios-review"
+            $0.detailDrafts[workspace.id] = "Review this /ios-review $ios-review"
             $0.detailInputFocusRequest = 2
+        }
+        await store.send(.appendSkillFilePath(projectSkill)) {
+            $0.detailDraft = "Review this /ios-review $ios-review `.claude/skills/ios-review/SKILL.md`"
+            $0.detailDrafts[workspace.id] = "Review this /ios-review $ios-review `.claude/skills/ios-review/SKILL.md`"
+            $0.detailInputFocusRequest = 3
         }
     }
 

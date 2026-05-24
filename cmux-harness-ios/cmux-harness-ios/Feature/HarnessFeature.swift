@@ -249,6 +249,7 @@ struct HarnessFeature {
         case skillsSucceeded(workspaceID: String, SkillsResponse)
         case skillsFailed(String)
         case appendSkillInvocation(ProjectSkill)
+        case appendCodexSkillInvocation(ProjectSkill)
         case appendSkillFilePath(ProjectSkill)
         case fileSearchTapped
         case dismissFileSearch
@@ -357,6 +358,7 @@ struct HarnessFeature {
                  .skillsSucceeded(workspaceID: _, _),
                  .skillsFailed(_),
                  .appendSkillInvocation(_),
+                 .appendCodexSkillInvocation(_),
                  .appendSkillFilePath(_),
                  .fileSearchTapped,
                  .dismissFileSearch,

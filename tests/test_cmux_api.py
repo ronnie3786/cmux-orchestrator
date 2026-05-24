@@ -8,6 +8,7 @@ from cmux_harness.cmux_api import (
     _parse_debug_terminals,
     _parse_feed_items,
     cmux_feed_reply,
+    cmux_send_to_workspace,
     _v2_request,
 )
 
@@ -302,6 +303,47 @@ class TestFeedReply(unittest.TestCase):
     def test_missing_request_id_is_error(self):
         result = cmux_feed_reply("permission", "", action="approve")
         self.assertFalse(result["ok"])
+
+
+class TestSendToWorkspace(unittest.TestCase):
+
+    @patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True})
+    def test_extended_terminal_keys_use_send_key(self, mock_v2_request):
+        keys = ["left", "right", "escape", "backspace"]
+
+        for key in keys:
+            with self.subTest(key=key):
+                mock_v2_request.reset_mock()
+
+                result = cmux_send_to_workspace(
+                    0,
+                    0,
+                    key=key,
+                    workspace_uuid="workspace-1",
+                    surface_id="surface-1",
+                )
+
+                self.assertTrue(result)
+                mock_v2_request.assert_called_once_with(
+                    "surface.send_key",
+                    {"workspace_id": "workspace-1", "key": key, "surface_id": "surface-1"},
+                )
+
+    @patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True})
+    def test_primary_terminal_keys_still_use_send_key(self, mock_v2_request):
+        result = cmux_send_to_workspace(
+            0,
+            0,
+            key="enter",
+            workspace_uuid="workspace-1",
+            surface_id="surface-1",
+        )
+
+        self.assertTrue(result)
+        mock_v2_request.assert_called_once_with(
+            "surface.send_key",
+            {"workspace_id": "workspace-1", "key": "enter", "surface_id": "surface-1"},
+        )
 
 
 class TestV2Request(unittest.TestCase):

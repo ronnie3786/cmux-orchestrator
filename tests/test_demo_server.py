@@ -68,6 +68,14 @@ class TestDemoHarness(unittest.TestCase):
         self.assertIn("Use the public demo server", screen["screen"])
         self.assertIn("Demo agent received", screen["screen"])
 
+    def test_send_accepts_extended_terminal_keys(self):
+        for key in ["left", "right", "escape", "backspace"]:
+            with self.subTest(key=key):
+                status, response = self._json("POST", "/api/send", payload={"index": 0, "key": key})
+
+                self.assertEqual(status, 200)
+                self.assertTrue(response["ok"])
+
     def test_new_session_creates_mutable_workspace(self):
         status, response = self._json(
             "POST",

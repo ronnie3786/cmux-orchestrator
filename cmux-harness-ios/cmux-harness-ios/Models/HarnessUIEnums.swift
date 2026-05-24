@@ -5,8 +5,19 @@ enum HarnessKey: String, CaseIterable, Equatable, Identifiable, Sendable {
     case down
     case tab
     case enter
+    case left
+    case right
+    case escape
+    case backspace
 
     var id: String { rawValue }
+
+    static var inputRows: [[HarnessKey]] {
+        [
+            [.up, .down, .tab, .enter],
+            [.left, .right, .escape, .backspace],
+        ]
+    }
 
     var label: String {
         switch self {
@@ -18,6 +29,14 @@ enum HarnessKey: String, CaseIterable, Equatable, Identifiable, Sendable {
             return "Tab"
         case .enter:
             return "Enter"
+        case .left:
+            return "Left"
+        case .right:
+            return "Right"
+        case .escape:
+            return "Esc"
+        case .backspace:
+            return "Bkspc"
         }
     }
 
@@ -31,6 +50,14 @@ enum HarnessKey: String, CaseIterable, Equatable, Identifiable, Sendable {
             return "arrow.right.to.line"
         case .enter:
             return "return"
+        case .left:
+            return "arrow.left"
+        case .right:
+            return "arrow.right"
+        case .escape:
+            return "x.square"
+        case .backspace:
+            return "delete.left"
         }
     }
 }

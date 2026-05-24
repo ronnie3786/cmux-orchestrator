@@ -176,7 +176,7 @@ class DemoHarness:
             key = str(data.get("key") or "").strip().lower()
             if index is None or (not text and not key):
                 return 400, {"ok": False, "error": "index and text or key required"}
-            if key and key not in {"up", "down", "tab", "enter"}:
+            if key and key not in {"up", "down", "tab", "enter", "left", "right", "escape", "backspace"}:
                 return 400, {"ok": False, "error": f"unsupported key: {key}"}
             return session.send(index=int(index), text=text, key=key)
         if api_path == "/api/new-session":
@@ -708,8 +708,12 @@ class DemoSessionState:
     def _response_for_key(key):
         if key == "enter":
             return "Demo agent accepted the selection and continued the simulated workflow."
-        if key in {"up", "down"}:
+        if key in {"up", "down", "left", "right"}:
             return f"Moved simulated terminal selection {key}."
+        if key == "escape":
+            return "Dismissed the simulated terminal prompt."
+        if key == "backspace":
+            return "Deleted one simulated terminal character."
         if key == "tab":
             return "Completed the next simulated shell token."
         return "Handled simulated key input."

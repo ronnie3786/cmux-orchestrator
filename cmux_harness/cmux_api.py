@@ -9,6 +9,35 @@ import time as _time
 
 log = logging.getLogger(__name__)
 
+_TERMINAL_KEY_ALIASES = {
+    "arrowleft": "left",
+    "arrow-left": "left",
+    "arrowright": "right",
+    "arrow-right": "right",
+    "esc": "escape",
+    "bckspc": "backspace",
+    "del": "backspace",
+    "delete": "backspace",
+}
+
+def _normalize_terminal_key(key):
+    value = str(key or "").strip().lower()
+    return _TERMINAL_KEY_ALIASES.get(value, value)
+
+
+def _send_v2_text(workspace_uuid, text, surface_id=None):
+    params = {"workspace_id": workspace_uuid, "text": text}
+    if surface_id:
+        params["surface_id"] = surface_id
+    return _v2_request("surface.send_text", params) is not None
+
+
+def _send_v2_key(workspace_uuid, key, surface_id=None):
+    params = {"workspace_id": workspace_uuid, "key": key}
+    if surface_id:
+        params["surface_id"] = surface_id
+    return _v2_request("surface.send_key", params) is not None
+
 # ---------------------------------------------------------------------------
 # cmux socket helpers
 # ---------------------------------------------------------------------------
@@ -198,17 +227,10 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
     When surface_id is provided (e.g. 'surface:2'), targets that specific surface."""
     if workspace_uuid:
         if text is not None:
-            params = {"workspace_id": workspace_uuid, "text": text}
-            if surface_id:
-                params["surface_id"] = surface_id
-            result = _v2_request("surface.send_text", params)
-            return result is not None
+            return _send_v2_text(workspace_uuid, text, surface_id=surface_id)
         if key is not None:
-            params = {"workspace_id": workspace_uuid, "key": key.lower()}
-            if surface_id:
-                params["surface_id"] = surface_id
-            result = _v2_request("surface.send_key", params)
-            return result is not None
+            normalized_key = _normalize_terminal_key(key)
+            return _send_v2_key(workspace_uuid, normalized_key, surface_id=surface_id)
     # No workspace_uuid provided and no v1 fallback — v1 used select_workspace
     # which visibly switches the active tab, causing UI flickering.
     return False

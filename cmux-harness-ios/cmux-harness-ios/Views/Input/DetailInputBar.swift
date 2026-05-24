@@ -32,7 +32,7 @@ struct DetailInputBar: View {
     let isInputFocused: FocusState<Bool>.Binding
     @State private var inputSelection: TextSelection?
     @State private var dismissedSkillAutocompleteSignature: String?
-    @State private var isActionMenuExpanded = true
+    @State private var isActionMenuExpanded = false
     @State private var isShowingAttachmentOptions = false
     @State private var activeAttachmentSheet: AttachmentInputSheet?
     @State private var isShowingFileImporter = false
@@ -44,6 +44,7 @@ struct DetailInputBar: View {
                !filteredSkillSuggestions(for: context).isEmpty {
                 SkillAutocompletePanel(
                     suggestions: filteredSkillSuggestions(for: context),
+                    invocationPrefix: context.invocationPrefix,
                     cancelAction: {
                         dismissedSkillAutocompleteSignature = context.signature
                     },
@@ -182,22 +183,30 @@ struct DetailInputBar: View {
                 .disabled(!canSend)
             }
 
-            HStack(spacing: 10) {
-                ForEach(HarnessKey.allCases) { key in
-                    Button {
-                        HarnessHaptics.inputCTA()
-                        store.send(.sendKey(workspaceID: workspace.id, key))
-                    } label: {
-                        Label(key.label, systemImage: key.systemImage)
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 38)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.92))
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay {
-                        Capsule()
-                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+            VStack(spacing: 8) {
+                ForEach(Array(HarnessKey.inputRows.enumerated()), id: \.offset) { index, row in
+                    if index == 0 || isActionMenuExpanded {
+                        HStack(spacing: 10) {
+                            ForEach(row) { key in
+                                Button {
+                                    HarnessHaptics.inputCTA()
+                                    store.send(.sendKey(workspaceID: workspace.id, key))
+                                } label: {
+                                    Label(key.label, systemImage: key.systemImage)
+                                        .font(.subheadline.weight(.semibold))
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.78)
+                                        .frame(maxWidth: .infinity, minHeight: 38)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.white.opacity(0.92))
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .overlay {
+                                    Capsule()
+                                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -209,8 +218,10 @@ struct DetailInputBar: View {
         .animation(.easeInOut(duration: 0.16), value: attachments)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: isActionMenuExpanded)
         .onChange(of: isInputFocused.wrappedValue) { _, isFocused in
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                isActionMenuExpanded = !isFocused
+            if isFocused {
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                    isActionMenuExpanded = false
+                }
             }
         }
         .sheet(item: $activeAttachmentSheet) { sheet in
@@ -371,7 +382,7 @@ struct DetailInputBar: View {
     }
 
     private func replaceSkillToken(_ context: SkillAutocompleteContext, with skill: ProjectSkill) {
-        let replacement = "/\(skill.name)"
+        let replacement = "\(context.invocationPrefix)\(skill.name)"
         var draft = store.detailDraft
         let cursorOffset = draft.distance(from: draft.startIndex, to: context.range.lowerBound) + replacement.count
         draft.replaceSubrange(context.range, with: replacement)
