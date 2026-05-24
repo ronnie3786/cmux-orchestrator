@@ -546,7 +546,7 @@ class HarnessEngine(threading.Thread):
             "screen": screen,
             "screenFingerprint": screen_fp,
         }
-        result = auto_policy.run_auto_policy(policy_payload, timeout=30)
+        result = auto_policy.run_auto_policy(policy_payload, timeout=50)
         decision = auto_policy.normalize_policy_result(
             result,
             auto_mode=auto_mode,
@@ -577,14 +577,15 @@ class HarnessEngine(threading.Thread):
         })
         self.auto_policy_last_checked_fingerprint[session_key] = screen_fp
         if not decision:
-            self._append_log({
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            storage.debug_log({
+                "event": "auto_policy_check_error",
                 "workspace": idx,
                 "workspaceName": ws_name,
-                "promptType": "fireworks-auto-check-error",
-                "action": "auto check failed",
+                "workspaceUuid": workspace_uuid,
+                "surfaceId": surface_id,
                 "reason": str(result.get("error") if isinstance(result, dict) else result)[:240],
                 "estimatedCostUSD": usage_entry.get("estimatedCostUSD"),
+                "screenFingerprint": screen_fp,
             })
             return
 

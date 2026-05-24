@@ -139,21 +139,14 @@ def classify_tool_severity(
 
     Returns ``{"level", "decision", "reason", "model", "latency_ms"}``.
 
-    When the regex fast-path flags a tool at level 4+, Haiku gets a second
-    look before escalating to the human.  If Haiku downgrades to level ≤ 3,
-    the tool is auto-approved without human involvement.
+    Fast-path classifications are deterministic. Unknown tools and unknown MCP
+    tools can still call Haiku, but known level 4/5 tools do not get downgraded
+    by a live model response.
     """
     tool_input = tool_input or {}
     start = time.monotonic()
 
     result = _fast_classify(tool_name, tool_input, spec_text, timeout, start)
-
-    # If the fast-path flagged level ≥ 4 and it wasn't already a Haiku
-    # result, ask Haiku for a second opinion before escalating to the human.
-    if result["level"] >= 4 and result["model"] is None:
-        haiku_result = _haiku_classify(tool_name, tool_input, spec_text, timeout, start)
-        if haiku_result["level"] <= 3:
-            return haiku_result
 
     return result
 

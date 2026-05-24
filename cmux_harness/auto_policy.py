@@ -47,7 +47,7 @@ def estimate_cost(input_tokens: int | None, output_tokens: int | None) -> float:
     )
 
 
-def run_auto_policy(payload: dict[str, Any], timeout: int = 30) -> dict[str, Any]:
+def run_auto_policy(payload: dict[str, Any], timeout: int = 50) -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
         return _error("node is not available on PATH", "node_missing")

@@ -356,6 +356,48 @@ class TestAutoPolicy(unittest.TestCase):
         mock_record_usage.assert_called_once()
         mock_log.assert_not_called()
 
+    @patch("cmux_harness.engine.storage.debug_log")
+    @patch("cmux_harness.engine.auto_policy.record_policy_usage")
+    @patch("cmux_harness.engine.auto_policy.run_auto_policy")
+    def test_policy_check_failure_is_not_written_as_approval_message(self, mock_policy, mock_record_usage, mock_debug_log):
+        engine = make_engine()
+        workspace_id = "ws-1"
+        engine.ws_config[workspace_id] = {
+            "autoEnabled": True,
+            "autoEnabledAt": 100.0,
+        }
+        ws = {
+            "index": 7,
+            "_real_index": 3,
+            "_surface_id": "surface:1",
+            "uuid": workspace_id,
+            "name": "Workspace",
+            "_cwd": "/repo",
+        }
+        mock_policy.return_value = {
+            "ok": False,
+            "provider": "fireworks",
+            "model": "accounts/fireworks/models/minimax-m2p7",
+            "usage": {"inputTokens": 100, "outputTokens": 20, "totalTokens": 120},
+            "error": "The operation was aborted due to timeout",
+            "latencyMs": 45000,
+            "promptChars": 400,
+        }
+        mock_record_usage.return_value = {
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "estimatedCostUSD": 0.000054,
+        }
+
+        with patch.object(engine, "_append_log") as mock_log:
+            engine._run_auto_policy_for_workspace(ws, "Allow Read?\n(Y/n)", 200.0)
+
+        mock_policy.assert_called_once()
+        mock_record_usage.assert_called_once()
+        mock_log.assert_not_called()
+        mock_debug_log.assert_called_once()
+        self.assertEqual(mock_debug_log.call_args.args[0]["event"], "auto_policy_check_error")
+
 
 class TestAutoPolicyCostLog(unittest.TestCase):
     def test_estimate_cost_uses_configured_rates(self):

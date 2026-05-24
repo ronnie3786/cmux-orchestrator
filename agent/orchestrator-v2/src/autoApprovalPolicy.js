@@ -26,8 +26,9 @@ export const policySchema = z.object({
 
 export function buildAutoPolicySystemPrompt() {
   return [
-    "You are cmux Auto Approval Bot, a cautious terminal automation policy agent.",
-    "You inspect a terminal tail from an AI coding session and return one validated JSON policy object.",
+    "You are a JSON API for cmux Auto Approval Bot.",
+    "Inspect the terminal tail and return exactly one compact JSON object. No markdown. No commentary.",
+    "Required shape: {\"approvalNeeded\":boolean,\"terminalState\":\"running|idle_prompt|approval_prompt|question_prompt|completed|unknown\",\"action\":\"approve|submit|alert|ignore\",\"submit\":\"enter|y|yes|1|2|3|4|none\",\"level\":1|2|3|4|5|null,\"confidence\":0..1,\"reason\":\"short\"}.",
     "",
     "First decide whether the terminal currently needs approval or trivial continuation input.",
     "Approval/input is needed only when the visible terminal is asking the user to allow, approve, confirm, continue, proceed, trust, run, apply, save, select an affirmative option, or answer a yes/no approval question.",
@@ -47,8 +48,7 @@ export function buildAutoPolicySystemPrompt() {
     "- Use approve for permission/confirmation prompts. Use submit for trivial continuation input such as pressing Enter to continue.",
     "- submit must be enter, y, yes, 1, 2, 3, 4, or none. Prefer enter when the terminal already has an affirmative option highlighted.",
     "- Never invent arbitrary text to type. Never include secrets in reason.",
-    "",
-    "Return compact JSON only. No markdown, no code fences, no commentary."
+    "Return compact JSON only."
   ].join("\n");
 }
 
@@ -136,50 +136,27 @@ export function parsePolicyText(text) {
     throw new Error(`Model returned invalid policy JSON: ${error.message}`);
   }
 
-  const schemaResult = policySchema.safeParse(coercePolicyObject(parsed));
-  if (!schemaResult.success) {
-    throw new Error("Model policy JSON did not match the expected schema.");
-  }
-  return schemaResult.data;
+  return coercePolicyObject(parsed) || parsed;
 }
 
 function coercePolicyObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
-  const action = cleanEnum(value.action, {
-    approve: "approve",
-    approved: "approve",
-    allow: "approve",
-    submit: "submit",
-    continue: "submit",
-    alert: "alert",
-    ask: "alert",
-    human: "alert",
-    ignore: "ignore",
-    none: "ignore"
-  });
-  const submit = cleanEnum(value.submit ?? value.key ?? value.selection, {
-    enter: "enter",
-    return: "enter",
-    y: "y",
-    yes: "yes",
-    "1": "1",
-    "2": "2",
-    "3": "3",
-    "4": "4",
-    none: "none"
-  });
-  const terminalStateValue = cleanEnum(value.terminalState ?? value.state, {
+  const terminalStateValue = cleanEnum(value.terminalState ?? value.terminal_state ?? value.state, {
     running: "running",
     active: "running",
+    working: "running",
+    processing: "running",
     idle: "idle_prompt",
     idle_prompt: "idle_prompt",
     prompt: "idle_prompt",
     shell_prompt: "idle_prompt",
+    user_prompt: "idle_prompt",
     approval: "approval_prompt",
     approval_prompt: "approval_prompt",
     permission_prompt: "approval_prompt",
     confirm_prompt: "approval_prompt",
+    confirmation: "approval_prompt",
     waiting: "approval_prompt",
     waiting_for_approval: "approval_prompt",
     awaiting_approval: "approval_prompt",
@@ -193,20 +170,63 @@ function coercePolicyObject(value) {
     completed: "completed",
     complete: "completed",
     done: "completed",
+    finished: "completed",
     unknown: "unknown"
   });
-  const reason = String(value.reason || "").trim().slice(0, 240);
-
-  if (!action || !submit || !reason) return null;
-
   const inactiveState = terminalStateValue === "running" || terminalStateValue === "idle_prompt" || terminalStateValue === "completed";
-  const approvalNeeded = typeof value.approvalNeeded === "boolean"
-    ? value.approvalNeeded
-    : typeof value.needsApproval === "boolean"
-      ? value.needsApproval
-      : typeof value.approval_needed === "boolean"
-        ? value.approval_needed
-        : !inactiveState && action !== "ignore";
+  const rawAction = cleanEnum(value.action ?? value.decision ?? value.recommendation ?? value.policy, {
+    approve: "approve",
+    approved: "approve",
+    allow: "approve",
+    accept: "approve",
+    auto_approve: "approve",
+    permitted: "approve",
+    submit: "submit",
+    continue: "submit",
+    send: "submit",
+    press: "submit",
+    alert: "alert",
+    ask: "alert",
+    human: "alert",
+    escalate: "alert",
+    needs_human: "alert",
+    ignore: "ignore",
+    skip: "ignore",
+    wait: "ignore",
+    none: "ignore"
+  });
+  const submit = cleanEnum(value.submit ?? value.submitKey ?? value.submit_key ?? value.key ?? value.selection ?? value.answer ?? value.response, {
+    enter: "enter",
+    return: "enter",
+    press_enter: "enter",
+    newline: "enter",
+    y: "y",
+    yes: "yes",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    none: "none"
+  });
+  const approvalNeeded = booleanOrNull(value.approvalNeeded)
+    ?? booleanOrNull(value.needsApproval)
+    ?? booleanOrNull(value.approval_needed)
+    ?? booleanOrNull(value.requiresApproval)
+    ?? booleanOrNull(value.requires_approval)
+    ?? booleanOrNull(value.inputNeeded)
+    ?? booleanOrNull(value.needsInput)
+    ?? (!inactiveState && rawAction !== "ignore");
+  const action = rawAction || (
+    approvalNeeded
+      ? (submit && submit !== "none" ? "approve" : "alert")
+      : "ignore"
+  );
+  const normalizedSubmit = submit || (approvalNeeded ? "none" : "none");
+  const reason = String(value.reason ?? value.rationale ?? value.explanation ?? value.decisionReason ?? value.decision_reason ?? "").trim().slice(0, 240)
+    || (approvalNeeded ? "Approval prompt detected without a complete model reason." : "No approval or continuation prompt is visible.");
+
+  if (!action || !normalizedSubmit || !reason) return null;
+
   const terminalState = terminalStateValue || (
     approvalNeeded
       ? (action === "submit" ? "question_prompt" : "approval_prompt")
@@ -217,9 +237,9 @@ function coercePolicyObject(value) {
     approvalNeeded,
     terminalState,
     action,
-    submit,
-    level: numberOrNull(value.level ?? value.severity),
-    confidence: numberOrNull(value.confidence) ?? 0,
+    submit: normalizedSubmit,
+    level: levelOrNull(value.level ?? value.severity ?? value.severityLevel ?? value.severity_level ?? value.riskLevel ?? value.risk_level),
+    confidence: confidenceOrDefault(value.confidence, approvalNeeded ? 0 : 1),
     reason
   };
 }
@@ -255,6 +275,40 @@ function numberOrNull(value) {
   return Number.isFinite(Number(value)) ? Number(value) : null;
 }
 
+function booleanOrNull(value) {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["true", "yes", "y", "1", "needed", "required"].includes(normalized)) return true;
+  if (["false", "no", "n", "0", "none", "not_needed", "not_required"].includes(normalized)) return false;
+  return null;
+}
+
+function confidenceOrDefault(value, fallback) {
+  const raw = String(value ?? "").trim();
+  if (raw.endsWith("%")) {
+    const percent = Number(raw.slice(0, -1));
+    if (Number.isFinite(percent)) return Math.max(0, Math.min(1, percent / 100));
+  }
+  const numeric = numberOrNull(value);
+  if (numeric == null) return fallback;
+  return Math.max(0, Math.min(1, numeric > 1 ? numeric / 100 : numeric));
+}
+
+function levelOrNull(value) {
+  const numeric = numberOrNull(value);
+  if (numeric != null) return numeric;
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) return null;
+  const explicitLevel = normalized.match(/\blevel_?([1-5])\b/);
+  if (explicitLevel) return Number(explicitLevel[1]);
+  if (/read|readonly|low|safe_read/.test(normalized)) return 1;
+  if (/safe|write|local|test|build/.test(normalized)) return 2;
+  if (/external|service|medium|network|api/.test(normalized)) return 3;
+  if (/ambiguous|judgment|human|unclear|high/.test(normalized)) return 4;
+  if (/danger|destructive|critical|secret|production|force|delete/.test(normalized)) return 5;
+  return null;
+}
+
 export async function runAutoApprovalPolicy(input) {
   const cfg = config();
   const modelName = process.env.CMUX_AUTO_POLICY_MODEL || cfg.model || DEFAULT_AUTO_POLICY_MODEL;
@@ -283,7 +337,7 @@ export async function runAutoApprovalPolicy(input) {
       prompt,
       temperature: 0,
       maxOutputTokens: Number(process.env.CMUX_AUTO_POLICY_MAX_OUTPUT_TOKENS || 900),
-      timeout: Number(process.env.CMUX_AUTO_POLICY_TIMEOUT_MS || 25000)
+      timeout: Number(process.env.CMUX_AUTO_POLICY_TIMEOUT_MS || 45000)
     });
     const policy = normalizePolicyObject(parsePolicyText(modelResult.text), input.autoMode, input.threshold);
     return {
