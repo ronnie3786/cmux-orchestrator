@@ -1438,45 +1438,228 @@ function repoLabel(workspaceDir) {
   return `${repo} / ${repo}`;
 }
 
+function normalizeGitEntry(entry, section) {
+  if (!entry) return null;
+  if (typeof entry === "string") {
+    return { file: entry, status: section === "untracked" ? "A" : "M", section };
+  }
+  const file = String(entry.file || entry.path || "").trim();
+  if (!file) return null;
+  return {
+    ...entry,
+    file,
+    status: entry.status || (section === "untracked" ? "A" : "M"),
+    section
+  };
+}
+
+function gitFilesFromStatus(status) {
+  return [
+    ...(status?.staged || []).map((entry) => normalizeGitEntry(entry, "staged")),
+    ...(status?.unstaged || []).map((entry) => normalizeGitEntry(entry, "unstaged")),
+    ...(status?.untracked || []).map((entry) => normalizeGitEntry(entry, "untracked"))
+  ].filter(Boolean);
+}
+
+function gitFileKey(file) {
+  if (file?.section === "commit") return `commit:${file?.commitHash || ""}:${file?.file || ""}`;
+  return `${file?.section || "unstaged"}:${file?.file || ""}`;
+}
+
+function gitStatusBadge(status) {
+  return String(status || "M").trim().charAt(0).toUpperCase() || "M";
+}
+
+function gitStatusClass(status) {
+  return `status-${gitStatusBadge(status).toLowerCase()}`;
+}
+
+function pickGitFile(status, current) {
+  const files = gitFilesFromStatus(status);
+  if (current) {
+    const matching = files.find((file) => gitFileKey(file) === gitFileKey(current));
+    if (matching) return matching;
+    const samePath = files.find((file) => file.file === current.file);
+    if (samePath) return samePath;
+  }
+  const preferredUnstaged = files.find((item) => item.section === "unstaged" && /rate[_-]?limit(?:er)?\.(rb|ts)$/i.test(item.file));
+  const preferredStaged = files.find((item) => item.section === "staged" && /rate[_-]?limit(?:er)?\.(rb|ts)$/i.test(item.file));
+  return preferredUnstaged
+    || preferredStaged
+    || files.find((item) => item.section === "staged")
+    || files.find((item) => item.section === "unstaged")
+    || files.find((item) => item.section === "untracked")
+    || files[0]
+    || null;
+}
+
 function DiffView({ task, initialMode, onBack }) {
   const [mode, setMode] = useState(initialMode === "unified" ? "unified" : "split");
   const [status, setStatus] = useState(null);
   const [selected, setSelected] = useState(null);
   const [diff, setDiff] = useState("");
+  const [gitMessage, setGitMessage] = useState("");
+  const [contextMenu, setContextMenu] = useState(null);
+  const [actioningKey, setActioningKey] = useState("");
+  const [expandedCommit, setExpandedCommit] = useState("");
+  const [commitFilesByHash, setCommitFilesByHash] = useState({});
+  const [commitFilesLoading, setCommitFilesLoading] = useState("");
+  const [commitFilesError, setCommitFilesError] = useState("");
+  const files = useMemo(() => gitFilesFromStatus(status), [status]);
+  const selectedIndex = files.findIndex((file) => gitFileKey(file) === gitFileKey(selected));
+  const fetchStatus = useCallback(() => api(`/git/status?path=${encodeURIComponent(task.workspaceDir)}`), [task.workspaceDir]);
+
   useEffect(() => {
-    api(`/git/status?path=${encodeURIComponent(task.workspaceDir)}`).then((payload) => {
+    let cancelled = false;
+    setStatus(null);
+    setSelected(null);
+    setDiff("");
+    setGitMessage("");
+    setExpandedCommit("");
+    setCommitFilesByHash({});
+    setCommitFilesLoading("");
+    setCommitFilesError("");
+    fetchStatus().then((payload) => {
+      if (cancelled) return;
       setStatus(payload);
-      const preferredUnstaged = (payload.unstaged || []).find((item) => /rate[_-]?limit(?:er)?\.(rb|ts)$/i.test(String(item.file || "")));
-      const preferredStaged = (payload.staged || []).find((item) => /rate[_-]?limit(?:er)?\.(rb|ts)$/i.test(String(item.file || "")));
-      const firstStaged = preferredStaged || (payload.staged || [])[0];
-      const firstUnstaged = (payload.unstaged || [])[0];
-      const firstUntracked = (payload.untracked || [])[0];
-      const first = preferredUnstaged ? { ...preferredUnstaged, section: "unstaged" }
-        : firstStaged ? { ...firstStaged, section: "staged" }
-          : firstUnstaged ? { ...firstUnstaged, section: "unstaged" }
-            : firstUntracked ? { file: firstUntracked, status: "A", section: "untracked" }
-              : null;
-      setSelected(first);
-    }).catch((err) => setDiff(err.message));
-  }, [task.workspaceDir]);
+      setSelected(pickGitFile(payload, null));
+    }).catch((err) => {
+      if (!cancelled) setDiff(err.message);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchStatus]);
+
   useEffect(() => {
     if (!selected) return;
-    api("/git/diff", { method: "POST", body: JSON.stringify({ path: task.workspaceDir, file: selected.file, section: selected.section || "unstaged" }) })
-      .then((payload) => setDiff(payload.diff || "No diff."))
-      .catch((err) => setDiff(err.message));
-  }, [selected?.file, selected?.section, task.workspaceDir]);
-  const files = [
-    ...(status?.staged || []).map((file) => ({ ...file, section: "staged" })),
-    ...(status?.unstaged || []).map((file) => ({ ...file, section: "unstaged" })),
-    ...(status?.untracked || []).map((file) => ({ file, status: "A", section: "untracked" }))
-  ];
+    let cancelled = false;
+    setDiff("Loading diff...");
+    const endpoint = selected.section === "commit" ? "/git/commit-diff" : "/git/diff";
+    const body = selected.section === "commit"
+      ? { path: task.workspaceDir, hash: selected.commitHash, file: selected.file }
+      : { path: task.workspaceDir, file: selected.file, section: selected.section || "unstaged" };
+    api(endpoint, { method: "POST", body: JSON.stringify(body) })
+      .then((payload) => {
+        if (!cancelled) setDiff(payload.diff || "No diff.");
+      })
+      .catch((err) => {
+        if (!cancelled) setDiff(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.file, selected?.section, selected?.commitHash, task.workspaceDir]);
+
+  useEffect(() => {
+    const closeContextMenu = () => setContextMenu(null);
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") closeContextMenu();
+    };
+    window.addEventListener("click", closeContextMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", closeContextMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
   const fileGroups = [
     { label: "Staged", files: files.filter((file) => file.section === "staged") },
-    { label: "Modified", files: files.filter((file) => file.section === "unstaged" && file.status === "M") },
+    { label: "Modified", files: files.filter((file) => file.section === "unstaged" && file.status !== "A") },
     { label: "New Files", files: files.filter((file) => file.section === "unstaged" && file.status === "A") },
     { label: "Untracked", files: files.filter((file) => file.section === "untracked") }
   ].filter((group) => group.files.length > 0);
-  const selectedIndex = files.findIndex((file) => file.file === selected?.file && file.section === selected?.section);
+
+  const refreshGitStatus = async (preferred = selected) => {
+    const payload = await fetchStatus();
+    setStatus(payload);
+    setSelected(pickGitFile(payload, preferred));
+    return payload;
+  };
+  const selectFile = (file) => {
+    setSelected(file);
+    setContextMenu(null);
+    setGitMessage("");
+  };
+  const openContextMenu = (event, file) => {
+    event.preventDefault();
+    const menuWidth = 190;
+    const menuHeight = 124;
+    const left = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+    const top = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+    setContextMenu({ file, left: Math.max(8, left), top: Math.max(8, top) });
+  };
+  const runGitAction = async (action, file = selected) => {
+    if (!file || file.section === "commit") return;
+    const key = `${action}:${gitFileKey(file)}`;
+    setActioningKey(key);
+    setGitMessage("");
+    try {
+      await api(`/git/${action}`, { method: "POST", body: JSON.stringify({ path: task.workspaceDir, file: file.file }) });
+      await refreshGitStatus(file);
+      setGitMessage(`${action === "stage" ? "Staged" : "Unstaged"} ${file.file}`);
+      setContextMenu(null);
+    } catch (err) {
+      setGitMessage(err.message);
+    } finally {
+      setActioningKey("");
+    }
+  };
+  const openNative = async (file = selected) => {
+    if (!file || file.section === "commit") return;
+    const key = `open:${gitFileKey(file)}`;
+    setActioningKey(key);
+    setGitMessage("");
+    try {
+      await api("/open-in-native", { method: "POST", body: JSON.stringify({ path: task.workspaceDir, file: file.file }) });
+      setGitMessage(`Opened ${file.file}`);
+      setContextMenu(null);
+    } catch (err) {
+      setGitMessage(err.message);
+    } finally {
+      setActioningKey("");
+    }
+  };
+  const toggleCommit = async (commit) => {
+    const hash = String(commit.hash || "").trim();
+    if (!hash) return;
+    setContextMenu(null);
+    setCommitFilesError("");
+    if (expandedCommit === hash) {
+      setExpandedCommit("");
+      return;
+    }
+    setExpandedCommit(hash);
+    if (commitFilesByHash[hash]) return;
+    setCommitFilesLoading(hash);
+    try {
+      const payload = await api("/git/commit-files", { method: "POST", body: JSON.stringify({ path: task.workspaceDir, hash }) });
+      setCommitFilesByHash((current) => ({ ...current, [hash]: payload.files || [] }));
+    } catch (err) {
+      setCommitFilesError(err.message);
+      setCommitFilesByHash((current) => ({ ...current, [hash]: [] }));
+    } finally {
+      setCommitFilesLoading("");
+    }
+  };
+  const selectCommitFile = (commit, file) => {
+    const hash = String(commit.hash || "").trim();
+    setSelected({
+      ...file,
+      status: gitStatusBadge(file.status),
+      section: "commit",
+      commitHash: hash,
+      commitMessage: commit.message || ""
+    });
+    setGitMessage("");
+    setContextMenu(null);
+  };
+  const selectedCommitFiles = selected?.section === "commit" ? commitFilesByHash[selected.commitHash] || [] : null;
+  const selectedCommitIndex = selectedCommitFiles ? selectedCommitFiles.findIndex((file) => gitFileKey({ ...file, section: "commit", commitHash: selected.commitHash }) === gitFileKey(selected)) : -1;
+  const panelTotalFiles = selectedCommitFiles ? selectedCommitFiles.length : files.length;
+  const panelSelectedPosition = selectedCommitFiles ? selectedCommitIndex + 1 : selected?.order || selectedIndex + 1;
+
   return (
     <section className="center-view diff-view">
       <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Tasks</button>
@@ -1494,7 +1677,40 @@ function DiffView({ task, initialMode, onBack }) {
         <aside className="diff-sidebar">
           <div className="panel-heading"><h2>Commit History</h2><span>{status?.commits?.length || 0}</span></div>
           <div className="commit-list">
-            {(status?.commits || []).slice(0, 5).map((commit) => <div className="commit-row" key={commit.hash}><b>{commit.hash}</b><span>{commit.message}</span></div>)}
+            {(status?.commits || []).slice(0, 10).map((commit) => {
+              const expanded = expandedCommit === commit.hash;
+              const commitFiles = commitFilesByHash[commit.hash] || [];
+              return (
+                <div className="commit-block" key={commit.hash}>
+                  <button type="button" className={`commit-row ${expanded ? "expanded" : ""}`} onClick={() => toggleCommit(commit)}>
+                    <ChevronRight className="commit-chevron" size={13} />
+                    <b>{commit.hash}</b>
+                    <span>{commit.message}</span>
+                  </button>
+                  {expanded && (
+                    <div className="commit-files">
+                      {commitFilesLoading === commit.hash && <div className="commit-file-state">Loading files...</div>}
+                      {commitFilesError && commitFilesLoading !== commit.hash && <div className="commit-file-state error">{commitFilesError}</div>}
+                      {!commitFilesLoading && !commitFilesError && commitFiles.length === 0 && <div className="commit-file-state">No files changed</div>}
+                      {commitFiles.map((file) => {
+                        const commitFile = { ...file, section: "commit", commitHash: commit.hash };
+                        return (
+                          <button
+                            type="button"
+                            key={`${commit.hash}-${file.file}`}
+                            className={`commit-file-row ${gitFileKey(selected) === gitFileKey(commitFile) ? "active" : ""}`}
+                            onClick={() => selectCommitFile(commit, file)}
+                          >
+                            <span className={`git-status-badge ${gitStatusClass(file.status)}`}>{gitStatusBadge(file.status)}</span>
+                            <em>{file.file}</em>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <div className="panel-heading"><h2>Current Changes</h2><span>{files.length}</span></div>
           <div className="file-list">
@@ -1502,57 +1718,270 @@ function DiffView({ task, initialMode, onBack }) {
               <div className="file-group" key={group.label}>
                 <div className="file-group-label"><span>{group.label}</span><b>{group.files.length}</b></div>
                 {group.files.map((file) => (
-                  <button key={`${file.section}-${file.file}`} className={selected?.file === file.file ? "active" : ""} onClick={() => setSelected(file)}>
-                    <span>{file.status || "M"}</span><em>{file.file}</em>
+                  <button
+                    key={gitFileKey(file)}
+                    className={gitFileKey(selected) === gitFileKey(file) ? "active" : ""}
+                    onClick={() => selectFile(file)}
+                    onContextMenu={(event) => openContextMenu(event, file)}
+                  >
+                    <span className={`git-status-badge ${gitStatusClass(file.status)}`}>{gitStatusBadge(file.status)}</span>
+                    <em>{file.file}</em>
                   </button>
                 ))}
               </div>
             ))}
           </div>
         </aside>
-        <DiffPanel mode={mode} file={selected?.file} diff={diff} totalFiles={files.length} selectedPosition={selected?.order || selectedIndex + 1} />
+        <DiffPanel
+          mode={mode}
+          fileEntry={selected}
+          diff={diff}
+          totalFiles={panelTotalFiles}
+          selectedPosition={panelSelectedPosition}
+          gitMessage={gitMessage}
+          actioningKey={actioningKey}
+          onGitAction={runGitAction}
+          onOpenNative={openNative}
+        />
       </div>
+      {contextMenu && (
+        <div
+          className="git-context-menu"
+          style={{ left: contextMenu.left, top: contextMenu.top }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button onClick={() => selectFile(contextMenu.file)}><FileCode2 size={14} />View Diff</button>
+          {contextMenu.file.section === "staged" ? (
+            <button onClick={() => runGitAction("unstage", contextMenu.file)} disabled={actioningKey === `unstage:${gitFileKey(contextMenu.file)}`}>
+              <ArrowDown size={14} />Unstage
+            </button>
+          ) : (
+            <button onClick={() => runGitAction("stage", contextMenu.file)} disabled={actioningKey === `stage:${gitFileKey(contextMenu.file)}`}>
+              <ArrowUp size={14} />Stage
+            </button>
+          )}
+          <button onClick={() => openNative(contextMenu.file)} disabled={actioningKey === `open:${gitFileKey(contextMenu.file)}`}>
+            <ExternalLink size={14} />Open in Native App
+          </button>
+        </div>
+      )}
     </section>
   );
 }
 
-function DiffPanel({ mode, file, diff, totalFiles = 0, selectedPosition = 1 }) {
-  const lines = diff ? diff.split("\n").filter((line) => !/^diff --git /.test(line) && !/^index /.test(line) && !/^--- /.test(line) && !/^\+\+\+ /.test(line)) : [];
+function commonDiffParts(before, after) {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start += 1;
+  let endBefore = before.length - 1;
+  let endAfter = after.length - 1;
+  while (endBefore >= start && endAfter >= start && before[endBefore] === after[endAfter]) {
+    endBefore -= 1;
+    endAfter -= 1;
+  }
+  const oldChanged = before.slice(start, endBefore + 1);
+  const newChanged = after.slice(start, endAfter + 1);
+  return {
+    before: [
+      { text: before.slice(0, start), highlight: false },
+      { text: oldChanged, highlight: oldChanged.length > 0 },
+      { text: before.slice(endBefore + 1), highlight: false }
+    ].filter((part) => part.text.length > 0),
+    after: [
+      { text: after.slice(0, start), highlight: false },
+      { text: newChanged, highlight: newChanged.length > 0 },
+      { text: after.slice(endAfter + 1), highlight: false }
+    ].filter((part) => part.text.length > 0)
+  };
+}
+
+function plainParts(text) {
+  return [{ text, highlight: false }];
+}
+
+function buildDiffRows(diffText) {
+  if (!diffText) return [];
+  const lines = String(diffText).split("\n");
+  const rows = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (/^@@ /.test(line)) {
+      const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) {
+        oldLine = Number(match[1]) - 1;
+        newLine = Number(match[2]) - 1;
+      }
+      rows.push({ type: "hunk", marker: "", oldNumber: "", newNumber: "", parts: plainParts(line) });
+      index += 1;
+      continue;
+    }
+    if (/^(diff --git|index |--- |\+\+\+ )/.test(line)) {
+      rows.push({ type: "header", marker: "", oldNumber: "", newNumber: "", parts: plainParts(line) });
+      index += 1;
+      continue;
+    }
+    if (line.startsWith("-")) {
+      const removed = [];
+      const added = [];
+      while (index < lines.length && lines[index].startsWith("-") && !lines[index].startsWith("--- ")) {
+        removed.push(lines[index].slice(1));
+        index += 1;
+      }
+      while (index < lines.length && lines[index].startsWith("+") && !lines[index].startsWith("+++ ")) {
+        added.push(lines[index].slice(1));
+        index += 1;
+      }
+      const count = Math.max(removed.length, added.length);
+      for (let pairIndex = 0; pairIndex < count; pairIndex += 1) {
+        const removedText = removed[pairIndex];
+        const addedText = added[pairIndex];
+        const paired = removedText !== undefined && addedText !== undefined ? commonDiffParts(removedText, addedText) : null;
+        if (removedText !== undefined) {
+          oldLine += 1;
+          rows.push({
+            type: "remove",
+            marker: "-",
+            oldNumber: oldLine,
+            newNumber: "",
+            parts: paired ? paired.before : plainParts(removedText)
+          });
+        }
+        if (addedText !== undefined) {
+          newLine += 1;
+          rows.push({
+            type: "add",
+            marker: "+",
+            oldNumber: "",
+            newNumber: newLine,
+            parts: paired ? paired.after : plainParts(addedText)
+          });
+        }
+      }
+      continue;
+    }
+    if (line.startsWith("+") && !line.startsWith("+++ ")) {
+      newLine += 1;
+      rows.push({ type: "add", marker: "+", oldNumber: "", newNumber: newLine, parts: plainParts(line.slice(1)) });
+      index += 1;
+      continue;
+    }
+    if (line.startsWith(" ")) {
+      oldLine += 1;
+      newLine += 1;
+      rows.push({ type: "context", marker: " ", oldNumber: oldLine, newNumber: newLine, parts: plainParts(line.slice(1)) });
+      index += 1;
+      continue;
+    }
+    rows.push({ type: "context", marker: "", oldNumber: "", newNumber: "", parts: plainParts(line || " ") });
+    index += 1;
+  }
+  return rows;
+}
+
+function DiffPanel({ mode, fileEntry, diff, totalFiles = 0, selectedPosition = 1, gitMessage, actioningKey, onGitAction, onOpenNative }) {
+  const rows = useMemo(() => buildDiffRows(diff), [diff]);
+  const file = fileEntry?.file;
+  const isCommitSelection = fileEntry?.section === "commit";
+  const title = isCommitSelection && fileEntry?.commitHash ? `${file} @ ${fileEntry.commitHash.slice(0, 7)}` : file;
+  const action = fileEntry?.section === "staged" ? "unstage" : "stage";
+  const actionLabel = action === "stage" ? "Stage" : "Unstage";
+  const actionIcon = action === "stage" ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
   return (
     <div className="diff-panel">
       <div className="diff-file-header">
-        <strong>{file || "No file selected"}</strong>
-        <span>M</span>
+        <strong>{title || "No file selected"}</strong>
+        <span>{gitStatusBadge(fileEntry?.status)}</span>
+        {isCommitSelection ? (
+          <span className="diff-context-pill"><GitBranch size={13} />Commit</span>
+        ) : (
+          <button className="diff-action-btn" onClick={() => onGitAction(action, fileEntry)} disabled={!fileEntry || actioningKey === `${action}:${gitFileKey(fileEntry)}`}>
+            {actionIcon}{actionLabel}
+          </button>
+        )}
+        {isCommitSelection ? (
+          <span className="diff-header-spacer" />
+        ) : (
+          <button className="icon-btn small" aria-label="Open selected file in native app" onClick={() => onOpenNative(fileEntry)} disabled={!fileEntry || actioningKey === `open:${gitFileKey(fileEntry)}`}><ExternalLink size={13} /></button>
+        )}
         <button className="icon-btn small"><Copy size={13} /></button>
-        <span>{Math.max(1, selectedPosition)} of {Math.max(1, totalFiles || lines.length)}</span>
+        <span>{Math.max(1, selectedPosition)} of {Math.max(1, totalFiles || rows.length)}</span>
         <button className="icon-btn small"><ChevronLeft size={13} /></button>
         <button className="icon-btn small"><ChevronRight size={13} /></button>
         <button className="icon-btn small"><MoreHorizontal size={13} /></button>
       </div>
+      {gitMessage && <div className="diff-message">{gitMessage}</div>}
       {mode === "split" ? (
-        <div className="split-diff">
-          <CodeColumn title="Before (main)" lines={lines.filter((line) => !line.startsWith("+"))} />
-          <CodeColumn title="After (feature/rate-limit)" lines={lines.filter((line) => !line.startsWith("-"))} />
-        </div>
+        <SplitDiffTable rows={rows} />
       ) : (
-        <pre className="unified-diff">{lines.map((line, index) => <DiffLine key={index} line={line} number={index + 1} />)}</pre>
+        <UnifiedDiffTable rows={rows} />
       )}
     </div>
   );
 }
 
-function CodeColumn({ title, lines }) {
+function DiffContent({ row }) {
   return (
-    <div className="code-column">
-      <div className="code-column-header">{title}<button>File View</button></div>
-      <pre>{lines.map((line, index) => <DiffLine key={index} line={line} number={index + 1} />)}</pre>
+    <>
+      <span className="diff-marker">{row.marker}</span>
+      <span className="diff-text">
+        {row.parts.map((part, index) => (
+          <span key={index} className={part.highlight ? "diff-inline-highlight" : ""}>{part.text}</span>
+        ))}
+      </span>
+    </>
+  );
+}
+
+function UnifiedDiffTable({ rows }) {
+  return (
+    <div className="unified-diff">
+      <table className="diff-table-v2">
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index} className={`diff-row-v2 ${row.type}`}>
+              <td className="diff-line-no">{row.oldNumber}</td>
+              <td className="diff-line-no">{row.newNumber}</td>
+              <td className="diff-code"><DiffContent row={row} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function DiffLine({ line, number }) {
-  const cls = line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : line.startsWith("@@") ? "hunk" : "";
-  return <span className={`diff-line ${cls}`}><em>{number}</em>{line || " "}</span>;
+function SplitDiffTable({ rows }) {
+  return (
+    <div className="split-diff">
+      <div className="split-diff-header"><span>Before</span><span>After</span></div>
+      <div className="split-diff-body">
+        {rows.map((row, index) => {
+          if (row.type === "header" || row.type === "hunk") {
+            return (
+              <div key={index} className={`split-diff-row meta ${row.type}`}>
+                <div><DiffContent row={row} /></div>
+              </div>
+            );
+          }
+          return (
+            <div key={index} className={`split-diff-row ${row.type}`}>
+              <div className={`split-diff-cell before ${row.type === "remove" || row.type === "context" ? "filled" : ""}`}>
+                <span className="diff-line-no">{row.type === "remove" || row.type === "context" ? row.oldNumber : ""}</span>
+                {(row.type === "remove" || row.type === "context") && <span className="diff-code"><DiffContent row={row} /></span>}
+              </div>
+              <div className={`split-diff-cell after ${row.type === "add" || row.type === "context" ? "filled" : ""}`}>
+                <span className="diff-line-no">{row.type === "add" || row.type === "context" ? row.newNumber : ""}</span>
+                {(row.type === "add" || row.type === "context") && <span className="diff-code"><DiffContent row={row} /></span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function GoalView({ task, onBack, onSaved }) {

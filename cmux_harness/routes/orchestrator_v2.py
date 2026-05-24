@@ -320,6 +320,33 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             diff = read_git_diff(engine, target, file, section)
             handler._json_response({"ok": True, "path": target, "file": file, "section": section, "diff": diff})
             return True
+        if path == "/api/orchestrator-v2/git/commit-files":
+            target = _resolve_body_path(data)
+            commit_hash = _validated_commit_hash(data.get("hash"))
+            files = read_git_commit_files(engine, target, commit_hash)
+            handler._json_response({"ok": True, "path": target, "hash": commit_hash, "files": files})
+            return True
+        if path == "/api/orchestrator-v2/git/commit-diff":
+            target = _resolve_body_path(data)
+            commit_hash = _validated_commit_hash(data.get("hash"))
+            file = str(data.get("file") or "").strip()
+            if not file:
+                raise OrchestratorV2RouteError("file required", 400)
+            diff = read_git_commit_diff(engine, target, commit_hash, file)
+            handler._json_response({"ok": True, "path": target, "hash": commit_hash, "file": file, "diff": diff})
+            return True
+        if path == "/api/orchestrator-v2/git/stage":
+            payload = update_git_index(engine, data, stage=True)
+            handler._json_response({"ok": True, **payload})
+            return True
+        if path == "/api/orchestrator-v2/git/unstage":
+            payload = update_git_index(engine, data, stage=False)
+            handler._json_response({"ok": True, **payload})
+            return True
+        if path == "/api/orchestrator-v2/open-in-native":
+            payload = open_native_file(data)
+            handler._json_response({"ok": True, **payload})
+            return True
         if path == "/api/orchestrator-v2/approvals":
             approval = repo.create_approval_request(data, actor="agent")
             handler._json_response({"ok": True, "approval": approval}, 201)
@@ -1063,6 +1090,16 @@ def read_git_diff(engine, cwd: str, file: str, section: str) -> str:
         raise OrchestratorV2RouteError("path required", 400)
     if not file:
         raise OrchestratorV2RouteError("file required", 400)
+    full_path = os.path.join(cwd, file)
+    if section == "untracked" and os.path.isdir(full_path):
+        parts = []
+        for root, _dirs, files in os.walk(full_path):
+            for fname in sorted(files):
+                fpath = os.path.relpath(os.path.join(root, fname), cwd)
+                part = engine._run_git_command(cwd, ["diff", "--no-index", "/dev/null", fpath], max_bytes=100 * 1024)
+                if not part.startswith("[error]"):
+                    parts.append(part)
+        return "\n".join(parts) if parts else "(empty directory)"
     if section == "staged":
         args = ["diff", "--cached", "--", file]
     elif section == "untracked":
@@ -1073,6 +1110,91 @@ def read_git_diff(engine, cwd: str, file: str, section: str) -> str:
     if result.startswith("[error]"):
         raise OrchestratorV2RouteError(result, 500)
     return result
+
+
+def read_git_commit_files(engine, cwd: str, commit_hash: str) -> list[dict[str, str]]:
+    if _fake_providers_enabled():
+        return [
+            {"status": "M", "file": "app/services/rate_limiter.rb"},
+            {"status": "A", "file": "spec/services/rate_limiter_spec.rb"},
+            {"status": "D", "file": "docs/legacy_rate_limit.md"},
+        ]
+    if not cwd or not os.path.isdir(cwd):
+        raise OrchestratorV2RouteError("path required", 400)
+    result = engine._run_git_command(cwd, ["diff-tree", "--no-commit-id", "--name-status", "-r", commit_hash])
+    if result.startswith("[error]"):
+        raise OrchestratorV2RouteError(result, 500)
+    files = []
+    for line in result.splitlines():
+        parts = line.split("	")
+        if len(parts) < 2:
+            continue
+        status = parts[0]
+        file = parts[-1]
+        if status and file:
+            item = {"status": status, "file": file}
+            if len(parts) > 2:
+                item["previousFile"] = parts[1]
+            files.append(item)
+    return files
+
+
+def read_git_commit_diff(engine, cwd: str, commit_hash: str, file: str) -> str:
+    if _fake_providers_enabled():
+        return fake_git_diff(file)
+    if not cwd or not os.path.isdir(cwd):
+        raise OrchestratorV2RouteError("path required", 400)
+    result = engine._run_git_command(cwd, ["diff", f"{commit_hash}~1", commit_hash, "--", file], max_bytes=50 * 1024)
+    if result.startswith("[error]"):
+        result = engine._run_git_command(cwd, ["show", commit_hash, "--", file], max_bytes=50 * 1024)
+    if result.startswith("[error]"):
+        raise OrchestratorV2RouteError(result, 500)
+    return result
+
+
+def update_git_index(engine, data: dict[str, Any], *, stage: bool) -> dict[str, Any]:
+    target = _resolve_body_path(data)
+    file = str(data.get("file") or "").strip()
+    if not file:
+        raise OrchestratorV2RouteError("file required", 400)
+    args = ["add", "--", file] if stage else ["reset", "HEAD", "--", file]
+    result = engine._run_git_command(target, args)
+    if result.startswith("[error]"):
+        raise OrchestratorV2RouteError(result, 500)
+    return {"path": target, "file": file, "action": "stage" if stage else "unstage"}
+
+
+def open_native_file(data: dict[str, Any]) -> dict[str, Any]:
+    file = str(data.get("file") or "").strip()
+    if file:
+        target = _resolve_body_path(data)
+        full_path = os.path.realpath(os.path.join(target, file))
+        try:
+            if os.path.commonpath([target, full_path]) != target:
+                raise OrchestratorV2RouteError("invalid file path", 400)
+        except ValueError as exc:
+            raise OrchestratorV2RouteError("invalid file path", 400) from exc
+    else:
+        raw_path = str(data.get("path") or "").strip()
+        if not raw_path:
+            raise OrchestratorV2RouteError("path required", 400)
+        full_path = os.path.realpath(os.path.expanduser(raw_path))
+    if not os.path.exists(full_path):
+        raise OrchestratorV2RouteError(f"file not found: {full_path}", 404)
+    try:
+        subprocess.run(["open", full_path], check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise OrchestratorV2RouteError(str(exc), 500) from exc
+    return {"path": full_path}
+
+
+def _validated_commit_hash(value: Any) -> str:
+    commit_hash = str(value or "").strip()
+    if not commit_hash:
+        raise OrchestratorV2RouteError("hash required", 400)
+    if not re.fullmatch(r"[0-9a-f]{4,40}", commit_hash, flags=re.IGNORECASE):
+        raise OrchestratorV2RouteError("invalid hash", 400)
+    return commit_hash
 
 
 def fake_git_status() -> dict[str, Any]:

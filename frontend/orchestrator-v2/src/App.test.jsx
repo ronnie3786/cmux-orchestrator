@@ -132,6 +132,143 @@ describe("AppShell", () => {
     ));
   });
 
+  it("opens the git context menu and stages or unstages files", async () => {
+    const statusPayload = {
+      ok: true,
+      branch: "orchestrator-v2",
+      commits: [],
+      staged: [{ file: "src/staged.js", status: "M" }],
+      unstaged: [{ file: "src/app.js", status: "M" }],
+      untracked: ["notes/new.md"]
+    };
+    global.fetch = vi.fn((url, options = {}) => {
+      if (String(url).includes("/copilotkit/info")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: "1", agents: {} }) });
+      }
+      if (String(url).includes("/bootstrap")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(bootstrap) });
+      }
+      if (String(url).includes("/orphans")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, orphans: [] }) });
+      }
+      if (String(url).includes("/git/status")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(statusPayload) });
+      }
+      if (String(url).includes("/git/diff")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ok: true,
+            diff: "diff --git a/src/app.js b/src/app.js\n@@ -1,2 +1,2 @@\n-old value\n+new value"
+          })
+        });
+      }
+      if (String(url).includes("/git/stage") || String(url).includes("/git/unstage")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+    });
+
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getAllByText("Ship V2").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("Git Diff"));
+
+    const modifiedFile = await screen.findByText("src/app.js");
+    fireEvent.contextMenu(modifiedFile.closest("button"), { clientX: 24, clientY: 32 });
+
+    expect(screen.getByText("View Diff")).toBeTruthy();
+    const stageAction = screen.getAllByText("Stage").find((element) => element.closest(".git-context-menu"));
+    fireEvent.click(stageAction);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/git/stage",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "/repo", file: "src/app.js" })
+      })
+    ));
+
+    const stagedFile = await screen.findByText("src/staged.js");
+    fireEvent.contextMenu(stagedFile.closest("button"), { clientX: 24, clientY: 32 });
+    fireEvent.click(screen.getByText("Unstage"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/git/unstage",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "/repo", file: "src/staged.js" })
+      })
+    ));
+  });
+
+  it("expands commit history and opens a committed file diff", async () => {
+    const statusPayload = {
+      ok: true,
+      branch: "orchestrator-v2",
+      commits: [{ hash: "abc1234", message: "Add old file changes" }],
+      staged: [],
+      unstaged: [],
+      untracked: []
+    };
+    global.fetch = vi.fn((url) => {
+      if (String(url).includes("/copilotkit/info")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: "1", agents: {} }) });
+      }
+      if (String(url).includes("/bootstrap")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(bootstrap) });
+      }
+      if (String(url).includes("/orphans")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, orphans: [] }) });
+      }
+      if (String(url).includes("/git/status")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(statusPayload) });
+      }
+      if (String(url).includes("/git/commit-files")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ok: true, files: [{ status: "M", file: "src/old.js" }] })
+        });
+      }
+      if (String(url).includes("/git/commit-diff")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ok: true,
+            diff: "diff --git a/src/old.js b/src/old.js\n@@ -1 +1 @@\n-before\n+after"
+          })
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+    });
+
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getAllByText("Ship V2").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("Git Diff"));
+    fireEvent.click(await screen.findByText("abc1234"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/git/commit-files",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "/repo", hash: "abc1234" })
+      })
+    ));
+
+    fireEvent.click(await screen.findByText("src/old.js"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/git/commit-diff",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "/repo", hash: "abc1234", file: "src/old.js" })
+      })
+    ));
+    expect(await screen.findByText("src/old.js @ abc1234")).toBeTruthy();
+    expect(screen.getByText("Commit")).toBeTruthy();
+  });
+
   it("renames a task from its card", async () => {
     global.fetch = vi.fn((url, options = {}) => {
       if (String(url).includes("/copilotkit/info")) {

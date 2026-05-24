@@ -169,6 +169,137 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertEqual(body["path"], str(self.workspace))
         self.assertEqual(mock_run.call_args.args[0][:2], ["osascript", "-e"])
 
+    def test_git_stage_route_runs_git_add_for_workspace_path(self):
+        engine = self._engine()
+        engine._run_git_command.return_value = ""
+
+        handler = self._post_json("/api/orchestrator-v2/git/stage", {
+            "path": str(self.workspace),
+            "file": "src/app.py",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["action"], "stage")
+        engine._run_git_command.assert_called_once_with(str(self.workspace.resolve()), ["add", "--", "src/app.py"])
+
+    def test_git_unstage_route_runs_git_reset_for_workspace_path(self):
+        engine = self._engine()
+        engine._run_git_command.return_value = ""
+
+        handler = self._post_json("/api/orchestrator-v2/git/unstage", {
+            "path": str(self.workspace),
+            "file": "src/app.py",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["action"], "unstage")
+        engine._run_git_command.assert_called_once_with(str(self.workspace.resolve()), ["reset", "HEAD", "--", "src/app.py"])
+
+    def test_git_diff_route_expands_untracked_directory(self):
+        untracked_dir = self.workspace / "notes"
+        untracked_dir.mkdir()
+        (untracked_dir / "a.txt").write_text("A", encoding="utf-8")
+        (untracked_dir / "b.txt").write_text("B", encoding="utf-8")
+        engine = self._engine()
+        engine._run_git_command.side_effect = ["diff a", "diff b"]
+
+        handler = self._post_json("/api/orchestrator-v2/git/diff", {
+            "path": str(self.workspace),
+            "file": "notes",
+            "section": "untracked",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertEqual(body["diff"], "diff a\ndiff b")
+        self.assertEqual(engine._run_git_command.call_args_list[0].args[1], ["diff", "--no-index", "/dev/null", "notes/a.txt"])
+        self.assertEqual(engine._run_git_command.call_args_list[1].args[1], ["diff", "--no-index", "/dev/null", "notes/b.txt"])
+
+    def test_git_commit_files_route_returns_changed_files(self):
+        engine = self._engine()
+        engine._run_git_command.return_value = "M\tsrc/app.py\nA\ttests/test_app.py\nR100\told.py\tnew.py"
+
+        handler = self._post_json("/api/orchestrator-v2/git/commit-files", {
+            "path": str(self.workspace),
+            "hash": "abc1234",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["files"], [
+            {"status": "M", "file": "src/app.py"},
+            {"status": "A", "file": "tests/test_app.py"},
+            {"status": "R100", "file": "new.py", "previousFile": "old.py"},
+        ])
+        engine._run_git_command.assert_called_once_with(
+            str(self.workspace.resolve()),
+            ["diff-tree", "--no-commit-id", "--name-status", "-r", "abc1234"],
+        )
+
+    def test_git_commit_files_route_rejects_invalid_hash(self):
+        engine = self._engine()
+
+        handler = self._post_json("/api/orchestrator-v2/git/commit-files", {
+            "path": str(self.workspace),
+            "hash": "abc1234;rm",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        handler.send_response.assert_called_once_with(400)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["error"], "invalid hash")
+        engine._run_git_command.assert_not_called()
+
+    def test_git_commit_diff_route_returns_file_diff(self):
+        engine = self._engine()
+        engine._run_git_command.return_value = "diff --git a/src/app.py b/src/app.py"
+
+        handler = self._post_json("/api/orchestrator-v2/git/commit-diff", {
+            "path": str(self.workspace),
+            "hash": "abc1234",
+            "file": "src/app.py",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertEqual(body["diff"], "diff --git a/src/app.py b/src/app.py")
+        engine._run_git_command.assert_called_once_with(
+            str(self.workspace.resolve()),
+            ["diff", "abc1234~1", "abc1234", "--", "src/app.py"],
+            max_bytes=50 * 1024,
+        )
+
+    def test_git_commit_diff_route_falls_back_to_show_for_root_commit(self):
+        engine = self._engine()
+        engine._run_git_command.side_effect = ["[error] bad revision", "root commit diff"]
+
+        handler = self._post_json("/api/orchestrator-v2/git/commit-diff", {
+            "path": str(self.workspace),
+            "hash": "abc1234",
+            "file": "src/app.py",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertEqual(body["diff"], "root commit diff")
+        self.assertEqual(engine._run_git_command.call_args_list[0].args[1], ["diff", "abc1234~1", "abc1234", "--", "src/app.py"])
+        self.assertEqual(engine._run_git_command.call_args_list[1].args[1], ["show", "abc1234", "--", "src/app.py"])
+
+    def test_open_in_native_route_resolves_workspace_file(self):
+        target = self.workspace / "src" / "app.py"
+        target.parent.mkdir()
+        target.write_text("print('hi')", encoding="utf-8")
+
+        with patch("cmux_harness.routes.orchestrator_v2.subprocess.run") as mock_run:
+            handler = self._post_json("/api/orchestrator-v2/open-in-native", {
+                "path": str(self.workspace),
+                "file": "src/app.py",
+            })
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["path"], str(target.resolve()))
+        mock_run.assert_called_once_with(["open", str(target.resolve())], check=True, capture_output=True, text=True)
+
     def test_cmux_session_input_route_sends_text_to_session(self):
         self.cmux.send_text.return_value = {"ok": True}
 
