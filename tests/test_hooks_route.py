@@ -60,6 +60,8 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertIn("terminal polling", handler.response["hookSpecificOutput"]["permissionDecisionReason"])
+        mock_resolve.assert_not_called()
         engine.orchestrator._append_message.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
@@ -72,6 +74,7 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        mock_resolve.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_non_objective_ls_tool_uses_harness_auto_polling(self, mock_resolve):
@@ -83,6 +86,7 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        mock_resolve.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_destructive_bash_denied(self, mock_resolve):
@@ -94,12 +98,10 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
-        engine.orchestrator._append_message.assert_called_once()
-        call_args = engine.orchestrator._append_message.call_args
-        self.assertEqual(call_args[0][1], "approval")
-        metadata = call_args[1].get("metadata") or call_args[0][3]
-        self.assertEqual(metadata["severity_level"], 5)
-        self.assertEqual(metadata["tool_name"], "Bash")
+        self.assertIn("terminal polling", handler.response["hookSpecificOutput"]["permissionDecisionReason"])
+        mock_resolve.assert_not_called()
+        engine.orchestrator._append_message.assert_not_called()
+        engine.orchestrator._log_event.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_safe_bash_approved(self, mock_resolve):
@@ -110,7 +112,9 @@ class TestHandlePreToolUse(unittest.TestCase):
 
         handle_pre_tool_use(handler, data, engine=engine)
 
-        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
+        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        mock_resolve.assert_not_called()
+        engine.orchestrator._append_message.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_ask_user_question_denied(self, mock_resolve):
@@ -122,6 +126,7 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        mock_resolve.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_threshold_4_approves_level_4(self, mock_resolve):
@@ -132,11 +137,11 @@ class TestHandlePreToolUse(unittest.TestCase):
 
         handle_pre_tool_use(handler, data, engine=engine)
 
-        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
+        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        mock_resolve.assert_not_called()
 
-    @patch("cmux_harness.routes.hooks.severity.classify_tool_severity")
     @patch("cmux_harness.routes.hooks._resolve_context")
-    def test_super_auto_approves_above_threshold_hook(self, mock_resolve, mock_classify):
+    def test_super_auto_approves_above_threshold_hook(self, mock_resolve):
         mock_resolve.return_value = {"objective_id": "obj-1", "task_id": "task-1", "workspace_id": "ws-1", "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine(threshold=1)
@@ -145,14 +150,13 @@ class TestHandlePreToolUse(unittest.TestCase):
 
         handle_pre_tool_use(handler, data, engine=engine)
 
-        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
-        self.assertIn("Super Auto", handler.response["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertIn("terminal polling", handler.response["hookSpecificOutput"]["permissionDecisionReason"])
+        mock_resolve.assert_not_called()
         engine.orchestrator._append_message.assert_not_called()
-        mock_classify.assert_not_called()
 
-    @patch("cmux_harness.routes.hooks.severity.classify_tool_severity")
     @patch("cmux_harness.routes.hooks._resolve_context")
-    def test_super_auto_cwd_match_bypasses_non_objective_hook(self, mock_resolve, mock_classify):
+    def test_super_auto_cwd_match_bypasses_non_objective_hook(self, mock_resolve):
         handler = MockHandler()
         engine = self._make_engine(threshold=1)
         engine.workspaces = [{"uuid": "ws-super", "_cwd": "/tmp/project"}]
@@ -161,15 +165,13 @@ class TestHandlePreToolUse(unittest.TestCase):
 
         handle_pre_tool_use(handler, data, engine=engine)
 
-        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "allow")
-        self.assertIn("Super Auto", handler.response["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertIn("terminal polling", handler.response["hookSpecificOutput"]["permissionDecisionReason"])
         mock_resolve.assert_not_called()
-        mock_classify.assert_not_called()
         engine.orchestrator._append_message.assert_not_called()
 
-    @patch("cmux_harness.routes.hooks.severity.classify_tool_severity")
     @patch("cmux_harness.routes.hooks._resolve_context")
-    def test_super_auto_parent_workspace_does_not_bypass_nested_claude_worktree(self, mock_resolve, mock_classify):
+    def test_super_auto_parent_workspace_does_not_bypass_nested_claude_worktree(self, mock_resolve):
         mock_resolve.return_value = {"objective_id": None, "task_id": None, "workspace_id": None, "spec_text": None}
         handler = MockHandler()
         engine = self._make_engine(threshold=1)
@@ -184,8 +186,7 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
-        mock_resolve.assert_called_once()
-        mock_classify.assert_not_called()
+        mock_resolve.assert_not_called()
 
     @patch("cmux_harness.routes.hooks._resolve_context")
     def test_no_escalation_message_when_no_objective(self, mock_resolve):
@@ -197,6 +198,7 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        mock_resolve.assert_not_called()
         # No message appended because objective_id is None
         engine.orchestrator._append_message.assert_not_called()
 
@@ -210,6 +212,7 @@ class TestHandlePreToolUse(unittest.TestCase):
         handle_pre_tool_use(handler, data, engine=engine)
 
         self.assertEqual(handler.response["hookSpecificOutput"]["permissionDecision"], "ask")
+        mock_resolve.assert_not_called()
         self.assertNotIn("task-1", engine.orchestrator._pending_hook_approvals)
         engine.orchestrator._append_message.assert_not_called()
         engine.orchestrator._log_event.assert_not_called()

@@ -18,6 +18,7 @@ REVIEWS_DIR = LOG_DIR / "reviews"
 REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "approval-log.jsonl"
 DEBUG_LOG = LOG_DIR / "debug-log.jsonl"
+AUTO_POLICY_COST_LOG = LOG_DIR / "auto-policy-cost-log.jsonl"
 CONFIG_FILE = LOG_DIR / "workspace-config.json"
 
 MAX_DEBUG_LOG_SIZE = 10 * 1024 * 1024  # 10MB

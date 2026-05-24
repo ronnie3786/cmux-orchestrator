@@ -43,13 +43,18 @@ export function redactValue(value) {
   if (value && typeof value === "object") {
     const out = {};
     for (const [key, item] of Object.entries(value)) {
-      out[key] = /api[_-]?key|authorization|bearer|token|secret|password|credential/i.test(key)
+      out[key] = isSecretKey(key)
         ? "[REDACTED]"
         : redactValue(item);
     }
     return out;
   }
   return typeof value === "string" ? redactText(value) : value;
+}
+
+function isSecretKey(key) {
+  if (/^(input|output|total|cachedInput|reasoning)Tokens$/i.test(key)) return false;
+  return /api[_-]?key|authorization|bearer|token|secret|password|credential/i.test(key);
 }
 
 export function config() {

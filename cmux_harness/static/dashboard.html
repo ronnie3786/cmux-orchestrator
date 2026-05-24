@@ -107,6 +107,36 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 .review-action-btn:hover{border-color:var(--accent);color:var(--accent)}
 .review-action-btn.danger:hover{border-color:var(--red);color:var(--red)}
 .review-more{padding:0;border:none;background:none;color:var(--accent);font-size:12px;cursor:pointer;text-align:left}
+.costs-container{padding:20px 28px 60px}
+.costs-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}
+.costs-title{font-size:20px;font-weight:800;letter-spacing:-.2px}
+.costs-subtitle{margin-top:4px;color:var(--text-muted);font-size:13px;line-height:1.45}
+.costs-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.cost-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.cost-card{border:1px solid var(--border);border-radius:14px;background:var(--surface);padding:16px;min-height:112px;display:flex;flex-direction:column;justify-content:space-between}
+.cost-card-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+.cost-card-value{font-family:'JetBrains Mono','SF Mono','Menlo',monospace;font-size:24px;font-weight:800;color:var(--text);margin-top:8px}
+.cost-card-detail{font-size:12px;color:var(--text-muted);margin-top:8px;line-height:1.45}
+.cost-panel{border:1px solid var(--border);border-radius:14px;background:var(--surface);overflow:hidden}
+.cost-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.cost-panel-title{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
+.cost-provider{font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono','SF Mono','Menlo',monospace}
+.cost-table-wrap{overflow:auto}
+.cost-table{width:100%;border-collapse:collapse;min-width:980px}
+.cost-table th,.cost-table td{padding:11px 12px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left;vertical-align:top;font-size:12px}
+.cost-table th{position:sticky;top:0;background:#111720;color:var(--text-muted);font-weight:800;text-transform:uppercase;letter-spacing:.05em;z-index:1}
+.cost-table tr:last-child td{border-bottom:none}
+.cost-money{font-family:'JetBrains Mono','SF Mono','Menlo',monospace;color:var(--green);font-weight:800}
+.cost-token{font-family:'JetBrains Mono','SF Mono','Menlo',monospace;color:var(--text)}
+.cost-mode{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid var(--border);color:var(--text-muted)}
+.cost-mode.auto{background:rgba(63,185,80,.12);color:var(--green);border-color:rgba(63,185,80,.24)}
+.cost-mode.super{background:rgba(210,153,34,.12);color:var(--yellow);border-color:rgba(210,153,34,.24)}
+.cost-action{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800}
+.cost-action.approve,.cost-action.submit{background:rgba(63,185,80,.12);color:var(--green)}
+.cost-action.alert,.cost-action.error{background:rgba(248,81,73,.12);color:var(--red)}
+.cost-action.ignore{background:rgba(139,148,158,.12);color:var(--text-muted)}
+.cost-reason{max-width:360px;color:var(--text-muted);line-height:1.45}
+.cost-empty{text-align:center;padding:72px 20px;color:var(--text-muted);font-size:14px}
 
 /* Card */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .2s,box-shadow .2s}
@@ -445,7 +475,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
 @media (max-width: 960px){
   .topbar{padding:14px 18px;flex-wrap:wrap;gap:12px}
   .topbar-left,.topbar-actions{width:100%;justify-content:space-between;flex-wrap:wrap}
-  .reviews-container,.grid{padding-left:18px;padding-right:18px}
+  .reviews-container,.costs-container,.grid{padding-left:18px;padding-right:18px}
+  .costs-header{flex-direction:column}
+  .cost-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .reviews-filters{top:120px;flex-direction:column;align-items:stretch}
   .reviews-filters-left{width:100%}
   .reviews-count{text-align:right}
@@ -458,7 +490,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   .topbar{display:grid;grid-template-columns:1fr;gap:8px;padding:calc(10px + var(--mobile-top-clearance)) 12px 10px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(13,17,23,.88);backdrop-filter:blur(22px)}
   .topbar-left{width:100%;gap:8px;align-items:stretch;flex-wrap:wrap}
   .logo{display:none}
-  .view-switcher{width:100%;display:grid;grid-template-columns:1fr 1fr}
+  .view-switcher{width:100%;display:grid;grid-template-columns:1fr 1fr 1fr}
   .view-btn{justify-content:center;min-width:0;min-height:34px;padding:7px 10px;border-radius:999px;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.08);font-size:11px;font-weight:700}
   .topbar-stats{display:none}
   .stat{font-size:12px}
@@ -475,6 +507,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
   .mobile-harness-title h1{margin:0;color:var(--text);font-size:34px;line-height:1;letter-spacing:-.05em}
   .mobile-harness-summary{margin-top:8px;color:var(--text-muted);font-size:13px;line-height:1.35}
   .grid{display:block;padding:0 14px calc(24px + var(--safe-bottom))}
+  .costs-container{padding:12px 12px calc(20px + var(--safe-bottom))}
+  .cost-summary-grid{grid-template-columns:1fr}
+  .costs-actions{width:100%;justify-content:stretch}
+  .costs-actions .btn{flex:1}
   .reviews-container{padding:12px 12px calc(20px + var(--safe-bottom))}
   .mobile-list-title,.grid-divider{display:flex;align-items:center;gap:10px;margin:20px 4px 8px;padding:0;color:var(--text-muted);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
   .mobile-list-title::after,.grid-divider::after{content:'';flex:1;height:1px;background:rgba(255,255,255,.08)}
@@ -571,6 +607,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     <div class="view-switcher">
       <button class="view-btn active" id="viewBtn-center" onclick="switchView('center')">👨‍💻 Command Center</button>
       <button class="view-btn" id="viewBtn-reviews" onclick="switchView('reviews')">&#128203; Reviews <span class="review-badge" id="reviewBadge"></span></button>
+      <button class="view-btn" id="viewBtn-costs" onclick="switchView('costs')">&#36; Auto Costs</button>
     </div>
     <div class="topbar-stats" id="topStats">
       <div class="stat"><span class="stat-dot" style="background:var(--accent)"></span> <span id="statSessions">0</span> sessions</div>
@@ -637,6 +674,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
     <div class="reviews-count" id="reviewsCount">0 reviews</div>
   </div>
   <div class="reviews-list" id="reviewsList"></div>
+</div>
+<div class="costs-container" id="costsContainer" style="display:none">
+  <div class="costs-header">
+    <div>
+      <div class="costs-title">Auto Approval Cost Dashboard</div>
+      <div class="costs-subtitle" id="costsSubtitle">Fireworks MiniMax polling spend, token usage, and recent policy decisions.</div>
+    </div>
+    <div class="costs-actions">
+      <button class="btn" onclick="refreshCosts(true)">Refresh</button>
+    </div>
+  </div>
+  <div class="cost-summary-grid" id="costSummaryGrid"></div>
+  <div class="cost-panel">
+    <div class="cost-panel-head">
+      <div class="cost-panel-title">Recent model checks</div>
+      <div class="cost-provider" id="costProvider">-</div>
+    </div>
+    <div class="cost-table-wrap" id="costTableWrap">
+      <div class="cost-empty">No auto policy model calls logged yet.</div>
+    </div>
+  </div>
 </div>
 
 
@@ -788,14 +846,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sa
       <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
         <div>
           <div class="settings-label">Auto-Approve Classifier</div>
-          <div class="settings-sublabel">Claude Haiku via PreToolUse hooks</div>
+          <div class="settings-sublabel">Fireworks MiniMax via terminal polling</div>
           <div class="ollama-status" id="ollamaStatus">
             <span class="ollama-dot gray" id="ollamaDot"></span>
             <span id="ollamaStatusText">Unknown</span>
           </div>
         </div>
         <select class="settings-select" id="settingsModel" disabled>
-          <option value="haiku">Claude Haiku</option>
+          <option value="accounts/fireworks/models/minimax-m2p7">MiniMax M2.7</option>
         </select>
       </div>
     </div>
@@ -1008,7 +1066,11 @@ var state = {
   reviewModel:'',
   reviewBackend:'claude',
   approvalThreshold:3,
-  backendAvailability:{claude:null,lmstudio:null,ollama:null}
+  autoPolicyProvider:'fireworks',
+  autoPolicyModel:'',
+  autoPolicyRates:{inputPerMillionUSD:0.3,outputPerMillionUSD:1.2},
+  fireworksConfigured:null,
+  backendAvailability:{claude:null,lmstudio:null,ollama:null,fireworks:null}
 };
 var logData = [];
 var feedUiEnabled = false;
@@ -1029,6 +1091,9 @@ var reviewsData = [];
 var reviewsLoaded = false;
 var reviewsRefreshTimer = null;
 var reviewFilters = {status:'all',time:'today',sort:'newest'};
+var costsData = null;
+var costsLoaded = false;
+var costsRefreshTimer = null;
 var mobileExpPanel = 'terminal';
 var notifiedReviewSessions = new Set();
 var lastGlobalReviewsRefresh = 0;
@@ -1610,8 +1675,10 @@ function updatePageTitle() {
     return !state.workspaces.some(function(w){return feedWorkspaceMatches(item,w)});
   }).length;
   var unreadCount = getUnreadReviewCount();
-  var badgeCount = currentView==='reviews' ? unreadCount : waitingCount;
-  var baseTitle = currentView==='reviews' ? 'cmux harness \u2014 Reviews' : 'cmux harness \u2014 Command Center';
+  var badgeCount = currentView==='reviews' ? unreadCount : (currentView==='costs' ? 0 : waitingCount);
+  var baseTitle = currentView==='reviews'
+    ? 'cmux harness \u2014 Reviews'
+    : (currentView==='costs' ? 'cmux harness \u2014 Auto Costs' : 'cmux harness \u2014 Command Center');
   document.title = badgeCount > 0 ? '(' + badgeCount + ') ' + baseTitle : baseTitle;
 }
 
@@ -1647,7 +1714,7 @@ function updateGlobalToggle(){
 }
 
 function updateOllamaStatus(){
-  var avail=state.backendAvailability.claude;
+  var avail=state.fireworksConfigured;
   // Top bar LLM indicator
   var statLlm=document.getElementById('statLlm');
   if(statLlm)statLlm.style.display=(avail===false)?'':'none';
@@ -1658,19 +1725,21 @@ function updateOllamaStatus(){
   if(avail===true){
     dot.className='ollama-dot green';txt.textContent='Ready';
   } else if(avail===false){
-    dot.className='ollama-dot red';txt.textContent='Claude CLI unavailable';
+    dot.className='ollama-dot red';txt.textContent='Fireworks key missing';
   } else {
     dot.className='ollama-dot gray';txt.textContent='Unknown';
   }
 }
 
 window.switchView=function(view){
-  currentView=view==='reviews'?'reviews':'center';
+  currentView=view==='reviews'||view==='costs'?view:'center';
   document.getElementById('grid').style.display=currentView==='center'?'':'none';
   document.getElementById('reviewsContainer').style.display=currentView==='reviews'?'block':'none';
+  var costsContainer=document.getElementById('costsContainer');
+  if(costsContainer)costsContainer.style.display=currentView==='costs'?'block':'none';
   var mobileTitle=document.getElementById('mobileHarnessTitle');
   if(mobileTitle)mobileTitle.style.display=currentView==='center'?'':'none';
-  ['center','reviews'].forEach(function(name){
+  ['center','reviews','costs'].forEach(function(name){
     var btn=document.getElementById('viewBtn-'+name);
     if(btn)btn.classList.toggle('active',currentView===name);
   });
@@ -1682,9 +1751,31 @@ window.switchView=function(view){
         if(currentView==='reviews')refreshReviews();
       },5000);
     }
+    if(costsRefreshTimer!==null){
+      clearInterval(costsRefreshTimer);
+      costsRefreshTimer=null;
+    }
+  } else if(currentView==='costs'){
+    refreshCosts();
+    if(costsRefreshTimer===null){
+      costsRefreshTimer=setInterval(function(){
+        if(currentView==='costs')refreshCosts();
+      },10000);
+    }
+    if(reviewsRefreshTimer!==null){
+      clearInterval(reviewsRefreshTimer);
+      reviewsRefreshTimer=null;
+    }
   } else if(reviewsRefreshTimer!==null){
     clearInterval(reviewsRefreshTimer);
     reviewsRefreshTimer=null;
+    if(costsRefreshTimer!==null){
+      clearInterval(costsRefreshTimer);
+      costsRefreshTimer=null;
+    }
+  } else if(costsRefreshTimer!==null){
+    clearInterval(costsRefreshTimer);
+    costsRefreshTimer=null;
   }
 };
 
@@ -1837,6 +1928,132 @@ window.rerunReview=function(sessionId){
 window.dismissReview=function(sessionId){
   api('POST','/api/reviews/'+encodeURIComponent(sessionId)+'/dismiss',{}).then(function(r){
     if(r&&r.ok)refreshReviews();
+  });
+};
+
+function money(value){
+  var number=Number(value)||0;
+  if(number<0.01)return '$'+number.toFixed(5);
+  return '$'+number.toFixed(2);
+}
+
+function compactNumber(value){
+  var number=Number(value)||0;
+  if(number>=1000000)return (number/1000000).toFixed(2)+'M';
+  if(number>=1000)return (number/1000).toFixed(1)+'k';
+  return String(Math.round(number));
+}
+
+function formatCostTimestamp(value){
+  if(!value)return '-';
+  try{
+    var date=new Date(value);
+    return date.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  }catch(e){return value}
+}
+
+function modeClass(mode){
+  mode=String(mode||'').toLowerCase();
+  return mode==='super'?'super':(mode==='auto'?'auto':'');
+}
+
+function actionClass(action){
+  action=String(action||'').toLowerCase();
+  return ['approve','submit','alert','ignore'].indexOf(action)>=0?action:'error';
+}
+
+function buildCostSummary(data){
+  var totals=(data&&data.totals)||{};
+  var rates=(data&&data.rates)||{};
+  return [
+    {
+      label:'Estimated spend',
+      value:money(totals.estimatedCostUSD),
+      detail:'Input $'+Number(rates.inputPerMillionUSD||0).toFixed(2)+' / 1M, output $'+Number(rates.outputPerMillionUSD||0).toFixed(2)+' / 1M'
+    },
+    {
+      label:'Model calls',
+      value:compactNumber(totals.calls),
+      detail:compactNumber(totals.approvals)+' approvals, '+compactNumber(totals.alerts)+' alerts'
+    },
+    {
+      label:'Input tokens',
+      value:compactNumber(totals.inputTokens),
+      detail:'Sent to Fireworks MiniMax from terminal polling'
+    },
+    {
+      label:'Output tokens',
+      value:compactNumber(totals.outputTokens),
+      detail:compactNumber(totals.ignored)+' ignored checks, '+compactNumber(totals.errors)+' errors'
+    }
+  ].map(function(card){
+    return ''+
+      '<div class="cost-card">'+
+        '<div>'+
+          '<div class="cost-card-label">'+esc(card.label)+'</div>'+
+          '<div class="cost-card-value">'+esc(card.value)+'</div>'+
+        '</div>'+
+        '<div class="cost-card-detail">'+esc(card.detail)+'</div>'+
+      '</div>';
+  }).join('');
+}
+
+function buildCostTable(entries){
+  if(!entries||!entries.length){
+    return '<div class="cost-empty">No auto policy model calls logged yet.</div>';
+  }
+  var rows=entries.map(function(item){
+    var action=String(item.action||'error').toLowerCase();
+    var mode=String(item.autoMode||'').toLowerCase();
+    return ''+
+      '<tr>'+
+        '<td>'+esc(formatCostTimestamp(item.timestamp))+'</td>'+
+        '<td>'+esc(item.workspaceName||'Workspace')+'</td>'+
+        '<td><span class="cost-mode '+modeClass(mode)+'">'+esc(mode||'-')+'</span></td>'+
+        '<td><span class="cost-action '+actionClass(action)+'">'+esc(action||'error')+'</span></td>'+
+        '<td>'+esc(item.submit||'-')+'</td>'+
+        '<td>'+esc(item.severityLevel==null?'-':String(item.severityLevel))+'</td>'+
+        '<td class="cost-token">'+compactNumber(item.inputTokens)+'</td>'+
+        '<td class="cost-token">'+compactNumber(item.outputTokens)+'</td>'+
+        '<td class="cost-money">'+money(item.estimatedCostUSD)+'</td>'+
+        '<td class="cost-reason">'+esc(item.reason||item.error||'')+'</td>'+
+      '</tr>';
+  }).join('');
+  return ''+
+    '<table class="cost-table">'+
+      '<thead><tr>'+
+        '<th>Time</th><th>Workspace</th><th>Mode</th><th>Action</th><th>Submit</th><th>Level</th><th>Input</th><th>Output</th><th>Cost</th><th>Reason</th>'+
+      '</tr></thead>'+
+      '<tbody>'+rows+'</tbody>'+
+    '</table>';
+}
+
+function renderCosts(){
+  var data=costsData||{};
+  var summary=document.getElementById('costSummaryGrid');
+  var provider=document.getElementById('costProvider');
+  var subtitle=document.getElementById('costsSubtitle');
+  var table=document.getElementById('costTableWrap');
+  if(summary)summary.innerHTML=buildCostSummary(data);
+  if(provider)provider.textContent=(data.provider||state.autoPolicyProvider||'fireworks')+' / '+(data.model||state.autoPolicyModel||'minimax');
+  if(subtitle){
+    subtitle.textContent='Terminal polling policy checks only. Raw terminal text is not stored in the cost log.';
+  }
+  if(table)table.innerHTML=buildCostTable(data.entries||[]);
+}
+
+window.refreshCosts=function(force){
+  if(costsLoaded&&!force&&costsData){
+    renderCosts();
+  }
+  return api('GET','/api/auto-policy-costs?limit=200').then(function(result){
+    if(!result||!result.ok)return;
+    costsData=result;
+    costsLoaded=true;
+    state.autoPolicyProvider=result.provider||state.autoPolicyProvider;
+    state.autoPolicyModel=result.model||state.autoPolicyModel;
+    state.autoPolicyRates=result.rates||state.autoPolicyRates;
+    renderCosts();
   });
 };
 
@@ -3310,6 +3527,9 @@ function saveConfig(body){
     state.reviewModel=result.reviewModel||state.reviewModel;
     state.reviewBackend=result.reviewBackend||state.reviewBackend;
     state.approvalThreshold=result.approvalThreshold!==undefined?result.approvalThreshold:state.approvalThreshold;
+    state.autoPolicyProvider=result.autoPolicyProvider||state.autoPolicyProvider;
+    state.autoPolicyModel=result.autoPolicyModel||state.autoPolicyModel;
+    state.autoPolicyRates=result.autoPolicyRates||state.autoPolicyRates;
     updateReviewEnabledUI();
     updateBackendAvailabilityUI();
     updateReviewSettingsVisibility();
@@ -3323,22 +3543,28 @@ function loadSettingsData(){
     var models=results[1]||{};
     var llmModels=models.models||[];
     state.pollInterval=status.pollInterval!==undefined?status.pollInterval:state.pollInterval;
-    state.model='haiku';
+    state.model=status.autoPolicyModel||models.autoPolicyModel||state.model||'accounts/fireworks/models/minimax-m2p7';
     state.reviewEnabled=status.reviewEnabled!==undefined?!!status.reviewEnabled:state.reviewEnabled;
     state.reviewModel=status.reviewModel||state.reviewModel;
     state.reviewBackend=status.reviewBackend||state.reviewBackend;
     state.approvalThreshold=status.approvalThreshold!==undefined?status.approvalThreshold:state.approvalThreshold;
+    state.autoPolicyProvider=status.autoPolicyProvider||state.autoPolicyProvider;
+    state.autoPolicyModel=status.autoPolicyModel||models.autoPolicyModel||state.autoPolicyModel;
+    state.autoPolicyRates=status.autoPolicyRates||state.autoPolicyRates;
+    state.fireworksConfigured=models.fireworksConfigured!==undefined?!!models.fireworksConfigured:state.fireworksConfigured;
     state.ollamaAvailable=models.available!==undefined?models.available:state.ollamaAvailable;
     state.backendAvailability={
       claude:models.claudeAvailable!==undefined?models.claudeAvailable:state.backendAvailability.claude,
       lmstudio:models.lmstudioAvailable!==undefined?models.lmstudioAvailable:state.backendAvailability.lmstudio,
-      ollama:models.available!==undefined?models.available:state.backendAvailability.ollama
+      ollama:models.available!==undefined?models.available:state.backendAvailability.ollama,
+      fireworks:state.fireworksConfigured
     };
     document.getElementById('settingsPoll').value=String(state.pollInterval);
     document.getElementById('settingsApprovalThreshold').value=String(state.approvalThreshold);
     var llmSelect=document.getElementById('settingsModel');
-    llmSelect.innerHTML='<option value="haiku">Claude Haiku</option>';
-    llmSelect.value='haiku';
+    var modelLabel=state.autoPolicyModel||'accounts/fireworks/models/minimax-m2p7';
+    llmSelect.innerHTML='<option value="'+esc(modelLabel)+'">'+esc(modelLabel)+'</option>';
+    llmSelect.value=modelLabel;
     updateOllamaStatus();
     updateReviewEnabledUI();
     updateBackendAvailabilityUI();

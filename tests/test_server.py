@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 from cmux_harness import attachments
+from cmux_harness import auto_policy
 from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
 from cmux_harness import workspaces
@@ -177,6 +178,7 @@ class TestServerResponses(unittest.TestCase):
 
     def test_network_status_returns_urls_and_cmux_socket_state(self):
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine.network_settings = {"tailscaleHost": "macbook.example.ts.net"}
@@ -219,6 +221,7 @@ class TestServerResponses(unittest.TestCase):
             },
         }
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine.network_settings = {}
@@ -268,6 +271,7 @@ class TestServerResponses(unittest.TestCase):
 
     def test_post_network_saves_normalized_tailscale_host(self):
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine.network_settings = {}
@@ -884,6 +888,7 @@ class TestServerResponses(unittest.TestCase):
 
     def test_get_config_includes_contract_review_flag(self):
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine.poll_interval = 5
@@ -902,9 +907,38 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body["contractReviewEnabled"], False)
         self.assertEqual(body["approvalThreshold"], 3)
+        self.assertEqual(body["autoPolicyProvider"], "fireworks")
+        self.assertEqual(body["autoPolicyModel"], auto_policy.AUTO_POLICY_MODEL)
+        self.assertEqual(body["autoPolicyRates"]["inputPerMillionUSD"], 0.3)
+
+    @patch("cmux_harness.server.auto_policy.cost_dashboard")
+    def test_auto_policy_costs_endpoint_returns_dashboard(self, mock_dashboard):
+        mock_dashboard.return_value = {
+            "ok": True,
+            "totals": {"calls": 1, "estimatedCostUSD": 0.0001},
+            "entries": [],
+        }
+        handler = self._make_handler(Mock(), "/api/auto-policy-costs?limit=25")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["totals"]["calls"], 1)
+        mock_dashboard.assert_called_once_with(limit=25)
+
+    @patch("cmux_harness.server.auto_policy.cost_dashboard")
+    def test_auto_policy_costs_endpoint_defaults_bad_limit(self, mock_dashboard):
+        mock_dashboard.return_value = {"ok": True, "totals": {}, "entries": []}
+        handler = self._make_handler(Mock(), "/api/auto-policy-costs?limit=bad")
+
+        handler.do_GET()
+
+        mock_dashboard.assert_called_once_with(limit=200)
 
     def test_post_config_updates_contract_review_flag(self):
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine.poll_interval = 5
@@ -936,10 +970,12 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body["contractReviewEnabled"], True)
         self.assertEqual(body["approvalThreshold"], 4)
+        self.assertEqual(body["autoPolicyProvider"], "fireworks")
 
     @patch("cmux_harness.server.cmux_api.cmux_send_to_workspace", return_value=True)
     def test_post_send_supports_text_input(self, mock_send):
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine._build_virtual_workspaces.return_value = [{
@@ -1012,6 +1048,7 @@ class TestServerResponses(unittest.TestCase):
 
     def test_post_workspace_star_maps_virtual_index_to_real_workspace(self):
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine._build_virtual_workspaces.return_value = [{
@@ -1030,6 +1067,7 @@ class TestServerResponses(unittest.TestCase):
 
     def test_post_workspace_accepts_super_auto_mode(self):
         engine = MagicMock()
+        engine._lock = MagicMock()
         engine._lock.__enter__.return_value = None
         engine._lock.__exit__.return_value = None
         engine._build_virtual_workspaces.return_value = [{

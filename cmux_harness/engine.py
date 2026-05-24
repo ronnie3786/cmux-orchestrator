@@ -7,19 +7,19 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import claude_cli
+from . import auto_policy
 from . import cmux_api
 from . import detection
 from . import push_notifications
 from . import review as review_mod
-from . import severity
 from . import storage
 from .orchestrator import Orchestrator
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b-nvfp4")
-AUTO_APPROVE_MODEL = "haiku"
-AUTO_HAIKU_INTERVAL_SECONDS = 60
+AUTO_APPROVE_MODEL = auto_policy.AUTO_POLICY_MODEL
+AUTO_POLICY_INTERVAL_SECONDS = 60
+AUTO_HAIKU_INTERVAL_SECONDS = AUTO_POLICY_INTERVAL_SECONDS
 AUTO_SESSION_MAX_SECONDS = 8 * 60 * 60
 AUTO_MODE_OFF = "off"
 AUTO_MODE_AUTO = "auto"
@@ -57,6 +57,7 @@ class HarnessEngine(threading.Thread):
         self.session_ids = {}    # idx -> str (workspace UUID + session start timestamp)
         self.claude_miss_count = {} # idx -> int (consecutive polls where detect_claude_session returned False)
         self.auto_policy_last_check = {} # idx -> float
+        self.auto_policy_last_checked_fingerprint = {} # session key -> screen fingerprint already sent to model
         self.auto_policy_last_action_fingerprint = {} # idx -> screen fingerprint acted on
         self.auto_policy_pending_human_fingerprint = {} # session key -> screen fingerprint already escalated
         self.surface_map = {}    # workspace_ref -> [{"ref", "title", "pane_ref"}, ...]
@@ -418,6 +419,12 @@ class HarnessEngine(threading.Thread):
                 "reviewBackend": self.review_backend,
                 "contractReviewEnabled": self.contract_review_enabled,
                 "approvalThreshold": self.approval_threshold,
+                "autoPolicyProvider": auto_policy.AUTO_POLICY_PROVIDER,
+                "autoPolicyModel": auto_policy.AUTO_POLICY_MODEL,
+                "autoPolicyRates": {
+                    "inputPerMillionUSD": auto_policy.INPUT_COST_PER_MILLION,
+                    "outputPerMillionUSD": auto_policy.OUTPUT_COST_PER_MILLION,
+                },
                 "connected": self.socket_connected,
                 "lastSuccessfulPoll": self.last_successful_poll,
                 "connectionLostAt": self.connection_lost_at,
@@ -480,106 +487,10 @@ class HarnessEngine(threading.Thread):
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "workspace": idx,
             "workspaceName": ws_name,
-            "promptType": "haiku-auto-guard",
+            "promptType": "auto-policy-guard",
             "action": "auto disabled",
             "reason": reason,
         })
-
-    def _build_auto_policy_prompt(self, ws, screen):
-        return self._build_auto_policy_prompt_for_mode(ws, screen, AUTO_MODE_AUTO)
-
-    def _build_auto_policy_prompt_for_mode(self, ws, screen, auto_mode):
-        tail = "\n".join(str(screen or "").splitlines()[-80:])
-        if auto_mode == AUTO_MODE_SUPER:
-            approval_rule = "- Super Auto mode is active: choose approve or submit for any clear approval/input request regardless of severity level."
-            alert_rule = "- Do not choose alert because a request is risky, above threshold, or low confidence. Choose alert only if there is no clear approval/input to submit."
-        else:
-            approval_rule = f"- The shared auto-approval threshold is level {self.approval_threshold}. Only choose approve or submit when level is at or below that threshold."
-            alert_rule = "- If confidence is below 0.85, choose alert or ignore."
-        return "\n".join([
-            "You are a cautious automation policy engine for a terminal running an AI coding agent.",
-            "Your job is to decide whether the terminal is waiting for an approval/input and what the harness should do.",
-            "Return JSON only with exactly these keys:",
-            '{"action":"approve|submit|alert|ignore","submit":"enter|y|yes|none","level":1,"confidence":0.0,"reason":"short reason"}',
-            "",
-            "Definitions:",
-            "- approve: the terminal is clearly showing a low-risk approval prompt and the harness should submit the selected/affirmative option.",
-            "- submit: the terminal is clearly waiting for a trivial continuation input such as pressing Enter.",
-            "- alert: a human should decide because the severity level is above the shared threshold, the request asks for secrets, or confidence is low.",
-            "- ignore: no approval/input is needed right now.",
-            "",
-            "Use this same severity scale as the PreToolUse hook classifier:",
-            "1 — Read-only project access (reading files, searching, listing directories).",
-            "2 — Writing or editing files, safe shell commands (build, test, ls, cat, grep).",
-            "3 — External API calls to known services (fetching from Jira, GitHub, Slack).",
-            "4 — Ambiguous operations needing human judgment (multi-option selections, unknown tools, design decisions).",
-            "5 — Destructive or dangerous (deleting files, force push, dropping databases, modifying production).",
-            "",
-            "Rules:",
-            approval_rule,
-            "- If the terminal is just at a shell prompt, choose ignore.",
-            alert_rule,
-            "- submit must be one of: enter, y, yes, none.",
-            "- Never invent text to type.",
-            "",
-            f"Workspace name: {ws.get('name') or ''}",
-            f"Workspace cwd: {ws.get('_cwd') or ''}",
-            f"Workspace branch: {ws.get('_branch') or ''}",
-            "",
-            "Terminal snapshot:",
-            tail,
-        ])
-
-    def _normalize_auto_policy_result(self, result, auto_mode=AUTO_MODE_AUTO):
-        if not isinstance(result, dict) or result.get("error"):
-            return None
-        super_auto = normalize_auto_mode(auto_mode, enabled=True) == AUTO_MODE_SUPER
-        raw_action = str(result.get("action") or "ignore").strip().lower()
-        action = raw_action
-        submit = str(result.get("submit") or "none").strip().lower()
-        reason = str(result.get("reason") or "").strip()[:240]
-        try:
-            confidence = float(result.get("confidence") or 0)
-        except (TypeError, ValueError):
-            confidence = 0.0
-        try:
-            level = int(result.get("level"))
-        except (TypeError, ValueError):
-            level = 5 if action == "alert" else 0
-        if level < 1 or level > 5:
-            level = 5 if action == "alert" else 0
-        invalid_action = action not in {"approve", "submit", "alert", "ignore"}
-        if action not in {"approve", "submit", "alert", "ignore"}:
-            action = "alert"
-        if submit not in {"enter", "y", "yes", "none"}:
-            submit = "none"
-        if super_auto and action == "alert" and not invalid_action:
-            action = "approve"
-            if submit == "none":
-                submit = "enter"
-            reason = reason or "Super Auto approved without severity threshold."
-        if super_auto and action in {"approve", "submit"} and submit == "none":
-            submit = "enter"
-        if action in {"approve", "submit"} and not severity.should_auto_approve_level(level, self.approval_threshold):
-            if not super_auto:
-                action = "alert"
-                submit = "none"
-                if level:
-                    reason = reason or f"Level {level} is above auto-approval threshold {self.approval_threshold}."
-                else:
-                    reason = reason or "Missing severity level for automation decision."
-        if confidence < 0.85 and action in {"approve", "submit"}:
-            if not super_auto:
-                action = "alert"
-                submit = "none"
-                reason = reason or "Low confidence automation decision."
-        return {
-            "action": action,
-            "submit": submit,
-            "level": level if level else None,
-            "confidence": confidence,
-            "reason": reason,
-        }
 
     def _auto_policy_session_key(self, idx, workspace_uuid, surface_id):
         if workspace_uuid:
@@ -607,9 +518,6 @@ class HarnessEngine(threading.Thread):
             )
             return
 
-        last_check = self.auto_policy_last_check.get(idx, 0)
-        if now_ts - last_check < AUTO_HAIKU_INTERVAL_SECONDS:
-            return
         if not str(screen or "").strip():
             return
 
@@ -621,18 +529,62 @@ class HarnessEngine(threading.Thread):
         if pending_human_fp:
             self.auto_policy_pending_human_fingerprint.pop(session_key, None)
 
+        if self.auto_policy_last_checked_fingerprint.get(session_key) == screen_fp:
+            return
+
+        last_check = self.auto_policy_last_check.get(idx, 0)
+        if now_ts - last_check < AUTO_POLICY_INTERVAL_SECONDS:
+            return
+
         self.auto_policy_last_check[idx] = now_ts
-        prompt = self._build_auto_policy_prompt_for_mode(ws, screen, auto_mode)
-        result = claude_cli.run_haiku(prompt, timeout=25)
-        decision = self._normalize_auto_policy_result(result, auto_mode=auto_mode)
+        policy_payload = {
+            "workspaceName": ws_name,
+            "cwd": ws.get("_cwd") or "",
+            "branch": ws.get("_branch") or "",
+            "autoMode": auto_mode,
+            "threshold": self.approval_threshold,
+            "screen": screen,
+            "screenFingerprint": screen_fp,
+        }
+        result = auto_policy.run_auto_policy(policy_payload, timeout=30)
+        decision = auto_policy.normalize_policy_result(
+            result,
+            auto_mode=auto_mode,
+            threshold=self.approval_threshold,
+        )
+        usage_entry = auto_policy.record_policy_usage({
+            "provider": result.get("provider") if isinstance(result, dict) else None,
+            "model": result.get("model") if isinstance(result, dict) else None,
+            "usage": result.get("usage") if isinstance(result, dict) else None,
+            "workspace": idx,
+            "workspaceName": ws_name,
+            "workspaceUuid": workspace_uuid,
+            "surfaceId": surface_id,
+            "autoMode": auto_mode,
+            "screenFingerprint": screen_fp,
+            "approvalThreshold": self.approval_threshold,
+            "terminalState": decision.get("terminalState") if decision else "",
+            "approvalNeeded": decision.get("approvalNeeded") if decision else False,
+            "action": decision.get("action") if decision else "error",
+            "submit": decision.get("submit") if decision else "none",
+            "severityLevel": decision.get("level") if decision else None,
+            "confidence": decision.get("confidence") if decision else None,
+            "reason": decision.get("reason") if decision else "",
+            "latencyMs": result.get("latencyMs") if isinstance(result, dict) else 0,
+            "promptChars": result.get("promptChars") if isinstance(result, dict) else 0,
+            "ok": bool(isinstance(result, dict) and result.get("ok") is True),
+            "error": result.get("error") if isinstance(result, dict) else "Auto policy failed.",
+        })
+        self.auto_policy_last_checked_fingerprint[session_key] = screen_fp
         if not decision:
             self._append_log({
                 "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "workspace": idx,
                 "workspaceName": ws_name,
-                "promptType": "haiku-auto-check-error",
+                "promptType": "fireworks-auto-check-error",
                 "action": "auto check failed",
-                "reason": str(result)[:240],
+                "reason": str(result.get("error") if isinstance(result, dict) else result)[:240],
+                "estimatedCostUSD": usage_entry.get("estimatedCostUSD"),
             })
             return
 
@@ -645,7 +597,7 @@ class HarnessEngine(threading.Thread):
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "workspace": idx,
             "workspaceName": ws_name,
-            "promptType": "haiku-auto-policy",
+            "promptType": "fireworks-auto-policy",
             "action": "",
             "reason": decision["reason"],
             "severityLevel": decision.get("level"),
@@ -653,7 +605,12 @@ class HarnessEngine(threading.Thread):
             "autoMode": auto_mode,
             "confidence": decision["confidence"],
             "submit": submit,
+            "terminalState": decision.get("terminalState"),
+            "approvalNeeded": decision.get("approvalNeeded"),
             "screenFingerprint": screen_fp,
+            "inputTokens": usage_entry.get("inputTokens"),
+            "outputTokens": usage_entry.get("outputTokens"),
+            "estimatedCostUSD": usage_entry.get("estimatedCostUSD"),
         }
 
         if action == "alert":
@@ -680,7 +637,7 @@ class HarnessEngine(threading.Thread):
             self.auto_policy_last_action_fingerprint[idx] = screen_fp
             self.auto_policy_pending_human_fingerprint[session_key] = screen_fp
             log_entry["action"] = "human alert"
-            log_entry["reason"] = decision["reason"] or "Haiku requested action without a safe submit key."
+            log_entry["reason"] = decision["reason"] or "Auto policy requested action without a safe submit key."
             self._append_log(log_entry)
             push_notifications.notify_auto_mode_human_alert(
                 workspace_id=push_notifications.app_workspace_id(workspace_uuid, surface_id),
@@ -1090,8 +1047,8 @@ class HarnessEngine(threading.Thread):
             storage.debug_log({"event": "empty_screen", "workspace": idx, "name": ws_name, "surface_id": surface_id})
             return
 
-        # Approval is now handled by PreToolUse hooks (see routes/hooks.py).
-        # Screen fingerprinting retained for dashboard display.
+        # Auto/Super Auto approvals are handled by terminal polling below.
+        # Screen fingerprinting is retained for dashboard display.
         fp = detection.fingerprint(screen)
         with self._lock:
             self.fingerprints[idx] = fp

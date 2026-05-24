@@ -14,6 +14,7 @@ from pathlib import Path
 import uuid
 
 from . import attachments
+from . import auto_policy
 from . import cmux_api
 from . import dependencies
 from . import objectives
@@ -372,6 +373,13 @@ def make_handler(engine):
                     self._json_response({"ok": False, "items": [], "error": "cmux feed unavailable"}, 503)
                     return
                 self._json_response({"ok": True, "items": items})
+            elif path == "/api/auto-policy-costs":
+                params = urllib.parse.parse_qs(parsed.query)
+                try:
+                    limit = int(params.get("limit", ["200"])[0] or 200)
+                except (TypeError, ValueError):
+                    limit = 200
+                self._json_response(auto_policy.cost_dashboard(limit=limit))
             elif path.startswith("/api/git-status"):
                 params = urllib.parse.parse_qs(parsed.query)
                 if path == "/api/git-status-path":
@@ -699,6 +707,12 @@ def make_handler(engine):
                         "reviewBackend": engine.review_backend,
                         "contractReviewEnabled": engine.contract_review_enabled,
                         "approvalThreshold": getattr(engine, "approval_threshold", 3),
+                        "autoPolicyProvider": auto_policy.AUTO_POLICY_PROVIDER,
+                        "autoPolicyModel": auto_policy.AUTO_POLICY_MODEL,
+                        "autoPolicyRates": {
+                            "inputPerMillionUSD": auto_policy.INPUT_COST_PER_MILLION,
+                            "outputPerMillionUSD": auto_policy.OUTPUT_COST_PER_MILLION,
+                        },
                         "defaultProjectDir": engine.default_project_dir,
                         "defaultBaseBranch": engine.default_base_branch,
                     })
@@ -719,6 +733,8 @@ def make_handler(engine):
                         "available": False,
                         "lmstudioAvailable": lmstudio_available,
                         "claudeAvailable": claude_available,
+                        "fireworksConfigured": auto_policy.fireworks_configured(),
+                        "autoPolicyModel": auto_policy.AUTO_POLICY_MODEL,
                     })
                 else:
                     try:
@@ -734,6 +750,8 @@ def make_handler(engine):
                             "available": True,
                             "lmstudioAvailable": lmstudio_available,
                             "claudeAvailable": claude_available,
+                            "fireworksConfigured": auto_policy.fireworks_configured(),
+                            "autoPolicyModel": auto_policy.AUTO_POLICY_MODEL,
                         })
                     except Exception as e:
                         with engine._lock:
@@ -744,6 +762,8 @@ def make_handler(engine):
                             "available": False,
                             "lmstudioAvailable": lmstudio_available,
                             "claudeAvailable": claude_available,
+                            "fireworksConfigured": auto_policy.fireworks_configured(),
+                            "autoPolicyModel": auto_policy.AUTO_POLICY_MODEL,
                             "error": str(e),
                         })
             else:
@@ -1055,6 +1075,12 @@ def make_handler(engine):
                         "reviewBackend": engine.review_backend,
                         "contractReviewEnabled": engine.contract_review_enabled,
                         "approvalThreshold": getattr(engine, "approval_threshold", 3),
+                        "autoPolicyProvider": auto_policy.AUTO_POLICY_PROVIDER,
+                        "autoPolicyModel": auto_policy.AUTO_POLICY_MODEL,
+                        "autoPolicyRates": {
+                            "inputPerMillionUSD": auto_policy.INPUT_COST_PER_MILLION,
+                            "outputPerMillionUSD": auto_policy.OUTPUT_COST_PER_MILLION,
+                        },
                         "defaultProjectDir": engine.default_project_dir,
                         "defaultBaseBranch": engine.default_base_branch,
                     })

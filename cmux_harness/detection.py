@@ -3,9 +3,8 @@
 Session detection (``detect_claude_session``) and screen fingerprinting
 (``fingerprint``) are still used by the engine for dashboard display.
 
-Prompt detection and approval classification have been replaced by
-PreToolUse hooks — see :mod:`cmux_harness.severity` and
-:mod:`cmux_harness.routes.hooks`.
+Auto/Super Auto prompt assessment now runs through
+:mod:`cmux_harness.auto_policy` from the terminal polling loop.
 """
 
 import hashlib

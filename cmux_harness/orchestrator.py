@@ -1788,7 +1788,7 @@ class Orchestrator:
             # This prevents false "exited" detection during startup.
             seen_claude_active = False
             grace_polls = _grace_polls
-            # Approval is now handled by PreToolUse hooks (see routes/hooks.py).
+            # Approval is handled by the engine's terminal polling policy.
             for attempt in range(_max_polls):
                 plan_exists = os.path.isfile(plan_path)
                 screen = cmux_api.cmux_read_workspace(0, 0, lines=50, workspace_uuid=workspace_uuid) or ""
@@ -2261,8 +2261,8 @@ class Orchestrator:
             if not ws_uuid:
                 continue
 
-            # Approval is now handled by PreToolUse hooks (see routes/hooks.py).
-            # Screen read retained for stuck detection and approval dismissal.
+            # Approval is handled by the engine's terminal polling policy.
+            # Screen read retained here for stuck detection and task progress.
             screen_text = ""
             try:
                 screen_text = cmux_api.cmux_read_workspace(

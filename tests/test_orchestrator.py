@@ -849,7 +849,7 @@ class TestPollTasks(unittest.TestCase):
         return objective
 
     def test_poll_tasks_no_longer_does_approval(self):
-        """Approval is now handled by PreToolUse hooks, not polling."""
+        """Approval is handled by the engine's terminal polling, not task polling."""
         task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
         objective = self._create_objective([task])
 
@@ -860,13 +860,13 @@ class TestPollTasks(unittest.TestCase):
                 patch("cmux_harness.orchestrator.monitor.assess_stuck_status", return_value={"level": "ok"}):
             self.orchestrator.poll_tasks(objective["id"])
 
-        # Verify no keystroke was sent — approval is handled by hooks now
+        # Verify no keystroke was sent; approval is handled by the engine loop.
         for call in mock_v2.call_args_list:
             if len(call[0]) >= 1:
                 self.assertNotEqual(call[0][0], "surface.send_key")
 
     def test_poll_tasks_does_not_escalate_via_polling(self):
-        """Escalation is now handled by PreToolUse hooks, not polling."""
+        """Escalation is handled by the engine's Auto/Super Auto policy."""
         task = {"id": "task-1", "status": "executing", "workspaceId": "ws-1", "worktreePath": str(self.project_dir)}
         objective = self._create_objective([task])
 
