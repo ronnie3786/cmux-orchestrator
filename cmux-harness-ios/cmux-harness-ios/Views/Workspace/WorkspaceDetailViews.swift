@@ -27,7 +27,7 @@ struct WorkspaceDetailView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                if !isDetailInputFocused {
+                if !isDetailInputFocused && !store.isEasyModeEnabled {
                     SessionDetailTabBar(selection: detailTabBinding)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -35,6 +35,7 @@ struct WorkspaceDetailView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: isDetailInputFocused)
+        .animation(.easeInOut(duration: 0.18), value: store.isEasyModeEnabled)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.black.opacity(0.92), for: .navigationBar)
@@ -62,8 +63,17 @@ struct WorkspaceDetailView: View {
                     },
                     detailsAction: {
                         isShowingSessionDetails = true
+                    },
+                    isEasyModeEnabled: store.isEasyModeEnabled,
+                    easyModeAction: {
+                        store.send(.setEasyMode(!store.isEasyModeEnabled))
                     }
                 )
+            }
+        }
+        .onChange(of: store.isEasyModeEnabled) { _, isEnabled in
+            if isEnabled {
+                isDetailInputFocused = false
             }
         }
         .sheet(isPresented: $isShowingSessionDetails) {
@@ -130,26 +140,36 @@ struct DetailTerminalLayout: View {
     let isInputFocused: FocusState<Bool>.Binding
 
     var body: some View {
-        VStack(spacing: 10) {
-            TerminalScrollView(workspaceID: workspace.id, text: terminalText)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
+        GeometryReader { proxy in
+            VStack(spacing: store.isEasyModeEnabled ? 12 : 10) {
+                TerminalScrollView(workspaceID: workspace.id, text: terminalText)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
 
-            DetailInputBar(
-                store: store,
-                workspace: workspace,
-                isInputFocused: isInputFocused
-            )
+                if store.isEasyModeEnabled {
+                    EasyModeKeyboard(store: store, workspace: workspace)
+                        .frame(height: easyModeKeyboardHeight(for: proxy.size.height))
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    DetailInputBar(
+                        store: store,
+                        workspace: workspace,
+                        isInputFocused: isInputFocused
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: store.isEasyModeEnabled)
         .background {
             Color.clear
                 .contentShape(Rectangle())
@@ -159,6 +179,11 @@ struct DetailTerminalLayout: View {
 
     private func dismissKeyboard() {
         isInputFocused.wrappedValue = false
+    }
+
+    private func easyModeKeyboardHeight(for availableHeight: CGFloat) -> CGFloat {
+        let targetHeight = max(120, availableHeight * 0.25)
+        return min(targetHeight, availableHeight * 0.31)
     }
 }
 

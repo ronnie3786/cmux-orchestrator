@@ -76,6 +76,9 @@ extension HarnessFeature {
 
             case let .detailTabChanged(tab):
                 state.detailTab = tab
+                if tab != .terminal {
+                    state.isEasyModeEnabled = false
+                }
                 if tab == .git {
                     if state.gitSegment == .prComments {
                         return .merge(
@@ -100,6 +103,17 @@ extension HarnessFeature {
                     .cancel(id: gitPollingCancelID),
                     .cancel(id: prCommentsCancelID)
                 )
+
+            case let .setEasyMode(isEnabled):
+                state.isEasyModeEnabled = isEnabled
+                if isEnabled {
+                    state.detailTab = .terminal
+                    return .merge(
+                        .cancel(id: gitPollingCancelID),
+                        .cancel(id: prCommentsCancelID)
+                    )
+                }
+                return .none
 
             case .screenTick:
                 guard let workspace = state.selectedWorkspace else { return .none }

@@ -53,6 +53,7 @@ struct HarnessFeature {
 
         var selectedWorkspaceID: String? = HarnessSettingsStore.lastSelectedWorkspaceID
         var detailTab: DetailTab = .terminal
+        var isEasyModeEnabled = false
         var fullScreenText: String?
         var draftMessages: [String: String] = [:]
         var detailDrafts: [String: String] = HarnessSettingsStore.detailDrafts
@@ -238,6 +239,7 @@ struct HarnessFeature {
         case selectWorkspace(String?)
         case openPushApproval(PushApprovalNotification)
         case detailTabChanged(DetailTab)
+        case setEasyMode(Bool)
         case screenTick
         case screenSucceeded(workspaceID: String, response: ScreenResponse)
         case screenFailed(String)
@@ -349,6 +351,7 @@ struct HarnessFeature {
             case .selectWorkspace(_),
                  .openPushApproval(_),
                  .detailTabChanged(_),
+                 .setEasyMode(_),
                  .screenTick,
                  .screenSucceeded(workspaceID: _, response: _),
                  .screenFailed(_),

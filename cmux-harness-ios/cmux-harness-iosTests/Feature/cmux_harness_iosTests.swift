@@ -164,6 +164,26 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func easyModeTogglesOnTerminalAndTurnsOffOutsideTerminal() async {
+        var state = Self.initialState()
+        state.detailTab = .git
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        }
+
+        await store.send(.setEasyMode(true)) {
+            $0.isEasyModeEnabled = true
+            $0.detailTab = .terminal
+        }
+
+        await store.send(.detailTabChanged(.activity)) {
+            $0.detailTab = .activity
+            $0.isEasyModeEnabled = false
+        }
+    }
+
+    @Test
     func stateLoadsPersistedDetailDraftForLastSelectedWorkspace() {
         let oldDrafts = HarnessSettingsStore.detailDrafts
         let oldSelectedWorkspaceID = HarnessSettingsStore.lastSelectedWorkspaceID

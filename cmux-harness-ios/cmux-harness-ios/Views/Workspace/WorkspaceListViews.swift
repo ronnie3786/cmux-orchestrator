@@ -557,6 +557,8 @@ struct SessionContextMenu: View {
     let workspace: Workspace
     var newSessionAction: (() -> Void)? = nil
     var detailsAction: (() -> Void)? = nil
+    var isEasyModeEnabled: Bool? = nil
+    var easyModeAction: (() -> Void)? = nil
 
     var body: some View {
         Menu {
@@ -574,6 +576,19 @@ struct SessionContextMenu: View {
                                 Image(systemName: "checkmark")
                             }
                         }
+                    }
+                }
+            }
+
+            if let isEasyModeEnabled, let easyModeAction {
+                Section("Input") {
+                    Button {
+                        easyModeAction()
+                    } label: {
+                        Label(
+                            isEasyModeEnabled ? "Turn Off Easy Mode" : "Easy Mode",
+                            systemImage: isEasyModeEnabled ? "hand.tap.fill" : "hand.tap"
+                        )
                     }
                 }
             }
@@ -609,8 +624,9 @@ struct SessionContextMenu: View {
                 .disabled(store.isCreatingSession || store.quickSessionCreation != nil)
             }
         } label: {
-            Image(systemName: "ellipsis")
+            Label("Session Options", systemImage: "ellipsis")
                 .font(.headline.weight(.bold))
+                .labelStyle(.iconOnly)
                 .foregroundStyle(.white.opacity(0.82))
                 .frame(width: 30, height: 30)
         }
