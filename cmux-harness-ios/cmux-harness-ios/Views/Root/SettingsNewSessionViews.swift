@@ -23,11 +23,74 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Server") {
+                Section("Active Source") {
+                    if store.serverSources.isEmpty {
+                        Text("Add a CMUX server URL to connect this iPhone to a session source.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Menu {
+                            ForEach(store.serverSources) { source in
+                                Button {
+                                    store.send(.selectServerSource(source.id))
+                                } label: {
+                                    Label(
+                                        source.name,
+                                        systemImage: source.id == store.selectedServerSourceID ? "checkmark.circle.fill" : "server.rack"
+                                    )
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Label(store.activeServerSourceName, systemImage: "server.rack")
+                                Spacer()
+                                Image(systemName: "chevron.down")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if !store.activeServerSourceURLString.isEmpty {
+                            Text(store.activeServerSourceURLString)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+
+                Section(store.isEditingSavedServerSource ? "Source Details" : "New Source") {
+                    TextField("Name", text: $store.serverSourceNameString)
+                        .textInputAutocapitalization(.words)
+
                     TextField("Server URL", text: $store.serverURLString)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
+
+                    Button {
+                        store.send(.saveServerTapped)
+                    } label: {
+                        Label(
+                            store.isEditingSavedServerSource ? "Save Source" : "Add Source",
+                            systemImage: "checkmark.circle.fill"
+                        )
+                    }
+
+                    if store.isEditingSavedServerSource {
+                        Button {
+                            store.send(.newServerSourceTapped)
+                        } label: {
+                            Label("Add Another Source", systemImage: "plus.circle")
+                        }
+                    }
+                }
+
+                if !store.serverSources.isEmpty {
+                    Section("Saved Sources") {
+                        ForEach(store.serverSources) { source in
+                            ServerSourceSettingsRow(store: store, source: source)
+                        }
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -42,8 +105,61 @@ struct SettingsView: View {
                     Button("Save") {
                         store.send(.saveServerTapped)
                     }
+                    .disabled(store.serverURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+        }
+    }
+}
+
+struct ServerSourceSettingsRow: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+    let source: HarnessServerSource
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                store.send(.selectServerSource(source.id))
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(source.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(source.urlString)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            if source.id == store.selectedServerSourceID {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("Selected")
+            }
+
+            Menu("Actions", systemImage: "ellipsis.circle") {
+                Button {
+                    store.send(.selectServerSource(source.id))
+                } label: {
+                    Label("Use Source", systemImage: "checkmark.circle")
+                }
+
+                Button {
+                    store.send(.editServerSource(source.id))
+                } label: {
+                    Label("Edit Source", systemImage: "pencil")
+                }
+
+                Button(role: .destructive) {
+                    store.send(.deleteServerSource(source.id))
+                } label: {
+                    Label("Delete Source", systemImage: "trash")
+                }
+            }
+            .menuStyle(.button)
         }
     }
 }

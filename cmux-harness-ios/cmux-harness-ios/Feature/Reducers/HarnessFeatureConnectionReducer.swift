@@ -18,6 +18,7 @@ extension HarnessFeature {
         state.status = nil
         state.workspaces = []
         state.logEntries = []
+        state.feedItems = []
         state.isRefreshing = false
         state.lastUpdated = nil
         state.sessionSearchText = ""
@@ -62,6 +63,56 @@ extension HarnessFeature {
         state.jiraLookupError = nil
         state.isResolvingJiraTicket = false
         state.terminalAttachments = [:]
+    }
+
+    private func activateServerSource(
+        _ source: HarnessServerSource,
+        in state: inout State,
+        setupMessage: String
+    ) -> Effect<Action> {
+        let shouldResetSessionData = state.isDemoMode || state.committedServerURLString != source.urlString
+        state.isDemoMode = false
+        HarnessSettingsStore.isLocalDemoMode = false
+        HarnessSettingsStore.selectedServerSourceID = source.id
+        state.serverSources = HarnessSettingsStore.serverSources
+        state.selectedServerSourceID = source.id
+        state.editingServerSourceID = source.id
+        state.serverSourceNameString = source.name
+        state.serverURLString = source.urlString
+        state.committedServerURLString = source.urlString
+        state.isShowingSettings = false
+        state.errorMessage = nil
+        state.serverSetupError = nil
+        state.serverSetupMessage = setupMessage
+
+        if shouldResetSessionData {
+            resetSessionData(&state)
+            HarnessSettingsStore.lastSelectedWorkspaceID = nil
+        }
+
+        return .merge(
+            cancelRuntimeEffects(),
+            configuredStartupEffects(state: state)
+        )
+    }
+
+    private func clearActiveServerSource(in state: inout State, setupMessage: String?) -> Effect<Action> {
+        state.selectedServerSourceID = nil
+        state.editingServerSourceID = nil
+        state.serverSourceNameString = ""
+        state.serverURLString = ""
+        state.committedServerURLString = ""
+        state.isShowingSettings = false
+        state.errorMessage = nil
+        state.serverSetupError = nil
+        state.serverSetupMessage = setupMessage
+        resetSessionData(&state)
+        HarnessSettingsStore.lastSelectedWorkspaceID = nil
+
+        return .merge(
+            cancelRuntimeEffects(),
+            .send(.discoverServer)
+        )
     }
 
     func reduceConnection(into state: inout State, action: Action) -> Effect<Action> {
@@ -166,23 +217,81 @@ extension HarnessFeature {
                 state.errorMessage = message
                 return .none
 
+            case .newServerSourceTapped:
+                state.editingServerSourceID = nil
+                state.serverSourceNameString = ""
+                state.serverURLString = ""
+                return .none
+
+            case let .editServerSource(id):
+                guard let source = state.serverSources.first(where: { $0.id == id }) else {
+                    return .none
+                }
+                state.editingServerSourceID = source.id
+                state.serverSourceNameString = source.name
+                state.serverURLString = source.urlString
+                return .none
+
+            case let .selectServerSource(id):
+                guard let source = state.serverSources.first(where: { $0.id == id }) else {
+                    return .none
+                }
+                return activateServerSource(
+                    source,
+                    in: &state,
+                    setupMessage: "Switched to \(source.name)."
+                )
+
+            case let .deleteServerSource(id):
+                let wasSelected = state.selectedServerSourceID == id
+                HarnessSettingsStore.deleteServerSource(id: id)
+                state.serverSources = HarnessSettingsStore.serverSources
+                state.selectedServerSourceID = HarnessSettingsStore.selectedServerSourceID
+
+                if state.editingServerSourceID == id {
+                    state.editingServerSourceID = state.selectedServerSourceID
+                    if let source = state.activeServerSource {
+                        state.serverSourceNameString = source.name
+                        state.serverURLString = source.urlString
+                    } else {
+                        state.serverSourceNameString = ""
+                        state.serverURLString = ""
+                    }
+                }
+
+                guard wasSelected else {
+                    return .none
+                }
+
+                guard let nextSource = state.activeServerSource else {
+                    return clearActiveServerSource(
+                        in: &state,
+                        setupMessage: "Server source removed. Looking for a cmux harness server..."
+                    )
+                }
+
+                return activateServerSource(
+                    nextSource,
+                    in: &state,
+                    setupMessage: "Removed server source. Switched to \(nextSource.name)."
+                )
+
             case .saveServerTapped:
-                let normalized = HarnessAPI.normalizedBaseURL(state.serverURLString)
-                guard !normalized.isEmpty else {
+                guard let source = HarnessSettingsStore.saveServerSource(
+                    id: state.editingServerSourceID,
+                    name: state.serverSourceNameString,
+                    urlString: state.serverURLString
+                ) else {
                     state.serverSetupError = "Server URL is required."
                     state.errorMessage = "Server URL is required."
                     return .none
                 }
-                state.isDemoMode = false
-                HarnessSettingsStore.isLocalDemoMode = false
-                state.serverURLString = normalized
-                state.committedServerURLString = normalized
-                HarnessSettingsStore.serverURL = normalized
-                state.isShowingSettings = false
-                state.errorMessage = nil
-                state.serverSetupError = nil
-                state.serverSetupMessage = "Saved \(normalized)"
-                return configuredStartupEffects(state: state)
+                state.serverSources = HarnessSettingsStore.serverSources
+                return activateServerSource(
+                    source,
+                    in: &state,
+                    setupMessage: "Saved \(source.name)."
+                )
 
             case .startLocalDemoTapped:
                 state.isDemoMode = true
@@ -200,18 +309,19 @@ extension HarnessFeature {
             case .exitDemoModeTapped:
                 state.isDemoMode = false
                 HarnessSettingsStore.isLocalDemoMode = false
-                state.committedServerURLString = ""
-                state.serverURLString = ""
-                state.isShowingSettings = false
-                state.errorMessage = nil
-                state.serverSetupError = nil
-                state.serverSetupMessage = "Demo closed. Looking for your cmux harness server..."
-                resetSessionData(&state)
-                HarnessSettingsStore.lastSelectedWorkspaceID = nil
-                return .merge(
-                    cancelRuntimeEffects(),
-                    .send(.discoverServer)
-                )
+                state.serverSources = HarnessSettingsStore.serverSources
+                if let source = state.activeServerSource {
+                    return activateServerSource(
+                        source,
+                        in: &state,
+                        setupMessage: "Demo closed. Connecting to \(source.name)."
+                    )
+                } else {
+                    return clearActiveServerSource(
+                        in: &state,
+                        setupMessage: "Demo closed. Looking for your cmux harness server..."
+                    )
+                }
 
             case .useDemoServerTapped:
                 let normalized = HarnessAPI.normalizedBaseURL(state.demoServerURLString)
@@ -220,16 +330,18 @@ extension HarnessFeature {
                     state.errorMessage = "Demo server URL is not configured for this build."
                     return .none
                 }
-                state.isDemoMode = false
-                HarnessSettingsStore.isLocalDemoMode = false
-                state.serverURLString = normalized
-                state.committedServerURLString = normalized
-                HarnessSettingsStore.serverURL = normalized
-                state.isShowingSettings = false
-                state.errorMessage = nil
-                state.serverSetupError = nil
-                state.serverSetupMessage = "Connected to demo server."
-                return configuredStartupEffects(state: state)
+                guard let source = HarnessSettingsStore.saveServerSource(
+                    id: nil,
+                    name: "Demo Server",
+                    urlString: normalized
+                ) else {
+                    return .none
+                }
+                return activateServerSource(
+                    source,
+                    in: &state,
+                    setupMessage: "Connected to demo server."
+                )
 
             case .discoverServer:
                 guard !state.isDiscoveringServer else { return .none }
@@ -259,17 +371,21 @@ extension HarnessFeature {
             case let .useDiscoveredServer(server):
                 let normalized = HarnessAPI.normalizedBaseURL(server.urlString)
                 guard !normalized.isEmpty else { return .none }
-                state.isDemoMode = false
-                HarnessSettingsStore.isLocalDemoMode = false
-                state.serverURLString = normalized
-                state.committedServerURLString = normalized
-                HarnessSettingsStore.serverURL = normalized
+                let sourceName = server.source == .tailscale ? "Tailscale" : "LAN"
+                guard let source = HarnessSettingsStore.saveServerSource(
+                    id: nil,
+                    name: server.name,
+                    urlString: normalized
+                ) else {
+                    return .none
+                }
                 state.isDiscoveringServer = false
                 state.discoveredServers = []
-                state.serverSetupError = nil
-                let sourceName = server.source == .tailscale ? "Tailscale" : "LAN"
-                state.serverSetupMessage = "Connected with \(sourceName): \(normalized)"
-                return configuredStartupEffects(state: state)
+                return activateServerSource(
+                    source,
+                    in: &state,
+                    setupMessage: "Connected with \(sourceName): \(normalized)"
+                )
 
             case .probeTailscaleHostTapped:
                 let host = state.tailscaleHostString.trimmingCharacters(in: .whitespacesAndNewlines)

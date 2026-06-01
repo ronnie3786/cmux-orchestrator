@@ -91,14 +91,26 @@ struct ServerSetupView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Use Local Server URL")
+                        Text("Use Server Source")
                             .font(.headline.weight(.bold))
                             .foregroundStyle(.white)
 
-                        Text("Enter the URL for the computer running the cmux dashboard. Use localhost from the simulator, or your Mac's LAN/Tailscale URL from a physical iPhone.")
+                        Text("Enter the URL for the computer running the cmux dashboard. Give it a name so you can switch between CMUX sources later.")
                             .font(.subheadline)
                             .foregroundStyle(.white.opacity(0.68))
                             .fixedSize(horizontal: false, vertical: true)
+
+                        TextField("Name", text: $store.serverSourceNameString)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.plain)
+                            .padding(14)
+                            .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                            }
+                            .foregroundStyle(.white)
 
                         TextField("your-mac.local:9091/harness", text: $store.serverURLString)
                             .textInputAutocapitalization(.never)
@@ -116,7 +128,7 @@ struct ServerSetupView: View {
                         Button {
                             store.send(.saveServerTapped)
                         } label: {
-                            Label("Use Server URL", systemImage: "checkmark.circle.fill")
+                            Label("Save and Connect", systemImage: "checkmark.circle.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(ServerSetupPrimaryButtonStyle())

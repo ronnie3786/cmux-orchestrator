@@ -5,13 +5,19 @@ extension HarnessFeature {
     func reduceNewSession(into state: inout State, action: Action) -> Effect<Action> {
         switch action {
             case .settingsButtonTapped:
-                state.serverURLString = state.committedServerURLString
+                state.serverSources = HarnessSettingsStore.serverSources
+                state.selectedServerSourceID = HarnessSettingsStore.selectedServerSourceID
+                state.editingServerSourceID = state.selectedServerSourceID
+                state.serverSourceNameString = state.activeServerSource?.name ?? ""
+                state.serverURLString = state.activeServerSourceURLString
                 state.isShowingSettings = true
                 return .none
 
             case .dismissSettings:
                 state.isShowingSettings = false
-                state.serverURLString = state.committedServerURLString
+                state.editingServerSourceID = state.selectedServerSourceID
+                state.serverSourceNameString = state.activeServerSource?.name ?? ""
+                state.serverURLString = state.activeServerSourceURLString
                 return .none
 
             case .newSessionButtonTapped:

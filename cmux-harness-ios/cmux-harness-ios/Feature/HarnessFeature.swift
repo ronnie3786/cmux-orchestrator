@@ -26,6 +26,10 @@ struct HarnessFeature {
 
     @ObservableState
     struct State: Equatable {
+        var serverSources: [HarnessServerSource] = HarnessSettingsStore.serverSources
+        var selectedServerSourceID = HarnessSettingsStore.selectedServerSourceID
+        var editingServerSourceID = HarnessSettingsStore.selectedServerSourceID
+        var serverSourceNameString = HarnessSettingsStore.activeServerSource?.name ?? ""
         var serverURLString = HarnessSettingsStore.serverURL ?? ""
         var committedServerURLString = HarnessSettingsStore.isLocalDemoMode
             ? HarnessLocalDemo.baseURL
@@ -154,6 +158,27 @@ struct HarnessFeature {
             isDemoMode || !committedServerURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
 
+        var activeServerSource: HarnessServerSource? {
+            guard let selectedServerSourceID else { return serverSources.first }
+            return serverSources.first { $0.id == selectedServerSourceID } ?? serverSources.first
+        }
+
+        var activeServerSourceName: String {
+            if isDemoMode {
+                return "Local Demo"
+            }
+            return activeServerSource?.name ?? "CMUX Server"
+        }
+
+        var activeServerSourceURLString: String {
+            activeServerSource?.urlString ?? committedServerURLString
+        }
+
+        var isEditingSavedServerSource: Bool {
+            guard let editingServerSourceID else { return false }
+            return serverSources.contains { $0.id == editingServerSourceID }
+        }
+
         func sessionState(for workspace: Workspace) -> WorkspaceSessionState {
             return workspaceSessionState(for: workspace, entries: logEntries)
         }
@@ -181,6 +206,10 @@ struct HarnessFeature {
         case refresh
         case refreshSucceeded(RefreshPayload)
         case refreshFailed(String)
+        case newServerSourceTapped
+        case editServerSource(String)
+        case selectServerSource(String)
+        case deleteServerSource(String)
         case saveServerTapped
         case startLocalDemoTapped
         case exitDemoModeTapped
@@ -286,6 +315,10 @@ struct HarnessFeature {
                  .refresh,
                  .refreshSucceeded(_),
                  .refreshFailed(_),
+                 .newServerSourceTapped,
+                 .editServerSource(_),
+                 .selectServerSource(_),
+                 .deleteServerSource(_),
                  .saveServerTapped,
                  .startLocalDemoTapped,
                  .exitDemoModeTapped,

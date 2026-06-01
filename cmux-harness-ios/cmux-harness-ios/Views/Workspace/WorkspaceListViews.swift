@@ -167,7 +167,60 @@ struct HomeHeaderView: View {
                 .foregroundStyle(.white.opacity(0.72))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+
+            if !store.isDemoMode && !store.serverSources.isEmpty {
+                HomeServerSourceMenu(store: store)
+                    .padding(.top, 8)
+            }
         }
+    }
+}
+
+struct HomeServerSourceMenu: View {
+    @Bindable var store: StoreOf<HarnessFeature>
+
+    var body: some View {
+        Menu {
+            ForEach(store.serverSources) { source in
+                Button {
+                    store.send(.selectServerSource(source.id))
+                } label: {
+                    Label(
+                        source.name,
+                        systemImage: source.id == store.selectedServerSourceID ? "checkmark.circle.fill" : "server.rack"
+                    )
+                }
+            }
+
+            Divider()
+
+            Button {
+                store.send(.settingsButtonTapped)
+            } label: {
+                Label("Manage Sources", systemImage: "gearshape")
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "server.rack")
+                Text(store.activeServerSourceName)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.58))
+            }
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color.white.opacity(0.1), in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+            }
+        }
+        .accessibilityLabel("CMUX source")
+        .accessibilityValue(store.activeServerSourceName)
     }
 }
 

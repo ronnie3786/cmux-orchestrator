@@ -185,12 +185,14 @@ struct HarnessFeatureTests {
 
     @Test
     func localDemoModeStartsWithReservedBaseURLAndExitReturnsToDiscovery() async {
-        let oldServerURL = HarnessSettingsStore.serverURL
+        let oldServerSources = HarnessSettingsStore.serverSources
+        let oldSelectedServerSourceID = HarnessSettingsStore.selectedServerSourceID
         let oldDemoMode = HarnessSettingsStore.isLocalDemoMode
         let oldSelectedWorkspaceID = HarnessSettingsStore.lastSelectedWorkspaceID
         let oldDrafts = HarnessSettingsStore.detailDrafts
         defer {
-            HarnessSettingsStore.serverURL = oldServerURL
+            HarnessSettingsStore.serverSources = oldServerSources
+            HarnessSettingsStore.selectedServerSourceID = oldSelectedServerSourceID
             HarnessSettingsStore.isLocalDemoMode = oldDemoMode
             HarnessSettingsStore.lastSelectedWorkspaceID = oldSelectedWorkspaceID
             HarnessSettingsStore.detailDrafts = oldDrafts
@@ -271,6 +273,187 @@ struct HarnessFeatureTests {
             $0.serverSetupMessage = nil
             $0.serverSetupError = "No running server was found. Start dashboard.py on your Mac, or enter the URL manually."
         }
+    }
+
+    @Test
+    func savingServerCreatesNamedSourceAndConnects() async {
+        let oldServerSources = HarnessSettingsStore.serverSources
+        let oldSelectedServerSourceID = HarnessSettingsStore.selectedServerSourceID
+        let oldDemoMode = HarnessSettingsStore.isLocalDemoMode
+        defer {
+            HarnessSettingsStore.serverSources = oldServerSources
+            HarnessSettingsStore.selectedServerSourceID = oldSelectedServerSourceID
+            HarnessSettingsStore.isLocalDemoMode = oldDemoMode
+        }
+
+        HarnessSettingsStore.serverURL = nil
+        HarnessSettingsStore.isLocalDemoMode = false
+
+        let normalizedURL = HarnessAPI.normalizedBaseURL("macbook.local:9091/harness")
+        let source = HarnessServerSource(name: "Studio Mac", urlString: normalizedURL)
+        let status = Self.status(workspaces: [])
+        let updatedAt = Date(timeIntervalSince1970: 1_777_500_000)
+        let clock = TestClock()
+        var client = HarnessClient.unimplemented
+        client.status = { baseURLString in
+            #expect(baseURLString == normalizedURL)
+            return status
+        }
+        client.log = { baseURLString in
+            #expect(baseURLString == normalizedURL)
+            return []
+        }
+
+        var state = HarnessFeature.State()
+        state.serverSources = []
+        state.selectedServerSourceID = nil
+        state.editingServerSourceID = nil
+        state.serverSourceNameString = "Studio Mac"
+        state.serverURLString = "macbook.local:9091/harness"
+        state.committedServerURLString = ""
+        state.isDemoMode = false
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.date.now = updatedAt
+            $0.harnessClient = client
+        }
+
+        await store.send(.saveServerTapped) {
+            $0.serverSources = [source]
+            $0.selectedServerSourceID = source.id
+            $0.editingServerSourceID = source.id
+            $0.serverSourceNameString = "Studio Mac"
+            $0.serverURLString = normalizedURL
+            $0.committedServerURLString = normalizedURL
+            $0.isShowingSettings = false
+            $0.errorMessage = nil
+            $0.serverSetupError = nil
+            $0.serverSetupMessage = "Saved Studio Mac."
+        }
+        await store.receive(\.refresh) {
+            $0.isRefreshing = true
+        }
+        await store.receive(\.refreshSucceeded) {
+            $0.isRefreshing = false
+            $0.status = status
+            $0.workspaces = []
+            $0.logEntries = []
+            $0.lastUpdated = updatedAt
+        }
+        await store.send(.onDisappear)
+
+        #expect(HarnessSettingsStore.serverSources == [source])
+        #expect(HarnessSettingsStore.selectedServerSourceID == source.id)
+        #expect(HarnessSettingsStore.serverURL == normalizedURL)
+    }
+
+    @Test
+    func selectingServerSourceSwitchesSessionsAndRefreshesFromNewURL() async {
+        let oldServerSources = HarnessSettingsStore.serverSources
+        let oldSelectedServerSourceID = HarnessSettingsStore.selectedServerSourceID
+        let oldSelectedWorkspaceID = HarnessSettingsStore.lastSelectedWorkspaceID
+        let oldDrafts = HarnessSettingsStore.detailDrafts
+        defer {
+            HarnessSettingsStore.serverSources = oldServerSources
+            HarnessSettingsStore.selectedServerSourceID = oldSelectedServerSourceID
+            HarnessSettingsStore.lastSelectedWorkspaceID = oldSelectedWorkspaceID
+            HarnessSettingsStore.detailDrafts = oldDrafts
+        }
+
+        let firstSource = HarnessServerSource(name: "MacBook", urlString: Self.baseURL)
+        let secondURL = "http://studio.local:9091/harness"
+        let secondSource = HarnessServerSource(name: "Studio", urlString: secondURL)
+        HarnessSettingsStore.serverSources = [firstSource, secondSource]
+        HarnessSettingsStore.selectedServerSourceID = firstSource.id
+        HarnessSettingsStore.detailDrafts = [:]
+
+        let existingWorkspace = Self.workspace()
+        var newWorkspace = Self.workspace()
+        newWorkspace.index = 4
+        newWorkspace.name = "studio-app"
+        newWorkspace.uuid = "workspace-studio"
+        newWorkspace.screenTail = "studio tail"
+        newWorkspace.screenFull = "studio full screen"
+        newWorkspace.cwd = "/Users/ronnie/Code/studio"
+        newWorkspace.surfaceId = "surface-studio"
+        let status = Self.status(workspaces: [newWorkspace])
+        let updatedAt = Date(timeIntervalSince1970: 1_777_600_000)
+        let clock = TestClock()
+        var client = HarnessClient.unimplemented
+        client.status = { baseURLString in
+            #expect(baseURLString == secondURL)
+            return status
+        }
+        client.log = { baseURLString in
+            #expect(baseURLString == secondURL)
+            return []
+        }
+
+        var state = Self.initialState()
+        state.serverSources = [firstSource, secondSource]
+        state.selectedServerSourceID = firstSource.id
+        state.editingServerSourceID = firstSource.id
+        state.serverSourceNameString = firstSource.name
+        state.serverURLString = firstSource.urlString
+        state.committedServerURLString = firstSource.urlString
+        state.workspaces = [existingWorkspace]
+        state.selectedWorkspaceID = existingWorkspace.id
+        state.fullScreenText = "old server screen"
+        state.feedItems = [
+            FeedItem(
+                requestID: "old-request",
+                kind: "approval",
+                title: nil,
+                message: "Old server approval",
+                command: nil,
+                workspaceID: existingWorkspace.id,
+                surfaceID: existingWorkspace.surfaceId,
+                agent: nil,
+                createdAt: "2026-04-26T12:00:00Z",
+                options: nil
+            )
+        ]
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.date.now = updatedAt
+            $0.harnessClient = client
+        }
+
+        await store.send(.selectServerSource(secondSource.id)) {
+            $0.selectedServerSourceID = secondSource.id
+            $0.editingServerSourceID = secondSource.id
+            $0.serverSourceNameString = secondSource.name
+            $0.serverURLString = secondSource.urlString
+            $0.committedServerURLString = secondSource.urlString
+            $0.status = nil
+            $0.workspaces = []
+            $0.logEntries = []
+            $0.feedItems = []
+            $0.lastUpdated = nil
+            $0.sessionSearchText = ""
+            $0.sessionFilter = .all
+            $0.selectedWorkspaceID = nil
+            $0.fullScreenText = nil
+            $0.detailDraft = ""
+            $0.serverSetupMessage = "Switched to Studio."
+        }
+        await store.receive(\.refresh) {
+            $0.isRefreshing = true
+        }
+        await store.receive(\.refreshSucceeded) {
+            $0.isRefreshing = false
+            $0.status = status
+            $0.workspaces = [newWorkspace]
+            $0.logEntries = []
+            $0.lastUpdated = updatedAt
+        }
+        await store.send(.onDisappear)
     }
 
     @Test
@@ -1240,6 +1423,11 @@ struct HarnessFeatureTests {
 
     private static func initialState() -> HarnessFeature.State {
         var state = HarnessFeature.State()
+        let source = HarnessServerSource(name: "MacBook", urlString: baseURL)
+        state.serverSources = [source]
+        state.selectedServerSourceID = source.id
+        state.editingServerSourceID = source.id
+        state.serverSourceNameString = source.name
         state.serverURLString = baseURL
         state.committedServerURLString = baseURL
         state.isDemoMode = false
