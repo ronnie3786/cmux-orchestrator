@@ -30,6 +30,15 @@ struct WorkspaceDetailView: View {
                 if !isDetailInputFocused && !store.isEasyModeEnabled {
                     SessionDetailTabBar(selection: detailTabBinding)
                         .transition(.move(edge: .top).combined(with: .opacity))
+                    if let paneGroup = store.selectedWorkspaceGroup, paneGroup.hasMultiplePanes {
+                        SessionPaneTabBar(
+                            group: paneGroup,
+                            selectedWorkspaceID: store.selectedWorkspaceID
+                        ) { workspaceID in
+                            store.send(.selectWorkspacePane(workspaceID))
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
                 detailContent
             }
@@ -46,7 +55,7 @@ struct WorkspaceDetailView: View {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
                     SessionStatusIndicators(workspace: workspace)
-                    Text(workspace.displayName)
+                    Text(store.selectedWorkspaceGroup?.displayName ?? workspace.displayName)
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
@@ -256,6 +265,75 @@ struct SessionDetailTabBar: View {
                         .frame(height: 1)
                 }
         }
+    }
+}
+
+struct SessionPaneTabBar: View {
+    let group: WorkspaceSessionGroup
+    let selectedWorkspaceID: String?
+    let selectAction: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(group.workspaces.enumerated()), id: \.element.id) { offset, pane in
+                    Button {
+                        selectAction(pane.id)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "rectangle.split.2x1")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(isSelected(pane) ? Color.black.opacity(0.72) : Color.white.opacity(0.66))
+
+                            Text(group.paneLabel(for: pane, offset: offset))
+                                .font(.caption.weight(.bold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.82)
+
+                            if pane.gitDirty == true {
+                                Circle()
+                                    .fill(isSelected(pane) ? Color.black.opacity(0.62) : Color.orange)
+                                    .frame(width: 6, height: 6)
+                                    .accessibilityLabel("Git changes")
+                            }
+                        }
+                        .foregroundStyle(isSelected(pane) ? Color.black.opacity(0.84) : Color.white.opacity(0.82))
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(
+                            isSelected(pane) ? Color.accentColor : Color.white.opacity(0.08),
+                            in: Capsule()
+                        )
+                        .overlay {
+                            Capsule()
+                                .strokeBorder(
+                                    isSelected(pane) ? Color.accentColor.opacity(0.9) : Color.white.opacity(0.14),
+                                    lineWidth: 1
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Pane \(offset + 1)")
+                    .accessibilityValue(group.paneLabel(for: pane, offset: offset))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+        .background {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.10))
+                        .frame(height: 1)
+                }
+        }
+    }
+
+    private func isSelected(_ pane: Workspace) -> Bool {
+        selectedWorkspaceID == pane.id
     }
 }
 

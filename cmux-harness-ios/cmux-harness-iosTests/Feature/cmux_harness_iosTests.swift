@@ -164,6 +164,51 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func selectingWorkspacePanePreservesDetailTabAndLoadsPaneScreen() async {
+        var serverPane = Self.workspace()
+        serverPane.surfaceLabel = "Project : server"
+        serverPane.surfaceId = "server-surface"
+
+        var testPane = Self.workspace()
+        testPane.index = 10_201
+        testPane.surfaceLabel = "Project : tests"
+        testPane.surfaceId = "tests-surface"
+
+        var state = Self.initialState()
+        state.workspaces = [serverPane, testPane]
+        state.selectedWorkspaceID = serverPane.id
+        state.detailTab = .activity
+        state.detailDraft = "server draft"
+        state.detailDrafts[testPane.id] = "test draft"
+        state.fullScreenText = "server screen"
+
+        var client = HarnessClient.unimplemented
+        client.screen = { baseURLString, index, lines in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == testPane.index)
+            #expect(lines == 200)
+            return ScreenResponse(ok: true, screen: "tests screen", lines: 200, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.selectWorkspacePane(testPane.id)) {
+            $0.detailDrafts[serverPane.id] = "server draft"
+            $0.selectedWorkspaceID = testPane.id
+            $0.fullScreenText = nil
+            $0.detailDraft = "test draft"
+        }
+        await store.receive(\.screenTick)
+        await store.receive(\.screenSucceeded) {
+            $0.fullScreenText = "tests screen"
+        }
+    }
+
+    @Test
     func easyModeTogglesOnTerminalAndTurnsOffOutsideTerminal() async {
         var state = Self.initialState()
         state.detailTab = .git
@@ -521,6 +566,71 @@ struct HarnessFeatureTests {
 
         #expect(singleSurface.id == refreshedSingleSurface.id)
         #expect(paneOne.id != paneTwo.id)
+    }
+
+    @Test
+    func workspaceSessionGroupsCollapsePanesByWorkspaceUUID() {
+        var serverPane = Self.workspace()
+        serverPane.surfaceLabel = "Project : server"
+        serverPane.surfaceId = "server-surface"
+        serverPane.surfaceTitle = "server"
+
+        var testPane = Self.workspace()
+        testPane.index = 10_201
+        testPane.surfaceLabel = "Project : tests"
+        testPane.surfaceId = "tests-surface"
+        testPane.surfaceTitle = "tests"
+
+        var state = Self.initialState()
+        state.workspaces = [testPane, serverPane]
+
+        let group = state.workspaceSessionGroups[0]
+        #expect(state.workspaceSessionGroups.count == 1)
+        #expect(group.id == "workspace-2")
+        #expect(group.displayName == "ios-app")
+        #expect(group.workspaces.map(\.id) == [serverPane.id, testPane.id])
+        #expect(group.paneLabel(for: serverPane, offset: 0) == "server")
+        #expect(group.paneLabel(for: testPane, offset: 1) == "tests")
+        #expect(group.preferredWorkspaceID(selectedWorkspaceID: testPane.id) == testPane.id)
+    }
+
+    @Test
+    func visibleWorkspaceGroupsSearchAndFilterAcrossPanes() {
+        var serverPane = Self.workspace()
+        serverPane.surfaceLabel = "Project : server"
+        serverPane.surfaceId = "server-surface"
+
+        var testPane = Self.workspace()
+        testPane.index = 10_201
+        testPane.surfaceLabel = "Project : tests"
+        testPane.surfaceId = "tests-surface"
+
+        var state = Self.initialState()
+        state.workspaces = [serverPane, testPane]
+        state.sessionSearchText = "tests"
+
+        #expect(state.visibleWorkspaceGroups.count == 1)
+
+        state.sessionFilter = .needsYou
+        state.logEntries = [
+            LogEntry(
+                timestamp: "2026-04-26T14:00:00Z",
+                workspace: testPane.index,
+                workspaceName: testPane.name,
+                promptType: "approval",
+                action: "Waiting for human input",
+                reason: nil,
+                key: nil,
+                surfaceId: testPane.surfaceId,
+                sessionID: nil
+            )
+        ]
+
+        #expect(state.waitingCount == 1)
+        #expect(state.visibleWorkspaceGroups.count == 1)
+
+        state.sessionSearchText = "missing"
+        #expect(state.visibleWorkspaceGroups.isEmpty)
     }
 
     @Test

@@ -38,7 +38,7 @@ struct WorkspaceListView: View {
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.white)
                     Spacer()
-                    Text("\(store.visibleWorkspaces.count) \(store.visibleWorkspaces.count == 1 ? "session" : "sessions")")
+                    Text("\(store.visibleWorkspaceGroups.count) \(store.visibleWorkspaceGroups.count == 1 ? "session" : "sessions")")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.55))
                 }
@@ -64,7 +64,7 @@ struct WorkspaceListView: View {
                     .listRowInsets(EdgeInsets(top: 8, leading: 18, bottom: 24, trailing: 18))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
-                } else if store.visibleWorkspaces.isEmpty {
+                } else if store.visibleWorkspaceGroups.isEmpty {
                     HomeEmptyState(
                         title: "No Matches",
                         message: "Adjust search or filter.",
@@ -74,9 +74,9 @@ struct WorkspaceListView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                 } else {
-                    ForEach(store.visibleWorkspaces) { workspace in
-                        WorkspaceCardView(store: store, workspace: workspace)
-                            .tag(workspace.id)
+                    ForEach(store.visibleWorkspaceGroups) { group in
+                        WorkspaceCardView(store: store, group: group)
+                            .tag(group.preferredWorkspaceID(selectedWorkspaceID: store.selectedWorkspaceID))
                             .listRowInsets(EdgeInsets(top: 5, leading: 18, bottom: 7, trailing: 18))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -423,7 +423,7 @@ struct HomeEmptyState: View {
 
 struct WorkspaceCardView: View {
     @Bindable var store: StoreOf<HarnessFeature>
-    let workspace: Workspace
+    let group: WorkspaceSessionGroup
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -433,9 +433,9 @@ struct WorkspaceCardView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Button {
-                        store.send(.selectWorkspace(workspace.id))
+                        store.send(.selectWorkspace(preferredWorkspaceID))
                     } label: {
-                        SessionTitleView(workspace: workspace)
+                        SessionGroupTitleView(group: group)
                     }
                     .buttonStyle(.plain)
                 }
@@ -458,6 +458,9 @@ struct WorkspaceCardView: View {
                 if let cwd = workspace.cwd?.nonEmptyTrimmed {
                     SessionMetaChip(systemImage: "folder", value: cwd.abbreviatedPath(componentCount: 2))
                 }
+                if group.hasMultiplePanes {
+                    SessionMetaChip(systemImage: "rectangle.split.2x1", value: "\(group.paneCount) panes")
+                }
             }
 
             HStack(spacing: 12) {
@@ -474,20 +477,68 @@ struct WorkspaceCardView: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture {
-            store.send(.selectWorkspace(workspace.id))
+            store.send(.selectWorkspace(preferredWorkspaceID))
         }
     }
 
+    private var workspace: Workspace {
+        group.primaryWorkspace
+    }
+
+    private var preferredWorkspaceID: String {
+        group.preferredWorkspaceID(selectedWorkspaceID: store.selectedWorkspaceID)
+    }
+
     private var sessionState: WorkspaceSessionState {
-        return workspaceSessionState(for: workspace, entries: store.logEntries)
+        return workspaceSessionState(for: group, entries: store.logEntries)
     }
 
     private var isExpanded: Bool {
-        store.selectedWorkspaceID == workspace.id
+        group.containsWorkspace(id: store.selectedWorkspaceID)
     }
 
     private var cardBorderColor: Color {
         isExpanded ? .accentColor.opacity(0.8) : Color.white.opacity(0.14)
+    }
+}
+
+struct SessionGroupTitleView: View {
+    let group: WorkspaceSessionGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.subheadline.weight(.bold))
+                .lineLimit(1)
+                .truncationMode(.head)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let subtitle {
+                Text(subtitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var title: String {
+        group.displayName.pathTail(componentCount: 2) ?? group.displayName
+    }
+
+    private var subtitle: String? {
+        if let cwd = group.primaryWorkspace.cwd?.nonEmptyTrimmed {
+            return cwd
+        }
+        if group.displayName != title, group.displayName.contains("/") {
+            return group.displayName
+        }
+        if group.hasMultiplePanes {
+            return "\(group.paneCount) panes"
+        }
+        return nil
     }
 }
 

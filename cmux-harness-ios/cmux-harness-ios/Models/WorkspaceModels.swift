@@ -52,11 +52,43 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
         return stableID
     }
 
+    var sessionGroupID: String {
+        let trimmedUUID = uuid.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedUUID.isEmpty ? id : trimmedUUID
+    }
+
     var displayName: String {
         let hasCustomName = customName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         let rawValue = surfaceLabel ?? customName ?? name
         let value = rawValue.isEmpty ? "workspace-\(index)" : rawValue
         return hasCustomName ? value : Self.shortenedFallbackTitle(value)
+    }
+
+    var sessionDisplayName: String {
+        let hasCustomName = customName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let rawValue = customName ?? name
+        let value = rawValue.isEmpty ? "workspace-\(index)" : rawValue
+        return hasCustomName ? value : Self.shortenedFallbackTitle(value)
+    }
+
+    var paneDisplayName: String {
+        if let surfaceLabel = surfaceLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !surfaceLabel.isEmpty {
+            let separator = " : "
+            if let range = surfaceLabel.range(of: separator) {
+                let trailing = String(surfaceLabel[range.upperBound...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trailing.isEmpty {
+                    return trailing
+                }
+            }
+            return surfaceLabel
+        }
+        if let surfaceTitle = surfaceTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !surfaceTitle.isEmpty {
+            return surfaceTitle
+        }
+        return "Pane"
     }
 
     var terminalPreview: String {
@@ -87,6 +119,97 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
             .split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
         return components.last ?? value
+    }
+}
+
+struct WorkspaceSessionGroup: Equatable, Identifiable, Sendable {
+    var id: String
+    var workspaces: [Workspace]
+
+    init?(workspaces: [Workspace]) {
+        let sortedWorkspaces = workspaces.sorted(by: Self.sortPanes)
+        guard let firstWorkspace = sortedWorkspaces.first else { return nil }
+        self.id = firstWorkspace.sessionGroupID
+        self.workspaces = sortedWorkspaces
+    }
+
+    var primaryWorkspace: Workspace {
+        workspaces[0]
+    }
+
+    var displayName: String {
+        primaryWorkspace.sessionDisplayName
+    }
+
+    var paneCount: Int {
+        workspaces.count
+    }
+
+    var hasMultiplePanes: Bool {
+        paneCount > 1
+    }
+
+    func containsWorkspace(id workspaceID: String?) -> Bool {
+        guard let workspaceID else { return false }
+        return workspaces.contains { $0.id == workspaceID }
+    }
+
+    func preferredWorkspaceID(selectedWorkspaceID: String?) -> String {
+        if containsWorkspace(id: selectedWorkspaceID), let selectedWorkspaceID {
+            return selectedWorkspaceID
+        }
+        return primaryWorkspace.id
+    }
+
+    func paneLabel(for workspace: Workspace, offset: Int) -> String {
+        let label = workspace.paneDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return label == "Pane" || label.isEmpty ? "Pane \(offset + 1)" : label
+    }
+
+    func matchesSearch(_ searchText: String) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        if displayName.localizedCaseInsensitiveContains(query) {
+            return true
+        }
+        return workspaces.contains {
+            $0.matchesSearch(query) || $0.paneDisplayName.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    static func groups(from workspaces: [Workspace]) -> [WorkspaceSessionGroup] {
+        Dictionary(grouping: workspaces, by: \.sessionGroupID)
+            .values
+            .compactMap(WorkspaceSessionGroup.init(workspaces:))
+            .sorted(by: sortGroups)
+    }
+
+    private static func sortPanes(_ lhs: Workspace, _ rhs: Workspace) -> Bool {
+        if lhs.index != rhs.index {
+            return lhs.index < rhs.index
+        }
+        let titleOrder = lhs.paneDisplayName.localizedCaseInsensitiveCompare(rhs.paneDisplayName)
+        if titleOrder != .orderedSame {
+            return titleOrder == .orderedAscending
+        }
+        return lhs.id < rhs.id
+    }
+
+    private static func sortGroups(_ lhs: WorkspaceSessionGroup, _ rhs: WorkspaceSessionGroup) -> Bool {
+        let left = lhs.primaryWorkspace
+        let right = rhs.primaryWorkspace
+        if left.starred != right.starred {
+            return left.starred && !right.starred
+        }
+        let displayOrder = lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName)
+        if displayOrder != .orderedSame {
+            return displayOrder == .orderedAscending
+        }
+        let idOrder = lhs.id.localizedCaseInsensitiveCompare(rhs.id)
+        if idOrder != .orderedSame {
+            return idOrder == .orderedAscending
+        }
+        return left.index < right.index
     }
 }
 

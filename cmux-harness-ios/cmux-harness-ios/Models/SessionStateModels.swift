@@ -71,6 +71,13 @@ func workspaceSessionState(for workspace: Workspace, entries: [LogEntry]) -> Wor
     return .session
 }
 
+func workspaceSessionState(for group: WorkspaceSessionGroup, entries: [LogEntry]) -> WorkspaceSessionState {
+    if group.workspaces.contains(where: { workspaceSessionState(for: $0, entries: entries) == .waiting }) {
+        return .waiting
+    }
+    return .session
+}
+
 func latestRelevantLog(for workspace: Workspace, entries: [LogEntry]) -> LogEntry? {
     entries.enumerated()
         .filter { _, entry in entry.workspace == workspace.index }

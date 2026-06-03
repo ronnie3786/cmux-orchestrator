@@ -134,17 +134,34 @@ struct HarnessFeature {
             }
         }
 
+        var workspaceSessionGroups: [WorkspaceSessionGroup] {
+            WorkspaceSessionGroup.groups(from: workspaces)
+        }
+
+        var visibleWorkspaceGroups: [WorkspaceSessionGroup] {
+            let searchText = sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return workspaceSessionGroups.filter { group in
+                sessionFilterIncludes(group)
+                && (searchText.isEmpty || group.matchesSearch(searchText))
+            }
+        }
+
         var selectedWorkspace: Workspace? {
             guard let selectedWorkspaceID else { return nil }
             return workspaces.first { $0.id == selectedWorkspaceID }
         }
 
+        var selectedWorkspaceGroup: WorkspaceSessionGroup? {
+            guard let selectedWorkspaceID else { return nil }
+            return workspaceSessionGroups.first { $0.containsWorkspace(id: selectedWorkspaceID) }
+        }
+
         var waitingCount: Int {
-            workspaces.filter { sessionState(for: $0) == .waiting }.count
+            workspaceSessionGroups.filter { sessionState(for: $0) == .waiting }.count
         }
 
         var sessionCount: Int {
-            workspaces.count
+            workspaceSessionGroups.count
         }
 
         var isConnected: Bool {
@@ -188,6 +205,10 @@ struct HarnessFeature {
             latestRelevantLog(for: workspace, entries: logEntries)
         }
 
+        func sessionState(for group: WorkspaceSessionGroup) -> WorkspaceSessionState {
+            workspaceSessionState(for: group, entries: logEntries)
+        }
+
         private func sessionFilterIncludes(_ workspace: Workspace) -> Bool {
             switch sessionFilter {
             case .all:
@@ -196,6 +217,17 @@ struct HarnessFeature {
                 return sessionState(for: workspace) == .waiting
             case .auto:
                 return workspace.resolvedAutoMode.isEnabled
+            }
+        }
+
+        private func sessionFilterIncludes(_ group: WorkspaceSessionGroup) -> Bool {
+            switch sessionFilter {
+            case .all:
+                return true
+            case .needsYou:
+                return sessionState(for: group) == .waiting
+            case .auto:
+                return group.workspaces.contains { $0.resolvedAutoMode.isEnabled }
             }
         }
     }
@@ -237,6 +269,7 @@ struct HarnessFeature {
         case createNewSessionFailed(String)
 
         case selectWorkspace(String?)
+        case selectWorkspacePane(String)
         case openPushApproval(PushApprovalNotification)
         case detailTabChanged(DetailTab)
         case setEasyMode(Bool)
@@ -349,6 +382,7 @@ struct HarnessFeature {
                 return reduceNewSession(into: &state, action: action)
 
             case .selectWorkspace(_),
+                 .selectWorkspacePane(_),
                  .openPushApproval(_),
                  .detailTabChanged(_),
                  .setEasyMode(_),

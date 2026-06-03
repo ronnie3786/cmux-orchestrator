@@ -64,6 +64,43 @@ extension HarnessFeature {
                 }
                 return .merge(effects)
 
+            case let .selectWorkspacePane(workspaceID):
+                guard state.workspaces.contains(where: { $0.id == workspaceID }) else { return .none }
+                guard state.selectedWorkspaceID != workspaceID else { return .none }
+                persistDetailDraft(&state)
+                state.selectedWorkspaceID = workspaceID
+                if state.isDemoMode {
+                    HarnessSettingsStore.lastSelectedWorkspaceID = nil
+                } else {
+                    HarnessSettingsStore.lastSelectedWorkspaceID = workspaceID
+                }
+                state.fullScreenText = nil
+                loadDetailDraft(for: workspaceID, into: &state)
+
+                var effects: [Effect<Action>] = [.send(.screenTick)]
+                switch state.detailTab {
+                case .terminal:
+                    break
+                case .git:
+                    state.gitStatus = nil
+                    state.gitError = nil
+                    state.prCommentsResponse = nil
+                    state.prCommentsError = nil
+                    if state.gitSegment == .prComments {
+                        effects.append(.send(.loadPRComments))
+                    } else {
+                        effects.append(.send(.gitTick))
+                    }
+                case .activity:
+                    break
+                case .skills:
+                    state.projectSkills = []
+                    state.userSkills = []
+                    state.skillsError = nil
+                    effects.append(.send(.loadSkills))
+                }
+                return .merge(effects)
+
             case let .openPushApproval(notification):
                 guard let workspaceID = matchingWorkspaceID(for: notification, in: state) else {
                     state.pendingPushApproval = notification
