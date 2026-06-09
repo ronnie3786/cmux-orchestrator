@@ -1,16 +1,93 @@
 import json
+import os
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 from cmux_harness.cmux_api import (
+    _find_socket_path,
     _parse_tree_data,
     _parse_notifications,
     _parse_debug_terminals,
     _parse_feed_items,
+    _socket_candidate_paths,
     cmux_feed_reply,
     cmux_send_to_workspace,
     _v2_request,
 )
+
+
+class TestSocketDiscovery(unittest.TestCase):
+
+    def test_candidates_prefer_last_socket_path_before_stale_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            default_path = os.path.join(temp_dir, "cmux.sock")
+            tagged_path = os.path.join(temp_dir, "cmux-501.sock")
+            last_path_file = os.path.join(temp_dir, "last-socket-path")
+            open(default_path, "w", encoding="utf-8").close()
+            open(tagged_path, "w", encoding="utf-8").close()
+            with open(last_path_file, "w", encoding="utf-8") as file:
+                file.write(tagged_path)
+
+            with patch.dict(os.environ, {"CMUX_SOCKET_PATH": ""}, clear=False), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_DIR", os.path.join(temp_dir, "state-missing")), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_SOCKET_PATH", os.path.join(temp_dir, "state-missing", "cmux.sock")), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_LAST_SOCKET_PATH_FILE", os.path.join(temp_dir, "state-missing", "last-socket-path")), \
+                    patch("cmux_harness.cmux_api.CMUX_APP_SUPPORT_DIR", temp_dir), \
+                    patch("cmux_harness.cmux_api.CMUX_DEFAULT_SOCKET_PATH", default_path), \
+                    patch("cmux_harness.cmux_api.CMUX_LAST_SOCKET_PATH_FILE", last_path_file):
+                candidates = _socket_candidate_paths()
+
+            self.assertGreaterEqual(len(candidates), 2)
+            self.assertEqual(candidates[0], tagged_path)
+            self.assertIn(default_path, candidates)
+
+    def test_find_socket_falls_back_when_env_socket_is_stale(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stale_path = os.path.join(temp_dir, "cmux.sock")
+            live_path = os.path.join(temp_dir, "cmux-501.sock")
+            last_path_file = os.path.join(temp_dir, "last-socket-path")
+            open(stale_path, "w", encoding="utf-8").close()
+            open(live_path, "w", encoding="utf-8").close()
+            with open(last_path_file, "w", encoding="utf-8") as file:
+                file.write(live_path)
+
+            def responds_to_ping(path):
+                return path == live_path
+
+            with patch.dict(os.environ, {"CMUX_SOCKET_PATH": stale_path}, clear=False), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_DIR", os.path.join(temp_dir, "state-missing")), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_SOCKET_PATH", os.path.join(temp_dir, "state-missing", "cmux.sock")), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_LAST_SOCKET_PATH_FILE", os.path.join(temp_dir, "state-missing", "last-socket-path")), \
+                    patch("cmux_harness.cmux_api.CMUX_APP_SUPPORT_DIR", temp_dir), \
+                    patch("cmux_harness.cmux_api.CMUX_DEFAULT_SOCKET_PATH", stale_path), \
+                    patch("cmux_harness.cmux_api.CMUX_LAST_SOCKET_PATH_FILE", last_path_file), \
+                    patch("cmux_harness.cmux_api._LAST_WORKING_SOCKET_PATH", None), \
+                    patch("cmux_harness.cmux_api._socket_responds_to_ping", side_effect=responds_to_ping):
+                self.assertEqual(_find_socket_path(), live_path)
+
+    def test_candidates_include_state_socket_before_legacy_app_support(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = os.path.join(temp_dir, "state")
+            app_dir = os.path.join(temp_dir, "app-support")
+            os.mkdir(state_dir)
+            os.mkdir(app_dir)
+            state_path = os.path.join(state_dir, "cmux.sock")
+            legacy_path = os.path.join(app_dir, "cmux.sock")
+            open(state_path, "w", encoding="utf-8").close()
+            open(legacy_path, "w", encoding="utf-8").close()
+
+            with patch.dict(os.environ, {"CMUX_SOCKET_PATH": ""}, clear=False), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_DIR", state_dir), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_SOCKET_PATH", state_path), \
+                    patch("cmux_harness.cmux_api.CMUX_STATE_LAST_SOCKET_PATH_FILE", os.path.join(state_dir, "last-socket-path")), \
+                    patch("cmux_harness.cmux_api.CMUX_APP_SUPPORT_DIR", app_dir), \
+                    patch("cmux_harness.cmux_api.CMUX_DEFAULT_SOCKET_PATH", legacy_path), \
+                    patch("cmux_harness.cmux_api.CMUX_LAST_SOCKET_PATH_FILE", os.path.join(app_dir, "last-socket-path")):
+                candidates = _socket_candidate_paths()
+
+            self.assertEqual(candidates[0], state_path)
+            self.assertLess(candidates.index(state_path), candidates.index(legacy_path))
 
 
 class TestParseTreeData(unittest.TestCase):

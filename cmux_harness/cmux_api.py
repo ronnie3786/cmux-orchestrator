@@ -9,6 +9,14 @@ import time as _time
 
 log = logging.getLogger(__name__)
 
+CMUX_APP_SUPPORT_DIR = os.path.expanduser("~/Library/Application Support/cmux")
+CMUX_LAST_SOCKET_PATH_FILE = os.path.join(CMUX_APP_SUPPORT_DIR, "last-socket-path")
+CMUX_DEFAULT_SOCKET_PATH = os.path.join(CMUX_APP_SUPPORT_DIR, "cmux.sock")
+CMUX_STATE_DIR = os.path.expanduser("~/.local/state/cmux")
+CMUX_STATE_LAST_SOCKET_PATH_FILE = os.path.join(CMUX_STATE_DIR, "last-socket-path")
+CMUX_STATE_SOCKET_PATH = os.path.join(CMUX_STATE_DIR, "cmux.sock")
+_LAST_WORKING_SOCKET_PATH = None
+
 _TERMINAL_KEY_ALIASES = {
     "arrowleft": "left",
     "arrow-left": "left",
@@ -42,25 +50,72 @@ def _send_v2_key(workspace_uuid, key, surface_id=None):
 # cmux socket helpers
 # ---------------------------------------------------------------------------
 
-def _find_socket_path():
-    env = os.environ.get("CMUX_SOCKET_PATH")
-    if env and os.path.exists(env):
-        return env
-    candidates = [
-        os.path.expanduser("~/Library/Application Support/cmux/cmux.sock"),
-        "/tmp/cmux.sock",
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
-    return None
+def _normalize_socket_path(path):
+    value = os.path.expanduser(str(path or "").strip())
+    return value or None
 
 
-def _cmux_send(sock, command):
+def _add_socket_candidate(candidates, seen, path):
+    normalized = _normalize_socket_path(path)
+    if not normalized or normalized in seen or not os.path.exists(normalized):
+        return
+    candidates.append(normalized)
+    seen.add(normalized)
+
+
+def _read_socket_path_file(path):
+    try:
+        with open(path, encoding="utf-8") as file:
+            return file.read().strip()
+    except OSError:
+        return None
+
+
+def _read_last_socket_path():
+    return _read_socket_path_file(CMUX_LAST_SOCKET_PATH_FILE)
+
+
+def _add_tagged_sockets(candidates, seen, directory):
+    tagged_sockets = []
+    try:
+        for name in os.listdir(directory):
+            if not name.startswith("cmux") or not name.endswith(".sock"):
+                continue
+            path = os.path.join(directory, name)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                mtime = 0
+            tagged_sockets.append((mtime, path))
+    except OSError:
+        return
+
+    for _, path in sorted(tagged_sockets, key=lambda item: item[0], reverse=True):
+        _add_socket_candidate(candidates, seen, path)
+
+
+def _socket_candidate_paths():
+    candidates = []
+    seen = set()
+    _add_socket_candidate(candidates, seen, os.environ.get("CMUX_SOCKET_PATH"))
+
+    _add_socket_candidate(candidates, seen, _read_socket_path_file(CMUX_STATE_LAST_SOCKET_PATH_FILE))
+    _add_socket_candidate(candidates, seen, _read_last_socket_path())
+
+    _add_tagged_sockets(candidates, seen, CMUX_STATE_DIR)
+    _add_tagged_sockets(candidates, seen, CMUX_APP_SUPPORT_DIR)
+
+    _add_socket_candidate(candidates, seen, CMUX_STATE_SOCKET_PATH)
+    _add_socket_candidate(candidates, seen, CMUX_DEFAULT_SOCKET_PATH)
+    _add_socket_candidate(candidates, seen, "/tmp/cmux.sock")
+    return candidates
+
+
+def _cmux_send(sock, command, timeout=3):
     """Send a command string to a cmux Unix socket and return the response."""
     sock.sendall((command + "\n").encode())
     chunks = []
-    sock.settimeout(3)
+    sock.settimeout(timeout)
     try:
         while True:
             data = sock.recv(65536)
@@ -72,6 +127,43 @@ def _cmux_send(sock, command):
     except socket.timeout:
         pass
     return b"".join(chunks).decode(errors="replace").strip()
+
+
+def _socket_responds_to_ping(path):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(path)
+        req = json.dumps({"id": "harness-socket-probe", "method": "system.ping", "params": {}})
+        raw = _cmux_send(sock, req, timeout=0.75)
+        if not raw:
+            return False
+        if raw.strip() == "PONG":
+            return True
+        parsed = json.loads(raw)
+        return bool(parsed.get("ok"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    finally:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        sock.close()
+
+
+def _find_socket_path():
+    global _LAST_WORKING_SOCKET_PATH
+    candidates = []
+    seen = set()
+    _add_socket_candidate(candidates, seen, _LAST_WORKING_SOCKET_PATH)
+    for candidate in _socket_candidate_paths():
+        _add_socket_candidate(candidates, seen, candidate)
+    for candidate in candidates:
+        if _socket_responds_to_ping(candidate):
+            _LAST_WORKING_SOCKET_PATH = candidate
+            return candidate
+    _LAST_WORKING_SOCKET_PATH = None
+    return None
 
 
 def cmux_command(command):
