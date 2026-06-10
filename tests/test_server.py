@@ -204,6 +204,39 @@ class TestServerResponses(unittest.TestCase):
         self.assertEqual(body["requirements"]["items"][0]["id"], "github")
         self.assertEqual(body["requirements"]["items"][1]["id"], "atlassian")
 
+    def test_api_discovery_lists_pr_review_endpoint_and_agent_tool(self):
+        handler = self._make_handler(Mock(), "/api/discovery")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        pr_start = next(
+            item for item in body["endpoints"]
+            if item["method"] == "POST" and item["path"] == "/api/orchestrator-v2/pr-reviews/start"
+        )
+        start_tool = next(item for item in body["agentTools"] if item["name"] == "start_pr_review")
+
+        handler.send_response.assert_called_once_with(200)
+        self.assertTrue(body["ok"])
+        self.assertIn("Discovery", body["categories"])
+        self.assertEqual(pr_start["category"], "PR Reviews")
+        self.assertEqual(pr_start["request"]["required"], ["number"])
+        self.assertEqual(pr_start["request"]["example"]["repo"], "doximity/iOS-Doximity")
+        self.assertIn("start_pr_review", pr_start["relatedTools"])
+        self.assertEqual(start_tool["invoke"]["path"], "/api/orchestrator-v2/agent/tools/start_pr_review")
+        self.assertEqual(start_tool["arguments"]["required"], ["number"])
+
+    def test_api_discovery_filters_by_method_and_query(self):
+        handler = self._make_handler(Mock(), "/api/discovery?method=POST&q=pr-reviews/start")
+
+        handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        paths = {item["path"] for item in body["endpoints"]}
+
+        self.assertEqual(body["filters"]["method"], "POST")
+        self.assertEqual(paths, {"/api/orchestrator-v2/pr-reviews/start"})
+
     def test_network_status_returns_detected_tailscale_url_when_host_not_saved(self):
         self.mock_tailscale_detect.return_value = {
             "available": True,

@@ -32,6 +32,13 @@ class TestOrchestratorV2Routes(unittest.TestCase):
             "title": "Created shell",
             "cwd": str(self.workspace),
         }
+        self.cmux.create_session_with_command.return_value = {
+            "workspaceId": "review-workspace",
+            "surfaceId": "review-surface",
+            "title": "PR-Review-11244",
+            "cwd": str(self.workspace),
+            "launchType": "Codex",
+        }
         self.cmux.list_sessions.return_value = [
             {"workspaceId": "workspace-created", "surfaceId": "surface-created", "title": "Created shell", "cwd": str(self.workspace)},
             {"workspaceId": "loose", "surfaceId": "surface-loose", "title": "Loose shell", "cwd": str(self.workspace)},
@@ -571,6 +578,89 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertEqual(body["openPrs"]["items"][0]["number"], 1)
         self.assertEqual(body["draftPrs"]["items"][0]["number"], 2)
         self.assertIn("reviewRequests", body)
+
+    def test_pr_review_requests_route_lists_ios_review_requests(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps([{
+                "number": 11244,
+                "title": "Review target",
+                "url": "https://github.com/doximity/iOS-Doximity/pull/11244",
+                "headRefName": "feature/review-target",
+                "isDraft": False,
+                "state": "OPEN",
+                "author": {"login": "teammate"},
+            }]),
+            stderr="",
+        )
+
+        with patch("cmux_harness.pr_review_orchestrator.subprocess.run", return_value=completed) as mock_run:
+            handler = self._make_handler("/api/orchestrator-v2/pr-reviews/review-requests?repo=doximity/iOS-Doximity")
+            handler.do_GET()
+
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["repository"], "doximity/iOS-Doximity")
+        self.assertEqual(body["items"][0]["number"], 11244)
+        self.assertEqual(body["items"][0]["owner"], "doximity")
+        self.assertEqual(body["items"][0]["repo"], "iOS-Doximity")
+        command = mock_run.call_args.args[0]
+        self.assertEqual(command[1:4], ["pr", "list", "--search"])
+        self.assertIn("--repo", command)
+        self.assertIn("doximity/iOS-Doximity", command)
+
+    def test_start_pr_review_route_launches_codex_workspace_and_creates_task(self):
+        handler = self._post_json("/api/orchestrator-v2/pr-reviews/start", {
+            "repo": "doximity/iOS-Doximity",
+            "number": 11244,
+            "projectDir": str(self.workspace),
+            "pullRequest": {
+                "number": 11244,
+                "title": "Review target",
+                "url": "https://github.com/doximity/iOS-Doximity/pull/11244",
+                "branch": "feature/review-target",
+                "state": "OPEN",
+            },
+        })
+
+        body = self._json_body(handler)
+
+        handler.send_response.assert_called_once_with(201)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["prompt"], "$ios-review-remote-pr 11244")
+        self.assertEqual(body["task"]["status"], "Running")
+        self.assertEqual(body["task"]["pullRequestLinks"][0]["number"], 11244)
+        self.assertEqual(body["task"]["cmuxSessionLinks"][0]["workspaceId"], "review-workspace")
+        kwargs = self.cmux.create_session_with_command.call_args.kwargs
+        self.assertEqual(kwargs["title"], "PR-Review-11244")
+        self.assertEqual(kwargs["cwd"], str(self.workspace.resolve()))
+        self.assertEqual(kwargs["launch_type"], "Codex")
+        self.assertIn("$ios-review-remote-pr 11244", kwargs["command"])
+        self.assertIn("--no-alt-screen", kwargs["command"])
+
+    def test_start_pr_review_agent_tool_records_tool_run(self):
+        handler = self._post_json("/api/orchestrator-v2/agent/tools/start_pr_review", {
+            "runId": "run-pr-review",
+            "args": {
+                "repo": "doximity/iOS-Doximity",
+                "number": 11244,
+                "projectDir": str(self.workspace),
+                "pullRequest": {
+                    "number": 11244,
+                    "title": "Review target",
+                    "url": "https://github.com/doximity/iOS-Doximity/pull/11244",
+                },
+            },
+        })
+
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["result"]["pullRequest"]["number"], 11244)
+        tool_runs = v2.get_repository().list_tool_runs(run_id="run-pr-review")
+        self.assertEqual(tool_runs[0]["toolName"], "start_pr_review")
 
 
 if __name__ == "__main__":

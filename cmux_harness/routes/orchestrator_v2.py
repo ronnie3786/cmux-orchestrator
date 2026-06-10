@@ -12,6 +12,7 @@ from .. import cmux_cli
 from .. import orchestrator_v2_runtime
 from .. import orchestrator_v2_storage as v2
 from .. import orchestrator_v2_voice
+from .. import pr_review_orchestrator as pr_reviews
 from ..orchestrator_v2_security import redact_text
 from . import jira as jira_routes
 
@@ -75,6 +76,14 @@ def handle_get(handler, parsed, *, engine) -> bool:
         if path == "/api/orchestrator-v2/left-rail/review-requests":
             handler._json_response({"ok": True, "pullRequests": list_prs_waiting_for_review()})
             return True
+        if path == "/api/orchestrator-v2/pr-reviews/review-requests":
+            params = handler.parse_qs(parsed.query)
+            payload = list_pr_review_requests({
+                "repo": params.get("repo", [pr_reviews.DEFAULT_REPO])[0],
+                "limit": params.get("limit", [20])[0],
+            })
+            handler._json_response({"ok": True, **payload})
+            return True
         if path == "/api/orchestrator-v2/cmux/sessions":
             sessions = get_cmux_cli().list_sessions()
             repo.record_cmux_snapshots(sessions)
@@ -131,7 +140,7 @@ def handle_get(handler, parsed, *, engine) -> bool:
             run_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/agui/runs/"):-len("/events")]).strip("/")
             handler._json_response({"ok": True, "runId": run_id, "events": repo.list_agui_events(run_id)})
             return True
-    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError, RuntimeError, ValueError) as exc:
+    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError, pr_reviews.PRReviewOrchestratorError, RuntimeError, ValueError) as exc:
         handler._json_response({"ok": False, "error": str(exc)}, getattr(exc, "status", 500))
         return True
     return False
@@ -296,6 +305,10 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             repo.record_cmux_snapshots([session])
             handler._json_response({"ok": True, "session": session}, 201)
             return True
+        if path == "/api/orchestrator-v2/pr-reviews/start":
+            payload = start_pr_review(repo, data, actor="local")
+            handler._json_response({"ok": True, **payload}, 201)
+            return True
         if path.startswith("/api/orchestrator-v2/cmux/sessions/") and path.endswith("/input"):
             workspace_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/cmux/sessions/"):-len("/input")]).strip("/")
             surface_id = str(data.get("surfaceId") or "")
@@ -378,7 +391,7 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             payload = run_agent_tool(repo, tool_name, data, engine=engine)
             handler._json_response({"ok": True, "tool": tool_name, "result": payload})
             return True
-    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError, RuntimeError, ValueError) as exc:
+    except (v2.V2StorageError, OrchestratorV2RouteError, cmux_cli.CmuxCliError, pr_reviews.PRReviewOrchestratorError, RuntimeError, ValueError) as exc:
         handler._json_response({"ok": False, "error": str(exc)}, getattr(exc, "status", 500))
         return True
     return False
@@ -528,6 +541,8 @@ def agent_tool_specs() -> dict[str, dict[str, Any]]:
         "list_my_open_prs": {"status": available, "kind": "read"},
         "list_my_draft_prs": {"status": available, "kind": "read"},
         "list_prs_waiting_for_review": {"status": available, "kind": "read"},
+        "list_pr_review_requests": {"status": available, "kind": "read"},
+        "start_pr_review": {"status": available, "kind": "local_update"},
         "get_git_status": {"status": available, "kind": "read"},
         "get_git_diff": {"status": available, "kind": "read"},
         "create_task": {"status": available, "kind": "local_update"},
@@ -646,6 +661,80 @@ def list_my_draft_prs() -> dict[str, Any]:
 
 def list_prs_waiting_for_review() -> dict[str, Any]:
     return {"ok": True, "items": _run_gh_pr_list(["search", "prs", "--review-requested", "@me", "--state", "open"])}
+
+
+def list_pr_review_requests(args: dict[str, Any] | None = None) -> dict[str, Any]:
+    args = args or {}
+    repo_name = pr_reviews.normalize_repo(args.get("repo") or args.get("repository") or pr_reviews.DEFAULT_REPO)
+    try:
+        limit = int(str(args.get("limit") or 20))
+    except (TypeError, ValueError) as exc:
+        raise OrchestratorV2RouteError("invalid limit", 400) from exc
+    items = pr_reviews.list_review_requests(
+        repo=repo_name,
+        limit=limit,
+        fake=_fake_providers_enabled(),
+    )
+    return {"repository": repo_name, "items": items, "pullRequests": items}
+
+
+def start_pr_review(repo: v2.V2Repository, args: dict[str, Any], *, actor: str = "agent") -> dict[str, Any]:
+    pull_request = args.get("pullRequest") if isinstance(args.get("pullRequest"), dict) else None
+    number = args.get("number") or args.get("prNumber") or (pull_request or {}).get("number")
+    repo_name = pr_reviews.normalize_repo(args.get("repo") or args.get("repository") or pr_reviews.DEFAULT_REPO)
+    project_dir = str(args.get("projectDir") or args.get("workspaceDir") or pr_reviews.DEFAULT_PROJECT_DIR)
+    review_cli = pr_reviews.normalize_review_cli(args.get("reviewCli") or args.get("cli") or pr_reviews.DEFAULT_REVIEW_CLI)
+    launched = pr_reviews.launch_review_workspace(
+        number=number,
+        repo=repo_name,
+        project_dir=project_dir,
+        review_cli=review_cli,
+        pull_request=pull_request,
+        title=str(args.get("title") or "").strip() or None,
+        cmux=get_cmux_cli(),
+        fake=_fake_providers_enabled(),
+    )
+    session = launched["cmuxSession"]
+    pr = dict(launched["pullRequest"])
+    pr["isPrimary"] = True
+    repo.record_cmux_snapshots([session])
+
+    task_id = str(args.get("taskId") or "").strip()
+    if task_id:
+        repo.attach_pr(task_id, pr, actor=actor)
+        repo.attach_cmux_session(task_id, session, launch_type=launched["launchType"], actor=actor)
+        task = repo.update_task(task_id, {"status": args.get("status") or "Running"}, actor=actor)
+    else:
+        pr_target = pr.get("url") or f"{repo_name}#{pr['number']}"
+        task = repo.create_task(
+            {
+                "title": str(args.get("taskTitle") or "").strip() or f"PR Review #{pr['number']}: {pr['title']}",
+                "workspaceDir": launched["projectDir"],
+                "status": args.get("status") or "Running",
+                "priority": args.get("priority") or "Medium",
+                "description": str(args.get("description") or "").strip() or f"Remote PR review for {pr_target}",
+                "sessionLaunchType": launched["launchType"],
+                "tags": args.get("tags") or [
+                    {"tag": "PR Review", "color": "indigo"},
+                    {"tag": review_cli, "color": ""},
+                ],
+                "pullRequest": pr,
+            },
+            cmux_session=session,
+            actor=actor,
+        )
+
+    return {
+        "task": task,
+        "cmuxSession": session,
+        "pullRequest": launched["pullRequest"],
+        "repository": repo_name,
+        "reviewCli": launched["reviewCli"],
+        "launchType": launched["launchType"],
+        "projectDir": launched["projectDir"],
+        "prompt": launched["prompt"],
+        "command": launched["command"],
+    }
 
 
 def _run_gh_pr_list(args: list[str]) -> list[dict[str, Any]]:
@@ -959,6 +1048,10 @@ def run_agent_tool(repo: v2.V2Repository, tool_name: str, data: dict[str, Any], 
         result = list_my_draft_prs()
     elif tool_name == "list_prs_waiting_for_review":
         result = list_prs_waiting_for_review()
+    elif tool_name == "list_pr_review_requests":
+        result = list_pr_review_requests(args)
+    elif tool_name == "start_pr_review":
+        result = start_pr_review(repo, args, actor="agent")
     elif tool_name == "get_git_status":
         result = fake_git_status() if _fake_providers_enabled() else engine.get_git_status_for_path(_resolve_body_path(args))
     elif tool_name == "get_git_diff":

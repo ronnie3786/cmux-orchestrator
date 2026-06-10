@@ -203,6 +203,54 @@ class CmuxCli:
         session.setdefault("launchType", launch_type)
         return session
 
+    def create_session_with_command(
+        self,
+        *,
+        title: str,
+        cwd: str,
+        command: str,
+        launch_type: str = "Custom command",
+    ) -> dict[str, Any]:
+        cwd = str(cwd or "").strip()
+        if not cwd:
+            raise CmuxCliError("cwd required", 400)
+        if not os.path.isdir(os.path.expanduser(cwd)):
+            raise CmuxCliError(f"cwd not found: {cwd}", 400)
+        command = str(command or "").strip()
+        if not command:
+            raise CmuxCliError("command required", 400)
+        if _fake_enabled():
+            fake_id = f"fake-{uuid.uuid4().hex[:8]}"
+            return {
+                "workspaceId": fake_id,
+                "workspaceIndex": None,
+                "surfaceId": f"surface-{fake_id}",
+                "title": str(title or "New Task"),
+                "cwd": os.path.expanduser(cwd),
+                "launchType": launch_type,
+                "command": command,
+                "active": True,
+                "raw": {"fake": True},
+            }
+        args = [
+            "new-workspace",
+            "--name",
+            str(title or "New Task"),
+            "--cwd",
+            os.path.expanduser(cwd),
+            "--command",
+            command,
+        ]
+        result = self.run(["--id-format", "both", *args], timeout=15)
+        session = parse_new_workspace_output(result.stdout)
+        if not session.get("workspaceId"):
+            session = self._find_created_session(str(title or "New Task")) or session
+        session.setdefault("title", str(title or "New Task"))
+        session.setdefault("cwd", os.path.expanduser(cwd))
+        session.setdefault("launchType", launch_type)
+        session["command"] = command
+        return session
+
     def send_text(self, workspace_id: str, text: str, *, surface_id: str = "") -> dict[str, Any]:
         if not workspace_id:
             raise CmuxCliError("workspaceId required", 400)

@@ -14,6 +14,7 @@ from pathlib import Path
 import uuid
 
 from . import attachments
+from . import api_discovery
 from . import auto_policy
 from . import cmux_api
 from . import dependencies
@@ -358,7 +359,16 @@ def make_handler(engine):
                 return
             if self._serve_static(path):
                 return
-            if path == "/api/network":
+            if path in {"/api/discovery", "/api/help"}:
+                params = urllib.parse.parse_qs(parsed.query)
+                self._json_response(api_discovery.discovery_payload(
+                    method=params.get("method", [""])[0],
+                    category=params.get("category", [""])[0],
+                    q=params.get("q", [""])[0],
+                    path_prefix=params.get("prefix", [""])[0],
+                    agent_tool_specs=orchestrator_v2_routes.agent_tool_specs(),
+                ))
+            elif path == "/api/network":
                 self._json_response(self._network_payload())
             elif path.startswith("/api/orchestrator-v2"):
                 if not orchestrator_v2_routes.handle_get(self, parsed, engine=self.server.engine):
