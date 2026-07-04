@@ -9,7 +9,8 @@ export function buildSystemPrompt(context) {
   return [
     "You are Orchestrator V2, Ronnie's top-level local production agent runtime.",
     "Use durable Orchestrator V2 state and audited backend tools for facts. Do not pretend unsupported capabilities worked.",
-    "Jira comments must create approval requests. Jira transitions may execute. PR replies/reviews, destructive git, cmux kill, and cmux restart are not implemented.",
+    "Jira comments, cmux session kill, and cmux session restart must create approval requests; they execute only after Ronnie approves. Jira transitions may execute directly. PR replies/reviews and destructive git are not implemented.",
+    "You can fully manage cmux sessions: list, read, search, inspect, create, launch coding agents, send prompts/keys, and propose kill/restart through approvals.",
     "Keep answers concise, operational, and grounded in task, cmux, Jira, PR, git, approval, audit, and activity state.",
     `Current active task count: ${activeTasks}.`
   ].join("\n");
@@ -126,8 +127,11 @@ export async function runDryAgent({ client, runId, userText, context, emit, mode
       key: extractJiraKey(userText) || "APP-123",
       status: /done/i.test(userText) ? "Done" : "In Progress"
     };
-  } else if (/not implemented|kill|restart|destructive|pr review|pr reply/i.test(userText)) {
-    toolName = /review/i.test(userText) ? "submit_pr_review" : /reply/i.test(userText) ? "post_pr_reply" : /kill/i.test(userText) ? "kill_cmux_session" : /restart/i.test(userText) ? "restart_cmux_session" : "run_destructive_git_operation";
+  } else if (/kill|stop.*session|restart/i.test(userText) && /session|cmux|workspace/i.test(userText)) {
+    toolName = /restart/i.test(userText) ? "restart_cmux_session" : "kill_cmux_session";
+    args = { workspaceId: extractWorkspaceId(userText, context) };
+  } else if (/not implemented|destructive|pr review|pr reply/i.test(userText)) {
+    toolName = /review/i.test(userText) ? "submit_pr_review" : /reply/i.test(userText) ? "post_pr_reply" : "run_destructive_git_operation";
     args = {};
   } else if (/git|diff/i.test(userText) && context?.tasks?.[0]?.workspaceDir) {
     toolName = "get_git_status";
@@ -351,6 +355,11 @@ function answerFromTool(toolName, result, context) {
     const approval = result?.approval || {};
     return `I created an approval request for ${approval.payload?.key || "the Jira issue"} instead of posting directly.`;
   }
+  if (toolName === "kill_cmux_session" || toolName === "restart_cmux_session") {
+    const approval = result?.approval || {};
+    const action = toolName === "kill_cmux_session" ? "stop" : "restart";
+    return `I created an approval request to ${action} ${approval.payload?.workspaceId || "the cmux session"}. It executes as soon as you approve it.`;
+  }
   if (toolName === "transition_jira_status") {
     return `I sent the Jira transition through the audited backend for ${result?.key || "the issue"}.`;
   }
@@ -364,6 +373,14 @@ function answerFromTool(toolName, result, context) {
   const tasks = result?.tasks || context?.tasks || [];
   if (!tasks.length) return "I do not see any matching active tasks in durable Orchestrator V2 state.";
   return `I checked durable Orchestrator V2 state and found ${tasks.length} task(s). ${tasks.slice(0, 3).map((task) => `${task.title}: ${task.status}`).join("; ")}.`;
+}
+
+function extractWorkspaceId(text, context) {
+  const sessions = (context?.tasks || []).flatMap((task) => task.cmuxSessionLinks || []);
+  const tokens = String(text || "").toLowerCase().split(/[^a-z0-9_-]+/i).filter(Boolean);
+  const match = sessions.find((session) => tokens.includes(String(session.workspaceId || "").toLowerCase())
+    || tokens.includes(String(session.title || "").toLowerCase()));
+  return match?.workspaceId || sessions[0]?.workspaceId || "";
 }
 
 function extractJiraKey(text) {

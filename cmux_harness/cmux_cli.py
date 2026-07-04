@@ -282,6 +282,53 @@ class CmuxCli:
             return self.send_text(workspace_id, text_key, surface_id=surface_id)
         return {"ok": True}
 
+    def close_session(self, workspace_id: str) -> dict[str, Any]:
+        workspace_id = str(workspace_id or "").strip()
+        if not workspace_id:
+            raise CmuxCliError("workspaceId required", 400)
+        if _fake_enabled():
+            return {"ok": True, "workspaceId": workspace_id, "fake": True}
+        socket_error = ""
+        try:
+            from . import cmux_api
+            if cmux_api._v2_request("workspace.close", {"workspace_id": workspace_id}) is not None:
+                return {"ok": True, "workspaceId": workspace_id, "via": "socket"}
+        except Exception as exc:
+            socket_error = str(exc)
+        try:
+            self.run(["close-workspace", "--workspace", workspace_id], timeout=10)
+            return {"ok": True, "workspaceId": workspace_id, "via": "cli"}
+        except CmuxCliError as exc:
+            detail = f"{exc}" if not socket_error else f"{exc} (socket: {socket_error})"
+            raise CmuxCliError(f"failed to close cmux workspace {workspace_id}: {detail}", exc.status) from exc
+
+    def restart_session(
+        self,
+        workspace_id: str,
+        *,
+        title: str = "",
+        cwd: str = "",
+        launch_type: str = "Empty shell",
+    ) -> dict[str, Any]:
+        workspace_id = str(workspace_id or "").strip()
+        if not workspace_id:
+            raise CmuxCliError("workspaceId required", 400)
+        current: dict[str, Any] | None = None
+        try:
+            current = next(
+                (session for session in self.list_sessions() if str(session.get("workspaceId") or "") == workspace_id),
+                None,
+            )
+        except CmuxCliError:
+            current = None
+        resolved_title = str(title or (current or {}).get("title") or "Restarted Session")
+        resolved_cwd = str(cwd or (current or {}).get("cwd") or "").strip()
+        if not resolved_cwd:
+            raise CmuxCliError("cwd required to restart session (original cwd unknown)", 400)
+        closed = self.close_session(workspace_id)
+        session = self.create_session(title=resolved_title, cwd=resolved_cwd, launch_type=launch_type)
+        return {"ok": True, "closed": closed, "session": session, "previousWorkspaceId": workspace_id}
+
     def _find_created_session(self, title: str) -> dict[str, Any] | None:
         title_key = str(title or "").strip().casefold()
         if not title_key:

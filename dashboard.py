@@ -60,7 +60,8 @@ def main():
     advertised = advertiser.start()
     v2_sidecar = OrchestratorV2Sidecar(python_port=port)
     sidecar_started = v2_sidecar.start()
-    v2_watcher = OrchestratorV2Watcher(interval_seconds=600)
+    watcher_interval = int(os.environ.get("ORCHESTRATOR_V2_WATCHER_INTERVAL") or 180)
+    v2_watcher = OrchestratorV2Watcher(interval_seconds=watcher_interval)
     v2_watcher.start()
 
     print(f"⚡ cmux harness home: http://localhost:{port}")

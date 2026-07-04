@@ -51,6 +51,7 @@ export const allowedPanels = new Set([
   "GitDiffSummaryPanel",
   "GoalDraftPanel",
   "JiraCommentApprovalPanel",
+  "SessionLifecycleApprovalPanel",
   "JiraTransitionPanel",
   "VoiceModePanel",
   "ToolRunTimeline",

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,11 @@ def handle_get(handler, parsed, *, engine) -> bool:
     path = parsed.path
     repo = v2.get_repository()
     try:
+        if path == "/api/orchestrator-v2/events/stream":
+            return stream_state_events(handler, parsed, repo=repo)
+        if path == "/api/orchestrator-v2/events/token":
+            handler._json_response({"ok": True, "token": repo.state_token()})
+            return True
         if path == "/api/orchestrator-v2/bootstrap":
             payload = bootstrap_payload(repo=repo)
             handler._json_response({"ok": True, **payload})
@@ -309,6 +315,16 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             payload = start_pr_review(repo, data, actor="local")
             handler._json_response({"ok": True, **payload}, 201)
             return True
+        if path.startswith("/api/orchestrator-v2/cmux/sessions/") and path.endswith("/kill"):
+            workspace_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/cmux/sessions/"):-len("/kill")]).strip("/")
+            payload = kill_cmux_session_now(repo, workspace_id, data, actor="local")
+            handler._json_response({"ok": True, **payload})
+            return True
+        if path.startswith("/api/orchestrator-v2/cmux/sessions/") and path.endswith("/restart"):
+            workspace_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/cmux/sessions/"):-len("/restart")]).strip("/")
+            payload = restart_cmux_session_now(repo, workspace_id, data, actor="local")
+            handler._json_response({"ok": True, **payload})
+            return True
         if path.startswith("/api/orchestrator-v2/cmux/sessions/") and path.endswith("/input"):
             workspace_id = urllib.parse.unquote(path[len("/api/orchestrator-v2/cmux/sessions/"):-len("/input")]).strip("/")
             surface_id = str(data.get("surfaceId") or "")
@@ -445,6 +461,56 @@ def handle_delete(handler, parsed, *, engine) -> bool:
     return False
 
 
+def stream_state_events(handler, parsed, *, repo: v2.V2Repository) -> bool:
+    """Server-sent events stream that fires whenever durable V2 state changes.
+
+    The client refetches full data on each `update` event, so the stream only
+    needs to be a cheap change signal, not a data channel.
+    """
+    params = handler.parse_qs(parsed.query)
+    poll_seconds = min(max(float(str(params.get("interval", ["2"])[0] or "2")), 0.5), 15.0)
+    max_seconds = min(max(float(str(params.get("maxSeconds", ["3600"])[0] or "3600")), 5.0), 6 * 3600.0)
+    try:
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        handler.send_header("Cache-Control", "no-cache")
+        handler.send_header("X-Accel-Buffering", "no")
+        handler.end_headers()
+    except (BrokenPipeError, ConnectionResetError):
+        return True
+
+    def write_event(event: str, payload: dict[str, Any]) -> bool:
+        try:
+            handler.wfile.write(f"event: {event}\ndata: {json.dumps(payload)}\n\n".encode("utf-8"))
+            handler.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return False
+
+    token = repo.state_token()
+    if not write_event("connected", {"ok": True}):
+        return True
+    started = time.monotonic()
+    last_heartbeat = started
+    while time.monotonic() - started < max_seconds:
+        time.sleep(poll_seconds)
+        try:
+            current = repo.state_token()
+        except Exception:
+            continue
+        now = time.monotonic()
+        if current != token:
+            token = current
+            if not write_event("update", {"changedAt": v2.now_iso()}):
+                return True
+            last_heartbeat = now
+        elif now - last_heartbeat >= 15.0:
+            if not write_event("heartbeat", {"ok": True}):
+                return True
+            last_heartbeat = now
+    return True
+
+
 def bootstrap_payload(*, repo: v2.V2Repository) -> dict[str, Any]:
     try:
         left_rail = left_rail_payload()
@@ -564,8 +630,8 @@ def agent_tool_specs() -> dict[str, dict[str, Any]]:
         "post_pr_reply": {"status": not_impl, "kind": "external_write"},
         "submit_pr_review": {"status": not_impl, "kind": "external_write"},
         "run_destructive_git_operation": {"status": not_impl, "kind": "external_write"},
-        "kill_cmux_session": {"status": not_impl, "kind": "cmux_lifecycle"},
-        "restart_cmux_session": {"status": not_impl, "kind": "cmux_lifecycle"},
+        "kill_cmux_session": {"status": approval, "kind": "cmux_lifecycle", "requiresApproval": True},
+        "restart_cmux_session": {"status": approval, "kind": "cmux_lifecycle", "requiresApproval": True},
     }
     return specs
 
@@ -737,6 +803,114 @@ def start_pr_review(repo: v2.V2Repository, args: dict[str, Any], *, actor: str =
     }
 
 
+def find_task_session_link(repo: v2.V2Repository, workspace_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    for task in repo.list_tasks(include_history=True):
+        for link in task.get("cmuxSessionLinks", []):
+            if str(link.get("workspaceId") or "") == workspace_id:
+                return task, link
+    return None, None
+
+
+def kill_cmux_session_now(repo: v2.V2Repository, workspace_id: str, args: dict[str, Any], *, actor: str = "local") -> dict[str, Any]:
+    workspace_id = str(workspace_id or args.get("workspaceId") or "").strip()
+    if not workspace_id:
+        raise OrchestratorV2RouteError("workspaceId required", 400)
+    run_id = str(args.get("runId") or v2.safe_id("lifecycle"))
+    task, link = find_task_session_link(repo, workspace_id)
+    result = get_cmux_cli().close_session(workspace_id)
+    if task is not None and link is not None and _parse_bool(args.get("detachLink", True)):
+        try:
+            repo.detach_cmux_session(task["id"], link["id"], actor=actor)
+        except v2.V2StorageError:
+            pass
+    repo.record_tool_run(run_id, "kill_cmux_session.execute", {"workspaceId": workspace_id}, result, actor=actor)
+    repo.record_activity_event(
+        "cmux_session_killed",
+        f"Stopped cmux session {workspace_id}",
+        str((task or {}).get("title") or ""),
+        target_type="cmux_session",
+        target_id=workspace_id,
+        run_id=run_id,
+    )
+    return {"result": result, "workspaceId": workspace_id, "taskId": (task or {}).get("id")}
+
+
+def restart_cmux_session_now(repo: v2.V2Repository, workspace_id: str, args: dict[str, Any], *, actor: str = "local") -> dict[str, Any]:
+    workspace_id = str(workspace_id or args.get("workspaceId") or "").strip()
+    if not workspace_id:
+        raise OrchestratorV2RouteError("workspaceId required", 400)
+    run_id = str(args.get("runId") or v2.safe_id("lifecycle"))
+    task, link = find_task_session_link(repo, workspace_id)
+    launch_type = v2.normalize_launch_type(args.get("launchType") or (link or {}).get("launchType"))
+    title = str(args.get("title") or (link or {}).get("title") or "").strip()
+    cwd = str(
+        args.get("workspaceDir")
+        or args.get("cwd")
+        or (link or {}).get("cwd")
+        or (task or {}).get("workspaceDir")
+        or ""
+    ).strip()
+    result = get_cmux_cli().restart_session(workspace_id, title=title, cwd=cwd, launch_type=launch_type)
+    session = result.get("session") if isinstance(result.get("session"), dict) else {}
+    new_link = None
+    if task is not None and session.get("workspaceId"):
+        if link is not None:
+            try:
+                repo.detach_cmux_session(task["id"], link["id"], actor=actor)
+            except v2.V2StorageError:
+                pass
+        new_link = repo.attach_cmux_session(task["id"], session, launch_type=launch_type, actor=actor)
+    if session:
+        repo.record_cmux_snapshots([session])
+    repo.record_tool_run(
+        run_id,
+        "restart_cmux_session.execute",
+        {"workspaceId": workspace_id, "launchType": launch_type},
+        {"session": session, "previousWorkspaceId": workspace_id},
+        actor=actor,
+    )
+    repo.record_activity_event(
+        "cmux_session_restarted",
+        f"Restarted cmux session {workspace_id}",
+        str(session.get("workspaceId") or ""),
+        target_type="cmux_session",
+        target_id=str(session.get("workspaceId") or workspace_id),
+        run_id=run_id,
+    )
+    return {
+        "result": result,
+        "session": session,
+        "cmuxSessionLink": new_link,
+        "previousWorkspaceId": workspace_id,
+        "taskId": (task or {}).get("id"),
+    }
+
+
+def cmux_lifecycle_approval_payload(tool_name: str, args: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    workspace_id = str(args.get("workspaceId") or "").strip()
+    if not workspace_id:
+        raise OrchestratorV2RouteError("workspaceId required", 400)
+    action = "Stop" if tool_name == "kill_cmux_session" else "Restart"
+    return {
+        "runId": run_id,
+        "taskId": str(args.get("taskId") or "").strip() or None,
+        "kind": tool_name,
+        "title": f"{action} cmux session {workspace_id}",
+        "summary": str(args.get("reason") or f"The agent wants to {action.lower()} cmux session {workspace_id}."),
+        "impact": "Session lifecycle",
+        "payload": {
+            "runId": run_id,
+            "toolName": tool_name,
+            "workspaceId": workspace_id,
+            "launchType": args.get("launchType"),
+            "workspaceDir": args.get("workspaceDir") or args.get("cwd"),
+            "title": args.get("title"),
+            "requestedAction": f"{action} cmux session",
+            "reversible": tool_name == "restart_cmux_session",
+        },
+    }
+
+
 def _run_gh_pr_list(args: list[str]) -> list[dict[str, Any]]:
     if _fake_providers_enabled():
         prs = [
@@ -872,6 +1046,9 @@ def normalize_pr(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_LAST_WATCHER_SNAPSHOT: dict[str, Any] = {"sessionStates": {}, "orphanKeys": set()}
+
+
 def run_watcher_once(*, repo: v2.V2Repository) -> dict[str, Any]:
     run_id = v2.safe_id("watch")
     sessions: list[dict[str, Any]] = []
@@ -906,6 +1083,7 @@ def run_watcher_once(*, repo: v2.V2Repository) -> dict[str, Any]:
             inspections.append(get_cmux_cli().inspect_session(session, screen_text=screen))
         except Exception as exc:
             inspections.append({"workspaceId": session.get("workspaceId", ""), "error": redact_text(exc)})
+    state_changes = detect_watcher_changes(repo, run_id, inspections, orphans)
     refreshed_summaries = 0
     for task in repo.list_tasks():
         texts = []
@@ -939,7 +1117,78 @@ def run_watcher_once(*, repo: v2.V2Repository) -> dict[str, Any]:
         "refreshedSummaries": refreshed_summaries,
         "providerResults": provider_results,
         "sessionError": session_error,
+        "stateChanges": state_changes,
     }
+
+
+def detect_watcher_changes(
+    repo: v2.V2Repository,
+    run_id: str,
+    inspections: list[dict[str, Any]],
+    orphans: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compare this watcher pass against the previous one and narrate meaningful
+    transitions (session state changes, new orphans) as activity events."""
+    previous_states: dict[str, str] = dict(_LAST_WATCHER_SNAPSHOT.get("sessionStates") or {})
+    previous_orphans: set[str] = set(_LAST_WATCHER_SNAPSHOT.get("orphanKeys") or set())
+    changes: list[dict[str, Any]] = []
+    current_states: dict[str, str] = {}
+    for inspection in inspections:
+        workspace_id = str(inspection.get("workspaceId") or "")
+        if not workspace_id or inspection.get("error"):
+            continue
+        state = str(inspection.get("state") or "unknown")
+        current_states[workspace_id] = state
+        before = previous_states.get(workspace_id)
+        if before is not None and before != state:
+            change = {
+                "kind": "session_state_changed",
+                "workspaceId": workspace_id,
+                "from": before,
+                "to": state,
+                "title": str(inspection.get("title") or workspace_id),
+            }
+            changes.append(change)
+            label = {
+                "error": "needs attention",
+                "running_tool": "started running a tool",
+                "completed_recently": "finished recent work",
+                "idle": "went idle",
+            }.get(state, state)
+            repo.record_activity_event(
+                "session_state_changed",
+                f"{change['title']} {label}",
+                f"{before} -> {state}",
+                target_type="cmux_session",
+                target_id=workspace_id,
+                run_id=run_id,
+                payload=change,
+            )
+    current_orphans = {str(orphan.get("sessionKey") or "") for orphan in orphans if orphan.get("sessionKey")}
+    for key in sorted(current_orphans - previous_orphans):
+        orphan = next((item for item in orphans if str(item.get("sessionKey") or "") == key), {})
+        changes.append({"kind": "orphan_detected", "sessionKey": key})
+        repo.record_activity_event(
+            "orphan_detected",
+            f"New unlinked cmux session: {orphan.get('title') or orphan.get('workspaceId') or key}",
+            str(orphan.get("cwd") or ""),
+            target_type="cmux_session",
+            target_id=str(orphan.get("workspaceId") or key),
+            run_id=run_id,
+        )
+    if changes:
+        repo.record_activity_event(
+            "watcher_summary",
+            f"Watcher detected {len(changes)} change(s)",
+            ", ".join(sorted({change["kind"] for change in changes})),
+            target_type="watcher_run",
+            target_id=run_id,
+            run_id=run_id,
+            payload={"changes": changes},
+        )
+    _LAST_WATCHER_SNAPSHOT["sessionStates"] = current_states
+    _LAST_WATCHER_SNAPSHOT["orphanKeys"] = current_orphans
+    return changes
 
 
 def handle_chat_turn(repo: v2.V2Repository, data: dict[str, Any]) -> dict[str, Any]:
@@ -1098,12 +1347,15 @@ def run_agent_tool(repo: v2.V2Repository, tool_name: str, data: dict[str, Any], 
         target_status = str(args.get("status") or args.get("targetStatus") or "").strip()
         transition = jira_routes.transition_status(key=key, status=target_status)
         result = {"transition": transition, "key": key.upper(), "targetStatus": target_status}
+    elif tool_name in {"kill_cmux_session", "restart_cmux_session"}:
+        approval_payload = cmux_lifecycle_approval_payload(tool_name, args, run_id=run_id)
+        result = {"approval": repo.create_approval_request(approval_payload, actor="agent")}
+        tool_status = "requires_approval"
+        requires_approval = True
     elif tool_name in {
         "post_pr_reply",
         "submit_pr_review",
         "run_destructive_git_operation",
-        "kill_cmux_session",
-        "restart_cmux_session",
     }:
         result = not_implemented_result(tool_name)
         tool_status = "not_implemented"
@@ -1143,8 +1395,6 @@ def not_implemented_result(tool_name: str) -> dict[str, Any]:
         "post_pr_reply": "PR replies are not implemented in this production pass.",
         "submit_pr_review": "PR reviews are not implemented in this production pass.",
         "run_destructive_git_operation": "Destructive git operations are not implemented in this production pass.",
-        "kill_cmux_session": "cmux kill is intentionally not implemented in this production pass.",
-        "restart_cmux_session": "cmux restart is intentionally not implemented in this production pass.",
     }
     return {
         "ok": False,
@@ -1157,23 +1407,47 @@ def not_implemented_result(tool_name: str) -> dict[str, Any]:
 
 def execute_approved_payload(repo: v2.V2Repository, before: dict[str, Any] | None, approval: dict[str, Any]) -> dict[str, Any] | None:
     stored = before or approval
-    if not stored or stored.get("kind") != "post_jira_comment":
+    if not stored:
         return None
+    kind = str(stored.get("kind") or "")
     payload = stored.get("payload") if isinstance(stored.get("payload"), dict) else {}
-    key = str(payload.get("key") or "").strip().upper()
-    body = str(payload.get("body") or "").strip()
-    if not key or not body:
-        return {"tool": "post_jira_comment", "status": "skipped", "reason": "stored reviewed payload is incomplete"}
-    result = jira_routes.post_comment(key=key, body=body)
     run_id = str(payload.get("runId") or stored.get("runId") or approval.get("id") or "")
-    repo.record_tool_run(
-        run_id,
-        "post_jira_comment.execute",
-        {"approvalId": approval.get("id"), "key": key, "body": body},
-        {"result": result, "key": key},
-        actor="agent",
-    )
-    return {"tool": "post_jira_comment", "key": key, "result": result}
+    if kind == "post_jira_comment":
+        key = str(payload.get("key") or "").strip().upper()
+        body = str(payload.get("body") or "").strip()
+        if not key or not body:
+            return {"tool": "post_jira_comment", "status": "skipped", "reason": "stored reviewed payload is incomplete"}
+        result = jira_routes.post_comment(key=key, body=body)
+        repo.record_tool_run(
+            run_id,
+            "post_jira_comment.execute",
+            {"approvalId": approval.get("id"), "key": key, "body": body},
+            {"result": result, "key": key},
+            actor="agent",
+        )
+        return {"tool": "post_jira_comment", "key": key, "result": result}
+    if kind in {"kill_cmux_session", "restart_cmux_session"}:
+        workspace_id = str(payload.get("workspaceId") or "").strip()
+        if not workspace_id:
+            return {"tool": kind, "status": "skipped", "reason": "stored reviewed payload is incomplete"}
+        args = {**payload, "runId": run_id}
+        try:
+            if kind == "kill_cmux_session":
+                execution = kill_cmux_session_now(repo, workspace_id, args, actor="agent")
+            else:
+                execution = restart_cmux_session_now(repo, workspace_id, args, actor="agent")
+        except (cmux_cli.CmuxCliError, OrchestratorV2RouteError, v2.V2StorageError) as exc:
+            repo.record_tool_run(
+                run_id,
+                f"{kind}.execute",
+                {"approvalId": approval.get("id"), "workspaceId": workspace_id},
+                {"error": str(exc)},
+                actor="agent",
+                status="error",
+            )
+            return {"tool": kind, "status": "error", "error": str(exc), "workspaceId": workspace_id}
+        return {"tool": kind, "workspaceId": workspace_id, **execution}
+    return None
 
 
 def read_git_diff(engine, cwd: str, file: str, section: str) -> str:
