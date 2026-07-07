@@ -376,4 +376,120 @@ describe("AppShell", () => {
     expect(screen.queryByText("Coding Agent Harness")).toBeNull();
     expect(screen.queryByText("Empty shell")).toBeNull();
   });
+
+  it("stops a cmux session from the session view after confirmation", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getByText("1 active")).toBeTruthy());
+    fireEvent.click(screen.getByText("1 active"));
+    fireEvent.click(await screen.findByText("Stop Session"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/cmux/sessions/workspace-1/kill",
+      expect.objectContaining({ method: "POST" })
+    ));
+  });
+
+  it("restarts a cmux session from the session view after confirmation", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getByText("1 active")).toBeTruthy());
+    fireEvent.click(screen.getByText("1 active"));
+    fireEvent.click((await screen.findAllByText("Restart Session"))[0]);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/cmux/sessions/workspace-1/restart",
+      expect.objectContaining({ method: "POST" })
+    ));
+  });
+
+  it("does not stop a session when the confirmation is declined", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getByText("1 active")).toBeTruthy());
+    fireEvent.click(screen.getByText("1 active"));
+    fireEvent.click(await screen.findByText("Stop Session"));
+
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/orchestrator-v2/cmux/sessions/workspace-1/kill",
+      expect.anything()
+    );
+  });
+
+  it("switches the board to list view", async () => {
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getAllByText("Ship V2").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByLabelText("List view"));
+
+    expect(document.querySelector(".task-list-view")).toBeTruthy();
+    expect(window.localStorage.getItem("orchestrator-v2-board-layout")).toBe("list");
+  });
+
+  it("opens the history view from the rail navigation and reopens a task", async () => {
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getAllByText("Ship V2").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("History"));
+
+    expect(await screen.findByText("Finished task")).toBeTruthy();
+    fireEvent.click(screen.getByText("Reopen"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/tasks/task_done",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "To Do" }) })
+    ));
+  });
+
+  it("runs the watcher from the activity view", async () => {
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getAllByText("Ship V2").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("Activity", { selector: ".rail-nav-btn span" }));
+    fireEvent.click(await screen.findByText("Run Watcher Now"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/watcher/run",
+      expect.objectContaining({ method: "POST" })
+    ));
+  });
+
+  it("renders session lifecycle approvals with approve and deny controls", async () => {
+    const lifecycleBootstrap = {
+      ...bootstrap,
+      approvals: [{
+        id: "approval_kill",
+        kind: "kill_cmux_session",
+        status: "pending",
+        title: "Stop cmux session workspace-1",
+        summary: "The agent wants to stop workspace-1.",
+        payload: { workspaceId: "workspace-1", toolName: "kill_cmux_session", reversible: false }
+      }]
+    };
+    global.fetch = vi.fn((url, options = {}) => {
+      if (String(url).includes("/copilotkit/info")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: "1", agents: {} }) });
+      }
+      if (String(url).includes("/bootstrap")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(lifecycleBootstrap) });
+      }
+      if (String(url).includes("/orphans")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, orphans: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+    });
+
+    render(<AppShell />);
+
+    await waitFor(() => expect(screen.getByText("Session Lifecycle Approval")).toBeTruthy());
+    fireEvent.click(screen.getByText("Approve Stop"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/approvals/approval_kill/decision",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ status: "approved" }) })
+    ));
+  });
 });

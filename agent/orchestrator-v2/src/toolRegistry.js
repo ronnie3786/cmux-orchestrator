@@ -40,9 +40,11 @@ export const toolSpecs = Object.freeze({
   post_pr_reply: ["not_implemented", "Not implemented. Return an explicit unsupported capability."],
   submit_pr_review: ["not_implemented", "Not implemented. Return an explicit unsupported capability."],
   run_destructive_git_operation: ["not_implemented", "Not implemented. Return an explicit unsupported capability."],
-  kill_cmux_session: ["not_implemented", "Not implemented. Return an explicit unsupported capability."],
-  restart_cmux_session: ["not_implemented", "Not implemented. Return an explicit unsupported capability."]
+  kill_cmux_session: ["cmux_lifecycle", "Create an approval request to stop a cmux session. Ronnie must approve before it executes."],
+  restart_cmux_session: ["cmux_lifecycle", "Create an approval request to restart a cmux session. Ronnie must approve before it executes."]
 });
+
+const APPROVAL_GATED_TOOLS = new Set(["post_jira_comment", "kill_cmux_session", "restart_cmux_session"]);
 
 export function capabilities() {
   return Object.fromEntries(Object.entries(toolSpecs).map(([name, [kind, description]]) => [
@@ -51,7 +53,7 @@ export function capabilities() {
       name,
       kind,
       description,
-      status: kind === "not_implemented" ? "not_implemented" : name === "post_jira_comment" ? "approval_required" : "available"
+      status: kind === "not_implemented" ? "not_implemented" : APPROVAL_GATED_TOOLS.has(name) ? "approval_required" : "available"
     }
   ]));
 }
@@ -99,6 +101,9 @@ export function panelForTool(toolName, result) {
   }
   if (toolName === "post_jira_comment" || result?.approval?.kind === "post_jira_comment") {
     return { component: "JiraCommentApprovalPanel", props: result?.approval || result };
+  }
+  if (toolName === "kill_cmux_session" || toolName === "restart_cmux_session" || ["kill_cmux_session", "restart_cmux_session"].includes(result?.approval?.kind)) {
+    return { component: "SessionLifecycleApprovalPanel", props: result?.approval || result };
   }
   if (toolName === "transition_jira_status") {
     return { component: "JiraTransitionPanel", props: result };

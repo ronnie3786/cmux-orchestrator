@@ -9,7 +9,6 @@ import {
   ArrowRight,
   ArrowUp,
   Bell,
-  Bot,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -29,10 +28,8 @@ import {
   LayoutDashboard,
   Lightbulb,
   List,
-  Maximize2,
   Mic,
   MoreHorizontal,
-  Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
@@ -58,9 +55,12 @@ function initialUiState() {
   const params = new URLSearchParams(window.location.search);
   const taskId = params.get("task");
   const view = params.get("view");
-  const selectedView = taskId && (view === "session" || view === "diff" || view === "goal")
-    ? { kind: view, taskId, mode: params.get("mode") || undefined }
-    : { kind: "board" };
+  let selectedView = { kind: "board" };
+  if (taskId && (view === "session" || view === "diff" || view === "goal")) {
+    selectedView = { kind: view, taskId, mode: params.get("mode") || undefined };
+  } else if (view === "activity" || view === "history") {
+    selectedView = { kind: view };
+  }
   return {
     selectedView,
     modalState: params.get("modal") === "new" ? { mode: "new" } : null
@@ -198,6 +198,7 @@ function AppShell() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
+  const [liveStatus, setLiveStatus] = useState("connecting");
 
   const refresh = useCallback(async () => {
     setError("");
@@ -224,10 +225,40 @@ function AppShell() {
   useEffect(() => {
     window.localStorage?.setItem("orchestrator-v2-proactive-updates", proactiveUpdates ? "on" : "off");
     if (!proactiveUpdates) return undefined;
+    // Polling is the safety net; the SSE stream below delivers changes as they happen.
     const interval = window.setInterval(() => {
       refresh().catch(() => {});
-    }, 60000);
+    }, liveStatus === "live" ? 120000 : 30000);
     return () => window.clearInterval(interval);
+  }, [proactiveUpdates, refresh, liveStatus]);
+
+  useEffect(() => {
+    if (!proactiveUpdates || typeof window === "undefined" || typeof window.EventSource === "undefined") {
+      setLiveStatus("polling");
+      return undefined;
+    }
+    let source = null;
+    let retryTimer = null;
+    let closed = false;
+    const connect = () => {
+      if (closed) return;
+      source = new window.EventSource(`${API_ROOT}/events/stream`);
+      source.addEventListener("connected", () => setLiveStatus("live"));
+      source.addEventListener("update", () => {
+        refresh().catch(() => {});
+      });
+      source.onerror = () => {
+        setLiveStatus("polling");
+        source?.close();
+        if (!closed) retryTimer = window.setTimeout(connect, 15000);
+      };
+    };
+    connect();
+    return () => {
+      closed = true;
+      source?.close();
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
   }, [proactiveUpdates, refresh]);
 
   useEffect(() => {
@@ -245,10 +276,22 @@ function AppShell() {
 
   const updateTask = async (taskId, patch) => {
     const result = await api(`/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body: JSON.stringify(patch) });
-    setTasks((current) => current.map((task) => (task.id === taskId ? result.task : task)).filter((task) => !["Done", "Archived"].includes(task.status)));
-    setHistory((current) => current.map((task) => (task.id === taskId ? result.task : task)));
+    const updated = result.task;
+    if (!updated) {
+      await refresh();
+      setToast("Task updated");
+      return null;
+    }
+    setTasks((current) => {
+      const known = current.some((task) => task.id === taskId);
+      const next = known
+        ? current.map((task) => (task.id === taskId ? updated : task))
+        : [updated, ...current];
+      return next.filter((task) => !["Done", "Archived"].includes(task.status));
+    });
+    setHistory((current) => current.map((task) => (task.id === taskId ? updated : task)));
     setToast("Task updated");
-    return result.task;
+    return updated;
   };
 
   const attachJira = async (task, key) => {
@@ -288,6 +331,71 @@ function AppShell() {
     await api(`/approvals/${encodeURIComponent(approval.id)}/decision`, { method: "POST", body: JSON.stringify({ status }) });
     setToast(status === "approved" ? "Approval recorded" : "Approval denied");
     await refresh();
+  };
+
+  const killSession = async (workspaceId) => {
+    if (!workspaceId) return;
+    if (!window.confirm(`Stop cmux session ${workspaceId}? The running process will be terminated.`)) return;
+    try {
+      await api(`/cmux/sessions/${encodeURIComponent(workspaceId)}/kill`, { method: "POST", body: JSON.stringify({}) });
+      setToast(`Stopped ${workspaceId}`);
+      await refresh();
+    } catch (err) {
+      setToast(err.message);
+    }
+  };
+
+  const restartSession = async (workspaceId) => {
+    if (!workspaceId) return;
+    if (!window.confirm(`Restart cmux session ${workspaceId}? The current process will be replaced with a fresh session.`)) return;
+    try {
+      const result = await api(`/cmux/sessions/${encodeURIComponent(workspaceId)}/restart`, { method: "POST", body: JSON.stringify({}) });
+      setToast(`Restarted as ${result.session?.workspaceId || "new session"}`);
+      await refresh();
+      return result;
+    } catch (err) {
+      setToast(err.message);
+    }
+    return null;
+  };
+
+  const startPrReview = async (pr) => {
+    if (!pr?.number) return;
+    try {
+      const repoName = pr.owner && pr.repo ? `${pr.owner}/${pr.repo}` : undefined;
+      const result = await api("/pr-reviews/start", {
+        method: "POST",
+        body: JSON.stringify({ number: pr.number, repo: repoName, pullRequest: pr })
+      });
+      setToast(`Review session started for PR #${pr.number}`);
+      await refresh();
+      if (result.task) setSelectedView({ kind: "session", taskId: result.task.id });
+    } catch (err) {
+      setToast(err.message);
+    }
+  };
+
+  const runWatcherNow = async () => {
+    const result = await api("/watcher/run", { method: "POST", body: JSON.stringify({}) });
+    await refresh();
+    return result;
+  };
+
+  const addTaskSession = async (task) => {
+    try {
+      const created = await api("/cmux/sessions", {
+        method: "POST",
+        body: JSON.stringify({ title: task.title, workspaceDir: task.workspaceDir })
+      });
+      await api(`/tasks/${encodeURIComponent(task.id)}/cmux-sessions`, {
+        method: "POST",
+        body: JSON.stringify({ session: created.session })
+      });
+      setToast("New session attached");
+      await refresh();
+    } catch (err) {
+      setToast(err.message);
+    }
   };
 
   const handleAgentEvent = (event) => {
@@ -587,6 +695,9 @@ function AppShell() {
           leftRail={leftRail}
           approvalJiraKeys={approvalJiraKeys}
           selectedTask={selectedTask}
+          selectedView={selectedView}
+          onNavigate={(kind) => setSelectedView({ kind })}
+          onStartPrReview={startPrReview}
           onToggle={() => setRailCollapsed((value) => !value)}
           onNewTask={() => setModalState({ mode: "new" })}
         />
@@ -610,31 +721,46 @@ function AppShell() {
             }}
             onStartVoice={startVoiceSession}
             onStopVoice={stopVoiceSession}
+            liveStatus={liveStatus}
           />
-          {error && <div className="error-strip">{error}</div>}
+          {error && (
+            <div className="error-strip">
+              <span>{error}</span>
+              <button className="subtle-btn" onClick={() => refresh().catch((err) => setError(err.message))}>
+                <RefreshCw size={13} />Retry
+              </button>
+            </div>
+          )}
           {loading ? (
             <LoadingState />
-          ) : selectedView.kind === "board" ? (
-            <TaskBoard
-              tasks={tasks}
-              history={history}
-              approvals={approvals}
-              orphans={orphans}
-              onNewTask={() => setModalState({ mode: "new" })}
-              onOrphanTask={(orphan) => setModalState({ mode: "orphan", orphan })}
-              onOpenView={openTaskView}
-              onUpdateTask={updateTask}
-              onAttachJira={attachJira}
-              onResyncJira={resyncJira}
-              onAttachPr={attachPr}
-              onApprovalDecision={decideApproval}
-            />
           ) : selectedView.kind === "session" && selectedTask ? (
-            <SessionView task={selectedTask} onBack={() => setSelectedView({ kind: "board" })} onOpenDiff={() => openTaskView("diff", selectedTask)} />
+            <SessionView
+              task={selectedTask}
+              activity={activity}
+              onBack={() => setSelectedView({ kind: "board" })}
+              onOpenDiff={() => openTaskView("diff", selectedTask)}
+              onKillSession={killSession}
+              onRestartSession={restartSession}
+              onNewSession={() => addTaskSession(selectedTask)}
+              onAskAgent={(message) => sendAgentMessage(message)}
+            />
           ) : selectedView.kind === "diff" && selectedTask ? (
             <DiffView task={selectedTask} initialMode={selectedView.mode} onBack={() => setSelectedView({ kind: "board" })} />
           ) : selectedView.kind === "goal" && selectedTask ? (
             <GoalView task={selectedTask} onBack={() => setSelectedView({ kind: "board" })} onSaved={refresh} />
+          ) : selectedView.kind === "activity" ? (
+            <ActivityView
+              activity={activity}
+              onBack={() => setSelectedView({ kind: "board" })}
+              onRunWatcher={runWatcherNow}
+            />
+          ) : selectedView.kind === "history" ? (
+            <HistoryView
+              history={history}
+              onBack={() => setSelectedView({ kind: "board" })}
+              onReopen={(task) => updateTask(task.id, { status: "To Do" })}
+              onOpenView={openTaskView}
+            />
           ) : (
             <TaskBoard
               tasks={tasks}
@@ -644,11 +770,13 @@ function AppShell() {
               onNewTask={() => setModalState({ mode: "new" })}
               onOrphanTask={(orphan) => setModalState({ mode: "orphan", orphan })}
               onOpenView={openTaskView}
+              onOpenHistory={() => setSelectedView({ kind: "history" })}
               onUpdateTask={updateTask}
               onAttachJira={attachJira}
               onResyncJira={resyncJira}
               onAttachPr={attachPr}
               onApprovalDecision={decideApproval}
+              onRefreshOrphans={() => refresh().catch(() => {})}
             />
           )}
           <GeneratedPanelStack
@@ -791,7 +919,7 @@ function CopilotBridge({ tasks, selectedTask, approvals, activity, voiceMode, op
   return null;
 }
 
-function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggle, onNewTask }) {
+function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, selectedView, onNavigate, onStartPrReview, onToggle, onNewTask }) {
   const [openSections, setOpenSections] = useState({
     jira: true,
     open: true,
@@ -799,11 +927,11 @@ function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggl
     review: true
   });
   const sections = [
-    { id: "jira", title: "Jira Tickets", icon: Diamond, items: itemsOf(leftRail.assignedJira), type: "jira" },
-    { id: "open", title: "Open PRs (GitHub)", icon: Github, items: itemsOf(leftRail.openPrs), type: "pr" },
-    { id: "draft", title: "Draft PRs", icon: GitPullRequest, items: itemsOf(leftRail.draftPrs), type: "pr" },
-    { id: "review", title: "Needs Review", icon: ShieldAlert, items: itemsOf(leftRail.reviewRequests), type: "pr" }
-  ].filter((section) => section.id === "jira" || section.id === "open" || section.items.length > 0);
+    { id: "jira", title: "Jira Tickets", icon: Diamond, items: itemsOf(leftRail.assignedJira), error: errorOf(leftRail.assignedJira), type: "jira" },
+    { id: "open", title: "Open PRs (GitHub)", icon: Github, items: itemsOf(leftRail.openPrs), error: errorOf(leftRail.openPrs), type: "pr" },
+    { id: "draft", title: "Draft PRs", icon: GitPullRequest, items: itemsOf(leftRail.draftPrs), error: errorOf(leftRail.draftPrs), type: "pr" },
+    { id: "review", title: "Needs Review", icon: ShieldAlert, items: itemsOf(leftRail.reviewRequests), error: errorOf(leftRail.reviewRequests), type: "pr" }
+  ].filter((section) => section.id === "jira" || section.id === "open" || section.items.length > 0 || section.error);
   const selectedJiraKeys = new Set((selectedTask?.jiraLinks || []).map((jira) => jira.key));
   return (
     <aside className="left-rail">
@@ -837,7 +965,9 @@ function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggl
             </div>
             {!collapsed && openSections[section.id] && (
               <div className="rail-card-list">
-                {section.items.length === 0 ? (
+                {section.error ? (
+                  <div className="rail-empty rail-error" title={section.error}>Unavailable: {section.error}</div>
+                ) : section.items.length === 0 ? (
                   <div className="rail-empty">No items</div>
                 ) : section.items.slice(0, 6).map((item) => {
                   const hasApproval = approvalJiraKeys?.has(item.key);
@@ -847,6 +977,20 @@ function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggl
                     <a className={`rail-card rail-${section.type} ${hasApproval ? "needs-approval" : ""} ${selectedJiraKeys.has(item.key) ? "selected" : ""}`} href={item.url || "#"} target="_blank" rel="noreferrer" key={`${section.id}-${item.key || item.number || item.url}`}>
                       <div className="rail-card-top">
                         <strong>{section.type === "jira" ? item.key : `#${item.number}`}</strong>
+                        {section.id === "review" && (
+                          <button
+                            type="button"
+                            className="rail-review-btn"
+                            title="Launch a PR review session"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              onStartPrReview?.(item);
+                            }}
+                          >
+                            <Play size={11} />Review
+                          </button>
+                        )}
                       </div>
                       <div className="rail-card-title">{item.title}</div>
                       <div className="rail-meta-row">
@@ -862,16 +1006,30 @@ function LeftRail({ collapsed, leftRail, approvalJiraKeys, selectedTask, onToggl
           </div>
         ))}
       </div>
-      <div className="all-work">
-        <LayoutDashboard size={17} />
-        {!collapsed && <span>All Work</span>}
-        {!collapsed && <ChevronRight size={15} />}
-      </div>
+      <nav className="rail-nav" aria-label="Orchestrator views">
+        <button className={`rail-nav-btn ${selectedView?.kind === "board" ? "active" : ""}`} onClick={() => onNavigate?.("board")}>
+          <LayoutDashboard size={17} />
+          {!collapsed && <span>Board</span>}
+        </button>
+        <button className={`rail-nav-btn ${selectedView?.kind === "activity" ? "active" : ""}`} onClick={() => onNavigate?.("activity")}>
+          <Sparkles size={17} />
+          {!collapsed && <span>Activity</span>}
+        </button>
+        <button className={`rail-nav-btn ${selectedView?.kind === "history" ? "active" : ""}`} onClick={() => onNavigate?.("history")}>
+          <Archive size={17} />
+          {!collapsed && <span>History</span>}
+        </button>
+      </nav>
     </aside>
   );
 }
 
-function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceSettings, setVoiceSettings, proactiveUpdates, setProactiveUpdates, onStartVoice, onStopVoice }) {
+function errorOf(section) {
+  if (Array.isArray(section)) return "";
+  return section && section.ok === false ? String(section.error || "provider unavailable") : "";
+}
+
+function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceSettings, setVoiceSettings, proactiveUpdates, setProactiveUpdates, onStartVoice, onStopVoice, liveStatus }) {
   const [value, setValue] = useState("");
   const voiceActionStops = ["connected", "ready", "recording"].includes(voiceState.status);
   const voiceProcessing = ["connecting", "transcribing", "thinking", "speaking"].includes(voiceState.status);
@@ -940,13 +1098,30 @@ function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceS
           {voiceProcessing ? <RefreshCw size={20} className="spin" /> : <Mic size={20} />}
         </button>
       </div>
+      <div
+        className={`live-indicator ${liveStatus || "polling"}`}
+        title={liveStatus === "live"
+          ? "Live updates connected: changes stream in as they happen."
+          : liveStatus === "connecting"
+            ? "Connecting to the live update stream..."
+            : "Live stream unavailable: falling back to periodic polling."}
+      >
+        <span className="live-dot" />
+        <span>{liveStatus === "live" ? "Live" : liveStatus === "connecting" ? "Connecting" : "Polling"}</span>
+      </div>
       <button className="icon-btn" aria-label="Notifications"><Bell size={18} /></button>
-      <div className="avatar">AK</div>
     </header>
   );
 }
 
-function TaskBoard({ tasks, history = [], approvals, orphans, onNewTask, onOrphanTask, onOpenView, onUpdateTask, onAttachJira, onResyncJira, onAttachPr, onApprovalDecision }) {
+function TaskBoard({ tasks, history = [], approvals, orphans, onNewTask, onOrphanTask, onOpenView, onOpenHistory, onUpdateTask, onAttachJira, onResyncJira, onAttachPr, onApprovalDecision, onRefreshOrphans }) {
+  const [layout, setLayout] = useState(() => {
+    if (typeof window === "undefined") return "grid";
+    return window.localStorage.getItem("orchestrator-v2-board-layout") === "list" ? "list" : "grid";
+  });
+  useEffect(() => {
+    window.localStorage?.setItem("orchestrator-v2-board-layout", layout);
+  }, [layout]);
   const activeApprovals = approvals.filter((approval) => approval.status === "pending");
   const unassignedApprovals = activeApprovals.filter((approval) => !(approval.taskId || approval.task_id));
   const approvalForTask = (task, index) => {
@@ -963,17 +1138,19 @@ function TaskBoard({ tasks, history = [], approvals, orphans, onNewTask, onOrpha
           <h1>Tasks / Objectives <span>{tasks.length}</span></h1>
         </div>
         <div className="board-controls">
-          <button className="subtle-btn">Sort: Recent Activity</button>
-          <button className="icon-btn active"><Grid2X2 size={17} /></button>
-          <button className="icon-btn" disabled title="List view is not available in this production pass"><List size={17} /></button>
+          <button className={`icon-btn ${layout === "grid" ? "active" : ""}`} aria-label="Grid view" onClick={() => setLayout("grid")}><Grid2X2 size={17} /></button>
+          <button className={`icon-btn ${layout === "list" ? "active" : ""}`} aria-label="List view" onClick={() => setLayout("list")}><List size={17} /></button>
         </div>
       </div>
       {tasks.length === 0 ? (
         <div className="empty-board">
           <Diamond size={28} />
           <h2>No active tasks</h2>
+          <p>Start a task, adopt an orphaned cmux session below, or ask the agent to plan one for you.</p>
           <button className="primary-btn" onClick={onNewTask}><Plus size={17} />Start Task</button>
         </div>
+      ) : layout === "list" ? (
+        <TaskListView tasks={tasks} approvalForTask={approvalForTask} onOpenView={onOpenView} onUpdateTask={onUpdateTask} />
       ) : (
         <div className={`task-grid ${activeApprovals.length ? "has-approval" : ""}`}>
           {tasks.map((task, index) => (
@@ -991,17 +1168,63 @@ function TaskBoard({ tasks, history = [], approvals, orphans, onNewTask, onOrpha
           ))}
         </div>
       )}
-      <OrphanPanel orphans={orphans} onOrphanTask={onOrphanTask} />
-      <HistoryStrip tasks={history.filter((task) => ["Done", "Archived"].includes(task.status))} />
+      <OrphanPanel orphans={orphans} onOrphanTask={onOrphanTask} onRefresh={onRefreshOrphans} />
+      <HistoryStrip tasks={history.filter((task) => ["Done", "Archived"].includes(task.status))} onOpenHistory={onOpenHistory} />
     </section>
   );
 }
 
-function HistoryStrip({ tasks }) {
+function TaskListView({ tasks, approvalForTask, onOpenView, onUpdateTask }) {
+  return (
+    <div className="task-list-view">
+      <div className="task-list-row head">
+        <span>Task</span>
+        <span>Status</span>
+        <span>Jira</span>
+        <span>PR</span>
+        <span>Sessions</span>
+        <span>Actions</span>
+      </div>
+      {tasks.map((task, index) => {
+        const approval = approvalForTask(task, index);
+        const primaryPr = task.pullRequestLinks?.find((link) => link.isPrimary) || task.pullRequestLinks?.[0];
+        return (
+          <div className={`task-list-row ${approval ? "needs-approval" : ""}`} key={task.id}>
+            <span className="task-list-title">
+              <strong>{task.title}</strong>
+              {approval && <span className="approval-rail-pill">Approval required</span>}
+            </span>
+            <select
+              value={displayTaskStatus(task, approval)}
+              onChange={(event) => onUpdateTask(task.id, { status: event.target.value })}
+              className={`status-pill ${statusClass(displayTaskStatus(task, approval))}`}
+            >
+              {STATUSES.map((status) => <option key={status}>{status}</option>)}
+            </select>
+            <span>{task.jiraLinks?.[0] ? <a className="resource-chip jira" href={task.jiraLinks[0].url || "#"} target="_blank" rel="noreferrer">{task.jiraLinks[0].key}</a> : <small>-</small>}</span>
+            <span>{primaryPr ? <a className="resource-chip pr" href={primaryPr.url || "#"} target="_blank" rel="noreferrer">#{primaryPr.number}</a> : <small>-</small>}</span>
+            <span><Terminal size={13} /> {task.cmuxSessionLinks?.length || 0}</span>
+            <span className="task-list-actions">
+              <button className="subtle-btn" onClick={() => onOpenView("session", task)}><Terminal size={13} />Session</button>
+              <button className="subtle-btn" onClick={() => onOpenView("diff", task)}><FileCode2 size={13} />Diff</button>
+              <button className="subtle-btn" onClick={() => onOpenView("goal", task)}><Edit3 size={13} />Goal</button>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HistoryStrip({ tasks, onOpenHistory }) {
   if (!tasks.length) return null;
   return (
     <section className="history-strip">
-      <div className="panel-heading"><h2>Done / Archived</h2><span>{tasks.length}</span></div>
+      <div className="panel-heading">
+        <h2>Done / Archived</h2>
+        <span>{tasks.length}</span>
+        <button className="subtle-btn" onClick={onOpenHistory}>View all<ChevronRight size={13} /></button>
+      </div>
       <div className="history-list">
         {tasks.slice(0, 8).map((task) => (
           <div className="history-row" key={task.id}>
@@ -1177,7 +1400,7 @@ function ApprovalCard({ approval, onReview, onDecision }) {
   );
 }
 
-function OrphanPanel({ orphans, onOrphanTask }) {
+function OrphanPanel({ orphans, onOrphanTask, onRefresh }) {
   const orphanMeta = (orphan) => orphan.raw?.raw || orphan.raw || {};
   const sortedOrphans = [...orphans].sort((left, right) => Number(orphanMeta(left).displayOrder ?? 999) - Number(orphanMeta(right).displayOrder ?? 999));
   return (
@@ -1185,10 +1408,10 @@ function OrphanPanel({ orphans, onOrphanTask }) {
       <div className="panel-heading">
         <div>
           <h2>Orphaned cmux sessions</h2>
-          <p>Click a session to open in a new terminal window.</p>
+          <p>Live cmux sessions that are not linked to any task yet.</p>
         </div>
         <span>{orphans.length}</span>
-        <button className="subtle-btn"><RefreshCw size={14} />Refresh</button>
+        <button className="subtle-btn" onClick={onRefresh}><RefreshCw size={14} />Refresh</button>
       </div>
       <div className="orphan-list">
         {orphans.length === 0 ? (
@@ -1214,22 +1437,34 @@ function OrphanPanel({ orphans, onOrphanTask }) {
   );
 }
 
-function SessionView({ task, onBack, onOpenDiff }) {
-  const sessions = sessionViewSessions(task);
+function SessionView({ task, activity = [], onBack, onOpenDiff, onKillSession, onRestartSession, onNewSession, onAskAgent }) {
+  const sessions = task.cmuxSessionLinks || [];
   const [active, setActive] = useState(sessions[0]?.id || "");
   const [screen, setScreen] = useState("");
+  const [screenUpdatedAt, setScreenUpdatedAt] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [command, setCommand] = useState("");
   const [sending, setSending] = useState(false);
   const activeSession = sessions.find((session) => session.id === active) || sessions[0];
   const refreshScreen = () => {
     if (!activeSession) return Promise.resolve();
     return api(`/cmux/sessions/${encodeURIComponent(activeSession.workspaceId)}/screen?surfaceId=${encodeURIComponent(activeSession.surfaceId || "")}&lines=300`)
-      .then((result) => setScreen(result.screen || ""))
+      .then((result) => {
+        setScreen(result.screen || "");
+        setScreenUpdatedAt(new Date());
+      })
       .catch((err) => setScreen(err.message));
   };
   useEffect(() => {
     refreshScreen();
   }, [activeSession?.workspaceId, activeSession?.surfaceId]);
+  useEffect(() => {
+    if (!autoRefresh || !activeSession) return undefined;
+    const interval = window.setInterval(() => {
+      refreshScreen();
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [autoRefresh, activeSession?.workspaceId, activeSession?.surfaceId]);
   const sendInput = async (payload) => {
     if (!activeSession || sending) return;
     setSending(true);
@@ -1253,6 +1488,13 @@ function SessionView({ task, onBack, onOpenDiff }) {
     sendInput({ text: `${text}\n` });
   };
   const sendKey = (key) => sendInput({ key });
+  const explainOutput = () => {
+    const excerpt = screen.split("\n").filter((line) => line.trim()).slice(-30).join("\n");
+    onAskAgent?.(`Explain what is happening in the cmux session "${activeSession?.title || activeSession?.workspaceId}" for task "${task.title}". Latest terminal output:\n\n${excerpt || "(no output captured yet)"}`);
+  };
+  const askAgent = () => {
+    onAskAgent?.(`What is the status of task "${task.title}"? Inspect its cmux sessions and summarize what is running, what finished, and anything that needs my attention.`);
+  };
   return (
     <section className="center-view session-view">
       <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Work</button>
@@ -1268,36 +1510,41 @@ function SessionView({ task, onBack, onOpenDiff }) {
           </div>
         </div>
         <div className="header-actions">
-          <button className="subtle-btn"><Lightbulb size={15} />Explain Output</button>
-          <button className="subtle-btn" disabled title="cmux restart is not implemented in this production pass"><RefreshCw size={15} />Restart Session</button>
+          <button className="subtle-btn" onClick={explainOutput} disabled={!activeSession}><Lightbulb size={15} />Explain Output</button>
+          <button className="subtle-btn" onClick={() => onRestartSession?.(activeSession?.workspaceId)} disabled={!activeSession} title="Close this cmux session and relaunch it with the same folder and harness"><RefreshCw size={15} />Restart Session</button>
+          <button className="subtle-btn danger" onClick={() => onKillSession?.(activeSession?.workspaceId)} disabled={!activeSession} title="Terminate this cmux session"><X size={15} />Stop Session</button>
           <button className="subtle-btn" onClick={onOpenDiff}><FileCode2 size={15} />Open Diff</button>
-          <button className="agent-btn"><Sparkles size={15} />Ask Agent</button>
-          <button className="icon-btn"><MoreHorizontal size={17} /></button>
+          <button className="agent-btn" onClick={askAgent}><Sparkles size={15} />Ask Agent</button>
         </div>
       </div>
       <div className="session-layout">
         <div className="terminal-panel">
           <div className="terminal-tabs">
             {sessions.map((session) => (
-              <button key={session.id} className={active === session.id ? "active" : ""} onClick={() => setActive(session.id)}>
-                <span className="green-dot" />{session.title || session.workspaceId}<X size={12} />
-              </button>
+              <span key={session.id} className={`terminal-tab ${active === session.id ? "active" : ""}`}>
+                <button className="terminal-tab-label" onClick={() => setActive(session.id)}>
+                  <span className="green-dot" />{session.title || session.workspaceId}
+                </button>
+                <button
+                  className="terminal-tab-close"
+                  aria-label={`Stop session ${session.title || session.workspaceId}`}
+                  title="Stop this cmux session"
+                  onClick={() => onKillSession?.(session.workspaceId)}
+                >
+                  <X size={12} />
+                </button>
+              </span>
             ))}
-            <button><Plus size={14} />New Session</button>
-            <span className="terminal-label">Status</span>
-            <span className="terminal-run-pill">Running</span>
-            <span className="terminal-timer">00:18:42</span>
-            <button className="terminal-tool" aria-label="Expand terminal"><Maximize2 size={14} /></button>
-            <button className="terminal-tool" aria-label="Terminal actions"><MoreHorizontal size={14} /></button>
+            <button onClick={onNewSession}><Plus size={14} />New Session</button>
+            <label className="terminal-auto-refresh" title="Automatically re-read the terminal screen every 5 seconds">
+              <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
+              <span>Auto-refresh</span>
+            </label>
+            {screenUpdatedAt && <span className="terminal-label">Updated {screenUpdatedAt.toLocaleTimeString()}</span>}
+            <button className="terminal-tool" aria-label="Refresh terminal now" onClick={refreshScreen}><RefreshCw size={14} /></button>
           </div>
-          <TerminalOutput screen={screen || "No terminal output yet."} />
+          <TerminalOutput screen={screen || (sessions.length ? "No terminal output yet." : "No cmux session is linked to this task yet. Use New Session to launch one.")} />
           <div className="terminal-controls">
-            <div className="terminal-control-row primary-controls">
-              <button><Paperclip size={15} />Attach</button>
-              <button><Mic size={15} />Mic</button>
-              <button><Folder size={15} />Files</button>
-              <button><FileCode2 size={15} />Skills</button>
-            </div>
             <div className="terminal-control-row key-controls">
               <button onClick={() => sendKey("up")} disabled={sending}><ArrowUp size={15} />Up</button>
               <button onClick={() => sendKey("down")} disabled={sending}><ArrowDown size={15} />Down</button>
@@ -1326,15 +1573,28 @@ function SessionView({ task, onBack, onOpenDiff }) {
               </button>
             </div>
             <div className="terminal-status-row">
-              <span>Shell: zsh <ChevronDown size={11} /></span>
-              <span>UTF-8 <ChevronDown size={11} /></span>
-              <span className="terminal-connected"><span className="green-dot" />Connected</span>
-              <code>cmux attach&nbsp;&nbsp;api-rate-limit-debug</code>
-              <Copy size={13} />
+              <span className="terminal-connected"><span className="green-dot" />{activeSession ? "Connected" : "No session"}</span>
+              {activeSession && <code>cmux attach {activeSession.workspaceId}</code>}
+              {activeSession && (
+                <button
+                  className="icon-btn small"
+                  aria-label="Copy attach command"
+                  onClick={() => navigator.clipboard?.writeText(`cmux attach ${activeSession.workspaceId}`)}
+                >
+                  <Copy size={13} />
+                </button>
+              )}
             </div>
           </div>
         </div>
-        <TaskSidebar task={task} sessions={sessions} />
+        <TaskSidebar
+          task={task}
+          sessions={sessions}
+          activity={activity}
+          onOpenDiff={onOpenDiff}
+          onRestartSession={() => onRestartSession?.(activeSession?.workspaceId)}
+          onAskAgent={askAgent}
+        />
       </div>
     </section>
   );
@@ -1370,62 +1630,82 @@ function TerminalLine({ line }) {
   return <span className="terminal-line">{line || " "}</span>;
 }
 
-function TaskSidebar({ task, sessions = task.cmuxSessionLinks || [] }) {
+function TaskSidebar({ task, sessions = task.cmuxSessionLinks || [], activity = [], onOpenDiff, onRestartSession, onAskAgent }) {
+  const [tab, setTab] = useState("task");
+  const taskActivity = activity.filter((item) => {
+    if (item.targetId === task.id) return true;
+    return sessions.some((session) => session.workspaceId && item.targetId === session.workspaceId);
+  });
   return (
     <aside className="task-sidebar">
-      <div className="tab-row"><button className="active">Task</button><button>Activity</button></div>
-      <h3>Task Summary</h3>
-      <div className="sidebar-meta-row">
-        <b>{task.jiraLinks?.[0]?.key || task.id}</b>
-        <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+      <div className="tab-row">
+        <button className={tab === "task" ? "active" : ""} onClick={() => setTab("task")}>Task</button>
+        <button className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Activity</button>
       </div>
-      <h2>{task.title}</h2>
-      <p>{task.description || task.sessionSummary?.summary || "No summary yet."}</p>
-      <div className="sidebar-section">
-        <h3>Links</h3>
-        <div className="sidebar-link-grid">
-          {(task.jiraLinks || []).map((jira) => (
-            <React.Fragment key={jira.id}>
-              <span>Jira</span>
-              <a className="resource-chip" href={jira.url}>{jira.key}<ExternalLink size={12} /></a>
-            </React.Fragment>
-          ))}
-          {(task.pullRequestLinks || []).map((pr) => (
-            <React.Fragment key={pr.id}>
-              <span>PR</span>
-              <a className="resource-chip pr" href={pr.url}>#{pr.number}<ExternalLink size={12} /></a>
-            </React.Fragment>
+      {tab === "activity" ? (
+        <div className="sidebar-activity">
+          <h3>Task Activity</h3>
+          {taskActivity.length === 0 ? (
+            <p className="sidebar-empty">No activity recorded for this task yet.</p>
+          ) : taskActivity.slice(0, 20).map((item) => (
+            <div className="sidebar-activity-row" key={item.id || `${item.kind}-${item.createdAt}`}>
+              <strong>{item.title}</strong>
+              <span>{item.summary || item.kind}</span>
+              <small>{relativeAge(item.createdAt)}</small>
+            </div>
           ))}
         </div>
-      </div>
-      <div className="sidebar-copy-row"><Folder size={14} /><span>Workspace</span><code>{task.workspaceDir}</code></div>
-      <div className="sidebar-copy-row"><GitBranch size={14} /><span>Branch</span><code>{task.featureBranch || "main"}</code></div>
-      <div className="sidebar-section session-list">
-        <div className="sidebar-section-title">
-          <h3>CMUX Sessions</h3>
-          <span>{sessions.length}</span>
-          <small>active</small>
-        </div>
-        {sessions.map((session) => (
-          <span className="session-chip" key={session.id}>
-            <Terminal size={12} />
-            <strong>{session.workspaceId}</strong>
-            <small>Attached</small>
-            <code>PID {session.raw?.pid || "8421"}</code>
-          </span>
-        ))}
-      </div>
-      <button className="subtle-btn wide">Open CMUX Manager</button>
-      <div className="recent-commands">
-        <h3>Recent Commands</h3>
-        <div><span>npm test -- --runTestsByPath src/middleware/...</span><small>2m ago</small></div>
-        <div><span>git status</span><small>4m ago</small></div>
-        <div><span>git diff src/middleware/rateLimit.ts</span><small>7m ago</small></div>
-        <div><span>npm run build</span><small>15m ago</small></div>
-        <a href="#">View all in Logs -&gt;</a>
-      </div>
+      ) : (
+        <>
+          <h3>Task Summary</h3>
+          <div className="sidebar-meta-row">
+            <b>{task.jiraLinks?.[0]?.key || task.id}</b>
+            <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+          </div>
+          <h2>{task.title}</h2>
+          <p>{task.description || task.sessionSummary?.summary || "No summary yet."}</p>
+          {task.sessionSummary?.refreshedAt && (
+            <small className="sidebar-freshness">Session summary refreshed {relativeAge(task.sessionSummary.refreshedAt)}</small>
+          )}
+          <div className="sidebar-section">
+            <h3>Links</h3>
+            <div className="sidebar-link-grid">
+              {(task.jiraLinks || []).map((jira) => (
+                <React.Fragment key={jira.id}>
+                  <span>Jira</span>
+                  <a className="resource-chip" href={jira.url}>{jira.key}<ExternalLink size={12} /></a>
+                </React.Fragment>
+              ))}
+              {(task.pullRequestLinks || []).map((pr) => (
+                <React.Fragment key={pr.id}>
+                  <span>PR</span>
+                  <a className="resource-chip pr" href={pr.url}>#{pr.number}<ExternalLink size={12} /></a>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+          <div className="sidebar-copy-row"><Folder size={14} /><span>Workspace</span><code>{task.workspaceDir}</code></div>
+          <div className="sidebar-copy-row"><GitBranch size={14} /><span>Branch</span><code>{task.featureBranch || "main"}</code></div>
+          <div className="sidebar-section session-list">
+            <div className="sidebar-section-title">
+              <h3>CMUX Sessions</h3>
+              <span>{sessions.length}</span>
+              <small>linked</small>
+            </div>
+            {sessions.map((session) => (
+              <span className="session-chip" key={session.id}>
+                <Terminal size={12} />
+                <strong>{session.workspaceId}</strong>
+                <small>{session.launchType || "Attached"}</small>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
       <div className="quick-actions">
-        <button><Check size={14} />Approve Changes</button><button><RefreshCw size={14} />Restart Session</button><button><FileCode2 size={14} />Open Diff</button><button><Send size={14} />Ask Agent</button>
+        <button onClick={onRestartSession}><RefreshCw size={14} />Restart Session</button>
+        <button onClick={onOpenDiff}><FileCode2 size={14} />Open Diff</button>
+        <button onClick={onAskAgent}><Send size={14} />Ask Agent</button>
       </div>
     </aside>
   );
@@ -2014,6 +2294,130 @@ function GoalView({ task, onBack, onSaved }) {
   );
 }
 
+function ActivityView({ activity, onBack, onRunWatcher }) {
+  const [toolRuns, setToolRuns] = useState([]);
+  const [loadError, setLoadError] = useState("");
+  const [runningWatcher, setRunningWatcher] = useState(false);
+  const [watcherNote, setWatcherNote] = useState("");
+  const groupedActivity = useMemo(() => groupActivity(activity), [activity]);
+  useEffect(() => {
+    api("/agent/tool-runs?limit=100")
+      .then((payload) => setToolRuns(payload.toolRuns || []))
+      .catch((err) => setLoadError(err.message));
+  }, [activity]);
+  const runWatcher = async () => {
+    setRunningWatcher(true);
+    setWatcherNote("");
+    try {
+      const result = await onRunWatcher();
+      const changes = result?.stateChanges?.length || 0;
+      setWatcherNote(`Watcher finished: ${result?.sessions?.length ?? 0} session(s), ${result?.orphans?.length ?? 0} orphan(s), ${changes} state change(s).`);
+    } catch (err) {
+      setWatcherNote(err.message);
+    } finally {
+      setRunningWatcher(false);
+    }
+  };
+  const toolRunsByRun = useMemo(() => {
+    const map = new Map();
+    for (const run of toolRuns) {
+      const key = run.runId || "manual";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(run);
+    }
+    return map;
+  }, [toolRuns]);
+  return (
+    <section className="center-view activity-view">
+      <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Board</button>
+      <div className="center-header">
+        <div>
+          <h1>Activity</h1>
+          <p className="view-subtitle">Everything the orchestrator and watcher did, grouped by run.</p>
+        </div>
+        <button className="primary-btn" onClick={runWatcher} disabled={runningWatcher}>
+          {runningWatcher ? <RefreshCw size={15} className="spin" /> : <Play size={15} />}
+          {runningWatcher ? "Watching..." : "Run Watcher Now"}
+        </button>
+      </div>
+      {watcherNote && <div className="watcher-note">{watcherNote}</div>}
+      {loadError && <div className="error-strip"><span>{loadError}</span></div>}
+      {groupedActivity.length === 0 ? (
+        <div className="empty-board">
+          <Sparkles size={28} />
+          <h2>No activity yet</h2>
+          <p>Agent tool calls, approvals, session lifecycle events, and watcher runs will appear here.</p>
+        </div>
+      ) : (
+        <div className="activity-full-list">
+          {groupedActivity.map((group) => {
+            const runs = toolRunsByRun.get(group.id) || [];
+            return (
+              <div className="activity-full-group" key={group.id}>
+                <div className="activity-full-head">
+                  <Circle size={9} />
+                  <strong>{group.title}</strong>
+                  <span>{group.items.length} event(s)</span>
+                  {runs.length > 0 && <small>{runs.length} tool run(s)</small>}
+                  <small>{relativeAge(group.items[0]?.createdAt)}</small>
+                </div>
+                {group.items.map((item) => (
+                  <div className={`activity-full-row kind-${statusClass(item.kind)}`} key={item.id || `${item.kind}-${item.createdAt}`}>
+                    <span className={`activity-kind-pill ${statusClass(item.kind)}`}>{String(item.kind || "event").replace(/_/g, " ")}</span>
+                    <strong>{item.title}</strong>
+                    <span className="activity-summary">{item.summary}</span>
+                    <small>{relativeAge(item.createdAt)}</small>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function HistoryView({ history, onBack, onReopen, onOpenView }) {
+  const finished = history.filter((task) => ["Done", "Archived"].includes(task.status));
+  return (
+    <section className="center-view history-view">
+      <button className="back-btn" onClick={onBack}><ChevronLeft size={17} />Back to Board</button>
+      <div className="center-header">
+        <div>
+          <h1>History <span className="count-inline">{finished.length}</span></h1>
+          <p className="view-subtitle">Done and archived tasks. Reopen a task to bring it back to the board.</p>
+        </div>
+      </div>
+      {finished.length === 0 ? (
+        <div className="empty-board">
+          <Archive size={28} />
+          <h2>No finished tasks yet</h2>
+          <p>Tasks marked Done or Archived land here.</p>
+        </div>
+      ) : (
+        <div className="history-full-list">
+          {finished.map((task) => (
+            <div className="history-full-row" key={task.id}>
+              <Check size={15} />
+              <div className="history-full-main">
+                <strong>{task.title}</strong>
+                <small>{task.workspaceDir}</small>
+              </div>
+              <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+              {task.jiraLinks?.[0] && <a className="resource-chip jira" href={task.jiraLinks[0].url || "#"} target="_blank" rel="noreferrer">{task.jiraLinks[0].key}</a>}
+              {task.pullRequestLinks?.[0] && <a className="resource-chip pr" href={task.pullRequestLinks[0].url || "#"} target="_blank" rel="noreferrer">#{task.pullRequestLinks[0].number}</a>}
+              <small>{relativeAge(task.updatedAt)}</small>
+              <button className="subtle-btn" onClick={() => onOpenView("diff", task)}><FileCode2 size={13} />Diff</button>
+              <button className="subtle-btn" onClick={() => onReopen(task)}><RefreshCw size={13} />Reopen</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function GeneratedPanelStack({ panels, tasks, approvals, voiceMode, voiceState, voiceSettings, onDismiss, onOpenView, onApprovalDecision }) {
   const combinedPanels = [
     {
@@ -2023,7 +2427,9 @@ function GeneratedPanelStack({ panels, tasks, approvals, voiceMode, voiceState, 
     },
     ...approvals.filter((approval) => approval.status === "pending").slice(0, 2).map((approval) => ({
       id: `approval-panel-${approval.id}`,
-      component: "JiraCommentApprovalPanel",
+      component: ["kill_cmux_session", "restart_cmux_session"].includes(approval.kind)
+        ? "SessionLifecycleApprovalPanel"
+        : "JiraCommentApprovalPanel",
       props: approval
     })),
     ...panels
@@ -2053,6 +2459,7 @@ function GeneratedPanel({ panel, tasks, onDismiss, onOpenView, onApprovalDecisio
   if (panel.component === "GitDiffSummaryPanel") return <PanelFrame title="Git Diff Summary" close={close}><GitDiffSummaryPanel {...props} /></PanelFrame>;
   if (panel.component === "GoalDraftPanel") return <PanelFrame title="Goal Draft" close={close}><GoalDraftPanel {...props} /></PanelFrame>;
   if (panel.component === "JiraCommentApprovalPanel") return <PanelFrame title="Jira Comment Approval" close={close}><JiraCommentApprovalPanel approval={props} onApprovalDecision={onApprovalDecision} /></PanelFrame>;
+  if (panel.component === "SessionLifecycleApprovalPanel") return <PanelFrame title="Session Lifecycle Approval" close={close}><SessionLifecycleApprovalPanel approval={props.approval || props} onApprovalDecision={onApprovalDecision} /></PanelFrame>;
   if (panel.component === "JiraTransitionPanel") return <PanelFrame title="Jira Transition" close={close}><JiraTransitionPanel {...props} /></PanelFrame>;
   if (panel.component === "VoiceModePanel") return <PanelFrame title="Voice Mode" close={close}><VoiceModePanel {...props} /></PanelFrame>;
   if (panel.component === "ToolRunTimeline") return <PanelFrame title="Tool Timeline" close={close}><ToolRunTimeline {...props} /></PanelFrame>;
@@ -2122,6 +2529,28 @@ function JiraCommentApprovalPanel({ approval, onApprovalDecision }) {
       {approval.status === "pending" && (
         <div className="approval-actions">
           <button className="approve-btn" onClick={() => onApprovalDecision(approval, "approved")}><Check size={14} />Approve</button>
+          <button className="deny-btn" onClick={() => onApprovalDecision(approval, "denied")}><X size={14} />Deny</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionLifecycleApprovalPanel({ approval, onApprovalDecision }) {
+  const payload = approval.payload || {};
+  const action = approval.kind === "restart_cmux_session" ? "Restart" : "Stop";
+  return (
+    <div className="jira-approval-panel lifecycle">
+      <div className="approval-details">
+        <span>Action</span><b>{action} cmux session</b>
+        <span>Target</span><b>{payload.workspaceId || "unknown session"}</b>
+        <span>Reversible</span><b>{payload.reversible ? "Yes (relaunches)" : "No (process terminates)"}</b>
+        <span>Status</span><b>{approval.status}</b>
+      </div>
+      <p>{approval.summary || approval.title}</p>
+      {approval.status === "pending" && (
+        <div className="approval-actions">
+          <button className="approve-btn" onClick={() => onApprovalDecision(approval, "approved")}><Check size={14} />Approve {action}</button>
           <button className="deny-btn" onClick={() => onApprovalDecision(approval, "denied")}><X size={14} />Deny</button>
         </div>
       )}
@@ -2437,7 +2866,7 @@ function groupActivity(activity) {
   for (const item of activity || []) {
     const runId = item.runId || item.run_id || "manual";
     if (!byRun.has(runId)) {
-      const group = { id: runId, title: runId === "manual" ? "Manual activity" : `Run ${runId}`, items: [] };
+      const group = { id: runId, title: activityGroupTitle(runId), items: [] };
       byRun.set(runId, group);
       groups.push(group);
     }
@@ -2446,22 +2875,15 @@ function groupActivity(activity) {
   return groups;
 }
 
-function sessionViewSessions(task) {
-  const sessions = task.cmuxSessionLinks || [];
-  const title = String(task.title || "").toLowerCase();
-  if (!title.includes("api rate limit") || sessions.some((session) => String(session.workspaceId || session.title || "").includes("audit-log-spike"))) {
-    return sessions;
-  }
-  return [
-    ...sessions,
-    {
-      id: "qa-audit-log-spike",
-      workspaceId: "audit-log-spike",
-      surfaceId: "surface-audit-log-spike",
-      title: "audit-log-spike",
-      raw: { pid: "18457" }
-    }
-  ];
+function activityGroupTitle(runId) {
+  if (runId === "manual") return "Manual activity";
+  const short = runId.slice(-6);
+  if (runId.startsWith("watch")) return `Watcher run ${short}`;
+  if (runId.startsWith("chatrun") || runId.startsWith("run")) return `Agent run ${short}`;
+  if (runId.startsWith("lifecycle")) return `Session lifecycle ${short}`;
+  if (runId.startsWith("toolrun")) return `Tool run ${short}`;
+  if (runId.startsWith("realtime")) return `Voice run ${short}`;
+  return `Run ${short}`;
 }
 
 function relativeAge(value) {

@@ -31,13 +31,29 @@ class FakeClient {
   }
   async runTool(runId, toolName, args) {
     this.toolRuns.push({ runId, toolName, args });
-    if (toolName === "kill_cmux_session") {
+    if (toolName === "kill_cmux_session" || toolName === "restart_cmux_session") {
+      return {
+        ok: true,
+        result: {
+          approval: {
+            id: "approval_lifecycle_1",
+            kind: toolName,
+            status: "pending",
+            payload: {
+              workspaceId: args.workspaceId || "workspace-1",
+              toolName
+            }
+          }
+        }
+      };
+    }
+    if (toolName === "post_pr_reply") {
       return {
         ok: true,
         result: {
           status: "not_implemented",
-          capability: "kill_cmux_session",
-          message: "cmux kill is intentionally not implemented."
+          capability: "post_pr_reply",
+          message: "PR replies are not implemented."
         }
       };
     }
@@ -87,6 +103,21 @@ test("dry run streams AG-UI events and persists transcript", async () => {
   assert.equal(client.finished.status, "completed");
 });
 
+test("dry run creates session lifecycle approval panel for kill requests", async () => {
+  process.env.ORCHESTRATOR_V2_AGENT_DRY_RUN = "1";
+  const client = new FakeClient();
+  const events = [];
+
+  await runAgentChat({
+    client,
+    input: { runId: "run_kill", message: "please kill this cmux session" },
+    emit: (payload) => events.push(payload)
+  });
+
+  assert.equal(client.toolRuns[0].toolName, "kill_cmux_session");
+  assert.ok(events.some((item) => item.name === "ORCHESTRATOR_PANEL" && item.value.component === "SessionLifecycleApprovalPanel"));
+});
+
 test("dry run returns explicit unsupported capability panel", async () => {
   process.env.ORCHESTRATOR_V2_AGENT_DRY_RUN = "1";
   const client = new FakeClient();
@@ -94,11 +125,11 @@ test("dry run returns explicit unsupported capability panel", async () => {
 
   await runAgentChat({
     client,
-    input: { runId: "run_nope", message: "please kill this cmux session" },
+    input: { runId: "run_nope", message: "this is not implemented: send a pr reply" },
     emit: (payload) => events.push(payload)
   });
 
-  assert.equal(client.toolRuns[0].toolName, "kill_cmux_session");
+  assert.equal(client.toolRuns[0].toolName, "post_pr_reply");
   assert.ok(events.some((item) => item.name === "ORCHESTRATOR_PANEL" && item.value.component === "NotImplementedCapabilityPanel"));
 });
 

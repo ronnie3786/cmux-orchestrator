@@ -493,9 +493,9 @@ class TestOrchestratorV2Routes(unittest.TestCase):
             "runId": "run-tools",
             "args": {"taskId": task["id"]},
         })
-        unsupported_handler = self._post_json("/api/orchestrator-v2/agent/tools/kill_cmux_session", {
+        unsupported_handler = self._post_json("/api/orchestrator-v2/agent/tools/post_pr_reply", {
             "runId": "run-tools",
-            "args": {"workspaceId": "workspace-created"},
+            "args": {},
         })
 
         self.assertTrue(self._json_body(key_handler)["result"]["ok"])
@@ -504,6 +504,109 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertEqual(unsupported["status"], "not_implemented")
         tool_runs = v2.get_repository().list_tool_runs(run_id="run-tools")
         self.assertIn("not_implemented", {item["status"] for item in tool_runs})
+
+    def test_kill_cmux_session_tool_creates_approval_and_executes_on_approve(self):
+        task = self._json_body(self._post_json("/api/orchestrator-v2/tasks", {
+            "title": "Lifecycle task",
+            "workspaceDir": str(self.workspace),
+            "sessionLaunchType": "Empty shell",
+        }))["task"]
+        self.cmux.close_session.return_value = {"ok": True, "workspaceId": "workspace-created"}
+
+        approval_handler = self._post_json("/api/orchestrator-v2/agent/tools/kill_cmux_session", {
+            "runId": "run-lifecycle",
+            "args": {"workspaceId": "workspace-created", "taskId": task["id"]},
+        })
+        approval = self._json_body(approval_handler)["result"]["approval"]
+
+        self.assertEqual(approval["kind"], "kill_cmux_session")
+        self.assertEqual(approval["status"], "pending")
+        self.assertEqual(approval["payload"]["workspaceId"], "workspace-created")
+        self.cmux.close_session.assert_not_called()
+
+        decision_handler = self._post_json(
+            f"/api/orchestrator-v2/approvals/{approval['id']}/decision", {"status": "approved"}
+        )
+        decided = self._json_body(decision_handler)["approval"]
+        self.assertEqual(decided["status"], "approved")
+        self.assertEqual(decided["execution"]["tool"], "kill_cmux_session")
+        self.cmux.close_session.assert_called_once_with("workspace-created")
+
+    def test_denied_kill_approval_never_executes(self):
+        approval_handler = self._post_json("/api/orchestrator-v2/agent/tools/kill_cmux_session", {
+            "runId": "run-denied",
+            "args": {"workspaceId": "workspace-created"},
+        })
+        approval = self._json_body(approval_handler)["result"]["approval"]
+
+        decision_handler = self._post_json(
+            f"/api/orchestrator-v2/approvals/{approval['id']}/decision", {"status": "denied"}
+        )
+        decided = self._json_body(decision_handler)["approval"]
+        self.assertEqual(decided["status"], "denied")
+        self.assertNotIn("execution", decided)
+        self.cmux.close_session.assert_not_called()
+
+    def test_direct_kill_route_closes_session_and_detaches_task_link(self):
+        task = self._json_body(self._post_json("/api/orchestrator-v2/tasks", {
+            "title": "Kill me",
+            "workspaceDir": str(self.workspace),
+            "sessionLaunchType": "Empty shell",
+        }))["task"]
+        self.cmux.close_session.return_value = {"ok": True, "workspaceId": "workspace-created"}
+
+        handler = self._post_json("/api/orchestrator-v2/cmux/sessions/workspace-created/kill", {})
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["taskId"], task["id"])
+        self.cmux.close_session.assert_called_once_with("workspace-created")
+        refreshed = v2.get_repository().get_task(task["id"])
+        self.assertEqual(refreshed["cmuxSessionLinks"], [])
+
+    def test_direct_restart_route_recreates_session_and_relinks_task(self):
+        task = self._json_body(self._post_json("/api/orchestrator-v2/tasks", {
+            "title": "Restart me",
+            "workspaceDir": str(self.workspace),
+            "sessionLaunchType": "Claude Code",
+        }))["task"]
+        self.cmux.restart_session.return_value = {
+            "ok": True,
+            "closed": {"ok": True},
+            "session": {
+                "workspaceId": "workspace-restarted",
+                "surfaceId": "surface-restarted",
+                "title": "Restart me",
+                "cwd": str(self.workspace),
+            },
+            "previousWorkspaceId": "workspace-created",
+        }
+
+        handler = self._post_json("/api/orchestrator-v2/cmux/sessions/workspace-created/restart", {})
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["session"]["workspaceId"], "workspace-restarted")
+        self.cmux.restart_session.assert_called_once()
+        _, kwargs = self.cmux.restart_session.call_args
+        self.assertEqual(kwargs["launch_type"], "Claude Code")
+        refreshed = v2.get_repository().get_task(task["id"])
+        self.assertEqual(refreshed["cmuxSessionLinks"][0]["workspaceId"], "workspace-restarted")
+
+    def test_events_token_route_changes_after_state_mutation(self):
+        first = self._json_body(self._make_handler_get("/api/orchestrator-v2/events/token"))["token"]
+        self._post_json("/api/orchestrator-v2/tasks", {
+            "title": "Token task",
+            "workspaceDir": str(self.workspace),
+            "sessionLaunchType": "Empty shell",
+        })
+        second = self._json_body(self._make_handler_get("/api/orchestrator-v2/events/token"))["token"]
+        self.assertNotEqual(first, second)
+
+    def _make_handler_get(self, path):
+        handler = self._make_handler(path)
+        handler.do_GET()
+        return handler
 
     def test_jira_comment_tool_creates_approval_and_approval_executes_stored_payload(self):
         approval_handler = self._post_json("/api/orchestrator-v2/agent/tools/post_jira_comment", {

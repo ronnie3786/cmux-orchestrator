@@ -737,6 +737,41 @@ class V2Repository:
             raise V2StorageError("approval request not found", 404)
         return approval
 
+    def record_activity_event(
+        self,
+        kind: str,
+        title: str,
+        summary: str = "",
+        *,
+        target_type: str = "",
+        target_id: str = "",
+        run_id: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            self._activity(conn, kind, title, summary, target_type, target_id, run_id=run_id, payload=payload)
+
+    def state_token(self) -> str:
+        parts: list[str] = []
+        with self.connect() as conn:
+            for table, column in [
+                ("tasks", "updated_at"),
+                ("approval_requests", "updated_at"),
+                ("activity_events", "created_at"),
+                ("audit_events", "created_at"),
+                ("agent_tool_runs", "created_at"),
+                ("global_chat_messages", "created_at"),
+                # first_seen_at (not last_seen_at) so routine snapshot refreshes
+                # do not spin the live-update stream; only new orphans change it.
+                ("orphan_session_candidates", "first_seen_at"),
+            ]:
+                try:
+                    row = conn.execute(f"SELECT COUNT(*), MAX({column}) FROM {table}").fetchone()
+                    parts.append(f"{table}:{row[0]}:{row[1] or ''}")
+                except sqlite3.OperationalError:
+                    parts.append(f"{table}:absent")
+        return "|".join(parts)
+
     def list_activity_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit or 100), 500))
         with self.connect() as conn:

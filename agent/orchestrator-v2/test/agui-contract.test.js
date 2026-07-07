@@ -41,21 +41,34 @@ test("tool registry exposes every production goal capability", () => {
     assert.ok(names.includes(name), `${name} missing`);
   }
   assert.equal(capabilities().post_jira_comment.status, "approval_required");
-  assert.equal(capabilities().kill_cmux_session.status, "not_implemented");
+  assert.equal(capabilities().kill_cmux_session.status, "approval_required");
+  assert.equal(capabilities().restart_cmux_session.status, "approval_required");
+  assert.equal(capabilities().post_pr_reply.status, "not_implemented");
 });
 
-test("realtime tools omit future unsupported writes", () => {
+test("realtime tools include approval-gated session lifecycle but omit unsupported writes", () => {
   const names = realtimeToolDefinitions().map((item) => item.name);
   assert.ok(names.includes("list_tasks"));
   assert.ok(names.includes("post_jira_comment"));
-  assert.ok(!names.includes("kill_cmux_session"));
+  assert.ok(names.includes("kill_cmux_session"));
+  assert.ok(names.includes("restart_cmux_session"));
+  assert.ok(!names.includes("post_pr_reply"));
+  assert.ok(!names.includes("submit_pr_review"));
 });
 
 test("panel selection maps unsupported capability to NotImplementedCapabilityPanel", () => {
-  const panel = panelForTool("kill_cmux_session", {
+  const panel = panelForTool("post_pr_reply", {
     status: "not_implemented",
-    capability: "kill_cmux_session",
+    capability: "post_pr_reply",
     message: "not yet"
   });
   assert.equal(panel.component, "NotImplementedCapabilityPanel");
+});
+
+test("panel selection maps session lifecycle approvals to SessionLifecycleApprovalPanel", () => {
+  assert.ok(allowedPanels.has("SessionLifecycleApprovalPanel"));
+  const panel = panelForTool("kill_cmux_session", {
+    approval: { kind: "kill_cmux_session", payload: { workspaceId: "ws-1" } }
+  });
+  assert.equal(panel.component, "SessionLifecycleApprovalPanel");
 });
