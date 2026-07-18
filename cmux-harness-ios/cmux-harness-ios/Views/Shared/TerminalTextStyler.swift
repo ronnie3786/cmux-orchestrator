@@ -55,6 +55,10 @@ private struct TerminalTextStyle: Equatable {
     var italic = false
     var isSuggested = false
     var underline = false
+    var isThinking = false
+    var isUserInput = false
+    var isBuildIndicator = false
+    var isStatusBar = false
 
     mutating func apply(_ patch: TerminalStylePatch) {
         if let foreground = patch.foreground,
@@ -79,6 +83,18 @@ private struct TerminalTextStyle: Equatable {
         }
         if patch.underline {
             underline = true
+        }
+        if patch.isThinking {
+            isThinking = true
+        }
+        if patch.isUserInput {
+            isUserInput = true
+        }
+        if patch.isBuildIndicator {
+            isBuildIndicator = true
+        }
+        if patch.isStatusBar {
+            isStatusBar = true
         }
     }
 
@@ -143,6 +159,10 @@ private struct TerminalStylePatch {
     var italic = false
     var isSuggested = false
     var underline = false
+    var isThinking = false
+    var isUserInput = false
+    var isBuildIndicator = false
+    var isStatusBar = false
     var overridesForeground = false
     var overridesBackground = false
 }
@@ -207,6 +227,23 @@ private enum TerminalPalette {
             ?? (colorScheme == .dark ? hex(0xD8DDE8) : hex(0x1E293B))
         if style.isSuggested {
             return style.dim ? resolvedColor.opacity(0.25) : resolvedColor.opacity(0.32)
+        }
+        if style.isThinking {
+            let thinkingColor = colorScheme == .dark ? hex(0x8B98B0) : hex(0x94A3B8)
+            return thinkingColor.opacity(0.5)
+        }
+        if style.isUserInput {
+            let inputColor = colorScheme == .dark ? hex(0x93C5FD) : hex(0x2563EB)
+            return inputColor.opacity(0.72)
+        }
+        if style.isBuildIndicator {
+            let badgeColor = colorScheme == .dark ? hex(0x6EE7B7) : hex(0x059669)
+            return badgeColor
+        }
+        if style.isStatusBar {
+            return (style.foreground.map { color(for: $0, colorScheme: colorScheme) }
+                    ?? (colorScheme == .dark ? hex(0x7A8BA4) : hex(0x64748B)))
+                .opacity(0.55)
         }
         return style.dim ? resolvedColor.opacity(0.6) : resolvedColor
     }
@@ -454,7 +491,8 @@ private enum ANSIParser {
 
 private enum TerminalSemanticHighlighter {
     static func highlight(_ runs: [TerminalRun]) -> [TerminalRun] {
-        let highlightedRuns = patterns.reduce(runs) { currentRuns, pattern in
+        let thinkingMarked = markThinkingBlocks(in: runs)
+        let highlightedRuns = patterns.reduce(thinkingMarked) { currentRuns, pattern in
             currentRuns.flatMap { apply(pattern, to: $0) }
         }
         return markKnownPromptSuggestions(in: markPromptSuggestions(in: highlightedRuns))
@@ -465,6 +503,162 @@ private enum TerminalSemanticHighlighter {
         guard let range = knownPromptSuggestionRange(in: text) else { return runs }
         return markSuggestedRange(range, in: runs)
     }
+
+    private static func markThinkingBlocks(in runs: [TerminalRun]) -> [TerminalRun] {
+        let text = runs.map(\.text).joined()
+        let lines = Array(lineRanges(in: text))
+
+        var thinkingRanges: [Range<Int>] = []
+        var userInputRanges: [Range<Int>] = []
+        var buildIndicatorRanges: [Range<Int>] = []
+        var statusBarRanges: [Range<Int>] = []
+
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.text.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.matched(by: thoughtHeaderRegex) {
+                var blockEnd = index + 1
+                while blockEnd < lines.count {
+                    let blockLine = lines[blockEnd]
+                    let blockTrimmed = blockLine.text.trimmingCharacters(in: .whitespaces)
+                    if blockTrimmed.hasPrefix("\u{2503}") { break }
+                    if blockTrimmed.matched(by: buildIndicatorRegex) { break }
+                    if blockTrimmed.matched(by: statusBarSeparatorRegex) { break }
+                    if blockTrimmed.matched(by: thoughtHeaderRegex) { break }
+                    blockEnd += 1
+                }
+                thinkingRanges.append(line.startOffset..<(blockEnd < lines.count ? lines[blockEnd].startOffset : text.count))
+                index = blockEnd
+                continue
+            }
+
+            if trimmed.hasPrefix("\u{2503}") {
+                let lineEnd = line.startOffset + line.text.count
+                if trimmed.matched(by: statusBarModelRegex) {
+                    statusBarRanges.append(line.startOffset..<lineEnd)
+                } else {
+                    userInputRanges.append(line.startOffset..<lineEnd)
+                }
+                index += 1
+                continue
+            }
+
+            if trimmed.matched(by: buildIndicatorRegex) {
+                let lineEnd = line.startOffset + line.text.count
+                buildIndicatorRanges.append(line.startOffset..<lineEnd)
+                index += 1
+                continue
+            }
+
+            if trimmed.matched(by: statusBarSeparatorRegex)
+                || trimmed.matched(by: statusBarPathInfoRegex)
+                || trimmed.matched(by: sidebarInfoRegex)
+                || trimmed.matched(by: sidebarLabelRegex)
+                || trimmed.matched(by: sidebarConnectionRegex)
+                || trimmed.matched(by: sidebarLspRegex)
+                || trimmed.matched(by: opencodeVersionRegex) {
+                let lineEnd = line.startOffset + line.text.count
+                statusBarRanges.append(line.startOffset..<lineEnd)
+                index += 1
+                continue
+            }
+
+            index += 1
+        }
+
+        var adjusted = runs
+        for range in thinkingRanges {
+            adjusted = applyStyleFlag(range, in: adjusted, keypath: \.isThinking, value: true)
+        }
+        for range in buildIndicatorRanges {
+            adjusted = applyStyleFlag(range, in: adjusted, keypath: \.isBuildIndicator, value: true)
+        }
+        for range in statusBarRanges {
+            adjusted = applyStyleFlag(range, in: adjusted, keypath: \.isStatusBar, value: true)
+        }
+        for range in userInputRanges {
+            adjusted = applyStyleFlag(range, in: adjusted, keypath: \.isUserInput, value: true)
+        }
+
+        return adjusted
+    }
+
+    private static func applyStyleFlag(
+        _ range: Range<Int>,
+        in runs: [TerminalRun],
+        keypath: WritableKeyPath<TerminalTextStyle, Bool>,
+        value: Bool
+    ) -> [TerminalRun] {
+        var result: [TerminalRun] = []
+        var runStartOffset = 0
+
+        for run in runs {
+            let runLength = run.text.count
+            let runEndOffset = runStartOffset + runLength
+            let overlapStart = max(range.lowerBound, runStartOffset)
+            let overlapEnd = min(range.upperBound, runEndOffset)
+
+            guard overlapStart < overlapEnd else {
+                result.append(run)
+                runStartOffset = runEndOffset
+                continue
+            }
+
+            let localStart = overlapStart - runStartOffset
+            let localEnd = overlapEnd - runStartOffset
+            let startIndex = run.text.index(run.text.startIndex, offsetBy: localStart)
+            let endIndex = run.text.index(run.text.startIndex, offsetBy: localEnd)
+
+            if run.text.startIndex < startIndex {
+                result.append(TerminalRun(text: String(run.text[run.text.startIndex..<startIndex]), style: run.style))
+            }
+
+            var flaggedStyle = run.style
+            flaggedStyle[keyPath: keypath] = value
+            result.append(TerminalRun(text: String(run.text[startIndex..<endIndex]), style: flaggedStyle))
+
+            if endIndex < run.text.endIndex {
+                result.append(TerminalRun(text: String(run.text[endIndex..<run.text.endIndex]), style: run.style))
+            }
+
+            runStartOffset = runEndOffset
+        }
+
+        return coalesceRuns(result)
+    }
+
+    private static let thoughtHeaderRegex = try! NSRegularExpression(
+        pattern: #"^Thought:\s*\d+(?:\.\d+)?(?:ms|s|m)"#
+    )
+    private static let buildIndicatorRegex = try! NSRegularExpression(
+        pattern: #"^(?:\x{23FA}|\x{25A3})\s*Build\s*·"#
+    )
+    private static let statusBarSeparatorRegex = try! NSRegularExpression(
+        pattern: #"^\x{2579}\x{2580}+"#
+    )
+    private static let statusBarModelRegex = try! NSRegularExpression(
+        pattern: #"^\x{2503}\s*Build\s*·\s*[^\n]+(?:Fireworks|OpenAI|Anthropic|Google|Meta|Mistral|Cerebras|Groq)"#
+    )
+    private static let statusBarPathInfoRegex = try! NSRegularExpression(
+        pattern: #"^[/~].*\d+(?:\.\d+)?K?\s*\(\d+%\).*\$[\d.]+.*ctrl\+p\s*commands"#
+    )
+    private static let sidebarInfoRegex = try! NSRegularExpression(
+        pattern: #"^(?:[\d,]+\s*tokens?|\d+%\s*used|\$[\d.]+\s*spent)"#
+    )
+    private static let sidebarLabelRegex = try! NSRegularExpression(
+        pattern: #"^(?:Context|MCP|LSP)\s*$"#
+    )
+    private static let sidebarConnectionRegex = try! NSRegularExpression(
+        pattern: #"^\x{2022}\s+\S+\s+(?:Connected|Needs auth|Disabled)"#
+    )
+    private static let sidebarLspRegex = try! NSRegularExpression(
+        pattern: #"^LSPs?\s+are\s+disabled"#
+    )
+    private static let opencodeVersionRegex = try! NSRegularExpression(
+        pattern: #"^OpenCode\s+\d+\.\d+(?:\.\d+)?"#
+    )
 
     private static func knownPromptSuggestionRange(in text: String) -> Range<Int>? {
         let lines = Array(lineRanges(in: text).suffix(12))
@@ -857,6 +1051,42 @@ private enum TerminalSemanticHighlighter {
             #"(?:(?:Sources|Tests|Packages|App|src|lib|test|spec|config|public|views|models|controllers)/[^\s<]+|[A-Za-z0-9_\-]+\.(?:swift|ts|tsx|js|jsx|py|rb|go|rs|json|yaml|yml|toml|css|html|md|sh|sql|xml|plist|h|m|c|cpp|java|kt))"#,
             patch: TerminalStylePatch(foreground: .named(.accent))
         ),
+        TerminalTextPattern(
+            #"^Thought:\s*\d+(?:\.\d+)?(?:ms|s|m)"#,
+            patch: TerminalStylePatch(italic: true, isThinking: true)
+        ),
+        TerminalTextPattern(
+            #"(?m)^\x{2503}\s*$"#,
+            patch: TerminalStylePatch(dim: true, isUserInput: true)
+        ),
+        TerminalTextPattern(
+            #"(?m)^\x{2579}\x{2580}+"#,
+            patch: TerminalStylePatch(dim: true, isStatusBar: true)
+        ),
+        TerminalTextPattern(
+            #"ctrl\+p\s*commands"#,
+            patch: TerminalStylePatch(foreground: .named(.muted), dim: true, isStatusBar: true, overridesForeground: true)
+        ),
+        TerminalTextPattern(
+            #"\x{2022}\s+\S+\s+Connected"#,
+            patch: TerminalStylePatch(foreground: .named(.green), dim: true, isStatusBar: true, overridesForeground: true)
+        ),
+        TerminalTextPattern(
+            #"\x{2022}\s+\S+\s+Needs auth"#,
+            patch: TerminalStylePatch(foreground: .named(.yellow), dim: true, isStatusBar: true, overridesForeground: true)
+        ),
+        TerminalTextPattern(
+            #"^Context$|^MCP$|^LSP$"#,
+            patch: TerminalStylePatch(foreground: .named(.muted), dim: true, isStatusBar: true, overridesForeground: true)
+        ),
+        TerminalTextPattern(
+            #"LSPs?\s+are\s+disabled"#,
+            patch: TerminalStylePatch(foreground: .named(.muted), dim: true, isStatusBar: true, overridesForeground: true)
+        ),
+        TerminalTextPattern(
+            #"OpenCode\s+\d+\.\d+(?:\.\d+)?"#,
+            patch: TerminalStylePatch(foreground: .named(.muted), dim: true, isStatusBar: true, overridesForeground: true)
+        ),
     ]
 
     private static func apply(_ pattern: TerminalTextPattern, to run: TerminalRun) -> [TerminalRun] {
@@ -891,6 +1121,12 @@ private enum TerminalSemanticHighlighter {
         }
 
         return result
+    }
+}
+
+private extension String {
+    func matched(by regex: NSRegularExpression) -> Bool {
+        regex.firstMatch(in: self, range: NSRange(startIndex..<endIndex, in: self)) != nil
     }
 }
 
