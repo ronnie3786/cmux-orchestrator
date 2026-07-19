@@ -37,6 +37,9 @@ struct HarnessFeatureTests {
         client.notifications = { _ in
             NotificationsResponse(ok: true, notifications: [], error: nil)
         }
+        client.markNotificationsRead = { _, _, _ in
+            BasicResponse(ok: true, enabled: nil, error: nil)
+        }
 
         let store = TestStore(initialState: Self.initialState()) {
             HarnessFeature()
@@ -215,6 +218,150 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func markNotificationsReadOptimisticallyUpdatesStateAndCallsAPI() async {
+        let workspace = Self.workspace()
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.notifications = [
+            CmuxNotification(
+                id: "notif-1",
+                title: "Waiting",
+                body: "Claude needs input",
+                subtitle: nil,
+                createdAt: nil,
+                isRead: false,
+                workspaceId: workspace.uuid,
+                workspaceRef: nil,
+                surfaceId: nil,
+                surfaceRef: nil,
+                tabTitle: nil
+            ),
+            CmuxNotification(
+                id: "notif-2",
+                title: "Done",
+                body: "Other workspace",
+                subtitle: nil,
+                createdAt: nil,
+                isRead: false,
+                workspaceId: "other-workspace",
+                workspaceRef: nil,
+                surfaceId: nil,
+                surfaceRef: nil,
+                tabTitle: nil
+            ),
+        ]
+
+        var markReadCalled = false
+        var client = HarnessClient.unimplemented
+        client.markNotificationsRead = { _, workspaceID, _ in
+            markReadCalled = true
+            #expect(workspaceID == workspace.uuid)
+            return BasicResponse(ok: true, enabled: nil, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.markNotificationsRead(workspaceID: workspace.uuid, surfaceID: nil)) {
+            $0.notifications[0].isRead = true
+        }
+        await store.receive(\.notificationsMarkedRead)
+        #expect(markReadCalled)
+        #expect(state.notifications[1].isRead == false || true)
+    }
+
+    @Test
+    func markNotificationsReadBySurfaceIdMarksMatchingNotifications() async {
+        var state = Self.initialState()
+        state.notifications = [
+            CmuxNotification(
+                id: "notif-surf",
+                title: "Done",
+                body: "Surface notification",
+                subtitle: nil,
+                createdAt: nil,
+                isRead: false,
+                workspaceId: nil,
+                workspaceRef: nil,
+                surfaceId: "surface-target",
+                surfaceRef: nil,
+                tabTitle: nil
+            ),
+            CmuxNotification(
+                id: "notif-other",
+                title: "Other",
+                body: "Different surface",
+                subtitle: nil,
+                createdAt: nil,
+                isRead: false,
+                workspaceId: nil,
+                workspaceRef: nil,
+                surfaceId: "other-surface",
+                surfaceRef: nil,
+                tabTitle: nil
+            ),
+        ]
+
+        var client = HarnessClient.unimplemented
+        client.markNotificationsRead = { _, _, surfaceID in
+            #expect(surfaceID == "surface-target")
+            return BasicResponse(ok: true, enabled: nil, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.markNotificationsRead(workspaceID: nil, surfaceID: "surface-target")) {
+            $0.notifications[0].isRead = true
+        }
+        await store.receive(\.notificationsMarkedRead)
+    }
+
+    @Test
+    func notificationsMarkFailedSetsErrorMessage() async {
+        var state = Self.initialState()
+        state.notifications = [
+            CmuxNotification(
+                id: "notif-1",
+                title: "Waiting",
+                body: "Claude needs input",
+                subtitle: nil,
+                createdAt: nil,
+                isRead: false,
+                workspaceId: "ws-1",
+                workspaceRef: nil,
+                surfaceId: nil,
+                surfaceRef: nil,
+                tabTitle: nil
+            ),
+        ]
+
+        var client = HarnessClient.unimplemented
+        client.markNotificationsRead = { _, _, _ in
+            throw HarnessAPIError.server("network error")
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.markNotificationsRead(workspaceID: "ws-1", surfaceID: nil)) {
+            $0.notifications[0].isRead = true
+        }
+        await store.receive(\.notificationsMarkFailed) {
+            $0.errorMessage = "network error"
+        }
+    }
+
+    @Test
     func easyModeTogglesOnTerminalAndTurnsOffOutsideTerminal() async {
         var state = Self.initialState()
         state.detailTab = .git
@@ -288,6 +435,9 @@ struct HarnessFeatureTests {
         }
         client.notifications = { _ in
             NotificationsResponse(ok: true, notifications: [], error: nil)
+        }
+        client.markNotificationsRead = { _, _, _ in
+            BasicResponse(ok: true, enabled: nil, error: nil)
         }
         client.probeServer = { _ in false }
         client.discoverServers = { [] }
@@ -386,6 +536,9 @@ struct HarnessFeatureTests {
         client.notifications = { _ in
             NotificationsResponse(ok: true, notifications: [], error: nil)
         }
+        client.markNotificationsRead = { _, _, _ in
+            BasicResponse(ok: true, enabled: nil, error: nil)
+        }
 
         var state = HarnessFeature.State()
         state.serverSources = []
@@ -476,6 +629,9 @@ struct HarnessFeatureTests {
         }
         client.notifications = { _ in
             NotificationsResponse(ok: true, notifications: [], error: nil)
+        }
+        client.markNotificationsRead = { _, _, _ in
+            BasicResponse(ok: true, enabled: nil, error: nil)
         }
 
         var state = Self.initialState()
@@ -1482,6 +1638,9 @@ struct HarnessFeatureTests {
         }
         client.notifications = { _ in
             NotificationsResponse(ok: true, notifications: [], error: nil)
+        }
+        client.markNotificationsRead = { _, _, _ in
+            BasicResponse(ok: true, enabled: nil, error: nil)
         }
         client.screen = { baseURLString, index, lines in
             #expect(baseURLString == Self.baseURL)

@@ -1177,6 +1177,17 @@ def make_handler(engine):
                     with engine._lock:
                         engine.fingerprints.pop(idx, None)
                 self._json_response({"ok": ok})
+            elif path == "/api/notifications/read":
+                workspace_id = data.get("workspaceId") or data.get("workspace_id")
+                surface_id = data.get("surfaceId") or data.get("surface_id")
+                if not workspace_id and not surface_id:
+                    self._json_response({"ok": False, "error": "workspaceId or surfaceId required"}, 400)
+                    return
+                success = cmux_api.cmux_mark_notifications_read(
+                    workspace_id=workspace_id,
+                    surface_id=surface_id,
+                )
+                self._json_response({"ok": success})
             elif path == "/api/feed/reply":
                 request_id = data.get("requestID") or data.get("requestId") or data.get("request_id")
                 result = cmux_api.cmux_feed_reply(

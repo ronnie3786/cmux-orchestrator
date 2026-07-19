@@ -69,6 +69,11 @@ struct FeedReplyRequest: Encodable {
     var selections: [String]?
 }
 
+struct MarkNotificationsReadRequest: Encodable {
+    var workspaceId: String?
+    var surfaceId: String?
+}
+
 struct AnyEncodable: Encodable {
     private let encodeValue: (Encoder) throws -> Void
 

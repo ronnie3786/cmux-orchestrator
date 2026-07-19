@@ -280,6 +280,9 @@ struct HarnessFeature {
         case installOpenCodeIntegration
         case installOpenCodeIntegrationSucceeded(OpenCodeIntegrationResponse)
         case installOpenCodeIntegrationFailed(String)
+        case markNotificationsRead(workspaceID: String?, surfaceID: String?)
+        case notificationsMarkedRead(workspaceID: String?, surfaceID: String?)
+        case notificationsMarkFailed(String)
 
         case settingsButtonTapped
         case dismissSettings
@@ -395,7 +398,10 @@ struct HarnessFeature {
                  .feedReplyFailed(requestID: _, message: _),
                  .installOpenCodeIntegration,
                  .installOpenCodeIntegrationSucceeded(_),
-                 .installOpenCodeIntegrationFailed(_):
+                 .installOpenCodeIntegrationFailed(_),
+                 .markNotificationsRead(workspaceID: _, surfaceID: _),
+                 .notificationsMarkedRead(workspaceID: _, surfaceID: _),
+                 .notificationsMarkFailed(_):
                 return reduceConnection(into: &state, action: action)
 
             case .settingsButtonTapped,

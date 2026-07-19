@@ -15,6 +15,7 @@ struct HarnessClient: Sendable {
     var status: @Sendable (String) async throws -> HarnessStatus
     var log: @Sendable (String) async throws -> [LogEntry]
     var notifications: @Sendable (String) async throws -> NotificationsResponse
+    var markNotificationsRead: @Sendable (String, String?, String?) async throws -> BasicResponse
     var feed: @Sendable (String) async throws -> FeedResponse
     var openCodeIntegration: @Sendable (String) async throws -> OpenCodeIntegrationResponse
     var installOpenCodeIntegration: @Sendable (String) async throws -> OpenCodeIntegrationResponse
@@ -91,6 +92,16 @@ extension HarnessClient {
                     return await demoStore.notifications()
                 }
                 return try await HarnessAPI.notifications(baseURLString: baseURLString)
+            },
+            markNotificationsRead: { baseURLString, workspaceId, surfaceId in
+                if HarnessLocalDemo.isDemoURL(baseURLString) {
+                    return await demoStore.markNotificationsRead(workspaceId: workspaceId, surfaceId: surfaceId)
+                }
+                return try await HarnessAPI.markNotificationsRead(
+                    baseURLString: baseURLString,
+                    workspaceId: workspaceId,
+                    surfaceId: surfaceId
+                )
             },
             feed: { baseURLString in
                 if HarnessLocalDemo.isDemoURL(baseURLString) {
@@ -332,6 +343,9 @@ extension HarnessClient {
             status: { _ in await store.status() },
             log: { _ in await store.log() },
             notifications: { _ in await store.notifications() },
+            markNotificationsRead: { _, workspaceId, surfaceId in
+                await store.markNotificationsRead(workspaceId: workspaceId, surfaceId: surfaceId)
+            },
             feed: { _ in await store.feed() },
             openCodeIntegration: { _ in
                 OpenCodeIntegrationResponse(
@@ -463,6 +477,10 @@ private actor LocalDemoHarnessStore {
             tabTitle: "sample-app : Review PR comments"
         )
         return NotificationsResponse(ok: true, notifications: [unread], error: nil)
+    }
+
+    func markNotificationsRead(workspaceId: String?, surfaceId: String?) -> BasicResponse {
+        return BasicResponse(ok: true, enabled: nil, error: nil)
     }
 
     func feed() -> FeedResponse {
@@ -1285,6 +1303,7 @@ extension HarnessClient {
         status: { _ in throw HarnessClientError.unimplemented("status") },
         log: { _ in throw HarnessClientError.unimplemented("log") },
         notifications: { _ in throw HarnessClientError.unimplemented("notifications") },
+        markNotificationsRead: { _, _, _ in throw HarnessClientError.unimplemented("markNotificationsRead") },
         feed: { _ in throw HarnessClientError.unimplemented("feed") },
         openCodeIntegration: { _ in throw HarnessClientError.unimplemented("openCodeIntegration") },
         installOpenCodeIntegration: { _ in throw HarnessClientError.unimplemented("installOpenCodeIntegration") },

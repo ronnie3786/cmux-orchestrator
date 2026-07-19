@@ -522,6 +522,35 @@ def cmux_notifications():
     return _parse_notifications(result)
 
 
+def cmux_mark_notifications_read(workspace_id=None, surface_id=None):
+    """Mark notifications as read for a workspace or surface via v2 API.
+
+    Tries ``notification.mark_read`` first (not all cmux versions support it).
+    Then focuses the target surface so the native cmux app marks its
+    notifications as read — the same thing that happens when a user clicks
+    into a pane in the desktop app.
+
+    Returns True if either approach succeeded, False if both failed.
+    """
+    params = {}
+    if workspace_id:
+        params["workspace_id"] = workspace_id
+    if surface_id:
+        params["surface_id"] = surface_id
+
+    marked = False
+    if params:
+        result = _v2_request("notification.mark_read", params)
+        if result is not None:
+            marked = True
+
+    focused = ensure_workspace_terminal_ready(
+        workspace_uuid=workspace_id,
+        surface_id=surface_id,
+    )
+    return marked or focused
+
+
 def _first_present(item, keys, default=""):
     for key in keys:
         value = item.get(key)

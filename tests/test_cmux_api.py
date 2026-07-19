@@ -12,6 +12,7 @@ from cmux_harness.cmux_api import (
     _parse_feed_items,
     _socket_candidate_paths,
     cmux_feed_reply,
+    cmux_mark_notifications_read,
     cmux_send_to_workspace,
     _v2_request,
 )
@@ -220,6 +221,65 @@ class TestParseNotifications(unittest.TestCase):
         ]
         parsed = _parse_notifications(result)
         self.assertEqual(len(parsed), 1)
+
+
+class TestMarkNotificationsRead(unittest.TestCase):
+
+    @patch("cmux_harness.cmux_api._v2_request")
+    @patch("cmux_harness.cmux_api.ensure_workspace_terminal_ready", return_value=True)
+    def test_mark_read_succeeds_via_notification_method(self, mock_focus, mock_v2):
+        mock_v2.return_value = {"ok": True}
+        result = cmux_mark_notifications_read(
+            workspace_id="ws-1",
+            surface_id="surf-1",
+        )
+        self.assertTrue(result)
+        mock_v2.assert_called_once_with(
+            "notification.mark_read",
+            {"workspace_id": "ws-1", "surface_id": "surf-1"},
+        )
+
+    @patch("cmux_harness.cmux_api._v2_request", return_value=None)
+    @patch("cmux_harness.cmux_api.ensure_workspace_terminal_ready", return_value=True)
+    def test_mark_read_falls_back_to_surface_focus(self, mock_focus, mock_v2):
+        result = cmux_mark_notifications_read(
+            workspace_id="ws-1",
+            surface_id="surf-1",
+        )
+        self.assertTrue(result)
+        mock_focus.assert_called_once_with(
+            workspace_uuid="ws-1",
+            surface_id="surf-1",
+        )
+
+    @patch("cmux_harness.cmux_api._v2_request", return_value=None)
+    @patch("cmux_harness.cmux_api.ensure_workspace_terminal_ready", return_value=False)
+    def test_mark_read_returns_false_when_both_approaches_fail(self, mock_focus, mock_v2):
+        result = cmux_mark_notifications_read(
+            workspace_id="ws-1",
+            surface_id="surf-1",
+        )
+        self.assertFalse(result)
+
+    @patch("cmux_harness.cmux_api._v2_request", return_value=None)
+    @patch("cmux_harness.cmux_api.ensure_workspace_terminal_ready", return_value=False)
+    def test_mark_read_with_only_workspace_id(self, mock_focus, mock_v2):
+        result = cmux_mark_notifications_read(workspace_id="ws-1")
+        self.assertFalse(result)
+        mock_v2.assert_called_once_with(
+            "notification.mark_read",
+            {"workspace_id": "ws-1"},
+        )
+
+    @patch("cmux_harness.cmux_api._v2_request", return_value=None)
+    @patch("cmux_harness.cmux_api.ensure_workspace_terminal_ready", return_value=False)
+    def test_mark_read_with_only_surface_id(self, mock_focus, mock_v2):
+        result = cmux_mark_notifications_read(surface_id="surf-1")
+        self.assertFalse(result)
+        mock_v2.assert_called_once_with(
+            "notification.mark_read",
+            {"surface_id": "surf-1"},
+        )
 
 
 class TestParseDebugTerminals(unittest.TestCase):

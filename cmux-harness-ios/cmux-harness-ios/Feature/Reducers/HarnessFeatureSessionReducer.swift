@@ -61,6 +61,12 @@ extension HarnessFeature {
                 ]
                 if let workspaceToClear {
                     effects.append(clearPushApprovalEffect(state: state, workspace: workspaceToClear))
+                    if state.unreadCount(forWorkspaceID: workspaceToClear.uuid) > 0 {
+                        effects.append(.send(.markNotificationsRead(
+                            workspaceID: workspaceToClear.uuid,
+                            surfaceID: workspaceToClear.surfaceUuid
+                        )))
+                    }
                 }
                 return .merge(effects)
 
@@ -78,6 +84,13 @@ extension HarnessFeature {
                 loadDetailDraft(for: workspaceID, into: &state)
 
                 var effects: [Effect<Action>] = [.send(.screenTick)]
+                if let selectedWorkspace = state.workspaces.first(where: { $0.id == workspaceID }),
+                   state.unreadCount(forSurfaceID: selectedWorkspace.surfaceUuid) > 0 {
+                    effects.append(.send(.markNotificationsRead(
+                        workspaceID: selectedWorkspace.uuid,
+                        surfaceID: selectedWorkspace.surfaceUuid
+                    )))
+                }
                 switch state.detailTab {
                 case .terminal:
                     break

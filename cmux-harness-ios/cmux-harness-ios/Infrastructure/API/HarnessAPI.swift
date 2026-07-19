@@ -34,6 +34,19 @@ enum HarnessAPI {
         try await request(baseURLString: baseURLString, path: "/api/notifications")
     }
 
+    static func markNotificationsRead(
+        baseURLString: String,
+        workspaceId: String?,
+        surfaceId: String?
+    ) async throws -> BasicResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/notifications/read",
+            method: "POST",
+            body: MarkNotificationsReadRequest(workspaceId: workspaceId, surfaceId: surfaceId)
+        )
+    }
+
     static func feed(baseURLString: String) async throws -> FeedResponse {
         try await request(baseURLString: baseURLString, path: "/api/feed")
     }

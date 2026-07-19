@@ -493,6 +493,38 @@ extension HarnessFeature {
                 state.errorMessage = message
                 return .none
 
+            case let .markNotificationsRead(workspaceID, surfaceID):
+                for index in state.notifications.indices {
+                    let matches = (workspaceID.map { $0 == state.notifications[index].workspaceId } ?? false)
+                        || (surfaceID.map { $0 == state.notifications[index].surfaceId } ?? false)
+                    if matches && state.notifications[index].isUnread {
+                        state.notifications[index].isRead = true
+                    }
+                }
+                guard state.isServerConfigured else { return .none }
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspaceID, surfaceID] send in
+                    do {
+                        _ = try await client.markNotificationsRead(baseURLString, workspaceID, surfaceID)
+                        await send(.notificationsMarkedRead(workspaceID: workspaceID, surfaceID: surfaceID))
+                    } catch {
+                        await send(.notificationsMarkFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+
+            case let .notificationsMarkedRead(workspaceID, surfaceID):
+                for index in state.notifications.indices {
+                    let matches = (workspaceID.map { $0 == state.notifications[index].workspaceId } ?? false)
+                        || (surfaceID.map { $0 == state.notifications[index].surfaceId } ?? false)
+                    if matches && state.notifications[index].isUnread {
+                        state.notifications[index].isRead = true
+                    }
+                }
+                return .none
+
+            case let .notificationsMarkFailed(message):
+                state.errorMessage = message
+                return .none
+
         default:
             return .none
         }
