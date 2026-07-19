@@ -1,5 +1,7 @@
 import Foundation
 
+struct EmptyRequest: Encodable {}
+
 struct ToggleRequest: Encodable {
     var enabled: Bool
 }

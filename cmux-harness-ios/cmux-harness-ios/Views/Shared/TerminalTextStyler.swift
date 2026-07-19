@@ -31,7 +31,14 @@ enum TerminalTextStyler {
     }
 
     private static func font(for style: TerminalTextStyle) -> Font {
-        var font = Font.system(.caption, design: .monospaced)
+        let textStyle: Font.TextStyle = if style.isInteractionOption {
+            .body
+        } else if style.isInteractionTitle {
+            .subheadline
+        } else {
+            .caption
+        }
+        var font = Font.system(textStyle, design: .monospaced)
         if style.bold {
             font = font.weight(.semibold)
         }
@@ -59,6 +66,9 @@ private struct TerminalTextStyle: Equatable {
     var isUserInput = false
     var isBuildIndicator = false
     var isStatusBar = false
+    var isInteractionTitle = false
+    var isInteractionOption = false
+    var isInteractionHint = false
 
     mutating func apply(_ patch: TerminalStylePatch) {
         if let foreground = patch.foreground,
@@ -95,6 +105,15 @@ private struct TerminalTextStyle: Equatable {
         }
         if patch.isStatusBar {
             isStatusBar = true
+        }
+        if patch.isInteractionTitle {
+            isInteractionTitle = true
+        }
+        if patch.isInteractionOption {
+            isInteractionOption = true
+        }
+        if patch.isInteractionHint {
+            isInteractionHint = true
         }
     }
 
@@ -163,6 +182,9 @@ private struct TerminalStylePatch {
     var isUserInput = false
     var isBuildIndicator = false
     var isStatusBar = false
+    var isInteractionTitle = false
+    var isInteractionOption = false
+    var isInteractionHint = false
     var overridesForeground = false
     var overridesBackground = false
 }
@@ -225,6 +247,12 @@ private enum TerminalPalette {
     static func foreground(for style: TerminalTextStyle, colorScheme: ColorScheme) -> Color {
         let resolvedColor = style.foreground.map { color(for: $0, colorScheme: colorScheme) }
             ?? (colorScheme == .dark ? hex(0xD8DDE8) : hex(0x1E293B))
+        if style.isInteractionTitle || style.isInteractionOption {
+            return resolvedColor
+        }
+        if style.isInteractionHint {
+            return resolvedColor.opacity(0.8)
+        }
         if style.isSuggested {
             return style.dim ? resolvedColor.opacity(0.25) : resolvedColor.opacity(0.32)
         }
@@ -495,7 +523,240 @@ private enum TerminalSemanticHighlighter {
         let highlightedRuns = patterns.reduce(thinkingMarked) { currentRuns, pattern in
             currentRuns.flatMap { apply(pattern, to: $0) }
         }
-        return markKnownPromptSuggestions(in: markPromptSuggestions(in: highlightedRuns))
+        let promptMarked = markKnownPromptSuggestions(in: markPromptSuggestions(in: highlightedRuns))
+        return markOpenCodeInteractions(in: promptMarked)
+    }
+
+    private static func markOpenCodeInteractions(in runs: [TerminalRun]) -> [TerminalRun] {
+        let text = runs.map(\.text).joined()
+        let lines = Array(lineRanges(in: text).suffix(48))
+        guard lines.contains(where: { $0.text.matched(by: opencodeVersionRegex) }) else { return runs }
+
+        if let headerIndex = lines.lastIndex(where: {
+            $0.text.range(of: "Permission required", options: .caseInsensitive) != nil
+        }) {
+            let block = Array(lines[headerIndex...])
+            let flattened = block.map(\.text).joined(separator: " ").lowercased()
+            if flattened.contains("allow once"),
+               flattened.contains("allow always"),
+               flattened.contains("reject"),
+               flattened.contains("enter"),
+               flattened.contains("confirm") {
+                return styleOpenCodePermission(block, in: runs)
+            }
+        }
+
+        let flattened = lines.map(\.text).joined(separator: " ").lowercased()
+        guard flattened.contains("select"),
+              flattened.contains("enter"),
+              flattened.contains("dismiss") else {
+            return runs
+        }
+        return styleOpenCodeQuestion(lines, in: runs)
+    }
+
+    private static func styleOpenCodePermission(
+        _ lines: [(text: String, startOffset: Int)],
+        in runs: [TerminalRun]
+    ) -> [TerminalRun] {
+        var adjusted = runs
+        let phraseStyles: [(String, TerminalStylePatch)] = [
+            (
+                "Permission required",
+                TerminalStylePatch(
+                    foreground: .named(.brightYellow),
+                    background: .named(.yellow),
+                    bold: true,
+                    isInteractionTitle: true,
+                    overridesForeground: true,
+                    overridesBackground: true
+                )
+            ),
+            (
+                "Allow once",
+                TerminalStylePatch(
+                    foreground: .named(.brightGreen),
+                    background: .named(.green),
+                    bold: true,
+                    isInteractionOption: true,
+                    overridesForeground: true,
+                    overridesBackground: true
+                )
+            ),
+            (
+                "Allow always",
+                TerminalStylePatch(
+                    foreground: .named(.brightBlue),
+                    background: .named(.blue),
+                    bold: true,
+                    isInteractionOption: true,
+                    overridesForeground: true,
+                    overridesBackground: true
+                )
+            ),
+            (
+                "Reject",
+                TerminalStylePatch(
+                    foreground: .named(.brightRed),
+                    background: .named(.red),
+                    bold: true,
+                    isInteractionOption: true,
+                    overridesForeground: true,
+                    overridesBackground: true
+                )
+            ),
+        ]
+
+        for line in lines {
+            for (phrase, patch) in phraseStyles {
+                for range in ranges(of: phrase, in: line) {
+                    adjusted = applyPatch(patch, to: range, in: adjusted)
+                }
+            }
+
+            let normalized = line.text.trimmingCharacters(in: .whitespaces)
+            if normalized.hasPrefix("- /") || normalized.hasPrefix("│ - /") || normalized.hasPrefix("┃ - /") {
+                adjusted = applyPatch(
+                    TerminalStylePatch(
+                        foreground: .named(.brightCyan),
+                        overridesForeground: true
+                    ),
+                    to: line.startOffset..<(line.startOffset + line.text.count),
+                    in: adjusted
+                )
+            }
+
+            let lowercased = line.text.lowercased()
+            if lowercased.contains("select") || lowercased.contains("confirm") || lowercased.contains("fullscreen") {
+                adjusted = applyPatch(
+                    TerminalStylePatch(
+                        foreground: .named(.brightCyan),
+                        isInteractionHint: true,
+                        overridesForeground: true
+                    ),
+                    to: line.startOffset..<(line.startOffset + line.text.count),
+                    in: adjusted
+                )
+            }
+        }
+        return adjusted
+    }
+
+    private static func styleOpenCodeQuestion(
+        _ lines: [(text: String, startOffset: Int)],
+        in runs: [TerminalRun]
+    ) -> [TerminalRun] {
+        let optionPattern = #"^\s*[│┃|]?\s*[›❯●○]?\s*\d+[.)]\s+"#
+        let optionLines = lines.filter {
+            $0.text.range(of: optionPattern, options: .regularExpression) != nil
+        }
+        guard optionLines.count >= 2 else { return runs }
+
+        var adjusted = runs
+        let firstOptionOffset = optionLines[0].startOffset
+        if let questionLine = lines.last(where: {
+            $0.startOffset < firstOptionOffset
+                && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) {
+            adjusted = applyPatch(
+                TerminalStylePatch(
+                    foreground: .named(.brightYellow),
+                    background: .named(.yellow),
+                    bold: true,
+                    isInteractionTitle: true,
+                    overridesForeground: true,
+                    overridesBackground: true
+                ),
+                to: questionLine.startOffset..<(questionLine.startOffset + questionLine.text.count),
+                in: adjusted
+            )
+        }
+
+        for line in optionLines {
+            adjusted = applyPatch(
+                TerminalStylePatch(
+                    foreground: .named(.brightWhite),
+                    background: .named(.brightBlack),
+                    bold: true,
+                    isInteractionOption: true,
+                    overridesForeground: true,
+                    overridesBackground: true
+                ),
+                to: line.startOffset..<(line.startOffset + line.text.count),
+                in: adjusted
+            )
+        }
+
+        for line in lines where line.text.lowercased().contains("select")
+            || line.text.lowercased().contains("dismiss") {
+            adjusted = applyPatch(
+                TerminalStylePatch(
+                    foreground: .named(.brightCyan),
+                    isInteractionHint: true,
+                    overridesForeground: true
+                ),
+                to: line.startOffset..<(line.startOffset + line.text.count),
+                in: adjusted
+            )
+        }
+        return adjusted
+    }
+
+    private static func ranges(
+        of phrase: String,
+        in line: (text: String, startOffset: Int)
+    ) -> [Range<Int>] {
+        var result: [Range<Int>] = []
+        var searchStart = line.text.startIndex
+        while searchStart < line.text.endIndex,
+              let range = line.text.range(
+                  of: phrase,
+                  options: .caseInsensitive,
+                  range: searchStart..<line.text.endIndex
+              ) {
+            let lower = line.startOffset + line.text.distance(from: line.text.startIndex, to: range.lowerBound)
+            let upper = line.startOffset + line.text.distance(from: line.text.startIndex, to: range.upperBound)
+            result.append(lower..<upper)
+            searchStart = range.upperBound
+        }
+        return result
+    }
+
+    private static func applyPatch(
+        _ patch: TerminalStylePatch,
+        to range: Range<Int>,
+        in runs: [TerminalRun]
+    ) -> [TerminalRun] {
+        var result: [TerminalRun] = []
+        var runStartOffset = 0
+
+        for run in runs {
+            let runEndOffset = runStartOffset + run.text.count
+            let overlapStart = max(range.lowerBound, runStartOffset)
+            let overlapEnd = min(range.upperBound, runEndOffset)
+
+            guard overlapStart < overlapEnd else {
+                result.append(run)
+                runStartOffset = runEndOffset
+                continue
+            }
+
+            let startIndex = run.text.index(run.text.startIndex, offsetBy: overlapStart - runStartOffset)
+            let endIndex = run.text.index(run.text.startIndex, offsetBy: overlapEnd - runStartOffset)
+            if run.text.startIndex < startIndex {
+                result.append(TerminalRun(text: String(run.text[..<startIndex]), style: run.style))
+            }
+
+            var style = run.style
+            style.apply(patch)
+            result.append(TerminalRun(text: String(run.text[startIndex..<endIndex]), style: style))
+
+            if endIndex < run.text.endIndex {
+                result.append(TerminalRun(text: String(run.text[endIndex...]), style: run.style))
+            }
+            runStartOffset = runEndOffset
+        }
+        return coalesceRuns(result)
     }
 
     private static func markKnownPromptSuggestions(in runs: [TerminalRun]) -> [TerminalRun] {
@@ -657,7 +918,7 @@ private enum TerminalSemanticHighlighter {
         pattern: #"^LSPs?\s+are\s+disabled"#
     )
     private static let opencodeVersionRegex = try! NSRegularExpression(
-        pattern: #"^OpenCode\s+\d+\.\d+(?:\.\d+)?"#
+        pattern: #"^\s*(?:[\x{2022}\x{2502}\x{2503}]\s*)?OpenCode\s+\d+\.\d+(?:\.\d+)?"#
     )
 
     private static func knownPromptSuggestionRange(in text: String) -> Range<Int>? {

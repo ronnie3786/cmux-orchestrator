@@ -20,6 +20,9 @@ extension HarnessFeature {
         state.logEntries = []
         state.notifications = []
         state.feedItems = []
+        state.pendingFeedReplyIDs = []
+        state.openCodeIntegration = nil
+        state.isInstallingOpenCodeIntegration = false
         state.isRefreshing = false
         state.lastUpdated = nil
         state.sessionSearchText = ""
@@ -142,12 +145,14 @@ extension HarnessFeature {
                         async let status = client.status(baseURLString)
                         async let log = client.log(baseURLString)
                         async let notifs = client.notifications(baseURLString)
-                        let feed = FeedResponse(ok: true, items: [], error: nil)
+                        async let feedResult: FeedResponse? = try? client.feed(baseURLString)
+                        async let openCodeIntegration: OpenCodeIntegrationResponse? = try? client.openCodeIntegration(baseURLString)
                         let payload = try await RefreshPayload(
                             status: status,
                             log: log,
-                            feed: feed,
-                            notifications: notifs
+                            feed: feedResult,
+                            notifications: notifs,
+                            openCodeIntegration: openCodeIntegration
                         )
                         await send(.refreshSucceeded(payload))
                     } catch {
@@ -162,7 +167,12 @@ extension HarnessFeature {
                 state.workspaces = payload.status.workspaces
                 state.logEntries = payload.log
                 state.notifications = payload.notifications.notifications
-                state.feedItems = payload.feed.items
+                if let feed = payload.feed {
+                    state.feedItems = feed.items
+                }
+                if let openCodeIntegration = payload.openCodeIntegration {
+                    state.openCodeIntegration = openCodeIntegration
+                }
                 state.lastUpdated = self.now
                 trimDrafts(&state)
                 if let pendingPushApproval = state.pendingPushApproval,
@@ -435,18 +445,52 @@ extension HarnessFeature {
                 return .none
 
             case let .replyToFeed(requestID, kind, action, mode, selections):
+                guard !state.pendingFeedReplyIDs.contains(requestID) else { return .none }
+                state.pendingFeedReplyIDs.insert(requestID)
                 return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString] send in
                     do {
                         _ = try await client.replyToFeed(baseURLString, requestID, kind, action, mode, selections)
                         await send(.feedReplySucceeded(requestID))
                         await send(.refresh)
                     } catch {
-                        await send(.requestFailed(HarnessAPI.message(for: error)))
+                        await send(.feedReplyFailed(
+                            requestID: requestID,
+                            message: HarnessAPI.message(for: error)
+                        ))
                     }
                 }
 
             case let .feedReplySucceeded(requestID):
+                state.pendingFeedReplyIDs.remove(requestID)
                 state.feedItems.removeAll { $0.requestID == requestID }
+                return .none
+
+            case let .feedReplyFailed(requestID, message):
+                state.pendingFeedReplyIDs.remove(requestID)
+                state.errorMessage = message
+                return .none
+
+            case .installOpenCodeIntegration:
+                guard !state.isInstallingOpenCodeIntegration else { return .none }
+                state.isInstallingOpenCodeIntegration = true
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString] send in
+                    do {
+                        let response = try await client.installOpenCodeIntegration(baseURLString)
+                        await send(.installOpenCodeIntegrationSucceeded(response))
+                    } catch {
+                        await send(.installOpenCodeIntegrationFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+
+            case let .installOpenCodeIntegrationSucceeded(response):
+                state.isInstallingOpenCodeIntegration = false
+                state.openCodeIntegration = response
+                state.errorMessage = nil
+                return .none
+
+            case let .installOpenCodeIntegrationFailed(message):
+                state.isInstallingOpenCodeIntegration = false
+                state.errorMessage = message
                 return .none
 
         default:

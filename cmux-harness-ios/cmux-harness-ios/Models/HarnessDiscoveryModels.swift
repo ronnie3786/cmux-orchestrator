@@ -18,6 +18,7 @@ struct DiscoveredHarnessServer: Equatable, Identifiable, Sendable {
 struct RefreshPayload: Equatable, Sendable {
     var status: HarnessStatus
     var log: [LogEntry]
-    var feed: FeedResponse
+    var feed: FeedResponse?
     var notifications: NotificationsResponse
+    var openCodeIntegration: OpenCodeIntegrationResponse? = nil
 }

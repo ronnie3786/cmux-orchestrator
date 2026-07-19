@@ -56,7 +56,9 @@ final class PushNotificationBridge: NSObject, ObservableObject, UIApplicationDel
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        configureNotifications(application: application)
+        if !ProcessInfo.processInfo.arguments.contains("-cmuxHarnessSuppressNotificationPrompt") {
+            configureNotifications(application: application)
+        }
         return true
     }
 

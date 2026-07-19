@@ -354,14 +354,20 @@ struct HarnessFeatureTests {
         let oldServerSources = HarnessSettingsStore.serverSources
         let oldSelectedServerSourceID = HarnessSettingsStore.selectedServerSourceID
         let oldDemoMode = HarnessSettingsStore.isLocalDemoMode
+        let oldSelectedWorkspaceID = HarnessSettingsStore.lastSelectedWorkspaceID
+        let oldDrafts = HarnessSettingsStore.detailDrafts
         defer {
             HarnessSettingsStore.serverSources = oldServerSources
             HarnessSettingsStore.selectedServerSourceID = oldSelectedServerSourceID
             HarnessSettingsStore.isLocalDemoMode = oldDemoMode
+            HarnessSettingsStore.lastSelectedWorkspaceID = oldSelectedWorkspaceID
+            HarnessSettingsStore.detailDrafts = oldDrafts
         }
 
         HarnessSettingsStore.serverURL = nil
         HarnessSettingsStore.isLocalDemoMode = false
+        HarnessSettingsStore.lastSelectedWorkspaceID = nil
+        HarnessSettingsStore.detailDrafts = [:]
 
         let normalizedURL = HarnessAPI.normalizedBaseURL("macbook.local:9091/harness")
         let source = HarnessServerSource(name: "Studio Mac", urlString: normalizedURL)
@@ -556,10 +562,20 @@ struct HarnessFeatureTests {
         let screen = try await client.screen(HarnessLocalDemo.baseURL, workspace.index, 200)
         let prComments = try await client.githubPRComments(HarnessLocalDemo.baseURL, workspace.index, false)
         let jiraTickets = try await client.assignedJiraTickets(HarnessLocalDemo.baseURL, nil, 50)
+        let feed = try await client.feed(HarnessLocalDemo.baseURL)
+        let fallbackScreen = try await client.screen(HarnessLocalDemo.baseURL, 2, 200)
 
         #expect(screen.screen.contains("Demo response"))
         #expect(prComments.pullRequest?.title == "Add iPhone dashboard onboarding")
         #expect(jiraTickets.tickets.map(\.key).contains("APP-1042"))
+        #expect(feed.items.count == 2)
+        #expect(feed.items.allSatisfy { item in
+            status.workspaces.contains { feedItem(item, matches: $0) }
+        })
+        #expect(feed.items.first?.agent == "OpenCode")
+        #expect(feed.items.first?.permissionType == "external_directory")
+        #expect(feed.items.last?.questions?.first?.question == "Where should this run?")
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: fallbackScreen.screen)?.kind == .permission)
     }
 
     @Test
@@ -802,6 +818,418 @@ struct HarnessFeatureTests {
         let styled = TerminalTextStyler.attributedString(for: raw, colorScheme: .dark)
 
         #expect(String(styled.characters) == raw)
+    }
+
+    @Test
+    func detectsScreenshotStyleOpenCodePermissionPrompt() {
+        let raw = """
+        \u{001B}[38;5;67m│  △ Permission required\u{001B}[0m
+        │  ← Access external directory /tmp
+        │
+        │  Patterns
+        │
+        │  - /tmp/*
+        │
+        │     Allow once    Allow always    Reject
+        ctrl+f fullscreen   ⇆ select   enter
+        confirm
+        │
+        • OpenCode 1.18.3
+        """
+
+        let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+        #expect(interaction?.kind == .permission)
+        #expect(interaction?.title == "Permission required")
+        #expect(interaction?.options == ["Allow once", "Allow always", "Reject"])
+        #expect(interaction?.detail.contains("Access external directory /tmp") == true)
+        #expect(interaction?.detail.contains("/tmp/*") == true)
+        let styled = TerminalTextStyler.attributedString(for: raw, colorScheme: .dark)
+        #expect(String(styled.characters) == TerminalTextStyler.plainText(for: raw))
+    }
+
+    @Test
+    func detectsOpenCodeQuestionPromptOptions() {
+        let raw = """
+        │  Where should this run?
+        │
+        │  1. Staging
+        │  2. Production
+        │
+        ↑↓ select   enter confirm   esc dismiss
+        • OpenCode 1.18.3
+        """
+
+        let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+        #expect(interaction?.kind == .question)
+        #expect(interaction?.detail == "Where should this run?")
+        #expect(interaction?.options == ["Staging", "Production"])
+        #expect(interaction?.navigationAxis == .vertical)
+    }
+
+    @Test
+    func doesNotTreatTranscriptPermissionWordsAsAnActivePrompt() {
+        let raw = """
+        We should render Allow once, Allow always, and Reject more clearly.
+        The next step is to confirm the design.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotKeepTerminalActionsAfterPromptLeavesCurrentFrame() {
+        let raw = """
+        │  △ Permission required
+        │     Allow once    Allow always    Reject
+        ⇆ select   enter confirm
+        • OpenCode 1.18.3
+        I'll confirm the deployment result now.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotMistakeAdjacentPermissionProseForAnOpenCodeFooter() {
+        let raw = """
+        │  △ Permission required
+        │     Allow once    Allow always    Reject
+        ⇆ select   enter confirm
+        • OpenCode 1.18.3
+        Select the target and press Enter.
+        Confirm it when ready.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotMistakeAdjacentQuestionProseForAnOpenCodeFooter() {
+        let raw = """
+        │  Where should this run?
+        │  1. Staging
+        │  2. Production
+        ↑↓ select   enter confirm   esc dismiss
+        • OpenCode 1.18.3
+        Select the target and press Enter.
+        Dismiss the sheet when ready.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotKeepPermissionActionsAfterConfirmationOutput() {
+        let raw = """
+        │  △ Permission required
+        │     Allow once    Allow always    Reject
+        ⇆ select   enter confirm
+        Permission confirmed by user.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotKeepQuestionActionsAfterDismissalOutput() {
+        let raw = """
+        │  Where should this run?
+        │  1. Staging
+        │  2. Production
+        ↑↓ select   enter confirm   esc dismiss
+        Question dismissed by user.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotJoinPermissionProseToAPreviousFooter() {
+        let raw = """
+        │  △ Permission required
+        │     Allow once    Allow always    Reject
+        ⇆ select   enter confirm
+        Please confirm.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotJoinQuestionProseToAPreviousFooter() {
+        let raw = """
+        │  Where should this run?
+        │  1. Staging
+        │  2. Production
+        ↑↓ select   enter confirm   esc dismiss
+        Press dismiss to close.
+        • OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func doesNotTreatOpenCodeVersionProseAsAStatusAnchor() {
+        let raw = """
+        │  △ Permission required
+        │     Allow once    Allow always    Reject
+        ⇆ select   enter confirm
+        Running tests for OpenCode 1.18.3
+        """
+
+        #expect(OpenCodeTerminalInteractionDetector.detect(in: raw) == nil)
+    }
+
+    @Test
+    func feedMatchingRequiresTheRequestedSurfaceWhenPresent() {
+        let firstPane = Self.workspace()
+        var requestedPane = firstPane
+        requestedPane.surfaceId = "surface-requested"
+        let item = FeedItem(
+            requestID: "permission-surface",
+            kind: "permission",
+            title: nil,
+            message: nil,
+            command: nil,
+            workspaceID: firstPane.uuid,
+            surfaceID: requestedPane.surfaceId,
+            agent: "OpenCode",
+            createdAt: nil,
+            options: nil
+        )
+
+        #expect(feedItem(item, matches: firstPane) == false)
+        #expect(feedItem(item, matches: requestedPane) == true)
+    }
+
+    @Test
+    func decodesStructuredOpenCodeFeedQuestions() throws {
+        let data = Data(#"""
+        {
+          "ok": true,
+          "items": [{
+            "requestID": "question-1",
+            "kind": "question",
+            "message": "Where should this run?",
+            "workspaceID": "workspace-1",
+            "options": ["Staging", "Production"],
+            "questions": [{
+              "id": "environment",
+              "header": "Environment",
+              "question": "Where should this run?",
+              "multiSelect": false,
+              "options": [
+                {"id": "staging", "label": "Staging", "description": "Shared QA"},
+                {"id": "production", "label": "Production", "description": "Live traffic"}
+              ]
+            }]
+          }]
+        }
+        """#.utf8)
+
+        let response = try JSONDecoder().decode(FeedResponse.self, from: data)
+
+        #expect(response.items.count == 1)
+        #expect(response.items[0].questions?.first?.question == "Where should this run?")
+        #expect(response.items[0].questions?.first?.options[1].description == "Live traffic")
+    }
+
+    @Test
+    func refreshLoadsFeedWithoutMakingFeedAvailabilityCritical() async {
+        let workspace = Self.workspace()
+        let status = Self.status(workspaces: [workspace])
+        let feedItem = FeedItem(
+            requestID: "permission-1",
+            kind: "permission",
+            title: "Permission required",
+            message: "Access external directory",
+            command: nil,
+            workspaceID: workspace.uuid,
+            surfaceID: workspace.surfaceId,
+            agent: "OpenCode",
+            createdAt: nil,
+            options: ["Allow once", "Allow always", "Reject"],
+            permissionType: "external_directory",
+            patterns: ["/tmp/*"],
+            questions: nil
+        )
+        var client = HarnessClient.unimplemented
+        client.status = { _ in status }
+        client.log = { _ in [] }
+        client.notifications = { _ in
+            NotificationsResponse(ok: true, notifications: [], error: nil)
+        }
+        client.feed = { _ in FeedResponse(ok: true, items: [feedItem], error: nil) }
+
+        let updatedAt = Date(timeIntervalSince1970: 1_777_900_000)
+        let store = TestStore(initialState: Self.initialState()) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.date.now = updatedAt
+            $0.harnessClient = client
+        }
+
+        await store.send(.refresh) {
+            $0.isRefreshing = true
+        }
+        await store.receive(\.refreshSucceeded) {
+            $0.isRefreshing = false
+            $0.status = status
+            $0.workspaces = [workspace]
+            $0.feedItems = [feedItem]
+            $0.lastUpdated = updatedAt
+        }
+    }
+
+    @Test
+    func transientFeedFailurePreservesLastKnownInteraction() async {
+        let workspace = Self.workspace()
+        let status = Self.status(workspaces: [workspace])
+        let item = FeedItem(
+            requestID: "permission-existing",
+            kind: "permission",
+            title: "Permission required",
+            message: nil,
+            command: nil,
+            workspaceID: workspace.uuid,
+            surfaceID: workspace.surfaceId,
+            agent: "OpenCode",
+            createdAt: nil,
+            options: nil
+        )
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.feedItems = [item]
+
+        var client = HarnessClient.unimplemented
+        client.status = { _ in status }
+        client.log = { _ in [] }
+        client.notifications = { _ in NotificationsResponse(ok: true, notifications: [], error: nil) }
+        client.feed = { _ in throw HarnessAPIError.transport("Feed temporarily unavailable") }
+        let updatedAt = Date(timeIntervalSince1970: 1_777_900_050)
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.date.now = updatedAt
+            $0.harnessClient = client
+        }
+
+        await store.send(.refresh)
+        await store.receive(\.refreshSucceeded) {
+            $0.status = status
+            $0.workspaces = [workspace]
+            $0.lastUpdated = updatedAt
+        }
+    }
+
+    @Test
+    func feedRepliesDisableDuplicateSubmissionUntilCompletion() async {
+        let workspace = Self.workspace()
+        let status = Self.status(workspaces: [workspace])
+        let item = FeedItem(
+            requestID: "permission-1",
+            kind: "permission",
+            title: "Permission required",
+            message: nil,
+            command: nil,
+            workspaceID: workspace.uuid,
+            surfaceID: workspace.surfaceId,
+            agent: "OpenCode",
+            createdAt: nil,
+            options: nil
+        )
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        state.feedItems = [item]
+
+        var client = HarnessClient.unimplemented
+        let expectedBaseURL = Self.baseURL
+        let expectedRequestID = item.requestID
+        client.replyToFeed = { baseURL, requestID, kind, action, mode, selections in
+            #expect(baseURL == expectedBaseURL)
+            #expect(requestID == expectedRequestID)
+            #expect(kind == "permission")
+            #expect(action == "approve")
+            #expect(mode == "always")
+            #expect(selections == nil)
+            return BasicResponse(ok: true, enabled: nil, error: nil)
+        }
+        client.status = { _ in status }
+        client.log = { _ in [] }
+        client.notifications = { _ in NotificationsResponse(ok: true, notifications: [], error: nil) }
+        client.feed = { _ in FeedResponse(ok: true, items: [], error: nil) }
+        let updatedAt = Date(timeIntervalSince1970: 1_777_900_100)
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.date.now = updatedAt
+            $0.harnessClient = client
+        }
+
+        await store.send(.replyToFeed(
+            requestID: item.requestID,
+            kind: item.kind,
+            action: "approve",
+            mode: "always",
+            selections: nil
+        )) {
+            $0.pendingFeedReplyIDs = [item.requestID]
+        }
+        await store.receive(\.feedReplySucceeded) {
+            $0.pendingFeedReplyIDs = []
+            $0.feedItems = []
+        }
+        await store.receive(\.refresh)
+        await store.receive(\.refreshSucceeded) {
+            $0.status = status
+            $0.workspaces = [workspace]
+            $0.lastUpdated = updatedAt
+        }
+    }
+
+    @Test
+    func installsOpenCodeNativeIntegrationExplicitly() async {
+        let response = OpenCodeIntegrationResponse(
+            ok: true,
+            status: "ready",
+            installed: true,
+            cmuxAvailable: true,
+            needsInstall: false,
+            needsRestart: true,
+            summary: "Restart active OpenCode sessions.",
+            error: nil
+        )
+        var client = HarnessClient.unimplemented
+        let expectedBaseURL = Self.baseURL
+        client.installOpenCodeIntegration = { baseURL in
+            #expect(baseURL == expectedBaseURL)
+            return response
+        }
+        let store = TestStore(initialState: Self.initialState()) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.installOpenCodeIntegration) {
+            $0.isInstallingOpenCodeIntegration = true
+        }
+        await store.receive(\.installOpenCodeIntegrationSucceeded) {
+            $0.isInstallingOpenCodeIntegration = false
+            $0.openCodeIntegration = response
+        }
     }
 
     @Test

@@ -530,8 +530,40 @@ def _first_present(item, keys, default=""):
     return default
 
 
+def _feed_sources(item):
+    """Return the Feed envelope followed by its optional hook event."""
+    if not isinstance(item, dict):
+        return []
+    sources = [item]
+    event = item.get("event")
+    if isinstance(event, dict):
+        sources.append(event)
+    return sources
+
+
+def _first_feed_present(item, keys, default=""):
+    for source in _feed_sources(item):
+        value = _first_present(source, keys, None)
+        if value is not None and value != "":
+            return value
+    return default
+
+
 def _infer_feed_kind(item):
-    raw_kind = str(_first_present(item, ["kind", "type", "request_type", "requestType", "category"], "")).strip()
+    hook_event_name = str(_first_feed_present(item, ["hook_event_name", "hookEventName"], "")).strip()
+    hook_kind = hook_event_name.lower().replace("-", "_").replace(" ", "_")
+    if hook_kind == "permissionrequest":
+        return "permission"
+    if hook_kind == "exitplanmode":
+        return "plan"
+    if hook_kind == "askuserquestion":
+        return "question"
+
+    raw_kind = str(_first_feed_present(
+        item,
+        ["kind", "type", "request_type", "requestType", "category"],
+        "",
+    )).strip()
     normalized = raw_kind.lower().replace("-", "_").replace(" ", "_")
     if "permission" in normalized:
         return "permission"
@@ -556,18 +588,77 @@ def _is_actionable_feed_item(item):
     if kind not in {"permission", "plan", "question"}:
         return False
 
-    request_id = str(_first_present(item, ["request_id", "requestId", "requestID"], "") or "").strip()
+    request_id = str(_first_feed_present(item, [
+        "request_id", "requestId", "requestID", "_opencode_request_id",
+    ], "") or "").strip()
     if not request_id:
         return False
 
-    if item.get("resolved_at") or item.get("resolvedAt"):
+    if _first_feed_present(item, ["resolved_at", "resolvedAt"], None):
         return False
 
-    status = str(_first_present(item, ["status", "state"], "") or "").strip().lower()
+    status = str(_first_feed_present(item, ["status", "state"], "") or "").strip().lower()
     if status in {"telemetry", "expired", "resolved", "approved", "denied", "rejected", "completed"}:
         return False
 
     return True
+
+
+def _string_option(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        candidate = _first_present(value, ["label", "title", "name", "value", "id"], "")
+        return str(candidate) if candidate is not None else ""
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _normalize_string_options(value):
+    if not isinstance(value, list):
+        return []
+    return [option for option in (_string_option(item) for item in value) if option]
+
+
+def _normalize_feed_questions(value):
+    if not isinstance(value, list):
+        return []
+
+    questions = []
+    for question_index, raw_question in enumerate(value):
+        if not isinstance(raw_question, dict):
+            continue
+        raw_options = raw_question.get("options")
+        options = []
+        if isinstance(raw_options, list):
+            for option_index, raw_option in enumerate(raw_options):
+                if isinstance(raw_option, dict):
+                    option_id = _first_present(raw_option, ["id", "value"], f"opt{option_index}")
+                    label = _first_present(raw_option, ["label", "title", "name", "value"], "")
+                    description = _first_present(raw_option, ["description", "detail", "subtitle"], "")
+                else:
+                    option_id = f"opt{option_index}"
+                    label = raw_option
+                    description = ""
+                options.append({
+                    "id": str(option_id or f"opt{option_index}"),
+                    "label": str(label or ""),
+                    "description": str(description or ""),
+                })
+
+        question_id = _first_present(raw_question, ["id", "questionID", "question_id"], f"q{question_index}")
+        header = _first_present(raw_question, ["header", "title"], "")
+        prompt = _first_present(raw_question, ["question", "prompt", "message"], "")
+        multi_select = _first_present(raw_question, ["multiSelect", "multi_select", "multiple"], False)
+        questions.append({
+            "id": str(question_id or f"q{question_index}"),
+            "header": str(header or ""),
+            "question": str(prompt or ""),
+            "multiSelect": multi_select is True,
+            "options": options,
+        })
+    return questions
 
 
 def _normalize_feed_item(item):
@@ -579,27 +670,61 @@ def _normalize_feed_item(item):
     """
     if not isinstance(item, dict):
         return None
-    request_id = str(_first_present(item, [
-        "request_id", "requestId", "requestID",
+    request_id = str(_first_feed_present(item, [
+        "request_id", "requestId", "requestID", "_opencode_request_id",
     ], "") or "")
-    workspace_id = str(_first_present(item, [
+    workspace_id = str(_first_feed_present(item, [
         "workspace_id", "workspaceId", "workspace_uuid", "workspaceUUID",
     ], "") or "")
-    surface_id = str(_first_present(item, [
+    surface_id = str(_first_feed_present(item, [
         "surface_id", "surfaceId", "tab_id", "tabId",
     ], "") or "")
-    title = str(_first_present(item, [
+    title = str(_first_feed_present(item, [
         "title", "label", "summary", "tool_name", "toolName",
     ], "") or "")
-    message = str(_first_present(item, [
+    message = str(_first_feed_present(item, [
         "message", "body", "prompt", "question", "description", "text", "content",
     ], "") or "")
-    command = str(_first_present(item, [
-        "command", "tool_input", "toolInput", "toolPreview", "tool_preview",
+    command = str(_first_feed_present(item, [
+        "command", "toolPreview", "tool_preview",
     ], "") or "")
-    options = _first_present(item, ["options", "choices", "selections"], [])
-    if not isinstance(options, list):
-        options = []
+    raw_tool_input = _first_feed_present(item, ["tool_input", "toolInput"], {})
+    if not command and isinstance(raw_tool_input, str):
+        command = raw_tool_input
+    tool_input = raw_tool_input if isinstance(raw_tool_input, dict) else {}
+
+    raw_questions = _first_feed_present(item, ["questions"], None)
+    if raw_questions is None:
+        raw_questions = tool_input.get("questions")
+    questions = _normalize_feed_questions(raw_questions)
+
+    raw_options = _first_feed_present(item, ["options", "choices", "selections"], None)
+    options = _normalize_string_options(raw_options)
+    if not options and questions:
+        options = [
+            option["label"]
+            for question in questions
+            for option in question["options"]
+            if option["label"]
+        ]
+
+    permission_type = _first_feed_present(
+        item,
+        ["permissionType", "permission_type", "permission"],
+        None,
+    )
+    if permission_type is None:
+        permission_type = _first_present(tool_input, ["permissionType", "permission_type", "permission"], "")
+    raw_patterns = _first_feed_present(item, ["patterns"], None)
+    if raw_patterns is None:
+        raw_patterns = tool_input.get("patterns")
+    patterns = _normalize_string_options(raw_patterns)
+
+    if not message and questions:
+        message = questions[0]["question"]
+    if not message:
+        message = str(_first_present(tool_input, ["message", "prompt", "question", "description"], "") or "")
+
     return {
         "requestID": request_id,
         "kind": _infer_feed_kind(item),
@@ -608,10 +733,13 @@ def _normalize_feed_item(item):
         "command": command,
         "workspaceID": workspace_id,
         "surfaceID": surface_id,
-        "agent": str(_first_present(item, ["agent", "source", "app"], "") or ""),
-        "status": str(_first_present(item, ["status", "state"], "") or ""),
-        "createdAt": str(_first_present(item, ["created_at", "createdAt", "timestamp", "time"], "") or ""),
+        "agent": str(_first_feed_present(item, ["agent", "source", "app", "_source"], "") or ""),
+        "status": str(_first_feed_present(item, ["status", "state"], "") or ""),
+        "createdAt": str(_first_feed_present(item, ["created_at", "createdAt", "timestamp", "time"], "") or ""),
         "options": options,
+        "permissionType": str(permission_type or ""),
+        "patterns": patterns,
+        "questions": questions,
         "raw": item,
     }
 
@@ -623,7 +751,11 @@ def _parse_feed_items(result):
     if isinstance(result, list):
         items = result
     elif isinstance(result, dict):
-        items = result.get("items") or result.get("feed") or result.get("requests") or []
+        items = result.get("items") or result.get("feed") or result.get("requests")
+        if items is None and isinstance(result.get("event"), dict):
+            items = [result]
+        if items is None:
+            items = []
     else:
         return []
     parsed = []
@@ -660,7 +792,7 @@ def cmux_feed_reply(kind, request_id, action=None, mode=None, selections=None):
     action = str(action or "").strip().lower()
     mode = str(mode or "").strip()
     if kind == "permission":
-        permission_mode = mode or {
+        action_modes = {
             "approve": "once",
             "allow": "once",
             "once": "once",
@@ -669,13 +801,17 @@ def cmux_feed_reply(kind, request_id, action=None, mode=None, selections=None):
             "bypass": "bypass",
             "deny": "deny",
             "reject": "deny",
-        }.get(action, "once")
+        }
+        allowed_modes = {"once", "always", "all", "bypass", "deny"}
+        permission_mode = mode or action_modes.get(action)
+        if permission_mode not in allowed_modes:
+            return {"ok": False, "error": "unsupported permission reply"}
         result = _v2_request("feed.permission.reply", {
             "request_id": request_id,
             "mode": permission_mode,
         })
     elif kind in {"plan", "exit_plan", "exitplan"}:
-        plan_mode = mode or {
+        action_modes = {
             "approve": "autoAccept",
             "accept": "autoAccept",
             "auto": "autoAccept",
@@ -684,18 +820,23 @@ def cmux_feed_reply(kind, request_id, action=None, mode=None, selections=None):
             "bypass": "bypassPermissions",
             "deny": "deny",
             "reject": "deny",
-        }.get(action, "autoAccept")
+        }
+        allowed_modes = {"ultraplan", "bypassPermissions", "autoAccept", "manual", "deny"}
+        plan_mode = mode or action_modes.get(action)
+        if plan_mode not in allowed_modes:
+            return {"ok": False, "error": "unsupported plan reply"}
         result = _v2_request("feed.exit_plan.reply", {
             "request_id": request_id,
             "mode": plan_mode,
         })
     elif kind == "question":
         selected = selections if isinstance(selections, list) else []
-        if not selected and action:
-            selected = [action]
+        selected = [str(item).strip() for item in selected if str(item).strip()]
+        if not selected:
+            return {"ok": False, "error": "question selections required"}
         result = _v2_request("feed.question.reply", {
             "request_id": request_id,
-            "selections": [str(item) for item in selected],
+            "selections": selected,
         })
     else:
         return {"ok": False, "error": f"unsupported feed kind: {kind or 'unknown'}"}

@@ -46,6 +46,9 @@ struct HarnessFeature {
         var logEntries: [LogEntry] = []
         var notifications: [CmuxNotification] = []
         var feedItems: [FeedItem] = []
+        var pendingFeedReplyIDs: Set<String> = []
+        var openCodeIntegration: OpenCodeIntegrationResponse?
+        var isInstallingOpenCodeIntegration = false
         var isRefreshing = false
         var lastUpdated: Date?
         var errorMessage: String?
@@ -273,6 +276,10 @@ struct HarnessFeature {
         case clearError
         case replyToFeed(requestID: String, kind: String, action: String?, mode: String?, selections: [String]?)
         case feedReplySucceeded(String)
+        case feedReplyFailed(requestID: String, message: String)
+        case installOpenCodeIntegration
+        case installOpenCodeIntegrationSucceeded(OpenCodeIntegrationResponse)
+        case installOpenCodeIntegrationFailed(String)
 
         case settingsButtonTapped
         case dismissSettings
@@ -383,7 +390,11 @@ struct HarnessFeature {
                  .tailscaleProbeFailed(_),
                  .clearError,
                  .replyToFeed(requestID: _, kind: _, action: _, mode: _, selections: _),
-                 .feedReplySucceeded(_):
+                 .feedReplySucceeded(_),
+                 .feedReplyFailed(requestID: _, message: _),
+                 .installOpenCodeIntegration,
+                 .installOpenCodeIntegrationSucceeded(_),
+                 .installOpenCodeIntegrationFailed(_):
                 return reduceConnection(into: &state, action: action)
 
             case .settingsButtonTapped,

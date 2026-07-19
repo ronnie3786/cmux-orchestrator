@@ -302,6 +302,62 @@ class TestServerResponses(unittest.TestCase):
             selections=None,
         )
 
+    def test_opencode_integration_status_is_read_only(self):
+        expected = {
+            "ok": True,
+            "status": "needs_install",
+            "installed": False,
+            "cmuxAvailable": True,
+        }
+        with patch(
+            "cmux_harness.server.opencode_integration.integration_status",
+            return_value=expected,
+        ) as mock_status, patch(
+            "cmux_harness.server.opencode_integration.install_integration",
+        ) as mock_install:
+            handler = self._make_handler(Mock(), "/api/integrations/opencode")
+            handler.do_GET()
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, expected)
+        handler.send_response.assert_called_once_with(200)
+        mock_status.assert_called_once_with()
+        mock_install.assert_not_called()
+
+    def test_post_opencode_integration_explicitly_installs_hook(self):
+        expected = {
+            "ok": True,
+            "status": "ready",
+            "installed": True,
+            "changed": True,
+            "needsRestart": True,
+        }
+        with patch(
+            "cmux_harness.server.opencode_integration.install_integration",
+            return_value=expected,
+        ) as mock_install:
+            handler = self._post_json("/api/integrations/opencode", {})
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, expected)
+        handler.send_response.assert_called_once_with(200)
+        mock_install.assert_called_once_with()
+
+    def test_post_opencode_integration_maps_unavailable_and_timeout_statuses(self):
+        cases = [
+            ("cmux_unavailable", 503),
+            ("install_timeout", 504),
+            ("install_failed", 500),
+        ]
+        for error_code, expected_status in cases:
+            with self.subTest(error_code=error_code), patch(
+                "cmux_harness.server.opencode_integration.install_integration",
+                return_value={"ok": False, "errorCode": error_code, "error": "failed"},
+            ):
+                handler = self._post_json("/api/integrations/opencode", {})
+
+            handler.send_response.assert_called_once_with(expected_status)
+
     def test_post_network_saves_normalized_tailscale_host(self):
         engine = MagicMock()
         engine._lock = MagicMock()

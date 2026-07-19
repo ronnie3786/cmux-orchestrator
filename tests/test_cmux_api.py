@@ -322,6 +322,88 @@ class TestParseFeedItems(unittest.TestCase):
         self.assertEqual([item["kind"] for item in parsed], ["plan", "question"])
         self.assertEqual(parsed[1]["options"], ["A", "B"])
 
+    def test_normalizes_opencode_permission_hook(self):
+        parsed = _parse_feed_items([{
+            "hook_event_name": "PermissionRequest",
+            "_opencode_request_id": "permission-1",
+            "_source": "opencode",
+            "workspace_id": "ws-1",
+            "tool_name": "external_directory",
+            "tool_input": {
+                "permission": "external_directory",
+                "patterns": ["/tmp/*", "/private/tmp/*"],
+            },
+        }])
+
+        self.assertEqual(len(parsed), 1)
+        item = parsed[0]
+        self.assertEqual(item["requestID"], "permission-1")
+        self.assertEqual(item["kind"], "permission")
+        self.assertEqual(item["permissionType"], "external_directory")
+        self.assertEqual(item["patterns"], ["/tmp/*", "/private/tmp/*"])
+        self.assertEqual(item["command"], "")
+        self.assertEqual(item["options"], [])
+        self.assertEqual(item["agent"], "opencode")
+
+    def test_normalizes_wrapped_opencode_questions(self):
+        parsed = _parse_feed_items({
+            "workspace_id": "ws-1",
+            "surface_id": "surf-1",
+            "event": {
+                "hook_event_name": "AskUserQuestion",
+                "_opencode_request_id": "question-1",
+                "tool_input": {
+                    "questions": [{
+                        "id": "environment",
+                        "header": "Environment",
+                        "question": "Where should this run?",
+                        "multiSelect": True,
+                        "options": [
+                            {"id": "staging", "label": "Staging", "description": "Shared QA"},
+                            {"id": "prod", "title": "Production", "detail": "Live traffic"},
+                        ],
+                    }],
+                },
+            },
+        })
+
+        self.assertEqual(len(parsed), 1)
+        item = parsed[0]
+        self.assertEqual(item["requestID"], "question-1")
+        self.assertEqual(item["kind"], "question")
+        self.assertEqual(item["workspaceID"], "ws-1")
+        self.assertEqual(item["surfaceID"], "surf-1")
+        self.assertEqual(item["message"], "Where should this run?")
+        self.assertEqual(item["options"], ["Staging", "Production"])
+        self.assertEqual(item["questions"], [{
+            "id": "environment",
+            "header": "Environment",
+            "question": "Where should this run?",
+            "multiSelect": True,
+            "options": [
+                {"id": "staging", "label": "Staging", "description": "Shared QA"},
+                {"id": "prod", "label": "Production", "description": "Live traffic"},
+            ],
+        }])
+
+    def test_normalizes_opencode_exit_plan_hook_and_dict_options(self):
+        parsed = _parse_feed_items([{
+            "hook_event_name": "ExitPlanMode",
+            "_opencode_request_id": "plan-1",
+            "tool_input": {"question": "Ready to build?"},
+            "options": [
+                {"label": "Build"},
+                {"title": "Keep planning"},
+                3,
+            ],
+        }])
+
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["requestID"], "plan-1")
+        self.assertEqual(parsed[0]["kind"], "plan")
+        self.assertEqual(parsed[0]["message"], "Ready to build?")
+        self.assertEqual(parsed[0]["options"], ["Build", "Keep planning", "3"])
+
     def test_skips_telemetry_and_expired_feed_history(self):
         parsed = _parse_feed_items([
             {"id": "event-1", "kind": "sessionStart", "status": "telemetry"},
@@ -376,6 +458,19 @@ class TestFeedReply(unittest.TestCase):
             "request_id": "req-1",
             "selections": ["A"],
         })
+
+    def test_unknown_or_invalid_replies_never_default_to_approval(self):
+        with patch("cmux_harness.cmux_api._v2_request") as mock_request:
+            unknown_permission = cmux_feed_reply("permission", "req-1", action="surprise")
+            invalid_permission_mode = cmux_feed_reply("permission", "req-1", mode="approveEverything")
+            unknown_plan = cmux_feed_reply("plan", "req-1", action="surprise")
+            empty_question = cmux_feed_reply("question", "req-1", action="answer", selections=[])
+
+        self.assertFalse(unknown_permission["ok"])
+        self.assertFalse(invalid_permission_mode["ok"])
+        self.assertFalse(unknown_plan["ok"])
+        self.assertFalse(empty_question["ok"])
+        mock_request.assert_not_called()
 
     def test_missing_request_id_is_error(self):
         result = cmux_feed_reply("permission", "", action="approve")

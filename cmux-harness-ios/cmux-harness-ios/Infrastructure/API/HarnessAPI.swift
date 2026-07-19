@@ -38,6 +38,19 @@ enum HarnessAPI {
         try await request(baseURLString: baseURLString, path: "/api/feed")
     }
 
+    static func openCodeIntegration(baseURLString: String) async throws -> OpenCodeIntegrationResponse {
+        try await request(baseURLString: baseURLString, path: "/api/integrations/opencode")
+    }
+
+    static func installOpenCodeIntegration(baseURLString: String) async throws -> OpenCodeIntegrationResponse {
+        try await request(
+            baseURLString: baseURLString,
+            path: "/api/integrations/opencode",
+            method: "POST",
+            body: EmptyRequest()
+        )
+    }
+
     static func replyToFeed(
         baseURLString: String,
         requestID: String,

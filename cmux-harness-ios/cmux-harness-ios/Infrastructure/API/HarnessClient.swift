@@ -16,6 +16,8 @@ struct HarnessClient: Sendable {
     var log: @Sendable (String) async throws -> [LogEntry]
     var notifications: @Sendable (String) async throws -> NotificationsResponse
     var feed: @Sendable (String) async throws -> FeedResponse
+    var openCodeIntegration: @Sendable (String) async throws -> OpenCodeIntegrationResponse
+    var installOpenCodeIntegration: @Sendable (String) async throws -> OpenCodeIntegrationResponse
     var replyToFeed: @Sendable (String, String, String, String?, String?, [String]?) async throws -> BasicResponse
     var screen: @Sendable (String, Int, Int) async throws -> ScreenResponse
     var setGlobalEnabled: @Sendable (String, Bool) async throws -> BasicResponse
@@ -95,6 +97,36 @@ extension HarnessClient {
                     return await demoStore.feed()
                 }
                 return try await HarnessAPI.feed(baseURLString: baseURLString)
+            },
+            openCodeIntegration: { baseURLString in
+                if HarnessLocalDemo.isDemoURL(baseURLString) {
+                    return OpenCodeIntegrationResponse(
+                        ok: true,
+                        status: "ready",
+                        installed: true,
+                        cmuxAvailable: true,
+                        needsInstall: false,
+                        needsRestart: false,
+                        summary: "OpenCode native controls are enabled in the demo.",
+                        error: nil
+                    )
+                }
+                return try await HarnessAPI.openCodeIntegration(baseURLString: baseURLString)
+            },
+            installOpenCodeIntegration: { baseURLString in
+                if HarnessLocalDemo.isDemoURL(baseURLString) {
+                    return OpenCodeIntegrationResponse(
+                        ok: true,
+                        status: "ready",
+                        installed: true,
+                        cmuxAvailable: true,
+                        needsInstall: false,
+                        needsRestart: false,
+                        summary: "OpenCode native controls are enabled in the demo.",
+                        error: nil
+                    )
+                }
+                return try await HarnessAPI.installOpenCodeIntegration(baseURLString: baseURLString)
             },
             replyToFeed: { baseURLString, requestID, kind, action, mode, selections in
                 if HarnessLocalDemo.isDemoURL(baseURLString) {
@@ -301,6 +333,30 @@ extension HarnessClient {
             log: { _ in await store.log() },
             notifications: { _ in await store.notifications() },
             feed: { _ in await store.feed() },
+            openCodeIntegration: { _ in
+                OpenCodeIntegrationResponse(
+                    ok: true,
+                    status: "ready",
+                    installed: true,
+                    cmuxAvailable: true,
+                    needsInstall: false,
+                    needsRestart: false,
+                    summary: "OpenCode native controls are enabled in the demo.",
+                    error: nil
+                )
+            },
+            installOpenCodeIntegration: { _ in
+                OpenCodeIntegrationResponse(
+                    ok: true,
+                    status: "ready",
+                    installed: true,
+                    cmuxAvailable: true,
+                    needsInstall: false,
+                    needsRestart: false,
+                    summary: "OpenCode native controls are enabled in the demo.",
+                    error: nil
+                )
+            },
             replyToFeed: { _, requestID, _, _, _, _ in await store.replyToFeed(requestID: requestID) },
             screen: { _, index, lines in await store.screen(index: index, lines: lines) },
             setGlobalEnabled: { _, enabled in await store.setGlobalEnabled(enabled) },
@@ -951,13 +1007,18 @@ private actor LocalDemoHarnessStore {
             """
         default:
             return """
-            cmux local demo - simulated shell
-
-            $ npm test
-            PASS Tests/DemoModeTests.swift
-            PASS Tests/ConnectionSetupTests.swift
-
-            Demo shell is idle.
+            │  △ Permission required
+            │  ← Access external directory /tmp
+            │
+            │  Patterns
+            │
+            │  - /tmp/*
+            │
+            │     Allow once    Allow always    Reject
+            ctrl+f fullscreen   ⇆ select   enter
+            confirm
+            │
+            • OpenCode 1.18.3
             """
         }
     }
@@ -1015,16 +1076,53 @@ private actor LocalDemoHarnessStore {
     private static func seedFeedItems() -> [FeedItem] {
         [
             FeedItem(
-                requestID: "demo-feed-1",
+                requestID: "demo-opencode-permission",
                 kind: "permission",
-                title: "Bash command",
-                message: "Claude wants to run the test suite.",
-                command: "swift test",
-                workspaceID: "demo-ws-0",
-                surfaceID: nil,
-                agent: "Claude Code",
+                title: "Access external directory",
+                message: "OpenCode needs access outside this workspace.",
+                command: nil,
+                workspaceID: "demo-workspace-0",
+                surfaceID: "demo-surface-0",
+                agent: "OpenCode",
                 createdAt: isoTimestamp(),
-                options: nil
+                options: nil,
+                permissionType: "external_directory",
+                patterns: ["/tmp/*"],
+                questions: nil
+            ),
+            FeedItem(
+                requestID: "demo-opencode-question",
+                kind: "question",
+                title: "Choose deployment target",
+                message: nil,
+                command: nil,
+                workspaceID: "demo-workspace-1",
+                surfaceID: "demo-surface-1",
+                agent: "OpenCode",
+                createdAt: isoTimestamp(),
+                options: nil,
+                permissionType: nil,
+                patterns: nil,
+                questions: [
+                    FeedItem.Question(
+                        id: "environment",
+                        header: "Environment",
+                        question: "Where should this run?",
+                        multiSelect: false,
+                        options: [
+                            FeedItem.Option(
+                                id: "staging",
+                                label: "Staging",
+                                description: "Validate the change before release."
+                            ),
+                            FeedItem.Option(
+                                id: "production",
+                                label: "Production",
+                                description: "Deploy directly to customers."
+                            ),
+                        ]
+                    ),
+                ]
             ),
         ]
     }
@@ -1051,6 +1149,8 @@ extension HarnessClient {
         log: { _ in throw HarnessClientError.unimplemented("log") },
         notifications: { _ in throw HarnessClientError.unimplemented("notifications") },
         feed: { _ in throw HarnessClientError.unimplemented("feed") },
+        openCodeIntegration: { _ in throw HarnessClientError.unimplemented("openCodeIntegration") },
+        installOpenCodeIntegration: { _ in throw HarnessClientError.unimplemented("installOpenCodeIntegration") },
         replyToFeed: { _, _, _, _, _, _ in throw HarnessClientError.unimplemented("replyToFeed") },
         screen: { _, _, _ in throw HarnessClientError.unimplemented("screen") },
         setGlobalEnabled: { _, _ in throw HarnessClientError.unimplemented("setGlobalEnabled") },

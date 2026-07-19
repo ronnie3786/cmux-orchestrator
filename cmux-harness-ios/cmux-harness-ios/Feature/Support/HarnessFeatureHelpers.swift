@@ -24,13 +24,14 @@ func persistDetailDraft(_ state: inout HarnessFeature.State) {
 func feedItem(_ item: FeedItem, matches workspace: Workspace) -> Bool {
     let workspaceID = trimmedNonEmpty(item.workspaceID)
     let surfaceID = trimmedNonEmpty(item.surfaceID)
-    if let workspaceID, workspaceID == workspace.uuid || workspaceID == workspace.id {
-        return true
+    let workspaceMatches = workspaceID.map { $0 == workspace.uuid || $0 == workspace.id }
+    let surfaceMatches = surfaceID.map { $0 == workspace.surfaceId || $0 == workspace.surfaceUuid }
+
+    if let surfaceMatches {
+        guard surfaceMatches else { return false }
+        return workspaceMatches ?? true
     }
-    if let surfaceID, surfaceID == workspace.surfaceId {
-        return true
-    }
-    return false
+    return workspaceMatches ?? false
 }
 
 func feedItems(for workspace: Workspace, in state: HarnessFeature.State) -> [FeedItem] {

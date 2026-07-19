@@ -19,6 +19,7 @@ from . import auto_policy
 from . import cmux_api
 from . import dependencies
 from . import objectives
+from . import opencode_integration
 from . import push_notifications
 from . import workspaces
 from . import review as review_mod
@@ -389,6 +390,8 @@ def make_handler(engine):
                     self._json_response({"ok": False, "items": [], "error": "cmux feed unavailable"}, 503)
                     return
                 self._json_response({"ok": True, "items": items})
+            elif path == "/api/integrations/opencode":
+                self._json_response(opencode_integration.integration_status())
             elif path == "/api/auto-policy-costs":
                 params = urllib.parse.parse_qs(parsed.query)
                 try:
@@ -799,6 +802,18 @@ def make_handler(engine):
             if path == "/api/toggle":
                 engine.set_enabled(data.get("enabled", False))
                 self._json_response({"ok": True, "enabled": engine.enabled})
+            elif path == "/api/integrations/opencode":
+                result = opencode_integration.install_integration()
+                error_code = result.get("errorCode")
+                if result.get("ok"):
+                    status = 200
+                elif error_code == "cmux_unavailable":
+                    status = 503
+                elif error_code == "install_timeout":
+                    status = 504
+                else:
+                    status = 500
+                self._json_response(result, status)
             elif path.startswith("/api/objectives/") and path.endswith("/start"):
                 objective_id = path.split("/")[3]
                 objective_routes.handle_post_start(self, objective_id, engine=self.server.engine)

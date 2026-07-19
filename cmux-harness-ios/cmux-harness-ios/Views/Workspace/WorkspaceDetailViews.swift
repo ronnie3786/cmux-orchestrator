@@ -152,6 +152,8 @@ struct DetailTerminalLayout: View {
     let terminalText: String
     let isInputFocused: FocusState<Bool>.Binding
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: store.isEasyModeEnabled ? 12 : 10) {
@@ -164,17 +166,54 @@ struct DetailTerminalLayout: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
 
-                if store.isEasyModeEnabled {
-                    EasyModeKeyboard(store: store, workspace: workspace)
-                        .frame(height: easyModeKeyboardHeight(for: proxy.size.height))
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
-                    DetailInputBar(
-                        store: store,
-                        workspace: workspace,
-                        isInputFocused: isInputFocused
+                if let feedItem = nativeFeedItem {
+                    FeedInteractionCard(
+                        item: feedItem,
+                        isSubmitting: store.pendingFeedReplyIDs.contains(feedItem.requestID),
+                        reply: { action, mode, selections in
+                            store.send(.replyToFeed(
+                                requestID: feedItem.requestID,
+                                kind: feedItem.kind,
+                                action: action,
+                                mode: mode,
+                                selections: selections
+                            ))
+                        },
+                        sendKey: { key in
+                            store.send(.sendKey(workspaceID: workspace.id, key))
+                        }
                     )
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .id(feedItem.requestID)
+                    .transition(panelTransition)
+                } else if let terminalInteraction {
+                    OpenCodeTerminalFallbackCard(
+                        interaction: terminalInteraction,
+                        fallbackNote: groupedQuestionFallbackNote,
+                        integrationStatus: store.openCodeIntegration,
+                        isInstallingIntegration: store.isInstallingOpenCodeIntegration,
+                        sendKey: { key in
+                            store.send(.sendKey(workspaceID: workspace.id, key))
+                        },
+                        installIntegration: {
+                            store.send(.installOpenCodeIntegration)
+                        }
+                    )
+                    .transition(panelTransition)
+                }
+
+                if !hasActiveInteraction {
+                    if store.isEasyModeEnabled {
+                        EasyModeKeyboard(store: store, workspace: workspace)
+                            .frame(height: easyModeKeyboardHeight(for: proxy.size.height))
+                            .transition(panelTransition)
+                    } else {
+                        DetailInputBar(
+                            store: store,
+                            workspace: workspace,
+                            isInputFocused: isInputFocused
+                        )
+                        .transition(panelTransition)
+                    }
                 }
             }
         }
@@ -182,7 +221,9 @@ struct DetailTerminalLayout: View {
         .padding(.top, 10)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: store.isEasyModeEnabled)
+        .animation(panelAnimation, value: store.isEasyModeEnabled)
+        .animation(panelAnimation, value: nativeFeedItem?.requestID)
+        .animation(panelAnimation, value: terminalInteraction)
         .background {
             Color.clear
                 .contentShape(Rectangle())
@@ -192,6 +233,36 @@ struct DetailTerminalLayout: View {
 
     private func dismissKeyboard() {
         isInputFocused.wrappedValue = false
+    }
+
+    private var workspaceFeedItems: [FeedItem] {
+        store.feedItems.filter { feedItem($0, matches: workspace) }
+    }
+
+    private var nativeFeedItem: FeedItem? {
+        workspaceFeedItems.first(where: \.supportsNativeReply)
+    }
+
+    private var groupedQuestionFallbackNote: String? {
+        guard workspaceFeedItems.contains(where: { !$0.supportsNativeReply }) else { return nil }
+        return "This question supports multiple selections. The current cmux bridge cannot safely preserve grouped answers, so this stays in OpenCode's terminal."
+    }
+
+    private var terminalInteraction: OpenCodeTerminalInteraction? {
+        guard nativeFeedItem == nil else { return nil }
+        return OpenCodeTerminalInteractionDetector.detect(in: terminalText)
+    }
+
+    private var hasActiveInteraction: Bool {
+        nativeFeedItem != nil || terminalInteraction != nil
+    }
+
+    private var panelTransition: AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+    }
+
+    private var panelAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.88)
     }
 
     private func easyModeKeyboardHeight(for availableHeight: CGFloat) -> CGFloat {
