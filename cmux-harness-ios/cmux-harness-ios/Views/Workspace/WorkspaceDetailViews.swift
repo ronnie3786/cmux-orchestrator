@@ -194,6 +194,9 @@ struct DetailTerminalLayout: View {
                         sendKey: { key in
                             store.send(.sendKey(workspaceID: workspace.id, key))
                         },
+                        sendKeys: { keys in
+                            store.send(.sendKeys(workspaceID: workspace.id, keys))
+                        },
                         installIntegration: {
                             store.send(.installOpenCodeIntegration)
                         }

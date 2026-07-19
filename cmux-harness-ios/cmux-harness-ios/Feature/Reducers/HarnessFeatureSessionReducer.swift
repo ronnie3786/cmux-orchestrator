@@ -216,6 +216,23 @@ extension HarnessFeature {
                     }
                 }
 
+            case let .sendKeys(workspaceID, keys):
+                guard !keys.isEmpty,
+                      let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else {
+                    return .none
+                }
+                return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString, workspace, keys] send in
+                    do {
+                        for key in keys {
+                            _ = try await client.sendKey(baseURLString, workspace.index, key, workspace.surfaceId)
+                        }
+                        await send(.requestFinished)
+                        await send(.screenTick)
+                    } catch {
+                        await send(.requestFailed(HarnessAPI.message(for: error)))
+                    }
+                }
+
             case .requestFinished:
                 state.errorMessage = nil
                 return .none

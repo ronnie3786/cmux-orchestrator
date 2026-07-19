@@ -574,7 +574,7 @@ struct HarnessFeatureTests {
         })
         #expect(feed.items.first?.agent == "OpenCode")
         #expect(feed.items.first?.permissionType == "external_directory")
-        #expect(feed.items.last?.questions?.first?.question == "Where should this run?")
+        #expect(feed.items.last?.questions?.first?.question == "How do you want to build/publish the iOS app?")
         #expect(OpenCodeTerminalInteractionDetector.detect(in: fallbackScreen.screen)?.kind == .permission)
     }
 
@@ -866,6 +866,68 @@ struct HarnessFeatureTests {
         #expect(interaction?.detail == "Where should this run?")
         #expect(interaction?.options == ["Staging", "Production"])
         #expect(interaction?.navigationAxis == .vertical)
+    }
+
+    @Test
+    func detectsOpenCodeQuestionReviewPromptAndAnswers() {
+        let raw = """
+        │  Build method    Export method    Configuration    Confirm
+        │
+        │  Review
+        │
+        │  Build method: Build from current branch (default)
+        │
+        │  Export method: development (Recommended)
+        │
+        │  Configuration: Debug (default)
+        │
+        │  ⇆ tab   enter submit   esc dismiss
+        │
+        • OpenCode 1.18.3
+        """
+
+        let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+        #expect(interaction?.kind == .questionReview)
+        #expect(interaction?.reviewItems == [
+            OpenCodeTerminalInteraction.ReviewItem(
+                label: "Build method",
+                value: "Build from current branch (default)"
+            ),
+            OpenCodeTerminalInteraction.ReviewItem(
+                label: "Export method",
+                value: "development (Recommended)"
+            ),
+            OpenCodeTerminalInteraction.ReviewItem(
+                label: "Configuration",
+                value: "Debug (default)"
+            ),
+        ])
+    }
+
+    @Test
+    func stripsShellRightPromptColumnsFromOpenCodeQuestionOptions() {
+        let raw = """
+        │  Which export method?                              /Volumes/PROJECTS/Development/
+        │
+        │  1. development (Recommended)                     Doximity-Claude-IOSDOX-26368
+        │  2. ad-hoc                                        text-selection:rr/feature/IOSDOX-26368
+        │  3. Type your own answer
+        │
+        │  ⇆ tab   ↑↓ select   enter confirm   esc dismiss
+        │
+        • OpenCode 1.18.3
+        """
+
+        let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+        #expect(interaction?.kind == .question)
+        #expect(interaction?.detail == "Which export method?")
+        #expect(interaction?.options == [
+            "development (Recommended)",
+            "ad-hoc",
+            "Type your own answer",
+        ])
     }
 
     @Test
@@ -1336,6 +1398,37 @@ struct HarnessFeatureTests {
         }
         await store.receive(\.requestFinished)
         await store.receive(\.screenTick)
+    }
+
+    @Test
+    func sendKeysCallsClientSequentiallyInOrder() async {
+        let workspace = Self.workspace()
+        let keys: [HarnessKey] = [.down, .down, .up, .enter]
+        let recorder = HarnessKeyCallRecorder()
+        var state = Self.initialState()
+        state.workspaces = [workspace]
+        var client = HarnessClient.unimplemented
+        client.sendKey = { baseURLString, index, key, surfaceId in
+            #expect(baseURLString == Self.baseURL)
+            #expect(index == workspace.index)
+            #expect(surfaceId == workspace.surfaceId)
+            await recorder.record(key)
+            return BasicResponse(ok: true, enabled: nil, error: nil)
+        }
+
+        let store = TestStore(initialState: state) {
+            HarnessFeature()
+        } withDependencies: {
+            $0.harnessClient = client
+        }
+
+        await store.send(.sendKeys(workspaceID: workspace.id, keys))
+        await store.receive(\.requestFinished)
+        await store.receive(\.screenTick)
+
+        let calls = await recorder.snapshot()
+        #expect(calls.keys == keys)
+        #expect(calls.maximumConcurrentCalls == 1)
     }
 
     @Test
@@ -2131,5 +2224,25 @@ struct HarnessFeatureTests {
                 )
             ]
         )
+    }
+}
+
+private actor HarnessKeyCallRecorder {
+    private var keys: [HarnessKey] = []
+    private var inFlightCallCount = 0
+    private var maximumConcurrentCalls = 0
+
+    func record(_ key: HarnessKey) async {
+        inFlightCallCount += 1
+        maximumConcurrentCalls = max(maximumConcurrentCalls, inFlightCallCount)
+        keys.append(key)
+
+        await Task.yield()
+
+        inFlightCallCount -= 1
+    }
+
+    func snapshot() -> (keys: [HarnessKey], maximumConcurrentCalls: Int) {
+        (keys, maximumConcurrentCalls)
     }
 }

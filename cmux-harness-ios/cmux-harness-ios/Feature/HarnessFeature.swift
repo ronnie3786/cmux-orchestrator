@@ -304,6 +304,7 @@ struct HarnessFeature {
         case sendDetailDraft
         case detailInputFocusHandled(Int)
         case sendKey(workspaceID: String, HarnessKey)
+        case sendKeys(workspaceID: String, [HarnessKey])
         case requestFinished
         case requestFailed(String)
 
@@ -421,6 +422,7 @@ struct HarnessFeature {
                  .sendDetailDraft,
                  .detailInputFocusHandled(_),
                  .sendKey(workspaceID: _, _),
+                 .sendKeys(workspaceID: _, _),
                  .requestFinished,
                  .requestFailed(_),
                  .toggleGlobal(_),

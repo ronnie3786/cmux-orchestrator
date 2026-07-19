@@ -11,6 +11,9 @@ enum OpenCodeTerminalInteractionDetector {
         if let permission = permissionInteraction(in: visibleLines) {
             return permission
         }
+        if let review = questionReviewInteraction(in: visibleLines) {
+            return review
+        }
         return questionInteraction(in: visibleLines)
     }
 
@@ -32,7 +35,10 @@ enum OpenCodeTerminalInteractionDetector {
               flattened.contains("confirm") else {
             return nil
         }
-        guard let footerIndex = interactionFooterIndex(in: block, completion: "confirm"),
+        guard let footerIndex = interactionFooterIndex(
+            in: block,
+            requiredTokens: ["select", "enter", "confirm"]
+        ),
               isCurrentPromptTail(Array(block[(footerIndex + 1)...])) else {
             return nil
         }
@@ -47,7 +53,7 @@ enum OpenCodeTerminalInteractionDetector {
                     && !value.contains("select")
                     && !value.contains("confirm")
             }
-            .map { normalized($0) }
+            .map { primaryColumn(in: $0) }
             .filter { value in
                 !value.isEmpty && value.lowercased() != "patterns"
             }
@@ -58,6 +64,47 @@ enum OpenCodeTerminalInteractionDetector {
             detail: detailLines.joined(separator: "\n"),
             options: optionLabels,
             navigationAxis: .horizontal
+        )
+    }
+
+    private static func questionReviewInteraction(in lines: [String]) -> OpenCodeTerminalInteraction? {
+        guard let anchorIndex = activeOpenCodeAnchorIndex(in: lines) else { return nil }
+        let windowStart = max(
+            activePromptWindowStart(in: lines, before: anchorIndex),
+            anchorIndex - 32
+        )
+        let activeLines = Array(lines[windowStart...anchorIndex])
+        let flattened = activeLines.map { normalized($0) }.joined(separator: " ").lowercased()
+        guard flattened.contains("review"),
+              flattened.contains("submit"),
+              flattened.contains("dismiss") else {
+            return nil
+        }
+        guard let footerIndex = interactionFooterIndex(
+            in: activeLines,
+            requiredTokens: ["tab", "enter", "submit", "dismiss"]
+        ),
+              isCurrentPromptTail(Array(activeLines[(footerIndex + 1)...])) else {
+            return nil
+        }
+
+        let contentLines = Array(activeLines[..<footerIndex])
+        guard let reviewIndex = contentLines.lastIndex(where: {
+            primaryColumn(in: $0).localizedCaseInsensitiveCompare("Review") == .orderedSame
+        }) else {
+            return nil
+        }
+        let reviewItems = contentLines[(reviewIndex + 1)...]
+            .compactMap { line in reviewItem(from: line) }
+        guard !reviewItems.isEmpty else { return nil }
+
+        return OpenCodeTerminalInteraction(
+            kind: .questionReview,
+            title: "Review answers",
+            detail: "Confirm these choices before OpenCode continues.",
+            options: [],
+            navigationAxis: .horizontal,
+            reviewItems: reviewItems
         )
     }
 
@@ -75,7 +122,10 @@ enum OpenCodeTerminalInteractionDetector {
               flattened.contains("dismiss") else {
             return nil
         }
-        guard let footerIndex = interactionFooterIndex(in: activeLines, completion: "dismiss"),
+        guard let footerIndex = interactionFooterIndex(
+            in: activeLines,
+            requiredTokens: ["select", "enter", "dismiss"]
+        ),
               isCurrentPromptTail(Array(activeLines[(footerIndex + 1)...])) else {
             return nil
         }
@@ -87,7 +137,7 @@ enum OpenCodeTerminalInteractionDetector {
         let firstOptionIndex = optionLines.firstIndex(where: { numberedOption(from: $0) != nil }) ?? optionLines.startIndex
         let question = optionLines[..<firstOptionIndex]
             .reversed()
-            .map { normalized($0) }
+            .map { primaryColumn(in: $0) }
             .first { value in
                 !value.isEmpty
                     && !value.lowercased().contains("opencode ")
@@ -104,7 +154,7 @@ enum OpenCodeTerminalInteractionDetector {
     }
 
     private static func numberedOption(from line: String) -> String? {
-        let value = normalized(line)
+        let value = primaryColumn(in: line)
         guard !value.isEmpty,
               value.first?.isNumber == true,
               !value.localizedCaseInsensitiveContains("OpenCode") else {
@@ -128,6 +178,22 @@ enum OpenCodeTerminalInteractionDetector {
         }
         guard index < value.endIndex else { return nil }
         return String(value[index...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func reviewItem(from line: String) -> OpenCodeTerminalInteraction.ReviewItem? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmedLine.first,
+              ["│", "┃", "|"].contains(first) else {
+            return nil
+        }
+
+        let value = primaryColumn(in: line)
+        guard let separator = value.firstIndex(of: ":") else { return nil }
+        let label = value[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+        let answerStart = value.index(after: separator)
+        let answer = value[answerStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, !answer.isEmpty else { return nil }
+        return OpenCodeTerminalInteraction.ReviewItem(label: label, value: answer)
     }
 
     private static func activeOpenCodeAnchorIndex(in lines: [String]) -> Int? {
@@ -163,18 +229,22 @@ enum OpenCodeTerminalInteractionDetector {
         return lines.index(after: previousAnchorIndex)
     }
 
-    private static func interactionFooterIndex(in lines: [String], completion: String) -> Int? {
+    private static func interactionFooterIndex(
+        in lines: [String],
+        requiredTokens: [String]
+    ) -> Int? {
         lines.indices.reversed().first { index in
             let current = normalized(lines[index]).lowercased()
-            guard containsControlToken(completion, in: current) else { return false }
+            guard requiredTokens.contains(where: { containsControlToken($0, in: current) }) else {
+                return false
+            }
             let previous = index > lines.startIndex
                 ? normalized(lines[index - 1]).lowercased()
                 : ""
-            let footer = current == completion
+            let footer = requiredTokens.contains(current)
                 ? previous + " " + current
                 : current
-            return containsControlToken("select", in: footer)
-                && containsControlToken("enter", in: footer)
+            return requiredTokens.allSatisfy { containsControlToken($0, in: footer) }
                 && containsOpenCodeControlHint(footer)
         }
     }
@@ -195,5 +265,13 @@ enum OpenCodeTerminalInteractionDetector {
             value.removeFirst()
         }
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func primaryColumn(in line: String) -> String {
+        let value = normalized(line)
+        guard let separator = value.range(of: #"\s{3,}"#, options: .regularExpression) else {
+            return value
+        }
+        return String(value[..<separator.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -402,7 +402,7 @@ extension HarnessClient {
 
 private actor LocalDemoHarnessStore {
     private var globalEnabled = true
-    private var nextWorkspaceIndex = 3
+    private var nextWorkspaceIndex = 5
     private var workspaces: [Workspace]
     private var screenByIndex: [Int: String]
     private var logEntries: [LogEntry]
@@ -976,6 +976,58 @@ private actor LocalDemoHarnessStore {
                 surfaceCreatedAt: isoTimestamp(),
                 surfaceAge: 1_800
             ),
+            Workspace(
+                hasClaude: true,
+                index: 3,
+                name: "sample-app : OpenCode question fallback",
+                uuid: "demo-workspace-3",
+                enabled: false,
+                autoMode: .off,
+                starred: false,
+                autoEnabledAt: nil,
+                autoExpiresAt: nil,
+                customName: "OpenCode question fallback",
+                lastCheck: isoTimestamp(),
+                screenTail: nil,
+                screenFull: nil,
+                cwd: "~/Projects/sample-app",
+                branch: "feature/opencode-remote-questions",
+                sessionStart: Date().timeIntervalSince1970 - 1_200,
+                sessionCost: "$0.00",
+                surfaceId: "demo-surface-3",
+                surfaceUuid: "demo-surface-3",
+                surfaceLabel: "OpenCode question fallback",
+                surfaceTitle: "Local Demo",
+                gitDirty: false,
+                surfaceCreatedAt: isoTimestamp(),
+                surfaceAge: 1_200
+            ),
+            Workspace(
+                hasClaude: true,
+                index: 4,
+                name: "sample-app : OpenCode review fallback",
+                uuid: "demo-workspace-4",
+                enabled: false,
+                autoMode: .off,
+                starred: false,
+                autoEnabledAt: nil,
+                autoExpiresAt: nil,
+                customName: "OpenCode review fallback",
+                lastCheck: isoTimestamp(),
+                screenTail: nil,
+                screenFull: nil,
+                cwd: "~/Projects/sample-app",
+                branch: "feature/opencode-remote-questions",
+                sessionStart: Date().timeIntervalSince1970 - 900,
+                sessionCost: "$0.00",
+                surfaceId: "demo-surface-4",
+                surfaceUuid: "demo-surface-4",
+                surfaceLabel: "OpenCode review fallback",
+                surfaceTitle: "Local Demo",
+                gitDirty: false,
+                surfaceCreatedAt: isoTimestamp(),
+                surfaceAge: 900
+            ),
         ]
     }
 
@@ -1005,7 +1057,7 @@ private actor LocalDemoHarnessStore {
             - Make the demo CTA explicit.
             - Add a persistent banner while demo mode is active.
             """
-        default:
+        case 2:
             return """
             │  △ Permission required
             │  ← Access external directory /tmp
@@ -1020,6 +1072,50 @@ private actor LocalDemoHarnessStore {
             │
             • OpenCode 1.18.3
             """
+        case 3:
+            return """
+            → Asked 3 questions
+
+            ▣ Build · DeepSeek V4 Flash
+
+            │ Build method   Export method   Configuration   Confirm
+            │
+            │ How do you want to build/publish the iOS app?
+            │
+            │ 1. Build from current branch (default)   /Volumes/PROJECTS/Development/
+            │    Build and archive from the current Git branch, then publish via tailnet
+            │ 2. Publish an existing IPA   Doximity-Claude-IOSDOX-26368-markdown-text-selection
+            │    Skip building and publish an existing .ipa file
+            │ 3. Export from existing archive   rr/feature/IOSDOX-26368-markdown-text-selection
+            │    Export and publish from a pre-existing .xcarchive
+            │ 4. Type your own answer   /Volumes/PROJECTS/Development/
+            │
+            │ ⇆ tab   ↑↓ select   enter confirm   esc dismiss
+            │
+            • OpenCode 1.18.3
+            """
+        case 4:
+            return """
+            → Asked 3 questions
+
+            ▣ Build · DeepSeek V4 Flash
+
+            │ Build method   Export method   Configuration   Confirm
+            │
+            │ Review
+            │
+            │ Build method: Build from current branch (default)
+            │
+            │ Export method: development (Recommended)
+            │
+            │ Configuration: Debug (default)
+            │
+            │ ⇆ tab   enter submit   esc dismiss
+            │
+            • OpenCode 1.18.3
+            """
+        default:
+            return "Demo session \(index)\nNo terminal output yet."
         }
     }
 
@@ -1105,20 +1201,61 @@ private actor LocalDemoHarnessStore {
                 patterns: nil,
                 questions: [
                     FeedItem.Question(
-                        id: "environment",
-                        header: "Environment",
-                        question: "Where should this run?",
+                        id: "build-method",
+                        header: "Build method",
+                        question: "How do you want to build/publish the iOS app?",
                         multiSelect: false,
                         options: [
                             FeedItem.Option(
-                                id: "staging",
-                                label: "Staging",
-                                description: "Validate the change before release."
+                                id: "current-branch",
+                                label: "Build from current branch (default)",
+                                description: "Build and archive from the current Git branch, then publish via tailnet."
                             ),
                             FeedItem.Option(
-                                id: "production",
-                                label: "Production",
-                                description: "Deploy directly to customers."
+                                id: "existing-ipa",
+                                label: "Publish an existing IPA",
+                                description: "Skip building and publish an existing .ipa file."
+                            ),
+                            FeedItem.Option(
+                                id: "existing-archive",
+                                label: "Export from existing archive",
+                                description: "Export and publish from a pre-existing .xcarchive."
+                            ),
+                        ]
+                    ),
+                    FeedItem.Question(
+                        id: "export-method",
+                        header: "Export method",
+                        question: "Which export method?",
+                        multiSelect: false,
+                        options: [
+                            FeedItem.Option(
+                                id: "development",
+                                label: "development (Recommended)",
+                                description: "Best for a personal device in the development provisioning profile."
+                            ),
+                            FeedItem.Option(
+                                id: "ad-hoc",
+                                label: "ad-hoc",
+                                description: "Better for sharing with multiple registered devices."
+                            ),
+                        ]
+                    ),
+                    FeedItem.Question(
+                        id: "configuration",
+                        header: "Configuration",
+                        question: "Which build configuration?",
+                        multiSelect: false,
+                        options: [
+                            FeedItem.Option(
+                                id: "debug",
+                                label: "Debug (default)",
+                                description: "Keep debug symbols and development diagnostics enabled."
+                            ),
+                            FeedItem.Option(
+                                id: "release",
+                                label: "Release",
+                                description: "Use optimized release build settings."
                             ),
                         ]
                     ),

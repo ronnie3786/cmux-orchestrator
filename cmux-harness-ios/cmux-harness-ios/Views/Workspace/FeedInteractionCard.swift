@@ -8,7 +8,7 @@ struct FeedInteractionCard: View {
 
     @State private var questionIndex = 0
     @State private var answers: [String: String] = [:]
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @State private var isReviewingAnswers = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -37,6 +37,7 @@ struct FeedInteractionCard: View {
         .onChange(of: item.requestID) {
             questionIndex = 0
             answers = [:]
+            isReviewingAnswers = false
         }
         .accessibilitySortPriority(1)
         .accessibilityElement(children: .contain)
@@ -112,7 +113,7 @@ struct FeedInteractionCard: View {
         case "permission":
             return "Permission required"
         case "question":
-            return "OpenCode question"
+            return isReviewingAnswers ? "Review answers" : "OpenCode question"
         default:
             return item.displayTitle
         }
@@ -143,7 +144,9 @@ struct FeedInteractionCard: View {
 
     @ViewBuilder
     private var questionContent: some View {
-        if let currentQuestion {
+        if isReviewingAnswers {
+            questionReviewContent
+        } else if let currentQuestion {
             VStack(alignment: .leading, spacing: 9) {
                 if questions.count > 1 {
                     Text("Question \(questionIndex + 1) of \(questions.count)")
@@ -200,51 +203,21 @@ struct FeedInteractionCard: View {
 
     private func questionAnswerForm(_ question: FeedItem.Question) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(question.options) { option in
-                Button {
-                    answers[question.id] = option.label
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: answers[question.id] == option.label ? "checkmark.circle.fill" : "circle")
-                            .font(.callout)
-                            .foregroundStyle(answers[question.id] == option.label ? Color.blue : Color.secondary)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(option.label)
-                                .font(.subheadline.bold())
-                                .foregroundStyle(.primary)
-                            if let description = trimmed(option.description) {
-                                Text(description)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    ForEach(question.options) { option in
+                        OpenCodeChoiceRow(
+                            label: option.label,
+                            detail: trimmed(option.description),
+                            isSelected: answers[question.id] == option.label
+                        ) {
+                            answers[question.id] = option.label
                         }
-                        Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .background(
-                        answers[question.id] == option.label ? Color.blue.opacity(0.12) : Color.white.opacity(0.045),
-                        in: RoundedRectangle(cornerRadius: 9)
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 9)
-                            .strokeBorder(
-                                answers[question.id] == option.label
-                                    ? Color.blue.opacity(differentiateWithoutColor ? 0.95 : 0.5)
-                                    : Color.white.opacity(differentiateWithoutColor ? 0.28 : 0.08),
-                                lineWidth: differentiateWithoutColor ? 1.5 : 1
-                            )
-                    }
-                    .contentShape(RoundedRectangle(cornerRadius: 9))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.label)
-                .accessibilityValue(answers[question.id] == option.label ? "Selected" : "Not selected")
-                .accessibilityHint(trimmed(option.description) ?? "Selects this answer")
-                .accessibilityAddTraits(answers[question.id] == option.label ? .isSelected : [])
             }
+            .scrollIndicators(.visible)
+            .frame(maxHeight: choiceListMaxHeight)
 
             TextField(
                 "Or type a custom answer",
@@ -264,7 +237,7 @@ struct FeedInteractionCard: View {
                 }
                 .accessibilityLabel("Custom answer")
 
-            HStack(spacing: 6) {
+            adaptiveActionLayout {
                 if questionIndex > 0 {
                     OpenCodeActionButton(
                         title: "Back",
@@ -276,11 +249,9 @@ struct FeedInteractionCard: View {
                     }
                 }
 
-                Spacer(minLength: 0)
-
                 if questionIndex < questions.count - 1 {
                     OpenCodeActionButton(
-                        title: "Next question",
+                        title: "Next",
                         systemImage: "chevron.right",
                         role: .primary,
                         fillsWidth: false
@@ -290,16 +261,74 @@ struct FeedInteractionCard: View {
                     .disabled(!hasAnswer(for: question.id))
                 } else {
                     OpenCodeActionButton(
-                        title: "Send answer",
-                        systemImage: "paperplane.fill",
+                        title: "Review answers",
+                        systemImage: "list.clipboard",
                         role: .primary,
                         fillsWidth: false
                     ) {
-                        reply("answer", nil, questions.compactMap { question in
-                            trimmed(answers[question.id])
-                        })
+                        isReviewingAnswers = true
                     }
                     .disabled(!questions.allSatisfy { hasAnswer(for: $0.id) })
+                }
+            }
+        }
+    }
+
+    private var questionReviewContent: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Confirm these choices before OpenCode continues.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(questions) { question in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(trimmed(question.header) ?? question.question)
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                            if trimmed(question.header) != nil {
+                                Text(question.question)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Label(answers[question.id] ?? "", systemImage: "checkmark.circle.fill")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+                    }
+                }
+            }
+            .scrollIndicators(.visible)
+            .frame(maxHeight: reviewListMaxHeight)
+
+            adaptiveActionLayout {
+                OpenCodeActionButton(
+                    title: "Back",
+                    systemImage: "chevron.left",
+                    role: .neutral,
+                    fillsWidth: false
+                ) {
+                    isReviewingAnswers = false
+                    questionIndex = max(questions.count - 1, 0)
+                }
+
+                OpenCodeActionButton(
+                    title: "Submit",
+                    systemImage: "paperplane.fill",
+                    role: .primary,
+                    fillsWidth: false
+                ) {
+                    reply("answer", nil, questions.compactMap { question in
+                        trimmed(answers[question.id])
+                    })
                 }
             }
         }
@@ -394,7 +423,7 @@ struct FeedInteractionCard: View {
     private var headerSymbol: String {
         switch item.kind {
         case "permission": "hand.raised.fill"
-        case "question": "questionmark.bubble.fill"
+        case "question": isReviewingAnswers ? "checkmark.circle.fill" : "questionmark.bubble.fill"
         case "plan": "doc.text.fill"
         default: "exclamationmark.bubble.fill"
         }
@@ -403,7 +432,9 @@ struct FeedInteractionCard: View {
     private var sourceLabel: String {
         let rawAgent = trimmed(item.agent) ?? "OpenCode"
         let agent = rawAgent.lowercased() == "opencode" ? "OpenCode" : rawAgent
-        return "\(agent) · Awaiting response"
+        return isReviewingAnswers
+            ? "\(agent) · Ready to submit"
+            : "\(agent) · Awaiting response"
     }
 
     private func answerBinding(for id: String) -> Binding<String> {
@@ -438,5 +469,13 @@ struct FeedInteractionCard: View {
         } else {
             AnyLayout(HStackLayout(spacing: 7))
         }
+    }
+
+    private var choiceListMaxHeight: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 260 : 190
+    }
+
+    private var reviewListMaxHeight: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 280 : 220
     }
 }

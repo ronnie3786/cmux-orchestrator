@@ -46,9 +46,47 @@ final class cmux_harness_iosUITests: XCTestCase {
 
         launchDemoSession("demo-workspace-1|demo-surface-1", in: app)
         XCTAssertTrue(app.staticTexts["OpenCode question"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Staging"].exists)
-        XCTAssertTrue(app.buttons["Production"].exists)
-        attachScreenshot(named: "02-opencode-native-question", from: app)
+        XCTAssertTrue(app.staticTexts["Question 1 of 3"].exists)
+
+        let buildMethod = app.buttons["Build from current branch (default)"]
+        XCTAssertTrue(buildMethod.exists)
+        XCTAssertEqual(buildMethod.value as? String, "Not selected")
+        buildMethod.tap()
+        XCTAssertEqual(buildMethod.value as? String, "Selected")
+        attachScreenshot(named: "02-opencode-native-selected-choice", from: app)
+
+        let firstNextButton = app.buttons["Next"]
+        XCTAssertTrue(firstNextButton.isEnabled)
+        firstNextButton.tap()
+        XCTAssertTrue(app.staticTexts["Question 2 of 3"].waitForExistence(timeout: 2))
+
+        let exportMethod = app.buttons["development (Recommended)"]
+        XCTAssertTrue(exportMethod.exists)
+        exportMethod.tap()
+        XCTAssertEqual(exportMethod.value as? String, "Selected")
+        attachScreenshot(named: "03-opencode-native-next-question", from: app)
+
+        let secondNextButton = app.buttons["Next"]
+        XCTAssertTrue(secondNextButton.isEnabled)
+        secondNextButton.tap()
+        XCTAssertTrue(app.staticTexts["Question 3 of 3"].waitForExistence(timeout: 2))
+
+        let configuration = app.buttons["Debug (default)"]
+        XCTAssertTrue(configuration.exists)
+        configuration.tap()
+        XCTAssertEqual(configuration.value as? String, "Selected")
+
+        let reviewButton = app.buttons["Review answers"]
+        XCTAssertTrue(reviewButton.isEnabled)
+        reviewButton.tap()
+
+        XCTAssertTrue(app.staticTexts["Review answers"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["Build from current branch (default)"].exists)
+        XCTAssertTrue(app.staticTexts["development (Recommended)"].exists)
+        XCTAssertTrue(app.staticTexts["Debug (default)"].exists)
+        XCTAssertTrue(app.buttons["Submit"].exists)
+        XCTAssertTrue(app.buttons["Submit"].isHittable)
+        attachScreenshot(named: "04-opencode-native-review-submit", from: app)
 
         launchDemoSession("demo-workspace-2|demo-surface-2", in: app)
         XCTAssertTrue(app.staticTexts["OpenCode terminal · Manual controls"].waitForExistence(timeout: 8))
@@ -56,7 +94,42 @@ final class cmux_harness_iosUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Next"].exists)
         XCTAssertTrue(app.buttons["Confirm"].exists)
         XCTAssertTrue(app.buttons["Reject"].exists)
-        attachScreenshot(named: "03-opencode-safe-tui-fallback", from: app)
+        attachScreenshot(named: "05-opencode-safe-tui-fallback", from: app)
+
+        launchDemoSession("demo-workspace-3|demo-surface-3", in: app)
+        XCTAssertTrue(app.staticTexts["OpenCode question"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["OpenCode terminal · Remote questions"].exists)
+
+        let fallbackDefault = app.buttons["Build from current branch (default)"]
+        XCTAssertTrue(fallbackDefault.exists)
+        XCTAssertEqual(fallbackDefault.value as? String, "Selected")
+
+        let fallbackExistingIPA = app.buttons["Publish an existing IPA"]
+        XCTAssertTrue(fallbackExistingIPA.exists)
+        XCTAssertEqual(fallbackExistingIPA.value as? String, "Not selected")
+        XCTAssertTrue(app.buttons["Export from existing archive"].exists)
+        XCTAssertTrue(app.buttons["Type your own answer"].exists)
+
+        fallbackExistingIPA.tap()
+        XCTAssertEqual(fallbackDefault.value as? String, "Not selected")
+        XCTAssertEqual(fallbackExistingIPA.value as? String, "Selected")
+        XCTAssertTrue(app.buttons["Next"].exists)
+        XCTAssertTrue(app.buttons["Next"].isHittable)
+        attachScreenshot(named: "06-opencode-tui-question-selection", from: app)
+
+        launchDemoSession("demo-workspace-4|demo-surface-4", in: app)
+        XCTAssertTrue(app.staticTexts["Review answers"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Build method"].exists)
+        XCTAssertTrue(app.staticTexts["Build from current branch (default)"].exists)
+        XCTAssertTrue(app.staticTexts["Export method"].exists)
+        XCTAssertTrue(app.staticTexts["development (Recommended)"].exists)
+        XCTAssertTrue(app.staticTexts["Configuration"].exists)
+        XCTAssertTrue(app.staticTexts["Debug (default)"].exists)
+        XCTAssertTrue(app.buttons["Edit answers"].exists)
+        XCTAssertTrue(app.buttons["Edit answers"].isHittable)
+        XCTAssertTrue(app.buttons["Submit"].exists)
+        XCTAssertTrue(app.buttons["Submit"].isHittable)
+        attachScreenshot(named: "07-opencode-tui-review-submit", from: app)
     }
 
     @MainActor
