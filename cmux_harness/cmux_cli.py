@@ -33,6 +33,7 @@ _TERMINAL_KEY_ALIASES = {
 _TERMINAL_KEY_TEXT = {
     "left": "\x1b[D",
     "right": "\x1b[C",
+    "space": " ",
     "escape": "\x1b",
     "backspace": "\x7f",
 }

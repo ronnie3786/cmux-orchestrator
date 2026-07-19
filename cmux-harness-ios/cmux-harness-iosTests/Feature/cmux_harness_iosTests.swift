@@ -724,13 +724,16 @@ struct HarnessFeatureTests {
         #expect(screen.screen.contains("Demo response"))
         #expect(prComments.pullRequest?.title == "Add iPhone dashboard onboarding")
         #expect(jiraTickets.tickets.map(\.key).contains("APP-1042"))
-        #expect(feed.items.count == 2)
+        #expect(feed.items.count == 6)
         #expect(feed.items.allSatisfy { item in
             status.workspaces.contains { feedItem(item, matches: $0) }
         })
         #expect(feed.items.first?.agent == "OpenCode")
         #expect(feed.items.first?.permissionType == "external_directory")
-        #expect(feed.items.last?.questions?.first?.question == "How do you want to build/publish the iOS app?")
+        #expect(
+            feed.items.first { $0.requestID == "demo-opencode-question" }?
+                .questions?.first?.question == "How do you want to build/publish the iOS app?"
+        )
         #expect(OpenCodeTerminalInteractionDetector.detect(in: fallbackScreen.screen)?.kind == .permission)
     }
 
@@ -1087,6 +1090,133 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func detectsEveryOptionInLongWrappedOpenCodeQuestionWithSelectionMarkers() {
+        let markerSets = [
+            ["›", "●", "☐"],
+            ["❯", "○", "☑"],
+        ]
+
+        for markers in markerSets {
+            let wrappedContext = (1...55)
+                .map { "│     Wrapped option detail line \($0)." }
+                .joined(separator: "\n")
+            let raw = """
+            │  Evaluate comment 1
+            │  (fetchAllFireworksGatewayModels partial
+            │  results / fireworksMaxPages)?
+            │
+            │  \(markers[0]) 1. Evaluate                         ~/Documents/Development/
+            │     Review the actual source code and
+            │     assess whether the suggestion is
+            │     valid.
+            │
+            │     The review may need to inspect the
+            │     pagination loop, the returned model
+            │     catalog, and the fallback behavior.
+            \(wrappedContext)
+            │
+            │  \(markers[1]) 2. Skip                             agentic-dev-opencode-moa-models
+            │     Do not evaluate this comment.
+            │
+            │     Continue without reading the source
+            │     or changing the current branch.
+            │
+            │     The selection remains visible while
+            │     OpenCode advances to the next item.
+            │
+            │  \(markers[2]) 3. Type your own answer
+            │
+            │     Enter a custom response when neither
+            │     of the standard choices applies.
+            │
+            │     This deliberately long prompt mirrors
+            │     a narrow terminal where descriptions
+            │     and shell context wrap across lines.
+            │
+            │     Additional wrapped context keeps the
+            │     first choice more than 24 lines away
+            │     from the active OpenCode anchor.
+            │
+            │  ⇆ tab   ↑↓ select   enter confirm   esc dismiss
+            │
+            • OpenCode 1.18.3
+            """
+
+            let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+            #expect(interaction?.kind == .question)
+            #expect(interaction?.options == [
+                "Evaluate",
+                "Skip",
+                "Type your own answer",
+            ])
+        }
+    }
+
+    @Test
+    func detectsEveryDisplayedOpenCodePermissionModeInOrder() {
+        let raw = """
+        │  △ Permission required
+        │  ← Run a workspace command
+        │
+        │  Allow once   Allow always   All tools   Bypass permissions   Reject
+        │  ⇆ select   enter confirm
+        │
+        • OpenCode 1.18.3
+        """
+
+        let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+        #expect(interaction?.kind == .permission)
+        #expect(interaction?.options == [
+            "Allow once",
+            "Allow always",
+            "All tools",
+            "Bypass permissions",
+            "Reject",
+        ])
+    }
+
+    @Test
+    func permissionChoicesComeOnlyFromTheControlRow() {
+        let raw = """
+        │  △ Permission required
+        │  ← Run a command that mentions deny, bypass permissions, and all tools
+        │  The explanation may repeat those words without offering those actions.
+        │
+        │  Allow once   Allow always   Reject
+        │  ⇆ select   enter confirm
+        │
+        • OpenCode 1.18.3
+        """
+
+        let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+        #expect(interaction?.kind == .permission)
+        #expect(interaction?.options == ["Allow once", "Allow always", "Reject"])
+    }
+
+    @Test
+    func detectsCheckboxQuestionsAndExposesTheSpaceKeyToken() {
+        let raw = """
+        │  Which checks should run?
+        │
+        │  ☐ 1. Unit tests
+        │  ☑ 2. UI tests
+        │
+        ↑↓ select   space toggle   enter confirm   esc dismiss
+        • OpenCode 1.18.3
+        """
+
+        let interaction = OpenCodeTerminalInteractionDetector.detect(in: raw)
+
+        #expect(interaction?.kind == .question)
+        #expect(interaction?.allowsMultipleSelection == true)
+        #expect(interaction?.options == ["Unit tests", "UI tests"])
+        #expect(HarnessKey.space.rawValue == "space")
+    }
+
+    @Test
     func doesNotTreatTranscriptPermissionWordsAsAnActivePrompt() {
         let raw = """
         We should render Allow once, Allow always, and Reject more clearly.
@@ -1231,6 +1361,60 @@ struct HarnessFeatureTests {
     }
 
     @Test
+    func feedMatchingUsesOnlyAnUnambiguousNormalizedWorkingDirectory() {
+        var requestedWorkspace = Self.workspace()
+        requestedWorkspace.uuid = "workspace-requested"
+        requestedWorkspace.cwd = "/private/tmp/cmux-feed/project/../project"
+
+        var otherWorkspace = Self.workspace()
+        otherWorkspace.uuid = "workspace-other"
+        otherWorkspace.cwd = "/private/tmp/cmux-feed/other"
+
+        let item = FeedItem(
+            requestID: "permission-cwd",
+            kind: "permission",
+            title: nil,
+            message: nil,
+            command: nil,
+            workspaceID: nil,
+            surfaceID: nil,
+            agent: "OpenCode",
+            createdAt: nil,
+            options: nil,
+            cwd: "/private/tmp/cmux-feed/project"
+        )
+
+        #expect(feedItem(
+            item,
+            matches: requestedWorkspace,
+            among: [requestedWorkspace, otherWorkspace]
+        ))
+        #expect(!feedItem(
+            item,
+            matches: otherWorkspace,
+            among: [requestedWorkspace, otherWorkspace]
+        ))
+
+        var secondPane = requestedWorkspace
+        secondPane.surfaceId = "surface-second-pane"
+        secondPane.surfaceLabel = "Second pane"
+        #expect(feedItem(
+            item,
+            matches: requestedWorkspace,
+            among: [requestedWorkspace, secondPane, otherWorkspace]
+        ))
+
+        var duplicateWorkspace = otherWorkspace
+        duplicateWorkspace.uuid = "workspace-duplicate"
+        duplicateWorkspace.cwd = "/private/tmp/cmux-feed/project/"
+        #expect(!feedItem(
+            item,
+            matches: requestedWorkspace,
+            among: [requestedWorkspace, duplicateWorkspace]
+        ))
+    }
+
+    @Test
     func decodesStructuredOpenCodeFeedQuestions() throws {
         let data = Data(#"""
         {
@@ -1245,12 +1429,16 @@ struct HarnessFeatureTests {
               "id": "environment",
               "header": "Environment",
               "question": "Where should this run?",
-              "multiSelect": false,
+              "multiSelect": true,
+              "allowsCustomAnswer": false,
               "options": [
                 {"id": "staging", "label": "Staging", "description": "Shared QA"},
                 {"id": "production", "label": "Production", "description": "Live traffic"}
               ]
-            }]
+            }],
+            "workstreamID": "opencode-session-1",
+            "cwd": "/repo",
+            "defaultMode": "manual"
           }]
         }
         """#.utf8)
@@ -1260,6 +1448,44 @@ struct HarnessFeatureTests {
         #expect(response.items.count == 1)
         #expect(response.items[0].questions?.first?.question == "Where should this run?")
         #expect(response.items[0].questions?.first?.options[1].description == "Live traffic")
+        #expect(response.items[0].questions?.first?.multiSelect == true)
+        #expect(response.items[0].questions?.first?.customAnswerAllowed == false)
+        #expect(response.items[0].workstreamID == "opencode-session-1")
+        #expect(response.items[0].cwd == "/repo")
+        #expect(response.items[0].defaultMode == "manual")
+    }
+
+    @Test
+    func decodesPermissionCapabilitiesAndFullPlanContent() throws {
+        let data = Data(#"""
+        {
+          "ok": true,
+          "items": [{
+            "requestID": "permission-1",
+            "kind": "permission",
+            "agent": "OpenCode",
+            "permissionModes": [
+              {"mode": "once", "label": "Allow once"},
+              {"mode": "bypass", "label": "Bypass permissions"},
+              {"mode": "deny", "label": "Reject"}
+            ]
+          }, {
+            "requestID": "plan-1",
+            "kind": "plan",
+            "message": "Implement the permission sheet",
+            "plan": "# Permission sheet\n\n1. Normalize modes.\n2. Verify the UI.",
+            "planSummary": "# Permission sheet",
+            "defaultMode": "manual"
+          }]
+        }
+        """#.utf8)
+
+        let response = try JSONDecoder().decode(FeedResponse.self, from: data)
+
+        #expect(response.items[0].permissionModes?.map(\.mode) == ["once", "bypass", "deny"])
+        #expect(response.items[1].plan?.contains("Normalize modes") == true)
+        #expect(response.items[1].planSummary == "# Permission sheet")
+        #expect(response.items[1].defaultMode == "manual")
     }
 
     @Test
@@ -1370,6 +1596,7 @@ struct HarnessFeatureTests {
         var state = Self.initialState()
         state.workspaces = [workspace]
         state.feedItems = [item]
+        state.errorMessage = "Previous reply failed"
 
         var client = HarnessClient.unimplemented
         let expectedBaseURL = Self.baseURL
@@ -1403,6 +1630,7 @@ struct HarnessFeatureTests {
             mode: "always",
             selections: nil
         )) {
+            $0.errorMessage = nil
             $0.pendingFeedReplyIDs = [item.requestID]
         }
         await store.receive(\.feedReplySucceeded) {

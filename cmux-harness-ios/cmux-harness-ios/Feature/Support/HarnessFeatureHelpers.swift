@@ -21,7 +21,11 @@ func persistDetailDraft(_ state: inout HarnessFeature.State) {
     HarnessSettingsStore.detailDrafts = state.detailDrafts
 }
 
-func feedItem(_ item: FeedItem, matches workspace: Workspace) -> Bool {
+func feedItem(
+    _ item: FeedItem,
+    matches workspace: Workspace,
+    among workspaces: [Workspace] = []
+) -> Bool {
     let workspaceID = trimmedNonEmpty(item.workspaceID)
     let surfaceID = trimmedNonEmpty(item.surfaceID)
     let workspaceMatches = workspaceID.map { $0 == workspace.uuid || $0 == workspace.id }
@@ -31,11 +35,27 @@ func feedItem(_ item: FeedItem, matches workspace: Workspace) -> Bool {
         guard surfaceMatches else { return false }
         return workspaceMatches ?? true
     }
-    return workspaceMatches ?? false
+    if let workspaceMatches {
+        return workspaceMatches
+    }
+
+    guard let itemDirectory = normalizedWorkspaceDirectory(item.cwd),
+          itemDirectory == normalizedWorkspaceDirectory(workspace.cwd) else {
+        return false
+    }
+    guard !workspaces.isEmpty else { return true }
+    let matchingSessionGroups = Set(
+        workspaces
+            .filter { normalizedWorkspaceDirectory($0.cwd) == itemDirectory }
+            .map(\.sessionGroupID)
+    )
+    return matchingSessionGroups.count == 1
 }
 
 func feedItems(for workspace: Workspace, in state: HarnessFeature.State) -> [FeedItem] {
-    state.feedItems.filter { feedItem($0, matches: workspace) }
+    state.feedItems.filter {
+        feedItem($0, matches: workspace, among: state.workspaces)
+    }
 }
 
 func jiraKey(from value: String) -> String? {
@@ -69,6 +89,12 @@ func appendPromptBlock(_ block: String, to draft: String) -> String {
 func trimmedNonEmpty(_ value: String?) -> String? {
     let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     return trimmed.isEmpty ? nil : trimmed
+}
+
+func normalizedWorkspaceDirectory(_ value: String?) -> String? {
+    guard let value = trimmedNonEmpty(value) else { return nil }
+    let expanded = (value as NSString).expandingTildeInPath
+    return URL(fileURLWithPath: expanded).standardizedFileURL.path
 }
 
 func workspaceDirectory(for workspace: Workspace) -> String? {

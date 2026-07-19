@@ -81,7 +81,7 @@ _STATIC_CONTENT = {
     "/workflow-orchestrator.js": WORKFLOW_ORCHESTRATOR_JS,
 }
 
-_HARNESS_ALLOWED_KEYS = {"up", "down", "tab", "enter", "left", "right", "escape", "backspace"}
+_HARNESS_ALLOWED_KEYS = {"up", "down", "tab", "enter", "left", "right", "space", "escape", "backspace"}
 
 
 def _human_file_size(size):

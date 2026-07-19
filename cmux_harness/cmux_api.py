@@ -322,6 +322,8 @@ def cmux_send_to_workspace(ws_index, surface_index, text=None, key=None, workspa
             return _send_v2_text(workspace_uuid, text, surface_id=surface_id)
         if key is not None:
             normalized_key = _normalize_terminal_key(key)
+            if normalized_key == "space":
+                return _send_v2_text(workspace_uuid, " ", surface_id=surface_id)
             return _send_v2_key(workspace_uuid, normalized_key, surface_id=surface_id)
     # No workspace_uuid provided and no v1 fallback — v1 used select_workspace
     # which visibly switches the active tab, causing UI flickering.
@@ -650,16 +652,185 @@ def _normalize_string_options(value):
     return [option for option in (_string_option(item) for item in value) if option]
 
 
+def _normalize_feed_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _parse_feed_json_object(value):
+    """Decode cmux fields that serialize an object as a JSON string."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _normalize_feed_patterns(*values):
+    patterns = []
+    for value in values:
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            pattern = _string_option(candidate).strip()
+            if pattern and pattern not in patterns:
+                patterns.append(pattern)
+    return patterns
+
+
+_PERMISSION_MODE_LABELS = {
+    "once": "Allow once",
+    "always": "Allow always",
+    "all": "All tools",
+    "bypass": "Bypass permissions",
+    "deny": "Reject",
+}
+_FEED_MISSING = object()
+
+
+def _permission_mode_entries(modes):
+    return [
+        {"mode": mode, "label": _PERMISSION_MODE_LABELS[mode]}
+        for mode in modes
+    ]
+
+
+def _parse_feed_capabilities(value):
+    """Return (capabilities, is_valid) without conflating malformed JSON with {}."""
+    if isinstance(value, dict):
+        return value, True
+    if not isinstance(value, str):
+        return {}, False
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return {}, False
+    return (decoded, True) if isinstance(decoded, dict) else ({}, False)
+
+
+def _normalize_available_decisions(value):
+    if not isinstance(value, list):
+        return []
+    decisions = []
+    for raw_decision in value:
+        if isinstance(raw_decision, dict) and len(raw_decision) == 1:
+            decision = str(next(iter(raw_decision)))
+        else:
+            decision = _string_option(raw_decision)
+        decision = decision.strip()
+        if decision and decision not in decisions:
+            decisions.append(decision)
+    return decisions
+
+
+def _normalize_permission_modes(source, raw_capabilities):
+    """Mirror cmux's FeedPermissionActionPolicy for the current Feed source."""
+    normalized_source = str(source or "").strip().lower().replace("_", "-")
+    if normalized_source == "hermes-agent" or normalized_source == "hermes":
+        return _permission_mode_entries(["once", "deny"])
+    if normalized_source == "claude":
+        return _permission_mode_entries(["once", "always", "all", "deny"])
+    if normalized_source != "codex":
+        return _permission_mode_entries(["once", "always", "all", "bypass", "deny"])
+
+    if raw_capabilities is None or raw_capabilities == "":
+        return _permission_mode_entries(["once", "always", "all", "deny"])
+
+    capabilities, is_valid = _parse_feed_capabilities(raw_capabilities)
+    if not is_valid:
+        return _permission_mode_entries(["deny"])
+
+    method = str(_first_present(
+        capabilities,
+        ["app_server_method", "appServerMethod"],
+        "",
+    ) or "")
+    decisions_value = next(
+        (
+            capabilities[key]
+            for key in ("available_decisions", "availableDecisions")
+            if key in capabilities
+        ),
+        _FEED_MISSING,
+    )
+    decisions = (
+        None
+        if decisions_value is _FEED_MISSING
+        else _normalize_available_decisions(decisions_value)
+    )
+
+    def decision_available(name):
+        return decisions is None or name in decisions
+
+    if method == "item/permissions/requestApproval":
+        allow_once = allow_always = allow_all = True
+    elif method == "item/commandExecution/requestApproval":
+        allow_once = decision_available("accept")
+        allow_always = decision_available("acceptForSession")
+        has_exec_amendment = (
+            "proposed_execpolicy_amendment" in capabilities
+            and capabilities["proposed_execpolicy_amendment"] is not None
+        )
+        network_amendments = capabilities.get("proposed_network_policy_amendments")
+        has_network_amendment = isinstance(network_amendments, list) and bool(network_amendments)
+        allow_all = (
+            has_exec_amendment
+            and decision_available("acceptWithExecpolicyAmendment")
+        ) or (
+            has_network_amendment
+            and decision_available("applyNetworkPolicyAmendment")
+        )
+    elif method == "item/fileChange/requestApproval":
+        allow_once = decision_available("accept")
+        allow_always = decision_available("acceptForSession")
+        allow_all = False
+    else:
+        allow_once = decision_available("accept")
+        allow_always = decision_available("acceptForSession")
+        allow_all = False
+
+    modes = []
+    if allow_once:
+        modes.append("once")
+    if allow_always:
+        modes.append("always")
+    if allow_all:
+        modes.append("all")
+    modes.append("deny")
+    return _permission_mode_entries(modes)
+
+
+def _unique_feed_id(value, fallback, seen_ids):
+    base = str(value or fallback).strip() or fallback
+    candidate = base
+    suffix = 2
+    while candidate in seen_ids:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    seen_ids.add(candidate)
+    return candidate
+
+
 def _normalize_feed_questions(value):
     if not isinstance(value, list):
         return []
 
     questions = []
+    question_ids = set()
     for question_index, raw_question in enumerate(value):
         if not isinstance(raw_question, dict):
             continue
         raw_options = raw_question.get("options")
         options = []
+        option_ids = set()
         if isinstance(raw_options, list):
             for option_index, raw_option in enumerate(raw_options):
                 if isinstance(raw_option, dict):
@@ -670,23 +841,44 @@ def _normalize_feed_questions(value):
                     option_id = f"opt{option_index}"
                     label = raw_option
                     description = ""
+                label = str(label or "").strip()
+                if not label:
+                    continue
                 options.append({
-                    "id": str(option_id or f"opt{option_index}"),
-                    "label": str(label or ""),
+                    "id": _unique_feed_id(option_id, f"opt{option_index}", option_ids),
+                    "label": label,
                     "description": str(description or ""),
                 })
 
+        explicit_prompt = str(_first_present(
+            raw_question,
+            ["question", "prompt", "message"],
+            "",
+        ) or "").strip()
+        header = str(_first_present(raw_question, ["header", "title"], "") or "").strip()
+        prompt = explicit_prompt or header
+        if not prompt and not options:
+            continue
+        if not prompt:
+            prompt = "Answer the agent question."
+
         question_id = _first_present(raw_question, ["id", "questionID", "question_id"], f"q{question_index}")
-        header = _first_present(raw_question, ["header", "title"], "")
-        prompt = _first_present(raw_question, ["question", "prompt", "message"], "")
         multi_select = _first_present(raw_question, ["multiSelect", "multi_select", "multiple"], False)
-        questions.append({
-            "id": str(question_id or f"q{question_index}"),
-            "header": str(header or ""),
-            "question": str(prompt or ""),
-            "multiSelect": multi_select is True,
+        question = {
+            "id": _unique_feed_id(question_id, f"q{question_index}", question_ids),
+            "header": header if explicit_prompt else "",
+            "question": prompt,
+            "multiSelect": _normalize_feed_bool(multi_select),
             "options": options,
-        })
+        }
+        custom = _first_present(
+            raw_question,
+            ["allowsCustomAnswer", "allows_custom_answer", "custom"],
+            None,
+        )
+        if custom is not None:
+            question["allowsCustomAnswer"] = _normalize_feed_bool(custom)
+        questions.append(question)
     return questions
 
 
@@ -708,6 +900,12 @@ def _normalize_feed_item(item):
     surface_id = str(_first_feed_present(item, [
         "surface_id", "surfaceId", "tab_id", "tabId",
     ], "") or "")
+    workstream_id = str(_first_feed_present(item, [
+        "workstream_id", "workstreamId", "workstreamID",
+    ], "") or "")
+    cwd = str(_first_feed_present(item, [
+        "cwd", "working_directory", "workingDirectory",
+    ], "") or "")
     title = str(_first_feed_present(item, [
         "title", "label", "summary", "tool_name", "toolName",
     ], "") or "")
@@ -718,14 +916,88 @@ def _normalize_feed_item(item):
         "command", "toolPreview", "tool_preview",
     ], "") or "")
     raw_tool_input = _first_feed_present(item, ["tool_input", "toolInput"], {})
-    if not command and isinstance(raw_tool_input, str):
-        command = raw_tool_input
-    tool_input = raw_tool_input if isinstance(raw_tool_input, dict) else {}
+    raw_tool_input_capabilities = _first_feed_present(
+        item,
+        ["tool_input_capabilities", "toolInputCapabilities"],
+        None,
+    )
+    tool_input = _parse_feed_json_object(raw_tool_input)
+    if not command:
+        tool_command = _first_present(tool_input, ["command", "cmd", "shell_command"], "")
+        if tool_command:
+            command = str(tool_command)
+        elif isinstance(raw_tool_input, str) and not tool_input:
+            # Preserve the legacy behavior for non-JSON tool previews.
+            command = raw_tool_input
 
     raw_questions = _first_feed_present(item, ["questions"], None)
     if raw_questions is None:
         raw_questions = tool_input.get("questions")
     questions = _normalize_feed_questions(raw_questions)
+    if not questions:
+        compatibility_prompt = _first_feed_present(
+            item,
+            ["question_prompt", "questionPrompt"],
+            None,
+        )
+        if compatibility_prompt is None:
+            compatibility_prompt = _first_present(
+                tool_input,
+                ["question_prompt", "questionPrompt", "question", "prompt"],
+                None,
+            )
+        compatibility_options = _first_feed_present(
+            item,
+            ["question_options", "questionOptions"],
+            None,
+        )
+        if compatibility_options is None:
+            compatibility_options = _first_present(
+                tool_input,
+                ["question_options", "questionOptions", "options"],
+                None,
+            )
+        compatibility_multi_select = _first_feed_present(
+            item,
+            ["question_multi_select", "questionMultiSelect", "question_multiple"],
+            None,
+        )
+        if compatibility_multi_select is None:
+            compatibility_multi_select = _first_present(
+                tool_input,
+                ["question_multi_select", "questionMultiSelect", "multiSelect", "multi_select", "multiple"],
+                None,
+            )
+        compatibility_custom = _first_feed_present(
+            item,
+            ["question_custom", "questionCustom", "allowsCustomAnswer", "allows_custom_answer", "custom"],
+            None,
+        )
+        if compatibility_custom is None:
+            compatibility_custom = _first_present(
+                tool_input,
+                ["question_custom", "questionCustom", "allowsCustomAnswer", "allows_custom_answer", "custom"],
+                None,
+            )
+        if any(value is not None for value in (
+            compatibility_prompt,
+            compatibility_options,
+            compatibility_multi_select,
+            compatibility_custom,
+        )):
+            compatibility_question = {
+                "id": _first_feed_present(
+                    item,
+                    ["question_id", "questionId", "questionID"],
+                    "q0",
+                ),
+                "prompt": compatibility_prompt or "",
+                "multi_select": compatibility_multi_select or False,
+                "options": compatibility_options or [],
+            }
+            if compatibility_custom is not None:
+                compatibility_question["custom"] = compatibility_custom
+            questions = _normalize_feed_questions([compatibility_question])
 
     raw_options = _first_feed_present(item, ["options", "choices", "selections"], None)
     options = _normalize_string_options(raw_options)
@@ -745,14 +1017,39 @@ def _normalize_feed_item(item):
     if permission_type is None:
         permission_type = _first_present(tool_input, ["permissionType", "permission_type", "permission"], "")
     raw_patterns = _first_feed_present(item, ["patterns"], None)
-    if raw_patterns is None:
-        raw_patterns = tool_input.get("patterns")
-    patterns = _normalize_string_options(raw_patterns)
+    raw_pattern = _first_feed_present(item, ["pattern"], None)
+    patterns = _normalize_feed_patterns(
+        raw_patterns,
+        raw_pattern,
+        tool_input.get("patterns"),
+        tool_input.get("pattern"),
+    )
+
+    plan = str(_first_feed_present(item, ["plan"], "") or "")
+    if not plan:
+        plan = str(_first_present(tool_input, ["plan"], "") or "")
+    plan_summary = str(_first_feed_present(item, ["plan_summary", "planSummary"], "") or "")
+    default_mode = str(_first_feed_present(item, ["default_mode", "defaultMode"], "") or "")
 
     if not message and questions:
         message = questions[0]["question"]
     if not message:
         message = str(_first_present(tool_input, ["message", "prompt", "question", "description"], "") or "")
+    if not message:
+        message = plan_summary or plan
+
+    agent = str(_first_feed_present(item, ["agent", "source", "app", "_source"], "") or "")
+    permission_capabilities = raw_tool_input_capabilities
+    if agent.strip().lower() == "codex" and permission_capabilities in (None, ""):
+        if isinstance(raw_tool_input, str) and raw_tool_input.strip():
+            permission_capabilities = raw_tool_input
+        elif isinstance(raw_tool_input, dict) and raw_tool_input:
+            permission_capabilities = raw_tool_input
+    permission_modes = (
+        _normalize_permission_modes(agent, permission_capabilities)
+        if _infer_feed_kind(item) == "permission"
+        else []
+    )
 
     return {
         "requestID": request_id,
@@ -762,13 +1059,20 @@ def _normalize_feed_item(item):
         "command": command,
         "workspaceID": workspace_id,
         "surfaceID": surface_id,
-        "agent": str(_first_feed_present(item, ["agent", "source", "app", "_source"], "") or ""),
+        "workstreamID": workstream_id,
+        "cwd": cwd,
+        "agent": agent,
         "status": str(_first_feed_present(item, ["status", "state"], "") or ""),
         "createdAt": str(_first_feed_present(item, ["created_at", "createdAt", "timestamp", "time"], "") or ""),
         "options": options,
         "permissionType": str(permission_type or ""),
         "patterns": patterns,
+        "permissionModes": permission_modes,
         "questions": questions,
+        "toolInput": tool_input,
+        "plan": plan,
+        "planSummary": plan_summary,
+        "defaultMode": default_mode,
         "raw": item,
     }
 
@@ -859,10 +1163,12 @@ def cmux_feed_reply(kind, request_id, action=None, mode=None, selections=None):
             "mode": plan_mode,
         })
     elif kind == "question":
-        selected = selections if isinstance(selections, list) else []
-        selected = [str(item).strip() for item in selected if str(item).strip()]
-        if not selected:
-            return {"ok": False, "error": "question selections required"}
+        if not isinstance(selections, list):
+            return {"ok": False, "error": "question selections must be a list"}
+        # cmux maps answers to questions by array position. Preserve blank
+        # placeholders so a later answer can never shift onto an earlier
+        # question that intentionally has no response.
+        selected = [str(item).strip() for item in selections]
         result = _v2_request("feed.question.reply", {
             "request_id": request_id,
             "selections": selected,

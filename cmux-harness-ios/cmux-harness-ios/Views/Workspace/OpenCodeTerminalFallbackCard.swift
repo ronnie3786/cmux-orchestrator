@@ -17,7 +17,7 @@ struct OpenCodeTerminalFallbackCard: View {
             OpenCodeInteractionHeader(
                 title: interaction.title,
                 subtitle: interaction.kind == .permission
-                    ? "OpenCode terminal · Manual controls"
+                    ? "OpenCode terminal · Remote permission"
                     : "OpenCode terminal · Remote questions",
                 systemImage: headerSystemImage
             )
@@ -48,40 +48,72 @@ struct OpenCodeTerminalFallbackCard: View {
         VStack(alignment: .leading, spacing: 9) {
             interactionDetail
 
-            if !interaction.options.isEmpty {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Label("Choices", systemImage: "list.bullet")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    Text(interaction.options.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+            LazyVStack(spacing: 6) {
+                ForEach(Array(interaction.options.enumerated()), id: \.offset) { index, option in
+                    OpenCodeChoiceRow(
+                        label: option,
+                        detail: permissionOptionDetail(option),
+                        isSelected: selectedOptionIndex == index
+                    ) {
+                        HarnessHaptics.inputCTA()
+                        selectedOptionIndex = index
+                    }
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Available choices: \(interaction.options.joined(separator: ", "))")
             }
 
-            Text("Choose with Previous or Next, then confirm.")
+            Text("Tap a response, then confirm. Your selection stays visible here while cmux updates OpenCode.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             fallbackMessage
             integrationSetup
-            manualActions(rejectLabel: "Reject")
+
+            adaptiveActionLayout {
+                OpenCodeActionButton(
+                    title: "Confirm",
+                    systemImage: "return",
+                    role: .primary,
+                    fillsWidth: false,
+                    action: submitSelectedOption
+                )
+                .disabled(!interaction.options.indices.contains(selectedOptionIndex))
+                .accessibilityHint("Confirms the selected OpenCode permission response")
+
+                OpenCodeActionButton(
+                    title: "Dismiss",
+                    systemImage: "xmark",
+                    role: .destructive,
+                    fillsWidth: false
+                ) {
+                    sendKeyWithHaptic(.escape)
+                }
+            }
         }
     }
 
     @ViewBuilder
     private var questionContent: some View {
-        if fallbackNote != nil {
+        if fallbackNote != nil || interaction.allowsMultipleSelection {
             VStack(alignment: .leading, spacing: 9) {
                 interactionDetail
-                Label(interaction.options.joined(separator: " · "), systemImage: "list.bullet")
+                LazyVStack(alignment: .leading, spacing: 7) {
+                    ForEach(Array(interaction.options.enumerated()), id: \.offset) { _, option in
+                        Label(option, systemImage: interaction.allowsMultipleSelection ? "square" : "circle")
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if interaction.allowsMultipleSelection {
+                    Label(
+                        "This terminal prompt accepts multiple selections. Move to a choice, tap Toggle, then confirm when every checkmark is correct.",
+                        systemImage: "checklist"
+                    )
                     .font(.caption)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                }
                 fallbackMessage
                 manualActions(rejectLabel: "Dismiss")
             }
@@ -89,22 +121,18 @@ struct OpenCodeTerminalFallbackCard: View {
             VStack(alignment: .leading, spacing: 9) {
                 interactionDetail
 
-                ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(Array(interaction.options.enumerated()), id: \.offset) { index, option in
-                            OpenCodeChoiceRow(
-                                label: option,
-                                detail: nil,
-                                isSelected: selectedOptionIndex == index
-                            ) {
-                                HarnessHaptics.inputCTA()
-                                selectedOptionIndex = index
-                            }
+                LazyVStack(spacing: 6) {
+                    ForEach(Array(interaction.options.enumerated()), id: \.offset) { index, option in
+                        OpenCodeChoiceRow(
+                            label: option,
+                            detail: nil,
+                            isSelected: selectedOptionIndex == index
+                        ) {
+                            HarnessHaptics.inputCTA()
+                            selectedOptionIndex = index
                         }
                     }
                 }
-                .scrollIndicators(.visible)
-                .frame(maxHeight: choiceListMaxHeight)
 
                 Text("Tap a choice, then tap Next. Your selection stays visible here while cmux advances OpenCode.")
                     .font(.caption)
@@ -139,27 +167,23 @@ struct OpenCodeTerminalFallbackCard: View {
         VStack(alignment: .leading, spacing: 9) {
             interactionDetail
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(interaction.reviewItems) { item in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.label)
-                                .font(.caption.bold())
-                                .foregroundStyle(.secondary)
-                            Label(item.value, systemImage: "checkmark.circle.fill")
-                                .font(.subheadline.bold())
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(interaction.reviewItems) { item in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.label)
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        Label(item.value, systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
                 }
             }
-            .scrollIndicators(.visible)
-            .frame(maxHeight: reviewListMaxHeight)
 
             adaptiveActionLayout {
                 OpenCodeActionButton(
@@ -247,7 +271,20 @@ struct OpenCodeTerminalFallbackCard: View {
 
     @ViewBuilder
     private func manualActions(rejectLabel: String) -> some View {
-        if dynamicTypeSize.isAccessibilitySize {
+        if interaction.allowsMultipleSelection {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    keyButton("Previous", key: previousKey, role: .neutral, fillsWidth: false, showsTitle: false)
+                    keyButton("Next", key: nextKey, role: .neutral, fillsWidth: false, showsTitle: false)
+                    keyButton("Toggle", key: .space, role: .attention, fillsWidth: false)
+                    Spacer(minLength: 0)
+                }
+                adaptiveActionLayout {
+                    keyButton("Confirm", key: .enter, role: .primary)
+                    keyButton(rejectLabel, key: .escape, role: .destructive)
+                }
+            }
+        } else if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     keyButton("Previous", key: previousKey, role: .neutral, fillsWidth: false, showsTitle: false)
@@ -295,24 +332,38 @@ struct OpenCodeTerminalFallbackCard: View {
         }
     }
 
-    private var choiceListMaxHeight: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? 280 : 210
-    }
-
-    private var reviewListMaxHeight: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? 300 : 230
-    }
-
     private func submitSelectedOption() {
         guard interaction.options.indices.contains(selectedOptionIndex) else { return }
         HarnessHaptics.inputCTA()
 
-        // Each OpenCode question opens on its first row. Moving down and back up
-        // makes that starting point explicit, then the remaining downs choose the
-        // locally checked row before Enter advances to the next question.
-        let selectionKeys = [HarnessKey.down, .up]
-            + Array(repeating: HarnessKey.down, count: selectedOptionIndex)
+        // OpenCode opens on its first choice. Moving one step forward and back
+        // makes that starting point explicit before navigating to the locally
+        // checked row and confirming it.
+        let forwardKey: HarnessKey = interaction.navigationAxis == .horizontal ? .right : .down
+        let backwardKey: HarnessKey = interaction.navigationAxis == .horizontal ? .left : .up
+        let selectionKeys = [forwardKey, backwardKey]
+            + Array(repeating: forwardKey, count: selectedOptionIndex)
         sendKeys(selectionKeys + [.enter])
+    }
+
+    private func permissionOptionDetail(_ option: String) -> String? {
+        let value = option.lowercased()
+        if value.contains("bypass") {
+            return "Allow and request bypass mode for this session."
+        }
+        if value.contains("all tool") || value == "all" {
+            return "Allow all supported tools for this session."
+        }
+        if value.contains("always") {
+            return "Approve future matching requests."
+        }
+        if value.contains("once") || value == "allow" {
+            return "Approve only this request."
+        }
+        if value.contains("reject") || value.contains("deny") {
+            return "Deny this request."
+        }
+        return nil
     }
 
     private func sendKeyWithHaptic(_ key: HarnessKey) {

@@ -416,7 +416,7 @@ extension HarnessClient {
 
 private actor LocalDemoHarnessStore {
     private var globalEnabled = true
-    private var nextWorkspaceIndex = 5
+    private var nextWorkspaceIndex = 9
     private var workspaces: [Workspace]
     private var screenByIndex: [Int: String]
     private var logEntries: [LogEntry]
@@ -1046,6 +1046,110 @@ private actor LocalDemoHarnessStore {
                 surfaceCreatedAt: isoTimestamp(),
                 surfaceAge: 900
             ),
+            Workspace(
+                hasClaude: true,
+                index: 5,
+                name: "sample-app : Long OpenCode question",
+                uuid: "demo-workspace-5",
+                enabled: false,
+                autoMode: .off,
+                starred: false,
+                autoEnabledAt: nil,
+                autoExpiresAt: nil,
+                customName: "Long OpenCode question",
+                lastCheck: isoTimestamp(),
+                screenTail: nil,
+                screenFull: nil,
+                cwd: "~/Projects/sample-app",
+                branch: "feature/opencode-question-sheet",
+                sessionStart: Date().timeIntervalSince1970 - 720,
+                sessionCost: "$0.00",
+                surfaceId: "demo-surface-5",
+                surfaceUuid: "demo-surface-5",
+                surfaceLabel: "Long OpenCode question",
+                surfaceTitle: "Local Demo",
+                gitDirty: false,
+                surfaceCreatedAt: isoTimestamp(),
+                surfaceAge: 720
+            ),
+            Workspace(
+                hasClaude: true,
+                index: 6,
+                name: "sample-app : OpenCode multi-select",
+                uuid: "demo-workspace-6",
+                enabled: false,
+                autoMode: .off,
+                starred: false,
+                autoEnabledAt: nil,
+                autoExpiresAt: nil,
+                customName: "OpenCode multi-select",
+                lastCheck: isoTimestamp(),
+                screenTail: nil,
+                screenFull: nil,
+                cwd: "~/Projects/sample-app",
+                branch: "feature/opencode-question-sheet",
+                sessionStart: Date().timeIntervalSince1970 - 600,
+                sessionCost: "$0.00",
+                surfaceId: "demo-surface-6",
+                surfaceUuid: "demo-surface-6",
+                surfaceLabel: "OpenCode multi-select",
+                surfaceTitle: "Local Demo",
+                gitDirty: false,
+                surfaceCreatedAt: isoTimestamp(),
+                surfaceAge: 600
+            ),
+            Workspace(
+                hasClaude: true,
+                index: 7,
+                name: "sample-app : OpenCode freeform",
+                uuid: "demo-workspace-7",
+                enabled: false,
+                autoMode: .off,
+                starred: false,
+                autoEnabledAt: nil,
+                autoExpiresAt: nil,
+                customName: "OpenCode freeform",
+                lastCheck: isoTimestamp(),
+                screenTail: nil,
+                screenFull: nil,
+                cwd: "~/Projects/sample-app",
+                branch: "feature/opencode-question-sheet",
+                sessionStart: Date().timeIntervalSince1970 - 480,
+                sessionCost: "$0.00",
+                surfaceId: "demo-surface-7",
+                surfaceUuid: "demo-surface-7",
+                surfaceLabel: "OpenCode freeform",
+                surfaceTitle: "Local Demo",
+                gitDirty: false,
+                surfaceCreatedAt: isoTimestamp(),
+                surfaceAge: 480
+            ),
+            Workspace(
+                hasClaude: true,
+                index: 8,
+                name: "sample-app : OpenCode plan approval",
+                uuid: "demo-workspace-8",
+                enabled: false,
+                autoMode: .off,
+                starred: false,
+                autoEnabledAt: nil,
+                autoExpiresAt: nil,
+                customName: "OpenCode plan approval",
+                lastCheck: isoTimestamp(),
+                screenTail: nil,
+                screenFull: nil,
+                cwd: "~/Projects/sample-app",
+                branch: "feature/opencode-question-sheet",
+                sessionStart: Date().timeIntervalSince1970 - 360,
+                sessionCost: "$0.00",
+                surfaceId: "demo-surface-8",
+                surfaceUuid: "demo-surface-8",
+                surfaceLabel: "OpenCode plan approval",
+                surfaceTitle: "Local Demo",
+                gitDirty: false,
+                surfaceCreatedAt: isoTimestamp(),
+                surfaceAge: 360
+            ),
         ]
     }
 
@@ -1091,22 +1195,25 @@ private actor LocalDemoHarnessStore {
             • OpenCode 1.18.3
             """
         case 3:
+            let wrappedEvaluationContext = (1...55)
+                .map { "│    Wrapped source-review detail line \($0)." }
+                .joined(separator: "\n")
             return """
-            → Asked 3 questions
+            → Asked 2 questions
 
-            ▣ Build · DeepSeek V4 Flash
+            ▣ Build · GLM 5.2
 
-            │ Build method   Export method   Configuration   Confirm
+            │ Comment 1: partial results   Comment 2: parity   Confirm
             │
-            │ How do you want to build/publish the iOS app?
+            │ Evaluate comment 1
+            │ (fetchAllFireworksGatewayModels partial results / fireworksMaxPages)?
             │
-            │ 1. Build from current branch (default)   /Volumes/PROJECTS/Development/
-            │    Build and archive from the current Git branch, then publish via tailnet
-            │ 2. Publish an existing IPA   Doximity-Claude-IOSDOX-26368-markdown-text-selection
-            │    Skip building and publish an existing .ipa file
-            │ 3. Export from existing archive   rr/feature/IOSDOX-26368-markdown-text-selection
-            │    Export and publish from a pre-existing .xcarchive
-            │ 4. Type your own answer   /Volumes/PROJECTS/Development/
+            │ ❯ 1. Evaluate
+            │    Review the actual source code and assess whether the suggestion is valid.
+            \(wrappedEvaluationContext)
+            │ ○ 2. Skip
+            │    Do not evaluate this comment.
+            │ ◉ 3. Type your own answer
             │
             │ ⇆ tab   ↑↓ select   enter confirm   esc dismiss
             │
@@ -1131,6 +1238,32 @@ private actor LocalDemoHarnessStore {
             │ ⇆ tab   enter submit   esc dismiss
             │
             • OpenCode 1.18.3
+            """
+        case 5:
+            return """
+            cmux local demo - long native question
+
+            OpenCode is waiting for a deployment destination.
+            The native question sheet should expose every choice.
+            """
+        case 6:
+            return """
+            cmux local demo - native multi-select
+
+            OpenCode is waiting for a set of validation steps.
+            More than one answer can remain selected.
+            """
+        case 7:
+            return """
+            cmux local demo - native freeform question
+
+            OpenCode is waiting for a typed release note.
+            """
+        case 8:
+            return """
+            cmux local demo - plan approval
+
+            OpenCode has proposed a plan and is waiting for a continuation mode.
             """
         default:
             return "Demo session \(index)\nNo terminal output yet."
@@ -1278,6 +1411,169 @@ private actor LocalDemoHarnessStore {
                         ]
                     ),
                 ]
+            ),
+            FeedItem(
+                requestID: "demo-opencode-long-question",
+                kind: "question",
+                title: "Choose deployment destination",
+                message: nil,
+                command: nil,
+                workspaceID: "demo-workspace-5",
+                surfaceID: "demo-surface-5",
+                agent: "OpenCode",
+                createdAt: isoTimestamp(),
+                options: nil,
+                permissionType: nil,
+                patterns: nil,
+                questions: [
+                    FeedItem.Question(
+                        id: "deployment-destination",
+                        header: "Destination",
+                        question: "Where should this signed iOS build be published for validation?",
+                        multiSelect: false,
+                        options: [
+                            FeedItem.Option(
+                                id: "internal-qa",
+                                label: "Internal QA devices",
+                                description: "Publish to the registered internal QA device group."
+                            ),
+                            FeedItem.Option(
+                                id: "design-review",
+                                label: "Design review devices",
+                                description: "Share with the design review group for visual validation."
+                            ),
+                            FeedItem.Option(
+                                id: "product-review",
+                                label: "Product review devices",
+                                description: "Share with product partners before wider distribution."
+                            ),
+                            FeedItem.Option(
+                                id: "engineering-dogfood",
+                                label: "Engineering dogfood",
+                                description: "Publish to the engineering dogfood device group."
+                            ),
+                            FeedItem.Option(
+                                id: "staging-testflight",
+                                label: "Staging TestFlight group",
+                                description: "Upload to the staging group in TestFlight."
+                            ),
+                            FeedItem.Option(
+                                id: "release-candidate",
+                                label: "Release candidate group",
+                                description: "Publish for final release-candidate verification."
+                            ),
+                            FeedItem.Option(
+                                id: "support-preview",
+                                label: "Support preview devices",
+                                description: "Give the support team an early preview build."
+                            ),
+                            FeedItem.Option(
+                                id: "executive-preview",
+                                label: "Executive preview devices",
+                                description: "Share the build with the executive preview group."
+                            ),
+                            FeedItem.Option(
+                                id: "tailnet-emergency",
+                                label: "Tailnet-only emergency install",
+                                description: "Publish an OTA install page available only on the private tailnet."
+                            ),
+                        ],
+                        allowsCustomAnswer: false
+                    ),
+                ]
+            ),
+            FeedItem(
+                requestID: "demo-opencode-multi-select",
+                kind: "question",
+                title: "Choose validation steps",
+                message: nil,
+                command: nil,
+                workspaceID: "demo-workspace-6",
+                surfaceID: "demo-surface-6",
+                agent: "OpenCode",
+                createdAt: isoTimestamp(),
+                options: nil,
+                permissionType: nil,
+                patterns: nil,
+                questions: [
+                    FeedItem.Question(
+                        id: "validation-steps",
+                        header: "Validation",
+                        question: "Which checks should run before publishing the build?",
+                        multiSelect: true,
+                        options: [
+                            FeedItem.Option(
+                                id: "unit-tests",
+                                label: "Unit tests",
+                                description: "Run the focused unit-test suite."
+                            ),
+                            FeedItem.Option(
+                                id: "ui-tests",
+                                label: "UI tests",
+                                description: "Exercise the permission and question flows."
+                            ),
+                            FeedItem.Option(
+                                id: "accessibility-audit",
+                                label: "Accessibility audit",
+                                description: "Check labels, traits, and Dynamic Type behavior."
+                            ),
+                            FeedItem.Option(
+                                id: "visual-review",
+                                label: "Visual review",
+                                description: "Capture screenshots for final review."
+                            ),
+                        ],
+                        allowsCustomAnswer: false
+                    ),
+                ]
+            ),
+            FeedItem(
+                requestID: "demo-opencode-freeform",
+                kind: "question",
+                title: "Add release context",
+                message: nil,
+                command: nil,
+                workspaceID: "demo-workspace-7",
+                surfaceID: "demo-surface-7",
+                agent: "OpenCode",
+                createdAt: isoTimestamp(),
+                options: nil,
+                permissionType: nil,
+                patterns: nil,
+                questions: [
+                    FeedItem.Question(
+                        id: "release-context",
+                        header: "Release note",
+                        question: "What should reviewers know about this build?",
+                        multiSelect: false,
+                        options: [],
+                        allowsCustomAnswer: true
+                    ),
+                ]
+            ),
+            FeedItem(
+                requestID: "demo-opencode-plan",
+                kind: "plan",
+                title: "Plan approval",
+                message: "Implement the permission and question sheet fixes.",
+                command: nil,
+                workspaceID: "demo-workspace-8",
+                surfaceID: "demo-surface-8",
+                agent: "OpenCode",
+                createdAt: isoTimestamp(),
+                options: nil,
+                permissionType: nil,
+                patterns: nil,
+                questions: nil,
+                plan: """
+                # Permission and question UI
+
+                1. Normalize every supported response mode.
+                2. Present the request in a scrollable adaptive sheet.
+                3. Verify long, multi-select, freeform, and plan prompts.
+                """,
+                planSummary: "Permission and question UI",
+                defaultMode: "manual"
             ),
         ]
     }

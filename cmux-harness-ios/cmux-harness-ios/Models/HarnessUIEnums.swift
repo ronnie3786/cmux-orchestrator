@@ -7,6 +7,7 @@ enum HarnessKey: String, CaseIterable, Equatable, Identifiable, Sendable {
     case enter
     case left
     case right
+    case space
     case escape
     case backspace
 
@@ -33,6 +34,8 @@ enum HarnessKey: String, CaseIterable, Equatable, Identifiable, Sendable {
             return "Left"
         case .right:
             return "Right"
+        case .space:
+            return "Space"
         case .escape:
             return "Esc"
         case .backspace:
@@ -54,6 +57,8 @@ enum HarnessKey: String, CaseIterable, Equatable, Identifiable, Sendable {
             return "arrow.left"
         case .right:
             return "arrow.right"
+        case .space:
+            return "keyboard"
         case .escape:
             return "x.square"
         case .backspace:

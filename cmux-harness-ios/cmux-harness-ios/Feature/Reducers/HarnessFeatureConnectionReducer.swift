@@ -446,6 +446,7 @@ extension HarnessFeature {
 
             case let .replyToFeed(requestID, kind, action, mode, selections):
                 guard !state.pendingFeedReplyIDs.contains(requestID) else { return .none }
+                state.errorMessage = nil
                 state.pendingFeedReplyIDs.insert(requestID)
                 return .run { [client = self.harnessClient, baseURLString = state.committedServerURLString] send in
                     do {

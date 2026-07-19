@@ -373,6 +373,175 @@ class TestParseFeedItems(unittest.TestCase):
         self.assertEqual(item["surfaceID"], "surf-1")
         self.assertEqual(item["raw"]["request_id"], "req-1")
 
+    def test_normalizes_actual_feed_list_permission_shape(self):
+        tool_input = {
+            "permission": "external_directory",
+            "patterns": ["/private/tmp/*", "/repo/generated/*"],
+            "metadata": {"tool": "read"},
+        }
+        parsed = _parse_feed_items({
+            "items": [{
+                "id": "item-1",
+                "workstream_id": "opencode-session-1",
+                "source": "opencode",
+                "kind": "permissionRequest",
+                "created_at": "2026-07-19T21:00:00Z",
+                "updated_at": "2026-07-19T21:00:01Z",
+                "cwd": "/repo",
+                "status": "pending",
+                "request_id": "permission-1",
+                "tool_name": "external_directory",
+                "tool_input": json.dumps(tool_input),
+                "pattern": "/repo/generated/*",
+            }],
+        })
+
+        self.assertEqual(len(parsed), 1)
+        item = parsed[0]
+        self.assertEqual(item["workstreamID"], "opencode-session-1")
+        self.assertEqual(item["cwd"], "/repo")
+        self.assertEqual(item["agent"], "opencode")
+        self.assertEqual(item["permissionType"], "external_directory")
+        self.assertEqual(item["patterns"], ["/repo/generated/*", "/private/tmp/*"])
+        self.assertEqual(item["toolInput"], tool_input)
+        self.assertEqual(item["command"], "")
+        self.assertEqual(
+            [entry["mode"] for entry in item["permissionModes"]],
+            ["once", "always", "all", "bypass", "deny"],
+        )
+
+    def test_permission_modes_follow_source_and_codex_capabilities(self):
+        missing = object()
+        cases = [
+            ("opencode", missing, ["once", "always", "all", "bypass", "deny"]),
+            ("claude", missing, ["once", "always", "all", "deny"]),
+            ("hermes-agent", missing, ["once", "deny"]),
+            ("codex", missing, ["once", "always", "all", "deny"]),
+            ("codex", "{}", ["once", "always", "deny"]),
+            ("codex", "not-json", ["deny"]),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/commandExecution/requestApproval",
+                    "available_decisions": ["accept"],
+                }),
+                ["once", "deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/commandExecution/requestApproval",
+                    "available_decisions": ["acceptForSession"],
+                }),
+                ["always", "deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/commandExecution/requestApproval",
+                    "available_decisions": ["acceptWithExecpolicyAmendment"],
+                    "proposed_execpolicy_amendment": True,
+                }),
+                ["all", "deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/commandExecution/requestApproval",
+                    "available_decisions": ["applyNetworkPolicyAmendment"],
+                    "proposed_network_policy_amendments": [True],
+                }),
+                ["all", "deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/fileChange/requestApproval",
+                    "available_decisions": ["accept", "acceptForSession"],
+                    "proposed_execpolicy_amendment": True,
+                }),
+                ["once", "always", "deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/permissions/requestApproval",
+                    "available_decisions": [],
+                }),
+                ["once", "always", "all", "deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/commandExecution/requestApproval",
+                    "available_decisions": None,
+                }),
+                ["deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/fileChange/requestApproval",
+                    "available_decisions": "accept",
+                }),
+                ["deny"],
+            ),
+            (
+                "codex",
+                json.dumps({
+                    "app_server_method": "item/commandExecution/requestApproval",
+                    "available_decisions": {},
+                }),
+                ["deny"],
+            ),
+        ]
+
+        for index, (source, capabilities, expected_modes) in enumerate(cases):
+            with self.subTest(source=source, capabilities=capabilities):
+                item = {
+                    "kind": "permissionRequest",
+                    "status": "pending",
+                    "request_id": f"permission-matrix-{index}",
+                    "source": source,
+                }
+                if capabilities is not missing:
+                    item["tool_input_capabilities"] = capabilities
+
+                parsed = _parse_feed_items({"items": [item]})
+
+                self.assertEqual(
+                    [entry["mode"] for entry in parsed[0]["permissionModes"]],
+                    expected_modes,
+                )
+
+    def test_codex_capabilities_fall_back_to_raw_tool_input(self):
+        cases = [
+            ("not-json", ["deny"]),
+            (
+                json.dumps({
+                    "app_server_method": "item/commandExecution/requestApproval",
+                    "available_decisions": ["acceptWithExecpolicyAmendment"],
+                    "proposed_execpolicy_amendment": {"command": "git status"},
+                }),
+                ["all", "deny"],
+            ),
+        ]
+
+        for index, (tool_input, expected_modes) in enumerate(cases):
+            with self.subTest(tool_input=tool_input):
+                parsed = _parse_feed_items({"items": [{
+                    "kind": "permissionRequest",
+                    "status": "pending",
+                    "request_id": f"permission-raw-capabilities-{index}",
+                    "source": "codex",
+                    "tool_input": tool_input,
+                }]})
+
+                self.assertEqual(
+                    [entry["mode"] for entry in parsed[0]["permissionModes"]],
+                    expected_modes,
+                )
+
     def test_infers_plan_and_question_items(self):
         parsed = _parse_feed_items([
             {"request_id": "plan-1", "kind": "exit-plan", "status": "pending", "prompt": "Approve plan?"},
@@ -464,6 +633,197 @@ class TestParseFeedItems(unittest.TestCase):
         self.assertEqual(parsed[0]["message"], "Ready to build?")
         self.assertEqual(parsed[0]["options"], ["Build", "Keep planning", "3"])
 
+    def test_normalizes_actual_feed_list_questions_shape(self):
+        parsed = _parse_feed_items({
+            "items": [{
+                "id": "item-question-1",
+                "workstream_id": "opencode-session-1",
+                "source": "opencode",
+                "kind": "question",
+                "cwd": "/repo",
+                "status": "pending",
+                "request_id": "question-1",
+                "questions": [{
+                    "id": "environment",
+                    "header": "Environment",
+                    "prompt": "Where should this run?",
+                    "multi_select": True,
+                    "custom": False,
+                    "options": [
+                        {"id": "staging", "label": "Staging", "description": "Shared QA"},
+                        {"id": "prod", "label": "Production", "description": "Live traffic"},
+                    ],
+                }, {
+                    "id": "checks",
+                    "prompt": "Which checks?",
+                    "multiple": "true",
+                    "options": ["Unit", "UI"],
+                }],
+            }],
+        })
+
+        self.assertEqual(len(parsed), 1)
+        item = parsed[0]
+        self.assertEqual(item["message"], "Where should this run?")
+        self.assertEqual(item["options"], ["Staging", "Production", "Unit", "UI"])
+        self.assertEqual(item["questions"], [{
+            "id": "environment",
+            "header": "Environment",
+            "question": "Where should this run?",
+            "multiSelect": True,
+            "options": [
+                {"id": "staging", "label": "Staging", "description": "Shared QA"},
+                {"id": "prod", "label": "Production", "description": "Live traffic"},
+            ],
+            "allowsCustomAnswer": False,
+        }, {
+            "id": "checks",
+            "header": "",
+            "question": "Which checks?",
+            "multiSelect": True,
+            "options": [
+                {"id": "opt0", "label": "Unit", "description": ""},
+                {"id": "opt1", "label": "UI", "description": ""},
+            ],
+        }])
+
+    def test_synthesizes_question_from_feed_list_compatibility_fields(self):
+        parsed = _parse_feed_items({
+            "items": [{
+                "id": "item-question-compat",
+                "workstream_id": "claude-session-1",
+                "source": "claude",
+                "kind": "question",
+                "status": "pending",
+                "request_id": "question-compat",
+                "question_prompt": "Choose a deploy target",
+                "question_multi_select": False,
+                "question_custom": True,
+                "question_options": [
+                    {"id": "staging", "label": "Staging", "description": "Shared QA"},
+                    {"id": "prod", "label": "Production", "description": "Live traffic"},
+                ],
+            }],
+        })
+
+        self.assertEqual(len(parsed), 1)
+        item = parsed[0]
+        self.assertEqual(item["message"], "Choose a deploy target")
+        self.assertEqual(item["options"], ["Staging", "Production"])
+        self.assertEqual(item["questions"], [{
+            "id": "q0",
+            "header": "",
+            "question": "Choose a deploy target",
+            "multiSelect": False,
+            "options": [
+                {"id": "staging", "label": "Staging", "description": "Shared QA"},
+                {"id": "prod", "label": "Production", "description": "Live traffic"},
+            ],
+            "allowsCustomAnswer": True,
+        }])
+
+    def test_invalid_question_array_uses_feed_list_compatibility_fields(self):
+        parsed = _parse_feed_items({
+            "items": [{
+                "kind": "question",
+                "status": "pending",
+                "request_id": "question-empty-compat",
+                "questions": [{}],
+                "question_prompt": "Choose a release channel",
+                "question_options": ["Beta", "Stable"],
+            }],
+        })
+
+        self.assertEqual(parsed[0]["questions"], [{
+            "id": "q0",
+            "header": "",
+            "question": "Choose a release channel",
+            "multiSelect": False,
+            "options": [
+                {"id": "opt0", "label": "Beta", "description": ""},
+                {"id": "opt1", "label": "Stable", "description": ""},
+            ],
+        }])
+
+    def test_structured_question_uses_header_or_default_prompt(self):
+        parsed = _parse_feed_items({"items": [{
+            "kind": "question",
+            "status": "pending",
+            "request_id": "question-prompt-fallbacks",
+            "questions": [{
+                "id": "header-only",
+                "header": "Deployment target",
+                "options": [],
+            }, {
+                "id": "options-only",
+                "options": ["Beta", "Stable"],
+            }],
+        }]})
+
+        self.assertEqual(
+            [question["question"] for question in parsed[0]["questions"]],
+            ["Deployment target", "Answer the agent question."],
+        )
+        self.assertEqual(
+            [question["header"] for question in parsed[0]["questions"]],
+            ["", ""],
+        )
+
+    def test_question_normalization_drops_blank_rows_and_stabilizes_duplicate_ids(self):
+        parsed = _parse_feed_items({
+            "items": [{
+                "kind": "question",
+                "status": "pending",
+                "request_id": "question-duplicate-options",
+                "questions": [{
+                    "id": "question",
+                    "prompt": "First?",
+                    "options": [
+                        {"id": "choice", "label": "Alpha"},
+                        {"id": "choice", "label": "  "},
+                        {"id": "choice", "label": "Beta"},
+                    ],
+                }, {
+                    "id": "question",
+                    "prompt": "Second?",
+                    "options": ["Gamma"],
+                }],
+            }],
+        })
+
+        questions = parsed[0]["questions"]
+        self.assertEqual([question["id"] for question in questions], ["question", "question-2"])
+        self.assertEqual(
+            [(option["id"], option["label"]) for option in questions[0]["options"]],
+            [("choice", "Alpha"), ("choice-2", "Beta")],
+        )
+
+    def test_normalizes_actual_feed_list_exit_plan_shape(self):
+        parsed = _parse_feed_items({
+            "items": [{
+                "id": "item-plan-1",
+                "workstream_id": "claude-session-1",
+                "source": "claude",
+                "kind": "exitPlan",
+                "cwd": "/repo",
+                "status": "pending",
+                "request_id": "plan-1",
+                "plan": "# Implement permission UI\n\n1. Normalize the feed.",
+                "plan_summary": "# Implement permission UI",
+                "default_mode": "manual",
+            }],
+        })
+
+        self.assertEqual(len(parsed), 1)
+        item = parsed[0]
+        self.assertEqual(item["kind"], "plan")
+        self.assertEqual(item["message"], "# Implement permission UI")
+        self.assertEqual(item["plan"], "# Implement permission UI\n\n1. Normalize the feed.")
+        self.assertEqual(item["planSummary"], "# Implement permission UI")
+        self.assertEqual(item["defaultMode"], "manual")
+        self.assertEqual(item["workstreamID"], "claude-session-1")
+        self.assertEqual(item["cwd"], "/repo")
+
     def test_skips_telemetry_and_expired_feed_history(self):
         parsed = _parse_feed_items([
             {"id": "event-1", "kind": "sessionStart", "status": "telemetry"},
@@ -519,17 +879,43 @@ class TestFeedReply(unittest.TestCase):
             "selections": ["A"],
         })
 
+    def test_question_reply_sends_explicit_empty_selections(self):
+        with patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True}) as mock_request:
+            result = cmux_feed_reply("question", "req-1", selections=[])
+
+        self.assertTrue(result["ok"])
+        mock_request.assert_called_once_with("feed.question.reply", {
+            "request_id": "req-1",
+            "selections": [],
+        })
+
+    def test_question_reply_preserves_blank_answer_positions(self):
+        with patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True}) as mock_request:
+            result = cmux_feed_reply(
+                "question",
+                "req-1",
+                selections=["Staging", "   ", "Unit, UI"],
+            )
+
+        self.assertTrue(result["ok"])
+        mock_request.assert_called_once_with("feed.question.reply", {
+            "request_id": "req-1",
+            "selections": ["Staging", "", "Unit, UI"],
+        })
+
     def test_unknown_or_invalid_replies_never_default_to_approval(self):
         with patch("cmux_harness.cmux_api._v2_request") as mock_request:
             unknown_permission = cmux_feed_reply("permission", "req-1", action="surprise")
             invalid_permission_mode = cmux_feed_reply("permission", "req-1", mode="approveEverything")
             unknown_plan = cmux_feed_reply("plan", "req-1", action="surprise")
-            empty_question = cmux_feed_reply("question", "req-1", action="answer", selections=[])
+            missing_question = cmux_feed_reply("question", "req-1", action="answer")
+            non_list_question = cmux_feed_reply("question", "req-1", selections="A")
 
         self.assertFalse(unknown_permission["ok"])
         self.assertFalse(invalid_permission_mode["ok"])
         self.assertFalse(unknown_plan["ok"])
-        self.assertFalse(empty_question["ok"])
+        self.assertFalse(missing_question["ok"])
+        self.assertFalse(non_list_question["ok"])
         mock_request.assert_not_called()
 
     def test_missing_request_id_is_error(self):
@@ -538,6 +924,22 @@ class TestFeedReply(unittest.TestCase):
 
 
 class TestSendToWorkspace(unittest.TestCase):
+
+    @patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True})
+    def test_space_key_uses_literal_text_for_checkbox_toggles(self, mock_v2_request):
+        result = cmux_send_to_workspace(
+            0,
+            0,
+            key="space",
+            workspace_uuid="workspace-1",
+            surface_id="surface-1",
+        )
+
+        self.assertTrue(result)
+        mock_v2_request.assert_called_once_with(
+            "surface.send_text",
+            {"workspace_id": "workspace-1", "text": " ", "surface_id": "surface-1"},
+        )
 
     @patch("cmux_harness.cmux_api._v2_request", return_value={"ok": True})
     def test_extended_terminal_keys_use_send_key(self, mock_v2_request):

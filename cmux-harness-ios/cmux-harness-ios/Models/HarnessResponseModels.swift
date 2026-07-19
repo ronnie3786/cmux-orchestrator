@@ -44,6 +44,13 @@ struct FeedResponse: Decodable, Equatable, Sendable {
 }
 
 struct FeedItem: Decodable, Equatable, Identifiable, Sendable {
+    struct PermissionMode: Decodable, Equatable, Identifiable, Sendable {
+        var mode: String
+        var label: String
+
+        var id: String { mode }
+    }
+
     struct Option: Decodable, Equatable, Identifiable, Sendable {
         var id: String
         var label: String
@@ -56,6 +63,11 @@ struct FeedItem: Decodable, Equatable, Identifiable, Sendable {
         var question: String
         var multiSelect: Bool
         var options: [Option]
+        var allowsCustomAnswer: Bool? = nil
+
+        var customAnswerAllowed: Bool {
+            allowsCustomAnswer != false
+        }
     }
 
     var requestID: String
@@ -70,7 +82,13 @@ struct FeedItem: Decodable, Equatable, Identifiable, Sendable {
     var options: [String]?
     var permissionType: String? = nil
     var patterns: [String]? = nil
+    var permissionModes: [PermissionMode]? = nil
     var questions: [Question]? = nil
+    var workstreamID: String? = nil
+    var cwd: String? = nil
+    var plan: String? = nil
+    var planSummary: String? = nil
+    var defaultMode: String? = nil
 
     var id: String { requestID }
 
@@ -98,6 +116,6 @@ struct FeedItem: Decodable, Equatable, Identifiable, Sendable {
     }
 
     var supportsNativeReply: Bool {
-        kind != "question" || questions?.contains(where: \.multiSelect) != true
+        true
     }
 }

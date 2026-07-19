@@ -25,10 +25,11 @@ struct OpenCodeTerminalInteraction: Equatable, Sendable {
     var options: [String]
     var navigationAxis: NavigationAxis
     var reviewItems: [ReviewItem] = []
+    var allowsMultipleSelection = false
 
     var promptID: String {
         let optionID = options.joined(separator: "|")
         let reviewID = reviewItems.map(\.id).joined(separator: "|")
-        return "\(kind)|\(detail)|\(optionID)|\(reviewID)"
+        return "\(kind)|\(detail)|\(optionID)|\(reviewID)|multi:\(allowsMultipleSelection)"
     }
 }

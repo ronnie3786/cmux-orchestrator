@@ -5,7 +5,7 @@ enum OpenCodeTerminalInteractionDetector {
         let plainText = TerminalTextStyler.plainText(for: rawText)
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-        let visibleLines = Array(plainText.split(separator: "\n", omittingEmptySubsequences: false).suffix(48))
+        let visibleLines = Array(plainText.split(separator: "\n", omittingEmptySubsequences: false))
             .map(String.init)
 
         if let permission = permissionInteraction(in: visibleLines) {
@@ -29,9 +29,7 @@ enum OpenCodeTerminalInteractionDetector {
 
         let block = Array(lines[headerIndex...anchorIndex])
         let flattened = block.map { normalized($0) }.joined(separator: " ").lowercased()
-        let optionLabels = ["Allow once", "Allow always", "Reject"]
-        guard optionLabels.allSatisfy({ flattened.contains($0.lowercased()) }),
-              flattened.contains("enter"),
+        guard flattened.contains("enter"),
               flattened.contains("confirm") else {
             return nil
         }
@@ -42,18 +40,19 @@ enum OpenCodeTerminalInteractionDetector {
               isCurrentPromptTail(Array(block[(footerIndex + 1)...])) else {
             return nil
         }
+        guard let permissionControls = permissionOptions(
+            in: block,
+            before: footerIndex
+        ) else { return nil }
+        let optionLabels = permissionControls.labels
 
-        let detailLines = block
-            .dropFirst()
-            .prefix { line in
-                let value = normalized(line).lowercased()
-                return !value.contains("allow once")
-                    && !value.contains("allow always")
-                    && !value.contains("reject")
-                    && !value.contains("select")
-                    && !value.contains("confirm")
+        let detailLines = block.enumerated()
+            .compactMap { index, line -> String? in
+                guard index > 0, index < permissionControls.firstRowIndex else {
+                    return nil
+                }
+                return primaryColumn(in: line)
             }
-            .map { primaryColumn(in: $0) }
             .filter { value in
                 !value.isEmpty && value.lowercased() != "patterns"
             }
@@ -69,10 +68,7 @@ enum OpenCodeTerminalInteractionDetector {
 
     private static func questionReviewInteraction(in lines: [String]) -> OpenCodeTerminalInteraction? {
         guard let anchorIndex = activeOpenCodeAnchorIndex(in: lines) else { return nil }
-        let windowStart = max(
-            activePromptWindowStart(in: lines, before: anchorIndex),
-            anchorIndex - 32
-        )
+        let windowStart = activePromptWindowStart(in: lines, before: anchorIndex)
         let activeLines = Array(lines[windowStart...anchorIndex])
         let flattened = activeLines.map { normalized($0) }.joined(separator: " ").lowercased()
         guard flattened.contains("review"),
@@ -110,10 +106,7 @@ enum OpenCodeTerminalInteractionDetector {
 
     private static func questionInteraction(in lines: [String]) -> OpenCodeTerminalInteraction? {
         guard let anchorIndex = activeOpenCodeAnchorIndex(in: lines) else { return nil }
-        let windowStart = max(
-            activePromptWindowStart(in: lines, before: anchorIndex),
-            anchorIndex - 24
-        )
+        let windowStart = activePromptWindowStart(in: lines, before: anchorIndex)
         let activeLines = Array(lines[windowStart...anchorIndex])
 
         let flattened = activeLines.map { normalized($0) }.joined(separator: " ").lowercased()
@@ -133,6 +126,7 @@ enum OpenCodeTerminalInteractionDetector {
         let optionLines = Array(activeLines[..<footerIndex])
         let options = optionLines.compactMap { numberedOption(from: $0) }
         guard options.count >= 2 else { return nil }
+        let allowsMultipleSelection = optionLines.contains(where: containsCheckboxSelectionMarker)
 
         let firstOptionIndex = optionLines.firstIndex(where: { numberedOption(from: $0) != nil }) ?? optionLines.startIndex
         let question = optionLines[..<firstOptionIndex]
@@ -149,12 +143,96 @@ enum OpenCodeTerminalInteractionDetector {
             title: "OpenCode question",
             detail: question,
             options: options,
-            navigationAxis: .vertical
+            navigationAxis: .vertical,
+            allowsMultipleSelection: allowsMultipleSelection
         )
     }
 
+    private static func permissionOptions(
+        in lines: [String],
+        before footerIndex: Int
+    ) -> (labels: [String], firstRowIndex: Int)? {
+        var footerStartIndex = footerIndex
+        if footerIndex > lines.startIndex {
+            let current = normalized(lines[footerIndex]).lowercased()
+            let previous = normalized(lines[footerIndex - 1]).lowercased()
+            let requiredTokens = ["select", "enter", "confirm"]
+            if !requiredTokens.allSatisfy({ containsControlToken($0, in: current) }),
+               requiredTokens.allSatisfy({ containsControlToken($0, in: previous + " " + current) }) {
+                footerStartIndex -= 1
+            }
+        }
+
+        var rows: [[String]] = []
+        var firstRowIndex = footerStartIndex
+        var cursor = footerStartIndex - 1
+        var foundOptions = false
+
+        while cursor >= lines.startIndex {
+            let value = normalized(lines[cursor])
+            if value.isEmpty, !foundOptions {
+                cursor -= 1
+                continue
+            }
+
+            let labels = permissionLabels(from: value)
+            guard !labels.isEmpty else { break }
+            rows.insert(labels, at: 0)
+            firstRowIndex = cursor
+            foundOptions = true
+            cursor -= 1
+        }
+
+        var seen: Set<String> = []
+        let labels = rows.flatMap { $0 }.filter { seen.insert($0.lowercased()).inserted }
+        guard labels.count >= 2 else { return nil }
+        return (labels, firstRowIndex)
+    }
+
+    private static func permissionLabels(from text: String) -> [String] {
+        let lowercaseText = text.lowercased()
+        var candidates = [
+            "Allow once",
+            "Allow always",
+            "Allow all tools",
+            "All tools",
+            "Bypass permissions",
+            "Bypass",
+            "Reject",
+            "Deny",
+        ]
+        if lowercaseText.contains("allow all tools") {
+            candidates.removeAll(where: { $0 == "All tools" })
+        }
+        if lowercaseText.contains("bypass permissions") {
+            candidates.removeAll(where: { $0 == "Bypass" })
+        }
+
+        let matches = candidates.compactMap { label -> (String, Range<String.Index>)? in
+            guard let range = lowercaseText.range(of: label.lowercased()) else { return nil }
+            return (label, range)
+        }
+        .sorted { $0.1.lowerBound < $1.1.lowerBound }
+
+        guard !matches.isEmpty else { return [] }
+        var residue = lowercaseText
+        for (_, range) in matches.reversed() {
+            residue.replaceSubrange(range, with: "")
+        }
+        residue = residue.replacingOccurrences(of: "choices", with: "")
+        guard !residue.unicodeScalars.contains(where: CharacterSet.alphanumerics.contains) else {
+            return []
+        }
+        return matches.map(\.0)
+    }
+
     private static func numberedOption(from line: String) -> String? {
-        let value = primaryColumn(in: line)
+        var value = primaryColumn(in: line)
+        while let first = value.first,
+              optionSelectionMarkers.contains(first) || first.isWhitespace {
+            value.removeFirst()
+        }
+
         guard !value.isEmpty,
               value.first?.isNumber == true,
               !value.localizedCaseInsensitiveContains("OpenCode") else {
@@ -265,6 +343,15 @@ enum OpenCodeTerminalInteractionDetector {
             value.removeFirst()
         }
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static let optionSelectionMarkers: Set<Character> = [
+        "›", "❯", "•", "●", "○", "◉", "◯",
+        "☐", "☑", "☒", "□", "■", "✓", "✔",
+    ]
+
+    nonisolated private static func containsCheckboxSelectionMarker(_ line: String) -> Bool {
+        ["☐", "☑", "☒", "□", "■"].contains(where: line.contains)
     }
 
     private static func primaryColumn(in line: String) -> String {

@@ -4,6 +4,7 @@ struct OpenCodeChoiceRow: View {
     let label: String
     let detail: String?
     let isSelected: Bool
+    var allowsMultipleSelection = false
     let action: () -> Void
 
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
@@ -11,7 +12,7 @@ struct OpenCodeChoiceRow: View {
     var body: some View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: selectionSystemImage)
                     .font(.callout)
                     .foregroundStyle(isSelected ? Color.blue : Color.secondary)
                     .accessibilityHidden(true)
@@ -53,7 +54,18 @@ struct OpenCodeChoiceRow: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
-        .accessibilityHint(detail ?? "Selects this answer")
+        .accessibilityHint(detail ?? accessibilityHint)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var selectionSystemImage: String {
+        if allowsMultipleSelection {
+            return isSelected ? "checkmark.square.fill" : "square"
+        }
+        return isSelected ? "checkmark.circle.fill" : "circle"
+    }
+
+    private var accessibilityHint: String {
+        allowsMultipleSelection ? "Toggles this answer" : "Selects this answer"
     }
 }

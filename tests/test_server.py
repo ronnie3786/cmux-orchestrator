@@ -1091,7 +1091,7 @@ class TestServerResponses(unittest.TestCase):
 
     @patch("cmux_harness.server.cmux_api.cmux_send_to_workspace", return_value=True)
     def test_post_send_supports_navigation_keys(self, mock_send):
-        for key in ["up", "down", "tab", "enter", "left", "right", "escape", "backspace"]:
+        for key in ["up", "down", "tab", "enter", "left", "right", "space", "escape", "backspace"]:
             with self.subTest(key=key):
                 mock_send.reset_mock()
                 engine = MagicMock()

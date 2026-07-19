@@ -152,6 +152,7 @@ struct DetailTerminalLayout: View {
     let terminalText: String
     let isInputFocused: FocusState<Bool>.Binding
 
+    @State private var presentedInteraction: WorkspaceInteractionPresentation?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -166,44 +167,6 @@ struct DetailTerminalLayout: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .simultaneousGesture(TapGesture().onEnded { _ in dismissKeyboard() })
 
-                if let feedItem = nativeFeedItem {
-                    FeedInteractionCard(
-                        item: feedItem,
-                        isSubmitting: store.pendingFeedReplyIDs.contains(feedItem.requestID),
-                        reply: { action, mode, selections in
-                            store.send(.replyToFeed(
-                                requestID: feedItem.requestID,
-                                kind: feedItem.kind,
-                                action: action,
-                                mode: mode,
-                                selections: selections
-                            ))
-                        },
-                        sendKey: { key in
-                            store.send(.sendKey(workspaceID: workspace.id, key))
-                        }
-                    )
-                    .id(feedItem.requestID)
-                    .transition(panelTransition)
-                } else if let terminalInteraction {
-                    OpenCodeTerminalFallbackCard(
-                        interaction: terminalInteraction,
-                        fallbackNote: groupedQuestionFallbackNote,
-                        integrationStatus: store.openCodeIntegration,
-                        isInstallingIntegration: store.isInstallingOpenCodeIntegration,
-                        sendKey: { key in
-                            store.send(.sendKey(workspaceID: workspace.id, key))
-                        },
-                        sendKeys: { keys in
-                            store.send(.sendKeys(workspaceID: workspace.id, keys))
-                        },
-                        installIntegration: {
-                            store.send(.installOpenCodeIntegration)
-                        }
-                    )
-                    .transition(panelTransition)
-                }
-
                 if !hasActiveInteraction {
                     if store.isEasyModeEnabled {
                         EasyModeKeyboard(store: store, workspace: workspace)
@@ -217,6 +180,17 @@ struct DetailTerminalLayout: View {
                         )
                         .transition(panelTransition)
                     }
+                } else if presentedInteraction == nil,
+                          let activeInteractionPresentation {
+                    OpenCodeActionButton(
+                        title: reopenInteractionTitle(activeInteractionPresentation),
+                        systemImage: "arrow.up.circle.fill",
+                        role: .attention
+                    ) {
+                        presentedInteraction = activeInteractionPresentation
+                    }
+                    .accessibilityHint("Reopens the pending OpenCode request")
+                    .transition(panelTransition)
                 }
             }
         }
@@ -232,6 +206,42 @@ struct DetailTerminalLayout: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: dismissKeyboard)
         }
+        .onAppear {
+            presentedInteraction = activeInteractionPresentation
+        }
+        .onChange(of: activeInteractionPresentation) { _, interaction in
+            presentedInteraction = interaction
+        }
+        .sheet(item: $presentedInteraction) { presentation in
+            WorkspaceInteractionSheet(
+                presentation: presentation,
+                isSubmitting: isSubmitting(presentation),
+                errorMessage: store.errorMessage,
+                reply: { requestID, kind, action, mode, selections in
+                    store.send(.replyToFeed(
+                        requestID: requestID,
+                        kind: kind,
+                        action: action,
+                        mode: mode,
+                        selections: selections
+                    ))
+                },
+                sendKey: { key in
+                    store.send(.sendKey(workspaceID: workspace.id, key))
+                },
+                sendKeys: { keys in
+                    store.send(.sendKeys(workspaceID: workspace.id, keys))
+                },
+                integrationStatus: store.openCodeIntegration,
+                isInstallingIntegration: store.isInstallingOpenCodeIntegration,
+                installIntegration: {
+                    store.send(.installOpenCodeIntegration)
+                },
+                clearError: {
+                    store.send(.clearError)
+                }
+            )
+        }
     }
 
     private func dismissKeyboard() {
@@ -239,16 +249,13 @@ struct DetailTerminalLayout: View {
     }
 
     private var workspaceFeedItems: [FeedItem] {
-        store.feedItems.filter { feedItem($0, matches: workspace) }
+        store.feedItems.filter {
+            feedItem($0, matches: workspace, among: store.workspaces)
+        }
     }
 
     private var nativeFeedItem: FeedItem? {
         workspaceFeedItems.first(where: \.supportsNativeReply)
-    }
-
-    private var groupedQuestionFallbackNote: String? {
-        guard workspaceFeedItems.contains(where: { !$0.supportsNativeReply }) else { return nil }
-        return "This question supports multiple selections. The current cmux bridge cannot safely preserve grouped answers, so this stays in OpenCode's terminal."
     }
 
     private var terminalInteraction: OpenCodeTerminalInteraction? {
@@ -256,8 +263,34 @@ struct DetailTerminalLayout: View {
         return OpenCodeTerminalInteractionDetector.detect(in: terminalText)
     }
 
+    private var activeInteractionPresentation: WorkspaceInteractionPresentation? {
+        if let nativeFeedItem {
+            return .feed(nativeFeedItem)
+        }
+        if let terminalInteraction {
+            return .terminal(terminalInteraction)
+        }
+        return nil
+    }
+
     private var hasActiveInteraction: Bool {
-        nativeFeedItem != nil || terminalInteraction != nil
+        activeInteractionPresentation != nil
+    }
+
+    private func isSubmitting(_ presentation: WorkspaceInteractionPresentation) -> Bool {
+        guard case .feed(let item) = presentation else { return false }
+        return store.pendingFeedReplyIDs.contains(item.requestID)
+    }
+
+    private func reopenInteractionTitle(
+        _ presentation: WorkspaceInteractionPresentation
+    ) -> String {
+        switch presentation {
+        case .feed(let item):
+            return item.kind == "permission" ? "Review permission" : "Answer OpenCode"
+        case .terminal(let interaction):
+            return interaction.kind == .permission ? "Review permission" : "Answer OpenCode"
+        }
     }
 
     private var panelTransition: AnyTransition {
