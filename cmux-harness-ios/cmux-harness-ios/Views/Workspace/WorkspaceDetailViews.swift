@@ -33,7 +33,11 @@ struct WorkspaceDetailView: View {
                     if let paneGroup = store.selectedWorkspaceGroup, paneGroup.hasMultiplePanes {
                         SessionPaneTabBar(
                             group: paneGroup,
-                            selectedWorkspaceID: store.selectedWorkspaceID
+                            selectedWorkspaceID: store.selectedWorkspaceID,
+                            unreadCountForSurface: { surfaceUUID in
+                                guard let surfaceUUID else { return 0 }
+                                return store.notifications.count { $0.isUnread && $0.surfaceId == surfaceUUID }
+                            }
                         ) { workspaceID in
                             store.send(.selectWorkspacePane(workspaceID))
                         }
@@ -271,6 +275,7 @@ struct SessionDetailTabBar: View {
 struct SessionPaneTabBar: View {
     let group: WorkspaceSessionGroup
     let selectedWorkspaceID: String?
+    let unreadCountForSurface: (String?) -> Int
     let selectAction: (String) -> Void
 
     var body: some View {
@@ -295,6 +300,10 @@ struct SessionPaneTabBar: View {
                                     .fill(isSelected(pane) ? Color.black.opacity(0.62) : Color.orange)
                                     .frame(width: 6, height: 6)
                                     .accessibilityLabel("Git changes")
+                            }
+
+                            if !isSelected(pane) {
+                                UnreadNotificationBadge(count: unreadCountForSurface(pane.surfaceUuid))
                             }
                         }
                         .foregroundStyle(isSelected(pane) ? Color.black.opacity(0.84) : Color.white.opacity(0.82))

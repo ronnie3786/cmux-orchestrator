@@ -34,6 +34,9 @@ struct HarnessFeatureTests {
             #expect(baseURLString == Self.baseURL)
             return logEntries
         }
+        client.notifications = { _ in
+            NotificationsResponse(ok: true, notifications: [], error: nil)
+        }
 
         let store = TestStore(initialState: Self.initialState()) {
             HarnessFeature()
@@ -50,6 +53,7 @@ struct HarnessFeatureTests {
             $0.status = status
             $0.workspaces = [workspace]
             $0.logEntries = logEntries
+            $0.notifications = []
             $0.lastUpdated = updatedAt
         }
     }
@@ -91,10 +95,11 @@ struct HarnessFeatureTests {
             $0.date.now = updatedAt
         }
 
-        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: [], feed: FeedResponse(ok: true, items: [], error: nil)))) {
+        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: [], feed: FeedResponse(ok: true, items: [], error: nil), notifications: NotificationsResponse(ok: true, notifications: [], error: nil)))) {
             $0.status = status
             $0.workspaces = [refreshedWorkspace]
             $0.logEntries = []
+            $0.notifications = []
             $0.lastUpdated = updatedAt
             $0.selectedWorkspaceID = selectedWorkspaceID
             $0.fullScreenText = fullScreenText
@@ -131,10 +136,11 @@ struct HarnessFeatureTests {
             $0.date.now = updatedAt
         }
 
-        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: [], feed: FeedResponse(ok: true, items: [], error: nil)))) {
+        await store.send(.refreshSucceeded(RefreshPayload(status: status, log: [], feed: FeedResponse(ok: true, items: [], error: nil), notifications: NotificationsResponse(ok: true, notifications: [], error: nil)))) {
             $0.status = status
             $0.workspaces = [remainingWorkspace]
             $0.logEntries = []
+            $0.notifications = []
             $0.lastUpdated = updatedAt
             $0.selectedWorkspaceID = nil
             $0.fullScreenText = nil
@@ -280,6 +286,9 @@ struct HarnessFeatureTests {
             #expect(baseURLString == HarnessLocalDemo.baseURL)
             return []
         }
+        client.notifications = { _ in
+            NotificationsResponse(ok: true, notifications: [], error: nil)
+        }
         client.probeServer = { _ in false }
         client.discoverServers = { [] }
 
@@ -368,6 +377,9 @@ struct HarnessFeatureTests {
             #expect(baseURLString == normalizedURL)
             return []
         }
+        client.notifications = { _ in
+            NotificationsResponse(ok: true, notifications: [], error: nil)
+        }
 
         var state = HarnessFeature.State()
         state.serverSources = []
@@ -455,6 +467,9 @@ struct HarnessFeatureTests {
         client.log = { baseURLString in
             #expect(baseURLString == secondURL)
             return []
+        }
+        client.notifications = { _ in
+            NotificationsResponse(ok: true, notifications: [], error: nil)
         }
 
         var state = Self.initialState()
@@ -943,6 +958,9 @@ struct HarnessFeatureTests {
         client.log = { baseURLString in
             #expect(baseURLString == Self.baseURL)
             return []
+        }
+        client.notifications = { _ in
+            NotificationsResponse(ok: true, notifications: [], error: nil)
         }
         client.screen = { baseURLString, index, lines in
             #expect(baseURLString == Self.baseURL)
@@ -1604,6 +1622,7 @@ struct HarnessFeatureTests {
             sessionStart: 1_777_000_000,
             sessionCost: "$0.42",
             surfaceId: "surface-2",
+            surfaceUuid: nil,
             surfaceLabel: "iOS App",
             surfaceTitle: "cmux",
             gitDirty: true,

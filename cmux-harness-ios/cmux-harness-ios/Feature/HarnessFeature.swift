@@ -44,6 +44,7 @@ struct HarnessFeature {
         var status: HarnessStatus?
         var workspaces: [Workspace] = []
         var logEntries: [LogEntry] = []
+        var notifications: [CmuxNotification] = []
         var feedItems: [FeedItem] = []
         var isRefreshing = false
         var lastUpdated: Date?
@@ -154,6 +155,21 @@ struct HarnessFeature {
         var selectedWorkspaceGroup: WorkspaceSessionGroup? {
             guard let selectedWorkspaceID else { return nil }
             return workspaceSessionGroups.first { $0.containsWorkspace(id: selectedWorkspaceID) }
+        }
+
+        func unreadCount(forWorkspaceID workspaceID: String?) -> Int {
+            guard let workspaceID else { return 0 }
+            return notifications.count { $0.isUnread && $0.workspaceId == workspaceID }
+        }
+
+        func unreadCount(forSurfaceID surfaceID: String?) -> Int {
+            guard let surfaceID else { return 0 }
+            return notifications.count { $0.isUnread && $0.surfaceId == surfaceID }
+        }
+
+        func unreadCount(for group: WorkspaceSessionGroup) -> Int {
+            let workspaceUUIDs = Set(group.workspaces.map(\.uuid))
+            return notifications.count { $0.isUnread && $0.workspaceId.map { workspaceUUIDs.contains($0) } == true }
         }
 
         var waitingCount: Int {

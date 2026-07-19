@@ -377,6 +377,12 @@ def make_handler(engine):
                 self._json_response(engine.get_status())
             elif path == "/api/log":
                 self._json_response(engine.get_log())
+            elif path == "/api/notifications":
+                notifications = cmux_api.cmux_notifications()
+                if notifications is None:
+                    self._json_response({"ok": False, "notifications": [], "error": "cmux notifications unavailable"}, 503)
+                    return
+                self._json_response({"ok": True, "notifications": notifications})
             elif path == "/api/feed":
                 items = cmux_api.cmux_feed_items()
                 if items is None:

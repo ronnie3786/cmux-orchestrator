@@ -36,6 +36,7 @@ struct Workspace: Decodable, Equatable, Identifiable, Sendable {
     var sessionStart: Double?
     var sessionCost: String?
     var surfaceId: String?
+    var surfaceUuid: String?
     var surfaceLabel: String?
     var surfaceTitle: String?
     var gitDirty: Bool?

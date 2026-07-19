@@ -402,6 +402,7 @@ class HarnessEngine(threading.Thread):
                     "sessionStart": self.session_start.get(idx, 0),
                     "sessionCost": self.session_cost.get(idx, ""),
                     "surfaceId": ws.get("_surface_id"),
+                    "surfaceUuid": ws.get("_surface_uuid", ""),
                     "surfaceLabel": surface_label,
                     "surfaceTitle": tmeta.get("surface_title", ""),
                     "gitDirty": tmeta.get("git_dirty", False),

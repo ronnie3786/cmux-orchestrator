@@ -30,6 +30,10 @@ enum HarnessAPI {
         try await request(baseURLString: baseURLString, path: "/api/log")
     }
 
+    static func notifications(baseURLString: String) async throws -> NotificationsResponse {
+        try await request(baseURLString: baseURLString, path: "/api/notifications")
+    }
+
     static func feed(baseURLString: String) async throws -> FeedResponse {
         try await request(baseURLString: baseURLString, path: "/api/feed")
     }

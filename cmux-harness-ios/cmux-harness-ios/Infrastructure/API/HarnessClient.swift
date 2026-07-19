@@ -14,6 +14,7 @@ struct HarnessClient: Sendable {
     var probeServer: @Sendable (String) async -> Bool
     var status: @Sendable (String) async throws -> HarnessStatus
     var log: @Sendable (String) async throws -> [LogEntry]
+    var notifications: @Sendable (String) async throws -> NotificationsResponse
     var feed: @Sendable (String) async throws -> FeedResponse
     var replyToFeed: @Sendable (String, String, String, String?, String?, [String]?) async throws -> BasicResponse
     var screen: @Sendable (String, Int, Int) async throws -> ScreenResponse
@@ -82,6 +83,12 @@ extension HarnessClient {
                     return await demoStore.log()
                 }
                 return try await HarnessAPI.log(baseURLString: baseURLString)
+            },
+            notifications: { baseURLString in
+                if HarnessLocalDemo.isDemoURL(baseURLString) {
+                    return await demoStore.notifications()
+                }
+                return try await HarnessAPI.notifications(baseURLString: baseURLString)
             },
             feed: { baseURLString in
                 if HarnessLocalDemo.isDemoURL(baseURLString) {
@@ -292,6 +299,7 @@ extension HarnessClient {
             probeServer: { HarnessLocalDemo.isDemoURL($0) },
             status: { _ in await store.status() },
             log: { _ in await store.log() },
+            notifications: { _ in await store.notifications() },
             feed: { _ in await store.feed() },
             replyToFeed: { _, requestID, _, _, _, _ in await store.replyToFeed(requestID: requestID) },
             screen: { _, index, lines in await store.screen(index: index, lines: lines) },
@@ -381,6 +389,24 @@ private actor LocalDemoHarnessStore {
 
     func log() -> [LogEntry] {
         logEntries
+    }
+
+    func notifications() -> NotificationsResponse {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let unread = CmuxNotification(
+            id: "demo-notif-1",
+            title: "Session done",
+            body: "Review PR #423",
+            subtitle: "",
+            createdAt: now,
+            isRead: false,
+            workspaceId: "demo-workspace-1",
+            workspaceRef: "workspace:1",
+            surfaceId: "demo-surface-1",
+            surfaceRef: "surface:1",
+            tabTitle: "sample-app : Review PR comments"
+        )
+        return NotificationsResponse(ok: true, notifications: [unread], error: nil)
     }
 
     func feed() -> FeedResponse {
@@ -499,6 +525,7 @@ private actor LocalDemoHarnessStore {
             sessionStart: Date().timeIntervalSince1970,
             sessionCost: "$0.00",
             surfaceId: surfaceId,
+            surfaceUuid: surfaceId,
             surfaceLabel: displayName,
             surfaceTitle: "Local Demo",
             gitDirty: false,
@@ -834,6 +861,7 @@ private actor LocalDemoHarnessStore {
                 sessionStart: Date().timeIntervalSince1970 - 3_600,
                 sessionCost: "$0.00",
                 surfaceId: "demo-surface-0",
+                surfaceUuid: "demo-surface-0",
                 surfaceLabel: "Onboarding polish",
                 surfaceTitle: "Local Demo",
                 gitDirty: true,
@@ -859,6 +887,7 @@ private actor LocalDemoHarnessStore {
                 sessionStart: Date().timeIntervalSince1970 - 2_400,
                 sessionCost: "$0.00",
                 surfaceId: "demo-surface-1",
+                surfaceUuid: "demo-surface-1",
                 surfaceLabel: "PR review",
                 surfaceTitle: "Local Demo",
                 gitDirty: true,
@@ -884,6 +913,7 @@ private actor LocalDemoHarnessStore {
                 sessionStart: Date().timeIntervalSince1970 - 1_800,
                 sessionCost: "$0.00",
                 surfaceId: "demo-surface-2",
+                surfaceUuid: "demo-surface-2",
                 surfaceLabel: "Build shell",
                 surfaceTitle: "Local Demo",
                 gitDirty: false,
@@ -1019,6 +1049,7 @@ extension HarnessClient {
         probeServer: { _ in false },
         status: { _ in throw HarnessClientError.unimplemented("status") },
         log: { _ in throw HarnessClientError.unimplemented("log") },
+        notifications: { _ in throw HarnessClientError.unimplemented("notifications") },
         feed: { _ in throw HarnessClientError.unimplemented("feed") },
         replyToFeed: { _, _, _, _, _, _ in throw HarnessClientError.unimplemented("replyToFeed") },
         screen: { _, _, _ in throw HarnessClientError.unimplemented("screen") },

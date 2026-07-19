@@ -18,6 +18,7 @@ extension HarnessFeature {
         state.status = nil
         state.workspaces = []
         state.logEntries = []
+        state.notifications = []
         state.feedItems = []
         state.isRefreshing = false
         state.lastUpdated = nil
@@ -140,8 +141,14 @@ extension HarnessFeature {
                     do {
                         async let status = client.status(baseURLString)
                         async let log = client.log(baseURLString)
+                        async let notifs = client.notifications(baseURLString)
                         let feed = FeedResponse(ok: true, items: [], error: nil)
-                        let payload = try await RefreshPayload(status: status, log: log, feed: feed)
+                        let payload = try await RefreshPayload(
+                            status: status,
+                            log: log,
+                            feed: feed,
+                            notifications: notifs
+                        )
                         await send(.refreshSucceeded(payload))
                     } catch {
                         await send(.refreshFailed(HarnessAPI.message(for: error)))
@@ -154,6 +161,7 @@ extension HarnessFeature {
                 state.status = payload.status
                 state.workspaces = payload.status.workspaces
                 state.logEntries = payload.log
+                state.notifications = payload.notifications.notifications
                 state.feedItems = payload.feed.items
                 state.lastUpdated = self.now
                 trimDrafts(&state)

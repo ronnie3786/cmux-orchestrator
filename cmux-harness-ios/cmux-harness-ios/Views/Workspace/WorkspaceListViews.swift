@@ -440,6 +440,9 @@ struct WorkspaceCardView: View {
                     .buttonStyle(.plain)
                 }
 
+                UnreadNotificationBadge(count: unreadNotificationCount)
+                    .padding(.top, 4)
+
                 Spacer(minLength: 8)
 
                 SessionContextMenu(
@@ -495,6 +498,11 @@ struct WorkspaceCardView: View {
 
     private var isExpanded: Bool {
         group.containsWorkspace(id: store.selectedWorkspaceID)
+    }
+
+    private var unreadNotificationCount: Int {
+        let workspaceUUIDs = Set(group.workspaces.map(\.uuid))
+        return store.notifications.count { $0.isUnread && $0.workspaceId.map { workspaceUUIDs.contains($0) } == true }
     }
 
     private var cardBorderColor: Color {
@@ -714,5 +722,25 @@ struct HomeGlassCard: View {
                     .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
             }
             .shadow(color: Color.black.opacity(0.28), radius: 18, x: 0, y: 8)
+    }
+}
+
+struct UnreadNotificationBadge: View {
+    let count: Int
+
+    var body: some View {
+        if count > 0 {
+            Text(count > 99 ? "99+" : "\(count)")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .frame(minWidth: 20, minHeight: 20)
+                .background(Color.blue, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
+                }
+                .accessibilityLabel("\(count) unread notification\(count == 1 ? "" : "s")")
+        }
     }
 }
