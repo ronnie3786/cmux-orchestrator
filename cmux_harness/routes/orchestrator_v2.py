@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import cmux_cli
+from .. import orchestrator_v2_enrich
 from .. import orchestrator_v2_runtime
 from .. import orchestrator_v2_storage as v2
 from .. import orchestrator_v2_voice
@@ -204,12 +205,20 @@ def handle_post(handler, parsed, data: dict[str, Any], *, engine) -> bool:
             return True
         if path == "/api/orchestrator-v2/voice/local/transcribe":
             payload = orchestrator_v2_voice.transcribe_local_payload(data)
-            if payload.get("text"):
+            append_chat = _parse_bool(data.get("appendChat", True)) and not _parse_bool(data.get("partial", False))
+            if append_chat and payload.get("text"):
                 repo.append_chat_message("user", str(payload["text"]), {"mode": "local_voice", "source": "stt"})
             handler._json_response(payload)
             return True
         if path == "/api/orchestrator-v2/voice/local/speak":
             payload = orchestrator_v2_voice.speak_local_payload(data)
+            handler._json_response(payload)
+            return True
+        if path == "/api/orchestrator-v2/voice/enrich":
+            try:
+                payload = orchestrator_v2_enrich.enrich_payload(data)
+            except RuntimeError as exc:
+                raise OrchestratorV2RouteError(str(exc), 502) from exc
             handler._json_response(payload)
             return True
         if path == "/api/orchestrator-v2/folder-picker":
@@ -553,7 +562,15 @@ def copilotkit_info_payload() -> dict[str, Any]:
 
 def agent_capabilities_payload() -> dict[str, Any]:
     health = orchestrator_v2_runtime.health_payload(repo=v2.get_repository())
+    checks = health["checks"]
     unsupported = sorted(name for name, spec in agent_tool_specs().items() if spec.get("status") == "not_implemented")
+    stt_backend = str(os.environ.get("ORCHESTRATOR_V2_STT_BACKEND") or "parakeet").strip().lower()
+    tts_provider = str(os.environ.get("ORCHESTRATOR_V2_TTS_BACKEND") or "kokoro").strip().lower()
+    if stt_backend == "parakeet":
+        stt_available = bool(checks["parakeet"]["available"] or checks["fasterWhisper"]["available"])
+    else:
+        stt_available = bool(checks["fasterWhisper"]["available"])
+    tts_available = bool((checks.get(tts_provider) or checks["kokoro"]).get("available"))
     return {
         "provider": "fireworks",
         "model": os.environ.get("ORCHESTRATOR_V2_AGENT_MODEL") or "accounts/fireworks/models/minimax-m2p7",
@@ -561,13 +578,15 @@ def agent_capabilities_payload() -> dict[str, Any]:
         "agui": True,
         "voiceModes": {
             "text": {"available": True},
-            "realtime": health["checks"]["openaiRealtime"],
+            "realtime": checks["openaiRealtime"],
             "local": {
-                "available": bool(health["checks"]["fasterWhisper"]["available"] and health["checks"]["piper"]["available"]),
-                "stt": health["checks"]["fasterWhisper"],
-                "tts": health["checks"]["piper"],
-                "elevenlabs": health["checks"]["elevenlabs"],
+                "available": bool(stt_available and tts_available),
+                "stt": {"backend": stt_backend, "available": stt_available},
+                "tts": {"provider": tts_provider, "available": tts_available},
+                "enrich": bool(checks["fireworks"]["available"]),
+                "elevenlabs": checks["elevenlabs"],
             },
+            "visual": bool(checks["parakeet"]["available"] and checks["kokoro"]["available"]),
         },
         "tools": agent_tool_specs(),
         "unsupported": unsupported,

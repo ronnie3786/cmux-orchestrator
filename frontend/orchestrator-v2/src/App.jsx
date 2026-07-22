@@ -25,17 +25,20 @@ import {
   Github,
   GitPullRequest,
   Grid2X2,
+  History,
   LayoutDashboard,
   Lightbulb,
   List,
   Mic,
   MoreHorizontal,
+  Orbit,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
   Plus,
   RefreshCw,
   Send,
+  Settings,
   ShieldAlert,
   Sparkles,
   SplitSquareHorizontal,
@@ -58,7 +61,7 @@ function initialUiState() {
   let selectedView = { kind: "board" };
   if (taskId && (view === "session" || view === "diff" || view === "goal")) {
     selectedView = { kind: view, taskId, mode: params.get("mode") || undefined };
-  } else if (view === "activity" || view === "history") {
+  } else if (view === "activity" || view === "history" || view === "voice") {
     selectedView = { kind: view };
   }
   return {
@@ -79,11 +82,12 @@ function api(path, options = {}) {
   });
 }
 
-async function streamAgent(path, payload, onEvent) {
+async function streamAgent(path, payload, onEvent, options = {}) {
   const response = await fetch(`${API_ROOT}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {})
+    body: JSON.stringify(payload || {}),
+    signal: options.signal
   });
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => ({}));
@@ -93,8 +97,16 @@ async function streamAgent(path, payload, onEvent) {
   const decoder = new TextDecoder();
   let buffer = "";
   while (true) {
-    const { value, done } = await reader.read();
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch (err) {
+      if (options.signal?.aborted) return;
+      throw err;
+    }
+    const { value, done } = chunk;
     if (done) break;
+    if (options.signal?.aborted) return;
     buffer += decoder.decode(value, { stream: true });
     const parts = buffer.split("\n\n");
     buffer = parts.pop() || "";
@@ -121,6 +133,195 @@ function blobToBase64(blob) {
 
 function stopStream(stream) {
   stream?.getTracks?.().forEach((track) => track.stop());
+}
+
+const VOICE_PERSONA_NAME = "Maestro";
+const VOICE_TARGET_SAMPLE_RATE = 16000;
+const VOICE_PARTIAL_INTERVAL_MS = 1500;
+const VOICE_FOLLOW_UP_MS = 6000;
+const VOICE_VAD = { speechRms: 0.012, minSpeechMs: 450, silenceMs: 900, maxUtteranceMs: 20000 };
+const VOICE_MAX_PCM_MS = 60000;
+const VOICE_BARGE_IN = { rms: 0.018, sustainMs: 220, cooldownMs: 700, prebufferMs: 500, noSpeechMs: 3000 };
+const VOICE_GREETINGS = [
+  "Hey — what are we doing today?",
+  "Ready when you are. What do you need?",
+  "Hello. What should we look at first?",
+  "I'm listening. Where do we start?"
+];
+const VOICE_ACKS = [
+  "Checking that now.",
+  "On it — one moment.",
+  "Let me take a look.",
+  "Working on it."
+];
+const VOICE_STATE_LABELS = {
+  off: "Standing by",
+  greeting: "Waking up",
+  idle: "Ready",
+  listening: "Listening",
+  transcribing: "Transcribing",
+  thinking: "Thinking",
+  speaking: "Speaking",
+  followup: "Follow-up"
+};
+const VOICE_CAPTURE_WORKLET = `
+class VoiceCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buffer = [];
+    this.length = 0;
+  }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel && channel.length) {
+      this.buffer.push(new Float32Array(channel));
+      this.length += channel.length;
+      if (this.length >= 2048) {
+        const merged = new Float32Array(this.length);
+        let offset = 0;
+        for (const chunk of this.buffer) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        this.port.postMessage(merged, [merged.buffer]);
+        this.buffer = [];
+        this.length = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("voice-capture", VoiceCaptureProcessor);
+`;
+
+async function createVoiceCapture(audioContext, stream, onChunk) {
+  const source = audioContext.createMediaStreamSource(stream);
+  if (audioContext.audioWorklet?.addModule && typeof window.AudioWorkletNode === "function" && typeof URL.createObjectURL === "function") {
+    const moduleUrl = URL.createObjectURL(new Blob([VOICE_CAPTURE_WORKLET], { type: "application/javascript" }));
+    try {
+      await audioContext.audioWorklet.addModule(moduleUrl);
+      const node = new window.AudioWorkletNode(audioContext, "voice-capture");
+      node.port.onmessage = (event) => onChunk(event.data);
+      source.connect(node);
+      return {
+        stop() {
+          node.port.onmessage = null;
+          try { source.disconnect(); } catch { /* already disconnected */ }
+          try { node.disconnect(); } catch { /* already disconnected */ }
+        }
+      };
+    } catch {
+      // Fall back to ScriptProcessorNode below.
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  }
+  const node = audioContext.createScriptProcessor(4096, 1, 1);
+  node.onaudioprocess = (event) => onChunk(new Float32Array(event.inputBuffer.getChannelData(0)));
+  source.connect(node);
+  node.connect(audioContext.destination);
+  return {
+    stop() {
+      node.onaudioprocess = null;
+      try { source.disconnect(); } catch { /* already disconnected */ }
+      try { node.disconnect(); } catch { /* already disconnected */ }
+    }
+  };
+}
+
+function mergeFloat32(chunks) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Float32Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function downsampleFloat32(samples, sourceRate, targetRate) {
+  if (!samples.length || sourceRate <= targetRate) return samples;
+  const ratio = sourceRate / targetRate;
+  const length = Math.floor(samples.length / ratio);
+  const result = new Float32Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const start = Math.floor(index * ratio);
+    const end = Math.min(samples.length, Math.floor((index + 1) * ratio));
+    let sum = 0;
+    for (let cursor = start; cursor < end; cursor += 1) sum += samples[cursor];
+    result[index] = end > start ? sum / (end - start) : samples[start] || 0;
+  }
+  return result;
+}
+
+function encodeWavPcm16(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeAscii = (offset, text) => {
+    for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index));
+  };
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  let offset = 44;
+  for (let index = 0; index < samples.length; index += 1, offset += 2) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  return buffer;
+}
+
+function wavBase64FromChunks(chunks, sourceRate) {
+  const merged = mergeFloat32(chunks);
+  if (!merged.length) return Promise.resolve("");
+  const rate = Math.min(sourceRate || VOICE_TARGET_SAMPLE_RATE, VOICE_TARGET_SAMPLE_RATE);
+  const samples = downsampleFloat32(merged, sourceRate, rate);
+  const wav = encodeWavPcm16(samples, rate);
+  return blobToBase64(new Blob([wav], { type: "audio/wav" }));
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = window.atob(base64 || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
+function chunkRms(chunk) {
+  if (!chunk?.length) return 0;
+  let sum = 0;
+  for (let index = 0; index < chunk.length; index += 1) sum += chunk[index] * chunk[index];
+  return Math.sqrt(sum / chunk.length);
+}
+
+function stripMarkdownForCaption(text) {
+  return String(text || "")
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/(\*\*|__)(.*?)\1/g, "$2")
+    .replace(/(\*|_)(.*?)\1/g, "$2")
+    .replace(/~~(.*?)~~/g, "$1")
+    .replace(/^\s*[-+*]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/^[-=_]{3,}\s*$/gm, " ")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function realtimeClientSecretValue(payload) {
@@ -264,6 +465,37 @@ function AppShell() {
   useEffect(() => {
     window.localStorage?.setItem("orchestrator-v2-dock-width", String(dockWidth));
   }, [dockWidth]);
+
+  const previousViewRef = useRef({ kind: "board" });
+
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("view") === "voice") {
+        setSelectedView((current) => (current.kind === "voice" ? current : { kind: "voice" }));
+      } else {
+        setSelectedView((current) => (current.kind === "voice" ? previousViewRef.current || { kind: "board" } : current));
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const enterVoiceMode = () => {
+    if (selectedView.kind === "voice") return;
+    previousViewRef.current = selectedView;
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "voice");
+    window.history.pushState({ view: "voice" }, "", url.toString());
+    setSelectedView({ kind: "voice" });
+  };
+
+  const exitVoiceMode = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("view");
+    window.history.pushState({}, "", url.toString());
+    setSelectedView(previousViewRef.current || { kind: "board" });
+  };
 
   const createTask = async (payload) => {
     const result = await api("/tasks", { method: "POST", body: JSON.stringify(payload) });
@@ -721,6 +953,7 @@ function AppShell() {
             }}
             onStartVoice={startVoiceSession}
             onStopVoice={stopVoiceSession}
+            onOpenVisualMode={enterVoiceMode}
             liveStatus={liveStatus}
           />
           {error && (
@@ -805,6 +1038,13 @@ function AppShell() {
             orphan={modalState.orphan}
             onClose={() => setModalState(null)}
             onSubmit={createTask}
+          />
+        )}
+        {selectedView.kind === "voice" && (
+          <VoiceVisualMode
+            capabilities={agentCapabilities}
+            onExit={exitVoiceMode}
+            onTurnComplete={() => refresh().catch(() => {})}
           />
         )}
         {toast && <Toast message={toast} onDone={() => setToast("")} />}
@@ -1029,7 +1269,7 @@ function errorOf(section) {
   return section && section.ok === false ? String(section.error || "provider unavailable") : "";
 }
 
-function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceSettings, setVoiceSettings, proactiveUpdates, setProactiveUpdates, onStartVoice, onStopVoice, liveStatus }) {
+function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceSettings, setVoiceSettings, proactiveUpdates, setProactiveUpdates, onStartVoice, onStopVoice, onOpenVisualMode, liveStatus }) {
   const [value, setValue] = useState("");
   const voiceActionStops = ["connected", "ready", "recording"].includes(voiceState.status);
   const voiceProcessing = ["connecting", "transcribing", "thinking", "speaking"].includes(voiceState.status);
@@ -1052,6 +1292,10 @@ function TopBar({ onChat, streaming, voiceMode, setVoiceMode, voiceState, voiceS
         <button className="icon-btn" onClick={send} aria-label="Send command" disabled={streaming}>{streaming ? <RefreshCw size={17} className="spin" /> : <Send size={17} />}</button>
       </div>
       <div className="voice-controls">
+        <button className="visual-mode-btn" onClick={onOpenVisualMode} title="Open the full-screen voice visual mode">
+          <Orbit size={16} />
+          <span>Visual Mode</span>
+        </button>
         <div className="segmented voice-mode-picker" role="tablist" aria-label="Voice mode">
           {["text", "realtime", "local"].map((mode) => (
             <button key={mode} className={voiceMode === mode ? "active" : ""} onClick={() => setVoiceMode(mode)}>{mode === "realtime" ? "Realtime 2" : mode === "local" ? "Local" : "Text"}</button>
@@ -2575,6 +2819,810 @@ function VoiceModePanel({ mode, state, settings }) {
   );
 }
 
+function VoiceVisualMode({ capabilities, onExit, onTurnComplete }) {
+  const [status, setStatus] = useState("off");
+  const [caps, setCaps] = useState(capabilities || null);
+  const [userCaption, setUserCaption] = useState("");
+  const [assistantCaption, setAssistantCaption] = useState("");
+  const [toolCalls, setToolCalls] = useState([]);
+  const [panel, setPanel] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [voiceToast, setVoiceToast] = useState("");
+  const [sessionStartedAt, setSessionStartedAt] = useState(0);
+  const [clock, setClock] = useState(() => Date.now());
+  const [talkMode, setTalkMode] = useState(() => {
+    if (typeof window === "undefined") return "toggle";
+    return window.localStorage.getItem("orchestrator-v2-voice-talk-mode") === "hold" ? "hold" : "toggle";
+  });
+
+  const statusRef = useRef("off");
+  const sessionRef = useRef(null);
+  const sessionGenRef = useRef(0);
+  const captureRef = useRef(null);
+  const recordingRef = useRef(null);
+  const playbackRef = useRef(null);
+  const bargeInRef = useRef(null);
+  const abortRef = useRef(null);
+  const turnRef = useRef(null);
+  const turnCounterRef = useRef(0);
+  const partialTimerRef = useRef(null);
+  const followupTimerRef = useRef(null);
+  const toastTimerRef = useRef(null);
+  const meterFrameRef = useRef(null);
+  const orbRef = useRef(null);
+  const endSessionRef = useRef(() => {});
+
+  const setStatusSafe = (value) => {
+    statusRef.current = value;
+    setStatus(value);
+  };
+
+  const showToast = (message) => {
+    setVoiceToast(message);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setVoiceToast(""), 5200);
+  };
+
+  const setOrbLevel = (value) => {
+    orbRef.current?.style?.setProperty("--voice-level", String(Math.max(0, Math.min(1, value))));
+  };
+
+  const stopOrbMeter = () => {
+    if (meterFrameRef.current) window.cancelAnimationFrame(meterFrameRef.current);
+    meterFrameRef.current = null;
+    setOrbLevel(0);
+  };
+
+  const startOrbMeter = (analyser) => {
+    stopOrbMeter();
+    if (typeof analyser?.getByteTimeDomainData !== "function" || typeof window.requestAnimationFrame !== "function") return;
+    const data = new Uint8Array(analyser.fftSize || 256);
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let index = 0; index < data.length; index += 1) {
+        const value = (data[index] - 128) / 128;
+        sum += value * value;
+      }
+      setOrbLevel(Math.sqrt(sum / data.length) * 3.2);
+      meterFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    meterFrameRef.current = window.requestAnimationFrame(tick);
+  };
+
+  const clearPartialTimer = () => {
+    if (partialTimerRef.current) window.clearInterval(partialTimerRef.current);
+    partialTimerRef.current = null;
+  };
+
+  const clearFollowupTimer = () => {
+    if (followupTimerRef.current) window.clearTimeout(followupTimerRef.current);
+    followupTimerRef.current = null;
+  };
+
+  const stopPlayback = () => playbackRef.current?.finish(false);
+
+  const playAudioBase64 = async (audioBase64, kind) => {
+    const session = sessionRef.current;
+    if (!session?.active || !audioBase64) return false;
+    stopPlayback();
+    let buffer = null;
+    try {
+      buffer = await session.audioContext.decodeAudioData(base64ToArrayBuffer(audioBase64));
+    } catch {
+      return false;
+    }
+    if (!buffer || !sessionRef.current?.active) return false;
+    return new Promise((resolve) => {
+      const source = session.audioContext.createBufferSource();
+      const analyser = session.audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.buffer = buffer;
+      source.connect(analyser);
+      analyser.connect(session.audioContext.destination);
+      const playback = {
+        kind,
+        startedAt: Date.now(),
+        done: false,
+        finish(completed) {
+          if (playback.done) return;
+          playback.done = true;
+          try { source.stop(); } catch { /* already stopped */ }
+          try { source.disconnect(); } catch { /* already disconnected */ }
+          try { analyser.disconnect(); } catch { /* already disconnected */ }
+          if (playbackRef.current === playback) playbackRef.current = null;
+          stopOrbMeter();
+          resolve(completed);
+        }
+      };
+      playbackRef.current = playback;
+      source.onended = () => playback.finish(true);
+      startOrbMeter(analyser);
+      try {
+        source.start(0);
+      } catch {
+        playback.finish(false);
+      }
+    });
+  };
+
+  const startRecording = ({ vad = true, followup = false, barge = false, seedChunks = null } = {}) => {
+    if (!sessionRef.current?.active || recordingRef.current) return;
+    recordingRef.current = {
+      chunks: seedChunks?.length ? seedChunks.slice() : [],
+      startedAt: Date.now(),
+      speechMs: 0,
+      silenceMs: 0,
+      pcmMs: 0,
+      heardSpeech: barge,
+      vad,
+      followup,
+      barge,
+      partialBusy: false,
+      finalized: false
+    };
+    if (!followup) {
+      setUserCaption("");
+      setStatusSafe("listening");
+    }
+    clearPartialTimer();
+    partialTimerRef.current = window.setInterval(() => {
+      sendPartialTranscribe();
+    }, VOICE_PARTIAL_INTERVAL_MS);
+  };
+
+  const cancelRecording = () => {
+    const rec = recordingRef.current;
+    if (rec) rec.finalized = true;
+    recordingRef.current = null;
+    clearPartialTimer();
+    clearFollowupTimer();
+    setOrbLevel(0);
+  };
+
+  const promoteFollowup = (hold = false) => {
+    const rec = recordingRef.current;
+    if (!rec || rec.finalized) {
+      startRecording({ vad: !hold });
+      return;
+    }
+    clearFollowupTimer();
+    rec.followup = false;
+    rec.vad = !hold;
+    setUserCaption("");
+    setStatusSafe("listening");
+  };
+
+  const handleChunk = (chunk) => {
+    if (!sessionRef.current?.active || !chunk?.length) return;
+    const sampleRate = captureRef.current?.sampleRate || VOICE_TARGET_SAMPLE_RATE;
+    const chunkMs = (chunk.length / sampleRate) * 1000;
+    const rms = chunkRms(chunk);
+    const rec = recordingRef.current;
+    if (rec && !rec.finalized) {
+      rec.chunks.push(chunk);
+      rec.pcmMs += chunkMs;
+      if (rms >= VOICE_VAD.speechRms) {
+        rec.speechMs += chunkMs;
+        rec.silenceMs = 0;
+        if (!rec.heardSpeech && rec.speechMs >= VOICE_VAD.minSpeechMs) {
+          rec.heardSpeech = true;
+          if (rec.followup) promoteFollowup();
+        }
+      } else {
+        rec.silenceMs += chunkMs;
+      }
+      if (statusRef.current === "listening" || statusRef.current === "followup") setOrbLevel(rms * 9);
+      if (rec.vad && rec.heardSpeech && rec.silenceMs >= VOICE_VAD.silenceMs) finalizeRecording();
+      else if (Date.now() - rec.startedAt >= VOICE_VAD.maxUtteranceMs) finalizeRecording();
+      else if (rec.pcmMs >= VOICE_MAX_PCM_MS) finalizeRecording();
+      else if (rec.barge && !rec.speechMs && Date.now() - rec.startedAt >= VOICE_BARGE_IN.noSpeechMs) finalizeRecording();
+    }
+    const monitor = bargeInRef.current;
+    const playback = playbackRef.current;
+    if (monitor && playback?.kind === "answer" && !playback.done) {
+      monitor.prebuffer.push(chunk);
+      monitor.prebufferMs += chunkMs;
+      while (monitor.prebuffer.length > 1 && monitor.prebufferMs - (monitor.prebuffer[0].length / sampleRate) * 1000 >= VOICE_BARGE_IN.prebufferMs) {
+        monitor.prebufferMs -= (monitor.prebuffer[0].length / sampleRate) * 1000;
+        monitor.prebuffer.shift();
+      }
+      if (Date.now() - playback.startedAt < VOICE_BARGE_IN.cooldownMs) {
+        monitor.sustainMs = 0;
+      } else if (rms >= VOICE_BARGE_IN.rms) {
+        monitor.sustainMs += chunkMs;
+        if (monitor.sustainMs >= VOICE_BARGE_IN.sustainMs) {
+          const seedChunks = monitor.prebuffer;
+          bargeInRef.current = null;
+          interruptToListening(false, seedChunks);
+        }
+      } else {
+        monitor.sustainMs = 0;
+      }
+    }
+  };
+
+  const sendPartialTranscribe = async () => {
+    const rec = recordingRef.current;
+    if (!rec || rec.finalized || rec.partialBusy || !rec.heardSpeech || !rec.chunks.length) return;
+    rec.partialBusy = true;
+    try {
+      const audioBase64 = await wavBase64FromChunks(rec.chunks.slice(), captureRef.current?.sampleRate || VOICE_TARGET_SAMPLE_RATE);
+      if (!audioBase64 || rec.finalized) return;
+      const result = await api("/voice/local/transcribe", {
+        method: "POST",
+        body: JSON.stringify({ audioBase64, filename: "voice.wav", mimeType: "audio/wav", partial: true, appendChat: false })
+      });
+      if (!rec.finalized && recordingRef.current === rec && result.text) setUserCaption(result.text);
+    } catch {
+      // Partial captions are best-effort; the final transcribe surfaces real failures.
+    } finally {
+      rec.partialBusy = false;
+    }
+  };
+
+  const finalizeRecording = async () => {
+    const rec = recordingRef.current;
+    if (!rec || rec.finalized) return;
+    rec.finalized = true;
+    recordingRef.current = null;
+    clearPartialTimer();
+    clearFollowupTimer();
+    setOrbLevel(0);
+    if (!sessionRef.current?.active) return;
+    if (!rec.barge && rec.speechMs < VOICE_VAD.minSpeechMs) {
+      setStatusSafe("idle");
+      return;
+    }
+    setStatusSafe("transcribing");
+    let text = "";
+    try {
+      const audioBase64 = await wavBase64FromChunks(rec.chunks, captureRef.current?.sampleRate || VOICE_TARGET_SAMPLE_RATE);
+      const result = await api("/voice/local/transcribe", {
+        method: "POST",
+        body: JSON.stringify({ audioBase64, filename: "voice.wav", mimeType: "audio/wav", appendChat: false })
+      });
+      text = String(result.text || "").trim();
+    } catch (err) {
+      if (statusRef.current === "transcribing" && sessionRef.current?.active) {
+        setStatusSafe("idle");
+        showToast(`Transcription failed — check the Parakeet tunnel (127.0.0.1:18793). ${err.message}`);
+      }
+      return;
+    }
+    if (statusRef.current !== "transcribing" || !sessionRef.current?.active) return;
+    if (!text) {
+      if (rec.barge) {
+        openFollowupWindow();
+        return;
+      }
+      setStatusSafe("idle");
+      showToast("I didn't catch that — press Talk and try again.");
+      return;
+    }
+    setUserCaption(text);
+    runTurn(text);
+  };
+
+  const runTurn = async (text) => {
+    turnCounterRef.current += 1;
+    const turn = { id: turnCounterRef.current, ackFired: false, answerReady: false, toolNames: {}, toolResults: [] };
+    turnRef.current = turn;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setToolCalls([]);
+    setPanel(null);
+    setAssistantCaption("");
+    setStatusSafe("thinking");
+    let answerText = "";
+    try {
+      await streamAgent("/ai/chat", {
+        message: text,
+        mode: "voice",
+        context: { visiblePanel: "voice", voiceMode: "visual" }
+      }, (event) => {
+        if (turnRef.current !== turn) return;
+        if (event.type === "TEXT_MESSAGE_CONTENT") {
+          answerText += event.delta || "";
+          setAssistantCaption(stripMarkdownForCaption(answerText));
+          return;
+        }
+        if (event.type === "TOOL_CALL_START") {
+          turn.toolNames[event.toolCallId] = event.toolCallName;
+          setToolCalls((current) => [...current, { id: event.toolCallId, name: event.toolCallName, status: "running" }]);
+          if (!turn.ackFired) {
+            turn.ackFired = true;
+            playQuickAck(turn);
+          }
+          return;
+        }
+        if (event.type === "TOOL_CALL_RESULT") {
+          turn.toolResults.push({
+            name: turn.toolNames[event.toolCallId] || "tool",
+            preview: JSON.stringify(event.result ?? {}).slice(0, 600)
+          });
+          setToolCalls((current) => current.map((call) => (
+            call.id === event.toolCallId ? { ...call, status: event.result?.status || "done" } : call
+          )));
+          return;
+        }
+        if (event.type === "RUN_ERROR") {
+          turn.runError = event.message || "The agent run failed.";
+          return;
+        }
+        if (event.type === "RUN_FINISHED") {
+          turn.runStatus = event.status || "completed";
+        }
+      }, { signal: controller.signal });
+    } catch (err) {
+      if (controller.signal.aborted || turnRef.current !== turn || !sessionRef.current?.active) return;
+      setStatusSafe("idle");
+      showToast(err.message);
+      return;
+    }
+    if (controller.signal.aborted || turnRef.current !== turn || !sessionRef.current?.active) return;
+    if (turn.runStatus === "aborted") {
+      setStatusSafe("idle");
+      return;
+    }
+    if (turn.runError) {
+      setStatusSafe("idle");
+      showToast(turn.runError);
+      return;
+    }
+    const answer = answerText.trim();
+    if (!answer) {
+      setStatusSafe("idle");
+      showToast("The agent finished without an answer — try rephrasing.");
+      return;
+    }
+    setPanel({ turnId: turn.id, question: text, answer, html: "", view: "text", enriching: true });
+    requestEnrichment(turn, text, answer);
+    onTurnComplete?.();
+    await speakAnswer(turn, answer);
+  };
+
+  const playQuickAck = async (turn) => {
+    const ack = VOICE_ACKS[(turn.id - 1) % VOICE_ACKS.length];
+    try {
+      const spoken = await api("/voice/local/speak", { method: "POST", body: JSON.stringify({ text: ack }) });
+      if (turnRef.current !== turn || turn.answerReady || playbackRef.current || !sessionRef.current?.active) return;
+      await playAudioBase64(spoken.audioBase64, "ack");
+    } catch {
+      // The quick ack is best-effort; the answer audio still plays.
+    }
+  };
+
+  const requestEnrichment = async (turn, question, answer) => {
+    let html = "";
+    try {
+      const result = await api("/voice/enrich", {
+        method: "POST",
+        body: JSON.stringify({ question, answer, toolResults: turn.toolResults.slice(0, 8) })
+      });
+      html = result.html || "";
+    } catch {
+      // Enrichment is best-effort; the text answer stays available.
+    }
+    setPanel((current) => (current?.turnId === turn.id ? {
+      ...current,
+      html: html || current.html,
+      view: html ? "rich" : current.view,
+      enriching: false
+    } : current));
+  };
+
+  const speakAnswer = async (turn, answer) => {
+    let spoken = null;
+    try {
+      spoken = await api("/voice/local/speak", {
+        method: "POST",
+        body: JSON.stringify({ text: stripMarkdownForCaption(answer).slice(0, 1180) })
+      });
+    } catch (err) {
+      if (turnRef.current !== turn || !sessionRef.current?.active) return;
+      showToast(`Speech is unavailable — check the Kokoro service (127.0.0.1:8898). ${err.message}`);
+      openFollowupWindow();
+      return;
+    }
+    if (turnRef.current !== turn || !sessionRef.current?.active) return;
+    turn.answerReady = true;
+    if (playbackRef.current?.kind === "ack") stopPlayback();
+    setStatusSafe("speaking");
+    bargeInRef.current = { sustainMs: 0, prebuffer: [], prebufferMs: 0 };
+    try {
+      await playAudioBase64(spoken.audioBase64, "answer");
+    } catch {
+      // Playback failure falls through to the follow-up window below.
+    }
+    bargeInRef.current = null;
+    if (turnRef.current !== turn || !sessionRef.current?.active) return;
+    openFollowupWindow();
+  };
+
+  const openFollowupWindow = () => {
+    if (!sessionRef.current?.active) return;
+    setStatusSafe("followup");
+    startRecording({ vad: true, followup: true });
+    clearFollowupTimer();
+    followupTimerRef.current = window.setTimeout(() => {
+      const rec = recordingRef.current;
+      if (statusRef.current === "followup" && rec && !rec.heardSpeech) {
+        cancelRecording();
+        setStatusSafe("idle");
+      }
+    }, VOICE_FOLLOW_UP_MS);
+  };
+
+  const interruptTurn = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    turnRef.current = null;
+    bargeInRef.current = null;
+    stopPlayback();
+    cancelRecording();
+  };
+
+  const interruptToListening = (hold = false, seedChunks = null) => {
+    interruptTurn();
+    if (!sessionRef.current?.active) return;
+    startRecording({ vad: !hold, barge: Boolean(seedChunks), seedChunks });
+  };
+
+  const interruptToIdle = () => {
+    interruptTurn();
+    if (!sessionRef.current?.active) return;
+    setStatusSafe("idle");
+  };
+
+  const beginTalk = (hold) => {
+    const current = statusRef.current;
+    if (current === "speaking" || current === "thinking") interruptToListening(hold);
+    else if (current === "followup") promoteFollowup(hold);
+    else if (current === "idle") startRecording({ vad: !hold });
+  };
+
+  const endTalkHold = () => {
+    const rec = recordingRef.current;
+    if (rec && !rec.vad && statusRef.current === "listening") finalizeRecording();
+  };
+
+  const handleTalkClick = () => {
+    if (talkMode === "hold") return;
+    if (statusRef.current === "listening") finalizeRecording();
+    else beginTalk(false);
+  };
+
+  const startSession = async () => {
+    if (statusRef.current !== "off") return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showToast("Microphone access needs a secure context — open this dashboard on localhost or over HTTPS.");
+      return;
+    }
+    const AudioContextImpl = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextImpl) {
+      showToast("WebAudio is unavailable in this browser — voice mode cannot start.");
+      return;
+    }
+    setStatusSafe("greeting");
+    const generation = sessionGenRef.current;
+    const cancelled = () => sessionGenRef.current !== generation;
+    let stream = null;
+    let audioContext = null;
+    let capture = null;
+    const discardStartup = () => {
+      capture?.stop();
+      if (stream) stopStream(stream);
+      try {
+        audioContext?.close?.()?.catch?.(() => {});
+      } catch { /* context already closed */ }
+    };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      if (cancelled()) {
+        discardStartup();
+        return;
+      }
+      audioContext = new AudioContextImpl();
+      if (audioContext.resume) await audioContext.resume().catch(() => {});
+      if (cancelled()) {
+        discardStartup();
+        return;
+      }
+      sessionRef.current = { audioContext, stream, active: true };
+      capture = await createVoiceCapture(audioContext, stream, handleChunk);
+      if (cancelled()) {
+        discardStartup();
+        return;
+      }
+      captureRef.current = { capture, sampleRate: audioContext.sampleRate || VOICE_TARGET_SAMPLE_RATE };
+      setSessionStartedAt(Date.now());
+      const greeting = VOICE_GREETINGS[Math.floor(Math.random() * VOICE_GREETINGS.length)];
+      setAssistantCaption(greeting);
+      let spoken = null;
+      try {
+        spoken = await api("/voice/local/speak", { method: "POST", body: JSON.stringify({ text: greeting }) });
+      } catch (err) {
+        if (!cancelled()) showToast(`Speech is unavailable — check the Kokoro service (127.0.0.1:8898). ${err.message}`);
+      }
+      if (cancelled() || !sessionRef.current?.active) return;
+      if (spoken?.audioBase64) await playAudioBase64(spoken.audioBase64, "greeting");
+      if (cancelled() || !sessionRef.current?.active) return;
+      openFollowupWindow();
+    } catch (err) {
+      if (cancelled()) {
+        discardStartup();
+        return;
+      }
+      endSession();
+      showToast(`Could not start the voice session — ${err.message}`);
+    }
+  };
+
+  const endSession = () => {
+    sessionGenRef.current += 1;
+    clearPartialTimer();
+    clearFollowupTimer();
+    stopOrbMeter();
+    abortRef.current?.abort();
+    abortRef.current = null;
+    turnRef.current = null;
+    bargeInRef.current = null;
+    recordingRef.current = null;
+    stopPlayback();
+    captureRef.current?.capture?.stop();
+    captureRef.current = null;
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    if (session) {
+      session.active = false;
+      stopStream(session.stream);
+      try {
+        session.audioContext?.close?.()?.catch?.(() => {});
+      } catch { /* context already closed */ }
+    }
+    setStatusSafe("off");
+    setUserCaption("");
+    setAssistantCaption("");
+    setToolCalls([]);
+    setPanel(null);
+    setSessionStartedAt(0);
+  };
+  endSessionRef.current = endSession;
+
+  useEffect(() => () => endSessionRef.current(), []);
+
+  useEffect(() => {
+    api("/ai/capabilities")
+      .then((payload) => setCaps(payload.capabilities || payload))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    window.localStorage?.setItem("orchestrator-v2-voice-talk-mode", talkMode);
+  }, [talkMode]);
+
+  useEffect(() => {
+    if (!sessionStartedAt) return undefined;
+    const interval = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [sessionStartedAt]);
+
+  useEffect(() => {
+    const isTypingTarget = (target) => ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName);
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          return;
+        }
+        if (historyOpen) {
+          setHistoryOpen(false);
+          return;
+        }
+        if (["listening", "thinking", "speaking", "followup", "transcribing"].includes(statusRef.current)) interruptToIdle();
+        return;
+      }
+      if (event.code === "Space" && !isTypingTarget(event.target)) {
+        event.preventDefault();
+        if (!event.repeat) beginTalk(true);
+      }
+    };
+    const onKeyUp = (event) => {
+      if (event.code === "Space" && !isTypingTarget(event.target)) endTalkHold();
+    };
+    const onBlur = () => endTalkHold();
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [historyOpen, settingsOpen]);
+
+  const active = status !== "off";
+  const visualReady = !caps || caps.voiceModes?.visual !== false;
+  const stateLabel = VOICE_STATE_LABELS[status] || "Standing by";
+  const elapsed = sessionStartedAt ? Math.max(0, Math.floor((clock - sessionStartedAt) / 1000)) : 0;
+  const timer = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+
+  return (
+    <div className="voice-overlay" data-status={status} role="dialog" aria-label="Voice visual mode">
+      <header className="voice-top">
+        <div className="voice-top-group">
+          <span className="voice-eyebrow voice-persona">{VOICE_PERSONA_NAME}</span>
+          {active && <span className="voice-timer">{timer}</span>}
+        </div>
+        <div className="voice-tool-strip" aria-label="Tool activity">
+          {toolCalls.slice(-4).map((call) => (
+            <span className={`voice-tool-chip ${call.status === "running" ? "running" : "done"}`} key={call.id}>
+              {call.status === "running" ? <RefreshCw size={11} className="spin" /> : <Check size={11} />}
+              <span>{String(call.name || "tool").replace(/_/g, " ")}</span>
+            </span>
+          ))}
+        </div>
+        <div className="voice-top-group">
+          <button className="voice-chip-btn" onClick={() => setHistoryOpen(true)}><History size={14} />History</button>
+          <button className="voice-chip-btn" onClick={onExit}><LayoutDashboard size={14} />Dashboard</button>
+        </div>
+      </header>
+      <main className={`voice-stage ${panel ? "has-panel" : ""}`}>
+        <div className="voice-orb-wrap">
+          <div className={`voice-orb ${status}`} ref={orbRef} aria-hidden="true">
+            <span className="voice-orb-halo" />
+            <span className="voice-orb-aurora" />
+            <span className="voice-orb-core" />
+            <span className="voice-orb-eyes">
+              <span className="voice-orb-eye" />
+              <span className="voice-orb-eye" />
+            </span>
+          </div>
+        </div>
+        <div className="voice-eyebrow voice-state-label" aria-live="polite">{stateLabel}</div>
+        {status === "off" ? (
+          <div className="voice-start-block">
+            <p className="voice-caption assistant">Start a session, then ask about your cmux sessions, tasks, and PRs.</p>
+            <button className="voice-start-btn" onClick={startSession} disabled={!visualReady}>
+              <Mic size={17} />Start session
+            </button>
+            {!visualReady && (
+              <p className="voice-hint">Voice services are offline — start Parakeet (127.0.0.1:18793) and Kokoro (127.0.0.1:8898), then reload.</p>
+            )}
+          </div>
+        ) : (
+          <div className="voice-captions">
+            <p className="voice-caption user">{userCaption}</p>
+            <p className="voice-caption assistant">{assistantCaption}</p>
+          </div>
+        )}
+        {panel && (
+          <section className="voice-panel">
+            <div className="voice-panel-head">
+              <span className="voice-eyebrow">Answer</span>
+              <div className="voice-panel-toggle" role="tablist" aria-label="Answer format">
+                <button
+                  className={panel.view === "text" ? "active" : ""}
+                  onClick={() => setPanel((current) => (current ? { ...current, view: "text" } : current))}
+                >
+                  Text
+                </button>
+                <button
+                  className={panel.view === "rich" ? "active" : ""}
+                  disabled={!panel.html}
+                  onClick={() => setPanel((current) => (current ? { ...current, view: "rich" } : current))}
+                >
+                  {panel.enriching ? "Rich…" : "Rich"}
+                </button>
+              </div>
+            </div>
+            {panel.view === "rich" && panel.html ? (
+              <iframe className="voice-panel-frame" sandbox="" srcDoc={panel.html} title="Rich answer" />
+            ) : (
+              <div className="voice-panel-markdown"><MarkdownMessage content={panel.answer} /></div>
+            )}
+          </section>
+        )}
+      </main>
+      <footer className="voice-bottom">
+        {active ? (
+          <>
+            <button className="voice-chip-btn danger" onClick={endSession}><X size={14} />End session</button>
+            <button
+              className={`voice-talk ${status}`}
+              disabled={["greeting", "transcribing"].includes(status)}
+              aria-pressed={status === "listening"}
+              onClick={handleTalkClick}
+              onPointerDown={talkMode === "hold" ? () => beginTalk(true) : undefined}
+              onPointerUp={talkMode === "hold" ? endTalkHold : undefined}
+              onPointerLeave={talkMode === "hold" ? endTalkHold : undefined}
+            >
+              <Mic size={19} />
+              <span>Talk</span>
+            </button>
+            <div className="voice-settings-anchor">
+              <button
+                className="voice-chip-btn"
+                aria-label="Voice settings"
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+              >
+                <Settings size={14} />Settings
+              </button>
+              {settingsOpen && (
+                <div className="voice-settings-pop" role="dialog" aria-label="Voice settings">
+                  <span className="voice-eyebrow">Talk button</span>
+                  <label>
+                    <input type="radio" name="voice-talk-mode" checked={talkMode === "toggle"} onChange={() => setTalkMode("toggle")} />
+                    <span>Tap to toggle — stops after silence</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="voice-talk-mode" checked={talkMode === "hold"} onChange={() => setTalkMode("hold")} />
+                    <span>Hold to talk</span>
+                  </label>
+                  <small>Space holds the mic. Esc interrupts.</small>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <span className="voice-hint quiet">Space holds the mic · Esc interrupts</span>
+        )}
+      </footer>
+      {historyOpen && <VoiceHistoryDrawer onClose={() => setHistoryOpen(false)} />}
+      {voiceToast && <div className="voice-toast" role="status">{voiceToast}</div>}
+    </div>
+  );
+}
+
+function VoiceHistoryDrawer({ onClose }) {
+  const [messages, setMessages] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api("/chat/messages")
+      .then((payload) => setMessages((payload.messages || payload.chatMessages || []).slice().reverse()))
+      .catch((err) => setError(err.message));
+  }, []);
+  const groups = useMemo(() => voiceHistoryGroups(messages || []), [messages]);
+  return (
+    <>
+      <div className="voice-drawer-scrim" onClick={onClose} />
+      <aside className="voice-drawer" role="dialog" aria-label="Conversation history">
+        <div className="voice-drawer-head">
+          <span className="voice-eyebrow">History</span>
+          <button className="voice-chip-btn" onClick={onClose} aria-label="Close history"><X size={14} /></button>
+        </div>
+        <div className="voice-drawer-body">
+          {error ? (
+            <p className="voice-drawer-note">{error}</p>
+          ) : messages === null ? (
+            <p className="voice-drawer-note">Loading conversation…</p>
+          ) : messages.length === 0 ? (
+            <p className="voice-drawer-note">No conversation yet.</p>
+          ) : groups.map((group) => (
+            <div className="voice-drawer-day" key={`${group.day}-${group.items[0]?.id || "first"}`}>
+              <div className="voice-eyebrow voice-drawer-divider">{group.day}</div>
+              {group.items.map((message, index) => (
+                <div className={`voice-drawer-message ${message.role}`} key={message.id || `${group.day}-${index}`}>
+                  <div className="voice-drawer-meta">
+                    <span className="voice-eyebrow">{message.role === "user" ? "You" : VOICE_PERSONA_NAME}</span>
+                    {/voice/i.test(String(message.metadata?.mode || "")) && (
+                      <span className="voice-mic-badge" title="Voice turn"><Mic size={10} /></span>
+                    )}
+                  </div>
+                  <MarkdownMessage content={message.content} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </aside>
+    </>
+  );
+}
+
 function ToolRunTimeline({ runId, status, dryRun }) {
   return <div className="tool-timeline-panel"><b>{runId}</b><span>{status || "running"}</span>{dryRun && <small>Dry-run fallback used until Fireworks is configured.</small>}</div>;
 }
@@ -2884,6 +3932,30 @@ function activityGroupTitle(runId) {
   if (runId.startsWith("toolrun")) return `Tool run ${short}`;
   if (runId.startsWith("realtime")) return `Voice run ${short}`;
   return `Run ${short}`;
+}
+
+function voiceDayLabel(value) {
+  const date = new Date(value || Date.now());
+  if (!Number.isFinite(date.getTime())) return "Earlier";
+  const startOfDay = (input) => new Date(input.getFullYear(), input.getMonth(), input.getDate()).getTime();
+  const daysAgo = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86400000);
+  if (daysAgo <= 0) return "Today";
+  if (daysAgo === 1) return "Yesterday";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function voiceHistoryGroups(messages) {
+  const groups = [];
+  let current = null;
+  for (const message of messages) {
+    const day = voiceDayLabel(message.createdAt || message.created_at || message.timestamp);
+    if (!current || current.day !== day) {
+      current = { day, items: [] };
+      groups.push(current);
+    }
+    current.items.push(message);
+  }
+  return groups;
 }
 
 function relativeAge(value) {

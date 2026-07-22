@@ -2,6 +2,20 @@
 
 ## How this project was built
 
+### Phase 9: Voice Visual Mode — the talking orchestrator (2026-07-06)
+
+**Feature:** Full-screen voice-interactive "Visual Mode" on the Orchestrator V2 dashboard, spec'd from Ronnie's voice memo (transcribed with the local Parakeet STT it now ships with). A persona orb ("Maestro") sits center screen with a big Talk CTA; a session starts with a spoken greeting, then push-to-talk turns flow: Parakeet STT → the existing Fireworks sidecar agent (new `mode: "voice"` prompt + assistant-context continuity) → Kokoro TTS (`bm_daniel`) with live captions, a deterministic quick-ack while tools run, voice barge-in/interrupt, a 6 s follow-up listen window, and an async Fireworks-generated rich HTML answer panel (validated server-side, rendered in a `sandbox=""` iframe) that swaps over the instant markdown render. History drawer reads the global transcript; Visual Mode ⇄ Dashboard toggle with `?view=voice` deep link.
+
+**Backend** (`cmux_harness/`): Parakeet backend (stdlib multipart) with faster-whisper fallback in `orchestrator_v2_voice.py`, Kokoro provider (OpenAI-compatible `/v1/audio/speech`), new `orchestrator_v2_enrich.py` (Fireworks chat-completions + strict HTML validation), `appendChat`/`partial` transcribe flags (kills the double-append), non-required `parakeet`/`kokoro` health checks, `voiceModes.visual` capability, API discovery entries. `sidecar_port()`/`sidecar_base_url()` now load `.env.local` first — fixes the silent sidecar bind failure when 8792 is occupied (it is, by the lux voice service; the sidecar now runs on 8795 via `ORCHESTRATOR_V2_AGENT_PORT`).
+
+**Sidecar** (`agent/orchestrator-v2/`): voice-mode system prompt (concise spoken answers, tools-before-answers, verbal confirmation before cmux writes), last-4 assistant messages interleaved for follow-ups, and abort-on-client-disconnect wired through `streamText` so barge-in stops the LLM run.
+
+**Frontend** (`frontend/orchestrator-v2/`): client-side 16 kHz WAV capture (inline AudioWorklet + ScriptProcessor fallback), full session state machine, audio-reactive persona orb, partial-transcript captions, WebAudio playback + RMS barge-in, history drawer, scoped dark `.voice-*` design system, `streamAgent` AbortSignal support, and a vitest environment fix (Node's experimental `localStorage` was shadowing jsdom's — all 19 tests were failing before).
+
+**Spec:** `docs/ORCHESTRATOR_V2_VOICE_VISUAL_MODE.md`. Tests: 559 Python + 25 vitest. E2E verified live: real Parakeet round-trip, Kokoro render in 0.35 s, Fireworks enrich in ~6 s, and a full voice agent turn that listed the 11 real cmux sessions.
+
+---
+
 ### Phase 8: Build Log Viewer (2026-04-04)
 
 **Feature:** Real-time build log viewer panel in the orchestrator UI. When the user triggers a build (e.g. via the "Build & Run" action button), the Xcode project compiles and writes output to `.build/build.log` in the worktree. This file can be 2.4MB+ (593 build targets for the Doximity iOS app). The viewer gives visibility into build progress without leaving the orchestrator.

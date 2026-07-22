@@ -425,8 +425,9 @@ ENDPOINTS: list[dict[str, Any]] = [
     endpoint("POST", "/api/orchestrator-v2/chat", "Run a local Orchestrator V2 chat turn.", category="Orchestrator V2", safety="local_write"),
     endpoint("POST", "/api/orchestrator-v2/realtime/session", "Create realtime voice session credentials.", category="Voice", safety="external_write"),
     endpoint("POST", "/api/orchestrator-v2/realtime/tool", "Run a realtime tool call.", category="Voice", safety="tool_dependent"),
-    endpoint("POST", "/api/orchestrator-v2/voice/local/transcribe", "Transcribe local audio.", category="Voice", safety="file_read"),
-    endpoint("POST", "/api/orchestrator-v2/voice/local/speak", "Generate local speech audio.", category="Voice", safety="file_write"),
+    endpoint("POST", "/api/orchestrator-v2/voice/local/transcribe", "Transcribe local audio through Parakeet with a faster-whisper fallback.", category="Voice", safety="file_read", request=body_schema(required=["audioBase64"], optional=["filename", "mimeType", "backend", "partial", "appendChat"], example={"audioBase64": "UklGRg==", "filename": "turn.wav", "backend": "parakeet", "appendChat": False})),
+    endpoint("POST", "/api/orchestrator-v2/voice/local/speak", "Generate local speech audio through Kokoro, Piper, or ElevenLabs.", category="Voice", safety="file_write", request=body_schema(required=["text"], optional=["provider", "voice", "speed"], example={"text": "Two sessions are running.", "provider": "kokoro", "voice": "bm_daniel", "speed": 1.0})),
+    endpoint("POST", "/api/orchestrator-v2/voice/enrich", "Generate a validated script-free HTML answer panel for a voice turn.", category="Voice", safety="external_write", request=body_schema(required=["question", "answer"], optional=["toolResults", "title"], example={"question": "What sessions do I have running?", "answer": "Two sessions are running.", "toolResults": [{"name": "list_cmux_sessions", "preview": "2 sessions"}], "title": "Cmux sessions"})),
     endpoint("POST", "/api/orchestrator-v2/folder-picker", "Open native folder picker.", category="Files", safety="native_ui"),
     endpoint("POST", "/api/orchestrator-v2/watcher/run", "Run Orchestrator V2 watcher once.", category="Orchestrator V2", safety="external_read"),
 ]

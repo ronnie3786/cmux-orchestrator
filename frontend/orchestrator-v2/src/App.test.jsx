@@ -1,6 +1,6 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { AppShell } from "./App.jsx";
 
 vi.mock("@copilotkit/react-core", () => ({
@@ -491,5 +491,359 @@ describe("AppShell", () => {
       "/api/orchestrator-v2/approvals/approval_kill/decision",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ status: "approved" }) })
     ));
+  });
+});
+
+class FakeAnalyser {
+  constructor() {
+    this.fftSize = 256;
+  }
+  connect() {}
+  disconnect() {}
+  getByteTimeDomainData(data) {
+    data.fill(128);
+  }
+}
+
+class FakeBufferSource {
+  connect() {}
+  disconnect() {}
+  start() {
+    window.setTimeout(() => this.onended?.(), 0);
+  }
+  stop() {}
+}
+
+class FakeAudioContext {
+  constructor() {
+    this.sampleRate = 16000;
+    this.destination = {};
+    this.scriptProcessors = [];
+    FakeAudioContext.instances.push(this);
+  }
+  resume() {
+    return Promise.resolve();
+  }
+  close() {
+    return Promise.resolve();
+  }
+  decodeAudioData() {
+    return Promise.resolve({ duration: 0.05 });
+  }
+  createBufferSource() {
+    return new FakeBufferSource();
+  }
+  createAnalyser() {
+    return new FakeAnalyser();
+  }
+  createMediaStreamSource() {
+    return { connect() {}, disconnect() {} };
+  }
+  createScriptProcessor() {
+    const node = { onaudioprocess: null, connect() {}, disconnect() {} };
+    this.scriptProcessors.push(node);
+    return node;
+  }
+}
+FakeAudioContext.instances = [];
+
+function jsonResponse(payload) {
+  return { ok: true, json: () => Promise.resolve(payload) };
+}
+
+function sseResponse(events, { signal, hangAfterFirstRead = false } = {}) {
+  const encoder = new TextEncoder();
+  const payload = encoder.encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+  let reads = 0;
+  return {
+    ok: true,
+    json: () => Promise.resolve({ ok: true }),
+    body: {
+      getReader: () => ({
+        read: () => {
+          reads += 1;
+          if (reads === 1) return Promise.resolve({ done: false, value: payload });
+          if (hangAfterFirstRead) {
+            return new Promise((resolve, reject) => {
+              signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+            });
+          }
+          return Promise.resolve({ done: true, value: undefined });
+        }
+      })
+    }
+  };
+}
+
+const voiceTurnEvents = [
+  { type: "RUN_STARTED", runId: "run_voice" },
+  { type: "TEXT_MESSAGE_START", messageId: "voice_m1" },
+  { type: "TOOL_CALL_START", toolCallId: "voice_t1", toolCallName: "list_cmux_sessions" },
+  { type: "TOOL_CALL_RESULT", toolCallId: "voice_t1", result: { status: "completed", sessions: 2 } },
+  { type: "TEXT_MESSAGE_CONTENT", messageId: "voice_m1", delta: "You have **2** sessions running." },
+  { type: "TEXT_MESSAGE_END", messageId: "voice_m1" },
+  { type: "RUN_FINISHED", runId: "run_voice" }
+];
+
+function makeVoiceFetch(overrides = {}) {
+  return vi.fn((url, options = {}) => {
+    const path = String(url);
+    for (const [needle, handler] of Object.entries(overrides)) {
+      if (path.includes(needle)) return Promise.resolve(handler(options));
+    }
+    if (path.includes("/copilotkit/info")) return Promise.resolve(jsonResponse({ version: "1", agents: {} }));
+    if (path.includes("/bootstrap")) return Promise.resolve(jsonResponse(bootstrap));
+    if (path.includes("/orphans")) return Promise.resolve(jsonResponse({ ok: true, orphans: [] }));
+    if (path.includes("/ai/capabilities")) return Promise.resolve(jsonResponse({ ok: true, voiceModes: { visual: true } }));
+    if (path.includes("/voice/local/transcribe")) return Promise.resolve(jsonResponse({ ok: true, text: "what sessions are running", backend: "parakeet" }));
+    if (path.includes("/voice/local/speak")) return Promise.resolve(jsonResponse({ ok: true, provider: "kokoro", mimeType: "audio/wav", audioBase64: window.btoa("wav") }));
+    if (path.includes("/voice/enrich")) return Promise.resolve(jsonResponse({ ok: true, html: "<html><body>Rich sessions panel</body></html>" }));
+    if (path.includes("/chat/messages")) return Promise.resolve(jsonResponse({ ok: true, messages: [] }));
+    if (path.includes("/ai/chat")) return Promise.resolve(sseResponse(voiceTurnEvents));
+    return Promise.resolve(jsonResponse({ ok: true }));
+  });
+}
+
+function installVoiceAudio() {
+  FakeAudioContext.instances = [];
+  window.AudioContext = FakeAudioContext;
+  const track = { stop: vi.fn() };
+  const getUserMedia = vi.fn(() => Promise.resolve({ getTracks: () => [track] }));
+  Object.defineProperty(window.navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia }
+  });
+  return { track, getUserMedia };
+}
+
+const voiceOverlay = () => document.querySelector(".voice-overlay");
+
+async function openVoiceMode() {
+  render(<AppShell />);
+  await waitFor(() => expect(screen.getAllByText("Ship V2").length).toBeGreaterThan(0));
+  fireEvent.click(screen.getByText("Visual Mode"));
+  await waitFor(() => expect(voiceOverlay()).toBeTruthy());
+}
+
+async function startVoiceTurnSession() {
+  await openVoiceMode();
+  fireEvent.click(await screen.findByText("Start session"));
+  await waitFor(() => expect(voiceOverlay().getAttribute("data-status")).toBe("followup"));
+  const context = FakeAudioContext.instances.at(-1);
+  const processor = context.scriptProcessors.at(-1);
+  expect(processor.onaudioprocess).toBeTruthy();
+  const loud = new Float32Array(4096).fill(0.2);
+  act(() => {
+    processor.onaudioprocess({ inputBuffer: { getChannelData: () => loud } });
+    processor.onaudioprocess({ inputBuffer: { getChannelData: () => loud } });
+  });
+  await waitFor(() => expect(voiceOverlay().getAttribute("data-status")).toBe("listening"));
+}
+
+describe("VoiceVisualMode", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    installVoiceAudio();
+    global.fetch = makeVoiceFetch();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    delete window.AudioContext;
+    delete window.navigator.mediaDevices;
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("opens the voice view from the TopBar and returns to the dashboard", async () => {
+    await openVoiceMode();
+
+    expect(window.location.search).toContain("view=voice");
+    expect(screen.getByText("Maestro")).toBeTruthy();
+    expect(screen.getByText("Start session")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Dashboard"));
+
+    expect(voiceOverlay()).toBeNull();
+    expect(window.location.search).not.toContain("view=voice");
+  });
+
+  it("opens the voice view from the ?view=voice deep link", async () => {
+    window.history.replaceState({}, "", "/?view=voice");
+    render(<AppShell />);
+
+    await waitFor(() => expect(voiceOverlay()).toBeTruthy());
+    expect(screen.getByText("Maestro")).toBeTruthy();
+  });
+
+  it("starts a session with a spoken greeting and opens the follow-up mic", async () => {
+    await openVoiceMode();
+    fireEvent.click(await screen.findByText("Start session"));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/orchestrator-v2/voice/local/speak",
+      expect.objectContaining({ method: "POST" })
+    ));
+    await waitFor(() => expect(voiceOverlay().getAttribute("data-status")).toBe("followup"));
+
+    expect(window.navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    });
+    expect(document.querySelector(".voice-caption.assistant").textContent.length).toBeGreaterThan(0);
+  });
+
+  it("runs a full voice turn through transcribe, chat, speak, and enrich", async () => {
+    await startVoiceTurnSession();
+
+    fireEvent.click(screen.getByText("Talk"));
+
+    await waitFor(() => {
+      const transcribeCall = global.fetch.mock.calls.find(([url, options]) => (
+        String(url).includes("/voice/local/transcribe") && !JSON.parse(options.body).partial
+      ));
+      expect(transcribeCall).toBeTruthy();
+      expect(JSON.parse(transcribeCall[1].body).appendChat).toBe(false);
+    });
+
+    await waitFor(() => {
+      const chatCall = global.fetch.mock.calls.find(([url]) => String(url).includes("/ai/chat"));
+      expect(chatCall).toBeTruthy();
+      const body = JSON.parse(chatCall[1].body);
+      expect(body.mode).toBe("voice");
+      expect(body.message).toBe("what sessions are running");
+    });
+
+    await waitFor(() => expect(screen.getAllByText("You have 2 sessions running.").length).toBeGreaterThan(0));
+    expect(screen.getByText("list cmux sessions")).toBeTruthy();
+
+    await waitFor(() => {
+      const speakCall = global.fetch.mock.calls.find(([url, options]) => (
+        String(url).includes("/voice/local/speak") && String(options.body).includes("You have 2 sessions running.")
+      ));
+      expect(speakCall).toBeTruthy();
+    });
+
+    const frame = await screen.findByTitle("Rich answer");
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("srcdoc")).toContain("Rich sessions panel");
+
+    fireEvent.click(within(document.querySelector(".voice-panel-toggle")).getByText("Text"));
+    expect(screen.queryByTitle("Rich answer")).toBeNull();
+    expect(document.querySelector(".voice-panel-markdown")).toBeTruthy();
+  });
+
+  it("ends the session, releasing the mic and aborting the agent stream", async () => {
+    let capturedSignal = null;
+    const audio = installVoiceAudio();
+    global.fetch = makeVoiceFetch({
+      "/ai/chat": (options) => {
+        capturedSignal = options.signal;
+        return sseResponse(voiceTurnEvents.slice(0, 5), { signal: options.signal, hangAfterFirstRead: true });
+      }
+    });
+    await startVoiceTurnSession();
+
+    fireEvent.click(screen.getByText("Talk"));
+    await waitFor(() => expect(voiceOverlay().getAttribute("data-status")).toBe("thinking"));
+    expect(capturedSignal).toBeTruthy();
+
+    fireEvent.click(screen.getByText("End session"));
+
+    expect(capturedSignal.aborted).toBe(true);
+    expect(audio.track.stop).toHaveBeenCalled();
+    expect(voiceOverlay().getAttribute("data-status")).toBe("off");
+    expect(await screen.findByText("Start session")).toBeTruthy();
+  });
+
+  it("cancels session startup when ended while the microphone request is pending", async () => {
+    const track = { stop: vi.fn() };
+    let resolveMedia = null;
+    const getUserMedia = vi.fn(() => new Promise((resolve) => { resolveMedia = resolve; }));
+    Object.defineProperty(window.navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    await openVoiceMode();
+
+    fireEvent.click(await screen.findByText("Start session"));
+    await waitFor(() => expect(voiceOverlay().getAttribute("data-status")).toBe("greeting"));
+    fireEvent.click(screen.getByText("End session"));
+    expect(voiceOverlay().getAttribute("data-status")).toBe("off");
+
+    await act(async () => {
+      resolveMedia({ getTracks: () => [track] });
+    });
+
+    await waitFor(() => expect(track.stop).toHaveBeenCalled());
+    expect(voiceOverlay().getAttribute("data-status")).toBe("off");
+    expect(FakeAudioContext.instances.length).toBe(0);
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes("/voice/local/speak"))).toBe(false);
+  });
+
+  it("surfaces RUN_ERROR without speaking or enriching the truncated answer", async () => {
+    global.fetch = makeVoiceFetch({
+      "/ai/chat": () => sseResponse([
+        { type: "RUN_STARTED", runId: "run_err" },
+        { type: "TEXT_MESSAGE_START", messageId: "err_m1" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "err_m1", delta: "Partial answer" },
+        { type: "RUN_ERROR", message: "Agent runtime error: Fireworks 500" }
+      ])
+    });
+    await startVoiceTurnSession();
+
+    fireEvent.click(screen.getByText("Talk"));
+
+    await waitFor(() => expect(screen.getByText("Agent runtime error: Fireworks 500")).toBeTruthy());
+    expect(voiceOverlay().getAttribute("data-status")).toBe("idle");
+    expect(document.querySelector(".voice-panel")).toBeNull();
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes("/voice/enrich"))).toBe(false);
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url).includes("/voice/local/speak") && String(options?.body).includes("Partial answer")
+    ))).toBe(false);
+  });
+
+  it("applies late enrichment to the interrupted turn's panel", async () => {
+    let resolveEnrich = null;
+    global.fetch = makeVoiceFetch({
+      "/voice/enrich": () => new Promise((resolve) => { resolveEnrich = resolve; })
+    });
+    await startVoiceTurnSession();
+
+    fireEvent.click(screen.getByText("Talk"));
+    await waitFor(() => expect(document.querySelector(".voice-panel")).toBeTruthy());
+    await waitFor(() => expect(voiceOverlay().getAttribute("data-status")).toBe("followup"));
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(voiceOverlay().getAttribute("data-status")).toBe("idle"));
+    expect(within(document.querySelector(".voice-panel-toggle")).getByText("Rich…")).toBeTruthy();
+
+    await act(async () => {
+      resolveEnrich(jsonResponse({ ok: true, html: "<html><body>Late rich panel</body></html>" }));
+    });
+
+    const frame = await screen.findByTitle("Rich answer");
+    expect(frame.getAttribute("srcdoc")).toContain("Late rich panel");
+    expect(within(document.querySelector(".voice-panel-toggle")).getByText("Rich")).toBeTruthy();
+  });
+
+  it("renders global chat history in the drawer", async () => {
+    const createdAt = new Date().toISOString();
+    global.fetch = makeVoiceFetch({
+      "/chat/messages": () => jsonResponse({
+        ok: true,
+        messages: [
+          { id: "hist_1", role: "user", content: "voice question", createdAt, metadata: { mode: "voice" } },
+          { id: "hist_2", role: "assistant", content: "voice answer", createdAt, metadata: { mode: "voice" } }
+        ]
+      })
+    });
+    await openVoiceMode();
+
+    fireEvent.click(within(voiceOverlay()).getByText("History"));
+
+    expect(await screen.findByText("voice question")).toBeTruthy();
+    expect(screen.getByText("voice answer")).toBeTruthy();
+    expect(screen.getByText("Today")).toBeTruthy();
+    expect(document.querySelectorAll(".voice-mic-badge").length).toBe(2);
+
+    fireEvent.click(document.querySelector(".voice-drawer-scrim"));
+    expect(screen.queryByText("voice question")).toBeNull();
   });
 });

@@ -1,11 +1,14 @@
+import http.client
 import io
 import json
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
+from cmux_harness import orchestrator_v2_runtime
 from cmux_harness import orchestrator_v2_storage as v2
 from cmux_harness.routes import orchestrator_v2
 from cmux_harness.server import make_handler
@@ -636,15 +639,249 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertEqual(body["events"][0]["type"], "RUN_STARTED")
 
     def test_voice_local_fake_pipeline_and_capabilities_are_redacted(self):
-        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {"CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "1"}):
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {
+            "CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "1",
+            "ORCHESTRATOR_V2_TTS_BACKEND": "",
+        }):
             transcribe = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
                 "audioBase64": "AA==",
                 "fixtureText": "hello from mic",
             })
             speak = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": "hello"})
+            piper_speak = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": "hello", "provider": "piper"})
 
         self.assertEqual(self._json_body(transcribe)["text"], "hello from mic")
-        self.assertEqual(self._json_body(speak)["provider"], "piper")
+        self.assertEqual(self._json_body(speak)["provider"], "kokoro")
+        self.assertEqual(self._json_body(piper_speak)["provider"], "piper")
+
+    def test_voice_transcribe_route_skips_chat_append_for_append_chat_false_and_partial(self):
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {"CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "1"}):
+            no_append = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
+                "audioBase64": "AA==",
+                "backend": "parakeet",
+                "appendChat": False,
+                "fixtureText": "list my sessions",
+            })
+            partial = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
+                "audioBase64": "AA==",
+                "backend": "parakeet",
+                "partial": True,
+                "fixtureText": "list my ses",
+            })
+
+        self.assertEqual(self._json_body(no_append)["text"], "list my sessions")
+        self.assertFalse(self._json_body(no_append)["partial"])
+        self.assertTrue(self._json_body(partial)["partial"])
+        self.assertEqual(v2.get_repository().list_chat_messages(), [])
+
+    def _fake_whisper_module(self, transcript):
+        segment = MagicMock()
+        segment.text = transcript
+        info = MagicMock()
+        info.language = "en"
+        fake_model = MagicMock()
+        fake_model.transcribe.return_value = ([segment], info)
+        fake_module = MagicMock()
+        fake_module.WhisperModel.return_value = fake_model
+        return fake_module
+
+    def test_voice_transcribe_webm_payload_skips_parakeet_and_uses_faster_whisper(self):
+        fake_module = self._fake_whisper_module(" hello from webm ")
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {
+            "CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "",
+            "ORCHESTRATOR_V2_STT_BACKEND": "parakeet",
+        }), patch.dict("sys.modules", {"faster_whisper": fake_module}), \
+                patch("cmux_harness.orchestrator_v2_voice._transcribe_parakeet") as mock_parakeet:
+            handler = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
+                "audioBase64": "AA==",
+                "filename": "voice.webm",
+                "mimeType": "audio/webm",
+                "appendChat": False,
+            })
+
+        body = self._json_body(handler)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["backend"], "faster-whisper")
+        self.assertEqual(body["text"], "hello from webm")
+        mock_parakeet.assert_not_called()
+
+    def test_voice_transcribe_parakeet_http_error_falls_back_to_faster_whisper(self):
+        fake_module = self._fake_whisper_module("fallback transcript")
+        http_error = urllib.error.HTTPError("http://parakeet/transcribe", 500, "boom", {}, None)
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {
+            "CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "",
+            "ORCHESTRATOR_V2_STT_BACKEND": "parakeet",
+        }), patch.dict("sys.modules", {"faster_whisper": fake_module}), \
+                patch("cmux_harness.orchestrator_v2_voice._transcribe_parakeet", side_effect=http_error) as mock_parakeet:
+            handler = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
+                "audioBase64": "AA==",
+                "filename": "voice.wav",
+                "appendChat": False,
+            })
+
+        body = self._json_body(handler)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["backend"], "faster-whisper")
+        self.assertEqual(body["text"], "fallback transcript")
+        mock_parakeet.assert_called_once()
+
+    def test_voice_transcribe_parakeet_http_exception_falls_back_to_faster_whisper(self):
+        fake_module = self._fake_whisper_module("recovered transcript")
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {
+            "CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "",
+            "ORCHESTRATOR_V2_STT_BACKEND": "parakeet",
+        }), patch.dict("sys.modules", {"faster_whisper": fake_module}), \
+                patch("cmux_harness.orchestrator_v2_voice._transcribe_parakeet", side_effect=http.client.IncompleteRead(b"partial")):
+            handler = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
+                "audioBase64": "AA==",
+                "filename": "voice.wav",
+                "appendChat": False,
+            })
+
+        body = self._json_body(handler)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["backend"], "faster-whisper")
+
+    def test_voice_transcribe_parakeet_http_error_without_whisper_reports_both_errors(self):
+        http_error = urllib.error.HTTPError("http://parakeet/transcribe", 502, "bad gateway", {}, None)
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {
+            "CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "",
+            "ORCHESTRATOR_V2_STT_BACKEND": "parakeet",
+        }), patch.dict("sys.modules", {"faster_whisper": None}), \
+                patch("cmux_harness.orchestrator_v2_voice._transcribe_parakeet", side_effect=http_error):
+            handler = self._post_json("/api/orchestrator-v2/voice/local/transcribe", {
+                "audioBase64": "AA==",
+                "filename": "voice.wav",
+                "appendChat": False,
+            })
+
+        body = self._json_body(handler)
+        self.assertFalse(body["ok"])
+        self.assertIn("HTTP 502", body["error"])
+        self.assertIn("faster-whisper", body["error"])
+
+    def test_proxy_stream_forwards_sse_heartbeat_bytes_unmodified(self):
+        chunks = [b": ping\n\n", b"data: {\"type\":\"RUN_FINISHED\"}\n\n"]
+        response = MagicMock()
+        response.status = 200
+        response.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+        response.read.side_effect = chunks + [b""]
+        handler = self._make_handler("/api/orchestrator-v2/agent/chat")
+
+        with patch("cmux_harness.orchestrator_v2_runtime.urllib.request.urlopen", return_value=response):
+            result = orchestrator_v2_runtime.proxy_stream(handler, "/api/orchestrator-v2/agent/chat", {})
+
+        self.assertTrue(result)
+        self.assertEqual(handler.wfile.getvalue(), b"".join(chunks))
+        response.close.assert_called_once()
+
+    def test_proxy_stream_closes_upstream_when_client_disconnects_mid_heartbeat(self):
+        response = MagicMock()
+        response.status = 200
+        response.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+        response.read.return_value = b": ping\n\n"
+        handler = self._make_handler("/api/orchestrator-v2/agent/chat")
+        handler.wfile = Mock()
+        handler.wfile.write.side_effect = BrokenPipeError()
+
+        with patch("cmux_harness.orchestrator_v2_runtime.urllib.request.urlopen", return_value=response):
+            result = orchestrator_v2_runtime.proxy_stream(handler, "/api/orchestrator-v2/agent/chat", {})
+
+        self.assertTrue(result)
+        response.close.assert_called_once()
+
+    def test_voice_speak_fake_kokoro_returns_wav_payload(self):
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {
+            "CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "1",
+            "ORCHESTRATOR_V2_KOKORO_VOICE": "",
+        }):
+            handler = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": "hello", "provider": "kokoro"})
+
+        body = self._json_body(handler)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["provider"], "kokoro")
+        self.assertEqual(body["mimeType"], "audio/wav")
+        self.assertEqual(body["voice"], "bm_daniel")
+        self.assertTrue(body["audioBase64"])
+        self.assertIn("elapsedS", body)
+
+    def test_voice_speak_truncates_long_text_at_sentence_boundary_instead_of_erroring(self):
+        long_text = "This answer keeps going with plenty of detail. " * 40
+        fake_result = {"ok": True, "provider": "kokoro", "mimeType": "audio/wav", "audioBase64": "AA=="}
+        with patch("cmux_harness.orchestrator_v2_voice._speak_kokoro", return_value=fake_result) as mock_speak:
+            handler = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": long_text, "provider": "kokoro"})
+
+        body = self._json_body(handler)
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["truncated"])
+        spoken = mock_speak.call_args[0][0]
+        self.assertLessEqual(len(spoken), 1200)
+        self.assertTrue(spoken.endswith("."))
+
+    def test_voice_speak_truncates_unbroken_long_text_and_short_text_has_no_flag(self):
+        with patch.dict("cmux_harness.orchestrator_v2_voice.os.environ", {"CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "1"}):
+            long_handler = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": "x" * 2000, "provider": "kokoro"})
+            short_handler = self._post_json("/api/orchestrator-v2/voice/local/speak", {"text": "hello", "provider": "kokoro"})
+
+        long_body = self._json_body(long_handler)
+        self.assertTrue(long_body["ok"])
+        self.assertTrue(long_body["truncated"])
+        short_body = self._json_body(short_handler)
+        self.assertTrue(short_body["ok"])
+        self.assertNotIn("truncated", short_body)
+
+    def test_voice_enrich_fake_returns_html_panel(self):
+        with patch.dict("cmux_harness.orchestrator_v2_enrich.os.environ", {"CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "1"}):
+            handler = self._post_json("/api/orchestrator-v2/voice/enrich", {
+                "question": "What sessions are running?",
+                "answer": "Two sessions are running.",
+                "toolResults": [{"name": "list_cmux_sessions", "preview": "2 sessions"}],
+                "title": "Cmux sessions",
+            })
+
+        body = self._json_body(handler)
+        self.assertTrue(body["ok"])
+        self.assertIn("<html", body["html"].lower())
+        self.assertIn("</html>", body["html"].lower())
+        self.assertNotIn("<script", body["html"].lower())
+        self.assertIn("model", body)
+        self.assertIn("elapsedS", body)
+
+    def test_voice_enrich_rejects_script_html_with_502(self):
+        bad_html = (
+            "<html><head><style>body{background:#0f1524}</style></head><body>"
+            + "<p>" + "detail " * 80 + "</p>"
+            + "<script>alert(1)</script></body></html>"
+        )
+        response = MagicMock()
+        response.read.return_value = json.dumps({"choices": [{"message": {"content": bad_html}}]}).encode("utf-8")
+        response.__enter__.return_value = response
+
+        with patch.dict("cmux_harness.orchestrator_v2_enrich.os.environ", {
+            "CMUX_ORCHESTRATOR_V2_FAKE_VOICE": "",
+            "FIREWORKS_API_KEY": "fw_test_1234567890abcdef",
+        }), patch("cmux_harness.orchestrator_v2_enrich.urllib.request.urlopen", return_value=response):
+            handler = self._post_json("/api/orchestrator-v2/voice/enrich", {"question": "q", "answer": "a"})
+
+        body = self._json_body(handler)
+        handler.send_response.assert_called_once_with(502)
+        self.assertFalse(body["ok"])
+        self.assertIn("forbidden", body["error"])
+
+    def test_capabilities_payload_reports_visual_voice_fields(self):
+        handler = self._make_handler_get("/api/orchestrator-v2/ai/capabilities")
+        body = self._json_body(handler)
+
+        voice_modes = body["voiceModes"]
+        self.assertIsInstance(voice_modes["visual"], bool)
+        local = voice_modes["local"]
+        self.assertIn("backend", local["stt"])
+        self.assertIn("available", local["stt"])
+        self.assertIn("provider", local["tts"])
+        self.assertIn("available", local["tts"])
+        self.assertIsInstance(local["enrich"], bool)
+        self.assertIn("parakeet", body["health"]["checks"])
+        self.assertIn("kokoro", body["health"]["checks"])
 
     def test_voice_provider_failures_return_json_errors(self):
         with patch("cmux_harness.orchestrator_v2_voice.speak_local_payload", side_effect=RuntimeError("Piper binary is not available")):

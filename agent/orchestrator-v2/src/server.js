@@ -29,6 +29,8 @@ function isChatPath(pathname) {
   return pathname === "/api/orchestrator-v2/ai/chat" || pathname === "/api/orchestrator-v2/agui/run" || pathname === "/api/orchestrator-v2/copilotkit";
 }
 
+const HEARTBEAT_INTERVAL_MS = 2000;
+
 export function createServer({ client = new PythonClient(), cfg = config() } = {}) {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
@@ -58,18 +60,33 @@ export function createServer({ client = new PythonClient(), cfg = config() } = {
       }
       if (req.method === "POST" && isChatPath(url.pathname)) {
         const input = await readJson(req);
+        const abortController = new AbortController();
+        res.on("close", () => abortController.abort());
         res.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-cache, no-transform",
           "Connection": "keep-alive",
           "X-Accel-Buffering": "no"
         });
-        await runAgentChat({
-          client,
-          input,
-          emit: (payload) => writeSse(res, payload)
-        });
-        res.end();
+        const heartbeat = setInterval(() => {
+          if (abortController.signal.aborted || res.writableEnded || res.destroyed) return;
+          res.write(": ping\n\n");
+        }, HEARTBEAT_INTERVAL_MS);
+        abortController.signal.addEventListener("abort", () => clearInterval(heartbeat), { once: true });
+        try {
+          await runAgentChat({
+            client,
+            input,
+            emit: (payload) => {
+              if (abortController.signal.aborted) return;
+              writeSse(res, payload);
+            },
+            abortSignal: abortController.signal
+          });
+        } finally {
+          clearInterval(heartbeat);
+        }
+        if (!abortController.signal.aborted) res.end();
         return;
       }
       if (req.method === "GET" && url.pathname === "/api/orchestrator-v2/agui/schema") {

@@ -16,6 +16,7 @@ from . import cmux_cli
 from . import orchestrator_v2_storage as v2
 from . import tailscale
 from .orchestrator_v2_security import load_local_env, redact_text, repo_root
+from .orchestrator_v2_voice import kokoro_base_url, parakeet_base_url
 
 
 DEFAULT_SIDECAR_PORT = 8792
@@ -27,10 +28,12 @@ def sidecar_dir() -> Path:
 
 
 def sidecar_port() -> int:
+    load_local_env()
     return int(os.environ.get("ORCHESTRATOR_V2_AGENT_PORT") or DEFAULT_SIDECAR_PORT)
 
 
 def sidecar_base_url() -> str:
+    load_local_env()
     configured = str(os.environ.get("ORCHESTRATOR_V2_AGENT_URL") or "").strip().rstrip("/")
     if configured:
         return configured
@@ -157,6 +160,15 @@ class OrchestratorV2Sidecar:
         self.process = None
 
 
+def _service_health(base_url: str, *, timeout: float = 2.0) -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(f"{base_url}/health", timeout=timeout) as response:
+            status = int(getattr(response, "status", 200) or 200)
+        return {"available": 200 <= status < 300, "url": base_url}
+    except Exception as exc:
+        return {"available": False, "url": base_url, "error": redact_text(exc)}
+
+
 def _command_status(command: list[str], *, timeout: float = 4.0) -> dict[str, Any]:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
@@ -226,6 +238,11 @@ def health_payload(*, python_port: int = DEFAULT_PYTHON_PORT, repo: v2.V2Reposit
             "voicePathAvailable": bool(piper_voice_path and Path(piper_voice_path).expanduser().exists()),
             "voice": os.environ.get("ORCHESTRATOR_V2_PIPER_VOICE") or "en_US-amy-medium.onnx",
             "lengthScale": os.environ.get("ORCHESTRATOR_V2_PIPER_LENGTH_SCALE") or "0.67",
+        },
+        "parakeet": _service_health(parakeet_base_url()),
+        "kokoro": {
+            **_service_health(kokoro_base_url()),
+            "voice": os.environ.get("ORCHESTRATOR_V2_KOKORO_VOICE") or "bm_daniel",
         },
         "sqlite": {"available": sqlite_ok, "path": str(repository.db_path)},
         "tailscale": {

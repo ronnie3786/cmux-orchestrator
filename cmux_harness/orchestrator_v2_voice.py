@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
+import uuid
 import wave
 from pathlib import Path
 from typing import Any
 
 from .orchestrator_v2_security import load_local_env, redact_text, repo_root
+
+
+def parakeet_base_url() -> str:
+    return str(os.environ.get("ORCHESTRATOR_V2_PARAKEET_URL") or "http://127.0.0.1:18793").strip().rstrip("/")
+
+
+def kokoro_base_url() -> str:
+    return str(os.environ.get("ORCHESTRATOR_V2_KOKORO_URL") or "http://127.0.0.1:8898").strip().rstrip("/")
 
 
 def _tiny_wav_bytes() -> bytes:
@@ -32,10 +43,28 @@ def _tiny_wav_bytes() -> bytes:
             pass
 
 
+def _payload_is_wav(data: dict[str, Any]) -> bool:
+    mime = str(data.get("mimeType") or "").strip().lower().split(";", 1)[0]
+    if mime and mime not in {"audio/wav", "audio/x-wav", "audio/wave"}:
+        return False
+    filename = str(data.get("filename") or "").strip().lower()
+    if filename and "." in filename and not filename.endswith(".wav"):
+        return False
+    return True
+
+
 def transcribe_local_payload(data: dict[str, Any]) -> dict[str, Any]:
     load_local_env()
+    started = time.monotonic()
+    partial = bool(data.get("partial"))
     if os.environ.get("CMUX_ORCHESTRATOR_V2_FAKE_VOICE", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return {"ok": True, "text": str(data.get("fixtureText") or "fixture audio transcript"), "backend": "fake"}
+        return {
+            "ok": True,
+            "text": str(data.get("fixtureText") or "fixture audio transcript"),
+            "backend": "fake",
+            "partial": partial,
+            "elapsedS": round(time.monotonic() - started, 3),
+        }
 
     audio_b64 = str(data.get("audioBase64") or "").strip()
     if not audio_b64:
@@ -45,9 +74,30 @@ def transcribe_local_payload(data: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         raise ValueError("audioBase64 is invalid") from exc
 
+    backend = str(data.get("backend") or os.environ.get("ORCHESTRATOR_V2_STT_BACKEND") or "parakeet").strip().lower()
+    parakeet_error = ""
+    if backend == "parakeet" and _payload_is_wav(data):
+        try:
+            text = _transcribe_parakeet(audio_bytes, str(data.get("filename") or "audio.wav"))
+            return {
+                "ok": True,
+                "text": text,
+                "backend": "parakeet",
+                "partial": partial,
+                "elapsedS": round(time.monotonic() - started, 3),
+            }
+        except urllib.error.HTTPError as exc:
+            parakeet_error = f"HTTP {exc.code}"
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+            parakeet_error = redact_text(exc)
+
     try:
         from faster_whisper import WhisperModel
     except Exception as exc:
+        if parakeet_error:
+            raise RuntimeError(
+                f"Parakeet failed ({parakeet_error}) and faster-whisper is not installed or importable"
+            ) from exc
         raise RuntimeError("faster-whisper is not installed or importable") from exc
 
     suffix = str(data.get("filename") or "audio.webm")
@@ -66,6 +116,8 @@ def transcribe_local_payload(data: dict[str, Any]) -> dict[str, Any]:
             "backend": "faster-whisper",
             "model": model_name,
             "language": getattr(info, "language", ""),
+            "partial": partial,
+            "elapsedS": round(time.monotonic() - started, 3),
         }
     finally:
         try:
@@ -74,15 +126,100 @@ def transcribe_local_payload(data: dict[str, Any]) -> dict[str, Any]:
             pass
 
 
+def _transcribe_parakeet(audio_bytes: bytes, filename: str) -> str:
+    boundary = uuid.uuid4().hex
+    body = (
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="audio"; filename="{filename}"\r\n'
+            "Content-Type: audio/wav\r\n\r\n"
+        ).encode("utf-8")
+        + audio_bytes
+        + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    )
+    request = urllib.request.Request(
+        f"{parakeet_base_url()}/transcribe",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8") or "{}")
+    return str(payload.get("text") or "").strip()
+
+
+def _truncate_speech_text(text: str, limit: int = 1200) -> tuple[str, bool]:
+    if len(text) <= limit:
+        return text, False
+    clipped = text[:limit]
+    boundary = max(clipped.rfind("."), clipped.rfind("!"), clipped.rfind("?"))
+    if boundary > 0:
+        return clipped[: boundary + 1].strip(), True
+    whitespace = max(clipped.rfind(" "), clipped.rfind("\n"), clipped.rfind("\t"))
+    if whitespace > 0:
+        return clipped[:whitespace].strip(), True
+    return clipped, True
+
+
 def speak_local_payload(data: dict[str, Any]) -> dict[str, Any]:
     load_local_env()
     text = str(data.get("text") or "").strip()
     if not text:
         raise ValueError("text required")
-    provider = str(data.get("provider") or os.environ.get("ORCHESTRATOR_V2_TTS_BACKEND") or "piper").strip().lower()
+    text, truncated = _truncate_speech_text(text)
+    provider = str(data.get("provider") or os.environ.get("ORCHESTRATOR_V2_TTS_BACKEND") or "kokoro").strip().lower()
     if provider == "elevenlabs":
-        return _speak_elevenlabs(text)
-    return _speak_piper(text)
+        result = _speak_elevenlabs(text)
+    elif provider == "piper":
+        result = _speak_piper(text)
+    else:
+        result = _speak_kokoro(text, data)
+    if truncated:
+        result["truncated"] = True
+    return result
+
+
+def _speak_kokoro(text: str, data: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    voice = str(data.get("voice") or os.environ.get("ORCHESTRATOR_V2_KOKORO_VOICE") or "bm_daniel").strip()
+    speed = float(data.get("speed") or 1.0)
+    if os.environ.get("CMUX_ORCHESTRATOR_V2_FAKE_VOICE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return {
+            "ok": True,
+            "provider": "kokoro",
+            "mimeType": "audio/wav",
+            "audioBase64": base64.b64encode(_tiny_wav_bytes()).decode("ascii"),
+            "voice": voice,
+            "elapsedS": round(time.monotonic() - started, 3),
+        }
+    payload = {
+        "model": "kokoro",
+        "voice": voice,
+        "input": text,
+        "response_format": "wav",
+        "speed": speed,
+    }
+    request = urllib.request.Request(
+        f"{kokoro_base_url()}/v1/audio/speech",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            audio = response.read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Kokoro request failed: HTTP {exc.code}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Kokoro request failed: {redact_text(exc)}") from exc
+    return {
+        "ok": True,
+        "provider": "kokoro",
+        "mimeType": "audio/wav",
+        "audioBase64": base64.b64encode(audio).decode("ascii"),
+        "voice": voice,
+        "elapsedS": round(time.monotonic() - started, 3),
+    }
 
 
 def _speak_piper(text: str) -> dict[str, Any]:

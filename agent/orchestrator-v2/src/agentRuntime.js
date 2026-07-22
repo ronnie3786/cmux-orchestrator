@@ -2,21 +2,30 @@ import { createFireworks } from "@ai-sdk/fireworks";
 import { stepCountIs, streamText } from "ai";
 import { EventType, event, id, panelEvent, validatePanel } from "./agui.js";
 import { config, redactText } from "./env.js";
-import { createAiTools, executeTool, panelForTool } from "./toolRegistry.js";
+import { createAiTools, executeTool } from "./toolRegistry.js";
 
-export function buildSystemPrompt(context) {
+export function buildSystemPrompt(context, mode = "text") {
   const activeTasks = context?.tasks?.length ?? 0;
-  return [
+  const lines = [
     "You are Orchestrator V2, Ronnie's top-level local production agent runtime.",
     "Use durable Orchestrator V2 state and audited backend tools for facts. Do not pretend unsupported capabilities worked.",
     "Jira comments, cmux session kill, and cmux session restart must create approval requests; they execute only after Ronnie approves. Jira transitions may execute directly. PR replies/reviews and destructive git are not implemented.",
     "You can fully manage cmux sessions: list, read, search, inspect, create, launch coding agents, send prompts/keys, and propose kill/restart through approvals.",
     "Keep answers concise, operational, and grounded in task, cmux, Jira, PR, git, approval, audit, and activity state.",
     `Current active task count: ${activeTasks}.`
-  ].join("\n");
+  ];
+  if (mode === "voice") {
+    lines.push(
+      "Voice mode is active: your answer is spoken aloud while a visual panel renders the detail.",
+      "Answer conversationally in at most 4 short sentences, around 45 words total. Do not use markdown tables, code blocks, URLs, or emoji. Round numbers.",
+      "Always call tools before answering questions about sessions, tasks, PRs, or Jira. Speak counts and highlights; let the visual panel carry the detail.",
+      "For send_cmux_prompt, create_cmux_session, or launch_coding_agent: first state exactly what will be sent or created and ask Ronnie to confirm verbally. Only call the tool after he explicitly confirms in a later turn."
+    );
+  }
+  return lines.join("\n");
 }
 
-export async function runAgentChat({ client, input, emit }) {
+export async function runAgentChat({ client, input, emit, abortSignal }) {
   const cfg = config();
   const runId = input.runId || id("run");
   const mode = input.mode || "text";
@@ -35,14 +44,14 @@ export async function runAgentChat({ client, input, emit }) {
 
   const context = await client.context();
   if (shouldUseGroundedTaskStatus(userText, context)) {
-    const output = await runGroundedTaskStatusAgent({ client, runId, userText, context, emit: saveEmit, mode });
+    const output = await runGroundedTaskStatusAgent({ client, runId, userText, context, emit: saveEmit, mode, abortSignal });
     await client.finishRun(runId, "completed", { text: output });
     await client.persistEvents(runId, events);
     return { runId, text: output, events };
   }
 
   if (cfg.dryRun || !cfg.fireworksApiKey) {
-    const output = await runDryAgent({ client, runId, userText, context, emit: saveEmit, mode });
+    const output = await runDryAgent({ client, runId, userText, context, emit: saveEmit, mode, abortSignal });
     await client.finishRun(runId, "completed", { text: output });
     await client.persistEvents(runId, events);
     return { runId, text: output, events };
@@ -50,43 +59,50 @@ export async function runAgentChat({ client, input, emit }) {
 
   let assistantText = "";
   const messageId = id("msg");
+  let abortedOutcome = null;
+  const finishAborted = async () => {
+    if (abortedOutcome) return abortedOutcome;
+    abortedOutcome = { runId, text: assistantText, events, aborted: true };
+    saveEmit(event(EventType.TEXT_MESSAGE_END, runId, { messageId }));
+    if (assistantText) {
+      try {
+        await client.appendTranscript("assistant", assistantText, { runId, mode, provider: "fireworks", model: cfg.model, aborted: true });
+      } catch {}
+    }
+    saveEmit(event(EventType.RUN_FINISHED, runId, { status: "aborted" }));
+    try {
+      await client.finishRun(runId, "aborted", { text: assistantText });
+    } catch {}
+    try {
+      await client.persistEvents(runId, events);
+    } catch {}
+    return abortedOutcome;
+  };
   saveEmit(event(EventType.TEXT_MESSAGE_START, runId, { messageId, role: "assistant" }));
   try {
     const fireworks = createFireworks({ apiKey: cfg.fireworksApiKey });
     const result = streamText({
       model: fireworks(cfg.model),
-      system: buildSystemPrompt(context),
-      messages: buildMessages(context, userText),
+      system: buildSystemPrompt(context, mode),
+      messages: buildMessages(context, userText, mode),
       tools: createAiTools({ client, runId, emit: saveEmit }),
-      stopWhen: stepCountIs(6)
+      stopWhen: stepCountIs(6),
+      abortSignal
     });
     for await (const part of result.fullStream) {
+      if (abortSignal?.aborted || part.type === "abort") break;
       if (part.type === "text-delta" || part.type === "text") {
         const delta = part.textDelta || part.text || part.delta || "";
         if (delta) {
           assistantText += delta;
           saveEmit(event(EventType.TEXT_MESSAGE_CONTENT, runId, { messageId, delta }));
         }
-      } else if (part.type === "tool-call") {
-        saveEmit(event(EventType.TOOL_CALL_START, runId, {
-          toolCallId: part.toolCallId,
-          toolCallName: part.toolName
-        }));
-        saveEmit(event(EventType.TOOL_CALL_ARGS, runId, {
-          toolCallId: part.toolCallId,
-          delta: JSON.stringify(part.input || {})
-        }));
-        saveEmit(event(EventType.TOOL_CALL_END, runId, { toolCallId: part.toolCallId }));
-      } else if (part.type === "tool-result") {
-        saveEmit(event(EventType.TOOL_CALL_RESULT, runId, {
-          toolCallId: part.toolCallId,
-          result: part.output ?? part.result
-        }));
-        const panel = panelForTool(part.toolName, part.output ?? part.result);
-        if (panel) saveEmit(panelEvent(runId, validatePanel(panel)));
       } else if (part.type === "error") {
         throw part.error;
       }
+    }
+    if (abortSignal?.aborted) {
+      return await finishAborted();
     }
     saveEmit(event(EventType.TEXT_MESSAGE_END, runId, { messageId }));
     if (assistantText) {
@@ -101,6 +117,9 @@ export async function runAgentChat({ client, input, emit }) {
     await client.persistEvents(runId, events);
     return { runId, text: assistantText, events };
   } catch (error) {
+    if (abortSignal?.aborted) {
+      return await finishAborted();
+    }
     const message = `Agent runtime error: ${redactText(error?.message || error)}`;
     saveEmit(event(EventType.RUN_ERROR, runId, { message }));
     await client.appendTranscript("assistant", message, { runId, mode, error: true });
@@ -110,7 +129,7 @@ export async function runAgentChat({ client, input, emit }) {
   }
 }
 
-export async function runDryAgent({ client, runId, userText, context, emit, mode = "text" }) {
+export async function runDryAgent({ client, runId, userText, context, emit, mode = "text", abortSignal }) {
   const messageId = id("msg");
   emit(event(EventType.TEXT_MESSAGE_START, runId, { messageId, role: "assistant" }));
   let toolName = "list_tasks";
@@ -143,6 +162,7 @@ export async function runDryAgent({ client, runId, userText, context, emit, mode
   const result = await executeTool({ client, runId, toolName, args, emit });
   const text = answerFromTool(toolName, result, context);
   for (const chunk of chunkText(text)) {
+    if (abortSignal?.aborted) break;
     emit(event(EventType.TEXT_MESSAGE_CONTENT, runId, { messageId, delta: chunk }));
   }
   emit(event(EventType.TEXT_MESSAGE_END, runId, { messageId }));
@@ -164,10 +184,19 @@ function extractUserText(input) {
   return "";
 }
 
-function buildMessages(context, userText) {
-  const recentUserMessages = Array.isArray(context?.chatMessages)
-    ? context.chatMessages.filter((message) => message.role !== "assistant").slice(-6)
-    : [];
+export function buildMessages(context, userText, mode = "text") {
+  const chatMessages = Array.isArray(context?.chatMessages) ? context.chatMessages : [];
+  const recentUserMessages = chatMessages.filter((message) => message.role !== "assistant").slice(-6);
+  let recentMessages = recentUserMessages.map((message) => ({ role: "user", content: String(message.content || "") }));
+  if (mode === "voice") {
+    const includedUsers = new Set(recentUserMessages);
+    const includedAssistants = new Set(chatMessages.filter((message) => message.role === "assistant").slice(-4));
+    recentMessages = chatMessages
+      .filter((message) => includedUsers.has(message) || includedAssistants.has(message))
+      .map((message) => (message.role === "assistant"
+        ? { role: "assistant", content: String(message.content || "").slice(0, 400) }
+        : { role: "user", content: String(message.content || "") }));
+  }
   const taskSummary = Array.isArray(context?.tasks)
     ? context.tasks.slice(0, 12).map((task) => ({
         id: task.id,
@@ -190,18 +219,20 @@ function buildMessages(context, userText) {
         JSON.stringify({ tasks: taskSummary })
       ].join("\n")
     },
-    ...recentUserMessages.map((message) => ({ role: "user", content: String(message.content || "") })),
+    ...recentMessages,
     { role: "user", content: userText }
   ];
 }
 
-async function runGroundedTaskStatusAgent({ client, runId, userText, context, emit, mode = "text" }) {
+async function runGroundedTaskStatusAgent({ client, runId, userText, context, emit, mode = "text", abortSignal }) {
   const messageId = id("msg");
   emit(event(EventType.TEXT_MESSAGE_START, runId, { messageId, role: "assistant" }));
   const tasks = await findStatusTasks({ client, runId, userText, context, emit });
   const inspections = [];
   for (const task of tasks.slice(0, 2)) {
+    if (abortSignal?.aborted) break;
     for (const session of (task.cmuxSessionLinks || []).filter((item) => item?.active !== false).slice(0, 3)) {
+      if (abortSignal?.aborted) break;
       if (!session?.workspaceId) continue;
       const inspection = await executeTool({
         client,
@@ -215,6 +246,7 @@ async function runGroundedTaskStatusAgent({ client, runId, userText, context, em
   }
   const text = composeGroundedTaskStatusAnswer({ userText, tasks, inspections, context });
   for (const chunk of chunkText(text)) {
+    if (abortSignal?.aborted) break;
     emit(event(EventType.TEXT_MESSAGE_CONTENT, runId, { messageId, delta: chunk }));
   }
   emit(event(EventType.TEXT_MESSAGE_END, runId, { messageId }));
