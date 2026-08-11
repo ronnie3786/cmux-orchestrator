@@ -1,0 +1,740 @@
+"""Standard-library HTTP and SSE server for Herdr Harness."""
+
+from __future__ import annotations
+
+import errno
+import hmac
+import json
+import os
+import re
+import socketserver
+import sys
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Optional
+
+from .alerts import utc_now
+from .client import HerdrAPIError, HerdrClientError
+from .service import HerdrService
+from .terminal import TerminalObserverError
+
+
+MAX_BODY_BYTES = 1024 * 1024
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
+_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_KEY_RE = re.compile(r"^[A-Za-z0-9+_-]{1,32}$")
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_EVENT_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
+_AGENT_STATUSES = frozenset({"idle", "working", "blocked", "done", "unknown"})
+_AGENT_KINDS = frozenset(
+    {
+        "pi",
+        "claude",
+        "codex",
+        "gemini",
+        "cursor",
+        "devin",
+        "agy",
+        "cline",
+        "omp",
+        "mastracode",
+        "opencode",
+        "copilot",
+        "kimi",
+        "kiro",
+        "droid",
+        "amp",
+        "grok",
+        "hermes",
+        "kilo",
+        "qodercli",
+        "maki",
+    }
+)
+
+_DISCONNECT_ERRNOS = {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.EPIPE}
+
+
+SETUP_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Herdr Harness</title>
+<style>
+:root{color-scheme:dark;--ink:#f7f7f5;--muted:#9b9b96;--line:#292927;--panel:#181817;--green:#70e0a2}
+*{box-sizing:border-box}body{margin:0;background:#0d0d0c;color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+main{width:min(760px,calc(100% - 36px));margin:9vh auto}.mark{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:var(--ink);color:#111;font-weight:800;font-size:22px}
+h1{font-size:42px;letter-spacing:-1.7px;line-height:1.05;margin:24px 0 10px}p{color:var(--muted);font-size:17px}.card{margin-top:30px;padding:22px;border:1px solid var(--line);background:var(--panel);border-radius:18px;box-shadow:0 20px 70px #0005}
+.row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}.status{display:flex;align-items:center;gap:9px}.dot{width:9px;height:9px;border-radius:50%;background:#777}.dot.live{background:var(--green);box-shadow:0 0 16px #70e0a280}code{font-family:"SF Mono",ui-monospace,monospace;color:#d7d7d2;font-size:13px}
+input,button{border:1px solid #373735;background:#222220;color:var(--ink);border-radius:10px;padding:10px 12px;font:inherit}input{width:100%}button{cursor:pointer;font-weight:650}button:hover{background:#2b2b28}.token{display:flex;gap:8px;margin-top:15px}.fine{font-size:13px;margin-top:18px}
+</style>
+</head>
+<body><main><div class="mark">H</div><h1>Your agents, within reach.</h1>
+<p>Herdr Harness is listening on this Mac. Connect the iOS app using a local or Tailscale address, then move through workspaces, panes, and live agent sessions.</p>
+<section class="card"><div class="row"><strong>Backend</strong><span class="status"><i class="dot" id="dot"></i><span id="state">Checking</span></span></div>
+<div class="row"><span>API base</span><code>/api/v1</code></div><div class="row"><span>Live events</span><code>/api/v1/events</code></div><div class="row"><span>Default port</span><code>9092</code></div>
+	<div class="token"><input id="token" type="password" autocomplete="new-password" placeholder="Bearer token"><button id="check">Check</button><button id="clear">Clear</button></div>
+	<p class="fine">For private remote access, first configure an API token, then run <code>tailscale serve --bg --https=8461 9092</code>. Use <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net:8461</code> in the iOS app. This dedicated port preserves existing Serve handlers.</p></section></main>
+	<script>
+	const token=document.querySelector('#token'),state=document.querySelector('#state'),dot=document.querySelector('#dot');
+	async function check(){try{const headers=token.value?{Authorization:`Bearer ${token.value}`}:{},r=await fetch('/api/v1/health',{headers}),j=await r.json();if(!r.ok)throw Error(j.error?.message||r.statusText);state.textContent=j.herdr?.connected?'Connected to Herdr':(j.cache?.available?'Cached snapshot, reconnecting':'Herdr unavailable');dot.classList.toggle('live',!!j.herdr?.connected)}catch(e){state.textContent=e.message;dot.classList.remove('live')}}
+	document.querySelector('#check').onclick=check;document.querySelector('#clear').onclick=()=>{token.value='';token.focus()};check();
+</script></body></html>"""
+
+
+class HTTPValidationError(ValueError):
+    def __init__(self, message: str, *, code: str = "invalid_request", status: int = 400):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+def _identifier(value: Any, label: str = "identifier") -> str:
+    text = str(value or "")
+    if not _IDENTIFIER_RE.fullmatch(text):
+        raise HTTPValidationError(f"{label} is invalid")
+    return text
+
+
+def _string(
+    value: Any,
+    label: str,
+    *,
+    maximum: int,
+    allow_empty: bool = False,
+) -> str:
+    if not isinstance(value, str):
+        raise HTTPValidationError(f"{label} must be a string")
+    if "\x00" in value:
+        raise HTTPValidationError(f"{label} contains a null byte")
+    text = value.strip() if label in {"label", "name", "kind"} else value
+    if not allow_empty and not text:
+        raise HTTPValidationError(f"{label} is required")
+    if len(text) > maximum:
+        raise HTTPValidationError(f"{label} exceeds {maximum} characters")
+    return text
+
+
+def _optional_cwd(body: dict) -> Optional[str]:
+    if "cwd" not in body or body.get("cwd") is None:
+        return None
+    cwd = _string(body.get("cwd"), "cwd", maximum=4096)
+    expanded = os.path.abspath(os.path.expanduser(cwd))
+    if not os.path.isabs(cwd):
+        raise HTTPValidationError("cwd must be an absolute path")
+    if not os.path.isdir(expanded):
+        raise HTTPValidationError("cwd must be an existing directory")
+    return expanded
+
+
+def _optional_env(body: dict) -> dict[str, str]:
+    value = body.get("env", {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > 64:
+        raise HTTPValidationError("env must be an object with at most 64 entries")
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not _ENV_KEY_RE.fullmatch(key):
+            raise HTTPValidationError("env contains an invalid variable name")
+        if not isinstance(item, str) or "\x00" in item or len(item) > 8192:
+            raise HTTPValidationError(f"env value for {key} is invalid")
+        result[key] = item
+    return result
+
+
+def _boolean(value: Any, label: str, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise HTTPValidationError(f"{label} must be a boolean")
+    return value
+
+
+def _query_bool(query: dict[str, list[str]], key: str, default: bool = False) -> bool:
+    raw = (query.get(key) or [None])[0]
+    if raw is None:
+        return default
+    value = str(raw).lower()
+    if value in {"1", "true", "yes"}:
+        return True
+    if value in {"0", "false", "no"}:
+        return False
+    raise HTTPValidationError(f"{key} must be true or false")
+
+
+def _query_int(
+    query: dict[str, list[str]],
+    key: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = (query.get(key) or [str(default)])[0]
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPValidationError(f"{key} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise HTTPValidationError(f"{key} must be between {minimum} and {maximum}")
+    return value
+
+
+def _herdr_status(exc: HerdrClientError) -> int:
+    code = str(getattr(exc, "code", ""))
+    if code in {"herdr_unavailable", "herdr_disconnected"}:
+        return 503
+    if "timeout" in code:
+        return 504
+    if code.endswith("not_found") or code in {"not_found", "pane_not_found", "workspace_not_found", "tab_not_found"}:
+        return 404
+    if "conflict" in code or "busy" in code:
+        return 409
+    if code.startswith("invalid_") or code.endswith("_invalid"):
+        return 400
+    return 502
+
+
+def api_description() -> dict:
+    return {
+        "ok": True,
+        "service": "herdr-harness",
+        "version": 1,
+        "endpoints": {
+            "health": "/api/v1/health",
+            "network": "/api/v1/network",
+            "snapshot": "/api/v1/snapshot",
+            "workspaces": "/api/v1/workspaces",
+            "workspace": "/api/v1/workspaces/{workspaceId}",
+            "events": "/api/v1/events",
+            "paneOutput": "/api/v1/panes/{paneId}/output",
+            "paneStream": "/api/v1/panes/{paneId}/stream",
+            "alerts": "/api/v1/alerts",
+            "pushStatus": "/api/v1/push/status",
+        },
+        "mutations": [
+            "POST /api/v1/workspaces",
+            "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
+            "POST /api/v1/workspaces/{workspaceId}/focus|tabs",
+            "PATCH|DELETE /api/v1/tabs/{tabId}",
+            "POST /api/v1/tabs/{tabId}/focus",
+            "PATCH|DELETE /api/v1/panes/{paneId}",
+            "POST /api/v1/panes/{paneId}/focus|split|send-text|send-keys|run|prompt|start-agent",
+            "POST /api/v1/alerts/{alertId}/read",
+            "POST /api/v1/alerts/read-all",
+            "POST /api/v1/push/devices|unregister",
+        ],
+        "generatedAt": utc_now(),
+    }
+
+
+def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
+    """Create a request handler bound to one HerdrService."""
+
+    configured_token = api_token if api_token is not None else service.environ.get("HERDR_HARNESS_API_TOKEN", "")
+    cors_origin = service.environ.get("HERDR_HARNESS_CORS_ORIGIN", "")
+
+    class HerdrHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            if service.environ.get("HERDR_HARNESS_HTTP_LOG") in {"1", "true", "yes"}:
+                super().log_message(fmt, *args)
+
+        def _common_headers(self) -> None:
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if cors_origin:
+                self.send_header("Access-Control-Allow-Origin", cors_origin)
+                self.send_header("Vary", "Origin")
+
+        def _json_response(self, data: dict, status: int = 200) -> None:
+            body = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self._common_headers()
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
+
+        def _error(self, status: int, code: str, message: str) -> None:
+            self._json_response(
+                {"ok": False, "error": {"code": code, "message": message}, "generatedAt": utc_now()},
+                status,
+            )
+
+        def _authorized(self) -> bool:
+            if not configured_token:
+                return True
+            authorization = self.headers.get("Authorization", "")
+            scheme, separator, candidate = authorization.partition(" ")
+            valid = separator and scheme.lower() == "bearer" and hmac.compare_digest(candidate, configured_token)
+            if not valid:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                body = json.dumps(
+                    {"ok": False, "error": {"code": "unauthorized", "message": "A valid bearer token is required"}}
+                ).encode("utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("WWW-Authenticate", 'Bearer realm="Herdr Harness"')
+                self._common_headers()
+                self.end_headers()
+                self.wfile.write(body)
+                return False
+            return True
+
+        def _read_json(self) -> dict:
+            raw_length = self.headers.get("Content-Length", "0")
+            try:
+                length = int(raw_length)
+            except ValueError as exc:
+                raise HTTPValidationError("Content-Length is invalid") from exc
+            if length < 0 or length > MAX_BODY_BYTES:
+                raise HTTPValidationError("request body exceeds 1 MB", code="body_too_large", status=413)
+            if length == 0:
+                return {}
+            raw = self.rfile.read(length)
+            try:
+                value = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise HTTPValidationError("request body must be valid JSON") from exc
+            if not isinstance(value, dict):
+                raise HTTPValidationError("request body must be a JSON object")
+            return value
+
+        def _parse(self) -> tuple[str, list[str], dict[str, list[str]]]:
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path.rstrip("/") or "/"
+            segments = [urllib.parse.unquote(item) for item in path.split("/") if item]
+            return path, segments, urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+        def _dispatch(self, method: str) -> None:
+            try:
+                path, segments, query = self._parse()
+                if method == "GET" and path == "/":
+                    body = SETUP_HTML.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self._common_headers()
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if len(segments) < 2 or segments[:2] != ["api", "v1"]:
+                    self._error(404, "not_found", "Endpoint not found")
+                    return
+                if (
+                    method in {"POST", "DELETE"}
+                    and path.startswith("/api/v1/push/")
+                    and not configured_token
+                ):
+                    self._error(
+                        503,
+                        "api_token_required",
+                        "Configure HERDR_HARNESS_API_TOKEN before managing push devices",
+                    )
+                    return
+                if not self._authorized():
+                    return
+                body = self._read_json() if method in {"POST", "PATCH", "DELETE"} else {}
+                response = self._route(method, segments, query, body)
+                if response is not None:
+                    self._json_response(response)
+            except HTTPValidationError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except HerdrAPIError as exc:
+                self._error(_herdr_status(exc), exc.code, str(exc))
+            except HerdrClientError as exc:
+                self._error(_herdr_status(exc), exc.code, str(exc))
+            except TerminalObserverError as exc:
+                self._error(503, "terminal_observer_unavailable", str(exc))
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
+            except Exception:
+                self._error(500, "internal_error", "The harness could not complete this request")
+                if service.environ.get("HERDR_HARNESS_HTTP_LOG") in {"1", "true", "yes"}:
+                    raise
+
+        def _route(
+            self,
+            method: str,
+            segments: list[str],
+            query: dict[str, list[str]],
+            body: dict,
+        ) -> Optional[dict]:
+            # segments starts with api, v1.
+            tail = segments[2:]
+            if method == "GET" and not tail:
+                return api_description()
+            if method == "GET" and tail == ["health"]:
+                return service.health_response()
+            if method == "GET" and tail == ["network"]:
+                port = int(self.server.server_address[1])
+                return service.network_response(port, host_header=self.headers.get("Host", ""))
+            if method == "GET" and tail == ["snapshot"]:
+                return service.snapshot_response()
+            if method == "GET" and tail == ["workspaces"]:
+                return service.workspaces_response()
+            if method == "GET" and len(tail) == 2 and tail[0] == "workspaces":
+                workspace_id = _identifier(tail[1], "workspace ID")
+                result = service.workspace_response(workspace_id)
+                if result is None:
+                    raise HTTPValidationError("Workspace not found", code="not_found", status=404)
+                return result
+            if method == "GET" and tail == ["events"]:
+                self._serve_events(query)
+                return None
+            if method == "GET" and tail == ["alerts"]:
+                unread = _query_bool(query, "unread", False)
+                limit = _query_int(query, "limit", 100, minimum=1, maximum=500)
+                status = (query.get("status") or [None])[0]
+                if status is not None and status not in {"blocked", "done"}:
+                    raise HTTPValidationError("status must be blocked or done")
+                return service.list_alerts(unread_only=unread, status=status, limit=limit)
+            if method == "GET" and tail == ["push", "status"]:
+                return service.push_status()
+            if method == "GET" and len(tail) == 3 and tail[0] == "panes" and tail[2] == "output":
+                pane_id = _identifier(tail[1], "pane ID")
+                source = (query.get("source") or ["recent_unwrapped"])[0].replace("-", "_")
+                if source not in {"visible", "recent", "recent_unwrapped", "detection"}:
+                    raise HTTPValidationError("source is invalid")
+                format_name = (query.get("format") or ["text"])[0]
+                if format_name not in {"text", "ansi"}:
+                    raise HTTPValidationError("format must be text or ansi")
+                lines = _query_int(query, "lines", 240, minimum=1, maximum=5000)
+                strip_ansi = _query_bool(query, "stripAnsi", format_name == "text")
+                return service.read_pane(
+                    pane_id,
+                    source=source,
+                    lines=lines,
+                    format_name=format_name,
+                    strip_ansi=strip_ansi,
+                )
+            if method == "GET" and len(tail) == 3 and tail[0] == "panes" and tail[2] == "stream":
+                pane_id = _identifier(tail[1], "pane ID")
+                cols = _query_int(query, "cols", 100, minimum=20, maximum=300)
+                rows = _query_int(query, "rows", 32, minimum=8, maximum=160)
+                self._serve_terminal_stream(pane_id, cols=cols, rows=rows)
+                return None
+            if method == "POST" and tail == ["workspaces"]:
+                params: dict[str, Any] = {
+                    "focus": _boolean(body.get("focus"), "focus", default=True),
+                    "env": _optional_env(body),
+                }
+                cwd = _optional_cwd(body)
+                if cwd is not None:
+                    params["cwd"] = cwd
+                if body.get("label") is not None:
+                    params["label"] = _string(body.get("label"), "label", maximum=120)
+                return service.invoke("workspace.create", params)
+            if len(tail) >= 2 and tail[0] == "workspaces":
+                workspace_id = _identifier(tail[1], "workspace ID")
+                if method == "PATCH" and len(tail) == 2:
+                    return service.invoke(
+                        "workspace.rename",
+                        {"workspace_id": workspace_id, "label": _string(body.get("label"), "label", maximum=120)},
+                    )
+                if method == "DELETE" and len(tail) == 2:
+                    return service.invoke("workspace.close", {"workspace_id": workspace_id})
+                if method == "POST" and len(tail) == 3 and tail[2] == "focus":
+                    return service.invoke("workspace.focus", {"workspace_id": workspace_id})
+                if method == "POST" and len(tail) == 3 and tail[2] == "tabs":
+                    params = {
+                        "workspace_id": workspace_id,
+                        "focus": _boolean(body.get("focus"), "focus", default=True),
+                        "env": _optional_env(body),
+                    }
+                    cwd = _optional_cwd(body)
+                    if cwd is not None:
+                        params["cwd"] = cwd
+                    if body.get("label") is not None:
+                        params["label"] = _string(body.get("label"), "label", maximum=120)
+                    return service.invoke("tab.create", params)
+            if len(tail) >= 2 and tail[0] == "tabs":
+                tab_id = _identifier(tail[1], "tab ID")
+                if method == "PATCH" and len(tail) == 2:
+                    return service.invoke(
+                        "tab.rename",
+                        {"tab_id": tab_id, "label": _string(body.get("label"), "label", maximum=120)},
+                    )
+                if method == "DELETE" and len(tail) == 2:
+                    return service.invoke("tab.close", {"tab_id": tab_id})
+                if method == "POST" and len(tail) == 3 and tail[2] == "focus":
+                    return service.invoke("tab.focus", {"tab_id": tab_id})
+            if len(tail) >= 2 and tail[0] == "panes":
+                pane_id = _identifier(tail[1], "pane ID")
+                if method == "PATCH" and len(tail) == 2:
+                    if "label" not in body:
+                        raise HTTPValidationError("label is required")
+                    label = body.get("label")
+                    if label is not None:
+                        label = _string(label, "label", maximum=120, allow_empty=True) or None
+                    return service.invoke("pane.rename", {"pane_id": pane_id, "label": label})
+                if method == "DELETE" and len(tail) == 2:
+                    return service.invoke("pane.close", {"pane_id": pane_id})
+                if method == "POST" and len(tail) == 3:
+                    action = tail[2]
+                    if action == "focus":
+                        return service.invoke("pane.focus", {"pane_id": pane_id})
+                    if action == "split":
+                        direction = body.get("direction", "right")
+                        if direction not in {"right", "down"}:
+                            raise HTTPValidationError("direction must be right or down")
+                        params = {
+                            "target_pane_id": pane_id,
+                            "direction": direction,
+                            "focus": _boolean(body.get("focus"), "focus", default=True),
+                            "env": _optional_env(body),
+                        }
+                        cwd = _optional_cwd(body)
+                        if cwd is not None:
+                            params["cwd"] = cwd
+                        if body.get("ratio") is not None:
+                            ratio = body.get("ratio")
+                            if not isinstance(ratio, (int, float)) or isinstance(ratio, bool) or not 0.05 <= float(ratio) <= 0.95:
+                                raise HTTPValidationError("ratio must be between 0.05 and 0.95")
+                            params["ratio"] = float(ratio)
+                        return service.invoke("pane.split", params)
+                    if action == "send-text":
+                        text = _string(body.get("text"), "text", maximum=131072, allow_empty=True)
+                        return service.invoke("pane.send_text", {"pane_id": pane_id, "text": text})
+                    if action == "send-keys":
+                        keys = body.get("keys")
+                        if not isinstance(keys, list) or not 1 <= len(keys) <= 64:
+                            raise HTTPValidationError("keys must be a non-empty array with at most 64 entries")
+                        if any(not isinstance(item, str) or not _KEY_RE.fullmatch(item) for item in keys):
+                            raise HTTPValidationError("keys contains an invalid key name")
+                        return service.invoke("pane.send_keys", {"pane_id": pane_id, "keys": keys})
+                    if action == "run":
+                        command = _string(body.get("command"), "command", maximum=32768)
+                        return service.invoke(
+                            "pane.send_input",
+                            {"pane_id": pane_id, "text": command, "keys": ["enter"]},
+                        )
+                    if action == "prompt":
+                        return self._prompt(pane_id, body)
+                    if action in {"start-agent", "agents"}:
+                        return self._start_agent(pane_id, body)
+            if method == "POST" and len(tail) == 3 and tail[0] == "agents" and tail[2] == "prompt":
+                return self._prompt(_identifier(tail[1], "agent target"), body)
+            if method == "POST" and tail == ["alerts", "read-all"]:
+                return service.mark_all_alerts_read()
+            if method == "POST" and len(tail) == 3 and tail[0] == "alerts" and tail[2] == "read":
+                alert_id = _identifier(tail[1], "alert ID")
+                result = service.mark_alert_read(alert_id)
+                if result is None:
+                    raise HTTPValidationError("Alert not found", code="not_found", status=404)
+                return result
+            if method == "POST" and tail in (["push", "devices"], ["push", "register"]):
+                token = _string(body.get("deviceToken") or body.get("token"), "deviceToken", maximum=512)
+                bundle_id = body.get("bundleId", "")
+                if not isinstance(bundle_id, str) or len(bundle_id) > 255:
+                    raise HTTPValidationError("bundleId is invalid")
+                environment = str(body.get("environment") or "sandbox").strip().lower()
+                if environment not in {"sandbox", "production"}:
+                    raise HTTPValidationError("environment must be sandbox or production")
+                try:
+                    return service.register_push_device(
+                        token,
+                        bundle_id=bundle_id,
+                        environment=environment,
+                    )
+                except ValueError as exc:
+                    raise HTTPValidationError(str(exc)) from exc
+            if method == "POST" and tail == ["push", "unregister"]:
+                token = _string(body.get("deviceToken") or body.get("token"), "deviceToken", maximum=512)
+                try:
+                    return service.unregister_push_device(token)
+                except ValueError as exc:
+                    raise HTTPValidationError(str(exc)) from exc
+            raise HTTPValidationError("Endpoint not found", code="not_found", status=404)
+
+        def _prompt(self, target: str, body: dict) -> dict:
+            text = _string(body.get("text"), "text", maximum=131072)
+            params: dict[str, Any] = {"target": target, "text": text}
+            wait_requested = _boolean(body.get("wait"), "wait", default=False)
+            if wait_requested:
+                until = body.get("until")
+                if until is None:
+                    statuses: list[str] = []
+                elif isinstance(until, str):
+                    statuses = [until]
+                elif isinstance(until, list) and all(isinstance(item, str) for item in until):
+                    statuses = list(until)
+                else:
+                    raise HTTPValidationError("until must be a status or status array")
+                if any(item not in _AGENT_STATUSES for item in statuses):
+                    raise HTTPValidationError("until contains an invalid agent status")
+                timeout = body.get("timeoutMs", 120000)
+                if not isinstance(timeout, int) or isinstance(timeout, bool) or not 100 <= timeout <= 300000:
+                    raise HTTPValidationError("timeoutMs must be between 100 and 300000")
+                params["wait"] = {"until": statuses, "timeout_ms": timeout}
+            elif "until" in body or "timeoutMs" in body:
+                raise HTTPValidationError("until and timeoutMs require wait=true")
+            return service.invoke("agent.prompt", params)
+
+        def _start_agent(self, pane_id: str, body: dict) -> dict:
+            name = _string(body.get("name"), "name", maximum=32)
+            if not _AGENT_NAME_RE.fullmatch(name):
+                raise HTTPValidationError("name must match [a-z][a-z0-9_-]{0,31}")
+            kind = _string(body.get("kind"), "kind", maximum=32)
+            if kind not in _AGENT_KINDS:
+                raise HTTPValidationError("kind is not supported by this Herdr Harness version")
+            args = body.get("args", [])
+            if not isinstance(args, list) or len(args) > 64:
+                raise HTTPValidationError("args must be an array with at most 64 entries")
+            clean_args = []
+            for item in args:
+                clean_args.append(_string(item, "agent argument", maximum=4096, allow_empty=True))
+            timeout = body.get("timeoutMs", 30000)
+            if not isinstance(timeout, int) or isinstance(timeout, bool) or not 3001 <= timeout <= 300000:
+                raise HTTPValidationError("timeoutMs must be greater than 3000 and at most 300000")
+            return service.invoke(
+                "agent.start",
+                {"pane_id": pane_id, "name": name, "kind": kind, "args": clean_args, "timeout_ms": timeout},
+            )
+
+        def _serve_events(self, query: dict[str, list[str]]) -> None:
+            raw_id = self.headers.get("Last-Event-ID") or (query.get("after") or ["0"])[0]
+            try:
+                last_id = max(0, int(raw_id))
+            except (TypeError, ValueError) as exc:
+                raise HTTPValidationError("Last-Event-ID must be an integer") from exc
+            once = _query_bool(query, "once", False)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self._common_headers()
+            self.end_headers()
+            latest_id = service.broker.latest_id
+            oldest_id = service.broker.oldest_id
+            reset_reason = None
+            if last_id > latest_id:
+                reset_reason = "backend_restarted"
+                last_id = 0
+            elif last_id and last_id < oldest_id - 1:
+                reset_reason = "replay_gap"
+                last_id = oldest_id - 1
+            ready = {
+                "event": "ready",
+                "generatedAt": utc_now(),
+                "lastEventId": latest_id,
+                "oldestEventId": oldest_id,
+            }
+            self.wfile.write(b"retry: 1000\n")
+            self.wfile.write(f"event: ready\ndata: {json.dumps(ready, separators=(',', ':'))}\n\n".encode("utf-8"))
+            if reset_reason:
+                reset = {
+                    "event": "stream.reset",
+                    "reason": reset_reason,
+                    "resumeAfter": last_id,
+                    "generatedAt": utc_now(),
+                }
+                self.wfile.write(
+                    f"event: stream.reset\ndata: {json.dumps(reset, separators=(',', ':'))}\n\n".encode("utf-8")
+                )
+            self.wfile.flush()
+            if once:
+                self.close_connection = True
+                return
+            while True:
+                events = service.broker.wait_after(last_id, timeout=15.0)
+                if not events:
+                    self.wfile.write(f": heartbeat {utc_now()}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    continue
+                for item in events:
+                    event_name = _EVENT_NAME_RE.sub("_", str(item.get("event") or "message"))
+                    payload = json.dumps(item, separators=(",", ":"), ensure_ascii=False)
+                    self.wfile.write(
+                        f"id: {item['id']}\nevent: {event_name}\ndata: {payload}\n\n".encode("utf-8")
+                    )
+                    self.wfile.flush()
+                    last_id = max(last_id, int(item["id"]))
+
+        def _serve_terminal_stream(self, pane_id: str, *, cols: int, rows: int) -> None:
+            observer = service.terminal_observer(pane_id, cols=cols, rows=rows)
+            try:
+                observer.start()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self._common_headers()
+                self.end_headers()
+                self.wfile.write(
+                    f"event: ready\ndata: {json.dumps({'paneId': pane_id, 'cols': cols, 'rows': rows})}\n\n".encode("utf-8")
+                )
+                self.wfile.flush()
+                started_at = time.monotonic()
+                with observer:
+                    for frame in observer.frames():
+                        if time.monotonic() - started_at >= service.terminal_max_seconds:
+                            payload = json.dumps({"reason": "lifetime_limit"}, separators=(",", ":"))
+                            self.wfile.write(f"event: terminal.closed\ndata: {payload}\n\n".encode("utf-8"))
+                            self.wfile.flush()
+                            break
+                        if frame.get("event") == "heartbeat":
+                            self.wfile.write(f": terminal heartbeat {utc_now()}\n\n".encode("utf-8"))
+                        else:
+                            event_name = _EVENT_NAME_RE.sub("_", str(frame.get("event") or "terminal.frame"))
+                            payload = json.dumps(frame.get("data") or {}, separators=(",", ":"), ensure_ascii=False)
+                            self.wfile.write(f"event: {event_name}\ndata: {payload}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+            finally:
+                observer.close()
+                service.release_terminal_observer()
+
+        def do_OPTIONS(self) -> None:
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
+            self._common_headers()
+            self.end_headers()
+
+        def do_GET(self) -> None:
+            self._dispatch("GET")
+
+        def do_POST(self) -> None:
+            self._dispatch("POST")
+
+        def do_PATCH(self) -> None:
+            self._dispatch("PATCH")
+
+        def do_DELETE(self) -> None:
+            self._dispatch("DELETE")
+
+    return HerdrHandler
+
+
+class HerdrHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+            return
+        if isinstance(exc, OSError) and exc.errno in _DISCONNECT_ERRNOS:
+            return
+        socketserver.BaseServer.handle_error(self, request, client_address)
+
+
+def make_server(
+    service: HerdrService,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 9092,
+    api_token: Optional[str] = None,
+) -> HerdrHTTPServer:
+    server = HerdrHTTPServer((host, int(port)), make_handler(service, api_token=api_token))
+    server.service = service
+    return server
