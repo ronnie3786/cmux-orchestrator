@@ -4,19 +4,28 @@ struct WorkspaceFilterBar: View {
     @Bindable var model: HerdrAppModel
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             ForEach(WorkspaceFilter.allCases) { filter in
-                Button(filter.rawValue) {
+                Button {
                     withAnimation(.snappy) { model.filter = filter }
+                } label: {
+                    HStack(spacing: 5) {
+                        if model.filter == filter {
+                            Image(systemName: "checkmark")
+                        }
+                        Text(filter.rawValue.lowercased())
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .font(.subheadline.bold())
+                .font(.subheadline.monospaced().bold())
                 .foregroundStyle(model.filter == filter ? HerdrTheme.ink : HerdrTheme.mist)
-                .padding(.horizontal, 14)
-                .frame(minHeight: 44)
-                .background(model.filter == filter ? HerdrTheme.accent : .white.opacity(0.07), in: Capsule())
+                .background(model.filter == filter ? HerdrTheme.accent : HerdrTheme.graphite)
+                .overlay {
+                    Rectangle().strokeBorder(HerdrTheme.surface.opacity(0.8), lineWidth: 1)
+                }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(model.filter == filter ? .isSelected : [])
             }
-            Spacer(minLength: 0)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Workspace filter")

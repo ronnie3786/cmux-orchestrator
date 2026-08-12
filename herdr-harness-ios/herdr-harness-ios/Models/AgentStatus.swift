@@ -42,14 +42,26 @@ enum AgentStatus: String, Codable, CaseIterable, Hashable, Sendable {
         }
     }
 
+    var terminalGlyph: String {
+        switch self {
+        case .blocked, .done, .working: "●"
+        case .idle: "○"
+        case .unknown: "·"
+        }
+    }
+
     var color: Color {
         switch self {
         case .blocked: HerdrTheme.alert
         case .done: HerdrTheme.signal
-        case .working: HerdrTheme.accent
-        case .idle: HerdrTheme.mist
+        case .working: HerdrTheme.working
+        case .idle: HerdrTheme.success
         case .unknown: HerdrTheme.muted
         }
+    }
+
+    var labelColor: Color {
+        self == .unknown ? HerdrTheme.mist : color
     }
 
     var attentionRank: Int {

@@ -101,6 +101,80 @@ struct TerminalGridHardeningTests {
         #expect(ServerConfiguration(urlString: "https://workstation.tailnet.ts.net", token: "token") != nil)
     }
 
+    @Test("Snapshot watchdog respects stream activity and missing frames")
+    func snapshotWatchdogFreshness() {
+        let now = Date(timeIntervalSince1970: 100)
+
+        #expect(
+            TerminalRefreshPolicy.shouldDisplaySnapshot(
+                force: false,
+                streamAdvancedDuringRequest: false,
+                snapshotChangedWithoutFrame: false,
+                lastStreamActivityAt: nil,
+                now: now
+            )
+        )
+        #expect(
+            !TerminalRefreshPolicy.shouldDisplaySnapshot(
+                force: false,
+                streamAdvancedDuringRequest: false,
+                snapshotChangedWithoutFrame: false,
+                lastStreamActivityAt: now.addingTimeInterval(-10),
+                now: now
+            )
+        )
+        #expect(
+            TerminalRefreshPolicy.shouldDisplaySnapshot(
+                force: false,
+                streamAdvancedDuringRequest: false,
+                snapshotChangedWithoutFrame: true,
+                lastStreamActivityAt: now,
+                now: now
+            )
+        )
+        #expect(
+            TerminalRefreshPolicy.shouldDisplaySnapshot(
+                force: false,
+                streamAdvancedDuringRequest: false,
+                snapshotChangedWithoutFrame: false,
+                lastStreamActivityAt: now.addingTimeInterval(-30),
+                now: now
+            )
+        )
+        #expect(
+            !TerminalRefreshPolicy.shouldDisplaySnapshot(
+                force: true,
+                streamAdvancedDuringRequest: true,
+                snapshotChangedWithoutFrame: true,
+                lastStreamActivityAt: now.addingTimeInterval(-30),
+                now: now
+            )
+        )
+    }
+
+    @Test("Terminal SSE parser exposes ready, heartbeats, and frames")
+    func terminalSSEActivityParsing() throws {
+        var parser = TerminalSSEParser()
+
+        #expect(try parser.consume(line: "event: ready") == nil)
+        #expect(try parser.consume(line: "data: {\"paneId\":\"w1:p1\"}") == nil)
+        #expect(try parser.consume(line: "") == .ready)
+        #expect(try parser.consume(line: ": terminal heartbeat now") == .activity)
+        #expect(try parser.consume(line: "") == nil)
+
+        #expect(try parser.consume(line: "event: terminal.frame") == nil)
+        #expect(
+            try parser.consume(
+                line: "data: {\"bytes\":\"aGk=\",\"encoding\":\"base64\",\"full\":true,\"height\":1,\"seq\":7,\"type\":\"terminal.frame\",\"width\":2}"
+            ) == nil
+        )
+        #expect(
+            try parser.consume(line: "") == .frame(
+                terminalFrame("hi", full: true, sequence: 7, width: 2, height: 1)
+            )
+        )
+    }
+
     private func terminalFrame(
         _ text: String,
         full: Bool,

@@ -86,6 +86,11 @@ Configuration:
 - `HERDR_HARNESS_PUSH_STORE_PATH`: optional persisted-device file override.
 - `HERDR_HARNESS_ALERT_STORE_PATH`: persisted alert journal. The launcher
   defaults to `~/.config/herdr-harness/alerts.json` with mode `0600`.
+- `HERDR_HARNESS_ATTACHMENTS_DIR`: prompt attachment storage root, default
+  `~/.config/herdr-harness/attachments`. Files use mode `0600`.
+- `HERDR_HARNESS_ATTACHMENT_RETENTION_SECONDS`: attachment TTL, default seven
+  days. `HERDR_HARNESS_ATTACHMENT_CLEANUP_SECONDS` controls the background
+  cleanup cadence, which defaults to at most one hour.
 - `HERDR_HARNESS_TERMINAL_MAX_STREAMS`: concurrent terminal observer limit,
   default `8`.
 - `HERDR_HARNESS_TERMINAL_MAX_SECONDS`: renewal lifetime for each observer,

@@ -54,6 +54,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your Herdr server and control your private agent sessions.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record voice notes to attach to your Herdr pane instructions.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

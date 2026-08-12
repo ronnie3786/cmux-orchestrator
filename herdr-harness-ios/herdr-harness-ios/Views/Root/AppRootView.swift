@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppRootView: View {
     @Bindable var model: HerdrAppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -38,7 +39,7 @@ struct AppRootView: View {
             if let message = model.toastMessage {
                 ToastView(message: message, dismiss: model.clearToast)
                     .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.snappy, value: model.toastMessage)

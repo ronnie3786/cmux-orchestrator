@@ -16,7 +16,8 @@ struct AttentionNavigationView: View {
             }
             .navigationDestination(for: WorkspaceRoute.self) { route in
                 if case let .pane(id) = route, let pane = model.pane(id: id) {
-                    PaneSessionView(model: model, pane: pane)
+                    PaneSessionView(model: model, pane: pane, hidesAppTabBar: true)
+                        .id(pane.id)
                 }
             }
         }

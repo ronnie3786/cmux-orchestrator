@@ -25,6 +25,101 @@ actor HerdrAPIClient {
         )
     }
 
+    func fetchGitStatus(workspaceID: String) async throws -> WorkspaceGitStatus {
+        try await request(path: "/api/v1/workspaces/\(workspaceID)/git")
+    }
+
+    func fetchGitDiff(
+        workspaceID: String,
+        file: String,
+        section: GitFileSection
+    ) async throws -> WorkspaceGitDiffResponse {
+        try await request(
+            path: "/api/v1/workspaces/\(workspaceID)/git/diff",
+            query: [
+                URLQueryItem(name: "file", value: file),
+                URLQueryItem(name: "section", value: section.rawValue),
+            ]
+        )
+    }
+
+    func stageGitFile(workspaceID: String, file: String) async throws {
+        let _: MutationResponse = try await request(
+            path: "/api/v1/workspaces/\(workspaceID)/git/stage",
+            method: "POST",
+            body: WorkspaceGitFileBody(file: file)
+        )
+    }
+
+    func unstageGitFile(workspaceID: String, file: String) async throws {
+        let _: MutationResponse = try await request(
+            path: "/api/v1/workspaces/\(workspaceID)/git/unstage",
+            method: "POST",
+            body: WorkspaceGitFileBody(file: file)
+        )
+    }
+
+    func fetchSkills(workspaceID: String) async throws -> SkillsResponse {
+        try await request(path: "/api/v1/workspaces/\(workspaceID)/skills")
+    }
+
+    func searchFiles(
+        workspaceID: String,
+        query: String,
+        limit: Int = 80
+    ) async throws -> FileSearchResponse {
+        try await request(
+            path: "/api/v1/workspaces/\(workspaceID)/files",
+            query: [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "limit", value: String(limit)),
+            ]
+        )
+    }
+
+    func fetchAssignedJiraTickets(limit: Int = 50) async throws -> JiraTicketsResponse {
+        try await request(
+            path: "/api/v1/jira/assigned",
+            query: [URLQueryItem(name: "limit", value: String(limit))]
+        )
+    }
+
+    func fetchJiraTicket(query: String) async throws -> JiraTicketResponse {
+        try await request(
+            path: "/api/v1/jira/issue",
+            query: [URLQueryItem(name: "q", value: query)]
+        )
+    }
+
+    func uploadAttachment(
+        workspaceID: String,
+        fileURL: URL,
+        contentType: String
+    ) async throws -> AttachmentUploadResponse {
+        let candidate = try AttachmentPolicy.candidate(
+            for: fileURL,
+            ownership: .userSelected
+        )
+        let accessed = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { fileURL.stopAccessingSecurityScopedResource() }
+        }
+        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+        try AttachmentPolicy.validateFile(
+            named: candidate.filename,
+            byteCount: Int64(data.count)
+        )
+        return try await request(
+            path: "/api/v1/workspaces/\(workspaceID)/attachments",
+            method: "POST",
+            body: WorkspaceAttachmentBody(
+                filename: fileURL.lastPathComponent,
+                contentType: contentType,
+                dataBase64: data.base64EncodedString()
+            )
+        )
+    }
+
     func createWorkspace(label: String, cwd: String) async throws {
         try await mutation(path: "/api/v1/workspaces", body: APIActionBody(label: label, cwd: cwd))
     }
@@ -170,11 +265,11 @@ actor HerdrAPIClient {
         }
     }
 
-    func terminalFrames(
+    func terminalEvents(
         paneID: String,
         columns: Int = 100,
         rows: Int = 32
-    ) -> AsyncThrowingStream<TerminalFrame, any Error> {
+    ) -> AsyncThrowingStream<TerminalStreamEvent, any Error> {
         var request = makeRequest(
             path: "/api/v1/panes/\(paneID)/stream",
             method: "GET",
@@ -186,36 +281,21 @@ actor HerdrAPIClient {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let terminalRequest = request
         let session = self.session
-        let decoder = self.decoder
 
         // Terminal delta frames are order-dependent, so do not drop intermediate
-        // values. The consumer applies them synchronously to a bounded grid.
+        // values. Activity records also keep quiet, healthy streams distinguishable
+        // from a stalled observer.
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: terminalRequest)
                     try Self.validate(response: response)
-                    var eventName = "message"
-                    var dataLines: [String] = []
+                    var parser = TerminalSSEParser()
 
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
-                        if line.isEmpty {
-                            if eventName == "terminal.frame", !dataLines.isEmpty {
-                                let payload = dataLines.joined(separator: "\n")
-                                guard let data = payload.data(using: .utf8),
-                                      let frame = try? decoder.decode(TerminalFrame.self, from: data)
-                                else { throw APIError.invalidResponse }
-                                continuation.yield(frame)
-                            } else if eventName == "terminal.error" || eventName == "terminal.closed" {
-                                throw APIError.streamEnded
-                            }
-                            eventName = "message"
-                            dataLines.removeAll(keepingCapacity: true)
-                        } else if line.hasPrefix("event:") {
-                            eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                        } else if line.hasPrefix("data:") {
-                            dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+                        if let event = try parser.consume(line: line) {
+                            continuation.yield(event)
                         }
                     }
                     throw APIError.streamEnded
@@ -272,7 +352,8 @@ actor HerdrAPIClient {
         if !query.isEmpty { components?.queryItems = query }
         var request = URLRequest(url: components?.url ?? configuration.baseURL)
         request.httpMethod = method
-        request.timeoutInterval = method == "GET" && path.hasSuffix("events") ? 24 * 60 * 60 : 15
+        let isEventStream = method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream"))
+        request.timeoutInterval = isEventStream ? 24 * 60 * 60 : 15
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if !configuration.token.isEmpty {
             request.setValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
@@ -285,6 +366,48 @@ actor HerdrAPIClient {
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? JSONDecoder().decode(ServerErrorEnvelope.self, from: data).error.message) ?? ""
             throw APIError.server(status: http.statusCode, message: message)
+        }
+    }
+}
+
+struct TerminalSSEParser {
+    private var eventName = "message"
+    private var dataLines: [String] = []
+    private let decoder = JSONDecoder()
+
+    mutating func consume(line: String) throws -> TerminalStreamEvent? {
+        if line.hasPrefix(":") {
+            return .activity
+        }
+        if line.hasPrefix("event:") {
+            eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            return nil
+        }
+        if line.hasPrefix("data:") {
+            dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            return nil
+        }
+        guard line.isEmpty else { return nil }
+
+        defer {
+            eventName = "message"
+            dataLines.removeAll(keepingCapacity: true)
+        }
+        switch eventName {
+        case "ready":
+            return .ready
+        case "heartbeat":
+            return .activity
+        case "terminal.frame":
+            let payload = dataLines.joined(separator: "\n")
+            guard let data = payload.data(using: .utf8),
+                  let frame = try? decoder.decode(TerminalFrame.self, from: data)
+            else { throw APIError.invalidResponse }
+            return .frame(frame)
+        case "terminal.error", "terminal.closed":
+            throw APIError.streamEnded
+        default:
+            return nil
         }
     }
 }

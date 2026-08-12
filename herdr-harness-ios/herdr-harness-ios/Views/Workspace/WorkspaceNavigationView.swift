@@ -37,7 +37,8 @@ struct WorkspaceNavigationView: View {
                     }
                 case let .pane(id):
                     if let pane = model.pane(id: id) {
-                        PaneSessionView(model: model, pane: pane)
+                        PaneSessionView(model: model, pane: pane, hidesAppTabBar: true)
+                            .id(pane.id)
                     }
                 }
             }
@@ -73,7 +74,8 @@ struct WorkspaceNavigationView: View {
             }
         } detail: {
             if let pane = model.pane(id: model.selectedPaneID) {
-                PaneSessionView(model: model, pane: pane)
+                PaneSessionView(model: model, pane: pane, hidesAppTabBar: true)
+                    .id(pane.id)
             } else {
                 ContentUnavailableView(
                     "Choose a pane",

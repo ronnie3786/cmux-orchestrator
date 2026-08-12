@@ -11,17 +11,27 @@ struct WorkspaceListView: View {
             HerdrBackground()
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    WorkspaceHeader(model: model) {
-                        presentedSheet = .create
-                    }
-                    FleetSummaryView(model: model)
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    WorkspaceHeader(model: model)
+
+                    WorkspaceSearchField(text: $model.searchText)
 
                     if !model.attentionPanes.isEmpty {
                         AttentionStrip(model: model, selectPane: selectPane)
                     }
 
                     WorkspaceFilterBar(model: model)
+
+                    HerdrSectionLabel(
+                        title: "spaces",
+                        detail: "\(model.visibleWorkspaces.count) / \(model.workspaces.count)"
+                    )
+
+                    Button("new workspace", systemImage: "plus", action: showCreateWorkspace)
+                        .font(.subheadline.monospaced().bold())
+                        .foregroundStyle(HerdrTheme.accent)
+                        .frame(minHeight: 44)
+                        .buttonStyle(.plain)
 
                     if model.visibleWorkspaces.isEmpty {
                         emptyState
@@ -32,7 +42,14 @@ struct WorkspaceListView: View {
                             Button {
                                 selectWorkspace(workspace)
                             } label: {
-                                WorkspaceCardView(workspace: workspace)
+                                WorkspaceCardView(
+                                    workspace: workspace,
+                                    isSelected: workspace.id == model.selectedWorkspaceID,
+                                    worktreeConnector: worktreeConnector(
+                                        for: workspace,
+                                        in: model.visibleWorkspaces
+                                    )
+                                )
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("workspace-\(workspace.id)")
@@ -49,7 +66,6 @@ struct WorkspaceListView: View {
         }
         .navigationTitle("Workspaces")
         .toolbar(.hidden, for: .navigationBar)
-        .searchable(text: $model.searchText, prompt: "Workspace, pane, or path")
         .sheet(item: $presentedSheet) { _ in
             CreateWorkspaceView { label, cwd in
                 let created = await model.createWorkspace(label: label, cwd: cwd)
@@ -58,6 +74,26 @@ struct WorkspaceListView: View {
             }
             .presentationDetents([.medium])
         }
+    }
+
+    private func showCreateWorkspace() {
+        presentedSheet = .create
+    }
+
+    private func worktreeConnector(
+        for workspace: HerdrWorkspace,
+        in workspaces: [HerdrWorkspace]
+    ) -> String? {
+        guard let worktree = workspace.worktree,
+              worktree.isLinkedWorktree,
+              workspaces.count(where: { $0.worktree?.repoRoot == worktree.repoRoot }) > 1,
+              let index = workspaces.firstIndex(where: { $0.id == workspace.id })
+        else { return nil }
+
+        let hasLaterSibling = workspaces.dropFirst(index + 1).contains {
+            $0.worktree?.repoRoot == worktree.repoRoot && $0.worktree?.isLinkedWorktree == true
+        }
+        return hasLaterSibling ? "├─" : "└─"
     }
 
     private var emptyState: some View {

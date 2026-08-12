@@ -102,6 +102,142 @@ enum DemoData {
         }
     }
 
+    static func gitStatus(for workspace: HerdrWorkspace) -> WorkspaceGitStatus {
+        WorkspaceGitStatus(
+            ok: true,
+            workspaceID: workspace.id,
+            branch: workspace.tokens["branch"] ?? "feature/member-profile",
+            cwd: workspace.displayPath,
+            staged: [
+                WorkspaceGitFile(status: "M", file: "herdr-harness-ios/Views/Pane/PaneSessionView.swift"),
+            ],
+            unstaged: [
+                WorkspaceGitFile(status: "M", file: "herdr-harness-ios/Views/Pane/PromptComposerView.swift"),
+                WorkspaceGitFile(status: "M", file: "herdr_harness/server.py"),
+            ],
+            untracked: [
+                "herdr-harness-ios/Views/Pane/WorkspaceSkillsView.swift",
+            ],
+            commits: [
+                WorkspaceGitCommit(hash: "8d3b96a", message: "Keep terminal frames live while a pane stays open"),
+                WorkspaceGitCommit(hash: "a18fe2c", message: "Match the workspace picker to the Herdr TUI"),
+                WorkspaceGitCommit(hash: "5f29d10", message: "Add iOS pane controls"),
+            ],
+            error: nil
+        )
+    }
+
+    static func gitDiff(file: String, section: GitFileSection) -> WorkspaceGitDiffResponse {
+        WorkspaceGitDiffResponse(
+            ok: true,
+            file: file,
+            section: section,
+            diff: """
+            diff --git a/\(file) b/\(file)
+            index 17f4c31..92ab840 100644
+            --- a/\(file)
+            +++ b/\(file)
+            @@ -42,6 +42,9 @@ struct PaneSessionView: View {
+                 PaneTerminalView(
+                     pane: currentPane,
+            +        source: terminalSource,
+            +        isFollowing: $isFollowing,
+            +        refresh: manualRefresh,
+                     output: output
+                 )
+            """,
+            error: nil
+        )
+    }
+
+    static func skills(for workspace: HerdrWorkspace) -> SkillsResponse {
+        let projectSkills = [
+            ProjectSkill(
+                name: "swiftui-pro",
+                skillFilePath: "./.claude/skills/swiftui-pro/SKILL.md",
+                scope: "project"
+            ),
+            ProjectSkill(
+                name: "self-qa",
+                skillFilePath: "./.claude/skills/self-qa/SKILL.md",
+                scope: "project"
+            ),
+            ProjectSkill(
+                name: "release-ios",
+                skillFilePath: "./.claude/skills/release-ios/SKILL.md",
+                scope: "project"
+            ),
+        ]
+        let userSkills = [
+            ProjectSkill(
+                name: "handoff",
+                skillFilePath: "~/.codex/skills/handoff/SKILL.md",
+                scope: "user"
+            ),
+            ProjectSkill(
+                name: "message-me",
+                skillFilePath: "~/.codex/skills/message-me/SKILL.md",
+                scope: "user"
+            ),
+        ]
+        return SkillsResponse(
+            ok: true,
+            workspaceID: workspace.id,
+            rootPath: workspace.displayPath,
+            skillsDirectory: "\(workspace.displayPath)/.claude/skills",
+            userSkillsDirectory: "~/.codex/skills",
+            projectSkills: projectSkills,
+            userSkills: userSkills,
+            skills: projectSkills + userSkills,
+            error: nil
+        )
+    }
+
+    static func fileSearch(query: String, workspace: HerdrWorkspace) -> FileSearchResponse {
+        FileSearchResponse(
+            ok: true,
+            workspaceID: workspace.id,
+            rootPath: workspace.displayPath,
+            query: query,
+            files: [
+                ProjectFileMatch(path: "herdr-harness-ios/Views/Pane/PaneSessionView.swift"),
+                ProjectFileMatch(path: "herdr-harness-ios/Views/Pane/PromptComposerView.swift"),
+                ProjectFileMatch(path: "tests/test_herdr_service.py"),
+            ].filter { query.isEmpty || $0.path.localizedCaseInsensitiveContains(query) },
+            truncated: false,
+            limit: 50,
+            error: nil
+        )
+    }
+
+    static let jiraTickets = JiraTicketsResponse(
+        ok: true,
+        project: "MOB",
+        projects: ["MOB", "IOS"],
+        site: "example.atlassian.net",
+        tickets: [
+            JiraTicket(
+                key: "MOB-1842",
+                projectKey: "MOB",
+                title: "Keep the remote terminal live on iOS",
+                status: "In Progress",
+                priority: "High",
+                issueType: "Story",
+                url: "https://example.atlassian.net/browse/MOB-1842"
+            ),
+            JiraTicket(
+                key: "IOS-927",
+                projectKey: "IOS",
+                title: "Polish the Herdr pane command deck",
+                status: "Ready for QA",
+                priority: "Medium",
+                issueType: "Task",
+                url: "https://example.atlassian.net/browse/IOS-927"
+            ),
+        ],
+        error: nil
+    )
+
     private static func workspace(
         id: String,
         number: Int,

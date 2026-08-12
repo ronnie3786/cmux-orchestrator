@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import os
 import threading
+from pathlib import Path
 from typing import Mapping, Optional
 
 from .alerts import AlertStore, utc_now
+from . import attachments, workspace_tools
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .events import EventBroker
 from .network import network_payload
@@ -61,6 +63,16 @@ class HerdrService:
         self._restart_subscription = threading.Event()
         self._event_thread: Optional[threading.Thread] = None
         self._refresh_thread: Optional[threading.Thread] = None
+        self._attachment_cleanup_thread: Optional[threading.Thread] = None
+        self._attachment_retention = attachments.retention_seconds(self.environ)
+        default_cleanup_interval = min(3600, max(60, self._attachment_retention // 4))
+        self._attachment_cleanup_interval = _bounded_environment_int(
+            self.environ,
+            "HERDR_HARNESS_ATTACHMENT_CLEANUP_SECONDS",
+            default_cleanup_interval,
+            minimum=10,
+            maximum=86400,
+        )
         self._terminal_limit = _bounded_environment_int(
             self.environ,
             "HERDR_HARNESS_TERMINAL_MAX_STREAMS",
@@ -91,6 +103,7 @@ class HerdrService:
             self.refresh_snapshot()
         except HerdrClientError:
             pass
+        self._prune_attachments()
         self._event_thread = threading.Thread(
             target=self._event_loop,
             name="herdr-events",
@@ -101,18 +114,43 @@ class HerdrService:
             name="herdr-snapshot-refresh",
             daemon=True,
         )
+        self._attachment_cleanup_thread = threading.Thread(
+            target=self._attachment_cleanup_loop,
+            name="herdr-attachment-cleanup",
+            daemon=True,
+        )
         self._event_thread.start()
         self._refresh_thread.start()
+        self._attachment_cleanup_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
         self._refresh_event.set()
         self._restart_subscription.set()
-        for thread in (self._event_thread, self._refresh_thread):
+        for thread in (
+            self._event_thread,
+            self._refresh_thread,
+            self._attachment_cleanup_thread,
+        ):
             if thread is not None and thread.is_alive():
                 thread.join(timeout=2.0)
         with self._lock:
             self._started = False
+
+    def _prune_attachments(self) -> None:
+        try:
+            attachments.prune_expired_attachments(
+                environ=self.environ,
+                retention=self._attachment_retention,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            # Attachment cleanup is maintenance and must never prevent the
+            # terminal/control API from starting or remaining available.
+            return
+
+    def _attachment_cleanup_loop(self) -> None:
+        while not self._stop_event.wait(self._attachment_cleanup_interval):
+            self._prune_attachments()
 
     def refresh_snapshot(self) -> dict:
         try:
@@ -265,6 +303,104 @@ class HerdrService:
                 if item.get("workspaceId") == workspace_id
             ],
             "generatedAt": response["generatedAt"],
+        }
+
+    def _workspace_tool_context(self, workspace_id: str) -> tuple[dict, Path]:
+        response = self.workspace_response(workspace_id)
+        if response is None:
+            raise workspace_tools.WorkspaceToolError(
+                "Workspace not found",
+                code="workspace_not_found",
+                status=404,
+            )
+        workspace = response["workspace"]
+        root = workspace_tools.workspace_root(workspace)
+        if root is None:
+            raise workspace_tools.WorkspaceToolError(
+                "Workspace has no available checkout or pane directory",
+                code="workspace_root_not_found",
+                status=404,
+            )
+        return workspace, root
+
+    def workspace_git_status(self, workspace_id: str) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        payload = workspace_tools.git_status(root)
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            **payload,
+            "generated_at": utc_now(),
+        }
+
+    def workspace_git_diff(self, workspace_id: str, *, file: str, section: str) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            **workspace_tools.git_diff(root, file, section),
+        }
+
+    def workspace_git_stage(self, workspace_id: str, *, file: str) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        relative = workspace_tools.git_stage(root, file)
+        return {"ok": True, "workspace_id": workspace_id, "file": relative}
+
+    def workspace_git_unstage(self, workspace_id: str, *, file: str) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        relative = workspace_tools.git_unstage(root, file)
+        return {"ok": True, "workspace_id": workspace_id, "file": relative}
+
+    def workspace_skills(self, workspace_id: str) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            **workspace_tools.skills(root, environ=self.environ),
+        }
+
+    def workspace_file_search(self, workspace_id: str, *, query: str, limit: int) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            **workspace_tools.search_files(root, query, limit=limit),
+        }
+
+    def workspace_attachment(
+        self,
+        workspace_id: str,
+        *,
+        filename: str,
+        content_type: str,
+        data_base64: str,
+    ) -> dict:
+        # Resolving the context first prevents uploads from inventing arbitrary
+        # workspace identifiers even though attachments live in harness storage.
+        self._workspace_tool_context(workspace_id)
+        attachment = attachments.save_base64_attachment(
+            workspace_id=workspace_id,
+            filename=filename,
+            content_type=content_type,
+            data_base64=data_base64,
+            environ=self.environ,
+        )
+        return {"ok": True, "attachment": attachment}
+
+    def jira_assigned(self, *, project: str, limit: int) -> dict:
+        return {
+            "ok": True,
+            **workspace_tools.jira_assigned(
+                project=project,
+                limit=limit,
+                environ=self.environ,
+            ),
+        }
+
+    def jira_issue(self, *, query: str) -> dict:
+        return {
+            "ok": True,
+            **workspace_tools.jira_issue(query, environ=self.environ),
         }
 
     def health_response(self) -> dict:

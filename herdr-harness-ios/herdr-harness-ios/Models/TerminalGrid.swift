@@ -72,11 +72,8 @@ struct TerminalGrid: Sendable {
                 if let background = colors.background {
                     value.backgroundColor = background
                 }
-                var font = Font.system(
-                    size: 12,
-                    weight: runStyle.bold ? .semibold : .regular,
-                    design: .monospaced
-                )
+                var font = Font.footnote.monospaced()
+                if runStyle.bold { font = font.bold() }
                 if runStyle.italic { font = font.italic() }
                 value.font = font
                 if runStyle.underline { value.underlineStyle = .single }
@@ -365,11 +362,11 @@ struct TerminalGrid: Sendable {
     }
 
     private func resolvedColors(for style: Style) -> (foreground: Color, background: Color?) {
-        let defaultForeground = Color(red: 0.84, green: 0.87, blue: 0.90)
+        let defaultForeground = HerdrTheme.text
         let foreground = style.foreground?.color ?? defaultForeground
         let background = style.background?.color
         if style.inverse {
-            return (background ?? Color.black, foreground)
+            return (background ?? HerdrTheme.ink, foreground)
         }
         return (foreground, background)
     }

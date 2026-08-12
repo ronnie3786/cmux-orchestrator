@@ -2,56 +2,73 @@ import SwiftUI
 
 struct WorkspaceCardView: View {
     let workspace: HerdrWorkspace
+    let isSelected: Bool
+    let worktreeConnector: String?
 
     var body: some View {
-        GlassCard {
-            HStack(spacing: 14) {
-                StatusRail(status: workspace.agentStatus)
+        HStack(spacing: 12) {
+            HerdrStatusDot(status: workspace.agentStatus)
 
-                VStack(alignment: .leading, spacing: 13) {
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(workspace.label)
-                                .font(.headline.bold())
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            if !workspace.displayPath.isEmpty {
-                                Text(workspace.displayPath)
-                                    .font(.caption)
-                                    .fontDesign(.monospaced)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                        }
-
-                        Spacer(minLength: 4)
-                        AgentStatusBadge(status: workspace.agentStatus, compact: true)
-                    }
-
-                    HStack(spacing: 12) {
-                        PaneTopologyView(layout: workspace.layouts.first)
-                            .frame(width: 86, height: 48)
-
-                        VStack(alignment: .leading, spacing: 5) {
-                            Label("^[\(workspace.paneCount) pane](inflect: true)", systemImage: "rectangle.split.3x1")
-                            Label("^[\(workspace.tabCount) tab](inflect: true)", systemImage: "square.on.square")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(HerdrTheme.mist)
-
-                        Spacer()
-
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.bold())
-                            .foregroundStyle(.tertiary)
-                    }
-                }
+            if let worktreeConnector {
+                Text(worktreeConnector)
+                    .font(.subheadline.monospaced())
+                    .foregroundStyle(HerdrTheme.muted)
+                    .accessibilityHidden(true)
             }
-            .padding(HerdrTheme.cardPadding)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(workspace.label)
+                        .font(.headline.monospaced().bold())
+                        .foregroundStyle(HerdrTheme.text)
+                        .lineLimit(1)
+
+                    if workspace.focused {
+                        Text("active")
+                            .font(.caption.monospaced().bold())
+                            .foregroundStyle(HerdrTheme.accent)
+                    }
+
+                    Spacer(minLength: 4)
+                    Text(workspace.agentStatus.compactTitle.lowercased())
+                        .font(.caption.monospaced())
+                        .foregroundStyle(workspace.agentStatus.labelColor)
+                }
+
+                Text(detail)
+                    .font(.subheadline.monospaced())
+                    .foregroundStyle(HerdrTheme.mist)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(minHeight: 64)
+        .background(rowBackground)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(isSelected ? HerdrTheme.accent : .clear)
+                .frame(width: 2)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(HerdrTheme.surface.opacity(0.65))
+                .frame(height: 1)
         }
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(workspace.label), \(workspace.agentStatus.title), \(workspace.paneCount) panes")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var detail: String {
+        let branch = workspace.tokens["branch"] ?? "shell"
+        return "\(branch) · \(workspace.tabCount) tab\(workspace.tabCount == 1 ? "" : "s")"
+    }
+
+    private var rowBackground: Color {
+        if isSelected { return HerdrTheme.elevated }
+        if workspace.focused { return HerdrTheme.graphite }
+        return HerdrTheme.ink
     }
 }

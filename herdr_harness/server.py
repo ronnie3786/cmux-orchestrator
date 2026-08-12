@@ -14,10 +14,12 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
+from . import attachments
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
 from .service import HerdrService
 from .terminal import TerminalObserverError
+from .workspace_tools import WorkspaceToolError
 
 
 MAX_BODY_BYTES = 1024 * 1024
@@ -209,6 +211,10 @@ def api_description() -> dict:
             "snapshot": "/api/v1/snapshot",
             "workspaces": "/api/v1/workspaces",
             "workspace": "/api/v1/workspaces/{workspaceId}",
+            "workspaceGit": "/api/v1/workspaces/{workspaceId}/git",
+            "workspaceSkills": "/api/v1/workspaces/{workspaceId}/skills",
+            "workspaceFiles": "/api/v1/workspaces/{workspaceId}/files",
+            "jiraAssigned": "/api/v1/jira/assigned",
             "events": "/api/v1/events",
             "paneOutput": "/api/v1/panes/{paneId}/output",
             "paneStream": "/api/v1/panes/{paneId}/stream",
@@ -219,6 +225,7 @@ def api_description() -> dict:
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
             "POST /api/v1/workspaces/{workspaceId}/focus|tabs",
+            "POST /api/v1/workspaces/{workspaceId}/git/stage|git/unstage|attachments",
             "PATCH|DELETE /api/v1/tabs/{tabId}",
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
@@ -289,14 +296,19 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return False
             return True
 
-        def _read_json(self) -> dict:
+        def _read_json(self, *, maximum: int = MAX_BODY_BYTES) -> dict:
             raw_length = self.headers.get("Content-Length", "0")
             try:
                 length = int(raw_length)
             except ValueError as exc:
                 raise HTTPValidationError("Content-Length is invalid") from exc
-            if length < 0 or length > MAX_BODY_BYTES:
-                raise HTTPValidationError("request body exceeds 1 MB", code="body_too_large", status=413)
+            if length < 0 or length > maximum:
+                limit_mb = maximum // (1024 * 1024)
+                raise HTTPValidationError(
+                    f"request body exceeds {limit_mb} MB",
+                    code="body_too_large",
+                    status=413,
+                )
             if length == 0:
                 return {}
             raw = self.rfile.read(length)
@@ -342,7 +354,14 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return
                 if not self._authorized():
                     return
-                body = self._read_json() if method in {"POST", "PATCH", "DELETE"} else {}
+                attachment_upload = (
+                    method == "POST"
+                    and len(segments) == 5
+                    and segments[:3] == ["api", "v1", "workspaces"]
+                    and segments[4] == "attachments"
+                )
+                maximum = attachments.MAX_ATTACHMENT_JSON_BYTES if attachment_upload else MAX_BODY_BYTES
+                body = self._read_json(maximum=maximum) if method in {"POST", "PATCH", "DELETE"} else {}
                 response = self._route(method, segments, query, body)
                 if response is not None:
                     self._json_response(response)
@@ -354,6 +373,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(_herdr_status(exc), exc.code, str(exc))
             except TerminalObserverError as exc:
                 self._error(503, "terminal_observer_unavailable", str(exc))
+            except WorkspaceToolError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except attachments.AttachmentError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
             except Exception:
@@ -387,6 +410,61 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 if result is None:
                     raise HTTPValidationError("Workspace not found", code="not_found", status=404)
                 return result
+            if len(tail) >= 3 and tail[0] == "workspaces":
+                workspace_id = _identifier(tail[1], "workspace ID")
+                if method == "GET" and len(tail) == 3 and tail[2] == "git":
+                    return service.workspace_git_status(workspace_id)
+                if method == "GET" and len(tail) == 4 and tail[2:] == ["git", "diff"]:
+                    file = _string((query.get("file") or [""])[0], "file", maximum=4096)
+                    section = str((query.get("section") or ["unstaged"])[0])
+                    return service.workspace_git_diff(workspace_id, file=file, section=section)
+                if method == "POST" and len(tail) == 4 and tail[2] == "git":
+                    file = _string(body.get("file"), "file", maximum=4096)
+                    if tail[3] == "stage":
+                        return service.workspace_git_stage(workspace_id, file=file)
+                    if tail[3] == "unstage":
+                        return service.workspace_git_unstage(workspace_id, file=file)
+                if method == "GET" and len(tail) == 3 and tail[2] == "skills":
+                    return service.workspace_skills(workspace_id)
+                if method == "GET" and len(tail) == 3 and tail[2] == "files":
+                    raw_query = (query.get("q") or query.get("query") or [""])[0]
+                    search_query = _string(
+                        raw_query,
+                        "query",
+                        maximum=512,
+                        allow_empty=True,
+                    )
+                    limit = _query_int(query, "limit", 80, minimum=1, maximum=500)
+                    return service.workspace_file_search(
+                        workspace_id,
+                        query=search_query,
+                        limit=limit,
+                    )
+                if method == "POST" and len(tail) == 3 and tail[2] == "attachments":
+                    filename = _string(body.get("filename"), "filename", maximum=512)
+                    content_type = _string(
+                        body.get("content_type") or "application/octet-stream",
+                        "content_type",
+                        maximum=255,
+                    )
+                    data_base64 = body.get("data_base64")
+                    if not isinstance(data_base64, str):
+                        raise HTTPValidationError("data_base64 must be a string")
+                    return service.workspace_attachment(
+                        workspace_id,
+                        filename=filename,
+                        content_type=content_type,
+                        data_base64=data_base64,
+                    )
+            if method == "GET" and tail == ["jira", "assigned"]:
+                project = str((query.get("project") or [""])[0]).strip()
+                limit = _query_int(query, "limit", 50, minimum=1, maximum=100)
+                return service.jira_assigned(project=project, limit=limit)
+            if method == "GET" and tail == ["jira", "issue"]:
+                issue_query = str((query.get("q") or query.get("key") or [""])[0]).strip()
+                if len(issue_query) > 2048 or "\x00" in issue_query:
+                    raise HTTPValidationError("Jira query is invalid")
+                return service.jira_issue(query=issue_query)
             if method == "GET" and tail == ["events"]:
                 self._serve_events(query)
                 return None

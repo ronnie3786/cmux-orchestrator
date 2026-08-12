@@ -7,6 +7,7 @@ import urllib.request
 
 from herdr_harness.events import EventBroker
 from herdr_harness.server import make_server
+from herdr_harness.workspace_tools import WorkspaceToolError
 
 
 class FakeHTTPService:
@@ -46,6 +47,53 @@ class FakeHTTPService:
         if workspace_id != "w1":
             return None
         return {"ok": True, "workspace": self.workspaces_response()["workspaces"][0], "alerts": [], "generatedAt": "now"}
+
+    def workspace_git_status(self, workspace_id):
+        self.calls.append(("workspace.git", {"workspace_id": workspace_id}))
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            "root_path": "/server/resolved/repo",
+            "branch": "feature/panes",
+            "staged": [],
+            "unstaged": [{"status": "M", "file": "Pane.swift"}],
+            "untracked": ["NewPane.swift"],
+            "commits": [],
+        }
+
+    def workspace_git_diff(self, workspace_id, *, file, section):
+        if file.startswith("/") or ".." in file.split("/"):
+            raise WorkspaceToolError("file must stay inside the repository", code="invalid_git_path", status=400)
+        self.calls.append(("workspace.git.diff", {"workspace_id": workspace_id, "file": file, "section": section}))
+        return {"ok": True, "workspace_id": workspace_id, "file": file, "section": section, "diff": "+change", "truncated": False}
+
+    def workspace_git_stage(self, workspace_id, *, file):
+        self.calls.append(("workspace.git.stage", {"workspace_id": workspace_id, "file": file}))
+        return {"ok": True, "workspace_id": workspace_id, "file": file}
+
+    def workspace_git_unstage(self, workspace_id, *, file):
+        self.calls.append(("workspace.git.unstage", {"workspace_id": workspace_id, "file": file}))
+        return {"ok": True, "workspace_id": workspace_id, "file": file}
+
+    def workspace_skills(self, workspace_id):
+        self.calls.append(("workspace.skills", {"workspace_id": workspace_id}))
+        return {"ok": True, "workspace_id": workspace_id, "root_path": "/server/resolved/repo", "project_skills": [], "user_skills": [], "skills": []}
+
+    def workspace_file_search(self, workspace_id, *, query, limit):
+        self.calls.append(("workspace.files", {"workspace_id": workspace_id, "query": query, "limit": limit}))
+        return {"ok": True, "workspace_id": workspace_id, "root_path": "/server/resolved/repo", "query": query, "files": [{"path": "Sources/Pane.swift"}], "truncated": False, "limit": limit}
+
+    def workspace_attachment(self, workspace_id, *, filename, content_type, data_base64):
+        self.calls.append(("workspace.attachment", {"workspace_id": workspace_id, "filename": filename, "content_type": content_type, "data_base64": data_base64}))
+        return {"ok": True, "attachment": {"workspace_id": workspace_id, "original_filename": filename, "content_type": content_type}}
+
+    def jira_assigned(self, *, project, limit):
+        self.calls.append(("jira.assigned", {"project": project, "limit": limit}))
+        return {"ok": True, "project": project or None, "projects": [], "site": "jira.example.test", "tickets": []}
+
+    def jira_issue(self, *, query):
+        self.calls.append(("jira.issue", {"query": query}))
+        return {"ok": True, "site": "jira.example.test", "ticket": {"key": "HERD-1"}}
 
     def invoke(self, method, params):
         self.calls.append((method, params))
@@ -208,6 +256,57 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(body["output"]["future"], 1)
         self.assertEqual(self.service.calls[-1][1]["source"], "recent_unwrapped")
         self.assertEqual(self.service.calls[-1][1]["lines"], 80)
+
+    def test_workspace_tool_routes_use_workspace_id_and_snake_case_contracts(self):
+        git_status, _, git_body = self.request("/api/v1/workspaces/w1/git?path=/client/cannot/choose")
+        diff_status, _, diff_body = self.request(
+            "/api/v1/workspaces/w1/git/diff?file=Sources%2FPane.swift&section=staged"
+        )
+        stage_status, _, _ = self.request(
+            "/api/v1/workspaces/w1/git/stage",
+            method="POST",
+            payload={"file": "Sources/Pane.swift"},
+        )
+        skills_status, _, skills_body = self.request("/api/v1/workspaces/w1/skills")
+        files_status, _, files_body = self.request("/api/v1/workspaces/w1/files?q=Pane&limit=12")
+        attachment_status, _, attachment_body = self.request(
+            "/api/v1/workspaces/w1/attachments",
+            method="POST",
+            payload={"filename": "notes.txt", "content_type": "text/plain", "data_base64": "aGVsbG8="},
+        )
+
+        self.assertEqual(
+            [git_status, diff_status, stage_status, skills_status, files_status, attachment_status],
+            [200, 200, 200, 200, 200, 200],
+        )
+        self.assertEqual(git_body["root_path"], "/server/resolved/repo")
+        self.assertEqual(git_body["untracked"], ["NewPane.swift"])
+        self.assertEqual(diff_body["section"], "staged")
+        self.assertIn("project_skills", skills_body)
+        self.assertEqual(files_body["files"], [{"path": "Sources/Pane.swift"}])
+        self.assertEqual(attachment_body["attachment"]["workspace_id"], "w1")
+        self.assertIn(("workspace.git", {"workspace_id": "w1"}), self.service.calls)
+        self.assertIn(("workspace.files", {"workspace_id": "w1", "query": "Pane", "limit": 12}), self.service.calls)
+
+    def test_workspace_tool_routes_require_auth_and_reject_git_traversal(self):
+        unauthorized, _, auth_body = self.request("/api/v1/workspaces/w1/git", token=None)
+        invalid, _, invalid_body = self.request(
+            "/api/v1/workspaces/w1/git/diff?file=..%2Fsecret&section=unstaged"
+        )
+
+        self.assertEqual(unauthorized, 401)
+        self.assertEqual(auth_body["error"]["code"], "unauthorized")
+        self.assertEqual(invalid, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_git_path")
+
+    def test_jira_routes_validate_and_forward_queries(self):
+        assigned_status, _, _ = self.request("/api/v1/jira/assigned?project=HERD&limit=9")
+        issue_status, _, issue = self.request("/api/v1/jira/issue?q=https%3A%2F%2Fjira.example%2Fbrowse%2FHERD-1")
+
+        self.assertEqual(assigned_status, 200)
+        self.assertEqual(issue_status, 200)
+        self.assertEqual(issue["ticket"]["key"], "HERD-1")
+        self.assertIn(("jira.assigned", {"project": "HERD", "limit": 9}), self.service.calls)
 
     def test_alert_list_and_read_routes(self):
         list_status, _, listed = self.request("/api/v1/alerts?unread=true")

@@ -5,45 +5,44 @@ struct AttentionStrip: View {
     let selectPane: (HerdrPane) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Attention", systemImage: "sparkle.magnifyingglass")
-                    .font(.headline.bold())
+                HerdrSectionLabel(title: "attention", detail: "\(model.attentionPanes.count)")
                 Spacer()
-                Button("See all") { model.selectedTab = .attention }
-                    .font(.subheadline.bold())
+                Button("open queue") { model.selectedTab = .attention }
+                    .font(.subheadline.monospaced().bold())
             }
 
-            ScrollView(.horizontal) {
-                LazyHStack(spacing: 10) {
-                    ForEach(model.attentionPanes.prefix(4)) { pane in
-                        Button {
-                            selectPane(pane)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 9) {
-                                AgentStatusBadge(status: pane.agentStatus, compact: true)
-                                Text(pane.displayTitle)
-                                    .font(.subheadline.bold())
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(2)
-                                Text(model.workspace(containing: pane)?.label ?? pane.workspaceID)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            .frame(width: 188, alignment: .leading)
-                            .padding(14)
-                            .background(HerdrTheme.elevated.opacity(0.72), in: .rect(cornerRadius: 16))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 16)
-                                    .strokeBorder(pane.agentStatus.color.opacity(0.25), lineWidth: 1)
-                            }
+            ForEach(model.attentionPanes.prefix(2)) { pane in
+                Button {
+                    selectPane(pane)
+                } label: {
+                    HStack(spacing: 10) {
+                        HerdrStatusDot(status: pane.agentStatus)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(pane.displayTitle)
+                                .font(.subheadline.monospaced().bold())
+                                .foregroundStyle(HerdrTheme.text)
+                                .lineLimit(1)
+                            Text(model.workspace(containing: pane)?.label ?? pane.workspaceID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(HerdrTheme.mist)
+                                .lineLimit(1)
                         }
-                        .buttonStyle(.plain)
+                        Spacer(minLength: 8)
+                        Text(pane.agentStatus.compactTitle.lowercased())
+                            .font(.caption.monospaced())
+                            .foregroundStyle(pane.agentStatus.color)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 54)
+                    .background(HerdrTheme.graphite)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(HerdrTheme.surface.opacity(0.65)).frame(height: 1)
                     }
                 }
+                .buttonStyle(.plain)
             }
-            .scrollIndicators(.hidden)
         }
     }
 }

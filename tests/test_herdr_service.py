@@ -1,7 +1,9 @@
 import copy
 import json
+import os
 import stat
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -236,6 +238,59 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(response, {"ok": True, "result": {"type": "ok", "future_result": True}})
         self.assertEqual(client.requests, [("pane.focus", {"pane_id": "w1:p1"})])
         self.assertEqual(service.snapshot_response()["snapshot"]["protocol"], 19)
+
+    def test_workspace_tools_resolve_root_only_from_cached_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkout = Path(temp_dir) / "checkout"
+            pane_cwd = checkout / "Sources"
+            pane_cwd.mkdir(parents=True)
+            raw = snapshot_with_status()
+            raw["workspaces"][0]["worktree"] = {"checkout_path": str(checkout)}
+            raw["panes"][0]["foreground_cwd"] = str(pane_cwd)
+            service = HerdrService(FakeClient([raw]), environ={})
+            service.refresh_snapshot()
+
+            with patch(
+                "herdr_harness.service.workspace_tools.git_status",
+                return_value={
+                    "root_path": str(checkout),
+                    "branch": "feature",
+                    "staged": [],
+                    "unstaged": [],
+                    "untracked": [],
+                    "commits": [],
+                },
+            ) as status:
+                payload = service.workspace_git_status("w1")
+
+            status.assert_called_once_with(checkout.resolve())
+            self.assertEqual(payload["workspace_id"], "w1")
+            self.assertEqual(payload["branch"], "feature")
+
+    def test_service_lifecycle_prunes_expired_attachments_on_start(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            attachment_root = Path(temp_dir) / "attachments"
+            workspace_directory = attachment_root / "w1"
+            workspace_directory.mkdir(parents=True)
+            expired = workspace_directory / "expired.txt"
+            expired.write_text("old attachment", encoding="utf-8")
+            old_time = time.time() - 120
+            os.utime(expired, (old_time, old_time))
+            service = HerdrService(
+                FakeClient([snapshot_with_status()]),
+                push=FakePush(),
+                environ={
+                    "HERDR_HARNESS_ATTACHMENTS_DIR": str(attachment_root),
+                    "HERDR_HARNESS_ATTACHMENT_RETENTION_SECONDS": "60",
+                    "HERDR_HARNESS_ATTACHMENT_CLEANUP_SECONDS": "60",
+                },
+            )
+
+            try:
+                service.start()
+                self.assertFalse(expired.exists())
+            finally:
+                service.stop()
 
     def test_alert_transition_queues_optional_push_without_blocking(self):
         client = FakeClient([snapshot_with_status("working"), snapshot_with_status("blocked")])

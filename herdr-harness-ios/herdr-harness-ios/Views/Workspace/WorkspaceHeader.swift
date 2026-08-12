@@ -2,15 +2,19 @@ import SwiftUI
 
 struct WorkspaceHeader: View {
     @Bindable var model: HerdrAppModel
-    let createWorkspace: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(spacing: 13) {
-                HerdrBrandMark(size: 48)
-                Text("herdr")
-                    .font(.largeTitle.bold())
-                    .fontDesign(.rounded)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                HerdrBrandMark(size: 42)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("herdr")
+                        .font(.title.bold())
+                    Text("switch")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(HerdrTheme.mist)
+                }
 
                 Spacer()
 
@@ -18,19 +22,23 @@ struct WorkspaceHeader: View {
                     Task { await model.refresh() }
                 }
                 .labelStyle(.iconOnly)
-                .buttonStyle(.bordered)
-                .controlSize(.large)
+                .font(.headline.bold())
+                .foregroundStyle(HerdrTheme.accent)
+                .frame(width: 48, height: 48)
+                .background(HerdrTheme.elevated)
+                .overlay {
+                    RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                        .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                }
+                .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+                .buttonStyle(.plain)
                 .disabled(model.isRefreshing)
 
-                Button("New workspace", systemImage: "plus", action: createWorkspace)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
             }
 
             HStack {
-                Text("Your agent command deck")
-                    .font(.subheadline)
+                Text("choose a workspace")
+                    .font(.subheadline.monospaced())
                     .foregroundStyle(HerdrTheme.mist)
                 Spacer()
                 ConnectionPill(state: model.connectionState)
@@ -38,7 +46,7 @@ struct WorkspaceHeader: View {
 
             if model.isDemoMode {
                 Label("Demo data is active", systemImage: "sparkles")
-                    .font(.footnote.bold())
+                    .font(.footnote.monospaced().bold())
                     .foregroundStyle(HerdrTheme.accent)
             }
         }

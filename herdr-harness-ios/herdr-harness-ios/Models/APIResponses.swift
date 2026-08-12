@@ -135,6 +135,12 @@ struct TerminalFrame: Decodable, Equatable, Sendable {
     }
 }
 
+enum TerminalStreamEvent: Equatable, Sendable {
+    case ready
+    case activity
+    case frame(TerminalFrame)
+}
+
 enum JSONValue: Decodable, Sendable {
     case string(String)
     case number(Double)

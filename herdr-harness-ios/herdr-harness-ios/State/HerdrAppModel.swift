@@ -58,12 +58,7 @@ final class HerdrAppModel {
         workspaces
             .filter(matchesFilter)
             .filter(matchesSearch)
-            .sorted {
-                if $0.agentStatus.attentionRank != $1.agentStatus.attentionRank {
-                    return $0.agentStatus.attentionRank < $1.agentStatus.attentionRank
-                }
-                return $0.number < $1.number
-            }
+            .sorted { $0.number < $1.number }
     }
 
     var attentionPanes: [HerdrPane] {
@@ -228,9 +223,125 @@ final class HerdrAppModel {
         return try await client.fetchPaneOutput(paneID: pane.id)
     }
 
-    func terminalFrames(for pane: HerdrPane) async -> AsyncThrowingStream<TerminalFrame, any Error>? {
+    func fetchGitStatus(for workspace: HerdrWorkspace) async throws -> WorkspaceGitStatus {
+        if isDemoMode { return DemoData.gitStatus(for: workspace) }
+        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        return try await client.fetchGitStatus(workspaceID: workspace.id)
+    }
+
+    func fetchGitDiff(
+        for workspace: HerdrWorkspace,
+        file: String,
+        section: GitFileSection
+    ) async throws -> WorkspaceGitDiffResponse {
+        if isDemoMode { return DemoData.gitDiff(file: file, section: section) }
+        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        return try await client.fetchGitDiff(
+            workspaceID: workspace.id,
+            file: file,
+            section: section
+        )
+    }
+
+    func stageGitFile(_ file: String, in workspace: HerdrWorkspace) async throws {
+        if isDemoMode {
+            toastMessage = "Staged \(file)"
+            return
+        }
+        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        try await client.stageGitFile(workspaceID: workspace.id, file: file)
+        toastMessage = "Staged \(file)"
+    }
+
+    func unstageGitFile(_ file: String, in workspace: HerdrWorkspace) async throws {
+        if isDemoMode {
+            toastMessage = "Unstaged \(file)"
+            return
+        }
+        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        try await client.unstageGitFile(workspaceID: workspace.id, file: file)
+        toastMessage = "Unstaged \(file)"
+    }
+
+    func fetchSkills(for workspace: HerdrWorkspace) async throws -> SkillsResponse {
+        if isDemoMode { return DemoData.skills(for: workspace) }
+        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        return try await client.fetchSkills(workspaceID: workspace.id)
+    }
+
+    func searchFiles(in workspace: HerdrWorkspace, query: String) async throws -> [ProjectFileMatch] {
+        if isDemoMode { return DemoData.fileSearch(query: query, workspace: workspace).files }
+        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        return try await client.searchFiles(workspaceID: workspace.id, query: query).files
+    }
+
+    func fetchAssignedJiraTickets() async throws -> [JiraTicket] {
+        if isDemoMode { return DemoData.jiraTickets.tickets }
+        guard canControl, let client else { throw APIError.invalidResponse }
+        return try await client.fetchAssignedJiraTickets().tickets
+    }
+
+    func fetchJiraTicket(query: String) async throws -> JiraTicket {
+        if isDemoMode {
+            if let ticket = DemoData.jiraTickets.tickets.first(where: {
+                query.localizedCaseInsensitiveContains($0.key)
+            }) ?? DemoData.jiraTickets.tickets.first {
+                return ticket
+            }
+            throw APIError.server(status: 404, message: "Jira ticket not found.")
+        }
+        guard canControl, let client else { throw APIError.invalidResponse }
+        let response = try await client.fetchJiraTicket(query: query)
+        guard let ticket = response.ticket else {
+            throw APIError.server(status: 404, message: response.error ?? "Jira ticket not found.")
+        }
+        return ticket
+    }
+
+    func uploadAttachment(
+        from fileURL: URL,
+        contentType: String,
+        to workspace: HerdrWorkspace
+    ) async throws -> UploadedAttachment {
+        if isDemoMode {
+            return UploadedAttachment(
+                id: UUID().uuidString,
+                filename: fileURL.lastPathComponent,
+                originalFilename: fileURL.lastPathComponent,
+                contentType: contentType,
+                size: 0,
+                path: "/tmp/herdr-demo-attachments/\(fileURL.lastPathComponent)",
+                workspaceID: workspace.id,
+                createdAt: ISO8601DateFormatter().string(from: .now)
+            )
+        }
+        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        let response = try await client.uploadAttachment(
+            workspaceID: workspace.id,
+            fileURL: fileURL,
+            contentType: contentType
+        )
+        guard let attachment = response.attachment else { throw APIError.invalidResponse }
+        return attachment
+    }
+
+    func terminalEvents(for pane: HerdrPane) async -> AsyncThrowingStream<TerminalStreamEvent, any Error>? {
         guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else { return nil }
-        return await client.terminalFrames(paneID: pane.id)
+        return await client.terminalEvents(paneID: pane.id)
     }
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
