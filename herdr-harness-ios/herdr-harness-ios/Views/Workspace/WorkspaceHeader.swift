@@ -18,6 +18,8 @@ struct WorkspaceHeader: View {
 
                 Spacer()
 
+                HerdPulseButton()
+
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await model.refresh() }
                 }

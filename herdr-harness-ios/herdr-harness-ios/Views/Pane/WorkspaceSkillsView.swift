@@ -8,7 +8,7 @@ struct WorkspaceSkillsView: View {
     @State private var response: SkillsResponse?
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var selectedToken: String?
+    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         ScrollView {
@@ -32,7 +32,7 @@ struct WorkspaceSkillsView: View {
         .scrollIndicators(.hidden)
         .refreshable { await refresh() }
         .task(id: workspace.id) { await refresh() }
-        .sensoryFeedback(.selection, trigger: selectedToken)
+        .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("workspace-skills")
     }
 
@@ -184,7 +184,7 @@ struct WorkspaceSkillsView: View {
 
     private func insert(_ skill: ProjectSkill, as style: SkillInsertionStyle) {
         let token = style.token(for: skill)
-        selectedToken = token
+        hapticPulse.fire(.selection)
         selectToken(token)
     }
 

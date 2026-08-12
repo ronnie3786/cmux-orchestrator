@@ -1,5 +1,6 @@
 import base64
 import copy
+import io
 import json
 import subprocess
 import threading
@@ -7,6 +8,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,6 +16,16 @@ from unittest.mock import patch
 
 from herdr_harness.server import make_server
 from herdr_harness.service import HerdrService
+
+
+def _tiny_voice_wav() -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(b"\x00\x00" * 160)
+    return buffer.getvalue()
 
 
 class _SnapshotClient:
@@ -179,6 +191,13 @@ class _RecordingCmuxHandler(BaseHTTPRequestHandler):
                     "workspaceKey": "w1",
                     "createdAt": "2026-08-12T12:00:00Z",
                 },
+            }
+        if path == "/api/orchestrator-v2/voice/local/transcribe":
+            return {
+                "ok": True,
+                "text": "Review the current diff and run the focused tests.",
+                "backend": "parakeet",
+                "language": "en",
             }
         return {"ok": False, "error": "unhandled fake route"}
 
@@ -524,6 +543,61 @@ class HerdrCmuxProxyHTTPTests(unittest.TestCase):
         code, body = self.request("/api/v1/workspaces/w1/git", token=None)
         self.assertEqual(code, 401)
         self.assertEqual(body["error"]["code"], "unauthorized")
+        self.assertEqual(self.cmux.requests, [])
+
+    def test_voice_transcription_uses_authenticated_bounded_cmux_proxy(self):
+        wav = _tiny_voice_wav()
+        code, body = self.request(
+            "/api/v1/voice/transcriptions",
+            method="POST",
+            payload={
+                "filename": "ramble.wav",
+                "mime_type": "audio/wav",
+                "data_base64": base64.b64encode(wav).decode(),
+            },
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["text"], "Review the current diff and run the focused tests.")
+        self.assertEqual(body["backend"], "parakeet")
+        request = self.cmux.requests[-1]
+        self.assertEqual(request["path"], "/api/orchestrator-v2/voice/local/transcribe")
+        upstream = self.json_body(request)
+        self.assertEqual(base64.b64decode(upstream["audioBase64"]), wav)
+        self.assertEqual(upstream["backend"], "parakeet")
+        self.assertFalse(upstream["appendChat"])
+        self.assertNotIn("authorization", request["headers"])
+        self.assertNotIn(self.TOKEN, repr(request))
+
+    def test_voice_transcription_rejects_non_wav_before_proxying(self):
+        code, body = self.request(
+            "/api/v1/voice/transcriptions",
+            method="POST",
+            payload={
+                "filename": "ramble.wav",
+                "mime_type": "audio/wav",
+                "data_base64": base64.b64encode(b"not a wav").decode(),
+            },
+        )
+
+        self.assertEqual(code, 400)
+        self.assertEqual(body["error"]["code"], "invalid_voice_recording")
+        self.assertEqual(self.cmux.requests, [])
+
+    def test_voice_transcription_rejects_multipart_filename_injection(self):
+        wav = _tiny_voice_wav()
+        code, body = self.request(
+            "/api/v1/voice/transcriptions",
+            method="POST",
+            payload={
+                "filename": "voice.wav\r\nX-Leak: yes.wav",
+                "mime_type": "audio/wav",
+                "data_base64": base64.b64encode(wav).decode(),
+            },
+        )
+
+        self.assertEqual(code, 400)
+        self.assertEqual(body["error"]["code"], "invalid_voice_recording")
         self.assertEqual(self.cmux.requests, [])
 
     @staticmethod

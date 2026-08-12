@@ -130,17 +130,20 @@ private final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAud
             try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
             try session.setActive(true)
 
-            let outputURL = Self.makeVoiceNoteURL()
+            let outputURL = VoiceRecordingPolicy.makeTemporaryURL()
             let settings: [String: Any] = [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 44_100,
+                AVFormatIDKey: Int(kAudioFormatLinearPCM),
+                AVSampleRateKey: 16_000,
                 AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
             ]
             let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
             recorder.delegate = self
             recorder.isMeteringEnabled = true
             recorder.prepareToRecord()
+            try VoiceRecordingPolicy.applyCompleteProtection(to: outputURL)
             recorder.record(forDuration: Self.maxDuration)
 
             self.recorder = recorder
@@ -285,12 +288,6 @@ private final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAud
         return CGFloat(min(max(linear, 0.08), 1))
     }
 
-    private static func makeVoiceNoteURL() -> URL {
-        let timestamp = Int(Date().timeIntervalSince1970)
-        let filename = "herdr-voice-\(timestamp)-\(UUID().uuidString.prefix(8)).m4a"
-        return FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-    }
-
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         Task { @MainActor in
             stopRecordingTimer()
@@ -320,52 +317,74 @@ struct HerdrVoiceNoteRecorderSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     let save: (URL) -> Void
+    let transcribe: (URL) async throws -> VoiceTranscription
+    let insertTranscript: (VoiceTranscription) -> Void
     let cancel: () -> Void
 
     @State private var recorder = HerdrVoiceRecorder()
     @State private var didSave = false
     @State private var isConfirmingDiscard = false
-    @State private var feedbackTrigger = 0
+    @State private var hapticPulse = HerdrHapticPulse()
+    @State private var transcriptionRequest: UUID?
+    @State private var transcriptionError: String?
 
     var body: some View {
         NavigationStack {
             ZStack {
                 HerdrBackground()
 
-                VStack(spacing: 18) {
-                    recordingControl
+                ScrollView {
+                    VStack(spacing: 18) {
+                        recordingControl
 
-                    HerdrVoiceWaveform(samples: recorder.samples, isRecording: recorder.isRecording)
+                        HerdrVoiceWaveform(samples: recorder.samples, isRecording: recorder.isRecording)
 
-                    VStack(spacing: 6) {
-                        Text(formattedDuration(recorder.elapsedTime))
-                            .font(.largeTitle.monospaced().weight(.semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(HerdrTheme.text)
+                        VStack(spacing: 6) {
+                            Text(formattedDuration(recorder.elapsedTime))
+                                .font(.largeTitle.monospaced().weight(.semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(HerdrTheme.text)
 
-                        Text(statusText)
-                            .font(.footnote.monospaced().weight(.semibold))
-                            .foregroundStyle(statusColor)
-                            .multilineTextAlignment(.center)
+                            Text(statusText)
+                                .font(.footnote.monospaced().weight(.semibold))
+                                .foregroundStyle(statusColor)
+                                .multilineTextAlignment(.center)
+                        }
+
+                        if recorder.status == .finished {
+                            playbackPreview
+                        }
+
+                        if let errorMessage = recorder.errorMessage {
+                            Label(errorMessage, systemImage: "exclamationmark.triangle")
+                                .font(.footnote.monospaced())
+                                .foregroundStyle(HerdrTheme.alert)
+                                .multilineTextAlignment(.center)
+                        }
+
+                        if let transcriptionError {
+                            Label(transcriptionError, systemImage: "waveform.badge.exclamationmark")
+                                .font(.footnote.monospaced())
+                                .foregroundStyle(HerdrTheme.alert)
+                                .multilineTextAlignment(.center)
+                        }
                     }
-
-                    if recorder.status == .finished {
-                        playbackPreview
-                    }
-
-                    if let errorMessage = recorder.errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .font(.footnote.monospaced())
-                            .foregroundStyle(HerdrTheme.alert)
-                            .multilineTextAlignment(.center)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    actionButtons
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 18)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 18)
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                actionButtons
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 12)
+                    .background(HerdrTheme.graphite.opacity(0.98))
+                    .overlay(alignment: .top) {
+                        Rectangle()
+                            .fill(HerdrTheme.surface)
+                            .frame(height: 1)
+                    }
             }
             .navigationTitle("VOICE NOTE")
             .navigationBarTitleDisplayMode(.inline)
@@ -384,11 +403,28 @@ struct HerdrVoiceNoteRecorderSheet: View {
             } message: {
                 Text("The temporary recording will be deleted.")
             }
-            .sensoryFeedback(.selection, trigger: feedbackTrigger)
+            .herdrHaptic(trigger: hapticPulse)
+            .task(id: transcriptionRequest) {
+                guard transcriptionRequest != nil,
+                      recorder.canSave,
+                      let outputURL = recorder.outputURL
+                else { return }
+                await runTranscription(outputURL)
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active {
                     recorder.stopForBackground()
                 }
+            }
+            .onChange(of: recorder.status) { oldStatus, newStatus in
+                if newStatus == .recording {
+                    hapticPulse.fire(.recordingStarted)
+                } else if oldStatus == .recording {
+                    hapticPulse.fire(.recordingStopped)
+                }
+            }
+            .onChange(of: recorder.errorMessage) { _, message in
+                if message != nil { hapticPulse.fire(.failed) }
             }
             .onDisappear {
                 if !didSave {
@@ -400,7 +436,6 @@ struct HerdrVoiceNoteRecorderSheet: View {
 
     private var recordingControl: some View {
         Button {
-            feedbackTrigger += 1
             recorder.toggleRecording()
         } label: {
             VStack(spacing: 9) {
@@ -425,8 +460,11 @@ struct HerdrVoiceNoteRecorderSheet: View {
     private var playbackPreview: some View {
         HStack(spacing: 12) {
             Button {
-                feedbackTrigger += 1
+                let wasPlaying = recorder.isPlaying
                 recorder.togglePlayback()
+                if wasPlaying != recorder.isPlaying {
+                    hapticPulse.fire(.selection)
+                }
             } label: {
                 Image(systemName: recorder.isPlaying ? "pause.fill" : "play.fill")
                     .font(.headline.weight(.bold))
@@ -464,31 +502,58 @@ struct HerdrVoiceNoteRecorderSheet: View {
 
     private var actionButtons: some View {
         HStack(spacing: 10) {
-            Button(role: recorder.hasRecording ? .destructive : nil) {
-                feedbackTrigger += 1
-                if recorder.hasRecording {
+            Button(role: recorder.hasRecording && !isTranscribing ? .destructive : nil) {
+                hapticPulse.fire(.selection)
+                if isTranscribing {
+                    transcriptionRequest = nil
+                } else if recorder.hasRecording {
                     isConfirmingDiscard = true
                 } else {
                     closeWithoutRecording()
                 }
             } label: {
-                Label(recorder.hasRecording ? "Discard" : "Close", systemImage: recorder.hasRecording ? "trash" : "xmark")
-                    .frame(maxWidth: .infinity, minHeight: 46)
+                Image(systemName: isTranscribing ? "xmark" : recorder.hasRecording ? "trash" : "xmark")
+                    .frame(width: 44, height: 46)
             }
             .buttonStyle(.bordered)
-            .tint(recorder.hasRecording ? HerdrTheme.alert : HerdrTheme.mist)
+            .tint(recorder.hasRecording && !isTranscribing ? HerdrTheme.alert : HerdrTheme.mist)
+            .accessibilityLabel(isTranscribing ? "Cancel transcription" : recorder.hasRecording ? "Discard" : "Close")
 
             Button {
                 saveRecording()
             } label: {
-                Label("Attach", systemImage: "paperclip")
-                    .frame(maxWidth: .infinity, minHeight: 46)
+                Image(systemName: "paperclip")
+                    .frame(width: 44, height: 46)
+            }
+            .buttonStyle(.bordered)
+            .tint(HerdrTheme.mist)
+            .disabled(!recorder.canSave || isTranscribing)
+            .accessibilityLabel("Attach audio without transcribing")
+
+            Button {
+                transcriptionError = nil
+                hapticPulse.fire(.transcriptionStarted)
+                transcriptionRequest = UUID()
+            } label: {
+                Group {
+                    if isTranscribing {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Transcribing")
+                        }
+                    } else {
+                        Label("Transcribe", systemImage: "text.bubble")
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 46)
             }
             .buttonStyle(.borderedProminent)
             .tint(HerdrTheme.accent)
-            .disabled(!recorder.canSave)
+            .disabled(!recorder.canSave || isTranscribing)
         }
     }
+
+    private var isTranscribing: Bool { transcriptionRequest != nil }
 
     private var statusText: String {
         switch recorder.status {
@@ -497,7 +562,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
         case .recording:
             "recording · tap stop when finished"
         case .finished:
-            "ready to attach"
+            isTranscribing ? "transcribing · this may take a moment" : "ready to transcribe or attach"
         }
     }
 
@@ -518,6 +583,23 @@ struct HerdrVoiceNoteRecorderSheet: View {
         recorder.relinquishSavedFile()
         save(outputURL)
         dismiss()
+    }
+
+    private func runTranscription(_ outputURL: URL) async {
+        do {
+            let result = try await transcribe(outputURL)
+            try Task.checkCancellation()
+            recorder.discard()
+            transcriptionRequest = nil
+            insertTranscript(result)
+            dismiss()
+        } catch is CancellationError {
+            transcriptionRequest = nil
+        } catch {
+            transcriptionRequest = nil
+            transcriptionError = error.localizedDescription
+            hapticPulse.fire(.failed)
+        }
     }
 
     private func closeWithoutRecording() {

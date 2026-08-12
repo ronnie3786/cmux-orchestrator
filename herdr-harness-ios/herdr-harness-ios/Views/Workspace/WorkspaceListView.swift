@@ -4,7 +4,10 @@ struct WorkspaceListView: View {
     @Bindable var model: HerdrAppModel
     let selectWorkspace: (HerdrWorkspace) -> Void
     let selectPane: (HerdrPane) -> Void
+    @Environment(\.scenePhase) private var scenePhase
     @State private var presentedSheet: WorkspaceListSheet?
+    @State private var statusHapticTracker = AgentStatusHapticTracker()
+    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         ZStack {
@@ -66,6 +69,22 @@ struct WorkspaceListView: View {
         }
         .navigationTitle("Workspaces")
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: agentStatuses, initial: true) { _, statuses in
+            if let event = statusHapticTracker.observe(statuses) {
+                hapticPulse.fire(event)
+            }
+        }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            statusHapticTracker.setSceneActive(
+                phase == .active,
+                isDemoMode: model.isDemoMode,
+                statuses: agentStatuses
+            )
+        }
+        .onChange(of: model.lastUpdated) {
+            statusHapticTracker.recordRefresh(statuses: agentStatuses)
+        }
+        .herdrHaptic(trigger: hapticPulse)
         .sheet(item: $presentedSheet) { _ in
             CreateWorkspaceView { label, cwd in
                 let created = await model.createWorkspace(label: label, cwd: cwd)
@@ -78,6 +97,10 @@ struct WorkspaceListView: View {
 
     private func showCreateWorkspace() {
         presentedSheet = .create
+    }
+
+    private var agentStatuses: [String: AgentStatus] {
+        AgentStatusHapticTracker.snapshot(model.workspaces)
     }
 
     private func worktreeConnector(

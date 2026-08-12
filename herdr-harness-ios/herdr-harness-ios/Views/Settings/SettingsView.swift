@@ -8,6 +8,7 @@ struct SettingsView: View {
             Form {
                 statusSection
                 connectionSection
+                voiceSection
                 alertSection
                 privacySection
                 aboutSection
@@ -80,6 +81,26 @@ struct SettingsView: View {
             Text("Attention")
         } footer: {
             Text("Herdr alerts only on meaningful transitions: an agent is blocked or background work is ready to review. Background APNs is reported separately from this local test.")
+        }
+    }
+
+    private var voiceSection: some View {
+        Section {
+            Toggle(
+                "Prefer Private Parakeet",
+                systemImage: "waveform.badge.magnifyingglass",
+                isOn: $model.preferPrivateTranscription
+            )
+            .onChange(of: model.preferPrivateTranscription) { oldValue, newValue in
+                guard oldValue != newValue else { return }
+                model.setPreferPrivateTranscription(newValue)
+            }
+
+            LabeledContent("Fallback", value: "Apple Speech")
+        } header: {
+            Text("Voice to prompt")
+        } footer: {
+            Text("Parakeet audio travels only through your authenticated Herdr server and private cmux proxy. If it is unavailable, Herdr transcribes with Apple Speech. Transcripts remain editable and are never sent automatically.")
         }
     }
 

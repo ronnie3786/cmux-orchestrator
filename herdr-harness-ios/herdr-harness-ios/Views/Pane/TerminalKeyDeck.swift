@@ -4,6 +4,7 @@ struct TerminalKeyDeck: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     let isExpanded: Bool
+    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         VStack(spacing: 7) {
@@ -15,12 +16,17 @@ struct TerminalKeyDeck: View {
             }
         }
         .accessibilityElement(children: .contain)
+        .onChange(of: isExpanded) { _, isExpanded in
+            hapticPulse.fire(isExpanded ? .controlsExpanded : .controlsCollapsed)
+        }
+        .herdrHaptic(trigger: hapticPulse)
     }
 
     private func keyRow(_ keys: [TerminalPresetKey]) -> some View {
         HStack(spacing: 7) {
             ForEach(keys) { key in
                 Button {
+                    hapticPulse.fire(.terminalKey)
                     Task { await model.sendKeys([key.rawValue], to: pane) }
                 } label: {
                     Label(key.label, systemImage: key.systemImage)

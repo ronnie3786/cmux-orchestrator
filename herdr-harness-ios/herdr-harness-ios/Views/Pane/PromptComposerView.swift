@@ -20,7 +20,7 @@ struct PromptComposerView: View {
     @State private var isShowingFileSearch = false
     @State private var isShowingJira = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
-    @State private var sendFeedback = 0
+    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         VStack(spacing: 8) {
@@ -47,7 +47,7 @@ struct PromptComposerView: View {
             TerminalKeyDeck(model: model, pane: pane, isExpanded: isExpanded)
         }
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: isExpanded)
-        .sensoryFeedback(.success, trigger: sendFeedback)
+        .herdrHaptic(trigger: hapticPulse)
         .onChange(of: isFocused) { _, focused in
             if focused { isExpanded = false }
         }
@@ -90,6 +90,17 @@ struct PromptComposerView: View {
                 save: { url in
                     isShowingVoiceRecorder = false
                     queueAttachments([url], ownership: .appTemporary)
+                },
+                transcribe: { url in
+                    try await model.transcribeVoiceNote(at: url)
+                },
+                insertTranscript: { result in
+                    isShowingVoiceRecorder = false
+                    appendTranscript(result.text)
+                    hapticPulse.fire(.transcriptionSucceeded)
+                    model.toastMessage = result.usedFallback
+                        ? "Parakeet unavailable · transcribed with Apple Speech"
+                        : "Transcribed with \(result.provider.rawValue)"
                 },
                 cancel: { isShowingVoiceRecorder = false }
             )
@@ -199,6 +210,14 @@ struct PromptComposerView: View {
     private func appendToken(_ token: String) {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = trimmed.isEmpty ? token : "\(trimmed) \(token)"
+        isFocused = true
+    }
+
+    private func appendTranscript(_ transcript: String) {
+        let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        let existing = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = existing.isEmpty ? cleaned : "\(existing)\n\n\(cleaned)"
         isFocused = true
     }
 
@@ -374,7 +393,7 @@ struct PromptComposerView: View {
                 draft = ""
                 attachments.forEach { $0.removeSourceFileIfOwned() }
                 attachments = []
-                sendFeedback &+= 1
+                hapticPulse.fire(.promptSent)
             }
         }
     }

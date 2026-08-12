@@ -14,7 +14,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
-from . import attachments
+from . import attachments, voice
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
 from .service import HerdrService
@@ -215,11 +215,13 @@ def api_description() -> dict:
             "workspaceSkills": "/api/v1/workspaces/{workspaceId}/skills",
             "workspaceFiles": "/api/v1/workspaces/{workspaceId}/files",
             "jiraAssigned": "/api/v1/jira/assigned",
+            "voiceTranscriptions": "/api/v1/voice/transcriptions",
             "events": "/api/v1/events",
             "paneOutput": "/api/v1/panes/{paneId}/output",
             "paneStream": "/api/v1/panes/{paneId}/stream",
             "alerts": "/api/v1/alerts",
             "pushStatus": "/api/v1/push/status",
+            "liveActivities": "/api/v1/live-activities",
         },
         "mutations": [
             "POST /api/v1/workspaces",
@@ -233,6 +235,8 @@ def api_description() -> dict:
             "POST /api/v1/alerts/{alertId}/read",
             "POST /api/v1/alerts/read-all",
             "POST /api/v1/push/devices|unregister",
+            "POST /api/v1/live-activities|unregister",
+            "POST /api/v1/voice/transcriptions",
         ],
         "generatedAt": utc_now(),
     }
@@ -343,7 +347,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return
                 if (
                     method in {"POST", "DELETE"}
-                    and path.startswith("/api/v1/push/")
+                    and (
+                        path.startswith("/api/v1/push/")
+                        or path.startswith("/api/v1/live-activities")
+                    )
                     and not configured_token
                 ):
                     self._error(
@@ -360,7 +367,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     and segments[:3] == ["api", "v1", "workspaces"]
                     and segments[4] == "attachments"
                 )
-                maximum = attachments.MAX_ATTACHMENT_JSON_BYTES if attachment_upload else MAX_BODY_BYTES
+                voice_upload = method == "POST" and segments[2:] == ["voice", "transcriptions"]
+                if attachment_upload:
+                    maximum = attachments.MAX_ATTACHMENT_JSON_BYTES
+                elif voice_upload:
+                    maximum = voice.MAX_VOICE_JSON_BYTES
+                else:
+                    maximum = MAX_BODY_BYTES
                 body = self._read_json(maximum=maximum) if method in {"POST", "PATCH", "DELETE"} else {}
                 response = self._route(method, segments, query, body)
                 if response is not None:
@@ -376,6 +389,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except WorkspaceToolError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except attachments.AttachmentError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except voice.VoiceError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
@@ -465,6 +480,21 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 if len(issue_query) > 2048 or "\x00" in issue_query:
                     raise HTTPValidationError("Jira query is invalid")
                 return service.jira_issue(query=issue_query)
+            if method == "POST" and tail == ["voice", "transcriptions"]:
+                filename = _string(body.get("filename"), "filename", maximum=128)
+                mime_type = _string(
+                    body.get("mime_type") or "audio/wav",
+                    "mime_type",
+                    maximum=64,
+                )
+                data_base64 = body.get("data_base64")
+                if not isinstance(data_base64, str):
+                    raise HTTPValidationError("data_base64 must be a string")
+                return service.transcribe_voice(
+                    filename=filename,
+                    mime_type=mime_type,
+                    data_base64=data_base64,
+                )
             if method == "GET" and tail == ["events"]:
                 self._serve_events(query)
                 return None
@@ -629,6 +659,34 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 token = _string(body.get("deviceToken") or body.get("token"), "deviceToken", maximum=512)
                 try:
                     return service.unregister_push_device(token)
+                except ValueError as exc:
+                    raise HTTPValidationError(str(exc)) from exc
+            if method == "POST" and tail == ["live-activities"]:
+                activity_id = _identifier(body.get("activityId"), "activity ID")
+                token = _string(body.get("pushToken"), "pushToken", maximum=512)
+                bundle_id = _string(body.get("bundleId"), "bundleId", maximum=255)
+                environment = str(body.get("environment") or "sandbox").strip().lower()
+                if environment not in {"sandbox", "production"}:
+                    raise HTTPValidationError("environment must be sandbox or production")
+                try:
+                    return service.register_live_activity(
+                        token,
+                        activity_id=activity_id,
+                        bundle_id=bundle_id,
+                        environment=environment,
+                    )
+                except ValueError as exc:
+                    raise HTTPValidationError(str(exc)) from exc
+            if method == "POST" and tail == ["live-activities", "unregister"]:
+                activity_id = _identifier(body.get("activityId"), "activity ID")
+                token = body.get("pushToken")
+                if token is not None and not isinstance(token, str):
+                    raise HTTPValidationError("pushToken must be a string")
+                try:
+                    return service.unregister_live_activity(
+                        activity_id,
+                        push_token=token,
+                    )
                 except ValueError as exc:
                     raise HTTPValidationError(str(exc)) from exc
             raise HTTPValidationError("Endpoint not found", code="not_found", status=404)

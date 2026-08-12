@@ -10,14 +10,14 @@ struct ComposerAuxiliaryBar: View {
     let searchFiles: () -> Void
     let chooseJira: () -> Void
 
-    @State private var feedbackTrigger = 0
+    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
             controls(showsTitles: true)
             controls(showsTitles: false)
         }
-        .sensoryFeedback(.selection, trigger: feedbackTrigger)
+        .herdrHaptic(trigger: hapticPulse)
     }
 
     private func controls(showsTitles: Bool) -> some View {
@@ -61,7 +61,7 @@ struct ComposerAuxiliaryBar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            feedbackTrigger += 1
+            hapticPulse.fire(.selection)
             action()
         } label: {
             HStack(spacing: 7) {

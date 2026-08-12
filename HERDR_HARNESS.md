@@ -305,6 +305,7 @@ is intentionally public and contains no session data.
 - `POST /api/v1/panes/{id}/prompt` and `/start-agent`
 - Alert list, mark-read, and mark-all-read operations
 - Optional APNs status, device registration, and removal operations
+- Bearer-protected Herd Pulse Live Activity registration and removal operations
 
 See `herdr_harness/README.md` for the exact contract and APNs environment
 variables.
@@ -333,6 +334,12 @@ Alerts and grant notification permission so the device token is registered.
 The in-app local test proves the UI and permission flow, not Apple's remote
 delivery. Check the backend's delivery readiness with authenticated
 `GET /api/v1/push/status`.
+
+Herd Pulse can be started from the waveform button in the workspace header.
+Its ActivityKit push token is registered separately from alert notification
+tokens. The server sends only privacy-safe aggregate counts and connection
+state to the Lock Screen and Dynamic Island. It never sends workspace names,
+pane identifiers, paths, prompts, or terminal content.
 
 ## Verification
 

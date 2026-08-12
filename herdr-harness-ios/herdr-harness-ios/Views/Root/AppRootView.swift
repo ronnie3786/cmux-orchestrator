@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppRootView: View {
     @Bindable var model: HerdrAppModel
+    @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -34,6 +35,9 @@ struct AppRootView: View {
         .task(id: model.hasCompletedSetup && model.smartAlertsEnabled && !model.isDemoMode) {
             await model.prepareSmartAlerts()
         }
+        .task(id: herdPulseContext) {
+            await herdPulse.synchronize(context: herdPulseContext)
+        }
         .onOpenURL(perform: model.open)
         .overlay(alignment: .top) {
             if let message = model.toastMessage {
@@ -43,7 +47,6 @@ struct AppRootView: View {
             }
         }
         .animation(.snappy, value: model.toastMessage)
-        .sensoryFeedback(.success, trigger: model.toastMessage)
         .alert(
             "Connection issue",
             isPresented: $model.isShowingError
@@ -52,6 +55,16 @@ struct AppRootView: View {
         } message: {
             Text(model.errorMessage ?? "Unknown error")
         }
+    }
+
+    private var herdPulseContext: HerdPulseSyncContext {
+        return HerdPulseSyncContext(
+            aggregate: HerdPulseAggregate(
+                workspaces: model.workspaces,
+                connectionState: model.connectionState
+            ),
+            serverConnection: model.activeServerConnection
+        )
     }
 
     private var appTabs: some View {

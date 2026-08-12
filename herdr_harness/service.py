@@ -7,11 +7,12 @@ import binascii
 import copy
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, TypeVar
 
 from .alerts import AlertStore, utc_now
-from . import attachments, cmux_tools, workspace_tools
+from . import attachments, cmux_tools, voice, workspace_tools
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .events import EventBroker
 from .network import network_payload
@@ -86,6 +87,51 @@ class HerdrService:
         )
         self._terminal_slots = threading.BoundedSemaphore(self._terminal_limit)
 
+    @staticmethod
+    def _herd_pulse_state(snapshot: dict, *, connected: bool) -> dict:
+        workspaces = [item for item in snapshot.get("workspaces", []) if isinstance(item, dict)]
+        panes = [item for item in snapshot.get("panes", []) if isinstance(item, dict)]
+        working = sum(item.get("agent_status") == "working" for item in panes)
+        attention = sum(item.get("agent_status") == "blocked" for item in panes)
+        ready = sum(item.get("agent_status") == "done" for item in panes)
+        if not connected:
+            phase = "offline"
+            connection = "offline"
+        elif attention:
+            phase = "attention"
+            connection = "live"
+        elif ready:
+            phase = "ready"
+            connection = "live"
+        elif working:
+            phase = "working"
+            connection = "live"
+        else:
+            phase = "resting"
+            connection = "live"
+        return {
+            "workspaceCount": len(workspaces),
+            "paneCount": len(panes),
+            "workingCount": working,
+            "attentionCount": attention,
+            "readyCount": ready,
+            "connection": connection,
+            "phase": phase,
+            "updatedAt": int(time.time()),
+        }
+
+    def _publish_herd_pulse(self, *, force: bool = False, activity_id: Optional[str] = None) -> bool:
+        with self._lock:
+            snapshot = copy.deepcopy(self._snapshot or {})
+            connected = self._request_connected and self._events_connected
+        content_state = self._herd_pulse_state(snapshot, connected=connected)
+        return self.push.notify_herd_pulse_async(
+            content_state,
+            force=force,
+            activity_id=activity_id,
+            callback=lambda result: self.broker.publish("push.live_activity", result),
+        )
+
     @property
     def generated_at(self) -> Optional[str]:
         with self._lock:
@@ -133,6 +179,7 @@ class HerdrService:
             with self._lock:
                 self._request_connected = False
                 self._last_error = str(exc)
+            self._publish_herd_pulse()
             raise
         if not isinstance(snapshot, dict):
             raise HerdrClientError("Herdr returned an invalid snapshot", code="invalid_herdr_response")
@@ -176,6 +223,7 @@ class HerdrService:
                 },
             },
         )
+        self._publish_herd_pulse()
         return copy.deepcopy(snapshot)
 
     def _refresh_loop(self) -> None:
@@ -224,6 +272,7 @@ class HerdrService:
             "connection.changed",
             {"state": state, "error": str(error) if error is not None else None},
         )
+        self._publish_herd_pulse()
 
     def _lookup_pane(self, pane_id: str) -> Optional[dict]:
         with self._lock:
@@ -377,6 +426,32 @@ class HerdrService:
                 code="attachment_too_large",
                 status=413,
             )
+        return data
+
+    @staticmethod
+    def _decode_voice_recording(data_base64: str) -> bytes:
+        if not isinstance(data_base64, str) or not data_base64:
+            raise voice.VoiceError("data_base64 is required")
+        maximum_encoded = ((voice.MAX_VOICE_AUDIO_BYTES + 2) // 3) * 4
+        if len(data_base64) > maximum_encoded:
+            raise voice.VoiceError(
+                "recording exceeds the 20 MB limit",
+                code="voice_recording_too_large",
+                status=413,
+            )
+        try:
+            data = base64.b64decode(data_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise voice.VoiceError("data_base64 must be valid base64") from exc
+        if not data:
+            raise voice.VoiceError("recording is empty")
+        if len(data) > voice.MAX_VOICE_AUDIO_BYTES:
+            raise voice.VoiceError(
+                "recording exceeds the 20 MB limit",
+                code="voice_recording_too_large",
+                status=413,
+            )
+        voice.validate_voice_wav(data)
         return data
 
     def workspace_git_status(self, workspace_id: str) -> dict:
@@ -576,6 +651,44 @@ class HerdrService:
             "ticket": self._jira_ticket(payload.get("ticket")),
         }
 
+    def transcribe_voice(
+        self,
+        *,
+        filename: str,
+        mime_type: str,
+        data_base64: str,
+    ) -> dict:
+        data = self._decode_voice_recording(data_base64)
+        payload = self._tool_call(
+            self.cmux_tools.transcribe_voice,
+            filename=filename,
+            mime_type=mime_type,
+            data=data,
+        )
+        text = payload.get("text")
+        backend = payload.get("backend")
+        language = payload.get("language")
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text) > voice.MAX_TRANSCRIPT_CHARACTERS
+            or not isinstance(backend, str)
+            or not backend
+            or len(backend) > 64
+            or (language is not None and not isinstance(language, str))
+        ):
+            raise workspace_tools.WorkspaceToolError(
+                "cmux returned an invalid transcription response",
+                code="cmux_invalid_response",
+                status=502,
+            )
+        return {
+            "ok": True,
+            "text": text.strip(),
+            "backend": backend,
+            "language": language,
+        }
+
     def health_response(self) -> dict:
         with self._lock:
             cached = self._snapshot is not None
@@ -692,6 +805,34 @@ class HerdrService:
     def unregister_push_device(self, device_token: str) -> dict:
         return self.push.unregister(device_token)
 
+    def register_live_activity(
+        self,
+        push_token: str,
+        *,
+        activity_id: str,
+        bundle_id: str,
+        environment: str,
+    ) -> dict:
+        result = self.push.register_live_activity(
+            push_token,
+            activity_id=activity_id,
+            bundle_id=bundle_id,
+            environment=environment,
+        )
+        self._publish_herd_pulse(force=True, activity_id=activity_id)
+        return result
+
+    def unregister_live_activity(
+        self,
+        activity_id: str,
+        *,
+        push_token: Optional[str] = None,
+    ) -> dict:
+        return self.push.unregister_live_activity(
+            activity_id,
+            push_token=push_token,
+        )
+
     def terminal_observer(self, pane_id: str, *, cols: int, rows: int) -> TerminalObserver:
         if not self._terminal_slots.acquire(blocking=False):
             raise TerminalObserverError(
@@ -717,11 +858,17 @@ class HerdrService:
         code = str(getattr(exc, "code", ""))
         if code in {"herdr_unavailable", "herdr_disconnected"} or "timeout" in code:
             with self._lock:
+                connection_changed = self._request_connected
                 self._request_connected = False
                 self._last_error = str(exc)
+            if connection_changed:
+                self._publish_herd_pulse()
 
     def _record_request_success(self) -> None:
         with self._lock:
+            connection_changed = not self._request_connected
             self._request_connected = True
             if self._events_connected:
                 self._last_error = None
+        if connection_changed:
+            self._publish_herd_pulse()

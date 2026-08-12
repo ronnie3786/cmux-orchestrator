@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from cmux_harness import orchestrator_v2_runtime
 from cmux_harness import orchestrator_v2_storage as v2
+from cmux_harness import orchestrator_v2_voice
 from cmux_harness.routes import orchestrator_v2
 from cmux_harness.server import make_handler
 
@@ -674,6 +675,19 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertTrue(self._json_body(partial)["partial"])
         self.assertEqual(v2.get_repository().list_chat_messages(), [])
 
+    def test_voice_transcribe_rejects_oversized_json_before_reading_body(self):
+        handler = self._make_handler("/api/orchestrator-v2/voice/local/transcribe")
+        handler.headers = {
+            "Content-Length": str(orchestrator_v2_voice.MAX_STT_JSON_BYTES + 1)
+        }
+        handler.rfile = MagicMock()
+
+        handler.do_POST()
+
+        handler.rfile.read.assert_not_called()
+        handler.send_response.assert_called_once_with(413)
+        self.assertIn("size limit", self._json_body(handler)["error"])
+
     def _fake_whisper_module(self, transcript):
         segment = MagicMock()
         segment.text = transcript
@@ -759,6 +773,51 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         self.assertFalse(body["ok"])
         self.assertIn("HTTP 502", body["error"])
         self.assertIn("faster-whisper", body["error"])
+
+    def test_parakeet_transcription_uses_no_redirect_opener_and_bounds_response(self):
+        response = MagicMock()
+        response.headers = {"Content-Length": "25"}
+        response.read.return_value = b'{"text":"private transcript"}'
+        context = MagicMock()
+        context.__enter__.return_value = response
+
+        with patch.object(
+            orchestrator_v2_voice._NO_REDIRECT_OPENER,
+            "open",
+            return_value=context,
+        ) as open_request, patch(
+            "cmux_harness.orchestrator_v2_voice.urllib.request.urlopen"
+        ) as default_open:
+            text = orchestrator_v2_voice._transcribe_parakeet(
+                orchestrator_v2_voice._tiny_wav_bytes(),
+                "voice.wav",
+            )
+
+        self.assertEqual(text, "private transcript")
+        open_request.assert_called_once()
+        default_open.assert_not_called()
+        response.read.assert_called_once_with(orchestrator_v2_voice.MAX_STT_RESPONSE_BYTES + 1)
+
+    def test_parakeet_transcription_rejects_oversized_declared_response(self):
+        response = MagicMock()
+        response.headers = {
+            "Content-Length": str(orchestrator_v2_voice.MAX_STT_RESPONSE_BYTES + 1)
+        }
+        context = MagicMock()
+        context.__enter__.return_value = response
+
+        with patch.object(
+            orchestrator_v2_voice._NO_REDIRECT_OPENER,
+            "open",
+            return_value=context,
+        ):
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                orchestrator_v2_voice._transcribe_parakeet(
+                    orchestrator_v2_voice._tiny_wav_bytes(),
+                    "voice.wav",
+                )
+
+        response.read.assert_not_called()
 
     def test_proxy_stream_forwards_sse_heartbeat_bytes_unmodified(self):
         chunks = [b": ping\n\n", b"data: {\"type\":\"RUN_FINISHED\"}\n\n"]

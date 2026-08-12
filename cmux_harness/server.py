@@ -19,6 +19,7 @@ from . import auto_policy
 from . import cmux_api
 from . import dependencies
 from . import objectives
+from . import orchestrator_v2_voice
 from . import opencode_integration
 from . import push_notifications
 from . import workspaces
@@ -794,6 +795,18 @@ def make_handler(engine):
             if path == "/api/attachments":
                 self._handle_post_attachment()
                 return
+            if path == "/api/orchestrator-v2/voice/local/transcribe":
+                try:
+                    content_length = int(self.headers.get("Content-Length", "0") or "0")
+                except (TypeError, ValueError):
+                    self._json_response({"ok": False, "error": "content length required"}, 411)
+                    return
+                if content_length <= 0:
+                    self._json_response({"ok": False, "error": "recording body is empty"}, 400)
+                    return
+                if content_length > orchestrator_v2_voice.MAX_STT_JSON_BYTES:
+                    self._json_response({"ok": False, "error": "recording body exceeds the size limit"}, 413)
+                    return
             data = self._read_body()
             if path.startswith("/api/orchestrator-v2"):
                 if not orchestrator_v2_routes.handle_post(self, parsed, data, engine=self.server.engine):

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import http.client
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +18,22 @@ from pathlib import Path
 from typing import Any
 
 from .orchestrator_v2_security import load_local_env, redact_text, repo_root
+
+
+MAX_STT_AUDIO_BYTES = 20 * 1024 * 1024
+MAX_STT_JSON_BYTES = 29 * 1024 * 1024
+MAX_STT_RESPONSE_BYTES = 512 * 1024
+_SAFE_AUDIO_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.wav$", re.IGNORECASE)
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Keep private voice recordings on the configured Parakeet origin."""
+
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_RejectRedirects())
 
 
 def parakeet_base_url() -> str:
@@ -69,10 +87,17 @@ def transcribe_local_payload(data: dict[str, Any]) -> dict[str, Any]:
     audio_b64 = str(data.get("audioBase64") or "").strip()
     if not audio_b64:
         raise ValueError("audioBase64 required")
+    maximum_encoded = ((MAX_STT_AUDIO_BYTES + 2) // 3) * 4
+    if len(audio_b64) > maximum_encoded:
+        raise ValueError("audio exceeds 20 MB limit")
     try:
         audio_bytes = base64.b64decode(audio_b64, validate=True)
     except Exception as exc:
         raise ValueError("audioBase64 is invalid") from exc
+    if not audio_bytes:
+        raise ValueError("audioBase64 is empty")
+    if len(audio_bytes) > MAX_STT_AUDIO_BYTES:
+        raise ValueError("audio exceeds 20 MB limit")
 
     backend = str(data.get("backend") or os.environ.get("ORCHESTRATOR_V2_STT_BACKEND") or "parakeet").strip().lower()
     parakeet_error = ""
@@ -127,6 +152,22 @@ def transcribe_local_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _transcribe_parakeet(audio_bytes: bytes, filename: str) -> str:
+    filename = Path(filename).name
+    if not _SAFE_AUDIO_FILENAME_RE.fullmatch(filename):
+        raise ValueError("audio filename is invalid")
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as audio:
+            if (
+                audio.getcomptype() != "NONE"
+                or audio.getnchannels() != 1
+                or audio.getframerate() != 16_000
+                or audio.getsampwidth() != 2
+                or audio.getnframes() <= 0
+                or audio.getnframes() > 16_000 * 10 * 60
+            ):
+                raise ValueError("audio must be mono 16 kHz, 16-bit PCM WAV")
+    except (EOFError, wave.Error) as exc:
+        raise ValueError("audio must be a valid PCM WAV file") from exc
     boundary = uuid.uuid4().hex
     body = (
         (
@@ -143,9 +184,33 @@ def _transcribe_parakeet(audio_bytes: bytes, filename: str) -> str:
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        payload = json.loads(response.read().decode("utf-8") or "{}")
-    return str(payload.get("text") or "").strip()
+    try:
+        timeout = float(os.environ.get("ORCHESTRATOR_V2_PARAKEET_TIMEOUT_SECONDS") or 60)
+    except (TypeError, ValueError):
+        timeout = 60
+    timeout = min(max(timeout, 5), 120)
+    with _NO_REDIRECT_OPENER.open(request, timeout=timeout) as response:
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except ValueError:
+                declared_length = 0
+            if declared_length > MAX_STT_RESPONSE_BYTES:
+                raise ValueError("Parakeet response exceeds the size limit")
+        response_data = response.read(MAX_STT_RESPONSE_BYTES + 1)
+    if len(response_data) > MAX_STT_RESPONSE_BYTES:
+        raise ValueError("Parakeet response exceeds the size limit")
+    try:
+        payload = json.loads(response_data.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Parakeet returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Parakeet returned an invalid response")
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Parakeet returned an empty transcript")
+    return text.strip()
 
 
 def _truncate_speech_text(text: str, limit: int = 1200) -> tuple[str, bool]:

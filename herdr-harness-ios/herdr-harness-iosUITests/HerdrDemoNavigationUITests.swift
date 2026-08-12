@@ -86,6 +86,42 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     }
 
     @MainActor
+    func testVoiceActionsRemainReachableInLandscapeAccessibilityText() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-HerdrDemoMode",
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+        ]
+        app.launch()
+
+        let workspace = app.buttons["iOS Doximity, Needs you, 3 panes"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8))
+        workspace.tap()
+
+        let blockedPane = app.buttons["Auth reducer review, Claude, Needs you"]
+        XCTAssertTrue(blockedPane.waitForExistence(timeout: 3))
+        blockedPane.tap()
+
+        let controls = app.buttons["terminal-controls-toggle"]
+        XCTAssertTrue(controls.waitForExistence(timeout: 3))
+        controls.tap()
+
+        let voice = app.buttons["Record a voice note"]
+        XCTAssertTrue(voice.waitForExistence(timeout: 3))
+        voice.tap()
+
+        XCTAssertTrue(app.navigationBars["VOICE NOTE"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Start recording"].isHittable)
+        XCTAssertTrue(app.buttons["Close"].isHittable)
+        XCTAssertTrue(app.buttons["Attach audio without transcribing"].exists)
+        XCTAssertTrue(app.buttons["Transcribe"].exists)
+    }
+
+    @MainActor
     private func selectPaneMode(_ mode: String, app: XCUIApplication) throws {
         let menu = app.buttons["Pane actions"]
         XCTAssertTrue(menu.waitForExistence(timeout: 3))

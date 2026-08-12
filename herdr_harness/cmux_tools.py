@@ -8,6 +8,7 @@ attachment operations without forwarding Herdr credentials upstream.
 from __future__ import annotations
 
 import json
+import base64
 import ipaddress
 import os
 import re
@@ -20,6 +21,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from . import voice
+
 
 DEFAULT_BASE_URL = "http://127.0.0.1:9091"
 DEFAULT_TIMEOUT_SECONDS = 15.0
@@ -27,12 +30,14 @@ GIT_TIMEOUT_SECONDS = 10.0
 JIRA_TIMEOUT_SECONDS = 15.0
 GENERAL_TIMEOUT_SECONDS = 15.0
 ATTACHMENT_TIMEOUT_SECONDS = 60.0
+VOICE_TIMEOUT_SECONDS = 90.0
 MAX_TIMEOUT_SECONDS = 120.0
 DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_GIT_ROOT_BYTES = 4 * 1024
 _PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _JIRA_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9_]+-\d+\b", re.IGNORECASE)
+_VOICE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.wav$", re.IGNORECASE)
 
 
 class CmuxToolsError(RuntimeError):
@@ -255,6 +260,23 @@ def _validate_attachment(payload: dict) -> dict:
         )
         and _is_integer(attachment.get("size"))
         and attachment["size"] > 0
+    ):
+        _invalid_response()
+    return payload
+
+
+def _validate_transcription(payload: dict) -> dict:
+    text = payload.get("text")
+    backend = payload.get("backend")
+    language = payload.get("language")
+    if not (
+        payload.get("ok") is True
+        and isinstance(text, str)
+        and bool(text.strip())
+        and len(text) <= voice.MAX_TRANSCRIPT_CHARACTERS
+        and isinstance(backend, str)
+        and 0 < len(backend) <= 64
+        and (language is None or (isinstance(language, str) and len(language) <= 64))
     ):
         _invalid_response()
     return payload
@@ -868,5 +890,60 @@ class CmuxToolsClient:
                 # attachments get a full minute even when normal API calls use a
                 # shorter timeout.
                 timeout=self._operation_timeout(ATTACHMENT_TIMEOUT_SECONDS),
+            )
+        )
+
+    def transcribe_voice(self, *, filename: str, mime_type: str, data: bytes) -> dict:
+        if not isinstance(data, bytes) or not data:
+            raise CmuxToolsError(
+                "recording is empty",
+                code="invalid_voice_recording",
+                status=400,
+            )
+        if len(data) > voice.MAX_VOICE_AUDIO_BYTES:
+            raise CmuxToolsError(
+                "recording exceeds the 20 MB limit",
+                code="voice_recording_too_large",
+                status=413,
+            )
+        try:
+            voice.validate_voice_wav(data)
+        except voice.VoiceError as exc:
+            raise CmuxToolsError(
+                str(exc),
+                code=exc.code,
+                status=exc.status,
+            ) from exc
+        if (
+            not isinstance(filename, str)
+            or not _VOICE_FILENAME_RE.fullmatch(filename)
+        ):
+            raise CmuxToolsError(
+                "recording filename is invalid",
+                code="invalid_voice_recording",
+                status=400,
+            )
+        if mime_type.lower().split(";", 1)[0].strip() not in {
+            "audio/wav",
+            "audio/x-wav",
+            "audio/wave",
+        }:
+            raise CmuxToolsError(
+                "recording must use a WAV content type",
+                code="invalid_voice_recording",
+                status=400,
+            )
+        return _validate_transcription(
+            self._request(
+                "/api/orchestrator-v2/voice/local/transcribe",
+                body={
+                    "audioBase64": base64.b64encode(data).decode("ascii"),
+                    "filename": filename,
+                    "mimeType": "audio/wav",
+                    "backend": "parakeet",
+                    "partial": False,
+                    "appendChat": False,
+                },
+                timeout=self._operation_timeout(VOICE_TIMEOUT_SECONDS),
             )
         )

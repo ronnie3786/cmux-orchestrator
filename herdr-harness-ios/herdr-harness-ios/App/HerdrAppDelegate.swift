@@ -14,6 +14,7 @@ final class HerdrAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        VoiceRecordingPolicy.removeStaleTemporaryRecordings()
         UNUserNotificationCenter.current().delegate = self
         return true
     }
@@ -30,7 +31,10 @@ final class HerdrAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound, .badge]
+        // The active app supplies semantic haptics from agent-state changes.
+        // Keep the banner visible, but do not duplicate that feedback with a
+        // generic notification sound while Herdr is in the foreground.
+        [.banner, .badge]
     }
 
     func userNotificationCenter(

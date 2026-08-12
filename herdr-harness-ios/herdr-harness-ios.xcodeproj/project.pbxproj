@@ -6,7 +6,18 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		E400000E2FABC00000000001 /* HerdPulseWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E40000012FABC00000000001 /* HerdPulseWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
+		E400000B2FABC00000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3C05416E2F9E6F0100621813 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E40000042FABC00000000001;
+			remoteInfo = HerdPulseWidgets;
+		};
 		3C0541842F9E6F0200621813 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3C05416E2F9E6F0100621813 /* Project object */;
@@ -23,13 +34,51 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		E400000D2FABC00000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E400000E2FABC00000000001 /* HerdPulseWidgets.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		E40000012FABC00000000001 /* HerdPulseWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HerdPulseWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		3C0541762F9E6F0100621813 /* herdr-harness-ios.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "herdr-harness-ios.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3C0541832F9E6F0200621813 /* herdr-harness-iosTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "herdr-harness-iosTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3C05418D2F9E6F0200621813 /* herdr-harness-iosUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "herdr-harness-iosUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		E400000F2FABC00000000001 /* Exceptions for "HerdPulseWidgets" folder in "HerdPulseWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = E40000042FABC00000000001 /* HerdPulseWidgets */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		E40000022FABC00000000001 /* HerdrPulseShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HerdrPulseShared;
+			sourceTree = "<group>";
+		};
+		E40000032FABC00000000001 /* HerdPulseWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E400000F2FABC00000000001 /* Exceptions for "HerdPulseWidgets" folder in "HerdPulseWidgets" target */,
+			);
+			path = HerdPulseWidgets;
+			sourceTree = "<group>";
+		};
 		3C0541782F9E6F0100621813 /* herdr-harness-ios */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "herdr-harness-ios";
@@ -48,6 +97,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		E40000062FABC00000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3C0541732F9E6F0100621813 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -76,6 +132,8 @@
 			isa = PBXGroup;
 			children = (
 				3C0541782F9E6F0100621813 /* herdr-harness-ios */,
+				E40000022FABC00000000001 /* HerdrPulseShared */,
+				E40000032FABC00000000001 /* HerdPulseWidgets */,
 				3C0541862F9E6F0200621813 /* herdr-harness-iosTests */,
 				3C0541902F9E6F0200621813 /* herdr-harness-iosUITests */,
 				3C0541772F9E6F0100621813 /* Products */,
@@ -86,6 +144,7 @@
 			isa = PBXGroup;
 			children = (
 				3C0541762F9E6F0100621813 /* herdr-harness-ios.app */,
+				E40000012FABC00000000001 /* HerdPulseWidgets.appex */,
 				3C0541832F9E6F0200621813 /* herdr-harness-iosTests.xctest */,
 				3C05418D2F9E6F0200621813 /* herdr-harness-iosUITests.xctest */,
 			);
@@ -102,13 +161,16 @@
 				3C0541722F9E6F0100621813 /* Sources */,
 				3C0541732F9E6F0100621813 /* Frameworks */,
 				3C0541742F9E6F0100621813 /* Resources */,
+				E400000D2FABC00000000001 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				E400000C2FABC00000000001 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3C0541782F9E6F0100621813 /* herdr-harness-ios */,
+				E40000022FABC00000000001 /* HerdrPulseShared */,
 			);
 			name = "herdr-harness-ios";
 			packageProductDependencies = (
@@ -116,6 +178,29 @@
 			productName = "herdr-harness-ios";
 			productReference = 3C0541762F9E6F0100621813 /* herdr-harness-ios.app */;
 			productType = "com.apple.product-type.application";
+		};
+		E40000042FABC00000000001 /* HerdPulseWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E400000A2FABC00000000001 /* Build configuration list for PBXNativeTarget "HerdPulseWidgets" */;
+			buildPhases = (
+				E40000052FABC00000000001 /* Sources */,
+				E40000062FABC00000000001 /* Frameworks */,
+				E40000072FABC00000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E40000022FABC00000000001 /* HerdrPulseShared */,
+				E40000032FABC00000000001 /* HerdPulseWidgets */,
+			);
+			name = HerdPulseWidgets;
+			packageProductDependencies = (
+			);
+			productName = HerdPulseWidgets;
+			productReference = E40000012FABC00000000001 /* HerdPulseWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		3C0541822F9E6F0200621813 /* herdr-harness-iosTests */ = {
 			isa = PBXNativeTarget;
@@ -173,6 +258,9 @@
 				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
+					E40000042FABC00000000001 = {
+						CreatedOnToolsVersion = 26.4;
+					};
 					3C0541752F9E6F0100621813 = {
 						CreatedOnToolsVersion = 26.4;
 					};
@@ -203,6 +291,7 @@
 			projectRoot = "";
 			targets = (
 				3C0541752F9E6F0100621813 /* herdr-harness-ios */,
+				E40000042FABC00000000001 /* HerdPulseWidgets */,
 				3C0541822F9E6F0200621813 /* herdr-harness-iosTests */,
 				3C05418C2F9E6F0200621813 /* herdr-harness-iosUITests */,
 			);
@@ -210,6 +299,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		E40000072FABC00000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3C0541742F9E6F0100621813 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -234,6 +330,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		E40000052FABC00000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3C0541722F9E6F0100621813 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -258,6 +361,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		E400000C2FABC00000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E40000042FABC00000000001 /* HerdPulseWidgets */;
+			targetProxy = E400000B2FABC00000000001 /* PBXContainerItemProxy */;
+		};
 		3C0541852F9E6F0200621813 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 3C0541752F9E6F0100621813 /* herdr-harness-ios */;
@@ -271,6 +379,64 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		E40000082FABC00000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = L2M32HMQZH;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HerdPulseWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.ronnierocha.herdr-harness.herdr-harness-ios.HerdPulseWidgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E40000092FABC00000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = L2M32HMQZH;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HerdPulseWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.ronnierocha.herdr-harness.herdr-harness-ios.HerdPulseWidgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		3C0541952F9E6F0200621813 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -559,6 +725,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		E400000A2FABC00000000001 /* Build configuration list for PBXNativeTarget "HerdPulseWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E40000082FABC00000000001 /* Debug */,
+				E40000092FABC00000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		3C0541712F9E6F0100621813 /* Build configuration list for PBXProject "herdr-harness-ios" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

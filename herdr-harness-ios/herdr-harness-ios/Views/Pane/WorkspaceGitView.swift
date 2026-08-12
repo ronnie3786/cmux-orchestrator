@@ -12,6 +12,7 @@ struct WorkspaceGitView: View {
     @State private var errorMessage: String?
     @State private var pendingFiles: Set<String> = []
     @State private var selectedDiff: WorkspaceGitDiffTarget?
+    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         ScrollView {
@@ -43,6 +44,7 @@ struct WorkspaceGitView: View {
             WorkspaceGitDiffView(target: target, loadDiff: loadDiff)
                 .presentationBackground(HerdrTheme.ink)
         }
+        .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("workspace-git")
     }
 
@@ -238,8 +240,10 @@ struct WorkspaceGitView: View {
                     try await stageFile(file)
                 }
                 await refresh()
+                hapticPulse.fire(section == .staged ? .gitUnstaged : .gitStaged)
             } catch {
                 errorMessage = error.localizedDescription
+                hapticPulse.fire(.failed)
             }
             pendingFiles.remove(file)
         }

@@ -120,6 +120,19 @@ actor HerdrAPIClient {
         )
     }
 
+    func transcribeVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
+        let data = try VoiceRecordingPolicy.validatedData(at: fileURL)
+        return try await request(
+            path: "/api/v1/voice/transcriptions",
+            method: "POST",
+            body: VoiceTranscriptionRequest(
+                filename: fileURL.lastPathComponent,
+                mimeType: "audio/wav",
+                dataBase64: data.base64EncodedString()
+            )
+        )
+    }
+
     func createWorkspace(label: String, cwd: String) async throws {
         try await mutation(path: "/api/v1/workspaces", body: APIActionBody(label: label, cwd: cwd))
     }
@@ -368,6 +381,9 @@ actor HerdrAPIClient {
             // The original cmux upload contract allows a full minute. Leave
             // headroom for the authenticated Herdr proxy hop as well.
             return 90
+        }
+        if path == "/api/v1/voice/transcriptions" {
+            return 120
         }
         if path.hasPrefix("/api/v1/jira/") ||
             (path.hasPrefix("/api/v1/workspaces/") &&

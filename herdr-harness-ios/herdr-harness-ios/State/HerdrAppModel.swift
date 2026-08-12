@@ -22,11 +22,13 @@ final class HerdrAppModel {
     var isRefreshing = false
     var isSending = false
     var connectionGeneration = 0
+    private(set) var activeServerConnection: ActiveServerConnection?
     var serverURLString: String
     var apiToken: String
     var isDemoMode: Bool
     var hasCompletedSetup: Bool
     var smartAlertsEnabled: Bool
+    var preferPrivateTranscription: Bool
     var remotePushConfigured = false
     var remotePushDeliveryVerified = false
     var remotePushRegistrationError: String?
@@ -41,13 +43,26 @@ final class HerdrAppModel {
         let defaults = UserDefaults.standard
         let forcedDemo = arguments.contains("-HerdrDemoMode")
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
-        serverURLString = defaults.string(forKey: "herdr.serverURL")
+        let storedURLString = defaults.string(forKey: "herdr.serverURL")
             ?? bundledURL?.nonEmpty
             ?? "http://localhost:9092"
-        apiToken = KeychainStore.value(for: "api-token")
+        let storedToken = KeychainStore.value(for: "api-token")
+        serverURLString = storedURLString
+        apiToken = storedToken
         isDemoMode = forcedDemo || defaults.bool(forKey: "herdr.demoMode")
         hasCompletedSetup = forcedDemo || defaults.bool(forKey: "herdr.completedSetup")
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
+        preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
+
+        if !isDemoMode,
+           hasCompletedSetup,
+           let configuration = ServerConfiguration(urlString: storedURLString, token: storedToken) {
+            client = HerdrAPIClient(configuration: configuration)
+            activeServerConnection = ActiveServerConnection(
+                configuration: configuration,
+                generation: connectionGeneration
+            )
+        }
 
         if isDemoMode {
             loadDemo()
@@ -77,6 +92,13 @@ final class HerdrAppModel {
     var workingCount: Int { workspaces.flatMap(\.panes).count(where: { $0.agentStatus == .working }) }
     var paneCount: Int { workspaces.reduce(0) { $0 + $1.paneCount } }
     var canControl: Bool { isDemoMode || connectionState == .live }
+    var activeServerConfiguration: ServerConfiguration? {
+        guard !isDemoMode,
+              let activeServerConnection,
+              activeServerConnection.generation == connectionGeneration
+        else { return nil }
+        return activeServerConnection.configuration
+    }
 
     var remotePushStatusText: String {
         if let remotePushRegistrationError { return remotePushRegistrationError }
@@ -100,7 +122,7 @@ final class HerdrAppModel {
     }
 
     func connect() {
-        guard ServerConfiguration(urlString: serverURLString, token: apiToken) != nil else {
+        guard let configuration = ServerConfiguration(urlString: serverURLString, token: apiToken) else {
             errorMessage = "Use HTTPS, or HTTP only when connecting to localhost."
             return
         }
@@ -113,6 +135,11 @@ final class HerdrAppModel {
         errorMessage = nil
         resetConnectionState()
         connectionGeneration += 1
+        client = HerdrAPIClient(configuration: configuration)
+        activeServerConnection = ActiveServerConnection(
+            configuration: configuration,
+            generation: connectionGeneration
+        )
     }
 
     func useDemo() {
@@ -139,14 +166,13 @@ final class HerdrAppModel {
             loadDemo()
             return
         }
-        guard let configuration = ServerConfiguration(urlString: serverURLString, token: apiToken) else {
+        guard let activeServerConnection,
+              activeServerConnection.generation == generation,
+              let client
+        else {
             connectionState = .disconnected
             return
         }
-
-        let client = HerdrAPIClient(configuration: configuration)
-        guard generation == connectionGeneration else { return }
-        self.client = client
         connectionState = .connecting
         await syncPushDevice(using: client, expectedGeneration: generation)
         var retryDelay = 2.0
@@ -337,6 +363,49 @@ final class HerdrAppModel {
         )
         guard let attachment = response.attachment else { throw APIError.invalidResponse }
         return attachment
+    }
+
+    func setPreferPrivateTranscription(_ enabled: Bool) {
+        preferPrivateTranscription = enabled
+        UserDefaults.standard.set(enabled, forKey: "herdr.preferPrivateTranscription")
+    }
+
+    func transcribeVoiceNote(at fileURL: URL) async throws -> VoiceTranscription {
+        if isDemoMode {
+            try await Task.sleep(for: .milliseconds(350))
+            return VoiceTranscription(
+                text: "Review the current changes, run the focused tests, and tell me what still needs attention.",
+                provider: .demo,
+                language: "en",
+                usedFallback: false
+            )
+        }
+
+        let privateClient = preferPrivateTranscription && canControl ? client : nil
+        return try await VoiceTranscriptionPipeline.run(
+            preferPrivate: privateClient != nil,
+            privateTranscription: {
+                guard let privateClient else { throw APIError.invalidResponse }
+                let response = try await privateClient.transcribeVoice(fileURL: fileURL)
+                let text = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard response.ok, !text.isEmpty else { throw VoiceTranscriptionError.emptyTranscript }
+                return VoiceTranscription(
+                    text: text,
+                    provider: response.backend.lowercased().contains("parakeet") ? .parakeet : .server,
+                    language: response.language,
+                    usedFallback: false
+                )
+            },
+            appleTranscription: {
+                let text = try await AppleVoiceTranscriber.transcribe(fileURL: fileURL)
+                return VoiceTranscription(
+                    text: text,
+                    provider: .apple,
+                    language: Locale.current.language.languageCode?.identifier,
+                    usedFallback: false
+                )
+            }
+        )
     }
 
     func terminalEvents(for pane: HerdrPane) async -> AsyncThrowingStream<TerminalStreamEvent, any Error>? {
@@ -579,7 +648,10 @@ final class HerdrAppModel {
     }
 
     private func syncPushDevice(using client: HerdrAPIClient, expectedGeneration: Int) async {
-        guard let token = pendingPushToken, !apiToken.isEmpty else {
+        guard let token = pendingPushToken,
+              activeServerConnection?.generation == expectedGeneration,
+              activeServerConnection?.configuration.token.isEmpty == false
+        else {
             remotePushConfigured = false
             remotePushDeliveryVerified = false
             return
@@ -664,6 +736,7 @@ final class HerdrAppModel {
 
     private func resetConnectionState() {
         client = nil
+        activeServerConnection = nil
         connectionState = .disconnected
         workspaces = []
         alerts = []

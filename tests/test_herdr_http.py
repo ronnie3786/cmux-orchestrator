@@ -130,6 +130,29 @@ class FakeHTTPService:
         self.calls.append(("push.unregister", {"deviceToken": device_token}))
         return {"ok": True, "unregistered": True, "deviceCount": 0}
 
+    def register_live_activity(self, push_token, *, activity_id, bundle_id, environment):
+        self.calls.append(
+            (
+                "live_activity.register",
+                {
+                    "pushToken": push_token,
+                    "activityId": activity_id,
+                    "bundleId": bundle_id,
+                    "environment": environment,
+                },
+            )
+        )
+        return {"ok": True, "registered": True, "liveActivityCount": 1}
+
+    def unregister_live_activity(self, activity_id, *, push_token=None):
+        self.calls.append(
+            (
+                "live_activity.unregister",
+                {"activityId": activity_id, "pushToken": push_token},
+            )
+        )
+        return {"ok": True, "unregistered": True, "liveActivityCount": 0}
+
 
 class HerdrHTTPTests(unittest.TestCase):
     def setUp(self):
@@ -403,6 +426,41 @@ class HerdrHTTPTests(unittest.TestCase):
 
         self.assertEqual(context.exception.code, 503)
         self.assertEqual(body["error"]["code"], "api_token_required")
+
+    def test_live_activity_registration_and_unregistration_are_bearer_protected(self):
+        token = "ab" * 32
+        unauthorized, _, _ = self.request(
+            "/api/v1/live-activities",
+            method="POST",
+            payload={
+                "activityId": "pulse-1",
+                "pushToken": token,
+                "bundleId": "com.example.Herdr",
+            },
+            token=None,
+        )
+        registered, _, body = self.request(
+            "/api/v1/live-activities",
+            method="POST",
+            payload={
+                "activityId": "pulse-1",
+                "pushToken": token,
+                "bundleId": "com.example.Herdr",
+                "environment": "sandbox",
+            },
+        )
+        unregistered, _, _ = self.request(
+            "/api/v1/live-activities/unregister",
+            method="POST",
+            payload={"activityId": "pulse-1", "pushToken": token},
+        )
+
+        self.assertEqual(unauthorized, 401)
+        self.assertEqual(registered, 200)
+        self.assertTrue(body["registered"])
+        self.assertEqual(unregistered, 200)
+        self.assertEqual(self.service.calls[-2][0], "live_activity.register")
+        self.assertEqual(self.service.calls[-1][0], "live_activity.unregister")
 
 
 if __name__ == "__main__":

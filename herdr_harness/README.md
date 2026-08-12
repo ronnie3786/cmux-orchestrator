@@ -77,7 +77,7 @@ Configuration:
 - `HERDR_HARNESS_TAILSCALE_HTTPS_PORT`: suggested isolated Serve port, default
   `8461`.
 - `HERDR_HARNESS_CMUX_URL`: trusted upstream cmux harness API used for Git,
-  Skills, Files, Jira, and attachments. It defaults to
+  Skills, Files, Jira, attachments, and private voice transcription. It defaults to
   `http://127.0.0.1:9091`; a trailing `/harness` is accepted and normalized.
 - `HERDR_CLIENT_SOCKET_PATH`: optional raw terminal client socket override used
   by `herdr terminal session observe`.
@@ -120,10 +120,18 @@ troubleshooting.
   owns attachment storage, retention, and dashboard-startup cleanup.
 - `GET /api/v1/jira/assigned` and `GET /api/v1/jira/issue`, delegated to the
   existing cmux Jira integration.
+- `POST /api/v1/voice/transcriptions` accepts bounded 16 kHz mono PCM16 WAV
+  recordings. The bearer-authenticated Herdr server proxies them to cmux,
+  which uses Parakeet and its existing faster-whisper fallback. The response
+  contains text for the iOS composer and never submits a prompt or appends to
+  cmux chat.
 - `GET /api/v1/events`
 - `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/read`
 - `GET /api/v1/push/status`, `POST /api/v1/push/devices`, and
   `POST /api/v1/push/unregister`
+- `POST /api/v1/live-activities` and
+  `POST /api/v1/live-activities/unregister` register ActivityKit push tokens
+  for Herd Pulse background updates.
 - Workspace create, rename, focus, and close routes.
 - Tab create, rename, focus, and close routes.
 - Pane split, rename, focus, close, text, key, and atomic command routes.
@@ -139,10 +147,35 @@ The pane stream route launches Herdr's terminal observer and relays its NDJSON
 terminal frames as authenticated SSE. `/output` remains the low-cost text or
 ANSI snapshot fallback.
 
+For a Parakeet service on another tailnet machine, configure the cmux process
+with `ORCHESTRATOR_V2_PARAKEET_URL`. The iPhone still connects only to the
+authenticated Herdr origin. When Parakeet listens on the Lux PC's Tailscale
+interface, cmux can use its MagicDNS name directly:
+
+```bash
+ORCHESTRATOR_V2_PARAKEET_URL=http://custom-lux-pc:18793
+```
+
+If Parakeet remains loopback-only, use an SSH or Tailscale tunnel on the Mac
+running cmux instead:
+
+```bash
+ORCHESTRATOR_V2_PARAKEET_URL=http://127.0.0.1:18793
+```
+
+The remote `/transcribe` service must accept multipart WAV audio and return a
+JSON `text` field. Keep the service private to the tailnet or loopback tunnel.
+The server limits recordings to 20 MB and rejects redirects, oversized
+responses, non-WAV input, and unbounded timeouts.
+
 APNs device registration is protected by the API bearer token and persisted in
 a mode-0600 JSON file. Delivery is disabled until all signing credentials and a
 topic are available. Agent `blocked` and `done` transitions enqueue delivery on
 a background thread, so APNs latency never stalls the native Herdr event loop.
+Herd Pulse registrations use the same credentials and the ActivityKit topic
+derived from the registered app bundle identifier. Their Lock Screen payload is
+limited to aggregate workspace, pane, working, blocked, and ready counts. It
+never includes terminal output, paths, labels, titles, or session identifiers.
 The implementation invokes the system `openssl` for ES256 token signing and
 `curl --http2` for Apple's HTTP/2 endpoint, without third-party Python packages.
 Push registration and removal return `503 api_token_required` when the harness
@@ -171,6 +204,8 @@ unless noted. Identifiers are URL-encoded path components.
 - `POST /alerts/{id}/read` and `POST /alerts/read-all`: `{}`
 - `POST /push/devices`: `{deviceToken, bundleId, environment}`
 - `POST /push/unregister`: `{deviceToken}`. Tokens never appear in URLs.
+- `POST /live-activities`: `{activityId, pushToken, bundleId, environment}`
+- `POST /live-activities/unregister`: `{activityId, pushToken?}`
 
 Prefix every path above with `/api/v1`. Input lengths, ratios, key names,
 statuses, paths, and timeouts are bounded in `server.py`; invalid input returns

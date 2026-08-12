@@ -55,7 +55,11 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your Herdr server and control your private agent sessions.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Record voice notes to attach to your Herdr pane instructions.</string>
+	<string>Record long-form voice notes to turn into editable Herdr prompts.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Transcribe your recording into an editable prompt when private Parakeet transcription is unavailable.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

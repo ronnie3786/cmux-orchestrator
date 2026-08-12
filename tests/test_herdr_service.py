@@ -111,6 +111,7 @@ class FakeClient:
 class FakePush:
     def __init__(self):
         self.alerts = []
+        self.pulses = []
 
     def notify_alert_async(self, alert, *, unread_count, callback=None):
         self.alerts.append((copy.deepcopy(alert), unread_count))
@@ -125,8 +126,41 @@ class FakePush:
     def unregister(self, device_token):
         return {"ok": True, "unregistered": True}
 
+    def notify_herd_pulse_async(
+        self,
+        content_state,
+        *,
+        force=False,
+        activity_id=None,
+        callback=None,
+    ):
+        self.pulses.append((copy.deepcopy(content_state), force, activity_id))
+        return True
+
+    def register_live_activity(self, push_token, *, activity_id, bundle_id, environment):
+        return {"ok": True, "registered": True, "activity": {"activityId": activity_id}}
+
+    def unregister_live_activity(self, activity_id, *, push_token=None):
+        return {"ok": True, "unregistered": True}
+
 
 class HerdrServiceTests(unittest.TestCase):
+    def test_herd_pulse_is_an_aggregate_without_session_identity(self):
+        push = FakePush()
+        service = HerdrService(FakeClient([snapshot_with_status("blocked")]), push=push, environ={})
+
+        service.refresh_snapshot()
+
+        state = push.pulses[-1][0]
+        self.assertEqual(state["workspaceCount"], 1)
+        self.assertEqual(state["paneCount"], 1)
+        self.assertEqual(state["attentionCount"], 1)
+        self.assertEqual(state["phase"], "offline")
+        encoded = json.dumps(state)
+        self.assertNotIn("Feature Lab", encoded)
+        self.assertNotIn("w1:p1", encoded)
+        self.assertNotIn("Implement settings", encoded)
+
     def test_snapshot_is_raw_and_workspace_composite_preserves_unknown_fields(self):
         raw = snapshot_with_status()
         service = HerdrService(FakeClient([raw]), environ={})
@@ -188,13 +222,18 @@ class HerdrServiceTests(unittest.TestCase):
 
     def test_cached_snapshot_survives_disconnect_and_health_marks_it_stale(self):
         client = FakeClient([snapshot_with_status()])
-        service = HerdrService(client, environ={})
+        push = FakePush()
+        service = HerdrService(client, push=push, environ={})
         service.refresh_snapshot()
+        service._handle_stream_state("connected", None)
+        self.assertEqual(push.pulses[-1][0]["connection"], "live")
         client.fail = True
 
         with self.assertRaises(HerdrClientError):
             service.refresh_snapshot()
 
+        self.assertEqual(push.pulses[-1][0]["connection"], "offline")
+        self.assertEqual(push.pulses[-1][0]["phase"], "offline")
         self.assertEqual(service.snapshot_response()["snapshot"]["version"], "0.8.0")
         health = service.health_response()
         self.assertTrue(health["cache"]["available"])
