@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
 import os
 import threading
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, TypeVar
 
 from .alerts import AlertStore, utc_now
-from . import attachments, workspace_tools
+from . import attachments, cmux_tools, workspace_tools
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
 from .push_notifications import APNsManager
 from .terminal import TerminalObserver, TerminalObserverError
+
+
+_ToolResult = TypeVar("_ToolResult")
 
 
 def _bounded_environment_int(
@@ -44,9 +49,11 @@ class HerdrService:
         broker: Optional[EventBroker] = None,
         push: Optional[APNsManager] = None,
         environ: Optional[Mapping[str, str]] = None,
+        tools: Optional[cmux_tools.CmuxToolsClient] = None,
     ) -> None:
         self.environ = dict(os.environ if environ is None else environ)
         self.client = client or HerdrClient(environ=self.environ)
+        self.cmux_tools = tools or cmux_tools.CmuxToolsClient(environ=self.environ)
         alert_store_path = self.environ.get("HERDR_HARNESS_ALERT_STORE_PATH") or None
         self.alerts = alerts or AlertStore(store_path=alert_store_path)
         self.broker = broker or EventBroker()
@@ -63,16 +70,6 @@ class HerdrService:
         self._restart_subscription = threading.Event()
         self._event_thread: Optional[threading.Thread] = None
         self._refresh_thread: Optional[threading.Thread] = None
-        self._attachment_cleanup_thread: Optional[threading.Thread] = None
-        self._attachment_retention = attachments.retention_seconds(self.environ)
-        default_cleanup_interval = min(3600, max(60, self._attachment_retention // 4))
-        self._attachment_cleanup_interval = _bounded_environment_int(
-            self.environ,
-            "HERDR_HARNESS_ATTACHMENT_CLEANUP_SECONDS",
-            default_cleanup_interval,
-            minimum=10,
-            maximum=86400,
-        )
         self._terminal_limit = _bounded_environment_int(
             self.environ,
             "HERDR_HARNESS_TERMINAL_MAX_STREAMS",
@@ -103,7 +100,6 @@ class HerdrService:
             self.refresh_snapshot()
         except HerdrClientError:
             pass
-        self._prune_attachments()
         self._event_thread = threading.Thread(
             target=self._event_loop,
             name="herdr-events",
@@ -114,14 +110,8 @@ class HerdrService:
             name="herdr-snapshot-refresh",
             daemon=True,
         )
-        self._attachment_cleanup_thread = threading.Thread(
-            target=self._attachment_cleanup_loop,
-            name="herdr-attachment-cleanup",
-            daemon=True,
-        )
         self._event_thread.start()
         self._refresh_thread.start()
-        self._attachment_cleanup_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -130,27 +120,11 @@ class HerdrService:
         for thread in (
             self._event_thread,
             self._refresh_thread,
-            self._attachment_cleanup_thread,
         ):
             if thread is not None and thread.is_alive():
                 thread.join(timeout=2.0)
         with self._lock:
             self._started = False
-
-    def _prune_attachments(self) -> None:
-        try:
-            attachments.prune_expired_attachments(
-                environ=self.environ,
-                retention=self._attachment_retention,
-            )
-        except (OSError, RuntimeError, TypeError, ValueError):
-            # Attachment cleanup is maintenance and must never prevent the
-            # terminal/control API from starting or remaining available.
-            return
-
-    def _attachment_cleanup_loop(self) -> None:
-        while not self._stop_event.wait(self._attachment_cleanup_interval):
-            self._prune_attachments()
 
     def refresh_snapshot(self) -> dict:
         try:
@@ -323,48 +297,182 @@ class HerdrService:
             )
         return workspace, root
 
+    @staticmethod
+    def _tool_call(
+        operation: Callable[..., _ToolResult],
+        *args: Any,
+        **kwargs: Any,
+    ) -> _ToolResult:
+        """Expose cmux transport failures through Herdr's existing error contract."""
+
+        try:
+            return operation(*args, **kwargs)
+        except cmux_tools.CmuxToolsError as exc:
+            raise workspace_tools.WorkspaceToolError(
+                str(exc),
+                code=exc.code,
+                status=exc.status,
+            ) from exc
+
+    @staticmethod
+    def _skill_items(value: Any, *, default_scope: Optional[str] = None) -> list[dict]:
+        if not isinstance(value, list):
+            return []
+        items: list[dict] = []
+        for raw in value:
+            if not isinstance(raw, dict):
+                continue
+            name = raw.get("name")
+            skill_path = raw.get("skillFilePath", raw.get("skill_file_path"))
+            if not isinstance(name, str) or not isinstance(skill_path, str):
+                continue
+            scope = raw.get("scope")
+            if not isinstance(scope, str) or not scope:
+                scope = default_scope
+            items.append(
+                {
+                    "name": name,
+                    "skill_file_path": skill_path,
+                    "scope": scope,
+                }
+            )
+        return items
+
+    @staticmethod
+    def _jira_ticket(value: Any) -> Optional[dict]:
+        if not isinstance(value, dict):
+            return None
+        return {
+            "key": value.get("key"),
+            "project_key": value.get("projectKey", value.get("project_key")),
+            "title": value.get("title", ""),
+            "status": value.get("status", ""),
+            "priority": value.get("priority", ""),
+            "issue_type": value.get("issueType", value.get("issue_type", "")),
+            "url": value.get("url", ""),
+        }
+
+    @staticmethod
+    def _decode_attachment(data_base64: str) -> bytes:
+        if not isinstance(data_base64, str) or not data_base64:
+            raise attachments.AttachmentError("data_base64 is required")
+        maximum_encoded = ((attachments.MAX_ATTACHMENT_BYTES + 2) // 3) * 4
+        if len(data_base64) > maximum_encoded:
+            raise attachments.AttachmentError(
+                "file exceeds 20 MB limit",
+                code="attachment_too_large",
+                status=413,
+            )
+        try:
+            data = base64.b64decode(data_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise attachments.AttachmentError(
+                "data_base64 must be valid base64"
+            ) from exc
+        if not data:
+            raise attachments.AttachmentError("file is empty")
+        if len(data) > attachments.MAX_ATTACHMENT_BYTES:
+            raise attachments.AttachmentError(
+                "file exceeds 20 MB limit",
+                code="attachment_too_large",
+                status=413,
+            )
+        return data
+
     def workspace_git_status(self, workspace_id: str) -> dict:
         _, root = self._workspace_tool_context(workspace_id)
-        payload = workspace_tools.git_status(root)
+        payload = self._tool_call(self.cmux_tools.git_status, root)
         return {
             "ok": True,
             "workspace_id": workspace_id,
-            **payload,
+            "root_path": (
+                payload.get("cwd")
+                or payload.get("rootPath")
+                or payload.get("root_path")
+                or str(root)
+            ),
+            "branch": payload.get("branch"),
+            "staged": payload.get("staged") if isinstance(payload.get("staged"), list) else [],
+            "unstaged": (
+                payload.get("unstaged") if isinstance(payload.get("unstaged"), list) else []
+            ),
+            "untracked": (
+                payload.get("untracked") if isinstance(payload.get("untracked"), list) else []
+            ),
+            "commits": payload.get("commits") if isinstance(payload.get("commits"), list) else [],
             "generated_at": utc_now(),
         }
 
     def workspace_git_diff(self, workspace_id: str, *, file: str, section: str) -> dict:
         _, root = self._workspace_tool_context(workspace_id)
+        payload = self._tool_call(self.cmux_tools.git_diff, root, file, section)
         return {
             "ok": True,
             "workspace_id": workspace_id,
-            **workspace_tools.git_diff(root, file, section),
+            "file": payload.get("file", file),
+            "section": payload.get("section", section),
+            "diff": payload.get("diff", ""),
+            "truncated": payload.get("truncated", False),
         }
 
     def workspace_git_stage(self, workspace_id: str, *, file: str) -> dict:
         _, root = self._workspace_tool_context(workspace_id)
-        relative = workspace_tools.git_stage(root, file)
-        return {"ok": True, "workspace_id": workspace_id, "file": relative}
-
-    def workspace_git_unstage(self, workspace_id: str, *, file: str) -> dict:
-        _, root = self._workspace_tool_context(workspace_id)
-        relative = workspace_tools.git_unstage(root, file)
-        return {"ok": True, "workspace_id": workspace_id, "file": relative}
-
-    def workspace_skills(self, workspace_id: str) -> dict:
-        _, root = self._workspace_tool_context(workspace_id)
+        payload = self._tool_call(self.cmux_tools.git_stage, root, file)
         return {
             "ok": True,
             "workspace_id": workspace_id,
-            **workspace_tools.skills(root, environ=self.environ),
+            "file": payload.get("file", file),
+        }
+
+    def workspace_git_unstage(self, workspace_id: str, *, file: str) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        payload = self._tool_call(self.cmux_tools.git_unstage, root, file)
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            "file": payload.get("file", file),
+        }
+
+    def workspace_skills(self, workspace_id: str) -> dict:
+        _, root = self._workspace_tool_context(workspace_id)
+        payload = self._tool_call(self.cmux_tools.skills, root)
+        project_skills = self._skill_items(
+            payload.get("projectSkills", payload.get("project_skills")),
+            default_scope="project",
+        )
+        user_skills = self._skill_items(
+            payload.get("userSkills", payload.get("user_skills")),
+            default_scope="user",
+        )
+        all_skills = self._skill_items(payload.get("skills"))
+        if not all_skills:
+            all_skills = project_skills + user_skills
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            "root_path": payload.get("rootPath") or payload.get("root_path") or str(root),
+            "skills_directory": payload.get(
+                "skillsDirectory", payload.get("skills_directory")
+            ),
+            "user_skills_directory": payload.get(
+                "userSkillsDirectory", payload.get("user_skills_directory")
+            ),
+            "project_skills": project_skills,
+            "user_skills": user_skills,
+            "skills": all_skills,
         }
 
     def workspace_file_search(self, workspace_id: str, *, query: str, limit: int) -> dict:
         _, root = self._workspace_tool_context(workspace_id)
+        payload = self._tool_call(self.cmux_tools.search_files, root, query, limit)
         return {
             "ok": True,
             "workspace_id": workspace_id,
-            **workspace_tools.search_files(root, query, limit=limit),
+            "root_path": payload.get("rootPath") or payload.get("root_path") or str(root),
+            "query": payload.get("query", query),
+            "files": payload.get("files") if isinstance(payload.get("files"), list) else [],
+            "truncated": payload.get("truncated", False),
+            "limit": payload.get("limit", limit),
         }
 
     def workspace_attachment(
@@ -376,31 +484,96 @@ class HerdrService:
         data_base64: str,
     ) -> dict:
         # Resolving the context first prevents uploads from inventing arbitrary
-        # workspace identifiers even though attachments live in harness storage.
-        self._workspace_tool_context(workspace_id)
-        attachment = attachments.save_base64_attachment(
-            workspace_id=workspace_id,
+        # workspace identifiers or choosing their own cmux workspace index.
+        _, root = self._workspace_tool_context(workspace_id)
+        data = self._decode_attachment(data_base64)
+        identity = self._tool_call(
+            self.cmux_tools.attachment_workspace_identity,
+            root,
+        )
+        payload = self._tool_call(
+            self.cmux_tools.upload_attachment,
+            workspace_uuid=identity["uuid"],
+            workspace_index=identity["index"],
             filename=filename,
             content_type=content_type,
-            data_base64=data_base64,
-            environ=self.environ,
+            data=data,
         )
-        return {"ok": True, "attachment": attachment}
-
-    def jira_assigned(self, *, project: str, limit: int) -> dict:
+        attachment = payload.get("attachment")
+        if not isinstance(attachment, dict):
+            raise workspace_tools.WorkspaceToolError(
+                "cmux returned an invalid attachment response",
+                code="cmux_invalid_response",
+                status=502,
+            )
+        original_filename = attachment.get(
+            "originalFilename", attachment.get("original_filename")
+        )
+        normalized_type = attachment.get(
+            "contentType", attachment.get("content_type")
+        )
+        created_at = attachment.get("createdAt", attachment.get("created_at"))
+        required_strings = (
+            attachment.get("id"),
+            attachment.get("filename"),
+            original_filename,
+            normalized_type,
+            attachment.get("path"),
+            created_at,
+        )
+        if (
+            any(not isinstance(value, str) or not value for value in required_strings)
+            or not isinstance(attachment.get("size"), int)
+            or isinstance(attachment.get("size"), bool)
+        ):
+            raise workspace_tools.WorkspaceToolError(
+                "cmux returned an invalid attachment response",
+                code="cmux_invalid_response",
+                status=502,
+            )
         return {
             "ok": True,
-            **workspace_tools.jira_assigned(
-                project=project,
-                limit=limit,
-                environ=self.environ,
-            ),
+            "attachment": {
+                "id": attachment.get("id"),
+                "filename": attachment.get("filename"),
+                "original_filename": original_filename,
+                "content_type": normalized_type,
+                "size": attachment.get("size"),
+                "path": attachment.get("path"),
+                "workspace_id": workspace_id,
+                "created_at": created_at,
+            },
+        }
+
+    def jira_assigned(self, *, project: str, limit: int) -> dict:
+        payload = self._tool_call(
+            self.cmux_tools.jira_assigned,
+            project=project or None,
+            limit=limit,
+        )
+        raw_tickets = payload.get("tickets")
+        tickets = [
+            ticket
+            for ticket in (
+                self._jira_ticket(item)
+                for item in (raw_tickets if isinstance(raw_tickets, list) else [])
+            )
+            if ticket is not None
+        ]
+        return {
+            "ok": True,
+            "project": payload.get("project"),
+            "projects": payload.get("projects", []),
+            "site": payload.get("site"),
+            "tickets": tickets,
         }
 
     def jira_issue(self, *, query: str) -> dict:
+        payload = self._tool_call(self.cmux_tools.jira_issue, query)
         return {
             "ok": True,
-            **workspace_tools.jira_issue(query, environ=self.environ),
+            "site": payload.get("site"),
+            "ticket": self._jira_ticket(payload.get("ticket")),
         }
 
     def health_response(self) -> dict:

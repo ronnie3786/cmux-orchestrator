@@ -76,6 +76,9 @@ Configuration:
   reported as a working endpoint.
 - `HERDR_HARNESS_TAILSCALE_HTTPS_PORT`: suggested isolated Serve port, default
   `8461`.
+- `HERDR_HARNESS_CMUX_URL`: trusted upstream cmux harness API used for Git,
+  Skills, Files, Jira, and attachments. It defaults to
+  `http://127.0.0.1:9091`; a trailing `/harness` is accepted and normalized.
 - `HERDR_CLIENT_SOCKET_PATH`: optional raw terminal client socket override used
   by `herdr terminal session observe`.
 - `HERDR_APNS_KEY_ID`, `HERDR_APNS_TEAM_ID`, and `HERDR_APNS_KEY_PATH`: optional
@@ -86,11 +89,6 @@ Configuration:
 - `HERDR_HARNESS_PUSH_STORE_PATH`: optional persisted-device file override.
 - `HERDR_HARNESS_ALERT_STORE_PATH`: persisted alert journal. The launcher
   defaults to `~/.config/herdr-harness/alerts.json` with mode `0600`.
-- `HERDR_HARNESS_ATTACHMENTS_DIR`: prompt attachment storage root, default
-  `~/.config/herdr-harness/attachments`. Files use mode `0600`.
-- `HERDR_HARNESS_ATTACHMENT_RETENTION_SECONDS`: attachment TTL, default seven
-  days. `HERDR_HARNESS_ATTACHMENT_CLEANUP_SECONDS` controls the background
-  cleanup cadence, which defaults to at most one hour.
 - `HERDR_HARNESS_TERMINAL_MAX_STREAMS`: concurrent terminal observer limit,
   default `8`.
 - `HERDR_HARNESS_TERMINAL_MAX_SECONDS`: renewal lifetime for each observer,
@@ -115,6 +113,13 @@ troubleshooting.
 - `GET /api/v1/workspaces/{id}`
 - `GET /api/v1/panes/{id}/output`
 - `GET /api/v1/panes/{id}/stream?cols=100&rows=32`
+- Workspace-scoped Git status, diff, stage, unstage, Skills, file search, and
+  attachment routes. These retain the Herdr API schema while delegating to the
+  existing cmux API by the server-resolved checkout path. For attachments,
+  Herdr resolves the matching live cmux workspace UUID and index first. cmux
+  owns attachment storage, retention, and dashboard-startup cleanup.
+- `GET /api/v1/jira/assigned` and `GET /api/v1/jira/issue`, delegated to the
+  existing cmux Jira integration.
 - `GET /api/v1/events`
 - `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/read`
 - `GET /api/v1/push/status`, `POST /api/v1/push/devices`, and

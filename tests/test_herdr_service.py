@@ -1,13 +1,13 @@
+import base64
 import copy
 import json
-import os
 import stat
 import tempfile
-import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from herdr_harness import attachments
 from herdr_harness.alerts import AlertStore
 from herdr_harness.client import HerdrClientError
 from herdr_harness.service import HerdrService
@@ -247,50 +247,33 @@ class HerdrServiceTests(unittest.TestCase):
             raw = snapshot_with_status()
             raw["workspaces"][0]["worktree"] = {"checkout_path": str(checkout)}
             raw["panes"][0]["foreground_cwd"] = str(pane_cwd)
-            service = HerdrService(FakeClient([raw]), environ={})
+            tools = Mock()
+            tools.git_status.return_value = {
+                "ok": True,
+                "cwd": str(checkout),
+                "branch": "feature",
+                "staged": [],
+                "unstaged": [],
+                "untracked": [],
+                "commits": [],
+            }
+            service = HerdrService(FakeClient([raw]), environ={}, tools=tools)
             service.refresh_snapshot()
 
-            with patch(
-                "herdr_harness.service.workspace_tools.git_status",
-                return_value={
-                    "root_path": str(checkout),
-                    "branch": "feature",
-                    "staged": [],
-                    "unstaged": [],
-                    "untracked": [],
-                    "commits": [],
-                },
-            ) as status:
-                payload = service.workspace_git_status("w1")
+            payload = service.workspace_git_status("w1")
 
-            status.assert_called_once_with(checkout.resolve())
+            tools.git_status.assert_called_once_with(checkout.resolve())
             self.assertEqual(payload["workspace_id"], "w1")
             self.assertEqual(payload["branch"], "feature")
 
-    def test_service_lifecycle_prunes_expired_attachments_on_start(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_root = Path(temp_dir) / "attachments"
-            workspace_directory = attachment_root / "w1"
-            workspace_directory.mkdir(parents=True)
-            expired = workspace_directory / "expired.txt"
-            expired.write_text("old attachment", encoding="utf-8")
-            old_time = time.time() - 120
-            os.utime(expired, (old_time, old_time))
-            service = HerdrService(
-                FakeClient([snapshot_with_status()]),
-                push=FakePush(),
-                environ={
-                    "HERDR_HARNESS_ATTACHMENTS_DIR": str(attachment_root),
-                    "HERDR_HARNESS_ATTACHMENT_RETENTION_SECONDS": "60",
-                    "HERDR_HARNESS_ATTACHMENT_CLEANUP_SECONDS": "60",
-                },
-            )
-
-            try:
-                service.start()
-                self.assertFalse(expired.exists())
-            finally:
-                service.stop()
+    def test_attachment_base64_and_decoded_size_validation_remains_bounded(self):
+        with self.assertRaises(attachments.AttachmentError):
+            HerdrService._decode_attachment("!!!")
+        with patch("herdr_harness.attachments.MAX_ATTACHMENT_BYTES", 3):
+            with self.assertRaises(attachments.AttachmentError) as context:
+                HerdrService._decode_attachment(base64.b64encode(b"1234").decode())
+        self.assertEqual(context.exception.status, 413)
+        self.assertEqual(context.exception.code, "attachment_too_large")
 
     def test_alert_transition_queues_optional_push_without_blocking(self):
         client = FakeClient([snapshot_with_status("working"), snapshot_with_status("blocked")])

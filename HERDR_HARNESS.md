@@ -36,6 +36,12 @@ frame. If the live observer disconnects, the app retains the last good frame,
 falls back to the low-cost text snapshot when necessary, and reconnects
 automatically.
 
+Git status and diffs, Skills, project-file search, Jira, and prompt attachments
+reuse the existing cmux harness API. The iPhone never opens the cmux server's
+plain-HTTP port directly. It sends every request through the authenticated
+Herdr HTTPS API, which resolves the selected Herdr checkout and proxies the
+operation to cmux on the same Mac.
+
 ## Components
 
 - `herdr-harness-ios/`: Swift 6, SwiftUI, Observation, and structured
@@ -103,6 +109,24 @@ and authenticated with an account that has available provider quota:
 command -v codex
 codex --version
 ```
+
+The auxiliary Git, Skills, Files, Jira, and attachment screens require the
+existing cmux harness server. Start it on the same Mac and leave it running:
+
+```bash
+CMUX_HARNESS_NO_BROWSER=1 python3 dashboard.py
+curl -sS http://127.0.0.1:9091/api/status
+```
+
+The Herdr backend uses `http://127.0.0.1:9091` by default. Set
+`HERDR_HARNESS_CMUX_URL` only when the cmux API is listening at a different
+trusted address. This upstream URL is server configuration and is never
+accepted from an iPhone request.
+
+Prompt attachments are stored and retained by cmux, not Herdr. The dashboard
+cleans expired cmux attachments when it starts. Herdr resolves the live cmux
+workspace UUID and index from `/api/status` by matching the server-resolved
+checkout path before forwarding each upload.
 
 ### 3. Start the isolated Herdr fixture
 

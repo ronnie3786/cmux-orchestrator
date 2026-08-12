@@ -352,13 +352,31 @@ actor HerdrAPIClient {
         if !query.isEmpty { components?.queryItems = query }
         var request = URLRequest(url: components?.url ?? configuration.baseURL)
         request.httpMethod = method
-        let isEventStream = method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream"))
-        request.timeoutInterval = isEventStream ? 24 * 60 * 60 : 15
+        request.timeoutInterval = Self.timeoutInterval(path: path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if !configuration.token.isEmpty {
             request.setValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
         }
         return request
+    }
+
+    static func timeoutInterval(path: String, method: String) -> TimeInterval {
+        if method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream")) {
+            return 24 * 60 * 60
+        }
+        if path.hasSuffix("/attachments") {
+            // The original cmux upload contract allows a full minute. Leave
+            // headroom for the authenticated Herdr proxy hop as well.
+            return 90
+        }
+        if path.hasPrefix("/api/v1/jira/") ||
+            (path.hasPrefix("/api/v1/workspaces/") &&
+                (path.contains("/git") || path.hasSuffix("/skills") || path.hasSuffix("/files"))) {
+            // cmux permits Git and Jira operations to run for up to 10 and 15
+            // seconds respectively. The client must outlive the upstream call.
+            return 30
+        }
+        return 15
     }
 
     private static func validate(response: URLResponse, data: Data = Data()) throws {
