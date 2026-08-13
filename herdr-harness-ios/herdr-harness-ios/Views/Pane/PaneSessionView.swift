@@ -119,8 +119,16 @@ struct PaneSessionView: View {
     private var modeContent: some View {
         switch selectedMode {
         case .chat:
-            if currentPane.supportsPiSemanticChat {
-                PiChatView(model: model, store: piConversationStore, pane: currentPane)
+            if currentPane.supportsPiSemanticChat, let workspace {
+                PiChatView(
+                    model: model,
+                    store: piConversationStore,
+                    pane: currentPane,
+                    workspace: workspace,
+                    draft: $composerDraft,
+                    attachments: $composerAttachments,
+                    focusRequest: composerFocusRequest
+                )
                     .transition(.opacity)
             } else {
                 unavailableMode("Chat", systemImage: "bubble.left.and.bubble.right")

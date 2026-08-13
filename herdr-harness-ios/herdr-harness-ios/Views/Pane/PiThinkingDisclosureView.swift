@@ -13,20 +13,25 @@ struct PiThinkingDisclosureView: View {
                 .padding(.top, 10)
         } label: {
             HStack(spacing: 9) {
-                if block.isStreaming {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(HerdrTheme.mauve)
-                        .accessibilityHidden(true)
-                } else {
-                    Image(systemName: "brain.head.profile")
-                        .foregroundStyle(HerdrTheme.mauve)
-                        .accessibilityHidden(true)
+                ZStack {
+                    if block.isStreaming {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(HerdrTheme.mauve)
+                            .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
+                    } else {
+                        Image(systemName: "brain.head.profile")
+                            .foregroundStyle(HerdrTheme.mauve)
+                            .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
+                    }
                 }
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
 
                 Text(block.isStreaming ? "Thinking" : "Thought process")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(HerdrTheme.mist)
+                    .contentTransition(.opacity)
 
                 Spacer(minLength: 8)
 
@@ -34,6 +39,7 @@ struct PiThinkingDisclosureView: View {
                     Text(startedAt, style: .relative)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(HerdrTheme.muted)
+                        .transition(.opacity)
                 }
             }
         }
@@ -41,7 +47,8 @@ struct PiThinkingDisclosureView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(HerdrTheme.elevated.opacity(0.46), in: RoundedRectangle(cornerRadius: 11))
-        .animation(reduceMotion ? nil : .snappy(duration: 0.22, extraBounce: 0), value: isExpanded)
+        .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
+        .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: block.isStreaming)
         .onChange(of: isExpanded) { _, expanded in
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }

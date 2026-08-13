@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PiTurnActivityRail: View {
     let turn: PiConversationTurn
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +19,10 @@ struct PiTurnActivityRail: View {
                 .frame(width: 7, height: 7)
         }
         .frame(width: 10)
+        .animation(
+            PiChatMotion.stateAnimation(reduceMotion: reduceMotion),
+            value: visualState
+        )
         .accessibilityHidden(true)
     }
 
@@ -34,6 +39,12 @@ struct PiTurnActivityRail: View {
     private var terminalColor: Color {
         if turn.items.contains(where: Self.isFailed) { return HerdrTheme.alert }
         return turn.isActive ? HerdrTheme.working : HerdrTheme.success
+    }
+
+    private var visualState: String {
+        let hasTool = turn.items.contains(where: Self.isTool)
+        let hasFailure = turn.items.contains(where: Self.isFailed)
+        return "\(turn.user?.id ?? "none"):\(hasTool):\(hasFailure):\(turn.isActive)"
     }
 
     private static func isTool(_ item: PiConversationItem) -> Bool {

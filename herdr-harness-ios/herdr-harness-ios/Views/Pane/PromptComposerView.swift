@@ -9,6 +9,8 @@ struct PromptComposerView: View {
     @Binding var draft: String
     @Binding var attachments: [TerminalAttachment]
     let focusRequest: Int
+    let dismissFocusRequest: Int
+    let piConfiguration: PiPromptComposerConfiguration?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isFocused: Bool
@@ -20,7 +22,29 @@ struct PromptComposerView: View {
     @State private var isShowingFileSearch = false
     @State private var isShowingJira = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var disposition: PiPromptDisposition = .prompt
     @State private var hapticPulse = HerdrHapticPulse()
+
+    init(
+        model: HerdrAppModel,
+        pane: HerdrPane,
+        workspace: HerdrWorkspace,
+        draft: Binding<String>,
+        attachments: Binding<[TerminalAttachment]>,
+        focusRequest: Int,
+        dismissFocusRequest: Int = 0,
+        piConfiguration: PiPromptComposerConfiguration? = nil
+    ) {
+        self.model = model
+        self.pane = pane
+        self.workspace = workspace
+        _draft = draft
+        _attachments = attachments
+        self.focusRequest = focusRequest
+        self.dismissFocusRequest = dismissFocusRequest
+        self.piConfiguration = piConfiguration
+        _disposition = State(initialValue: piConfiguration?.preferredDisposition ?? .prompt)
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -30,6 +54,18 @@ struct PromptComposerView: View {
                     retry: retryAttachment,
                     remove: removeAttachment
                 )
+            }
+
+            if let piConfiguration, piConfiguration.phase == .working {
+                PiPromptComposerStatusBar(
+                    disposition: effectiveDisposition,
+                    availableDispositions: piConfiguration.availableDispositions,
+                    canSelectDisposition: piConfiguration.isConnected,
+                    canAbort: piConfiguration.canAbort,
+                    selectDisposition: selectDisposition,
+                    stop: stopPi
+                )
+                    .transition(semanticControlTransition)
             }
 
             if isExpanded {
@@ -47,12 +83,23 @@ struct PromptComposerView: View {
             TerminalKeyDeck(model: model, pane: pane, isExpanded: isExpanded)
         }
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: isExpanded)
+        .animation(
+            reduceMotion ? nil : .snappy(duration: 0.24),
+            value: piConfiguration?.phase
+        )
         .herdrHaptic(trigger: hapticPulse)
         .onChange(of: isFocused) { _, focused in
             if focused { isExpanded = false }
         }
         .onChange(of: focusRequest) {
             isFocused = true
+        }
+        .onChange(of: dismissFocusRequest) {
+            isFocused = false
+        }
+        .onChange(of: piConfiguration?.availableDispositions) { _, options in
+            guard let options, !options.contains(disposition) else { return }
+            disposition = options.first ?? .prompt
         }
         .onChange(of: selectedPhotos) { _, items in
             guard !items.isEmpty else { return }
@@ -129,6 +176,11 @@ struct PromptComposerView: View {
         }
     }
 
+    private var semanticControlTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .move(edge: .bottom).combined(with: .opacity)
+    }
+
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
             Button {
@@ -148,7 +200,7 @@ struct PromptComposerView: View {
                     .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "Collapse terminal controls" : "Expand terminal controls")
+            .accessibilityLabel(isExpanded ? "Collapse composer controls" : "Expand composer controls")
             .accessibilityIdentifier("terminal-controls-toggle")
 
             TextField(placeholder, text: $draft, axis: .vertical)
@@ -168,14 +220,14 @@ struct PromptComposerView: View {
                 }
                 .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
                 .accessibilityIdentifier("prompt-composer")
-                .disabled(model.isSending || !model.canControl)
+                .disabled(isSubmitting || !canControl)
 
             Button(action: send) {
-                if model.isSending {
+                if isSubmitting {
                     ProgressView()
                         .tint(HerdrTheme.ink)
                 } else {
-                    Image(systemName: "arrow.up")
+                    Image(systemName: effectiveDisposition.symbol)
                 }
             }
             .font(.headline.bold())
@@ -186,13 +238,39 @@ struct PromptComposerView: View {
             .buttonStyle(.plain)
             .opacity(canSend ? 1 : 0.45)
             .disabled(!canSend)
-            .accessibilityLabel("Send")
+            .accessibilityLabel(effectiveDisposition.label)
+            .accessibilityHint(sendAccessibilityHint)
             .accessibilityIdentifier("prompt-send")
         }
     }
 
     private var placeholder: String {
-        pane.agentStatus == .unknown ? "run or type into this shell" : "message \(pane.displayAgentName)"
+        if let piConfiguration {
+            return piConfiguration.placeholder(for: effectiveDisposition)
+        }
+        return pane.agentStatus == .unknown
+            ? "run or type into this shell"
+            : "message \(pane.displayAgentName)"
+    }
+
+    private var canControl: Bool {
+        piConfiguration?.isConnected ?? model.canControl
+    }
+
+    private var isSubmitting: Bool {
+        piConfiguration?.isSubmitting ?? model.isSending
+    }
+
+    private var sendAccessibilityHint: String {
+        guard piConfiguration != nil else { return "Sends the prompt to this terminal" }
+        return "Sends using \(effectiveDisposition.label.lowercased()) mode"
+    }
+
+    private var effectiveDisposition: PiPromptDisposition {
+        guard let piConfiguration else { return .prompt }
+        return piConfiguration.availableDispositions.contains(disposition)
+            ? disposition
+            : piConfiguration.preferredDisposition
     }
 
     private var canSend: Bool {
@@ -204,7 +282,12 @@ struct PromptComposerView: View {
         let isUploading = attachments.contains { item in
             item.status == .uploading
         }
-        return (hasText || hasAttachment) && !isUploading && !model.isSending && model.canControl
+        let dispositionIsAvailable = piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true
+        return (hasText || hasAttachment)
+            && !isUploading
+            && !isSubmitting
+            && canControl
+            && dispositionIsAvailable
     }
 
     private func appendToken(_ token: String) {
@@ -387,14 +470,37 @@ struct PromptComposerView: View {
         let message = [text, attachmentBlock]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
+        let piConfiguration = self.piConfiguration
+        let disposition = effectiveDisposition
 
         Task {
-            if await model.sendPrompt(message, to: pane) {
+            let didSend = if let piConfiguration {
+                await piConfiguration.submit(message, disposition)
+            } else {
+                await model.sendPrompt(message, to: pane)
+            }
+
+            if didSend {
                 draft = ""
                 attachments.forEach { $0.removeSourceFileIfOwned() }
                 attachments = []
                 hapticPulse.fire(.promptSent)
+            } else if piConfiguration != nil {
+                hapticPulse.fire(.failed)
             }
+        }
+    }
+
+    private func selectDisposition(_ selection: PiPromptDisposition) {
+        disposition = selection
+        hapticPulse.fire(.selection)
+    }
+
+    private func stopPi() {
+        guard let piConfiguration, piConfiguration.canAbort else { return }
+        Task {
+            let succeeded = await piConfiguration.abort()
+            hapticPulse.fire(succeeded ? .stopped : .failed)
         }
     }
 }

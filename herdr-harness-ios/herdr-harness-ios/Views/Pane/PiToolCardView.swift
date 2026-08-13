@@ -21,8 +21,8 @@ struct PiToolCardView: View {
             RoundedRectangle(cornerRadius: 11)
                 .stroke(presentation.tint.opacity(0.15), lineWidth: 1)
         }
-        .animation(reduceMotion ? nil : .snappy(duration: 0.22, extraBounce: 0), value: isExpanded)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: tool.status)
+        .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
+        .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: tool.status)
         .onChange(of: isExpanded) { _, expanded in
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }
@@ -55,6 +55,8 @@ struct PiToolCardView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 statusLabel
                     .font(.caption.weight(.semibold))
+                    .id(statusMotionKey)
+                    .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 if let elapsedDuration {
                     Text(elapsedDuration)
                         .font(.caption.monospacedDigit())
@@ -71,17 +73,24 @@ struct PiToolCardView: View {
         VStack(alignment: .leading, spacing: 10) {
             if let arguments = tool.arguments {
                 toolSection("Input", value: arguments)
+                    .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
             }
             if let result = tool.result {
                 toolSection(tool.status == .failed ? "Error" : "Result", value: result)
+                    .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
             }
             if tool.arguments == nil, tool.result == nil {
                 Text("Waiting for tool details…")
                     .font(.caption)
                     .foregroundStyle(HerdrTheme.muted)
+                    .transition(.opacity)
             }
         }
         .padding(.top, 10)
+        .animation(
+            PiChatMotion.structuralAnimation(reduceMotion: reduceMotion),
+            value: detailStructure
+        )
     }
 
     private func toolSection(_ label: String, value: PiJSONValue) -> some View {
@@ -135,5 +144,18 @@ struct PiToolCardView: View {
         }
         if let elapsedDuration { return "\(status), \(elapsedDuration)" }
         return status
+    }
+
+    private var statusMotionKey: Int {
+        switch tool.status {
+        case .waiting: 0
+        case .running: 1
+        case .succeeded: 2
+        case .failed: 3
+        }
+    }
+
+    private var detailStructure: Int {
+        (tool.arguments == nil ? 0 : 1) | (tool.result == nil ? 0 : 2)
     }
 }

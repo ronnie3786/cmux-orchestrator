@@ -4,7 +4,11 @@ struct PiChatView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var store: PiConversationStore
     let pane: HerdrPane
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let workspace: HerdrWorkspace
+    @Binding var draft: String
+    @Binding var attachments: [TerminalAttachment]
+    let focusRequest: Int
+    @State private var dismissFocusRequest = 0
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
@@ -14,7 +18,8 @@ struct PiChatView: View {
             PiChatTimelineView(
                 store: store,
                 isConnected: store.canSendCommands
-                    && (pane.piSemantic?.capabilities.interactionResponse ?? false)
+                    && (pane.piSemantic?.capabilities.interactionResponse ?? false),
+                onKeyboardDismissRequested: dismissKeyboard
             ) { interaction, response in
                 await store.respond(to: interaction, response: response, model: model, pane: pane)
             }
@@ -33,24 +38,27 @@ struct PiChatView: View {
                     }
             }
 
-            PiChatComposerView(
-                store: store,
-                capabilities: pane.piSemantic?.capabilities ?? .unavailable,
-                isConnected: store.canSendCommands,
-                submit: { text, disposition in
-                    await store.submit(
-                        text: text,
-                        disposition: disposition,
-                        model: model,
-                        pane: pane
-                    )
-                },
-                abort: {
-                    await store.abort(model: model, pane: pane)
-                }
+            PromptComposerView(
+                model: model,
+                pane: pane,
+                workspace: workspace,
+                draft: $draft,
+                attachments: $attachments,
+                focusRequest: focusRequest,
+                dismissFocusRequest: dismissFocusRequest,
+                piConfiguration: composerConfiguration
             )
+            .id(pane.id)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+            .background(.ultraThinMaterial)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(HerdrTheme.surface.opacity(0.55))
+                    .frame(height: 1)
+            }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: store.turns.count)
         .onChange(of: store.phase) { oldPhase, newPhase in
             if oldPhase == .working, newPhase == .idle {
                 hapticPulse.fire(.completed)
@@ -60,5 +68,30 @@ struct PiChatView: View {
         }
         .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("pi-chat-view")
+    }
+
+    private var composerConfiguration: PiPromptComposerConfiguration {
+        PiPromptComposerConfiguration(
+            capabilities: pane.piSemantic?.capabilities ?? .unavailable,
+            phase: store.phase,
+            isConnected: store.canSendCommands,
+            isSubmitting: store.isSubmitting,
+            isAborting: store.isAborting,
+            submit: { text, disposition in
+                await store.submit(
+                    text: text,
+                    disposition: disposition,
+                    model: model,
+                    pane: pane
+                )
+            },
+            abort: {
+                await store.abort(model: model, pane: pane)
+            }
+        )
+    }
+
+    private func dismissKeyboard() {
+        dismissFocusRequest &+= 1
     }
 }

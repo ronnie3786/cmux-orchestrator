@@ -3,30 +3,54 @@ import SwiftUI
 struct PiChatTimelineView: View {
     @Bindable var store: PiConversationStore
     let isConnected: Bool
+    let onKeyboardDismissRequested: () -> Void
     let respond: (PiPendingInteraction, PiInteractionResponseBody) async -> Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @State private var isNearBottom = true
+    @State private var lastAutoScrollStructure: PiChatTimelineStructure?
+
+    init(
+        store: PiConversationStore,
+        isConnected: Bool,
+        onKeyboardDismissRequested: @escaping () -> Void = {},
+        respond: @escaping (PiPendingInteraction, PiInteractionResponseBody) async -> Bool
+    ) {
+        self.store = store
+        self.isConnected = isConnected
+        self.onKeyboardDismissRequested = onKeyboardDismissRequested
+        self.respond = respond
+    }
 
     var body: some View {
+        let structure = PiChatTimelineStructure(
+            turns: store.turns,
+            pendingInteractions: store.pendingInteractions,
+            hasContent: store.hasContent,
+            isTruncated: store.isTruncated
+        )
+
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     transcriptHeader
+                        .transition(.opacity)
 
                     if store.hasContent {
                         ForEach(store.turns) { turn in
                             PiConversationTurnView(turn: turn)
-                                .transition(turnTransition)
+                                .transition(PiChatMotion.turnTransition(reduceMotion: reduceMotion))
                         }
                     } else if store.connection == .connected {
                         emptyTranscript
+                            .transition(.opacity)
                     }
 
                     ForEach(store.pendingInteractions) { interaction in
                         PiInteractionCardView(interaction: interaction, isConnected: isConnected) { response in
                             await respond(interaction, response)
                         }
+                        .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
                     }
 
                     Color.clear
@@ -41,18 +65,36 @@ struct PiChatTimelineView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 24)
+                .animation(
+                    PiChatMotion.structuralAnimation(reduceMotion: reduceMotion),
+                    value: structure
+                )
             }
             .scrollPosition($scrollPosition)
             .defaultScrollAnchor(.bottom)
-            .onChange(of: store.turns.count) { oldCount, newCount in
-                guard newCount > oldCount, isNearBottom else { return }
-                scrollPosition.scrollTo(edge: .bottom)
+            .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture().onEnded { _ in
+                    onKeyboardDismissRequested()
+                }
+            )
+            .onAppear {
+                lastAutoScrollStructure = structure
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isNearBottom)
             .onChange(of: store.revision) { _, _ in
+                let structureChanged = lastAutoScrollStructure != structure
+                lastAutoScrollStructure = structure
                 guard isNearBottom else { return }
-                // Deliberately no animation while tokens and tool output stream.
-                scrollPosition.scrollTo(edge: .bottom)
+
+                if structureChanged, !reduceMotion {
+                    withAnimation(PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)) {
+                        scrollPosition.scrollTo(edge: .bottom)
+                    }
+                } else {
+                    // Deliberately no animation while tokens and tool output stream.
+                    scrollPosition.scrollTo(edge: .bottom)
+                }
             }
 
             if !isNearBottom {
@@ -66,10 +108,14 @@ struct PiChatTimelineView: View {
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay { Capsule().stroke(HerdrTheme.accent.opacity(0.25), lineWidth: 1) }
                 .padding(14)
-                .transition(jumpTransition)
+                .transition(PiChatMotion.jumpToLatestTransition(reduceMotion: reduceMotion))
                 .accessibilityIdentifier("pi-chat-jump-latest")
             }
         }
+        .animation(
+            PiChatMotion.stateAnimation(reduceMotion: reduceMotion),
+            value: isNearBottom
+        )
     }
 
     @ViewBuilder
@@ -92,18 +138,5 @@ struct PiChatTimelineView: View {
         .foregroundStyle(HerdrTheme.text)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 44)
-    }
-
-    private var turnTransition: AnyTransition {
-        reduceMotion
-            ? .opacity
-            : .asymmetric(
-                insertion: .opacity.combined(with: .offset(y: 6)),
-                removal: .opacity
-            )
-    }
-
-    private var jumpTransition: AnyTransition {
-        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
     }
 }
