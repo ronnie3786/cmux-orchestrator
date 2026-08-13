@@ -232,36 +232,18 @@ actor HerdrAPIClient {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let eventRequest = request
         let session = self.session
-        let decoder = self.decoder
 
         return AsyncThrowingStream(bufferingPolicy: .bufferingNewest(32)) { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: eventRequest)
                     try Self.validate(response: response)
-
-                    var eventName = "message"
-                    var dataLines: [String] = []
+                    var parser = HerdrSSEParser()
 
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
-                        if line.isEmpty {
-                            if !dataLines.isEmpty {
-                                let payload = dataLines.joined(separator: "\n")
-                                if let data = payload.data(using: .utf8) {
-                                    if let event = try? decoder.decode(HerdrEvent.self, from: data) {
-                                        continuation.yield(event)
-                                    } else if let value = try? decoder.decode(JSONValue.self, from: data) {
-                                        continuation.yield(HerdrEvent(event: eventName, data: value))
-                                    }
-                                }
-                            }
-                            eventName = "message"
-                            dataLines.removeAll(keepingCapacity: true)
-                        } else if line.hasPrefix("event:") {
-                            eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                        } else if line.hasPrefix("data:") {
-                            dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+                        if let event = parser.consume(line: line) {
+                            continuation.yield(event)
                         }
                     }
                     throw APIError.streamEnded
@@ -323,6 +305,103 @@ actor HerdrAPIClient {
                 task.cancel()
             }
         }
+    }
+
+    func fetchPiConversationSnapshot(paneID: String) async throws -> PiConversationSnapshot {
+        try await request(path: "/api/v1/panes/\(paneID)/pi/snapshot")
+    }
+
+    func piConversationEvents(
+        paneID: String,
+        after cursor: String?
+    ) -> AsyncThrowingStream<PiConversationStreamEvent, any Error> {
+        let query = cursor.map { [URLQueryItem(name: "after", value: $0)] } ?? []
+        var request = makeRequest(
+            path: "/api/v1/panes/\(paneID)/pi/events",
+            method: "GET",
+            query: query
+        )
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let cursor, !cursor.isEmpty {
+            request.setValue(cursor, forHTTPHeaderField: "Last-Event-ID")
+        }
+        let eventRequest = request
+        let session = self.session
+
+        // Pi deltas and tool transitions are order-dependent. Preserve every
+        // event and let the reducer de-duplicate durable cursors.
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let (bytes, response) = try await session.bytes(for: eventRequest)
+                    try Self.validate(response: response)
+                    var parser = PiConversationSSEParser()
+
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        if let event = try parser.consume(line: line) {
+                            continuation.yield(event)
+                        }
+                    }
+                    throw APIError.streamEnded
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+    }
+
+    func sendPiPrompt(
+        paneID: String,
+        text: String,
+        disposition: PiPromptDisposition
+    ) async throws {
+        let path: String
+        switch disposition {
+        case .prompt:
+            path = "/api/v1/panes/\(paneID)/pi/prompt"
+        case .steer:
+            path = "/api/v1/panes/\(paneID)/pi/steer"
+        case .followUp:
+            path = "/api/v1/panes/\(paneID)/pi/follow-up"
+        }
+        let response: PiCommandResponse = try await request(
+            path: path,
+            method: "POST",
+            body: APIActionBody(text: text)
+        )
+        guard response.accepted else { throw APIError.invalidResponse }
+    }
+
+    func abortPiConversation(paneID: String) async throws {
+        let response: PiCommandResponse = try await request(
+            path: "/api/v1/panes/\(paneID)/pi/abort",
+            method: "POST",
+            body: APIActionBody()
+        )
+        guard response.accepted else { throw APIError.invalidResponse }
+    }
+
+    func respondToPiInteraction(
+        paneID: String,
+        interactionID: String,
+        response: PiInteractionResponseBody
+    ) async throws {
+        let safeInteractionID = interactionID.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        ) ?? interactionID
+        let result: PiCommandResponse = try await request(
+            path: "/api/v1/panes/\(paneID)/pi/interactions/\(safeInteractionID)/respond",
+            method: "POST",
+            body: response
+        )
+        guard result.accepted else { throw APIError.invalidResponse }
     }
 
     private func mutation(
@@ -419,30 +498,94 @@ struct TerminalSSEParser {
         }
         if line.hasPrefix("data:") {
             dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
-            return nil
+            return try dispatchIfComplete(force: false)
         }
         guard line.isEmpty else { return nil }
+        return try dispatchIfComplete(force: true)
+    }
 
-        defer {
-            eventName = "message"
-            dataLines.removeAll(keepingCapacity: true)
+    private mutating func dispatchIfComplete(force: Bool) throws -> TerminalStreamEvent? {
+        guard !dataLines.isEmpty else {
+            if force { resetRecord() }
+            return nil
         }
+
         switch eventName {
         case "ready":
+            resetRecord()
             return .ready
         case "heartbeat":
+            resetRecord()
             return .activity
         case "terminal.frame":
             let payload = dataLines.joined(separator: "\n")
-            guard let data = payload.data(using: .utf8),
-                  let frame = try? decoder.decode(TerminalFrame.self, from: data)
-            else { throw APIError.invalidResponse }
+            guard let data = payload.data(using: .utf8) else {
+                if force { resetRecord(); throw APIError.invalidResponse }
+                return nil
+            }
+            guard let frame = try? decoder.decode(TerminalFrame.self, from: data) else {
+                if force { resetRecord(); throw APIError.invalidResponse }
+                return nil
+            }
+            resetRecord()
             return .frame(frame)
         case "terminal.error", "terminal.closed":
+            resetRecord()
             throw APIError.streamEnded
         default:
+            if force { resetRecord() }
             return nil
         }
+    }
+
+    private mutating func resetRecord() {
+        eventName = "message"
+        dataLines.removeAll(keepingCapacity: true)
+    }
+}
+
+struct HerdrSSEParser {
+    private var eventName = "message"
+    private var dataLines: [String] = []
+    private let decoder = JSONDecoder()
+
+    mutating func consume(line: String) -> HerdrEvent? {
+        if line.hasPrefix(":") { return nil }
+        if line.hasPrefix("event:") {
+            eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            return nil
+        }
+        if line.hasPrefix("data:") {
+            dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            return dispatchIfComplete(force: false)
+        }
+        guard line.isEmpty else { return nil }
+        return dispatchIfComplete(force: true)
+    }
+
+    private mutating func dispatchIfComplete(force: Bool) -> HerdrEvent? {
+        guard !dataLines.isEmpty,
+              let data = dataLines.joined(separator: "\n").data(using: .utf8)
+        else {
+            if force { resetRecord() }
+            return nil
+        }
+        if let event = try? decoder.decode(HerdrEvent.self, from: data) {
+            resetRecord()
+            return event
+        }
+        if let value = try? decoder.decode(JSONValue.self, from: data) {
+            let event = HerdrEvent(event: eventName, data: value)
+            resetRecord()
+            return event
+        }
+        if force { resetRecord() }
+        return nil
+    }
+
+    private mutating func resetRecord() {
+        eventName = "message"
+        dataLines.removeAll(keepingCapacity: true)
     }
 }
 

@@ -18,6 +18,7 @@ struct HerdrHapticTests {
         #expect(HerdrHaptic.transcriptionStarted.feedback == .start)
         #expect(HerdrHaptic.transcriptionSucceeded.feedback == .success)
         #expect(HerdrHaptic.attention.feedback == .warning)
+        #expect(HerdrHaptic.stopped.feedback == .stop)
         #expect(HerdrHaptic.completed.feedback == .success)
         #expect(HerdrHaptic.failed.feedback == .error)
     }

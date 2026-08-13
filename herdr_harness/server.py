@@ -17,6 +17,7 @@ from typing import Any, Optional
 from . import attachments, voice
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
+from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError
 from .service import HerdrService
 from .terminal import TerminalObserverError
 from .workspace_tools import WorkspaceToolError
@@ -219,6 +220,8 @@ def api_description() -> dict:
             "events": "/api/v1/events",
             "paneOutput": "/api/v1/panes/{paneId}/output",
             "paneStream": "/api/v1/panes/{paneId}/stream",
+            "piSnapshot": "/api/v1/panes/{paneId}/pi/snapshot",
+            "piEvents": "/api/v1/panes/{paneId}/pi/events",
             "alerts": "/api/v1/alerts",
             "pushStatus": "/api/v1/push/status",
             "liveActivities": "/api/v1/live-activities",
@@ -232,6 +235,8 @@ def api_description() -> dict:
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
             "POST /api/v1/panes/{paneId}/focus|split|send-text|send-keys|run|prompt|start-agent",
+            "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort",
+            "POST /api/v1/panes/{paneId}/pi/interactions/{interactionId}/respond",
             "POST /api/v1/alerts/{alertId}/read",
             "POST /api/v1/alerts/read-all",
             "POST /api/v1/push/devices|unregister",
@@ -386,6 +391,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(_herdr_status(exc), exc.code, str(exc))
             except TerminalObserverError as exc:
                 self._error(503, "terminal_observer_unavailable", str(exc))
+            except PiSemanticError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except WorkspaceToolError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except attachments.AttachmentError as exc:
@@ -497,6 +504,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 )
             if method == "GET" and tail == ["events"]:
                 self._serve_events(query)
+                return None
+            if method == "GET" and len(tail) == 4 and tail[0] == "panes" and tail[2:] == ["pi", "snapshot"]:
+                return service.pi_snapshot_response(_identifier(tail[1], "pane ID"))
+            if method == "GET" and len(tail) == 4 and tail[0] == "panes" and tail[2:] == ["pi", "events"]:
+                self._serve_pi_events(_identifier(tail[1], "pane ID"), query)
                 return None
             if method == "GET" and tail == ["alerts"]:
                 unread = _query_bool(query, "unread", False)
@@ -629,6 +641,40 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         return self._prompt(pane_id, body)
                     if action in {"start-agent", "agents"}:
                         return self._start_agent(pane_id, body)
+                if len(tail) >= 4 and tail[2] == "pi":
+                    pi_action = tail[3]
+                    if method == "POST" and len(tail) == 4 and pi_action in {
+                        "prompt",
+                        "steer",
+                        "follow-up",
+                        "abort",
+                    }:
+                        payload: dict[str, Any] = {}
+                        if pi_action != "abort":
+                            payload["text"] = _string(body.get("text"), "text", maximum=131072)
+                        return service.pi_command(pane_id, pi_action.replace("-", "_"), payload)
+                    if (
+                        method == "POST"
+                        and len(tail) == 6
+                        and pi_action == "interactions"
+                        and tail[5] == "respond"
+                    ):
+                        interaction_id = _identifier(tail[4], "interaction ID")
+                        allowed = {"value", "confirmed", "cancelled"}
+                        if any(key not in allowed for key in body):
+                            raise HTTPValidationError("interaction response contains an unsupported field")
+                        if "value" in body:
+                            value = body["value"]
+                            if not isinstance(value, str) or len(value) > 131072 or "\x00" in value:
+                                raise HTTPValidationError("interaction value is invalid")
+                        for key in ("confirmed", "cancelled"):
+                            if key in body and not isinstance(body[key], bool):
+                                raise HTTPValidationError(f"{key} must be a boolean")
+                        return service.pi_command(
+                            pane_id,
+                            "interaction_response",
+                            {"interactionId": interaction_id, **body},
+                        )
             if method == "POST" and len(tail) == 3 and tail[0] == "agents" and tail[2] == "prompt":
                 return self._prompt(_identifier(tail[1], "agent target"), body)
             if method == "POST" and tail == ["alerts", "read-all"]:
@@ -827,6 +873,89 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             finally:
                 observer.close()
                 service.release_terminal_observer()
+
+        def _serve_pi_events(self, pane_id: str, query: dict[str, list[str]]) -> None:
+            # Validate availability and pane identity before committing an SSE
+            # response. A disconnected bridge may still have a useful durable
+            # snapshot, so snapshot_response intentionally permits that state.
+            service.pi_snapshot_response(pane_id)
+            raw_id = self.headers.get("Last-Event-ID") or (query.get("after") or ["0"])[0]
+            try:
+                last_id = max(0, int(raw_id))
+            except (TypeError, ValueError) as exc:
+                raise HTTPValidationError("Last-Event-ID must be an integer") from exc
+            once = _query_bool(query, "once", False)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self._common_headers()
+            self.end_headers()
+
+            oldest_id, latest_id = service.pi_semantic.bounds(pane_id)
+            pi_snapshot = service.pi_snapshot_response(pane_id)
+            reset_reason = None
+            if last_id > latest_id:
+                reset_reason = "backend_restarted"
+                last_id = latest_id
+            elif last_id and last_id < oldest_id - 1:
+                reset_reason = "replay_gap"
+                last_id = oldest_id - 1
+            ready = {
+                "protocol": PI_SEMANTIC_PROTOCOL,
+                "pane_id": pane_id,
+                # This is the cursor already represented by the client. Using
+                # latest_id here could make a disconnect after `ready` skip
+                # journal events that have not been sent yet.
+                "cursor": last_id,
+                "latest_cursor": latest_id,
+                "oldest_cursor": oldest_id,
+                "connected": bool(pi_snapshot.get("connected")),
+                "event": {
+                    "type": "ready",
+                    "connected": bool(pi_snapshot.get("connected")),
+                },
+                "generated_at": utc_now(),
+            }
+            self.wfile.write(b"retry: 1000\n")
+            self.wfile.write(
+                f"event: pi.ready\ndata: {json.dumps(ready, separators=(',', ':'))}\n\n".encode("utf-8")
+            )
+            if reset_reason:
+                reset = {
+                    "protocol": PI_SEMANTIC_PROTOCOL,
+                    "pane_id": pane_id,
+                    "cursor": latest_id,
+                    "event": {
+                        "type": "stream.reset",
+                        "reason": reset_reason,
+                        "resumeAfter": last_id,
+                    },
+                    "generated_at": utc_now(),
+                }
+                self.wfile.write(
+                    f"event: pi.stream.reset\ndata: {json.dumps(reset, separators=(',', ':'))}\n\n".encode("utf-8")
+                )
+            self.wfile.flush()
+            if once:
+                self.close_connection = True
+                return
+            while True:
+                events = service.pi_semantic.wait_after(pane_id, last_id, timeout=15.0)
+                if not events:
+                    self.wfile.write(f": heartbeat {utc_now()}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    continue
+                for item in events:
+                    event = item.get("event") if isinstance(item.get("event"), dict) else {}
+                    event_type = _EVENT_NAME_RE.sub("_", str(event.get("type") or "event"))
+                    cursor = int(item.get("cursor") or last_id)
+                    payload = json.dumps(item, separators=(",", ":"), ensure_ascii=False)
+                    self.wfile.write(
+                        f"id: {cursor}\nevent: pi.{event_type}\ndata: {payload}\n\n".encode("utf-8")
+                    )
+                    self.wfile.flush()
+                    last_id = max(last_id, cursor)
 
         def do_OPTIONS(self) -> None:
             self.send_response(204)

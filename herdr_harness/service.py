@@ -17,6 +17,7 @@ from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
+from .pi_semantic import PiSemanticManager
 from .push_notifications import APNsManager
 from .terminal import TerminalObserver, TerminalObserverError
 
@@ -51,14 +52,21 @@ class HerdrService:
         push: Optional[APNsManager] = None,
         environ: Optional[Mapping[str, str]] = None,
         tools: Optional[cmux_tools.CmuxToolsClient] = None,
+        pi_semantic: Optional[PiSemanticManager] = None,
     ) -> None:
-        self.environ = dict(os.environ if environ is None else environ)
+        production_environment = environ is None
+        self.environ = dict(os.environ if production_environment else environ)
         self.client = client or HerdrClient(environ=self.environ)
         self.cmux_tools = tools or cmux_tools.CmuxToolsClient(environ=self.environ)
         alert_store_path = self.environ.get("HERDR_HARNESS_ALERT_STORE_PATH") or None
         self.alerts = alerts or AlertStore(store_path=alert_store_path)
         self.broker = broker or EventBroker()
         self.push = push or APNsManager(environ=self.environ)
+        self.pi_semantic = pi_semantic or PiSemanticManager(
+            self.client.socket_path,
+            environ=None if production_environment else self.environ,
+            on_event=self._publish_pi_event,
+        )
         self._lock = threading.RLock()
         self._snapshot: Optional[dict] = None
         self._generated_at: Optional[str] = None
@@ -146,6 +154,7 @@ class HerdrService:
             self.refresh_snapshot()
         except HerdrClientError:
             pass
+        self.pi_semantic.start()
         self._event_thread = threading.Thread(
             target=self._event_loop,
             name="herdr-events",
@@ -163,6 +172,7 @@ class HerdrService:
         self._stop_event.set()
         self._refresh_event.set()
         self._restart_subscription.set()
+        self.pi_semantic.stop()
         for thread in (
             self._event_thread,
             self._refresh_thread,
@@ -171,6 +181,14 @@ class HerdrService:
                 thread.join(timeout=2.0)
         with self._lock:
             self._started = False
+        close_pi = getattr(self.pi_semantic, "close", None)
+        if callable(close_pi):
+            close_pi()
+
+    def _publish_pi_event(self, envelope: dict) -> None:
+        event = envelope.get("event") if isinstance(envelope, dict) else None
+        event_type = str(event.get("type") or "event") if isinstance(event, dict) else "event"
+        self.broker.publish(f"pi.{event_type}", envelope)
 
     def refresh_snapshot(self) -> dict:
         try:
@@ -201,6 +219,7 @@ class HerdrService:
             self._request_connected = True
             if self._events_connected:
                 self._last_error = None
+        self.pi_semantic.sync_snapshot(snapshot)
         if had_snapshot and previous_pane_ids != current_pane_ids:
             # Rebuild pane-specific status subscriptions only after the cache
             # contains the new topology.
@@ -298,16 +317,29 @@ class HerdrService:
 
     def snapshot_response(self) -> dict:
         snapshot, generated_at = self._cached_snapshot()
-        return {"ok": True, "snapshot": snapshot, "generatedAt": generated_at}
+        return {
+            "ok": True,
+            "snapshot": self.pi_semantic.enrich_snapshot(snapshot),
+            "generatedAt": generated_at,
+        }
 
     def workspaces_response(self) -> dict:
         snapshot, generated_at = self._cached_snapshot()
         return {
             "ok": True,
-            "workspaces": composite_workspaces(snapshot),
+            "workspaces": self.pi_semantic.enrich_workspaces(
+                snapshot,
+                composite_workspaces(snapshot),
+            ),
             "alerts": self.alerts.list(limit=100),
             "generatedAt": generated_at,
         }
+
+    def pi_snapshot_response(self, pane_id: str) -> dict:
+        return self.pi_semantic.snapshot_response(pane_id)
+
+    def pi_command(self, pane_id: str, command: str, payload: Optional[dict] = None) -> dict:
+        return self.pi_semantic.command(pane_id, command, payload)
 
     def workspace_response(self, workspace_id: str) -> Optional[dict]:
         response = self.workspaces_response()

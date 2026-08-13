@@ -17,6 +17,7 @@ enum HerdrHaptic: Equatable, Sendable {
     case transcriptionStarted
     case transcriptionSucceeded
     case attention
+    case stopped
     case completed
     case failed
 
@@ -38,7 +39,7 @@ enum HerdrHaptic: Equatable, Sendable {
             .decrease
         case .recordingStarted, .transcriptionStarted:
             .start
-        case .recordingStopped:
+        case .recordingStopped, .stopped:
             .stop
         case .attention:
             .warning

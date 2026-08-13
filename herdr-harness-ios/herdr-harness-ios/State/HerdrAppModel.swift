@@ -42,15 +42,25 @@ final class HerdrAppModel {
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         let defaults = UserDefaults.standard
         let forcedDemo = arguments.contains("-HerdrDemoMode")
+        #if DEBUG
+        let uiTestServerURL = Self.launchArgumentValue("-HerdrUITestServerURL", in: arguments)
+        let uiTestToken = Self.launchArgumentValue("-HerdrUITestAPIToken", in: arguments)
+            ?? Self.launchArgumentValue("-HerdrUITestToken", in: arguments)
+            ?? ""
+        #else
+        let uiTestServerURL: String? = nil
+        let uiTestToken = ""
+        #endif
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
-        let storedURLString = defaults.string(forKey: "herdr.serverURL")
+        let storedURLString = uiTestServerURL
+            ?? defaults.string(forKey: "herdr.serverURL")
             ?? bundledURL?.nonEmpty
             ?? "http://localhost:9092"
-        let storedToken = KeychainStore.value(for: "api-token")
+        let storedToken = uiTestServerURL == nil ? KeychainStore.value(for: "api-token") : uiTestToken
         serverURLString = storedURLString
         apiToken = storedToken
-        isDemoMode = forcedDemo || defaults.bool(forKey: "herdr.demoMode")
-        hasCompletedSetup = forcedDemo || defaults.bool(forKey: "herdr.completedSetup")
+        isDemoMode = uiTestServerURL == nil && (forcedDemo || defaults.bool(forKey: "herdr.demoMode"))
+        hasCompletedSetup = forcedDemo || uiTestServerURL != nil || defaults.bool(forKey: "herdr.completedSetup")
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
 
@@ -186,7 +196,7 @@ final class HerdrAppModel {
                 for try await event in await client.events() {
                     try Task.checkCancellation()
                     guard generation == connectionGeneration else { return }
-                    if event.event == "snapshot.updated" {
+                    if event.event == "snapshot.updated" || Self.piCapabilityEvents.contains(event.event) {
                         try await refresh(
                             using: client,
                             showSpinner: false,
@@ -411,6 +421,58 @@ final class HerdrAppModel {
     func terminalEvents(for pane: HerdrPane) async -> AsyncThrowingStream<TerminalStreamEvent, any Error>? {
         guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else { return nil }
         return await client.terminalEvents(paneID: pane.id)
+    }
+
+    func fetchPiConversationSnapshot(for pane: HerdrPane) async throws -> PiConversationSnapshot {
+        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        return try await client.fetchPiConversationSnapshot(paneID: pane.id)
+    }
+
+    func piConversationEvents(
+        for pane: HerdrPane,
+        after cursor: String?
+    ) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>? {
+        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else { return nil }
+        return await client.piConversationEvents(paneID: pane.id, after: cursor)
+    }
+
+    func sendPiConversationPrompt(
+        _ text: String,
+        disposition: PiPromptDisposition,
+        to pane: HerdrPane
+    ) async throws {
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty,
+              !isDemoMode,
+              canControl,
+              self.pane(id: pane.id) != nil,
+              let client
+        else { throw APIError.invalidResponse }
+        try await client.sendPiPrompt(paneID: pane.id, text: prompt, disposition: disposition)
+    }
+
+    func abortPiConversation(for pane: HerdrPane) async throws {
+        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        try await client.abortPiConversation(paneID: pane.id)
+    }
+
+    func respondToPiInteraction(
+        id: String,
+        response: PiInteractionResponseBody,
+        in pane: HerdrPane
+    ) async throws {
+        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        try await client.respondToPiInteraction(
+            paneID: pane.id,
+            interactionID: id,
+            response: response
+        )
     }
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
@@ -717,6 +779,25 @@ final class HerdrAppModel {
         case .active: workspace.workingCount > 0
         }
     }
+
+    private static func launchArgumentValue(_ name: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        let value = arguments[index + 1]
+        return value.hasPrefix("-") ? nil : value
+    }
+
+    /// Pi can attach its semantic socket after the pane already exists. These
+    /// lifecycle events are the points where workspace capability metadata can
+    /// change, so refresh topology without doing so for every streamed token.
+    private static let piCapabilityEvents: Set<String> = [
+        "pi.bridge.connection",
+        "pi.session_start",
+        "pi.session_shutdown",
+        "pi.session_info_changed",
+        "pi.session_tree",
+    ]
 
     private func matchesSearch(_ workspace: HerdrWorkspace) -> Bool {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)

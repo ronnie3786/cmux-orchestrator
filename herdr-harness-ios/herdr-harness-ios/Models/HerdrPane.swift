@@ -18,6 +18,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     let terminalTitleStripped: String?
     let stateLabels: [String: String]
     let tokens: [String: String]
+    let piSemantic: PiSemanticCapability?
 
     var id: String { paneID }
 
@@ -39,6 +40,10 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         foregroundCWD ?? cwd ?? ""
     }
 
+    var supportsPiSemanticChat: Bool {
+        piSemantic?.available == true && piSemantic?.protocolVersion == 1
+    }
+
     enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
         case terminalID = "terminal_id"
@@ -57,6 +62,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         case terminalTitleStripped = "terminal_title_stripped"
         case stateLabels = "state_labels"
         case tokens
+        case piSemantic = "pi_semantic"
     }
 
     init(from decoder: Decoder) throws {
@@ -78,6 +84,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         terminalTitleStripped = try container.decodeIfPresent(String.self, forKey: .terminalTitleStripped)
         stateLabels = try container.decodeIfPresent([String: String].self, forKey: .stateLabels) ?? [:]
         tokens = try container.decodeIfPresent([String: String].self, forKey: .tokens) ?? [:]
+        piSemantic = try container.decodeIfPresent(PiSemanticCapability.self, forKey: .piSemantic)
     }
 
     init(
@@ -97,7 +104,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         terminalTitle: String?,
         terminalTitleStripped: String?,
         stateLabels: [String: String] = [:],
-        tokens: [String: String] = [:]
+        tokens: [String: String] = [:],
+        piSemantic: PiSemanticCapability? = nil
     ) {
         self.paneID = paneID
         self.terminalID = terminalID
@@ -116,5 +124,6 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.terminalTitleStripped = terminalTitleStripped
         self.stateLabels = stateLabels
         self.tokens = tokens
+        self.piSemantic = piSemantic
     }
 }

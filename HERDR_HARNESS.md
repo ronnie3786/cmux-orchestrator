@@ -20,7 +20,7 @@ navigate. Blocked agents and unseen completed work rise above active and idle
 sessions. The iPhone layout uses typed stack navigation, while iPad uses a
 balanced three-column split view.
 
-Three extra capabilities go beyond the cmux version:
+Four extra capabilities go beyond the cmux version:
 
 1. **Attention Deck:** transition-aware blocked and done alerts, ranked panes,
    unread state, deep navigation from notifications, and optional APNs.
@@ -28,6 +28,10 @@ Three extra capabilities go beyond the cmux version:
    layout rectangles and split geometry.
 3. **Command Lens:** status-aware prompt suggestions, an agent-aware composer,
    and a compact Esc, arrow, Tab, and Ctrl-C key deck.
+4. **Native Pi Chat:** a semantic projection of a live Pi session with native
+   message turns, collapsed thinking, structured tool cards, streaming status,
+   and prompt, steer, follow-up, and stop controls. The stock Pi TUI keeps
+   running in the same pane and remains available as a sibling Terminal view.
 
 The selected terminal consumes Herdr's base64 ANSI full and delta frames
 directly. A bounded Swift terminal grid applies cursor movement, erasure,
@@ -50,6 +54,9 @@ operation to cmux on the same Mac.
 - `herdr_harness/`: native Herdr socket adapter, cached model, REST API, SSE,
   terminal observer bridge, alert journal, network discovery, and optional
   APNs.
+- `pi-semantic-bridge/`: an optional Pi extension that publishes semantic
+  lifecycle events through a private, pane-scoped Unix socket without replacing
+  or parsing Pi's TUI.
 - `scripts/setup_herdr_demo.py`: repeatable fixture topology with optional real
   agents.
 
@@ -108,6 +115,15 @@ and authenticated with an account that has available provider quota:
 ```bash
 command -v codex
 codex --version
+```
+
+A native Pi chat fixture requires Pi 0.83 or newer. The extension can be loaded
+for one session directly from this checkout, so verification does not require a
+global Pi install or settings change:
+
+```bash
+command -v pi
+pi --version
 ```
 
 The auxiliary Git, Skills, Files, Jira, and attachment screens require the
@@ -173,6 +189,23 @@ Starting an agent can consume provider quota. Codex may ask to review the hook
 installed by the integration command. Review it before deciding whether to
 trust it. Herdr can still detect the process through its screen manifest when
 the hook is not trusted.
+
+To start one real Pi session with native Chat while preserving its ordinary TUI,
+choose an owned fixture pane and load the repository extension explicitly:
+
+```bash
+herdr --session herdr-ios-fixtures agent start mobile-pi \
+  --kind pi \
+  --pane <pane-id> \
+  --timeout 60000 \
+  -- \
+  --extension "$PWD/pi-semantic-bridge"
+```
+
+This starts one Pi process with two projections. Pi continues to draw and accept
+input in its stock TUI. The extension only mirrors typed semantic events to the
+harness, and the iOS pane screen offers native Chat and Terminal as sibling
+modes. It never starts a second Pi runtime against the same session.
 
 Verify the native state at any time:
 
@@ -300,6 +333,9 @@ is intentionally public and contains no session data.
 - `GET /api/v1/events` for replayable topology and lifecycle SSE
 - `GET /api/v1/panes/{id}/output` for text or ANSI snapshots
 - `GET /api/v1/panes/{id}/stream` for live terminal-frame SSE
+- `GET /api/v1/panes/{id}/pi/snapshot` for authoritative Pi conversation state
+- `GET /api/v1/panes/{id}/pi/events` for cursor-replayable Pi semantic SSE
+- `POST /api/v1/panes/{id}/pi/prompt`, `/steer`, `/follow-up`, and `/abort`
 - Workspace and tab create, rename, focus, and close operations
 - Pane split, rename, focus, close, text, key, and command operations
 - `POST /api/v1/panes/{id}/prompt` and `/start-agent`
@@ -351,6 +387,7 @@ python3 -m unittest -v \
   tests.test_herdr_client \
   tests.test_herdr_service \
   tests.test_herdr_push \
+  tests.test_pi_semantic \
   tests.test_herdr_http \
   tests.test_herdr_network
 ```
@@ -368,9 +405,12 @@ xcodebuild \
 ```
 
 The UI smoke test drills from a ranked workspace into its pane list and then
-into the live-session composer. Unit tests cover native JSON decoding,
-forward-compatible fields, attention ordering, fixture integrity, terminal
-full and delta frames, output variants, alerts, secure URL validation, and demo
+into the live-session composer. Native Pi verification also covers real prompt,
+thinking, tool success, tool failure, steer, follow-up, stop, reconnect, and
+offline transcript flows while the same process remains visible in Terminal.
+Unit tests cover native JSON decoding, forward-compatible fields, attention
+ordering, fixture integrity, terminal full and delta frames, Pi semantic
+reduction and replay, output variants, alerts, secure URL validation, and demo
 actions.
 
 ## Security notes
@@ -384,6 +424,12 @@ actions.
 - Backend mutation inputs are bounded and validated before native Herdr calls.
 - Terminal observation is read-only. Input always uses explicit action routes.
 - Terminal observers are concurrency-limited and periodically renewed.
+- Pi semantic sockets live in a bridge-owned mode-`0700` directory, use
+  mode-`0600`, and are independently checked for type, owner, and permissions.
+- Pi system prompts, provider signatures, and cumulative provider internals are
+  not copied into the semantic journal or iOS stream.
+- Pi transcript checkpoints and replay cursors are scoped to the selected Herdr
+  session, bounded on disk, and retained for offline read-only history.
 
 ## Troubleshooting
 
@@ -424,6 +470,15 @@ Topology updates or terminal frames appear stale:
   `eventsConnected` should be true.
 - Move the app to the foreground or reopen the pane to trigger a bounded SSE
   reconnect. The last good terminal frame remains visible during recovery.
+
+Native Pi Chat is unavailable or read-only:
+
+- Confirm the pane is running Pi with `--extension "$PWD/pi-semantic-bridge"`.
+- Open Terminal mode to confirm the ordinary Pi TUI is still responsive.
+- Check `GET /api/v1/panes/{id}/pi/snapshot`; `available` may remain true for an
+  offline retained transcript, while `connected` must be true to send commands.
+- Restarting the harness does not require restarting Pi. The bridge reconnects
+  and publishes an authoritative active-branch snapshot.
 
 Alert history cannot persist:
 

@@ -10,10 +10,19 @@ from herdr_harness.server import make_server
 from herdr_harness.workspace_tools import WorkspaceToolError
 
 
+class FakePiSemantic:
+    def bounds(self, _pane_id):
+        return (1, 2)
+
+    def wait_after(self, _pane_id, _cursor, timeout=15.0):
+        return []
+
+
 class FakeHTTPService:
     def __init__(self):
         self.environ = {}
         self.broker = EventBroker()
+        self.pi_semantic = FakePiSemantic()
         self.calls = []
         self.snapshot = {
             "version": "0.8.0",
@@ -102,6 +111,28 @@ class FakeHTTPService:
     def read_pane(self, pane_id, **options):
         self.calls.append(("pane.read", {"pane_id": pane_id, **options}))
         return {"ok": True, "output": {"pane_id": pane_id, "text": "hello", "future": 1}, "result": {}}
+
+    def pi_snapshot_response(self, pane_id):
+        self.calls.append(("pi.snapshot", {"pane_id": pane_id}))
+        return {
+            "ok": True,
+            "protocol": {"name": "herdr.pi.semantic", "version": 1},
+            "pane_id": pane_id,
+            "available": True,
+            "connected": False,
+            "session": {"id": "pi-session"},
+            "state": {"idle": True},
+            "entries": [{"id": "entry-1", "parentId": None}],
+            "pending_interactions": [],
+            "cursor": 2,
+            "oldest_cursor": 1,
+            "truncated": False,
+            "generated_at": "now",
+        }
+
+    def pi_command(self, pane_id, command, payload=None):
+        self.calls.append((f"pi.{command}", {"pane_id": pane_id, "payload": payload or {}}))
+        return {"ok": True, "success": True, "result": {"accepted": True}}
 
     def list_alerts(self, **_options):
         return {"ok": True, "alerts": [{"id": "alert_1", "isRead": False}], "unreadCount": 1}
@@ -374,6 +405,96 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("event: stream.reset", payload)
         self.assertIn("backend_restarted", payload)
+
+    def test_pi_snapshot_and_command_routes_preserve_the_semantic_contract(self):
+        snapshot_status, _, snapshot = self.request("/api/v1/panes/w1:p1/pi/snapshot")
+        prompt_status, _, prompt = self.request(
+            "/api/v1/panes/w1:p1/pi/prompt",
+            method="POST",
+            payload={"text": "Fix the tests"},
+        )
+        follow_status, _, _ = self.request(
+            "/api/v1/panes/w1:p1/pi/follow-up",
+            method="POST",
+            payload={"text": "Then review it"},
+        )
+        abort_status, _, _ = self.request(
+            "/api/v1/panes/w1:p1/pi/abort",
+            method="POST",
+            payload={},
+        )
+
+        self.assertEqual(snapshot_status, 200)
+        self.assertEqual(snapshot["protocol"], {"name": "herdr.pi.semantic", "version": 1})
+        self.assertEqual(snapshot["entries"][0]["id"], "entry-1")
+        self.assertFalse(snapshot["connected"])
+        self.assertEqual(prompt_status, 200)
+        self.assertTrue(prompt["success"])
+        self.assertEqual(follow_status, 200)
+        self.assertEqual(abort_status, 200)
+        self.assertIn(("pi.prompt", {"pane_id": "w1:p1", "payload": {"text": "Fix the tests"}}), self.service.calls)
+        self.assertIn(("pi.follow_up", {"pane_id": "w1:p1", "payload": {"text": "Then review it"}}), self.service.calls)
+        self.assertIn(("pi.abort", {"pane_id": "w1:p1", "payload": {}}), self.service.calls)
+
+    def test_pi_interaction_response_is_bounded_and_forwarded(self):
+        valid_status, _, _ = self.request(
+            "/api/v1/panes/w1:p1/pi/interactions/ui-1/respond",
+            method="POST",
+            payload={"value": "Staging", "confirmed": True},
+        )
+        invalid_status, _, invalid = self.request(
+            "/api/v1/panes/w1:p1/pi/interactions/ui-1/respond",
+            method="POST",
+            payload={"raw": {"unbounded": True}},
+        )
+
+        self.assertEqual(valid_status, 200)
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid["error"]["code"], "invalid_request")
+        self.assertIn(
+            (
+                "pi.interaction_response",
+                {
+                    "pane_id": "w1:p1",
+                    "payload": {"interactionId": "ui-1", "value": "Staging", "confirmed": True},
+                },
+            ),
+            self.service.calls,
+        )
+
+    def test_pi_sse_ready_reports_actual_bridge_connection_and_reset(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=2)
+        connection.request(
+            "GET",
+            "/api/v1/panes/w1:p1/pi/events?once=true&after=99",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        response = connection.getresponse()
+        payload = response.read().decode()
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("event: pi.ready", payload)
+        self.assertIn('"connected":false', payload)
+        self.assertIn("event: pi.stream.reset", payload)
+        self.assertIn("backend_restarted", payload)
+
+    def test_pi_sse_ready_cursor_does_not_jump_past_unreplayed_events(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=2)
+        connection.request(
+            "GET",
+            "/api/v1/panes/w1:p1/pi/events?once=true&after=1",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        response = connection.getresponse()
+        payload = response.read().decode()
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        ready_data = next(line.removeprefix("data: ") for line in payload.splitlines() if line.startswith("data: "))
+        ready = json.loads(ready_data)
+        self.assertEqual(ready["cursor"], 1)
+        self.assertEqual(ready["latest_cursor"], 2)
 
     def test_push_registration_and_unregistration_are_bearer_protected(self):
         token = "ab" * 32

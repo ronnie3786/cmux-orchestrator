@@ -11,7 +11,7 @@ struct PaneActionsMenu: View {
     var body: some View {
         Menu("Pane actions", systemImage: "ellipsis.circle") {
             Section("View") {
-                ForEach(PaneDetailMode.allCases) { mode in
+                ForEach(availableModes) { mode in
                     Button {
                         selectedMode = mode
                     } label: {
@@ -91,5 +91,10 @@ struct PaneActionsMenu: View {
         } message: {
             Text("This label is shared with Herdr on your Mac.")
         }
+        .accessibilityIdentifier("pane-mode-toggle")
+    }
+
+    private var availableModes: [PaneDetailMode] {
+        PaneDetailMode.allCases.filter { $0 != .chat || pane.supportsPiSemanticChat }
     }
 }

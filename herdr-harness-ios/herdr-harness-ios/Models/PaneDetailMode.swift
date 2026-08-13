@@ -1,6 +1,7 @@
 import Foundation
 
 enum PaneDetailMode: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
+    case chat
     case terminal
     case git
     case skills
@@ -9,6 +10,7 @@ enum PaneDetailMode: String, CaseIterable, Codable, Hashable, Identifiable, Send
 
     var label: String {
         switch self {
+        case .chat: "Chat"
         case .terminal: "Terminal"
         case .git: "Git"
         case .skills: "Skills"
@@ -17,6 +19,7 @@ enum PaneDetailMode: String, CaseIterable, Codable, Hashable, Identifiable, Send
 
     var symbol: String {
         switch self {
+        case .chat: "bubble.left.and.bubble.right"
         case .terminal: "terminal"
         case .git: "point.3.connected.trianglepath.dotted"
         case .skills: "wand.and.stars"

@@ -64,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
         "HERDR_HARNESS_ALERT_STORE_PATH",
         os.path.expanduser("~/.config/herdr-harness/alerts.json"),
     )
+    service_environ.setdefault(
+        "HERDR_HARNESS_PI_STORE_PATH",
+        os.path.expanduser("~/.config/herdr-harness/pi-semantic.sqlite3"),
+    )
     service = HerdrService(client, environ=service_environ)
     service.start()
     server = make_server(service, host=args.host, port=args.port)

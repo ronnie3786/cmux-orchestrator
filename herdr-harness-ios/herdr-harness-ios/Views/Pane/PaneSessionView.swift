@@ -5,6 +5,7 @@ struct PaneSessionView: View {
     let pane: HerdrPane
     let hidesAppTabBar: Bool
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var output = "Connecting to terminal…"
     @State private var snapshotRevision = 0
     @State private var snapshotFrameSequence = 0
@@ -19,6 +20,8 @@ struct PaneSessionView: View {
     @State private var isManuallyRefreshing = false
     @State private var outputError: String?
     @State private var selectedMode: PaneDetailMode = .terminal
+    @State private var piConversationStore = PiConversationStore()
+    @State private var didAutoSelectChat = false
     @State private var composerDraft = ""
     @State private var composerAttachments: [TerminalAttachment] = []
     @State private var composerFocusRequest = 0
@@ -30,13 +33,14 @@ struct PaneSessionView: View {
             VStack(spacing: 0) {
                 modeContent
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)
         }
         .navigationTitle(currentPane.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(hidesAppTabBar ? .hidden : .automatic, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                PaneActionsMenu(model: model, pane: currentPane, selectedMode: $selectedMode)
+                PaneActionsMenu(model: model, pane: currentPane, selectedMode: modeSelection)
             }
         }
         .task(id: followTaskID) {
@@ -52,9 +56,33 @@ struct PaneSessionView: View {
             defer { isManuallyRefreshing = false }
             await refreshOutput(forceSnapshot: terminalSource != .stream)
         }
+        .task(id: piChatTaskID) {
+            guard scenePhase == .active,
+                  selectedMode == .chat,
+                  currentPane.supportsPiSemanticChat
+            else { return }
+            await piConversationStore.follow(model: model, pane: currentPane)
+        }
+        .onAppear {
+            autoSelectChatIfNeeded()
+        }
+        .onChange(of: currentPane.supportsPiSemanticChat) { _, supportsChat in
+            if supportsChat {
+                autoSelectChatIfNeeded()
+            } else if selectedMode == .chat {
+                selectedMode = .terminal
+            }
+        }
         .onChange(of: pane.id) { oldPaneID, newPaneID in
             guard oldPaneID != newPaneID else { return }
             discardComposerState()
+            piConversationStore.reset()
+            didAutoSelectChat = false
+            if currentPane.supportsPiSemanticChat {
+                autoSelectChatIfNeeded()
+            } else {
+                selectedMode = .terminal
+            }
         }
         .onDisappear {
             composerAttachments.forEach { $0.removeSourceFileIfOwned() }
@@ -77,9 +105,26 @@ struct PaneSessionView: View {
         model.pane(id: pane.id) ?? pane
     }
 
+    private var modeSelection: Binding<PaneDetailMode> {
+        Binding(
+            get: { selectedMode },
+            set: { mode in
+                selectedMode = mode
+                if mode == .terminal { didAutoSelectChat = true }
+            }
+        )
+    }
+
     @ViewBuilder
     private var modeContent: some View {
         switch selectedMode {
+        case .chat:
+            if currentPane.supportsPiSemanticChat {
+                PiChatView(model: model, store: piConversationStore, pane: currentPane)
+                    .transition(.opacity)
+            } else {
+                unavailableMode("Chat", systemImage: "bubble.left.and.bubble.right")
+            }
         case .terminal:
             terminalContent
         case .git:
@@ -172,12 +217,25 @@ struct PaneSessionView: View {
         composerFocusRequest = 0
     }
 
+    private func autoSelectChatIfNeeded() {
+        guard !didAutoSelectChat,
+              selectedMode == .terminal,
+              currentPane.supportsPiSemanticChat
+        else { return }
+        didAutoSelectChat = true
+        selectedMode = .chat
+    }
+
     private var followTaskID: String {
         "\(pane.id):\(model.connectionGeneration):\(scenePhase == .active)"
     }
 
     private var manualRefreshTaskID: String {
         "\(followTaskID):refresh:\(manualRefreshGeneration)"
+    }
+
+    private var piChatTaskID: String {
+        "\(pane.id):pi-chat:\(model.connectionGeneration):\(scenePhase == .active):\(selectedMode.rawValue)"
     }
 
     private func followOutput() async {

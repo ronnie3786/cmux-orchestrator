@@ -157,8 +157,8 @@ struct TerminalGridHardeningTests {
         var parser = TerminalSSEParser()
 
         #expect(try parser.consume(line: "event: ready") == nil)
-        #expect(try parser.consume(line: "data: {\"paneId\":\"w1:p1\"}") == nil)
-        #expect(try parser.consume(line: "") == .ready)
+        #expect(try parser.consume(line: "data: {\"paneId\":\"w1:p1\"}") == .ready)
+        #expect(try parser.consume(line: "") == nil)
         #expect(try parser.consume(line: ": terminal heartbeat now") == .activity)
         #expect(try parser.consume(line: "") == nil)
 
@@ -166,13 +166,22 @@ struct TerminalGridHardeningTests {
         #expect(
             try parser.consume(
                 line: "data: {\"bytes\":\"aGk=\",\"encoding\":\"base64\",\"full\":true,\"height\":1,\"seq\":7,\"type\":\"terminal.frame\",\"width\":2}"
-            ) == nil
-        )
-        #expect(
-            try parser.consume(line: "") == .frame(
+            ) == .frame(
                 terminalFrame("hi", full: true, sequence: 7, width: 2, height: 1)
             )
         )
+        #expect(try parser.consume(line: "") == nil)
+    }
+
+    @Test("General SSE parser dispatches without an empty separator")
+    func generalSSEParsingWithoutBlankLine() {
+        var parser = HerdrSSEParser()
+        #expect(parser.consume(line: "event: pi.bridge.connection") == nil)
+        let event = parser.consume(
+            line: "data: {\"event\":\"pi.bridge.connection\",\"data\":{\"connected\":true}}"
+        )
+        #expect(event?.event == "pi.bridge.connection")
+        #expect(parser.consume(line: "") == nil)
     }
 
     private func terminalFrame(
