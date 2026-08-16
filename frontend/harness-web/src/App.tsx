@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Loader2, RefreshCw } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { getToken, setToken } from "./api/client";
-import { getStatus, type HarnessStatus } from "./api/endpoints";
+import { getFeed, getNotifications, getStatus } from "./api/endpoints";
+import { ConnectionBar } from "./components/ConnectionBar";
+import { Sidebar } from "./components/Sidebar";
+import { useConnectionStore } from "./store/connectionStore";
+import { useWorkspacesStore } from "./store/workspacesStore";
+import { paneDisplayName, sessionDisplayName, workspaceID } from "./lib/workspaceGroups";
 
-type ConnectionState =
-  | { status: "idle" }
-  | { status: "checking" }
-  | { status: "ok"; detail: HarnessStatus }
-  | { status: "error"; message: string };
+const POLL_INTERVAL_MS = 2_000;
 
 export default function App() {
   const [token, setStoredToken] = useState<string>(() => getToken());
   const [draft, setDraft] = useState("");
-  const [connection, setConnection] = useState<ConnectionState>({ status: "idle" });
 
   // One-time bootstrap: read #token=... from the URL fragment, store it, and
   // strip the fragment so the token never sits in the address bar.
@@ -29,6 +29,68 @@ export default function App() {
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
   }, []);
 
+  // Polling lifecycle: 2 s tick for /api/status + /api/notifications +
+  // /api/feed (iOS global refresh parity). Skipped while a tick is in flight
+  // (overlap guard) and while the tab is hidden; an immediate tick fires when
+  // the tab becomes visible again. Runs only while a token is stored.
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    let inFlight = false;
+    let disposed = false;
+
+    const tick = async () => {
+      if (disposed || inFlight || document.hidden) {
+        return;
+      }
+      if (useConnectionStore.getState().manualDisconnect) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const [statusResult, notificationsResult, feedResult] = await Promise.allSettled([
+          getStatus(),
+          getNotifications(),
+          getFeed(),
+        ]);
+        if (disposed) {
+          return;
+        }
+        const connection = useConnectionStore.getState();
+        const workspaces = useWorkspacesStore.getState();
+        if (statusResult.status === "fulfilled") {
+          connection.markStatus(statusResult.value);
+          workspaces.applyStatus(statusResult.value);
+        } else {
+          connection.markPollError(statusResult.reason instanceof Error ? statusResult.reason.message : "Poll failed");
+        }
+        if (notificationsResult.status === "fulfilled") {
+          workspaces.applyNotifications(notificationsResult.value);
+        }
+        if (feedResult.status === "fulfilled") {
+          workspaces.applyFeed(feedResult.value);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void tick();
+    const intervalId = setInterval(() => void tick(), POLL_INTERVAL_MS);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void tick();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      disposed = true;
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [token]);
+
   const saveToken = () => {
     const value = draft.trim();
     if (!value) {
@@ -37,26 +99,28 @@ export default function App() {
     setToken(value);
     setStoredToken(value);
     setDraft("");
-    setConnection({ status: "idle" });
-  };
-
-  const testConnection = async () => {
-    setConnection({ status: "checking" });
-    try {
-      const status = await getStatus();
-      setConnection({ status: "ok", detail: status });
-    } catch (error) {
-      setConnection({
-        status: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
   };
 
   const clearToken = () => {
     setToken("");
     setStoredToken("");
-    setConnection({ status: "idle" });
+    useWorkspacesStore.setState({
+      workspaces: [],
+      notifications: [],
+      feedItems: [],
+      lastUpdated: null,
+      hasReceivedStatus: false,
+      selectedGroupID: null,
+      selectedWorkspaceID: null,
+    });
+    useConnectionStore.setState({
+      connection: "checking",
+      lastUpdated: null,
+      errorMessage: null,
+      engineEnabled: null,
+      consecutivePollFailures: 0,
+      manualDisconnect: false,
+    });
   };
 
   if (!token) {
@@ -96,40 +160,35 @@ export default function App() {
   }
 
   return (
-    <main className="screen">
-      <section className="card">
-        <h1>Harness Web</h1>
-        <p className="connected">Connected to harness</p>
-        <button
-          type="button"
-          className="primary"
-          onClick={testConnection}
-          disabled={connection.status === "checking"}
-        >
-          {connection.status === "checking" ? (
-            <Loader2 size={16} className="spin" aria-hidden />
-          ) : (
-            <RefreshCw size={16} aria-hidden />
-          )}
-          Test connection
-        </button>
-        {connection.status === "ok" && (
-          <p className="result ok">
-            /api/status responded — {connection.detail.workspaces.length} workspace
-            {connection.detail.workspaces.length === 1 ? "" : "s"}, socket{" "}
-            {connection.detail.socketFound ? "found" : "missing"}.
-          </p>
-        )}
-        {connection.status === "error" && (
-          <div className="result error">
-            <p>{connection.message}</p>
-            <button type="button" className="ghost" onClick={clearToken}>
-              Change token
-            </button>
-          </div>
-        )}
-        <p className="hint">Real screens (sessions, terminal, Git) land in later phases.</p>
-      </section>
+    <div className="app">
+      <ConnectionBar onClearToken={clearToken} />
+      <Sidebar />
+      <DetailPane />
+    </div>
+  );
+}
+
+function DetailPane() {
+  const workspaces = useWorkspacesStore((state) => state.workspaces);
+  const selectedWorkspaceID = useWorkspacesStore((state) => state.selectedWorkspaceID);
+
+  const workspace = workspaces.find((candidate) => workspaceID(candidate) === selectedWorkspaceID);
+
+  if (!workspace) {
+    return (
+      <main className="detail">
+        <div className="detail-placeholder">Select a session</div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="detail">
+      <header className="detail-header">
+        <div className="detail-title">{sessionDisplayName(workspace)}</div>
+        <div className="detail-subtitle">{paneDisplayName(workspace)}</div>
+      </header>
+      <div className="detail-placeholder">Terminal, Git, and tools land in Phase 2.</div>
     </main>
   );
 }

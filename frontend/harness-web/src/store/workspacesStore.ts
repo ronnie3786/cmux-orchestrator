@@ -1,0 +1,183 @@
+/**
+ * Workspaces / notifications / feed store.
+ *
+ * Data flows in from the 2 s poll tick (App): applyStatus / applyNotifications /
+ * applyFeed. Selection follows iOS HarnessFeatureSessionReducer: selecting a
+ * session fires a fire-and-forget POST /api/push/clear, and marks the session's
+ * notifications read optimistically (confirmed by the API call, re-synced by
+ * the next poll).
+ */
+
+import { create } from "zustand";
+import {
+  clearPushApproval,
+  markNotificationsRead as apiMarkNotificationsRead,
+  starWorkspace,
+} from "../api/endpoints";
+import type {
+  CmuxNotification,
+  FeedItem,
+  FeedResponse,
+  HarnessStatus,
+  NotificationsResponse,
+  Workspace,
+} from "../api/types";
+import { sessionGroupID, unreadCountForWorkspace, workspaceID } from "../lib/workspaceGroups";
+import { useConnectionStore } from "./connectionStore";
+
+interface WorkspacesStoreState {
+  workspaces: Workspace[];
+  notifications: CmuxNotification[];
+  /** Pending feed items (approvals/questions) from /api/feed. */
+  feedItems: FeedItem[];
+  /** Epoch ms of the last successful status poll. */
+  lastUpdated: number | null;
+  hasReceivedStatus: boolean;
+  /** Selected session group (uuid). */
+  selectedGroupID: string | null;
+  /** Selected pane row id (uuid, or `uuid|surfaceId` for multi-surface rows). */
+  selectedWorkspaceID: string | null;
+
+  applyStatus: (status: HarnessStatus) => void;
+  applyNotifications: (response: NotificationsResponse) => void;
+  applyFeed: (response: FeedResponse) => void;
+  /** Select a session group (keeps the selected pane, else picks primary). */
+  selectGroup: (groupID: string) => void;
+  /** Select a specific pane row. */
+  selectWorkspace: (workspaceIDValue: string) => void;
+  /** Optimistic star toggle + POST /api/workspace-star. */
+  toggleStar: (index: number, starred: boolean) => void;
+  /** Optimistic mark-read + POST /api/notifications/read. */
+  markNotificationsRead: (workspaceId?: string | null, surfaceId?: string | null) => void;
+}
+
+function reportError(message: string): void {
+  useConnectionStore.setState({ errorMessage: message });
+}
+
+function pushWorkspaceID(workspace: Workspace): string {
+  if (workspace.surfaceId) {
+    return `${workspace.uuid}|${workspace.surfaceId}`;
+  }
+  return workspace.uuid;
+}
+
+function matchesNotification(
+  notification: CmuxNotification,
+  workspaceId?: string | null,
+  surfaceId?: string | null,
+): boolean {
+  const workspaceMatch = workspaceId != null && workspaceId !== "" && notification.workspace_id === workspaceId;
+  const surfaceMatch = surfaceId != null && surfaceId !== "" && notification.surface_id === surfaceId;
+  return workspaceMatch || surfaceMatch;
+}
+
+export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => ({
+  workspaces: [],
+  notifications: [],
+  feedItems: [],
+  lastUpdated: null,
+  hasReceivedStatus: false,
+  selectedGroupID: null,
+  selectedWorkspaceID: null,
+
+  applyStatus: (status: HarnessStatus) => {
+    const workspaces = status.workspaces ?? [];
+    const state = get();
+    // Stale selection: the selected row disappeared from status.
+    const selectionCleared =
+      state.selectedWorkspaceID != null &&
+      !workspaces.some((workspace) => workspaceID(workspace) === state.selectedWorkspaceID);
+    set({
+      workspaces,
+      lastUpdated: Date.now(),
+      hasReceivedStatus: true,
+      ...(selectionCleared ? { selectedGroupID: null, selectedWorkspaceID: null } : {}),
+    });
+  },
+
+  applyNotifications: (response: NotificationsResponse) => {
+    set({ notifications: response.notifications ?? [] });
+  },
+
+  applyFeed: (response: FeedResponse) => {
+    set({ feedItems: response.items ?? [] });
+  },
+
+  selectWorkspace: (workspaceIDValue: string) => {
+    const { workspaces } = get();
+    const workspace = workspaces.find((candidate) => workspaceID(candidate) === workspaceIDValue);
+    set({
+      selectedWorkspaceID: workspaceIDValue,
+      selectedGroupID: workspace ? sessionGroupID(workspace) : null,
+    });
+    if (!workspace) return;
+
+    // Fire-and-forget: clear any pending push approval for this session
+    // (iOS clearPushApprovalEffect).
+    void clearPushApproval({
+      workspaceID: pushWorkspaceID(workspace),
+      workspaceUUID: workspace.uuid || null,
+      surfaceID: workspace.surfaceId || null,
+    }).catch(() => {
+      // Best effort — the next poll re-syncs.
+    });
+
+    if (unreadCountForWorkspace(workspace, get().notifications) > 0) {
+      get().markNotificationsRead(workspace.uuid, workspace.surfaceUuid ?? null);
+    }
+  },
+
+  selectGroup: (groupID: string) => {
+    const { workspaces, selectedWorkspaceID } = get();
+    const members = workspaces.filter((workspace) => sessionGroupID(workspace) === groupID);
+    if (members.length === 0) return;
+    const membersSorted = [...members].sort((a, b) => a.index - b.index);
+    const primary = membersSorted[0];
+    const preferred =
+      selectedWorkspaceID && members.some((workspace) => workspaceID(workspace) === selectedWorkspaceID)
+        ? selectedWorkspaceID
+        : workspaceID(primary);
+    get().selectWorkspace(preferred);
+  },
+
+  toggleStar: (index: number, starred: boolean) => {
+    const { workspaces } = get();
+    const target = workspaces.find((workspace) => workspace.index === index);
+    if (!target) return;
+    const uuid = target.uuid;
+    const previousStarred = target.starred ?? false;
+
+    const flip = (value: boolean) =>
+      set((state) => ({
+        workspaces: state.workspaces.map((workspace) =>
+          workspace.uuid === uuid || workspace.index === index ? { ...workspace, starred: value } : workspace,
+        ),
+      }));
+
+    flip(starred);
+    starWorkspace(index, starred).catch((error: unknown) => {
+      flip(previousStarred);
+      reportError(error instanceof Error ? error.message : "Couldn't update star");
+    });
+  },
+
+  markNotificationsRead: (workspaceId, surfaceId) => {
+    // Optimistic: mark matching notifications read now (iOS parity).
+    set((state) => ({
+      notifications: state.notifications.map((notification) =>
+        matchesNotification(notification, workspaceId, surfaceId) && !notification.is_read
+          ? { ...notification, is_read: true }
+          : notification,
+      ),
+    }));
+    const request: Record<string, string> = {};
+    if (workspaceId) request.workspaceId = workspaceId;
+    if (surfaceId) request.surfaceId = surfaceId;
+    if (Object.keys(request).length === 0) return;
+    apiMarkNotificationsRead(request).catch((error: unknown) => {
+      // Keep the optimistic read (the next poll re-syncs); surface the error.
+      reportError(error instanceof Error ? error.message : "Couldn't mark notifications read");
+    });
+  },
+}));

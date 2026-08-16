@@ -1,0 +1,128 @@
+/**
+ * Session sidebar (iOS WorkspaceListView / session card parity).
+ *
+ * Error banner (poll failures) on top, then session groups: a workspace row
+ * (star toggle + name + unread badge) with one row per cmux surface/pane
+ * (name + state badge: green "Session" / orange "Needs You"). Selecting a row
+ * fires the selection side effects (push/clear, mark read) in the store.
+ */
+
+import { Star } from "lucide-react";
+import { useConnectionStore } from "../store/connectionStore";
+import { useWorkspacesStore } from "../store/workspacesStore";
+import {
+  groups,
+  paneLabel,
+  unreadCountForGroup,
+  workspaceID,
+  workspaceNeedsYou,
+} from "../lib/workspaceGroups";
+
+function UnreadBadge({ count }: { count: number }) {
+  if (count === 0) return null;
+  return <span className="unread-badge">{count > 99 ? "99+" : count}</span>;
+}
+
+function StateBadge({ needsYou }: { needsYou: boolean }) {
+  return (
+    <span className={`state-badge ${needsYou ? "state-badge-needs-you" : "state-badge-session"}`}>
+      {needsYou ? "Needs You" : "Session"}
+    </span>
+  );
+}
+
+export function Sidebar() {
+  const errorMessage = useConnectionStore((state) => state.errorMessage);
+  const clearError = useConnectionStore((state) => state.clearError);
+  const connect = useConnectionStore((state) => state.connect);
+  const workspaces = useWorkspacesStore((state) => state.workspaces);
+  const notifications = useWorkspacesStore((state) => state.notifications);
+  const feedItems = useWorkspacesStore((state) => state.feedItems);
+  const hasReceivedStatus = useWorkspacesStore((state) => state.hasReceivedStatus);
+  const selectedWorkspaceID = useWorkspacesStore((state) => state.selectedWorkspaceID);
+  const selectGroup = useWorkspacesStore((state) => state.selectGroup);
+  const selectWorkspace = useWorkspacesStore((state) => state.selectWorkspace);
+  const toggleStar = useWorkspacesStore((state) => state.toggleStar);
+
+  const sessionGroups = groups(workspaces);
+
+  return (
+    <aside className="sidebar">
+      {errorMessage !== null && (
+        <div className="error-banner" role="alert">
+          <span className="error-banner-text">{errorMessage}</span>
+          <div className="error-banner-actions">
+            <button type="button" className="error-banner-button" onClick={connect}>
+              Retry
+            </button>
+            <button type="button" className="error-banner-button" onClick={clearError}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="sidebar-list">
+        {!hasReceivedStatus && <div className="sidebar-empty">Connecting…</div>}
+        {hasReceivedStatus && sessionGroups.length === 0 && <div className="sidebar-empty">No sessions</div>}
+
+        {sessionGroups.map((group) => {
+          const unread = unreadCountForGroup(group, notifications);
+          return (
+            <div className="session-group" key={group.id}>
+              <div
+                className="session-group-header"
+                onClick={() => selectGroup(group.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    selectGroup(group.id);
+                  }
+                }}
+              >
+                <button
+                  type="button"
+                  className={`star-button ${group.primaryWorkspace.starred ? "star-button-on" : ""}`}
+                  title={group.primaryWorkspace.starred ? "Unstar" : "Star"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleStar(group.primaryWorkspace.index, !group.primaryWorkspace.starred);
+                  }}
+                >
+                  <Star size={14} fill={group.primaryWorkspace.starred ? "currentColor" : "none"} aria-hidden="true" />
+                </button>
+                <span className="session-group-name">{group.displayName}</span>
+                <UnreadBadge count={unread} />
+              </div>
+
+              {group.workspaces.map((workspace, offset) => {
+                const id = workspaceID(workspace);
+                const selected = selectedWorkspaceID === id;
+                return (
+                  <div
+                    key={id}
+                    className={`pane-row ${selected ? "pane-row-selected" : ""}`}
+                    onClick={() => selectWorkspace(id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectWorkspace(id);
+                      }
+                    }}
+                  >
+                    <span className="pane-row-name">{paneLabel(group, workspace, offset)}</span>
+                    <StateBadge needsYou={workspaceNeedsYou(workspace, notifications, feedItems)} />
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}

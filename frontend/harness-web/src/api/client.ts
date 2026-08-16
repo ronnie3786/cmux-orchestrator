@@ -1,5 +1,7 @@
 const TOKEN_STORAGE_KEY = "harness-web:token";
 const DEFAULT_TIMEOUT_MS = 15_000;
+/** Attachment uploads get a longer window (iOS HarnessAPI parity: 60 s). */
+export const UPLOAD_TIMEOUT_MS = 60_000;
 
 export function getToken(): string {
   try {
@@ -34,12 +36,16 @@ function errorFromPayload(payload: unknown, status: number): string {
 /**
  * Same-origin fetch wrapper for the harness server.
  * Injects X-Cmux-Token from localStorage on every request and enforces a
- * 15 s timeout via AbortController. Throws Error with the server's error
- * string on non-2xx responses.
+ * 15 s timeout via AbortController (overridable per-call, e.g. uploads).
+ * Throws Error with the server's error string on non-2xx responses.
  */
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) {
