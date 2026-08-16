@@ -28,6 +28,7 @@ import { sessionGroupID, unreadCountForWorkspace, workspaceID } from "../lib/wor
 import { useAttachmentsStore } from "./attachmentsStore";
 import { useConnectionStore } from "./connectionStore";
 import { useDraftStore } from "./draftStore";
+import { useNewSessionStore } from "./newSessionStore";
 
 interface WorkspacesStoreState {
   workspaces: Workspace[];
@@ -57,6 +58,8 @@ interface WorkspacesStoreState {
   selectWorkspace: (workspaceIDValue: string) => void;
   /** Optimistic star toggle + POST /api/workspace-star. */
   toggleStar: (index: number, starred: boolean) => void;
+  /** Optimistic rename (iOS sets customName immediately, then refreshes). */
+  applyCustomName: (index: number, name: string) => void;
   /** Optimistic mark-read + POST /api/notifications/read. */
   markNotificationsRead: (workspaceId?: string | null, surfaceId?: string | null) => void;
 }
@@ -110,6 +113,17 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
     useDraftStore.getState().trimDrafts(workspaces.map((workspace) => workspaceID(workspace)));
     // Attachments are ephemeral per-workspace state — drop them the same way.
     useAttachmentsStore.getState().trim(workspaces.map((workspace) => workspaceID(workspace)));
+
+    // iOS `refreshSucceeded`: while a new session is being created, auto-select
+    // it as soon as it appears in a status poll (uuid first, then index).
+    const newSession = useNewSessionStore.getState();
+    if (newSession.pendingSelection) {
+      const matched = newSession.resolvePendingSelection(workspaces);
+      if (matched) {
+        newSession.finishSelection();
+        get().selectWorkspace(matched);
+      }
+    }
   },
 
   applyNotifications: (response: NotificationsResponse) => {
@@ -188,6 +202,14 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
       flip(previousStarred);
       reportError(error instanceof Error ? error.message : "Couldn't update star");
     });
+  },
+
+  applyCustomName: (index: number, name: string) => {
+    set((state) => ({
+      workspaces: state.workspaces.map((workspace) =>
+        workspace.index === index ? { ...workspace, customName: name } : workspace,
+      ),
+    }));
   },
 
   markNotificationsRead: (workspaceId, surfaceId) => {

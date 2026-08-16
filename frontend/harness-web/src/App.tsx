@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KeyRound } from "lucide-react";
 import { getToken, setToken } from "./api/client";
 import { getFeed, getLog, getNotifications, getOpenCodeIntegration, getStatus } from "./api/endpoints";
 import { ConnectionBar } from "./components/ConnectionBar";
 import { Sidebar } from "./components/Sidebar";
+import { NewSessionModal } from "./components/Sessions/NewSessionModal";
+import { SessionCreationProgressOverlay } from "./components/Sessions/SessionCreationProgressOverlay";
+import { SettingsModal } from "./components/Settings/SettingsModal";
 import { WorkspaceDetailView } from "./components/Workspace/WorkspaceDetailView";
 import { useConnectionStore } from "./store/connectionStore";
+import { useNewSessionStore } from "./store/newSessionStore";
 import { useSessionStore } from "./store/sessionStore";
 import { useWorkspacesStore } from "./store/workspacesStore";
 import { groups, sessionGroupID, workspaceID } from "./lib/workspaceGroups";
@@ -15,6 +19,19 @@ const POLL_INTERVAL_MS = 2_000;
 export default function App() {
   const [token, setStoredToken] = useState<string>(() => getToken());
   const [draft, setDraft] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const newSessionOpen = useNewSessionStore((state) => state.isOpen);
+  const newSessionPhase = useNewSessionStore((state) => state.phase);
+
+  // Catch-up status refreshes (e.g. 750 ms after a new session is created —
+  // iOS `.refresh` parity) bump this counter; the polling loop runs one tick.
+  const tickRequestCount = useConnectionStore((state) => state.tickRequestCount);
+  const tickRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (tickRequestCount > 0) {
+      void tickRef.current?.();
+    }
+  }, [tickRequestCount]);
 
   // One-time bootstrap: read #token=... from the URL fragment, store it, and
   // strip the fragment so the token never sits in the address bar.
@@ -43,6 +60,7 @@ export default function App() {
     }
     let inFlight = false;
     let disposed = false;
+    tickRef.current = null;
 
     const tick = async () => {
       if (disposed || inFlight || document.hidden) {
@@ -89,6 +107,7 @@ export default function App() {
       }
     };
 
+    tickRef.current = tick;
     void tick();
     const intervalId = setInterval(() => void tick(), POLL_INTERVAL_MS);
     const onVisibilityChange = () => {
@@ -99,6 +118,7 @@ export default function App() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       disposed = true;
+      tickRef.current = null;
       clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
@@ -189,9 +209,17 @@ export default function App() {
 
   return (
     <div className="app">
-      <ConnectionBar onClearToken={clearToken} />
+      <ConnectionBar onClearToken={clearToken} onOpenSettings={() => setSettingsOpen(true)} />
       <Sidebar />
       <DetailPane />
+      {newSessionOpen ? <NewSessionModal /> : null}
+      {newSessionPhase !== "idle" ? <SessionCreationProgressOverlay /> : null}
+      {settingsOpen ? (
+        <SettingsModal
+          onClose={() => setSettingsOpen(false)}
+          onTokenChanged={(value) => setStoredToken(value)}
+        />
+      ) : null}
     </div>
   );
 }

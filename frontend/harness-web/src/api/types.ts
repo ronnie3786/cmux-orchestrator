@@ -324,6 +324,38 @@ export interface GitCommit {
  * GET /api/git-status. Mirrors GitStatus.
  * `editorTargets` is a server extra (verified against the live server).
  */
+export interface NetworkInfoResponse {
+  ok: boolean;
+  port?: number | null;
+  hostname?: string | null;
+  localName?: string | null;
+  bonjourType?: string | null;
+  lanAddresses?: string[] | null;
+  tailscaleHost?: string | null;
+  tailscale?: {
+    dnsName?: string | null;
+    tailscaleIPv4?: string | null;
+    savedHost?: string | null;
+    activeHost?: string | null;
+    [key: string]: unknown;
+  } | null;
+  urls?: {
+    home?: string | null;
+    harness?: string | null;
+    localHarness?: string | null;
+    lanHarness?: string[] | null;
+    tailscaleHarness?: string | null;
+    [key: string]: unknown;
+  } | null;
+  cmux?: {
+    socketFound?: boolean;
+    connected?: boolean;
+    workspaceCount?: number;
+    staleData?: boolean;
+  } | null;
+  error?: string | null;
+}
+
 export interface GitStatus {
   ok?: boolean | null;
   branch?: string | null;

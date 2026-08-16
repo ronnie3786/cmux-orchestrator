@@ -27,6 +27,7 @@ import type {
   MarkNotificationsReadRequest,
   NewSessionRequest,
   NewSessionResponse,
+  NetworkInfoResponse,
   NotificationsResponse,
   OpenCodeIntegrationResponse,
   PushApprovalClearRequest,
@@ -211,6 +212,10 @@ export function renameWorkspace(index: number, name: string): Promise<BasicRespo
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
   });
+}
+
+export function getNetworkInfo(): Promise<NetworkInfoResponse> {
+  return apiRequest<NetworkInfoResponse>("/api/network");
 }
 
 /** POST /api/send — send text or a whitelisted key to a workspace/surface. */

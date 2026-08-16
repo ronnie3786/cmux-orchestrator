@@ -41,6 +41,13 @@ export interface ConnectionStoreState {
   engineEnabled: boolean | null;
   /** True while a user-initiated toggleEngine call is in flight. */
   isTogglingEngine: boolean;
+  /**
+   * Monotonic counter bumped by features that want an immediate status poll
+   * (e.g. the new-session catch-up refresh, 750 ms after creation — iOS
+   * `.refresh` parity). App's polling loop watches it and runs one tick.
+   */
+  tickRequestCount: number;
+  requestTick: () => void;
   /** When true the polling tick is skipped until connect() is called again. */
   manualDisconnect: boolean;
   consecutivePollFailures: number;
@@ -71,6 +78,10 @@ export const useConnectionStore = create<ConnectionStoreState>()((set, get) => (
   errorMessage: null,
   engineEnabled: null,
   isTogglingEngine: false,
+  tickRequestCount: 0,
+  requestTick: () => {
+    set({ tickRequestCount: get().tickRequestCount + 1 });
+  },
   manualDisconnect: false,
   consecutivePollFailures: 0,
 

@@ -7,7 +7,7 @@
  *        while the server is reachable but not connected, iOS parity).
  */
 
-import { CheckCircle2, PauseCircle } from "lucide-react";
+import { CheckCircle2, PauseCircle, Settings } from "lucide-react";
 import { useConnectionStore, type ConnectionState } from "../store/connectionStore";
 
 function connectionTitle(connection: ConnectionState): string {
@@ -33,9 +33,11 @@ function formatUpdated(epochMs: number): string {
 interface ConnectionBarProps {
   /** Phase 0 parity: lets the user wipe the stored token and re-paste. */
   onClearToken?: () => void;
+  /** Opens the settings sheet (iOS HomeHeaderView gear parity). */
+  onOpenSettings: () => void;
 }
 
-export function ConnectionBar({ onClearToken }: ConnectionBarProps) {
+export function ConnectionBar({ onClearToken, onOpenSettings }: ConnectionBarProps) {
   const serverHost = useConnectionStore((state) => state.serverHost);
   const setServerHost = useConnectionStore((state) => state.setServerHost);
   const connection = useConnectionStore((state) => state.connection);
@@ -86,6 +88,15 @@ export function ConnectionBar({ onClearToken }: ConnectionBarProps) {
           Change token
         </button>
       )}
+      <button
+        type="button"
+        className="icon-button icon-button-light"
+        onClick={onOpenSettings}
+        title="Settings"
+        aria-label="Settings"
+      >
+        <Settings size={16} />
+      </button>
     </header>
   );
 }

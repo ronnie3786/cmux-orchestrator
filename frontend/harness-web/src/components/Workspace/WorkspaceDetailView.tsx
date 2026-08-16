@@ -42,6 +42,7 @@ import {
 import { detect } from "../../terminal/detector";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useGitStore } from "../../store/gitStore";
+import { useNewSessionStore } from "../../store/newSessionStore";
 import { useSessionStore } from "../../store/sessionStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
 import { GitStatusView } from "../Git/GitStatusView";
@@ -179,11 +180,17 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
     setBusyAction("rename");
     setActionError(null);
     try {
-      // iOS: empty string clears the custom name (server stores "" → nil).
+      // iOS parity: set the custom name immediately, then refresh
+      // (commitRename sets customName, the effect sends .refresh).
+      useWorkspacesStore.getState().applyCustomName(workspace.index, value);
+      // Empty string clears the custom name (server stores "" → nil).
       await renameWorkspace(workspace.index, value);
       setRenameOpen(false);
+      useConnectionStore.getState().requestTick();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't rename session");
+      // Refresh to restore the server's truth.
+      useConnectionStore.getState().requestTick();
     } finally {
       setBusyAction(null);
     }
@@ -259,6 +266,19 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
   const hasActiveInteraction = nativeFeedItem !== null || terminalInteraction !== null;
 
   const fallbackNote = useMemo(() => groupedQuestionFallbackNote(workspaceFeedItems), [workspaceFeedItems]);
+
+  // Pane-pill unread counts (iOS: pane.unreadCount > 0 && !isSelected) —
+  // unread notifications whose surface_id matches the pane's surfaceUuid,
+  // from the existing 2 s notifications poll (no new polling).
+  const unreadBySurface = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const notification of notifications) {
+      if (!notification.is_read && notification.surface_id) {
+        counts.set(notification.surface_id, (counts.get(notification.surface_id) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [notifications]);
 
   const isSubmittingNative = nativeFeedItem !== null && feedReplyPendingIDs.has(nativeFeedItem.requestID);
 
@@ -359,14 +379,14 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
       {/* Header */}
       <div className="detail-header">
         <div className="detail-title-row">
-          {needsYou ? <span className="needs-you-dot" title="Needs you" /> : null}
           <h1 className="detail-title" title={title}>
             {title}
           </h1>
+          {/* iOS `SessionBadge`: green "Session" / orange "Needs You". */}
           {needsYou ? (
-            <span className="chip chip-needs">Needs You</span>
+            <span className="state-badge state-badge-needs-you">Needs You</span>
           ) : (
-            <span className="chip chip-muted">Active</span>
+            <span className="state-badge state-badge-session">Session</span>
           )}
           <div className="detail-header-actions">
             <button
@@ -410,6 +430,7 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
           {group.workspaces.map((pane, offset) => {
             const paneID = workspaceID(pane);
             const active = paneID === selectedWorkspaceID;
+            const paneUnread = (pane.surfaceUuid ? unreadBySurface.get(pane.surfaceUuid) : undefined) ?? 0;
             return (
               <button
                 key={paneID}
@@ -421,6 +442,12 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
                 onClick={() => selectWorkspace(paneID)}
               >
                 {paneLabel(group, pane, offset)}
+                {pane.gitDirty === true ? (
+                  <span className="pane-pill-dirty" title="Uncommitted changes" aria-label="Uncommitted changes" />
+                ) : null}
+                {!active && paneUnread > 0 ? (
+                  <span className="unread-badge">{paneUnread}</span>
+                ) : null}
               </button>
             );
           })}
@@ -603,7 +630,9 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
               role="menuitem"
               className="menu-item"
               onClick={() => {
-                setRenameValue(workspace.customName ?? "");
+                // iOS: renameText = workspace.displayName (prompt with the
+                // current name).
+                setRenameValue(displayName(workspace));
                 setRenameOpen(true);
                 setMenuOpen(false);
               }}
@@ -627,9 +656,11 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
             <button
               type="button"
               role="menuitem"
-              className="menu-item menu-item-disabled"
-              disabled
-              title="Phase 2b"
+              className="menu-item"
+              onClick={() => {
+                setMenuOpen(false);
+                useNewSessionStore.getState().open();
+              }}
             >
               <Plus size={14} className="menu-item-icon" />
               <span className="menu-item-label">New Session</span>
@@ -657,7 +688,7 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
               className="dialog-input"
               type="text"
               value={renameValue}
-              placeholder={displayName(workspace)}
+              placeholder="Session name"
               autoFocus
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspacesStore } from "./workspacesStore";
 import { useConnectionStore } from "./connectionStore";
+import { useNewSessionStore } from "./newSessionStore";
 import type { CmuxNotification, FeedItem, HarnessStatus, Workspace } from "../api/types";
 
 function installLocalStorage() {
@@ -47,6 +48,19 @@ describe("workspacesStore", () => {
     installLocalStorage();
     useWorkspacesStore.setState(INITIAL);
     useConnectionStore.setState({ errorMessage: null });
+    useNewSessionStore.setState({
+      isOpen: false,
+      mode: "claude",
+      projectPath: "~/Documents/Development/sample-app",
+      branchName: "",
+      jiraUrl: "",
+      prompt: "",
+      sessionName: "Shell",
+      error: null,
+      phase: "idle",
+      pendingSelection: null,
+      overlayDirectory: null,
+    });
   });
 
   afterEach(() => {
@@ -143,5 +157,33 @@ describe("workspacesStore", () => {
     // Reverted after the server error; the shared error banner shows it.
     expect(useWorkspacesStore.getState().workspaces[0]?.starred).toBe(false);
     expect(useConnectionStore.getState().errorMessage).toBe("nope");
+  });
+
+  it("auto-selects the created session once it appears in status (iOS refreshSucceeded parity)", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    // A new session was just created; the poll hasn't seen it yet.
+    useNewSessionStore.setState({ phase: "switching", pendingSelection: { uuid: "uuid-9", index: 9 } });
+    useWorkspacesStore.getState().applyStatus(status([workspace({})]));
+    expect(useWorkspacesStore.getState().selectedWorkspaceID).toBeNull();
+
+    // The next poll lists it — it gets selected and the overlay state clears.
+    useWorkspacesStore.getState().applyStatus(status([
+      workspace({}),
+      workspace({ uuid: "uuid-9", index: 9, name: "IOSDOX-123" }),
+    ]));
+
+    expect(useWorkspacesStore.getState().selectedWorkspaceID).toBe("uuid-9");
+    const newSession = useNewSessionStore.getState();
+    expect(newSession.pendingSelection).toBeNull();
+    expect(newSession.phase).toBe("idle");
+
+    // Let the fire-and-forget selection calls settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls).toContain("/api/push/clear");
   });
 });
