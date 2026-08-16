@@ -673,91 +673,289 @@ button {
   color: var(--muted-dim);
 }
 
-/* --- minimal input row ----------------------------------------------------------- */
+/* --- input bar (Phase 4a, iOS DetailInputBar parity) ------------------------ */
 
-.input-row {
+.input-bar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-}
-
-.input-row-field {
-  flex: 1;
-  min-width: 0;
-  padding: 9px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.35);
-  color: var(--text);
-  font-size: 13px;
-  outline: none;
-}
-
-.input-row-field::placeholder {
-  color: var(--muted-dim);
-}
-
-.input-row-field:focus {
-  border-color: var(--accent);
-}
-
-.input-row-field:disabled {
-  opacity: 0.55;
-}
-
-.input-row-keys {
-  display: flex;
-  gap: 4px;
   flex-shrink: 0;
 }
 
-.quick-key {
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+/* Expanded action row. Phase 4a has no buttons in it yet — Phase 4b/5 adds
+   the iOS paperclip / mic / @ / ticket actions here (min-height keeps the
+   slot's layout stable). */
+.input-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* Phase 4b: attachment tray chips render here (iOS tray sits above the row). */
+.input-bar-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.input-bar-main {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.input-bar-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
   background: var(--panel);
   color: var(--muted);
-  font-size: 11.5px;
-  font-weight: 600;
-  white-space: nowrap;
+  flex-shrink: 0;
+  transition: transform 0.16s ease;
 }
 
-.quick-key:hover:not(:disabled) {
-  border-color: var(--line-strong);
+.input-bar-chevron:hover:not(:disabled) {
   color: var(--text);
+  background: var(--panel-strong);
 }
 
-.quick-key:disabled {
+.input-bar-chevron:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.input-row-send {
+.input-bar-chevron-expanded {
+  transform: rotate(180deg);
+}
+
+.input-bar-field-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.input-bar-textarea {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
+  min-height: 44px; /* 1 row: 20px line + 24px vertical padding */
+  resize: none;
+  outline: none;
+  overflow-y: auto;
+}
+
+.input-bar-textarea::placeholder {
+  color: var(--muted-dim);
+}
+
+.input-bar-textarea:focus {
+  border-color: var(--accent);
+}
+
+.input-bar-textarea:disabled {
+  opacity: 0.55;
+}
+
+/* Hidden measurement mirror for the auto-grow — font metrics must match
+   .input-bar-textarea exactly (font-size 13px, line-height 20px, no padding). */
+.input-bar-textarea-mirror {
+  position: absolute;
+  top: 0;
+  left: -9999px;
+  visibility: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 20px;
+  width: 0;
+  pointer-events: none;
+}
+
+.input-bar-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border: none;
-  border-radius: 8px;
+  border-radius: 50%;
   background: var(--accent);
   color: #ffffff;
   flex-shrink: 0;
 }
 
-.input-row-send:disabled {
-  opacity: 0.45;
+.input-bar-send:disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.46);
   cursor: default;
 }
 
-.input-row-error {
-  flex-shrink: 0;
-  max-width: 220px;
+/* Quick-key rows: row 1 always, row 2 when expanded (iOS HarnessKey.inputRows). */
+.input-bar-key-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-bar-key-row {
+  display: flex;
+  gap: 10px;
+}
+
+.input-bar-key {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.input-bar-key:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+}
+
+.input-bar-key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- skill autocomplete panel (iOS SkillAutocompletePanel parity) ------------ */
+
+.input-bar-autocomplete {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.input-bar-autocomplete-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11.5px;
-  color: var(--red);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.input-bar-autocomplete-icon {
+  color: var(--accent);
+}
+
+.input-bar-autocomplete-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 4px;
+}
+
+.input-bar-autocomplete-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  text-align: left;
+}
+
+.input-bar-autocomplete-row:hover,
+.input-bar-autocomplete-row-active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.input-bar-autocomplete-name {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.input-bar-autocomplete-scope {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--muted-dim);
+}
+
+/* --- easy-mode keyboard (iOS EasyModeKeyboard parity) ------------------------- */
+
+.easy-keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 200px; /* iOS: ~25% of the detail height, clamped to 120–31% */
+  flex-shrink: 0;
+}
+
+.easy-keyboard-row {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.easy-key {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.easy-key:hover:not(:disabled) {
+  background: var(--panel-strong);
+}
+
+.easy-key:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* --- tab placeholder + metadata card --------------------------------------------- */

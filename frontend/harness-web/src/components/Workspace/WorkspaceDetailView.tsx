@@ -45,8 +45,9 @@ import { useGitStore } from "../../store/gitStore";
 import { useSessionStore } from "../../store/sessionStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
 import { GitStatusView } from "../Git/GitStatusView";
-import { MinimalInputRow } from "../Terminal/MinimalInputRow";
 import { TerminalView } from "../Terminal/TerminalView";
+import { EasyModeKeyboard } from "../Input/EasyModeKeyboard";
+import { InputBar } from "../Input/InputBar";
 import { ActivityTab } from "./ActivityTab";
 import { FeedInteractionCard, type FeedReplyAction, type FeedReplyMode } from "./FeedInteractionCard";
 import { OpenCodeFallbackCard } from "./OpenCodeFallbackCard";
@@ -62,19 +63,36 @@ const DETAIL_TABS: Array<{ id: DetailTab; label: string; icon: typeof Terminal }
 
 const AUTO_MODES: WorkspaceAutoMode[] = ["off", "auto", "super"];
 
-const EASY_MODE_STORAGE_KEY = "cmux-harness:easyMode";
+/**
+ * Easy-mode persistence. iOS keeps easy mode in TCA state only (in-memory,
+ * not persisted). Web: persist per workspace row id in localStorage so each
+ * session remembers its own easy mode (plan: client-side per-workspace).
+ */
+const EASY_MODE_KEY_PREFIX = "harness-web:easyMode:";
+const LEGACY_EASY_MODE_KEY = "cmux-harness:easyMode";
 
-function readEasyMode(): boolean {
+// One-time migration: easy mode used to be a single global flag.
+try {
+  window.localStorage.removeItem(LEGACY_EASY_MODE_KEY);
+} catch {
+  // No window (test env) — nothing to migrate.
+}
+
+function readEasyMode(rowID: string): boolean {
   try {
-    return window.localStorage.getItem(EASY_MODE_STORAGE_KEY) === "1";
+    return window.localStorage.getItem(EASY_MODE_KEY_PREFIX + rowID) === "1";
   } catch {
     return false;
   }
 }
 
-function writeEasyMode(enabled: boolean): void {
+function writeEasyMode(rowID: string, enabled: boolean): void {
   try {
-    window.localStorage.setItem(EASY_MODE_STORAGE_KEY, enabled ? "1" : "0");
+    if (enabled) {
+      window.localStorage.setItem(EASY_MODE_KEY_PREFIX + rowID, "1");
+    } else {
+      window.localStorage.removeItem(EASY_MODE_KEY_PREFIX + rowID);
+    }
   } catch {
     // localStorage unavailable (private mode) — easy mode stays session-only.
   }
@@ -96,7 +114,9 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
   const openCodeIntegration = useWorkspacesStore((s) => s.openCodeIntegration);
 
   const [tab, setTab] = useState<DetailTab>("terminal");
-  const [easyMode, setEasyMode] = useState(readEasyMode);
+  // The view remounts per workspace (keyed in App), so reading the
+  // per-workspace flag on init gives per-session easy mode.
+  const [easyMode, setEasyMode] = useState(() => readEasyMode(workspaceID(workspace)));
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -117,19 +137,19 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
       setTab(next);
       if (next !== "terminal") {
         setEasyMode((previous) => {
-          if (previous) writeEasyMode(false);
+          if (previous) writeEasyMode(id, false);
           return false;
         });
       }
     },
-    [],
+    [id],
   );
 
   const setEasyModePersisted = useCallback((enabled: boolean) => {
-    writeEasyMode(enabled);
+    writeEasyMode(id, enabled);
     setEasyMode(enabled);
     if (enabled) setTab("terminal");
-  }, []);
+  }, [id]);
 
   const setAutoMode = useCallback(
     async (mode: WorkspaceAutoMode) => {
@@ -376,8 +396,8 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
         </div>
       </div>
 
-      {/* Pane pills (multi-surface groups) */}
-      {group.hasMultiplePanes ? (
+      {/* Pane pills (multi-surface groups) — hidden in easy mode (iOS parity) */}
+      {!easyMode && group.hasMultiplePanes ? (
         <div className="pane-pills" role="tablist" aria-label="Panes">
           {group.workspaces.map((pane, offset) => {
             const paneID = workspaceID(pane);
@@ -399,22 +419,24 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
         </div>
       ) : null}
 
-      {/* Detail tab bar */}
-      <div className="detail-tab-bar" role="tablist" aria-label="Session details">
-        {DETAIL_TABS.map(({ id: tabID, label, icon: Icon }) => (
-          <button
-            key={tabID}
-            type="button"
-            role="tab"
-            aria-selected={tab === tabID}
-            className={`detail-tab${tab === tabID ? " detail-tab-active" : ""}`}
-            onClick={() => setTabAndMaybeDisableEasy(tabID)}
-          >
-            <Icon size={13} />
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* Detail tab bar — hidden in easy mode (iOS parity) */}
+      {!easyMode ? (
+        <div className="detail-tab-bar" role="tablist" aria-label="Session details">
+          {DETAIL_TABS.map(({ id: tabID, label, icon: Icon }) => (
+            <button
+              key={tabID}
+              type="button"
+              role="tab"
+              aria-selected={tab === tabID}
+              className={`detail-tab${tab === tabID ? " detail-tab-active" : ""}`}
+              onClick={() => setTabAndMaybeDisableEasy(tabID)}
+            >
+              <Icon size={13} />
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {actionError ? <div className="detail-error">{actionError}</div> : null}
 
@@ -444,7 +466,16 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
                 onInstallIntegration={() => void handleInstallIntegration()}
               />
             ) : null}
-            {!hasActiveInteraction ? <MinimalInputRow index={workspace.index} /> : null}
+            {!hasActiveInteraction ? (
+              easyMode ? (
+                // iOS DetailTerminalLayout: easy mode replaces the whole input
+                // bar with the 2×4 keyboard (only when no interaction card is
+                // showing).
+                <EasyModeKeyboard onSendKey={(key) => void handleSendKey(key)} />
+              ) : (
+                <InputBar index={workspace.index} surfaceId={workspace.surfaceId ?? null} />
+              )
+            ) : null}
           </div>
         ) : tab === "git" ? (
           <GitStatusView
