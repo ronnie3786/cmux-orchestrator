@@ -25,6 +25,7 @@ import type {
   Workspace,
 } from "../api/types";
 import { sessionGroupID, unreadCountForWorkspace, workspaceID } from "../lib/workspaceGroups";
+import { useAttachmentsStore } from "./attachmentsStore";
 import { useConnectionStore } from "./connectionStore";
 import { useDraftStore } from "./draftStore";
 
@@ -107,6 +108,8 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
     });
     // iOS `trimDrafts`: drop persisted drafts for workspaces that vanished.
     useDraftStore.getState().trimDrafts(workspaces.map((workspace) => workspaceID(workspace)));
+    // Attachments are ephemeral per-workspace state — drop them the same way.
+    useAttachmentsStore.getState().trim(workspaces.map((workspace) => workspaceID(workspace)));
   },
 
   applyNotifications: (response: NotificationsResponse) => {
@@ -134,6 +137,8 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
     });
     // iOS `loadDetailDraft`: bind the input row to the selected workspace's draft.
     useDraftStore.getState().selectDraft(workspaceIDValue);
+    // ...and its attachments (terminalAttachments[workspaceID]).
+    useAttachmentsStore.getState().selectWorkspace(workspaceIDValue);
     if (!workspace) return;
 
     // Fire-and-forget: clear any pending push approval for this session

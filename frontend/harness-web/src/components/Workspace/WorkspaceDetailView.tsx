@@ -473,7 +473,12 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
                 // showing).
                 <EasyModeKeyboard onSendKey={(key) => void handleSendKey(key)} />
               ) : (
-                <InputBar index={workspace.index} surfaceId={workspace.surfaceId ?? null} />
+                <InputBar
+                  index={workspace.index}
+                  surfaceId={workspace.surfaceId ?? null}
+                  workspaceID={workspaceID(workspace)}
+                  workspaceUUID={workspace.uuid}
+                />
               )
             ) : null}
           </div>

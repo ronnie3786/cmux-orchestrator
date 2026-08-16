@@ -5,10 +5,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent as ReactChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import { ChevronUp, Send } from "lucide-react";
+import { ChevronUp, Folder, Image as ImageIcon, Mic, Paperclip, Send } from "lucide-react";
 import { getSkills, sendTextOrKey } from "../../api/endpoints";
 import type { HarnessKey, ProjectSkill } from "../../api/types";
 import {
@@ -18,12 +19,21 @@ import {
   type SkillAutocompleteContext,
 } from "../../lib/skillAutocomplete";
 import { HARNESS_KEY_LABELS, HARNESS_KEY_ROWS } from "../../lib/harnessKeys";
+import {
+  activeAttachmentsOf,
+  inFlightCount,
+  useAttachmentsStore,
+  uploadedPaths,
+} from "../../store/attachmentsStore";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useDraftStore } from "../../store/draftStore";
+import { AttachmentTray } from "./AttachmentTray";
 import { SkillAutocomplete } from "./SkillAutocomplete";
+import { VoiceNoteSheet } from "./VoiceNoteSheet";
 
 /**
- * Full input bar (iOS DetailInputBar.swift parity, Phase 4a — no attachments).
+ * Full input bar (iOS DetailInputBar.swift parity, Phase 4a/4b — quick keys,
+ * skill autocomplete, attachments tray, voice notes).
  *
  * - Multiline auto-growing textarea, 1–6 rows (iOS `lineLimit(1...6)`), scrolls
  *   beyond 6 rows. Bound to the per-workspace draft (draftStore — the same
@@ -43,10 +53,14 @@ import { SkillAutocomplete } from "./SkillAutocomplete";
  *   does not focus the field on session select.
  *
  * Phase 4b slots (attachments + voice):
- * - `traySlot` renders the AttachmentTray chips above the main row (iOS puts
- *   the tray above the action row);
+ * - the AttachmentTray chips render above the main row (iOS puts the tray
+ *   above the action row), fed by the attachmentsStore via `workspaceID`;
  * - `canSend` / `isUploading` mirror iOS `canSend` — the upload-in-flight
- *   gate and the "has uploaded attachment" disjunct slot in there.
+ *   gate plus the "has uploaded attachment" disjunct;
+ * - the expanded action row carries the paperclip (Photos / Files menu over
+ *   two hidden <input type=file multiple>) and the mic (VoiceNoteSheet);
+ * - send joins uploaded server paths + the draft (iOS sendDetailDraft),
+ *   clears both on success, and is gated while uploads are in flight.
  */
 
 export interface InputBarProps {
@@ -55,9 +69,15 @@ export interface InputBarProps {
   /** Surface id for multi-pane sessions (iOS sends workspace.surfaceId). */
   surfaceId?: string | null;
   /**
-   * Phase 4b slot: attachment tray (chips with uploading/uploaded/error
-   * states) + any in-flight upload indicator. Rendered above the main row,
-   * matching the iOS DetailInputBar tray position.
+   * Stable workspace row id (workspaceGroups.workspaceID) — keys the draft
+   * and attachment stores, exactly like the iOS workspace id.
+   */
+  workspaceID: string;
+  /** Workspace UUID for the upload headers (X-Cmux-Workspace-UUID). */
+  workspaceUUID?: string | null;
+  /**
+   * Extra content rendered in the tray area above the input row (the
+   * AttachmentTray itself is rendered by the bar, keyed by `workspaceID`).
    */
   traySlot?: ReactNode;
 }
@@ -95,13 +115,27 @@ const TEXTAREA_LINE_HEIGHT_PX = 20;
 const TEXTAREA_VERTICAL_PADDING_PX = 24;
 const MAX_ROWS = 6;
 
-export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
+export function InputBar({
+  index,
+  surfaceId = null,
+  workspaceID,
+  workspaceUUID = null,
+  traySlot,
+}: InputBarProps) {
   const draft = useDraftStore((state) => state.activeDraft);
   const setDraft = useDraftStore((state) => state.setDraft);
   const focusRequest = useDraftStore((state) => state.focusRequest);
 
+  // Attachments follow the same workspace-row binding as the draft (iOS
+  // terminalAttachments[workspaceID] is read/written by the same reducer).
+  const attachments = useAttachmentsStore(activeAttachmentsOf);
+
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Paperclip menu open (iOS confirmationDialog: Photo Library vs Files). */
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  /** Voice note sheet open (iOS shows the sheet over the detail view). */
+  const [voiceSheetOpen, setVoiceSheetOpen] = useState(false);
   /** Caret offset in the draft (textarea selectionStart). */
   const [caret, setCaret] = useState(0);
   /** Signature of the token the user dismissed (iOS dismissedSkillAutocompleteSignature). */
@@ -113,6 +147,9 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
+  /** Hidden pickers: images-only (iOS Photos parity) vs any file. */
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   /** Caret to apply after the next controlled value commit (skill select). */
   const pendingCaretRef = useRef<number | null>(null);
 
@@ -221,8 +258,10 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
         useConnectionStore.getState().clearError();
         if (payload.text) {
           // iOS sends the draft then clears it (persistDetailDraft removes the
-          // stored entry for an empty draft).
+          // stored entry for an empty draft); sendDetailDraft also clears the
+          // workspace's terminalAttachments.
           useDraftStore.getState().clearDraft();
+          useAttachmentsStore.getState().clearActive();
           setCaret(0);
           pendingCaretRef.current = 0;
         }
@@ -245,6 +284,26 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
       void send({ key });
     },
     [send],
+  );
+
+  /**
+   * iOS sendDetailDraft: wait for in-flight uploads, join the uploaded server
+   * paths with the trimmed draft (space-separated), then send as text.
+   */
+  const sendDraft = useCallback(
+    (text: string) => {
+      if (index === null) return;
+      const workspaceAttachments = useAttachmentsStore.getState().byWorkspace[workspaceID] ?? [];
+      if (workspaceAttachments.some((attachment) => attachment.state === "uploading")) {
+        useConnectionStore.setState({ errorMessage: "Wait for attachment uploads to finish" });
+        return;
+      }
+      const paths = uploadedPaths(workspaceAttachments);
+      const message = text.trim();
+      if (message.length === 0 && paths.length === 0) return;
+      void send({ text: [...paths, ...(message.length > 0 ? [message] : [])].join(" ") });
+    },
+    [index, workspaceID, send],
   );
 
   // iOS `replaceSkillToken`: replace the token with prefix + name, caret right
@@ -295,9 +354,11 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (draft.trim().length > 0) {
-        void send({ text: draft });
-      } else {
+      // iOS send is enabled by a non-empty draft OR an uploaded attachment;
+      // a truly empty bar with nothing uploaded sends the literal enter key.
+      if (canSend) {
+        sendDraft(draft);
+      } else if (draft.trim().length === 0) {
         sendKey("enter");
       }
       return;
@@ -310,13 +371,28 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
     }
   };
 
-  // --- send button rules (iOS `canSend`, 4a: draft-only) ----------------------
-  //
-  // Phase 4b: `const isUploading = attachments.some(a => a.status === "uploading")`
-  //          `const hasUploaded = attachments.some(a => a.status === "uploaded" && a.uploadedPath)`
-  //          canSend = !isUploading && (hasMessage || hasUploaded)
+  // --- send button rules (iOS `canSend`) ------------------------------------
+  // Uploads gate the button; an uploaded attachment alone is enough to send
+  // (the payload becomes the space-joined server paths).
+  const isUploading = inFlightCount(attachments) > 0;
+  const hasUploadedAttachment = uploadedPaths(attachments).length > 0;
   const hasMessage = draft.trim().length > 0;
-  const canSend = hasMessage;
+  const canSend = !isUploading && (hasMessage || hasUploadedAttachment);
+
+  // iOS paperclip menu: Photo Library (images) vs Files (any type).
+  const openPicker = (kind: "photo" | "file") => {
+    setAttachMenuOpen(false);
+    (kind === "photo" ? photoInputRef.current : fileInputRef.current)?.click();
+  };
+
+  const handleFilesSelected = (event: ReactChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = ""; // allow re-selecting the same file
+    if (files.length === 0 || index === null) return;
+    useAttachmentsStore
+      .getState()
+      .addFiles(files, workspaceID, { index, uuid: workspaceUUID });
+  };
 
   return (
     <div className="input-bar">
@@ -330,13 +406,64 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
         />
       ) : null}
 
-      {/* Phase 4b: <AttachmentTray/> lands here (above the main row, iOS parity). */}
+      {/* Phase 4b: paperclip (Photos / Files) + mic (voice note sheet), shown
+          with the expanded state exactly like the iOS action row. Phase 5:
+          @ file-search + Jira ticket. */}
+      {attachMenuOpen ? (
+        <div className="attach-menu" role="menu" aria-label="Attachment source">
+          <button
+            type="button"
+            role="menuitem"
+            className="menu-item"
+            onClick={() => openPicker("photo")}
+          >
+            <ImageIcon size={14} className="menu-item-icon" aria-hidden="true" />
+            <span className="menu-item-label">Photos</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="menu-item"
+            onClick={() => openPicker("file")}
+          >
+            <Folder size={14} className="menu-item-icon" aria-hidden="true" />
+            <span className="menu-item-label">Files</span>
+          </button>
+        </div>
+      ) : null}
+
+      <AttachmentTray
+        attachments={attachments}
+        onRemove={(id) => useAttachmentsStore.getState().remove(id)}
+        onRetry={(id) => useAttachmentsStore.getState().retry(id)}
+      />
       {traySlot ? <div className="input-bar-tray">{traySlot}</div> : null}
 
-      {/* Phase 4b/5 slot: the iOS expanded action row (paperclip attach,
-          mic voice note, @ file search, ticket Jira) renders here between the
-          tray and the main row once 4b lands AttachmentTray. Deliberately not
-          rendered in 4a — the row would be an empty gap. */}
+      {expanded ? (
+        <div className="input-bar-actions">
+          <button
+            type="button"
+            className="input-action-button"
+            title="Attach file"
+            aria-label="Attach file"
+            disabled={index === null}
+            onClick={() => setAttachMenuOpen((value) => !value)}
+          >
+            <Paperclip size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="input-action-button"
+            title="Record voice note"
+            aria-label="Record voice note"
+            disabled={index === null}
+            onClick={() => setVoiceSheetOpen(true)}
+          >
+            <Mic size={16} aria-hidden="true" />
+          </button>
+          {/* Phase 5: @ file-search + Jira ticket buttons. */}
+        </div>
+      ) : null}
 
       <div className="input-bar-main">
         <button
@@ -387,7 +514,7 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
           title="Send"
           aria-label="Send message"
           disabled={disabled || !canSend}
-          onClick={() => void send({ text: draft })}
+          onClick={() => sendDraft(draft)}
         >
           <Send size={16} aria-hidden="true" />
         </button>
@@ -427,6 +554,43 @@ export function InputBar({ index, surfaceId = null, traySlot }: InputBarProps) {
           </div>
         ) : null}
       </div>
+
+      {/* Phase 4b pickers: images-only (iOS Photos parity) vs any file. */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="input-file-hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={handleFilesSelected}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="input-file-hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={handleFilesSelected}
+      />
+
+      {attachMenuOpen ? (
+        <div className="menu-backdrop" onClick={() => setAttachMenuOpen(false)} />
+      ) : null}
+      {voiceSheetOpen ? (
+        <VoiceNoteSheet
+          onSave={(file) => {
+            if (index === null) return;
+            useAttachmentsStore
+              .getState()
+              .addFiles([file], workspaceID, { index, uuid: workspaceUUID });
+            setVoiceSheetOpen(false);
+          }}
+          onDismiss={() => setVoiceSheetOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
