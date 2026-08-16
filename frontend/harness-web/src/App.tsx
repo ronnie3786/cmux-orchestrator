@@ -4,9 +4,11 @@ import { getToken, setToken } from "./api/client";
 import { getFeed, getNotifications, getStatus } from "./api/endpoints";
 import { ConnectionBar } from "./components/ConnectionBar";
 import { Sidebar } from "./components/Sidebar";
+import { WorkspaceDetailView } from "./components/Workspace/WorkspaceDetailView";
 import { useConnectionStore } from "./store/connectionStore";
+import { useSessionStore } from "./store/sessionStore";
 import { useWorkspacesStore } from "./store/workspacesStore";
-import { paneDisplayName, sessionDisplayName, workspaceID } from "./lib/workspaceGroups";
+import { groups, sessionGroupID, workspaceID } from "./lib/workspaceGroups";
 
 const POLL_INTERVAL_MS = 2_000;
 
@@ -90,6 +92,19 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [token]);
+
+  // Screen polling lifecycle: start when a session is selected, stop when the
+  // selection changes or clears (iOS: the screen tick runs only for the
+  // selected workspace).
+  const selectedWorkspaceID = useWorkspacesStore((state) => state.selectedWorkspaceID);
+  useEffect(() => {
+    if (!token || !selectedWorkspaceID) {
+      useSessionStore.getState().stopPolling();
+      return;
+    }
+    useSessionStore.getState().startPolling();
+    return () => useSessionStore.getState().stopPolling();
+  }, [token, selectedWorkspaceID]);
 
   const saveToken = () => {
     const value = draft.trim();
@@ -182,13 +197,16 @@ function DetailPane() {
     );
   }
 
-  return (
-    <main className="detail">
-      <header className="detail-header">
-        <div className="detail-title">{sessionDisplayName(workspace)}</div>
-        <div className="detail-subtitle">{paneDisplayName(workspace)}</div>
-      </header>
-      <div className="detail-placeholder">Terminal, Git, and tools land in Phase 2.</div>
-    </main>
-  );
+  const group = groups(workspaces).find((candidate) => candidate.id === sessionGroupID(workspace));
+
+  // Fallback group (shouldn't happen — the workspace is in the list).
+  if (!group) {
+    return (
+      <main className="detail">
+        <div className="detail-placeholder">Select a session</div>
+      </main>
+    );
+  }
+
+  return <WorkspaceDetailView key={workspace.uuid || workspace.index} workspace={workspace} group={group} />;
 }
