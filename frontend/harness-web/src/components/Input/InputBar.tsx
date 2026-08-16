@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import { ChevronUp, Folder, Image as ImageIcon, Mic, Paperclip, Send } from "lucide-react";
+import { ChevronUp, Folder, Image as ImageIcon, Mic, Paperclip, Send, Ticket } from "lucide-react";
 import { getSkills, sendTextOrKey } from "../../api/endpoints";
 import type { HarnessKey, ProjectSkill } from "../../api/types";
 import {
@@ -80,6 +80,12 @@ export interface InputBarProps {
    * AttachmentTray itself is rendered by the bar, keyed by `workspaceID`).
    */
   traySlot?: ReactNode;
+  /**
+   * Phase 5: open a tools modal from the expanded action row (iOS
+   * `.fileSearchTapped` / `.jiraTicketsTapped`). Owned by the detail view so
+   * the modal survives tab switches and stays available while the bar shows.
+   */
+  onOpenTools?: (tool: "fileSearch" | "jira") => void;
 }
 
 // --- skills loading (lazy per index, cached across remounts) ----------------
@@ -121,6 +127,7 @@ export function InputBar({
   workspaceID,
   workspaceUUID = null,
   traySlot,
+  onOpenTools,
 }: InputBarProps) {
   const draft = useDraftStore((state) => state.activeDraft);
   const setDraft = useDraftStore((state) => state.setDraft);
@@ -461,7 +468,27 @@ export function InputBar({
           >
             <Mic size={16} aria-hidden="true" />
           </button>
-          {/* Phase 5: @ file-search + Jira ticket buttons. */}
+          {/* Phase 5 (iOS action-row parity): @ file-search + Jira ticket. */}
+          <button
+            type="button"
+            className="input-action-button input-action-button-at"
+            title="Add file path"
+            aria-label="Add file path"
+            disabled={index === null}
+            onClick={() => onOpenTools?.("fileSearch")}
+          >
+            @
+          </button>
+          <button
+            type="button"
+            className="input-action-button"
+            title="Add Jira ticket"
+            aria-label="Add Jira ticket"
+            disabled={index === null}
+            onClick={() => onOpenTools?.("jira")}
+          >
+            <Ticket size={16} aria-hidden="true" />
+          </button>
         </div>
       ) : null}
 

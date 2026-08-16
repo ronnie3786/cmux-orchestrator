@@ -292,31 +292,43 @@ export function getPRComments(index: number, includeResolved = false): Promise<G
 
 // --- skills / file search / jira -------------------------------------------------
 
-/** GET /api/skills?index=N */
-export function getSkills(index: number): Promise<SkillsResponse> {
+/** GET /api/skills?index=N. `signal` cancels on unmount (iOS `loadSkills` task). */
+export function getSkills(index: number, signal?: AbortSignal): Promise<SkillsResponse> {
   const query = new URLSearchParams({ index: String(index) });
-  return apiRequest<SkillsResponse>(`/api/skills?${query.toString()}`);
+  return apiRequest<SkillsResponse>(`/api/skills?${query.toString()}`, { signal });
 }
 
-/** GET /api/file-search?index=N&q=... */
-export function fileSearch(index: number, query: string): Promise<FileSearchResponse> {
+/**
+ * GET /api/file-search?index=N&q=...
+ * Pass `signal` to cancel a per-keystroke in-flight request (iOS
+ * `fileSearchCancelID` parity — only the latest query's results render).
+ */
+export function fileSearch(
+  index: number,
+  query: string,
+  signal?: AbortSignal,
+): Promise<FileSearchResponse> {
   const params = new URLSearchParams({ index: String(index), q: query });
-  return apiRequest<FileSearchResponse>(`/api/file-search?${params.toString()}`);
+  return apiRequest<FileSearchResponse>(`/api/file-search?${params.toString()}`, { signal });
 }
 
-/** GET /api/jira/assigned?limit=N[&project=KEY] */
-export function getJiraAssigned(limit = 50, project?: string): Promise<JiraTicketsResponse> {
+/** GET /api/jira/assigned?limit=N[&project=KEY]. `signal` cancels on close (iOS `jiraTicketsCancelID`). */
+export function getJiraAssigned(
+  limit = 50,
+  project?: string,
+  signal?: AbortSignal,
+): Promise<JiraTicketsResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (project) {
     params.set("project", project);
   }
-  return apiRequest<JiraTicketsResponse>(`/api/jira/assigned?${params.toString()}`);
+  return apiRequest<JiraTicketsResponse>(`/api/jira/assigned?${params.toString()}`, { signal });
 }
 
-/** GET /api/jira/issue?q=TICKET-123 */
-export function getJiraIssue(query: string): Promise<JiraTicketResponse> {
+/** GET /api/jira/issue?q=TICKET-123 (or a browse URL — the server parses it). `signal` cancels on close (iOS `jiraLookupCancelID`). */
+export function getJiraIssue(query: string, signal?: AbortSignal): Promise<JiraTicketResponse> {
   const params = new URLSearchParams({ q: query });
-  return apiRequest<JiraTicketResponse>(`/api/jira/issue?${params.toString()}`);
+  return apiRequest<JiraTicketResponse>(`/api/jira/issue?${params.toString()}`, { signal });
 }
 
 // --- attachments ---------------------------------------------------------------

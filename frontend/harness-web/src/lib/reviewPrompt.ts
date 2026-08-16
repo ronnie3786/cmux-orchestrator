@@ -25,6 +25,25 @@ export function appendPromptBlock(block: string, draft: string): string {
   return `${trimmedDraft}\n\n${trimmedBlock}`;
 }
 
+/**
+ * Exact port of `appendPromptToken(_ token: String, to draft: String)`
+ * (HarnessFeatureHelpers.swift). Used by the file-search, skill, and Jira
+ * inserts — the token (e.g. `` `path` ``, `/name`, `$name`) is appended
+ * space-separated. Unlike `appendPromptBlock`, neither side is trimmed:
+ * an empty draft yields the token as-is; a non-empty draft ending in
+ * whitespace gets the token directly; otherwise a single space is inserted.
+ */
+export function appendPromptToken(token: string, draft: string): string {
+  if (draft === "") {
+    return token;
+  }
+  const last = draft.charAt(draft.length - 1);
+  if (/\s/.test(last)) {
+    return draft + token;
+  }
+  return draft + " " + token;
+}
+
 /** iOS `DiffLineCommentSide.promptLabel` — the raw values are the labels. */
 function sidePromptLabel(side: DiffLineReviewComment["side"]): string {
   return side;

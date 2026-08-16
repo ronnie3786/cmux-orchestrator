@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GitHubPRCommentsResponse, GitHubPRThread } from "../api/types";
 import {
   appendPromptBlock,
+  appendPromptToken,
   formatDiffLineReviewPrompt,
   formatPRCommentThreadPrompt,
   prThreadLineLabel,
@@ -264,5 +265,42 @@ ${expectedPRPrompt}`,
     const block = "  block text\n";
     expect(appendPromptBlock(block, "")).toBe("block text");
     expect(appendPromptBlock(block, "   \n  ")).toBe("block text");
+  });
+});
+
+describe("appendPromptToken (iOS appendPromptToken parity)", () => {
+  it("returns the token unchanged for an empty draft", () => {
+    expect(appendPromptToken("`Sources/AppView.swift`", "")).toBe("`Sources/AppView.swift`");
+  });
+
+  it("inserts a single space when the draft does not end in whitespace", () => {
+    expect(appendPromptToken("`Sources/AppView.swift`", "Open")).toBe(
+      "Open `Sources/AppView.swift`",
+    );
+  });
+
+  it("appends directly when the draft ends in whitespace", () => {
+    expect(appendPromptToken("/ios-review", "Review this ")).toBe("Review this /ios-review");
+    expect(appendPromptToken("/ios-review", "Review this\n")).toBe("Review this\n/ios-review");
+  });
+
+  it("reproduces the iOS skill-insert chain (skillsAppendsInvocationTokens)", () => {
+    // iOS test: draft "Review this" + appendSkillInvocation +
+    // appendCodexSkillInvocation + appendSkillFilePath.
+    let draft = "Review this";
+    draft = appendPromptToken("/ios-review", draft);
+    expect(draft).toBe("Review this /ios-review");
+    draft = appendPromptToken("$ios-review", draft);
+    expect(draft).toBe("Review this /ios-review $ios-review");
+    draft = appendPromptToken("`.claude/skills/ios-review/SKILL.md`", draft);
+    expect(draft).toBe(
+      "Review this /ios-review $ios-review `.claude/skills/ios-review/SKILL.md`",
+    );
+  });
+
+  it("reproduces the iOS file-search insert (fileSearchAppendsBacktickedProjectRelativePath)", () => {
+    expect(appendPromptToken("`Sources/AppView.swift`", "Open")).toBe(
+      "Open `Sources/AppView.swift`",
+    );
   });
 });

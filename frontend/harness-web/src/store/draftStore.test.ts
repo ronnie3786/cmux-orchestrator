@@ -82,6 +82,25 @@ describe("draftStore", () => {
     expect(store.getState().activeDraft).toBe("block only");
   });
 
+  it("appends tokens with iOS appendPromptToken semantics (file/skill inserts)", async () => {
+    const { store, storage } = await setup({ "harness-web:draft:abc": "Open" });
+    store.getState().selectDraft("abc");
+
+    // iOS fileSearchAppendsBacktickedProjectRelativePath: "Open" + token.
+    store.getState().appendToken("`Sources/AppView.swift`");
+    expect(store.getState().activeDraft).toBe("Open `Sources/AppView.swift`");
+    expect(storage.getItem("harness-web:draft:abc")).toBe("Open `Sources/AppView.swift`");
+
+    // Trailing whitespace: no extra space inserted (Swift isWhitespace check).
+    store.getState().appendToken("/ios-review");
+    expect(store.getState().activeDraft).toBe("Open `Sources/AppView.swift` /ios-review");
+
+    // An empty draft receives just the token (Swift guard !draft.isEmpty).
+    store.getState().clearDraft();
+    store.getState().appendToken("$ios-review");
+    expect(store.getState().activeDraft).toBe("$ios-review");
+  });
+
   it("trims drafts for workspaces that no longer exist (iOS trimDrafts)", async () => {
     const { store, storage } = await setup({
       "harness-web:draft:keep": "a",

@@ -38,6 +38,11 @@ function errorFromPayload(payload: unknown, status: number): string {
  * Injects X-Cmux-Token from localStorage on every request and enforces a
  * 15 s timeout via AbortController (overridable per-call, e.g. uploads).
  * Throws Error with the server's error string on non-2xx responses.
+ *
+ * Pass `signal` in `init` to support caller-side cancellation (e.g. the file
+ * search's per-keystroke re-issue — iOS `fileSearchCancelID` parity): the
+ * external signal aborts the internal controller, and the rejection reads
+ * "Request cancelled" (vs "Request timed out" for the internal timeout).
  */
 export async function apiRequest<T>(
   path: string,
@@ -46,6 +51,15 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = init.signal ?? null;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) {
@@ -68,10 +82,11 @@ export async function apiRequest<T>(
     return payload as T;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("Request timed out");
+      throw new Error(externalSignal?.aborted ? "Request cancelled" : "Request timed out");
     }
     throw error;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
 }

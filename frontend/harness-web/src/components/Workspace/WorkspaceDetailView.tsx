@@ -48,6 +48,9 @@ import { GitStatusView } from "../Git/GitStatusView";
 import { TerminalView } from "../Terminal/TerminalView";
 import { EasyModeKeyboard } from "../Input/EasyModeKeyboard";
 import { InputBar } from "../Input/InputBar";
+import { FileSearchModal } from "../Tools/FileSearchModal";
+import { JiraModal } from "../Tools/JiraModal";
+import { SkillsTab } from "../Tools/SkillsTab";
 import { ActivityTab } from "./ActivityTab";
 import { FeedInteractionCard, type FeedReplyAction, type FeedReplyMode } from "./FeedInteractionCard";
 import { OpenCodeFallbackCard } from "./OpenCodeFallbackCard";
@@ -114,6 +117,11 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
   const openCodeIntegration = useWorkspacesStore((s) => s.openCodeIntegration);
 
   const [tab, setTab] = useState<DetailTab>("terminal");
+  // Phase 5 tools modals (iOS isShowingFileSearch / isShowingJiraTickets).
+  // Owned here — not by the InputBar — so they stay open across tab switches
+  // and inserts can jump to the Terminal tab (iOS append* actions set
+  // detailTab = .terminal + bump detailInputFocusRequest, then close).
+  const [toolsModal, setToolsModal] = useState<"fileSearch" | "jira" | null>(null);
   // The view remounts per workspace (keyed in App), so reading the
   // per-workspace flag on init gives per-session easy mode.
   const [easyMode, setEasyMode] = useState(() => readEasyMode(workspaceID(workspace)));
@@ -478,6 +486,7 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
                   surfaceId={workspace.surfaceId ?? null}
                   workspaceID={workspaceID(workspace)}
                   workspaceUUID={workspace.uuid}
+                  onOpenTools={(tool) => setToolsModal(tool)}
                 />
               )
             ) : null}
@@ -492,11 +501,11 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
             <ActivityTab workspace={workspace} />
           </div>
         ) : (
-          <div className="tab-placeholder">
-            <p>{DETAIL_TABS.find((t) => t.id === tab)?.label} arrives in a later phase.</p>
-            <p className="tab-placeholder-hint">
-              The screen polling, input row, and this layout are already wired.
-            </p>
+          <div className="skills-tab-panel">
+            <SkillsTab
+              index={workspace.index}
+              onJumpToTerminal={() => setTabAndMaybeDisableEasy("terminal")}
+            />
           </div>
         )}
 
@@ -525,6 +534,21 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
           </div>
         </div>
       </div>
+
+      {/* Phase 5 tools modals (iOS sheetPresented: fileSearch / jiraTickets) */}
+      {toolsModal === "fileSearch" ? (
+        <FileSearchModal
+          index={workspace.index}
+          onJumpToTerminal={() => setTabAndMaybeDisableEasy("terminal")}
+          onClose={() => setToolsModal(null)}
+        />
+      ) : null}
+      {toolsModal === "jira" ? (
+        <JiraModal
+          onJumpToTerminal={() => setTabAndMaybeDisableEasy("terminal")}
+          onClose={() => setToolsModal(null)}
+        />
+      ) : null}
 
       {/* Actions menu */}
       {menuOpen ? (

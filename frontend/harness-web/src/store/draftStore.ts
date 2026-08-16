@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { appendPromptBlock } from "../lib/reviewPrompt";
+import { appendPromptBlock, appendPromptToken } from "../lib/reviewPrompt";
 
 /**
  * Per-workspace detail input drafts (iOS `detailDrafts` / `persistDetailDraft`
@@ -79,6 +79,8 @@ interface DraftStoreState {
   setDraft: (value: string) => void;
   /** iOS `appendPromptBlock` into the active draft + persist. */
   appendBlock: (block: string) => void;
+  /** iOS `appendPromptToken` into the active draft + persist (file/skill inserts). */
+  appendToken: (token: string) => void;
   /** Clear the active draft (removes the persisted entry, iOS parity). */
   clearDraft: () => void;
   /** iOS `trimDrafts` — drop drafts for workspaces that no longer exist. */
@@ -128,6 +130,12 @@ export const useDraftStore = create<DraftStoreState>()((set, get) => ({
     const id = get().activeDraftID;
     if (id === null) return;
     get().setDraft(appendPromptBlock(block, get().activeDraft));
+  },
+
+  appendToken: (token) => {
+    const id = get().activeDraftID;
+    if (id === null) return;
+    get().setDraft(appendPromptToken(token, get().activeDraft));
   },
 
   clearDraft: () => {
