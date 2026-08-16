@@ -15,6 +15,11 @@ extension HarnessAPI {
         request.timeoutInterval = 15
         request.setValue(jsonContentType, forHTTPHeaderField: "Accept")
 
+        let webToken = HarnessSettingsStore.harnessWebToken
+        if !webToken.isEmpty {
+            request.setValue(webToken, forHTTPHeaderField: "X-Cmux-Token")
+        }
+
         if let body {
             request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(AnyEncodable(body))

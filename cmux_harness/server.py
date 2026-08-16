@@ -1,6 +1,8 @@
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -83,6 +85,26 @@ _STATIC_CONTENT = {
 
 _HARNESS_ALLOWED_KEYS = {"up", "down", "tab", "enter", "left", "right", "escape", "backspace"}
 
+WEB_TOKEN_FILE = storage.LOG_DIR / "web-token.txt"
+
+
+def load_or_create_web_token(path=None):
+    """Load the harness-web shared token, generating and persisting it on first run."""
+    token_path = Path(path) if path is not None else WEB_TOKEN_FILE
+    try:
+        token = token_path.read_text(encoding="utf-8").strip()
+        if token:
+            return token
+    except OSError:
+        pass
+    token = secrets.token_hex(16)
+    token_path.write_text(token, encoding="utf-8")
+    try:
+        os.chmod(token_path, 0o600)
+    except OSError:
+        pass
+    return token
+
 
 def _human_file_size(size):
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -142,7 +164,7 @@ def _server_lan_addresses():
     return sorted(addresses)
 
 
-def make_handler(engine):
+def make_handler(engine, web_token=""):
     """Create a DashboardHandler class bound to the given engine instance."""
 
     class DashboardHandler(BaseHTTPRequestHandler):
@@ -150,6 +172,25 @@ def make_handler(engine):
 
         def log_message(self, fmt, *args):
             pass
+
+        def _auth_ok(self, path):
+            """Gate non-loopback /api/ requests on the X-Cmux-Token header.
+
+            Returns False (after responding 401) when the request is rejected.
+            No-op when no token is configured or the path is outside /api/.
+            """
+            if not path.startswith("/api/"):
+                return True
+            if not web_token:
+                return True
+            client_host = (getattr(self, "client_address", None) or ("", 0))[0]
+            if client_host in ("127.0.0.1", "::1"):
+                return True
+            provided = self.headers.get("X-Cmux-Token") if self.headers else None
+            if provided and hmac.compare_digest(provided, web_token):
+                return True
+            self._json_response({"ok": False, "error": "unauthorized"}, 401)
+            return False
 
         def _json_response(self, data, status=200):
             body = json.dumps(data).encode()
@@ -298,6 +339,52 @@ def make_handler(engine):
                 return False
             return True
 
+        def _serve_harness_web_static(self, path):
+            root_dir = _STATIC_DIR / "harness-web"
+            if path in {"/harness-web", "/harness-web/"}:
+                relative = ""
+            elif path.startswith("/harness-web/"):
+                relative = path[len("/harness-web/"):].strip("/")
+            else:
+                return False
+            target = root_dir / (relative or "index.html")
+            try:
+                root = root_dir.resolve()
+                resolved = target.resolve()
+                if os.path.commonpath([str(root), str(resolved)]) != str(root):
+                    return False
+                target = resolved
+            except ValueError:
+                return False
+            if not target.exists() or not target.is_file():
+                # SPA fallback: unknown non-asset paths serve the app shell.
+                if "." in Path(relative).name:
+                    return False
+                target = root_dir / "index.html"
+                if not target.exists() or not target.is_file():
+                    return False
+            content_type = {
+                ".html": "text/html; charset=utf-8",
+                ".js": "application/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".svg": "image/svg+xml",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".json": "application/json",
+            }.get(target.suffix.lower(), "application/octet-stream")
+            body = target.read_bytes()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return False
+            return True
+
         def _network_payload(self):
             port = int(getattr(self.server, "server_address", ("", 9091))[1] or 9091)
             lan_addresses = _server_lan_addresses()
@@ -356,7 +443,11 @@ def make_handler(engine):
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
+            if not self._auth_ok(path):
+                return
             if self._serve_orchestrator_v2_static(path):
+                return
+            if self._serve_harness_web_static(path):
                 return
             if self._serve_static(path):
                 return
@@ -791,6 +882,8 @@ def make_handler(engine):
         def do_POST(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
+            if not self._auth_ok(path):
+                return
             if path == "/api/attachments":
                 self._handle_post_attachment()
                 return
@@ -1674,6 +1767,8 @@ def make_handler(engine):
         def do_PATCH(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
+            if not self._auth_ok(path):
+                return
             data = self._read_body()
             if path.startswith("/api/orchestrator-v2"):
                 if not orchestrator_v2_routes.handle_patch(self, parsed, data, engine=self.server.engine):
@@ -1723,6 +1818,8 @@ def make_handler(engine):
         def do_DELETE(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
+            if not self._auth_ok(path):
+                return
             if path.startswith("/api/orchestrator-v2"):
                 if not orchestrator_v2_routes.handle_delete(self, parsed, engine=self.server.engine):
                     self.send_error(404)

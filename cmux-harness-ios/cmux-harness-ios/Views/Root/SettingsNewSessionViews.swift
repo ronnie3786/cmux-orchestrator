@@ -58,6 +58,20 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    SecureField("Harness API token", text: $store.harnessWebTokenString)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.caption.monospaced())
+                        .onChange(of: store.harnessWebTokenString) { _, newValue in
+                            HarnessSettingsStore.harnessWebToken = newValue
+                        }
+                } header: {
+                    Text("Harness API Token")
+                } footer: {
+                    Text("Paste the token printed in the Mac server log (harness-web ready line). Sent as the X-Cmux-Token header; leave empty for servers without auth.")
+                }
+
                 Section(store.isEditingSavedServerSource ? "Source Details" : "New Source") {
                     TextField("Name", text: $store.serverSourceNameString)
                         .textInputAutocapitalization(.words)

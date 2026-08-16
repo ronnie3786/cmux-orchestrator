@@ -55,7 +55,7 @@ get_running_pids() {
     if [[ "$cmd" != *"dashboard.py"* ]]; then
       continue
     fi
-    for existing in "${pids[@]}"; do
+    for existing in ${pids[@]+"${pids[@]}"}; do
       if [[ "$existing" == "$pid" ]]; then
         continue 2
       fi
