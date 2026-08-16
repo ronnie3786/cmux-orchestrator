@@ -26,6 +26,7 @@ import type {
 } from "../api/types";
 import { sessionGroupID, unreadCountForWorkspace, workspaceID } from "../lib/workspaceGroups";
 import { useConnectionStore } from "./connectionStore";
+import { useDraftStore } from "./draftStore";
 
 interface WorkspacesStoreState {
   workspaces: Workspace[];
@@ -104,6 +105,8 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
       hasReceivedStatus: true,
       ...(selectionCleared ? { selectedGroupID: null, selectedWorkspaceID: null } : {}),
     });
+    // iOS `trimDrafts`: drop persisted drafts for workspaces that vanished.
+    useDraftStore.getState().trimDrafts(workspaces.map((workspace) => workspaceID(workspace)));
   },
 
   applyNotifications: (response: NotificationsResponse) => {
@@ -129,6 +132,8 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
       selectedWorkspaceID: workspaceIDValue,
       selectedGroupID: workspace ? sessionGroupID(workspace) : null,
     });
+    // iOS `loadDetailDraft`: bind the input row to the selected workspace's draft.
+    useDraftStore.getState().selectDraft(workspaceIDValue);
     if (!workspace) return;
 
     // Fire-and-forget: clear any pending push approval for this session

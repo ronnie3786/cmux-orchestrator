@@ -41,8 +41,10 @@ import {
 } from "../../lib/feed";
 import { detect } from "../../terminal/detector";
 import { useConnectionStore } from "../../store/connectionStore";
+import { useGitStore } from "../../store/gitStore";
 import { useSessionStore } from "../../store/sessionStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
+import { GitStatusView } from "../Git/GitStatusView";
 import { MinimalInputRow } from "../Terminal/MinimalInputRow";
 import { TerminalView } from "../Terminal/TerminalView";
 import { ActivityTab } from "./ActivityTab";
@@ -171,6 +173,35 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen, renameOpen, detailsOpen]);
+
+  // --- Git tab lifecycle (iOS HarnessFeatureGitReducer parity) --------------
+  //
+  // The view remounts on every selection change (keyed by workspace in App),
+  // so a mount-time reset mirrors iOS `workspaceSelected`: fresh status/PR
+  // data, status segment, no sheet open.
+  const gitSegment = useGitStore((s) => s.gitSegment);
+  useEffect(() => {
+    useGitStore.getState().resetForSelection();
+    return () => {
+      useGitStore.getState().stopStatusPolling();
+    };
+  }, []);
+
+  // Status segment: 10 s poll (iOS gitPollingEffect) with an immediate tick.
+  // PR Comments segment: one-shot load (iOS `.loadPRComments`). Leaving the
+  // git tab cancels the poll (iOS `detailTabChanged`).
+  useEffect(() => {
+    const git = useGitStore.getState();
+    if (tab === "git" && gitSegment === "status") {
+      git.startStatusPolling(workspace.index);
+      return () => git.stopStatusPolling();
+    }
+    if (tab === "git" && gitSegment === "prComments") {
+      git.loadPRComments(workspace.index);
+      return;
+    }
+    git.stopStatusPolling();
+  }, [tab, gitSegment, workspace.index]);
 
   // --- active interaction (iOS DetailTerminalLayout parity) ------------------
   //
@@ -415,6 +446,11 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
             ) : null}
             {!hasActiveInteraction ? <MinimalInputRow index={workspace.index} /> : null}
           </div>
+        ) : tab === "git" ? (
+          <GitStatusView
+            workspace={workspace}
+            onJumpToTerminal={() => setTabAndMaybeDisableEasy("terminal")}
+          />
         ) : tab === "activity" ? (
           <div className="activity-tab-panel">
             <ActivityTab workspace={workspace} />

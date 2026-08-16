@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import { sendTextOrKey } from "../../api/endpoints";
 import type { HarnessKey } from "../../api/types";
+import { useDraftStore } from "../../store/draftStore";
 
 interface MinimalInputRowProps {
   /** cmux index of the selected session; null disables the row. */
@@ -11,6 +12,12 @@ interface MinimalInputRowProps {
 /**
  * Quick keys are limited to the server's /api/send whitelist. The button
  * labels are display-only; `key` is what gets sent.
+ *
+ * The text field is bound to the per-workspace draft (draftStore, iOS
+ * `detailDraft` parity): drafts survive tab switches and reloads, appended
+ * prompt blocks (diff-line comments, PR threads) land here, and the field
+ * focuses whenever the Git tab raises a focus request. Phase 4 replaces the
+ * local `text` state with the full input bar on top of this plumbing.
  */
 const QUICK_KEYS: Array<{ key: HarnessKey; label: string; title: string }> = [
   { key: "enter", label: "Enter", title: "Send Enter" },
@@ -21,10 +28,20 @@ const QUICK_KEYS: Array<{ key: HarnessKey; label: string; title: string }> = [
 ];
 
 export function MinimalInputRow({ index }: MinimalInputRowProps) {
-  const [text, setText] = useState("");
+  const draft = useDraftStore((state) => state.activeDraft);
+  const setDraft = useDraftStore((state) => state.setDraft);
+  const focusRequest = useDraftStore((state) => state.focusRequest);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // iOS `detailInputFocusHandled`: the Git tab (diff-line comments, PR
+  // threads) bumps the request; the input row focuses and marks it handled.
+  useEffect(() => {
+    if (focusRequest === 0) return;
+    inputRef.current?.focus();
+    useDraftStore.getState().markFocusHandled(focusRequest);
+  }, [focusRequest]);
 
   const disabled = index === null || busy;
 
@@ -34,9 +51,17 @@ export function MinimalInputRow({ index }: MinimalInputRowProps) {
       setBusy(true);
       setError(null);
       try {
-        await sendTextOrKey({ index, ...payload });
+        // iOS sendTextEffect parity: input-bar text executes in the terminal
+        // (iOS sends `message + "\n"`). Quick keys are unaffected.
+        await sendTextOrKey({
+          index,
+          ...payload,
+          ...(payload.text ? { text: payload.text + "\n" } : {}),
+        });
         if (payload.text) {
-          setText("");
+          // iOS sends the draft then clears it (persistDetailDraft removes the
+          // stored entry for an empty draft).
+          useDraftStore.getState().clearDraft();
         }
         inputRef.current?.focus();
       } catch (err) {
@@ -62,14 +87,14 @@ export function MinimalInputRow({ index }: MinimalInputRowProps) {
         className="input-row-field"
         type="text"
         placeholder={index === null ? "Select a session" : "Type a message…"}
-        value={text}
+        value={draft}
         disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
-          if (text.trim().length > 0) {
-            void send({ text });
+          if (draft.trim().length > 0) {
+            void send({ text: draft });
           } else {
             sendKey("enter");
           }
@@ -93,8 +118,8 @@ export function MinimalInputRow({ index }: MinimalInputRowProps) {
       <button
         type="button"
         className="input-row-send"
-        disabled={disabled || text.trim().length === 0}
-        onClick={() => void send({ text })}
+        disabled={disabled || draft.trim().length === 0}
+        onClick={() => void send({ text: draft })}
         aria-label="Send message"
       >
         <Send size={14} />
