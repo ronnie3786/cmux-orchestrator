@@ -108,7 +108,7 @@ export function getStatus(): Promise<HarnessStatus> {
   return apiRequest<HarnessStatus>("/api/status");
 }
 
-/** GET /api/log — newest last. */
+/** GET /api/log — newest first (server returns reversed approval log). */
 export function getLog(): Promise<LogEntry[]> {
   return apiRequest<LogEntry[]>("/api/log");
 }
@@ -152,13 +152,13 @@ export function getOpenCodeIntegration(): Promise<OpenCodeIntegrationResponse> {
   return apiRequest<OpenCodeIntegrationResponse>("/api/integrations/opencode");
 }
 
-/** POST /api/integrations/opencode/install */
+/**
+ * POST /api/integrations/opencode — installs the cmux OpenCode event bridge.
+ * (The server has no /install variant; GET and POST share this path —
+ * verified against cmux_harness/server.py and the iOS client.)
+ */
 export function installOpenCodeIntegration(): Promise<OpenCodeIntegrationResponse> {
-  return apiRequest<OpenCodeIntegrationResponse>("/api/integrations/opencode/install", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-  });
+  return apiRequest<OpenCodeIntegrationResponse>("/api/integrations/opencode", { method: "POST" });
 }
 
 /** GET /api/screen?index=N&lines=L */

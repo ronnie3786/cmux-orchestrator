@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Check,
@@ -14,8 +14,8 @@ import {
   Timer,
   X,
 } from "lucide-react";
-import { renameWorkspace, setWorkspaceToggle } from "../../api/endpoints";
-import type { Workspace, WorkspaceAutoMode } from "../../api/types";
+import { renameWorkspace, replyToFeed, sendTextOrKey, setWorkspaceToggle, installOpenCodeIntegration } from "../../api/endpoints";
+import type { HarnessKey, Workspace, WorkspaceAutoMode } from "../../api/types";
 import {
   displayName,
   paneLabel,
@@ -34,10 +34,20 @@ import {
   nonEmptyTrimmed,
   worktreeValue,
 } from "../../lib/workspaceDisplay";
+import {
+  feedItemMatches,
+  feedItemSupportsNativeReply,
+  groupedQuestionFallbackNote,
+} from "../../lib/feed";
+import { detect } from "../../terminal/detector";
+import { useConnectionStore } from "../../store/connectionStore";
 import { useSessionStore } from "../../store/sessionStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
 import { MinimalInputRow } from "../Terminal/MinimalInputRow";
 import { TerminalView } from "../Terminal/TerminalView";
+import { ActivityTab } from "./ActivityTab";
+import { FeedInteractionCard, type FeedReplyAction, type FeedReplyMode } from "./FeedInteractionCard";
+import { OpenCodeFallbackCard } from "./OpenCodeFallbackCard";
 
 type DetailTab = "terminal" | "git" | "activity" | "skills";
 
@@ -80,6 +90,8 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
   const toggleStar = useWorkspacesStore((s) => s.toggleStar);
   const screenText = useSessionStore((s) => s.screenText);
+  const feedReplyPendingIDs = useSessionStore((s) => s.feedReplyPendingIDs);
+  const openCodeIntegration = useWorkspacesStore((s) => s.openCodeIntegration);
 
   const [tab, setTab] = useState<DetailTab>("terminal");
   const [easyMode, setEasyMode] = useState(readEasyMode);
@@ -89,6 +101,7 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
   const [renameValue, setRenameValue] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [isInstallingIntegration, setIsInstallingIntegration] = useState(false);
 
   const id = workspaceID(workspace);
   const title = group.displayName;
@@ -158,6 +171,129 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen, renameOpen, detailsOpen]);
+
+  // --- active interaction (iOS DetailTerminalLayout parity) ------------------
+  //
+  // terminalText mirrors the iOS detector input: the latest raw screen text,
+  // or the iOS placeholder when the terminal has no data yet.
+  const terminalText = useMemo(() => {
+    const raw = screenText ?? "";
+    return raw.length > 0 ? raw : "(no terminal data yet)";
+  }, [screenText]);
+
+  const workspaceFeedItems = useMemo(
+    () => feedItems.filter((item) => feedItemMatches(item, workspace)),
+    [feedItems, workspace],
+  );
+
+  const nativeFeedItem = useMemo(
+    () => workspaceFeedItems.find((item) => feedItemSupportsNativeReply(item)) ?? null,
+    [workspaceFeedItems],
+  );
+
+  // The detector only runs when no native feed item exists (iOS guard).
+  const terminalInteraction = useMemo(() => {
+    if (nativeFeedItem !== null) return null;
+    return detect(terminalText);
+  }, [nativeFeedItem, terminalText]);
+
+  const hasActiveInteraction = nativeFeedItem !== null || terminalInteraction !== null;
+
+  const fallbackNote = useMemo(() => groupedQuestionFallbackNote(workspaceFeedItems), [workspaceFeedItems]);
+
+  const isSubmittingNative = nativeFeedItem !== null && feedReplyPendingIDs.has(nativeFeedItem.requestID);
+
+  /** Port of the replyToFeed action: dedupe, POST, optimistic remove + refresh. */
+  const handleFeedReply = useCallback(
+    async (action: FeedReplyAction, mode: FeedReplyMode | null, selections: string[] | null) => {
+      if (nativeFeedItem === null) return;
+      const requestID = nativeFeedItem.requestID;
+      const session = useSessionStore.getState();
+      if (!session.beginFeedReply(requestID)) return;
+      try {
+        await replyToFeed({
+          requestID,
+          kind: nativeFeedItem.kind,
+          action,
+          mode,
+          selections,
+        });
+        session.finishFeedReply(requestID);
+        // iOS removes the answered item from state immediately; the next
+        // 2 s global tick re-syncs from the server.
+        useWorkspacesStore.setState((state) => ({
+          feedItems: state.feedItems.filter((item) => item.requestID !== requestID),
+        }));
+        useConnectionStore.getState().clearError();
+      } catch (err) {
+        session.finishFeedReply(requestID);
+        useConnectionStore.setState({
+          errorMessage: err instanceof Error ? err.message : "Couldn't send response",
+        });
+      }
+    },
+    [nativeFeedItem],
+  );
+
+  /** Port of the sendKey action: POST /api/send, then an immediate screen tick. */
+  const handleSendKey = useCallback(
+    async (key: HarnessKey) => {
+      try {
+        await sendTextOrKey({
+          index: workspace.index,
+          key,
+          surfaceId: workspace.surfaceId ?? null,
+        });
+        useConnectionStore.getState().clearError();
+        void useSessionStore.getState().pollNow();
+      } catch (err) {
+        useConnectionStore.setState({
+          errorMessage: err instanceof Error ? err.message : "Couldn't send key",
+        });
+      }
+    },
+    [workspace.index, workspace.surfaceId],
+  );
+
+  /** Port of the sendKeys action: sequential sends, stop at the first error. */
+  const handleSendKeys = useCallback(
+    async (keys: string[]) => {
+      if (keys.length === 0) return;
+      try {
+        for (const key of keys) {
+          await sendTextOrKey({
+            index: workspace.index,
+            key: key as HarnessKey,
+            surfaceId: workspace.surfaceId ?? null,
+          });
+        }
+        useConnectionStore.getState().clearError();
+        void useSessionStore.getState().pollNow();
+      } catch (err) {
+        useConnectionStore.setState({
+          errorMessage: err instanceof Error ? err.message : "Couldn't send keys",
+        });
+      }
+    },
+    [workspace.index, workspace.surfaceId],
+  );
+
+  /** Port of the installOpenCodeIntegration action. */
+  const handleInstallIntegration = useCallback(async () => {
+    if (isInstallingIntegration) return;
+    setIsInstallingIntegration(true);
+    try {
+      const response = await installOpenCodeIntegration();
+      useWorkspacesStore.getState().applyOpenCodeIntegration(response);
+      useConnectionStore.getState().clearError();
+    } catch (err) {
+      useConnectionStore.setState({
+        errorMessage: err instanceof Error ? err.message : "Couldn't enable native controls",
+      });
+    } finally {
+      setIsInstallingIntegration(false);
+    }
+  }, [isInstallingIntegration]);
 
   return (
     <main className="detail">
@@ -258,11 +394,34 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
             <div className="terminal-panel">
               <TerminalView text={screenText ?? ""} sessionID={id} />
             </div>
-            <MinimalInputRow index={workspace.index} />
+            {nativeFeedItem !== null ? (
+              <FeedInteractionCard
+                key={nativeFeedItem.requestID}
+                item={nativeFeedItem}
+                isSubmitting={isSubmittingNative}
+                onReply={handleFeedReply}
+                onSendKey={(key) => void handleSendKey(key as HarnessKey)}
+              />
+            ) : terminalInteraction !== null ? (
+              <OpenCodeFallbackCard
+                interaction={terminalInteraction}
+                fallbackNote={fallbackNote}
+                integrationStatus={openCodeIntegration}
+                isInstallingIntegration={isInstallingIntegration}
+                onSendKey={(key) => void handleSendKey(key as HarnessKey)}
+                onSendKeys={(keys) => void handleSendKeys(keys)}
+                onInstallIntegration={() => void handleInstallIntegration()}
+              />
+            ) : null}
+            {!hasActiveInteraction ? <MinimalInputRow index={workspace.index} /> : null}
+          </div>
+        ) : tab === "activity" ? (
+          <div className="activity-tab-panel">
+            <ActivityTab workspace={workspace} />
           </div>
         ) : (
           <div className="tab-placeholder">
-            <p>{DETAIL_TABS.find((t) => t.id === tab)?.label} arrives in Phase 2b.</p>
+            <p>{DETAIL_TABS.find((t) => t.id === tab)?.label} arrives in a later phase.</p>
             <p className="tab-placeholder-hint">
               The screen polling, input row, and this layout are already wired.
             </p>

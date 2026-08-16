@@ -19,7 +19,9 @@ import type {
   FeedItem,
   FeedResponse,
   HarnessStatus,
+  LogEntry,
   NotificationsResponse,
+  OpenCodeIntegrationResponse,
   Workspace,
 } from "../api/types";
 import { sessionGroupID, unreadCountForWorkspace, workspaceID } from "../lib/workspaceGroups";
@@ -30,6 +32,10 @@ interface WorkspacesStoreState {
   notifications: CmuxNotification[];
   /** Pending feed items (approvals/questions) from /api/feed. */
   feedItems: FeedItem[];
+  /** Approval/action log from /api/log (server order: newest first, iOS parity). */
+  logEntries: LogEntry[];
+  /** OpenCode integration status from /api/integrations/opencode (2 s poll). */
+  openCodeIntegration: OpenCodeIntegrationResponse | null;
   /** Epoch ms of the last successful status poll. */
   lastUpdated: number | null;
   hasReceivedStatus: boolean;
@@ -41,6 +47,8 @@ interface WorkspacesStoreState {
   applyStatus: (status: HarnessStatus) => void;
   applyNotifications: (response: NotificationsResponse) => void;
   applyFeed: (response: FeedResponse) => void;
+  applyLog: (entries: LogEntry[]) => void;
+  applyOpenCodeIntegration: (response: OpenCodeIntegrationResponse) => void;
   /** Select a session group (keeps the selected pane, else picks primary). */
   selectGroup: (groupID: string) => void;
   /** Select a specific pane row. */
@@ -76,6 +84,8 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
   workspaces: [],
   notifications: [],
   feedItems: [],
+  logEntries: [],
+  openCodeIntegration: null,
   lastUpdated: null,
   hasReceivedStatus: false,
   selectedGroupID: null,
@@ -102,6 +112,14 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
 
   applyFeed: (response: FeedResponse) => {
     set({ feedItems: response.items ?? [] });
+  },
+
+  applyLog: (entries) => {
+    set({ logEntries: entries });
+  },
+
+  applyOpenCodeIntegration: (response) => {
+    set({ openCodeIntegration: response });
   },
 
   selectWorkspace: (workspaceIDValue: string) => {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { KeyRound } from "lucide-react";
 import { getToken, setToken } from "./api/client";
-import { getFeed, getNotifications, getStatus } from "./api/endpoints";
+import { getFeed, getLog, getNotifications, getOpenCodeIntegration, getStatus } from "./api/endpoints";
 import { ConnectionBar } from "./components/ConnectionBar";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceDetailView } from "./components/Workspace/WorkspaceDetailView";
@@ -32,9 +32,11 @@ export default function App() {
   }, []);
 
   // Polling lifecycle: 2 s tick for /api/status + /api/notifications +
-  // /api/feed (iOS global refresh parity). Skipped while a tick is in flight
-  // (overlap guard) and while the tab is hidden; an immediate tick fires when
-  // the tab becomes visible again. Runs only while a token is stored.
+  // /api/feed + /api/log + /api/integrations/opencode (iOS global refresh
+  // parity — HarnessFeatureConnectionReducer.refresh fetches all five in
+  // parallel). Skipped while a tick is in flight (overlap guard) and while
+  // the tab is hidden; an immediate tick fires when the tab becomes visible
+  // again. Runs only while a token is stored.
   useEffect(() => {
     if (!token) {
       return;
@@ -51,11 +53,14 @@ export default function App() {
       }
       inFlight = true;
       try {
-        const [statusResult, notificationsResult, feedResult] = await Promise.allSettled([
-          getStatus(),
-          getNotifications(),
-          getFeed(),
-        ]);
+        const [statusResult, notificationsResult, feedResult, logResult, integrationResult] =
+          await Promise.allSettled([
+            getStatus(),
+            getNotifications(),
+            getFeed(),
+            getLog(),
+            getOpenCodeIntegration(),
+          ]);
         if (disposed) {
           return;
         }
@@ -72,6 +77,12 @@ export default function App() {
         }
         if (feedResult.status === "fulfilled") {
           workspaces.applyFeed(feedResult.value);
+        }
+        if (logResult.status === "fulfilled") {
+          workspaces.applyLog(logResult.value);
+        }
+        if (integrationResult.status === "fulfilled") {
+          workspaces.applyOpenCodeIntegration(integrationResult.value);
         }
       } finally {
         inFlight = false;
@@ -123,6 +134,8 @@ export default function App() {
       workspaces: [],
       notifications: [],
       feedItems: [],
+      logEntries: [],
+      openCodeIntegration: null,
       lastUpdated: null,
       hasReceivedStatus: false,
       selectedGroupID: null,

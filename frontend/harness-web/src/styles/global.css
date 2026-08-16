@@ -1095,3 +1095,490 @@ h1 {
   opacity: 0.55;
   cursor: default;
 }
+
+/* --- OpenCode interaction cards (Phase 2b; port of OpenCode* views) ----------- */
+
+.oc-card {
+  flex: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 13px;
+  border-radius: 14px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.075) 0%,
+    rgba(255, 255, 255, 0.045) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.24);
+}
+
+.oc-card-submitting {
+  opacity: 0.74;
+}
+
+.oc-card-submitting button {
+  pointer-events: none;
+  opacity: 0.46;
+}
+
+.oc-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+}
+
+.oc-card-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--orange);
+}
+
+.oc-card-header-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.oc-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.oc-card-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.oc-card-spinner {
+  flex: none;
+  margin-top: 4px;
+  color: var(--muted);
+  animation: oc-spin 1s linear infinite;
+}
+
+@keyframes oc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.oc-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+}
+
+.oc-detail-text {
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+  width: 100%;
+}
+
+.oc-detail-bold {
+  font-weight: 700;
+}
+
+.oc-command-box {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.oc-patterns-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+}
+
+.oc-pattern-row {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.oc-scope-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.oc-scope-standalone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.oc-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
+.oc-actions-trailing {
+  justify-content: flex-end;
+}
+
+.oc-actions-spacer {
+  flex: 1;
+}
+
+.oc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.12s ease;
+}
+
+.oc-btn-fill {
+  flex: 1;
+  min-width: 0;
+}
+
+.oc-btn:disabled {
+  opacity: 0.46;
+  cursor: default;
+}
+
+.oc-btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.oc-btn-secondary {
+  background: rgba(47, 129, 247, 0.13);
+  color: #4c9aff;
+  border-color: rgba(47, 129, 247, 0.34);
+}
+
+.oc-btn-destructive {
+  background: rgba(255, 69, 58, 0.1);
+  color: var(--red);
+  border-color: rgba(255, 69, 58, 0.38);
+}
+
+.oc-btn-neutral {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.oc-btn-attention {
+  background: rgba(255, 159, 10, 0.12);
+  color: var(--orange);
+  border-color: rgba(255, 159, 10, 0.38);
+}
+
+.oc-choices {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.oc-choice {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  min-height: 40px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font);
+}
+
+.oc-choice-selected {
+  background: rgba(47, 129, 247, 0.12);
+  border-color: rgba(47, 129, 247, 0.5);
+}
+
+.oc-choice-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+.oc-choice-selected .oc-choice-icon {
+  color: #4c9aff;
+}
+
+.oc-choice-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.oc-choice-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.oc-choice-detail {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.oc-question-counter {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--orange);
+}
+
+.oc-question-header {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.oc-question-text {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  width: 100%;
+  word-break: break-word;
+}
+
+.oc-answer-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.oc-text-field {
+  width: 100%;
+  min-height: 44px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  resize: none;
+}
+
+.oc-text-field::placeholder {
+  color: var(--muted-dim);
+}
+
+.oc-review-intro {
+  font-size: 13px;
+  color: var(--muted);
+  width: 100%;
+}
+
+.oc-review-rows {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 230px;
+  overflow-y: auto;
+}
+
+.oc-review-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.045);
+  border-radius: 9px;
+}
+
+.oc-review-header {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.oc-review-question {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.oc-review-answer {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  width: 100%;
+  word-break: break-word;
+}
+
+.oc-choices-label {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.oc-choices-label-title {
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.oc-choices-label-text {
+  word-break: break-word;
+}
+
+.oc-hint-text {
+  font-size: 12px;
+  color: var(--muted);
+  width: 100%;
+}
+
+.oc-fallback-note,
+.oc-integration-installed,
+.oc-integration-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  width: 100%;
+}
+
+.oc-fallback-note,
+.oc-integration-warning {
+  color: var(--orange);
+}
+
+.oc-integration-installed {
+  color: var(--muted);
+}
+
+.oc-fallback-note svg,
+.oc-integration-installed svg,
+.oc-integration-warning svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* --- activity tab ------------------------------------------------------------ */
+
+.activity-tab-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.activity-action {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.activity-timestamp {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.activity-prompt-type {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  word-break: break-word;
+}
+
+.activity-reason {
+  font-size: 11.5px;
+  color: var(--text);
+  font-family: var(--mono);
+  word-break: break-word;
+}
+
+.activity-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  min-height: 120px;
+  color: var(--muted-dim);
+  font-size: 13px;
+}
