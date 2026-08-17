@@ -23,7 +23,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     var id: String { paneID }
 
     var displayTitle: String {
-        for candidate in [title, terminalTitleStripped, label, displayAgent, agent] {
+        for candidate in [label, title, terminalTitleStripped, displayAgent, agent] {
             if let candidate, !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return candidate
             }
