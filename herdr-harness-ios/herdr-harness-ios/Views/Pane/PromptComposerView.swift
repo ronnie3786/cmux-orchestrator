@@ -13,6 +13,7 @@ struct PromptComposerView: View {
     let piConfiguration: PiPromptComposerConfiguration?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var isFocused: Bool
     @State private var isExpanded = false
     @State private var isShowingAttachOptions = false
@@ -24,6 +25,7 @@ struct PromptComposerView: View {
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var disposition: PiPromptDisposition = .prompt
     @State private var hapticPulse = HerdrHapticPulse()
+    @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
 
     init(
         model: HerdrAppModel,
@@ -73,7 +75,10 @@ struct PromptComposerView: View {
                     attach: { isShowingAttachOptions = true },
                     recordVoice: { isShowingVoiceRecorder = true },
                     searchFiles: { isShowingFileSearch = true },
-                    chooseJira: { isShowingJira = true }
+                    chooseJira: { isShowingJira = true },
+                    voicePhase: quickVoiceCapture.phase,
+                    beginVoiceHold: beginQuickVoiceCapture,
+                    endVoiceHold: finishQuickVoiceCapture
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -122,6 +127,16 @@ struct PromptComposerView: View {
             value: piConfiguration?.phase
         )
         .herdrHaptic(trigger: hapticPulse)
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                quickVoiceCapture.cancel()
+            }
+        }
+        .onChange(of: isExpanded) { _, expanded in
+            if !expanded {
+                quickVoiceCapture.cancel()
+            }
+        }
         .onChange(of: isFocused) { _, focused in
             if focused { isExpanded = false }
         }
@@ -336,6 +351,36 @@ struct PromptComposerView: View {
         let existing = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = existing.isEmpty ? cleaned : "\(existing)\n\n\(cleaned)"
         isFocused = true
+    }
+
+    private func beginQuickVoiceCapture() {
+        guard !isShowingVoiceRecorder else { return }
+        hapticPulse.fire(.recordingStarted)
+        quickVoiceCapture.beginHold()
+    }
+
+    private func finishQuickVoiceCapture() {
+        Task {
+            hapticPulse.fire(.recordingStopped)
+            let outcome = await quickVoiceCapture.endHold { url in
+                try await model.transcribeVoiceNote(at: url)
+            }
+            switch outcome {
+            case .cancelled:
+                break
+            case .tooShort:
+                model.toastMessage = "Hold the mic to dictate"
+            case let .transcript(result):
+                appendTranscript(result.text)
+                hapticPulse.fire(.transcriptionSucceeded)
+                model.toastMessage = result.usedFallback
+                    ? "Parakeet unavailable · transcribed with Apple Speech"
+                    : "Transcribed with \(result.provider.rawValue)"
+            case let .failure(message):
+                hapticPulse.fire(.failed)
+                model.errorMessage = message
+            }
+        }
     }
 
     private func appendJira(_ ticket: JiraTicket) {

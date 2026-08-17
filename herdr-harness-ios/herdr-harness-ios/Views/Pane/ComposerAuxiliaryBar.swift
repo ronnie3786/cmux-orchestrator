@@ -9,6 +9,9 @@ struct ComposerAuxiliaryBar: View {
     let recordVoice: () -> Void
     let searchFiles: () -> Void
     let chooseJira: () -> Void
+    let voicePhase: HerdrQuickVoiceCapture.Phase
+    let beginVoiceHold: () -> Void
+    let endVoiceHold: () -> Void
 
     @State private var hapticPulse = HerdrHapticPulse()
 
@@ -29,13 +32,7 @@ struct ComposerAuxiliaryBar: View {
                 showsTitle: showsTitles,
                 action: attach
             )
-            auxiliaryButton(
-                title: "voice",
-                systemImage: "mic.fill",
-                accessibilityLabel: "Record a voice note",
-                showsTitle: showsTitles,
-                action: recordVoice
-            )
+            voiceButton(showsTitle: showsTitles)
             auxiliaryButton(
                 title: "@ file",
                 systemImage: "at",
@@ -87,5 +84,61 @@ struct ComposerAuxiliaryBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func voiceButton(showsTitle: Bool) -> some View {
+        HStack(spacing: 7) {
+            if voicePhase == .transcribing {
+                ProgressView()
+                    .tint(HerdrTheme.mist)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "mic.fill")
+                    .font(.subheadline.weight(.semibold))
+            }
+
+            if showsTitle {
+                Text("voice")
+                    .font(.caption.monospaced().weight(.semibold))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(voiceForeground)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .padding(.horizontal, showsTitle ? 8 : 12)
+        .background(voiceBackground)
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .strokeBorder(voiceBorder, lineWidth: 1)
+        }
+        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .contentShape(.rect)
+        .onTapGesture {
+            guard voicePhase == .idle else { return }
+            hapticPulse.fire(.selection)
+            recordVoice()
+        }
+        .gesture(
+            LongPressGesture(minimumDuration: 0.35)
+                .onEnded { _ in beginVoiceHold() }
+                .sequenced(before: DragGesture(minimumDistance: 0))
+                .onEnded { _ in endVoiceHold() }
+        )
+        .allowsHitTesting(voicePhase != .transcribing)
+        .accessibilityLabel("Record a voice note")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens the voice recorder. Press and hold to dictate into the prompt.")
+    }
+
+    private var voiceForeground: Color {
+        voicePhase == .recording ? HerdrTheme.ink : HerdrTheme.mist
+    }
+
+    private var voiceBackground: Color {
+        voicePhase == .recording ? HerdrTheme.alert : HerdrTheme.elevated
+    }
+
+    private var voiceBorder: Color {
+        voicePhase == .recording ? HerdrTheme.alert : HerdrTheme.surface
     }
 }
