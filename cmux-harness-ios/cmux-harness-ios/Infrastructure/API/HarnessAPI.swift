@@ -340,6 +340,11 @@ enum HarnessAPI {
         request.httpMethod = "POST"
         request.timeoutInterval = 60
         request.setValue(jsonContentType, forHTTPHeaderField: "Accept")
+
+        let webToken = HarnessSettingsStore.harnessWebToken
+        if !webToken.isEmpty {
+            request.setValue(webToken, forHTTPHeaderField: "X-Cmux-Token")
+        }
         request.setValue(String(workspaceIndex), forHTTPHeaderField: "X-Cmux-Workspace-Index")
         request.setValue(workspaceUUID, forHTTPHeaderField: "X-Cmux-Workspace-UUID")
         request.setValue(

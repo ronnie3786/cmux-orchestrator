@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Check,
@@ -223,6 +223,22 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
       useGitStore.getState().stopStatusPolling();
     };
   }, []);
+
+  // --- Pane switch (iOS selectWorkspacePane parity) ------------------------
+  //
+  // Multi-surface panes share the workspace uuid, so switching panes does NOT
+  // remount this view. iOS nils the per-pane data (git status, PR comments,
+  // skills) and re-ticks; we clear the git store the same way. The current
+  // tab/segment is kept. SkillsTab remounts via its key below.
+  const paneKey = workspace.surfaceId ?? "__default__";
+  const isFirstPaneRender = useRef(true);
+  useEffect(() => {
+    if (isFirstPaneRender.current) {
+      isFirstPaneRender.current = false;
+      return;
+    }
+    useGitStore.getState().resetPane();
+  }, [paneKey]);
 
   // Status segment: 10 s poll (iOS gitPollingEffect) with an immediate tick.
   // PR Comments segment: one-shot load (iOS `.loadPRComments`). Leaving the
@@ -544,6 +560,7 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
         ) : (
           <div className="skills-tab-panel">
             <SkillsTab
+              key={paneKey}
               index={workspace.index}
               onJumpToTerminal={() => setTabAndMaybeDisableEasy("terminal")}
             />

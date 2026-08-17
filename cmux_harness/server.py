@@ -98,11 +98,21 @@ def load_or_create_web_token(path=None):
     except OSError:
         pass
     token = secrets.token_hex(16)
-    token_path.write_text(token, encoding="utf-8")
     try:
-        os.chmod(token_path, 0o600)
-    except OSError:
-        pass
+        # Create 0600 atomically so the token is never world-readable, even
+        # for the first-write window (a plain write_text would land 0644
+        # under a default umask before the chmod below could run).
+        fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Empty file left over from a previous run — overwrite it.
+        token_path.write_text(token, encoding="utf-8")
+        try:
+            os.chmod(token_path, 0o600)
+        except OSError:
+            pass
+        return token
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(token)
     return token
 
 

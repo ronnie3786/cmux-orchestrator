@@ -52,7 +52,8 @@ export function SkillsTab({ index, onJumpToTerminal }: SkillsTabProps) {
   const abortRef = useRef<AbortController | null>(null);
 
   /** iOS `.loadSkills` (cancellable; success only applies to this index — the
-      tab remounts per workspace, so no workspace guard is needed). */
+      index-keyed effect aborts the in-flight load on selection/pane change,
+      so a stale response can never overwrite a newer index's data). */
   const loadSkills = useCallback(() => {
     abortRef.current?.abort();
     // iOS `state.isLoadingSkills = !state.hasSkills`.

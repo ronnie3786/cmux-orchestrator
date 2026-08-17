@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -102,6 +102,8 @@ function GitStatusSections({ workspace }: { workspace: Workspace }) {
 function GitStatusBody({ status, workspace }: { status: GitStatus; workspace: Workspace }) {
   const isClean =
     status.staged.length === 0 && status.unstaged.length === 0 && status.untracked.length === 0;
+  // O(1) untracked lookup for the merged Unstaged section's kindOf.
+  const untrackedFiles = useMemo(() => new Set(status.untracked), [status]);
 
   return (
     <>
@@ -147,7 +149,7 @@ function GitStatusBody({ status, workspace }: { status: GitStatus; workspace: Wo
             // iOS merges untracked rows into the Unstaged section with "?" status.
             ...status.untracked.map((file): GitFile => ({ file, status: "?" })),
           ]}
-          kindOf={(entry) => (entry.status === "?" && status.untracked.includes(entry.file) ? "untracked" : "unstaged")}
+          kindOf={(entry) => (entry.status === "?" && untrackedFiles.has(entry.file) ? "untracked" : "unstaged")}
           workspace={workspace}
         />
       ) : null}
