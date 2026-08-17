@@ -250,6 +250,28 @@ struct PiConversationReducerTests {
         #expect(reducer.currentModel?.id == "gpt-5")
     }
 
+    @Test("Snapshots and thinking level selection events update the thinking level")
+    func tracksThinkingLevel() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(
+            entries: "[]",
+            state: "{\"isStreaming\":false,\"thinkingLevel\":\"high\"}"
+        ))
+
+        #expect(reducer.thinkingLevel == "high")
+
+        let effect = reducer.apply(try envelope(
+            1,
+            "{\"type\":\"pi.thinking_level_select\",\"level\":\"max\"}"
+        ))
+
+        #expect(effect == .none)
+        #expect(reducer.thinkingLevel == "max")
+
+        _ = reducer.apply(try envelope(2, "{\"type\":\"turn_start\"}"))
+        #expect(reducer.thinkingLevel == "max")
+    }
+
     @Test("An empty failed assistant message remains visible")
     func projectsFailureWithoutText() throws {
         var reducer = PiConversationReducer()

@@ -509,6 +509,69 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(rejected_status, 409)
         self.assertEqual(rejected_body["error"]["code"], "command_rejected")
 
+    def test_pi_thinking_level_route_validates_and_forwards(self):
+        valid_status, _, valid = self.request(
+            "/api/v1/panes/w1:p1/pi/thinking-level",
+            method="POST",
+            payload={"level": "high"},
+        )
+        missing_level_status, _, missing_level = self.request(
+            "/api/v1/panes/w1:p1/pi/thinking-level",
+            method="POST",
+            payload={},
+        )
+        empty_level_status, _, empty_level = self.request(
+            "/api/v1/panes/w1:p1/pi/thinking-level",
+            method="POST",
+            payload={"level": ""},
+        )
+        extra_key_status, _, extra_key = self.request(
+            "/api/v1/panes/w1:p1/pi/thinking-level",
+            method="POST",
+            payload={"level": "high", "extra": "nope"},
+        )
+
+        self.assertEqual(valid_status, 200)
+        self.assertTrue(valid["success"])
+        for status, response in (
+            (missing_level_status, missing_level),
+            (empty_level_status, empty_level),
+            (extra_key_status, extra_key),
+        ):
+            self.assertEqual(status, 400)
+            self.assertEqual(response["error"]["code"], "invalid_request")
+        self.assertIn(
+            (
+                "pi.set_thinking_level",
+                {
+                    "pane_id": "w1:p1",
+                    "payload": {"level": "high"},
+                },
+            ),
+            self.service.calls,
+        )
+
+    def test_pi_thinking_level_route_errors_map_to_the_bridges_reported_http_status(self):
+        self.service.pi_command_error = PiSemanticError("Unsupported Pi command", code="unsupported", status=501)
+        unsupported_status, _, unsupported_body = self.request(
+            "/api/v1/panes/w1:p1/pi/thinking-level",
+            method="POST",
+            payload={"level": "high"},
+        )
+
+        self.service.pi_command_error = PiSemanticError("Pi rejected the command", code="command_rejected", status=409)
+        rejected_status, _, rejected_body = self.request(
+            "/api/v1/panes/w1:p1/pi/thinking-level",
+            method="POST",
+            payload={"level": "high"},
+        )
+        self.service.pi_command_error = None
+
+        self.assertEqual(unsupported_status, 501)
+        self.assertEqual(unsupported_body["error"]["code"], "unsupported")
+        self.assertEqual(rejected_status, 409)
+        self.assertEqual(rejected_body["error"]["code"], "command_rejected")
+
     def test_pi_interaction_response_is_bounded_and_forwarded(self):
         valid_status, _, _ = self.request(
             "/api/v1/panes/w1:p1/pi/interactions/ui-1/respond",

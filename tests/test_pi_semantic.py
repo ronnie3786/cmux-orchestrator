@@ -574,6 +574,60 @@ class PiSemanticTests(unittest.TestCase):
                 self.assertIs(capability["listModels"], models_supported)
                 self.assertIs(capability["setModel"], models_supported)
 
+    def test_manager_reports_thinking_level_capability_from_observed_hello(self):
+        cases = [
+            (
+                {
+                    "prompt": True,
+                    "steer": True,
+                    "followUp": True,
+                    "abort": True,
+                    "interactionResponse": False,
+                },
+                False,
+            ),
+            (
+                {
+                    "prompt": True,
+                    "steer": True,
+                    "followUp": True,
+                    "abort": True,
+                    "interactionResponse": False,
+                    "setThinkingLevel": True,
+                },
+                True,
+            ),
+        ]
+        for hello_capabilities, thinking_level_supported in cases:
+            with self.subTest(thinking_level_supported=thinking_level_supported), tempfile.TemporaryDirectory() as temporary:
+                herdr_path = str(Path(temporary) / "herdr.sock")
+                pane_id = "w1:p1"
+                path = pi_semantic_socket_path(herdr_path, pane_id)
+                extension = FakeExtensionSocket(
+                    path,
+                    pane_id,
+                    hello_capabilities=hello_capabilities,
+                ).start()
+                self.addCleanup(extension.stop)
+                manager = PiSemanticManager(
+                    herdr_path,
+                    environ={},
+                    journal=PiSemanticJournal(":memory:"),
+                )
+                manager.sync_snapshot(pi_snapshot(pane_id))
+                manager.start()
+                self.addCleanup(manager.close)
+
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if manager.capability(pane_id)["connected"]:
+                        break
+                    time.sleep(0.02)
+                capability = manager.capability(pane_id)["capabilities"]
+
+                self.assertTrue(capability["prompt"])
+                self.assertIs(capability["setThinkingLevel"], thinking_level_supported)
+
     def test_manager_maps_bridge_errors_for_model_commands(self):
         with tempfile.TemporaryDirectory() as temporary:
             herdr_path = str(Path(temporary) / "herdr.sock")
@@ -607,6 +661,38 @@ class PiSemanticTests(unittest.TestCase):
             with self.assertRaises(PiSemanticError) as rejected:
                 manager.command(pane_id, "set_model", {"provider": "x", "id": "y"})
             self.assertEqual(rejected.exception.status, 409)
+
+    def test_manager_maps_bridge_errors_for_thinking_level_commands(self):
+        cases = [("unsupported", 501), ("command_rejected", 409)]
+        for failure, expected_status in cases:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                herdr_path = str(Path(temporary) / "herdr.sock")
+                pane_id = "w1:p1"
+                path = pi_semantic_socket_path(herdr_path, pane_id)
+                extension = FakeExtensionSocket(
+                    path,
+                    pane_id,
+                    command_failures={"set_thinking_level": failure},
+                ).start()
+                self.addCleanup(extension.stop)
+                manager = PiSemanticManager(
+                    herdr_path,
+                    environ={},
+                    journal=PiSemanticJournal(":memory:"),
+                )
+                manager.sync_snapshot(pi_snapshot(pane_id))
+                manager.start()
+                self.addCleanup(manager.close)
+
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if manager.snapshot_response(pane_id)["entries"]:
+                        break
+                    time.sleep(0.02)
+
+                with self.assertRaises(PiSemanticError) as error:
+                    manager.command(pane_id, "set_thinking_level", {"level": "high"})
+                self.assertEqual(error.exception.status, expected_status)
 
 
 if __name__ == "__main__":

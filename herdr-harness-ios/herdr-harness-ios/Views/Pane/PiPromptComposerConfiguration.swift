@@ -18,6 +18,9 @@ struct PiPromptComposerConfiguration {
     let abort: () async -> Bool
     let selectModel: (PiAvailableModel) async -> Bool
     let retryLoadModels: () async -> Void
+    let thinkingLevel: String?
+    let isSettingThinkingLevel: Bool
+    let selectThinkingLevel: (PiThinkingLevel) async -> Bool
 
     var availableDispositions: [PiPromptDisposition] {
         guard isConnected else { return [] }
@@ -44,8 +47,22 @@ struct PiPromptComposerConfiguration {
         capabilities.setModel && isConnected && !isSettingModel
     }
 
+    var canSelectThinkingLevel: Bool {
+        capabilities.setThinkingLevel && isConnected && !isSettingThinkingLevel
+    }
+
     var supportsModelMenu: Bool {
         capabilities.listModels && capabilities.setModel && !isModelSwitchingUnsupported
+    }
+
+    var supportsThinkingMenu: Bool {
+        guard capabilities.setThinkingLevel else { return false }
+        guard let current = currentModel,
+              let reasoning = availableModels.first(
+                where: { $0.provider == current.provider && $0.modelID == current.id }
+              )?.reasoning
+        else { return true }
+        return reasoning
     }
 
     func placeholder(for disposition: PiPromptDisposition) -> String {

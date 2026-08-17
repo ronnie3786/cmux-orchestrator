@@ -45,11 +45,11 @@ struct PiConversationDecodingTests {
     func decodesModelCapabilities() throws {
         let snakeCase = try JSONDecoder().decode(
             PiSemanticCapabilities.self,
-            from: Data("{\"prompt\":true,\"list_models\":true,\"set_model\":true}".utf8)
+            from: Data("{\"prompt\":true,\"list_models\":true,\"set_model\":true,\"set_thinking_level\":true}".utf8)
         )
         let camelCase = try JSONDecoder().decode(
             PiSemanticCapabilities.self,
-            from: Data("{\"prompt\":true,\"listModels\":true,\"setModel\":true}".utf8)
+            from: Data("{\"prompt\":true,\"listModels\":true,\"setModel\":true,\"setThinkingLevel\":true}".utf8)
         )
         let absent = try JSONDecoder().decode(
             PiSemanticCapabilities.self,
@@ -58,12 +58,16 @@ struct PiConversationDecodingTests {
 
         #expect(snakeCase.listModels)
         #expect(snakeCase.setModel)
+        #expect(snakeCase.setThinkingLevel)
         #expect(camelCase.listModels)
         #expect(camelCase.setModel)
+        #expect(camelCase.setThinkingLevel)
         #expect(!absent.listModels)
         #expect(!absent.setModel)
+        #expect(!absent.setThinkingLevel)
         #expect(!PiSemanticCapabilities.unavailable.listModels)
         #expect(!PiSemanticCapabilities.unavailable.setModel)
+        #expect(!PiSemanticCapabilities.unavailable.setThinkingLevel)
     }
 
     @Test("Snapshot retains unknown entries and accepts snake case aliases")

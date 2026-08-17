@@ -497,6 +497,13 @@ final class HerdrAppModel {
         try await client.setPiModel(paneID: pane.id, provider: provider, modelID: modelID)
     }
 
+    func setPiThinkingLevel(level: String, for pane: HerdrPane) async throws -> String? {
+        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        return try await client.setPiThinkingLevel(paneID: pane.id, level: level)
+    }
+
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return false }

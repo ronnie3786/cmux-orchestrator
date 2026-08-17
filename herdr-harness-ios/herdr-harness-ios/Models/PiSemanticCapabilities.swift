@@ -7,6 +7,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
     let abort: Bool
     let listModels: Bool
     let setModel: Bool
+    let setThinkingLevel: Bool
     let interactionResponse: Bool
 
     static let unavailable = PiSemanticCapabilities(
@@ -16,6 +17,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         abort: false,
         listModels: false,
         setModel: false,
+        setThinkingLevel: false,
         interactionResponse: false
     )
 
@@ -26,6 +28,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         abort: Bool,
         listModels: Bool,
         setModel: Bool,
+        setThinkingLevel: Bool,
         interactionResponse: Bool
     ) {
         self.prompt = prompt
@@ -34,6 +37,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         self.abort = abort
         self.listModels = listModels
         self.setModel = setModel
+        self.setThinkingLevel = setThinkingLevel
         self.interactionResponse = interactionResponse
     }
 
@@ -47,6 +51,8 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         case listModelsSnake = "list_models"
         case setModel
         case setModelSnake = "set_model"
+        case setThinkingLevel
+        case setThinkingLevelSnake = "set_thinking_level"
         case interactionResponse
         case interactionResponseSnake = "interaction_response"
     }
@@ -65,6 +71,9 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         setModel = try container.decodeIfPresent(Bool.self, forKey: .setModel)
             ?? container.decodeIfPresent(Bool.self, forKey: .setModelSnake)
             ?? false
+        setThinkingLevel = try container.decodeIfPresent(Bool.self, forKey: .setThinkingLevel)
+            ?? container.decodeIfPresent(Bool.self, forKey: .setThinkingLevelSnake)
+            ?? false
         interactionResponse = try container.decodeIfPresent(Bool.self, forKey: .interactionResponse)
             ?? container.decodeIfPresent(Bool.self, forKey: .interactionResponseSnake)
             ?? false
@@ -78,6 +87,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         try container.encode(abort, forKey: .abort)
         try container.encode(listModels, forKey: .listModels)
         try container.encode(setModel, forKey: .setModel)
+        try container.encode(setThinkingLevel, forKey: .setThinkingLevel)
         try container.encode(interactionResponse, forKey: .interactionResponse)
     }
 }

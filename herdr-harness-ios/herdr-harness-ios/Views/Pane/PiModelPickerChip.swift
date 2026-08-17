@@ -60,6 +60,8 @@ struct PiModelPickerChip: View {
                 Image(systemName: "cpu")
             }
             Text(currentModel?.displayName ?? "model")
+                .lineLimit(1)
+                .truncationMode(.middle)
             if isInteractive {
                 Image(systemName: "chevron.up.down")
                     .font(.caption2)
@@ -85,4 +87,35 @@ struct PiModelPickerChip: View {
     private func isCurrent(_ candidate: PiAvailableModel) -> Bool {
         currentModel?.provider == candidate.provider && currentModel?.id == candidate.modelID
     }
+}
+
+#Preview("Long model name stays one line") {
+    HStack {
+        PiModelPickerChip(
+            currentModel: PiModelIdentity(
+                provider: "anthropic",
+                id: "claude-sonnet-4-5-20250929",
+                name: "claude-sonnet-4-5-20250929"
+            ),
+            availableModels: [],
+            isLoading: false,
+            isSetting: false,
+            isEnabled: true,
+            isInteractive: true,
+            errorMessage: nil,
+            selectModel: { _ in },
+            retry: {}
+        )
+        PiThinkingLevelChip(
+            currentLevel: PiThinkingLevel.xhigh.rawValue,
+            isSetting: false,
+            isEnabled: true,
+            isInteractive: true,
+            selectLevel: { _ in }
+        )
+        Spacer()
+    }
+    .padding(.horizontal, 12)
+    .frame(width: 375)
+    .background(HerdrTheme.ink)
 }

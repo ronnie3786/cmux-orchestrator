@@ -18,6 +18,7 @@ struct PiConversationReducer: Sendable {
     private(set) var bridgeConnected = false
     private(set) var contextUsage: PiContextUsage?
     private(set) var currentModel: PiModelIdentity?
+    private(set) var thinkingLevel: String?
 
     private var activeTurnID: String?
     private var activeMessageID: String?
@@ -37,6 +38,7 @@ struct PiConversationReducer: Sendable {
         bridgeConnected = snapshot.connected
         contextUsage = PiContextUsage(from: snapshot.state?["context"])
         currentModel = PiModelIdentity(json: snapshot.state?["model"])
+        thinkingLevel = snapshot.state?.string(for: "thinkingLevel", "thinking_level")
 
         for entry in snapshot.entries {
             projectSessionEntry(entry)
@@ -87,6 +89,11 @@ struct PiConversationReducer: Sendable {
         case "model_select":
             if let updated = PiModelIdentity(json: event["model"]) {
                 currentModel = updated
+            }
+            return .none
+        case "thinking_level_select":
+            if let level = event.string(for: "level") {
+                thinkingLevel = level
             }
             return .none
         case "session_tree", "session_compact":

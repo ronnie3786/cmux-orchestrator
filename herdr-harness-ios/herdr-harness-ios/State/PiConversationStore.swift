@@ -16,6 +16,8 @@ final class PiConversationStore {
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var isLoadingModels = false
     private(set) var isSettingModel = false
+    private(set) var thinkingLevel: String?
+    private(set) var isSettingThinkingLevel = false
     private(set) var modelCatalogError: String?
     private(set) var isModelSwitchingUnsupported = false
     private(set) var isSubmitting = false
@@ -173,6 +175,27 @@ final class PiConversationStore {
         }
     }
 
+    func setThinkingLevel(_ level: PiThinkingLevel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
+        guard canSendCommands, !isSettingThinkingLevel else { return false }
+        isSettingThinkingLevel = true
+        commandNotice = nil
+        defer { isSettingThinkingLevel = false }
+        do {
+            let effective = try await model.setPiThinkingLevel(level: level.rawValue, for: pane)
+            lastError = nil
+            let effectiveDisplay = effective.flatMap { PiThinkingLevel(rawValue: $0)?.displayName ?? $0 }
+                ?? level.displayName
+            commandNotice = "Thinking set to \(effectiveDisplay)"
+            return true
+        } catch let APIError.server(status, _) where status == 501 {
+            lastError = "Thinking control isn't supported by this Pi session"
+            return false
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
     func retryLoadModels(model: HerdrAppModel, pane: HerdrPane) async {
         modelCatalogError = nil
         isModelSwitchingUnsupported = false
@@ -250,6 +273,8 @@ final class PiConversationStore {
         availableModels = []
         isLoadingModels = false
         isSettingModel = false
+        thinkingLevel = nil
+        isSettingThinkingLevel = false
         modelCatalogError = nil
         isModelSwitchingUnsupported = false
         isSubmitting = false
@@ -342,6 +367,7 @@ final class PiConversationStore {
         bridgeConnected = reducer.bridgeConnected
         contextUsage = reducer.contextUsage
         currentModel = reducer.currentModel
+        thinkingLevel = reducer.thinkingLevel
         revision &+= 1
     }
 

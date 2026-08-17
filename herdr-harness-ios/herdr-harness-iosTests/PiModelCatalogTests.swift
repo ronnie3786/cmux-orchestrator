@@ -4,6 +4,13 @@ import Testing
 
 @Suite("Pi model catalog")
 struct PiModelCatalogTests {
+    @Test("Thinking level raw values match Pi's canonical order")
+    func thinkingLevelRawValuesArePinned() {
+        #expect(PiThinkingLevel.allCases.map(\.rawValue) == [
+            "off", "minimal", "low", "medium", "high", "xhigh", "max"
+        ])
+    }
+
     @Test("Model identity accepts canonical and fallback identifiers")
     func decodesModelIdentity() throws {
         let named = try JSONDecoder().decode(

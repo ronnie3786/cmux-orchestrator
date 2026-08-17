@@ -27,6 +27,8 @@ const sent = [];
 let aborted = false;
 const setModelCalls = [];
 let setModelResult = true;
+const setThinkingLevelCalls = [];
+let effectiveThinkingLevel = "high";
 const availableModels = [
 	{ provider: "test", id: "model", name: "Test Model", reasoning: true, contextWindow: 128000 },
 	{ provider: "other", id: "other-model", name: "Other Model", reasoning: false, contextWindow: 32000 },
@@ -37,6 +39,12 @@ const pi = {
 	async setModel(model) {
 		setModelCalls.push(model);
 		return setModelResult;
+	},
+	setThinkingLevel(level) {
+		setThinkingLevelCalls.push(level);
+	},
+	getThinkingLevel() {
+		return effectiveThinkingLevel;
 	},
 };
 
@@ -150,6 +158,7 @@ try {
 	const hello = initial.find((item) => item.kind === "hello");
 	assert.equal(hello.capabilities.listModels, true);
 	assert.equal(hello.capabilities.setModel, true);
+	assert.equal(hello.capabilities.setThinkingLevel, true);
 
 	const deltas = [];
 	const privateSentinel = "PRIVATE-SYSTEM-PROMPT-MUST-NOT-CROSS-WIRE";
@@ -382,6 +391,59 @@ try {
 	assert.equal(unavailableModelRecord.error.message, "Model has no configured credentials");
 	unavailableModel.destroy();
 	setModelResult = true;
+
+	const thinkingLevel = await connect(socketPath);
+	const thinkingLevelResponse = readRecords(thinkingLevel, (records) => records.some((item) => item.request_id === "thinking-level-1"));
+	thinkingLevel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "thinking-level-1",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_thinking_level",
+		payload: { level: "high" },
+	})}\n`);
+	const thinkingLevelRecord = (await thinkingLevelResponse)[0];
+	assert.equal(thinkingLevelRecord.success, true);
+	assert.equal(thinkingLevelRecord.result.accepted, true);
+	assert.equal(thinkingLevelRecord.result.command, "set_thinking_level");
+	assert.equal(thinkingLevelRecord.result.level, "high");
+	assert.equal(setThinkingLevelCalls.at(-1), "high");
+	thinkingLevel.destroy();
+
+	effectiveThinkingLevel = "medium";
+	const clampedThinkingLevel = await connect(socketPath);
+	const clampedThinkingLevelResponse = readRecords(clampedThinkingLevel, (records) => records.some((item) => item.request_id === "thinking-level-clamped"));
+	clampedThinkingLevel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "thinking-level-clamped",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_thinking_level",
+		payload: { level: "max" },
+	})}\n`);
+	const clampedThinkingLevelRecord = (await clampedThinkingLevelResponse)[0];
+	assert.equal(clampedThinkingLevelRecord.success, true);
+	assert.equal(clampedThinkingLevelRecord.result.level, "medium");
+	assert.equal(setThinkingLevelCalls.at(-1), "max");
+	clampedThinkingLevel.destroy();
+	effectiveThinkingLevel = "high";
+
+	const unknownThinkingLevel = await connect(socketPath);
+	const unknownThinkingLevelResponse = readRecords(unknownThinkingLevel, (records) => records.some((item) => item.request_id === "thinking-level-unknown"));
+	const setThinkingLevelCallCount = setThinkingLevelCalls.length;
+	unknownThinkingLevel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "thinking-level-unknown",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_thinking_level",
+		payload: { level: "ultra" },
+	})}\n`);
+	const unknownThinkingLevelRecord = (await unknownThinkingLevelResponse)[0];
+	assert.equal(unknownThinkingLevelRecord.success, false);
+	assert.equal(unknownThinkingLevelRecord.error.message, "Unknown thinking level");
+	assert.equal(setThinkingLevelCalls.length, setThinkingLevelCallCount);
+	unknownThinkingLevel.destroy();
 
 	const shutdownRecord = readRecords(subscription, (records) => records.some(
 		(item) => item.event?.type === "session_shutdown",

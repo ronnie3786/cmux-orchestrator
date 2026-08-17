@@ -13,6 +13,11 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const PROTOCOL = { name: "herdr.pi.semantic", version: 1 } as const;
+// Mirrors @earendil-works/pi-agent-core's ThinkingLevel union exactly (not
+// re-exported by name from the public package, so this is the source of
+// truth for both wire validation and the local type below).
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+type SupportedThinkingLevel = (typeof THINKING_LEVELS)[number];
 const MAX_LINE_BYTES = 512 * 1024;
 const MAX_QUEUE_RECORDS = positiveEnvironmentInt("HERDR_PI_SEMANTIC_MAX_QUEUE_RECORDS", 2048, 8, 65_536);
 const MAX_QUEUE_BYTES = positiveEnvironmentInt(
@@ -446,6 +451,7 @@ class BridgeRuntime {
 				abort: true,
 				listModels: true,
 				setModel: true,
+				setThinkingLevel: true,
 				interactionResponse: false,
 			},
 			generated_at: new Date().toISOString(),
@@ -699,6 +705,19 @@ class BridgeRuntime {
 					const accepted = await this.pi.setModel(model);
 					if (!accepted) throw new Error("Model has no configured credentials");
 					this.respond(socket, request, true, { accepted: true, command: "set_model", model: modelIdentity(model) });
+					return;
+				}
+				case "set_thinking_level": {
+					const requested = typeof payload?.level === "string" ? payload.level.trim() : "";
+					if (!requested || !THINKING_LEVELS.includes(requested as SupportedThinkingLevel)) {
+						throw new Error("Unknown thinking level");
+					}
+					this.pi.setThinkingLevel(requested as SupportedThinkingLevel);
+					this.respond(socket, request, true, {
+						accepted: true,
+						command: "set_thinking_level",
+						level: this.pi.getThinkingLevel(),
+					});
 					return;
 				}
 				case "interaction_response":

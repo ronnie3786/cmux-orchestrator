@@ -223,6 +223,7 @@ def api_description() -> dict:
             "piSnapshot": "/api/v1/panes/{paneId}/pi/snapshot",
             "piEvents": "/api/v1/panes/{paneId}/pi/events",
             "piModels": "/api/v1/panes/{paneId}/pi/models",
+            "piThinkingLevel": "/api/v1/panes/{paneId}/pi/thinking-level",
             "alerts": "/api/v1/alerts",
             "pushStatus": "/api/v1/push/status",
             "liveActivities": "/api/v1/live-activities",
@@ -236,7 +237,7 @@ def api_description() -> dict:
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
             "POST /api/v1/panes/{paneId}/focus|split|send-text|send-keys|run|prompt|start-agent",
-            "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort|model",
+            "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort|model|thinking-level",
             "POST /api/v1/panes/{paneId}/pi/interactions/{interactionId}/respond",
             "POST /api/v1/alerts/{alertId}/read",
             "POST /api/v1/alerts/read-all",
@@ -667,6 +668,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             "set_model",
                             {"provider": provider, "id": model_id},
                         )
+                    if method == "POST" and len(tail) == 4 and pi_action == "thinking-level":
+                        allowed_keys = {"level"}
+                        if set(body) != allowed_keys:
+                            raise HTTPValidationError("Request body must contain exactly level")
+                        level = _string(body.get("level"), "level", maximum=64)
+                        return service.pi_command(pane_id, "set_thinking_level", {"level": level})
                     if (
                         method == "POST"
                         and len(tail) == 6

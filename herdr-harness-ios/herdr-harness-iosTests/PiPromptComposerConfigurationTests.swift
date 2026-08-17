@@ -35,6 +35,7 @@ struct PiPromptComposerConfigurationTests {
                 abort: false,
                 listModels: false,
                 setModel: false,
+                setThinkingLevel: false,
                 interactionResponse: false
             )
         )
@@ -63,6 +64,7 @@ struct PiPromptComposerConfigurationTests {
                 abort: true,
                 listModels: false,
                 setModel: false,
+                setThinkingLevel: false,
                 interactionResponse: true
             ),
             currentModel: PiModelIdentity(provider: "anthropic", id: "claude-3", name: "Claude 3")
@@ -88,6 +90,63 @@ struct PiPromptComposerConfigurationTests {
         #expect(!configuration.supportsModelMenu)
     }
 
+    @Test("Thinking capability controls whether the thinking menu is supported")
+    func unavailableThinkingCapabilityDoesNotSupportMenu() {
+        let configuration = makeConfiguration(
+            phase: .idle,
+            capabilities: PiSemanticCapabilities(
+                prompt: true,
+                steer: true,
+                followUp: true,
+                abort: true,
+                listModels: true,
+                setModel: true,
+                setThinkingLevel: false,
+                interactionResponse: true
+            )
+        )
+
+        #expect(!configuration.supportsThinkingMenu)
+    }
+
+    @Test("Known non-reasoning models do not support the thinking menu")
+    func nonReasoningModelDoesNotSupportThinkingMenu() {
+        let configuration = makeConfiguration(
+            phase: .idle,
+            currentModel: PiModelIdentity(provider: "openai", id: "gpt-5", name: "GPT-5"),
+            availableModels: [
+                PiAvailableModel(
+                    provider: "openai",
+                    modelID: "gpt-5",
+                    name: "GPT-5",
+                    reasoning: false,
+                    contextWindow: nil
+                )
+            ]
+        )
+
+        #expect(!configuration.supportsThinkingMenu)
+    }
+
+    @Test("Reasoning models support the thinking menu")
+    func reasoningModelSupportsThinkingMenu() {
+        let configuration = makeConfiguration(
+            phase: .idle,
+            currentModel: PiModelIdentity(provider: "openai", id: "gpt-5", name: "GPT-5"),
+            availableModels: [
+                PiAvailableModel(
+                    provider: "openai",
+                    modelID: "gpt-5",
+                    name: "GPT-5",
+                    reasoning: true,
+                    contextWindow: nil
+                )
+            ]
+        )
+
+        #expect(configuration.supportsThinkingMenu)
+    }
+
     private func makeConfiguration(
         phase: PiConversationPhase,
         capabilities: PiSemanticCapabilities = PiSemanticCapabilities(
@@ -97,10 +156,14 @@ struct PiPromptComposerConfigurationTests {
             abort: true,
             listModels: true,
             setModel: true,
+            setThinkingLevel: true,
             interactionResponse: true
         ),
         isConnected: Bool = true,
         currentModel: PiModelIdentity? = nil,
+        thinkingLevel: String? = nil,
+        isSettingThinkingLevel: Bool = false,
+        availableModels: [PiAvailableModel] = [],
         isModelSwitchingUnsupported: Bool = false
     ) -> PiPromptComposerConfiguration {
         PiPromptComposerConfiguration(
@@ -110,7 +173,7 @@ struct PiPromptComposerConfigurationTests {
             isSubmitting: false,
             isAborting: false,
             currentModel: currentModel,
-            availableModels: [],
+            availableModels: availableModels,
             isLoadingModels: false,
             isSettingModel: false,
             modelCatalogError: nil,
@@ -118,7 +181,10 @@ struct PiPromptComposerConfigurationTests {
             submit: { _, _ in true },
             abort: { true },
             selectModel: { _ in true },
-            retryLoadModels: {}
+            retryLoadModels: {},
+            thinkingLevel: thinkingLevel,
+            isSettingThinkingLevel: isSettingThinkingLevel,
+            selectThinkingLevel: { _ in true }
         )
     }
 }

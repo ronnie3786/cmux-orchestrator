@@ -967,6 +967,7 @@ class PiSemanticManager:
             "abort": True,
             "listModels": True,
             "setModel": True,
+            "setThinkingLevel": True,
             "interactionResponse": False,
         }
         with self._lock:

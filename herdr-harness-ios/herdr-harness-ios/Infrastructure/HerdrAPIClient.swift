@@ -401,6 +401,16 @@ actor HerdrAPIClient {
         guard response.accepted else { throw APIError.invalidResponse }
     }
 
+    func setPiThinkingLevel(paneID: String, level: String) async throws -> String? {
+        let response: PiSetThinkingLevelResponse = try await request(
+            path: "/api/v1/panes/\(paneID)/pi/thinking-level",
+            method: "POST",
+            body: PiSetThinkingLevelBody(level: level)
+        )
+        guard response.accepted else { throw APIError.invalidResponse }
+        return response.level
+    }
+
     func respondToPiInteraction(
         paneID: String,
         interactionID: String,

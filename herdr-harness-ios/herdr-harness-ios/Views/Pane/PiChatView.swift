@@ -103,6 +103,13 @@ struct PiChatView: View {
             },
             retryLoadModels: {
                 await store.retryLoadModels(model: model, pane: pane)
+            },
+            thinkingLevel: store.thinkingLevel,
+            isSettingThinkingLevel: store.isSettingThinkingLevel,
+            selectThinkingLevel: { level in
+                let succeeded = await store.setThinkingLevel(level, model: model, pane: pane)
+                if succeeded { hapticPulse.fire(.selection) }
+                return succeeded
             }
         )
     }

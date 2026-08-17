@@ -41,3 +41,7 @@ struct PiSetModelBody: Encodable, Sendable {
     let provider: String
     let id: String
 }
+
+struct PiSetThinkingLevelBody: Encodable, Sendable {
+    let level: String
+}

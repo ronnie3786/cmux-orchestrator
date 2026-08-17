@@ -78,7 +78,11 @@ struct PromptComposerView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            if let piConfiguration, piConfiguration.currentModel != nil || piConfiguration.capabilities.listModels {
+            if let piConfiguration,
+               piConfiguration.currentModel != nil
+               || piConfiguration.capabilities.listModels
+               || piConfiguration.thinkingLevel != nil
+               || piConfiguration.capabilities.setThinkingLevel {
                 HStack {
                     PiModelPickerChip(
                         currentModel: piConfiguration.currentModel,
@@ -93,6 +97,15 @@ struct PromptComposerView: View {
                         },
                         retry: {
                             Task { await piConfiguration.retryLoadModels() }
+                        }
+                    )
+                    PiThinkingLevelChip(
+                        currentLevel: piConfiguration.thinkingLevel,
+                        isSetting: piConfiguration.isSettingThinkingLevel,
+                        isEnabled: piConfiguration.canSelectThinkingLevel,
+                        isInteractive: piConfiguration.supportsThinkingMenu,
+                        selectLevel: { level in
+                            Task { _ = await piConfiguration.selectThinkingLevel(level) }
                         }
                     )
                     Spacer()
