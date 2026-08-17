@@ -483,6 +483,20 @@ final class HerdrAppModel {
         )
     }
 
+    func fetchPiModels(for pane: HerdrPane) async throws -> PiModelCatalogResponse {
+        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        return try await client.fetchPiModels(paneID: pane.id)
+    }
+
+    func setPiModel(provider: String, modelID: String, for pane: HerdrPane) async throws {
+        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+            throw APIError.invalidResponse
+        }
+        try await client.setPiModel(paneID: pane.id, provider: provider, modelID: modelID)
+    }
+
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return false }

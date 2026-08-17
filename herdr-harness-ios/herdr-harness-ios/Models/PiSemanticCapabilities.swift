@@ -5,6 +5,8 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
     let steer: Bool
     let followUp: Bool
     let abort: Bool
+    let listModels: Bool
+    let setModel: Bool
     let interactionResponse: Bool
 
     static let unavailable = PiSemanticCapabilities(
@@ -12,6 +14,8 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         steer: false,
         followUp: false,
         abort: false,
+        listModels: false,
+        setModel: false,
         interactionResponse: false
     )
 
@@ -20,12 +24,16 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         steer: Bool,
         followUp: Bool,
         abort: Bool,
+        listModels: Bool,
+        setModel: Bool,
         interactionResponse: Bool
     ) {
         self.prompt = prompt
         self.steer = steer
         self.followUp = followUp
         self.abort = abort
+        self.listModels = listModels
+        self.setModel = setModel
         self.interactionResponse = interactionResponse
     }
 
@@ -35,6 +43,10 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         case followUp
         case followUpSnake = "follow_up"
         case abort
+        case listModels
+        case listModelsSnake = "list_models"
+        case setModel
+        case setModelSnake = "set_model"
         case interactionResponse
         case interactionResponseSnake = "interaction_response"
     }
@@ -47,6 +59,12 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
             ?? container.decodeIfPresent(Bool.self, forKey: .followUpSnake)
             ?? false
         abort = try container.decodeIfPresent(Bool.self, forKey: .abort) ?? false
+        listModels = try container.decodeIfPresent(Bool.self, forKey: .listModels)
+            ?? container.decodeIfPresent(Bool.self, forKey: .listModelsSnake)
+            ?? false
+        setModel = try container.decodeIfPresent(Bool.self, forKey: .setModel)
+            ?? container.decodeIfPresent(Bool.self, forKey: .setModelSnake)
+            ?? false
         interactionResponse = try container.decodeIfPresent(Bool.self, forKey: .interactionResponse)
             ?? container.decodeIfPresent(Bool.self, forKey: .interactionResponseSnake)
             ?? false
@@ -58,6 +76,8 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         try container.encode(steer, forKey: .steer)
         try container.encode(followUp, forKey: .followUp)
         try container.encode(abort, forKey: .abort)
+        try container.encode(listModels, forKey: .listModels)
+        try container.encode(setModel, forKey: .setModel)
         try container.encode(interactionResponse, forKey: .interactionResponse)
     }
 }

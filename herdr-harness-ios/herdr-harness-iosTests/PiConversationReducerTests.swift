@@ -226,6 +226,30 @@ struct PiConversationReducerTests {
         #expect(reducer.turns.isEmpty)
     }
 
+    @Test("Snapshots and model selection events update the current model")
+    func tracksCurrentModel() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(
+            entries: "[]",
+            state: "{\"isStreaming\":false,\"model\":{\"provider\":\"anthropic\",\"id\":\"claude-3\",\"name\":\"Claude 3\"}}"
+        ))
+
+        #expect(reducer.currentModel?.provider == "anthropic")
+        #expect(reducer.currentModel?.id == "claude-3")
+
+        let effect = reducer.apply(try envelope(1, """
+        {"type":"pi.model_select","model":{"provider":"openai","id":"gpt-5"},"previousModel":{"provider":"anthropic","id":"claude-3"},"source":"set"}
+        """))
+
+        #expect(effect == .none)
+        #expect(reducer.currentModel?.provider == "openai")
+        #expect(reducer.currentModel?.id == "gpt-5")
+
+        _ = reducer.apply(try envelope(2, "{\"type\":\"turn_start\"}"))
+        #expect(reducer.currentModel?.provider == "openai")
+        #expect(reducer.currentModel?.id == "gpt-5")
+    }
+
     @Test("An empty failed assistant message remains visible")
     func projectsFailureWithoutText() throws {
         var reducer = PiConversationReducer()

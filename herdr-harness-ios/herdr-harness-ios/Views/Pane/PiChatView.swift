@@ -79,6 +79,12 @@ struct PiChatView: View {
             isConnected: store.canSendCommands,
             isSubmitting: store.isSubmitting,
             isAborting: store.isAborting,
+            currentModel: store.currentModel,
+            availableModels: store.availableModels,
+            isLoadingModels: store.isLoadingModels,
+            isSettingModel: store.isSettingModel,
+            modelCatalogError: store.modelCatalogError,
+            isModelSwitchingUnsupported: store.isModelSwitchingUnsupported,
             submit: { text, disposition in
                 await store.submit(
                     text: text,
@@ -89,6 +95,14 @@ struct PiChatView: View {
             },
             abort: {
                 await store.abort(model: model, pane: pane)
+            },
+            selectModel: { candidate in
+                let succeeded = await store.setModel(candidate, model: model, pane: pane)
+                if succeeded { hapticPulse.fire(.selection) }
+                return succeeded
+            },
+            retryLoadModels: {
+                await store.retryLoadModels(model: model, pane: pane)
             }
         )
     }

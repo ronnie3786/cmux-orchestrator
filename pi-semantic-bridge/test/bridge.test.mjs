@@ -25,9 +25,19 @@ const bridgeModule = await jiti.import("../extensions/pi-semantic-bridge.ts");
 const handlers = new Map();
 const sent = [];
 let aborted = false;
+const setModelCalls = [];
+let setModelResult = true;
+const availableModels = [
+	{ provider: "test", id: "model", name: "Test Model", reasoning: true, contextWindow: 128000 },
+	{ provider: "other", id: "other-model", name: "Other Model", reasoning: false, contextWindow: 32000 },
+];
 const pi = {
 	on(type, handler) { handlers.set(type, handler); },
 	sendUserMessage(text, options) { sent.push({ text, options }); },
+	async setModel(model) {
+		setModelCalls.push(model);
+		return setModelResult;
+	},
 };
 
 let idle = true;
@@ -54,6 +64,11 @@ const context = {
 	getContextUsage: () => contextUsageValue,
 	hasPendingMessages: () => false,
 	abort: () => { aborted = true; },
+	modelRegistry: {
+		getAvailable: () => availableModels,
+		find: (provider, id) => availableModels.find((item) => item.provider === provider && item.id === id),
+	},
+	scopedModels: [],
 	sessionManager: {
 		getSessionId: () => "session-1",
 		getSessionFile: () => "/tmp/session.jsonl",
@@ -132,6 +147,9 @@ try {
 	assert.equal(snapshot.state.working, false);
 	assert.equal(snapshot.state.isStreaming, false);
 	assert.deepEqual(snapshot.state.context, { tokens: 12_345, contextWindow: 192_000, percent: 6.43 });
+	const hello = initial.find((item) => item.kind === "hello");
+	assert.equal(hello.capabilities.listModels, true);
+	assert.equal(hello.capabilities.setModel, true);
 
 	const deltas = [];
 	const privateSentinel = "PRIVATE-SYSTEM-PROMPT-MUST-NOT-CROSS-WIRE";
@@ -231,6 +249,139 @@ try {
 	assert.equal((await abortResponse)[0].success, true);
 	assert.equal(aborted, true);
 	abort.destroy();
+
+	const listModels = await connect(socketPath);
+	const listModelsResponse = readRecords(listModels, (records) => records.some((item) => item.request_id === "list-models-1"));
+	listModels.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "list-models-1",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "list_models",
+		payload: {},
+	})}\n`);
+	const listedModels = (await listModelsResponse)[0];
+	assert.equal(listedModels.success, true);
+	assert.equal(listedModels.result.scoped, false);
+	assert.equal(listedModels.result.models.length, 2);
+	for (const model of listedModels.result.models) {
+		assert.equal(typeof model.provider, "string");
+		assert.equal(typeof model.id, "string");
+		assert.equal(typeof model.name, "string");
+		assert.equal(typeof model.reasoning, "boolean");
+		assert.equal(typeof model.contextWindow, "number");
+	}
+	assert.equal(listedModels.result.current.provider, "test");
+	assert.equal(listedModels.result.current.id, "model");
+	listModels.destroy();
+
+	context.scopedModels = [{ model: availableModels[0] }];
+	const scopedModels = await connect(socketPath);
+	const scopedModelsResponse = readRecords(scopedModels, (records) => records.some((item) => item.request_id === "list-models-2"));
+	scopedModels.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "list-models-2",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "list_models",
+		payload: {},
+	})}\n`);
+	const listedScopedModels = (await scopedModelsResponse)[0];
+	assert.equal(listedScopedModels.success, true);
+	assert.equal(listedScopedModels.result.scoped, true);
+	assert.equal(listedScopedModels.result.models.length, 1);
+	assert.equal(listedScopedModels.result.models[0].id, "model");
+	scopedModels.destroy();
+
+	const outOfScopeModel = await connect(socketPath);
+	const outOfScopeModelResponse = readRecords(outOfScopeModel, (records) => records.some((item) => item.request_id === "set-model-out-of-scope"));
+	const scopedSetModelCallCount = setModelCalls.length;
+	outOfScopeModel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "set-model-out-of-scope",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_model",
+		payload: { provider: "other", id: "other-model" },
+	})}\n`);
+	const outOfScopeModelRecord = (await outOfScopeModelResponse)[0];
+	assert.equal(outOfScopeModelRecord.success, false);
+	assert.equal(outOfScopeModelRecord.error.message, "Model is not in this session's scope");
+	assert.equal(setModelCalls.length, scopedSetModelCallCount);
+	outOfScopeModel.destroy();
+
+	const inScopeModel = await connect(socketPath);
+	const inScopeModelResponse = readRecords(inScopeModel, (records) => records.some((item) => item.request_id === "set-model-in-scope"));
+	inScopeModel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "set-model-in-scope",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_model",
+		payload: { provider: "test", id: "model" },
+	})}\n`);
+	const inScopeModelRecord = (await inScopeModelResponse)[0];
+	assert.equal(inScopeModelRecord.success, true);
+	assert.equal(inScopeModelRecord.result.accepted, true);
+	assert.equal(inScopeModelRecord.result.model.provider, "test");
+	assert.equal(inScopeModelRecord.result.model.id, "model");
+	assert.equal(setModelCalls.at(-1), availableModels[0]);
+	inScopeModel.destroy();
+
+	context.scopedModels = [];
+
+	const setModel = await connect(socketPath);
+	const setModelResponse = readRecords(setModel, (records) => records.some((item) => item.request_id === "set-model-1"));
+	setModel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "set-model-1",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_model",
+		payload: { provider: "test", id: "model" },
+	})}\n`);
+	const setModelResultRecord = (await setModelResponse)[0];
+	assert.equal(setModelResultRecord.success, true);
+	assert.equal(setModelResultRecord.result.accepted, true);
+	assert.equal(setModelResultRecord.result.command, "set_model");
+	assert.equal(setModelResultRecord.result.model.provider, "test");
+	assert.equal(setModelResultRecord.result.model.id, "model");
+	assert.equal(setModelCalls.at(-1), availableModels[0]);
+	setModel.destroy();
+
+	const unknownModel = await connect(socketPath);
+	const unknownModelResponse = readRecords(unknownModel, (records) => records.some((item) => item.request_id === "set-model-unknown"));
+	const setModelCallCount = setModelCalls.length;
+	unknownModel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "set-model-unknown",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_model",
+		payload: { provider: "nope", id: "nope" },
+	})}\n`);
+	const unknownModelRecord = (await unknownModelResponse)[0];
+	assert.equal(unknownModelRecord.success, false);
+	assert.equal(unknownModelRecord.error.message, "Unknown model");
+	assert.equal(setModelCalls.length, setModelCallCount);
+	unknownModel.destroy();
+
+	setModelResult = false;
+	const unavailableModel = await connect(socketPath);
+	const unavailableModelResponse = readRecords(unavailableModel, (records) => records.some((item) => item.request_id === "set-model-no-credentials"));
+	unavailableModel.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "set-model-no-credentials",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_model",
+		payload: { provider: "test", id: "model" },
+	})}\n`);
+	const unavailableModelRecord = (await unavailableModelResponse)[0];
+	assert.equal(unavailableModelRecord.success, false);
+	assert.equal(unavailableModelRecord.error.message, "Model has no configured credentials");
+	unavailableModel.destroy();
+	setModelResult = true;
 
 	const shutdownRecord = readRecords(subscription, (records) => records.some(
 		(item) => item.event?.type === "session_shutdown",

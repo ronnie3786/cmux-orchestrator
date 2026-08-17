@@ -17,6 +17,7 @@ struct PiConversationReducer: Sendable {
     private(set) var isTruncated = false
     private(set) var bridgeConnected = false
     private(set) var contextUsage: PiContextUsage?
+    private(set) var currentModel: PiModelIdentity?
 
     private var activeTurnID: String?
     private var activeMessageID: String?
@@ -35,6 +36,7 @@ struct PiConversationReducer: Sendable {
         isTruncated = snapshot.truncated
         bridgeConnected = snapshot.connected
         contextUsage = PiContextUsage(from: snapshot.state?["context"])
+        currentModel = PiModelIdentity(json: snapshot.state?["model"])
 
         for entry in snapshot.entries {
             projectSessionEntry(entry)
@@ -81,6 +83,11 @@ struct PiConversationReducer: Sendable {
         switch type {
         case "bridge.connection":
             bridgeConnected = event.bool(for: "connected") ?? envelope.connected ?? false
+            return .none
+        case "model_select":
+            if let updated = PiModelIdentity(json: event["model"]) {
+                currentModel = updated
+            }
             return .none
         case "session_tree", "session_compact":
             // Both can replace the current context without changing the Pi

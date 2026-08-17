@@ -311,6 +311,10 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/panes/\(paneID)/pi/snapshot")
     }
 
+    func fetchPiModels(paneID: String) async throws -> PiModelCatalogResponse {
+        try await request(path: "/api/v1/panes/\(paneID)/pi/models")
+    }
+
     func piConversationEvents(
         paneID: String,
         after cursor: String?
@@ -384,6 +388,15 @@ actor HerdrAPIClient {
             path: "/api/v1/panes/\(paneID)/pi/abort",
             method: "POST",
             body: APIActionBody()
+        )
+        guard response.accepted else { throw APIError.invalidResponse }
+    }
+
+    func setPiModel(paneID: String, provider: String, modelID: String) async throws {
+        let response: PiCommandResponse = try await request(
+            path: "/api/v1/panes/\(paneID)/pi/model",
+            method: "POST",
+            body: PiSetModelBody(provider: provider, id: modelID)
         )
         guard response.accepted else { throw APIError.invalidResponse }
     }

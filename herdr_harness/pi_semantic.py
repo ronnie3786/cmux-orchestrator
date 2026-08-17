@@ -744,6 +744,7 @@ class PiSemanticManager:
         self._lock = threading.RLock()
         self._started = False
         self._known_pi_panes: set[str] = set()
+        self._bridge_capabilities: dict[str, dict] = {}
         self._watchers: dict[str, tuple[threading.Event, threading.Thread]] = {}
 
     def start(self) -> None:
@@ -869,6 +870,11 @@ class PiSemanticManager:
                                 code="pi_protocol_error",
                                 status=502,
                             )
+                        if record.get("kind") in ("hello", "bridge.hello"):
+                            observed_capabilities = record.get("capabilities")
+                            if isinstance(observed_capabilities, dict):
+                                with self._lock:
+                                    self._bridge_capabilities[pane_id] = dict(observed_capabilities)
                         if not authenticated:
                             changed = self.journal.mark_connected(pane_id, True, namespace=self.namespace)
                             if changed is not None and self._on_event is not None:
@@ -954,6 +960,21 @@ class PiSemanticManager:
         raise PiSemanticError("Pi command connection ended without a response", code="pi_bridge_disconnected", status=503)
 
     def capability(self, pane_id: str) -> dict:
+        default_capabilities = {
+            "prompt": True,
+            "steer": True,
+            "followUp": True,
+            "abort": True,
+            "listModels": True,
+            "setModel": True,
+            "interactionResponse": False,
+        }
+        with self._lock:
+            observed = self._bridge_capabilities.get(pane_id)
+        if observed is None:
+            capabilities = dict(default_capabilities)
+        else:
+            capabilities = {key: bool(observed.get(key, False)) for key in default_capabilities}
         snapshot = self.journal.snapshot(pane_id, namespace=self.namespace)
         available = bool(snapshot.get("entries")) or snapshot.get("session") is not None
         try:
@@ -969,16 +990,7 @@ class PiSemanticManager:
             "session_id": session.get("id") if isinstance(session, dict) else None,
             "cursor": snapshot.get("cursor", 0),
             "oldest_cursor": snapshot.get("oldest_cursor", 1),
-            "capabilities": {
-                "prompt": True,
-                "steer": True,
-                "followUp": True,
-                "abort": True,
-                # Stock TUI owns third-party extension dialogs.  The endpoint
-                # exists for forward compatibility, but this bridge correctly
-                # advertises that it cannot answer those private dialogs.
-                "interactionResponse": False,
-            },
+            "capabilities": capabilities,
             "generated_at": utc_now(),
         }
 

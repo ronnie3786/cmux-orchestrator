@@ -8,8 +8,16 @@ struct PiPromptComposerConfiguration {
     let isConnected: Bool
     let isSubmitting: Bool
     let isAborting: Bool
+    let currentModel: PiModelIdentity?
+    let availableModels: [PiAvailableModel]
+    let isLoadingModels: Bool
+    let isSettingModel: Bool
+    let modelCatalogError: String?
+    let isModelSwitchingUnsupported: Bool
     let submit: (String, PiPromptDisposition) async -> Bool
     let abort: () async -> Bool
+    let selectModel: (PiAvailableModel) async -> Bool
+    let retryLoadModels: () async -> Void
 
     var availableDispositions: [PiPromptDisposition] {
         guard isConnected else { return [] }
@@ -30,6 +38,14 @@ struct PiPromptComposerConfiguration {
 
     var canAbort: Bool {
         phase == .working && isConnected && capabilities.abort && !isAborting
+    }
+
+    var canSelectModel: Bool {
+        capabilities.setModel && isConnected && !isSettingModel
+    }
+
+    var supportsModelMenu: Bool {
+        capabilities.listModels && capabilities.setModel && !isModelSwitchingUnsupported
     }
 
     func placeholder(for disposition: PiPromptDisposition) -> String {

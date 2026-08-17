@@ -7,9 +7,11 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Optional
 
 from herdr_harness.pi_semantic import (
     PI_SEMANTIC_PROTOCOL,
+    PiSemanticError,
     PiSemanticJournal,
     PiSemanticManager,
     ensure_private_socket_directory,
@@ -44,9 +46,17 @@ def bridge_record(pane_id, kind, *, sequence=0, **values):
 
 
 class FakeExtensionSocket:
-    def __init__(self, path, pane_id):
+    def __init__(
+        self,
+        path,
+        pane_id,
+        hello_capabilities: Optional[dict] = None,
+        command_failures: Optional[dict[str, str]] = None,
+    ):
         self.path = path
         self.pane_id = pane_id
+        self.hello_capabilities = hello_capabilities
+        self.command_failures = command_failures
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         Path(path).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.server.bind(path)
@@ -87,12 +97,15 @@ class FakeExtensionSocket:
                 return
             request = json.loads(line)
             if request["type"] == "subscribe":
+                hello_values = {"session_id": "session-1"}
+                if self.hello_capabilities is not None:
+                    hello_values["capabilities"] = self.hello_capabilities
                 connection.sendall(
                     json.dumps(
                         bridge_record(
                             self.pane_id,
                             "hello",
-                            session_id="session-1",
+                            **hello_values,
                         )
                     ).encode()
                     + b"\n"
@@ -128,6 +141,25 @@ class FakeExtensionSocket:
                 return
             if request["type"] == "command":
                 self.commands.append(request)
+                failure_code = self.command_failures.get(request["command"]) if self.command_failures else None
+                if failure_code:
+                    connection.sendall(
+                        json.dumps(
+                            {
+                                "protocol": PI_SEMANTIC_PROTOCOL,
+                                "pane_id": self.pane_id,
+                                "type": "response",
+                                "request_id": request["id"],
+                                "success": False,
+                                "error": {
+                                    "code": failure_code,
+                                    "message": f"{request['command']} rejected for the test",
+                                },
+                            }
+                        ).encode()
+                        + b"\n"
+                    )
+                    return
                 connection.sendall(
                     json.dumps(
                         {
@@ -445,6 +477,8 @@ class PiSemanticTests(unittest.TestCase):
         capability = manager.capability("w1:p1")
         self.assertTrue(capability["available"])
         self.assertFalse(capability["connected"])
+        self.assertTrue(capability["capabilities"]["listModels"])
+        self.assertTrue(capability["capabilities"]["setModel"])
         manager.close()
 
     def test_explicit_empty_environment_uses_an_in_memory_store(self):
@@ -483,6 +517,96 @@ class PiSemanticTests(unittest.TestCase):
             self.assertTrue(response["success"])
             self.assertEqual(extension.commands[-1]["command"], "prompt")
             self.assertEqual(extension.commands[-1]["payload"], {"text": "Fix it"})
+
+    def test_manager_uses_observed_hello_capabilities_for_model_commands(self):
+        cases = [
+            (
+                {
+                    "prompt": True,
+                    "steer": True,
+                    "followUp": True,
+                    "abort": True,
+                    "interactionResponse": False,
+                },
+                False,
+            ),
+            (
+                {
+                    "prompt": True,
+                    "steer": True,
+                    "followUp": True,
+                    "abort": True,
+                    "interactionResponse": False,
+                    "listModels": True,
+                    "setModel": True,
+                },
+                True,
+            ),
+        ]
+        for hello_capabilities, models_supported in cases:
+            with self.subTest(models_supported=models_supported), tempfile.TemporaryDirectory() as temporary:
+                herdr_path = str(Path(temporary) / "herdr.sock")
+                pane_id = "w1:p1"
+                path = pi_semantic_socket_path(herdr_path, pane_id)
+                extension = FakeExtensionSocket(
+                    path,
+                    pane_id,
+                    hello_capabilities=hello_capabilities,
+                ).start()
+                self.addCleanup(extension.stop)
+                manager = PiSemanticManager(
+                    herdr_path,
+                    environ={},
+                    journal=PiSemanticJournal(":memory:"),
+                )
+                manager.sync_snapshot(pi_snapshot(pane_id))
+                manager.start()
+                self.addCleanup(manager.close)
+
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if manager.capability(pane_id)["connected"]:
+                        break
+                    time.sleep(0.02)
+                capability = manager.capability(pane_id)["capabilities"]
+
+                self.assertTrue(capability["prompt"])
+                self.assertIs(capability["listModels"], models_supported)
+                self.assertIs(capability["setModel"], models_supported)
+
+    def test_manager_maps_bridge_errors_for_model_commands(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            herdr_path = str(Path(temporary) / "herdr.sock")
+            pane_id = "w1:p1"
+            path = pi_semantic_socket_path(herdr_path, pane_id)
+            extension = FakeExtensionSocket(
+                path,
+                pane_id,
+                command_failures={"list_models": "unsupported", "set_model": "command_rejected"},
+            ).start()
+            self.addCleanup(extension.stop)
+            manager = PiSemanticManager(
+                herdr_path,
+                environ={},
+                journal=PiSemanticJournal(":memory:"),
+            )
+            manager.sync_snapshot(pi_snapshot(pane_id))
+            manager.start()
+            self.addCleanup(manager.close)
+
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if manager.snapshot_response(pane_id)["entries"]:
+                    break
+                time.sleep(0.02)
+
+            with self.assertRaises(PiSemanticError) as unsupported:
+                manager.command(pane_id, "list_models", {})
+            self.assertEqual(unsupported.exception.status, 501)
+
+            with self.assertRaises(PiSemanticError) as rejected:
+                manager.command(pane_id, "set_model", {"provider": "x", "id": "y"})
+            self.assertEqual(rejected.exception.status, 409)
 
 
 if __name__ == "__main__":

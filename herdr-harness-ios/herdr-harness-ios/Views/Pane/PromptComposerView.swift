@@ -78,6 +78,27 @@ struct PromptComposerView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            if let piConfiguration, piConfiguration.currentModel != nil || piConfiguration.capabilities.listModels {
+                HStack {
+                    PiModelPickerChip(
+                        currentModel: piConfiguration.currentModel,
+                        availableModels: piConfiguration.availableModels,
+                        isLoading: piConfiguration.isLoadingModels,
+                        isSetting: piConfiguration.isSettingModel,
+                        isEnabled: piConfiguration.canSelectModel,
+                        isInteractive: piConfiguration.supportsModelMenu,
+                        errorMessage: piConfiguration.modelCatalogError,
+                        selectModel: { candidate in
+                            Task { _ = await piConfiguration.selectModel(candidate) }
+                        },
+                        retry: {
+                            Task { await piConfiguration.retryLoadModels() }
+                        }
+                    )
+                    Spacer()
+                }
+            }
+
             composerRow
 
             TerminalKeyDeck(model: model, pane: pane, isExpanded: isExpanded)

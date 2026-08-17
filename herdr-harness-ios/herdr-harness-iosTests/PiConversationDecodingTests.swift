@@ -41,6 +41,31 @@ struct PiConversationDecodingTests {
         #expect(pane.piSemantic?.capabilities.followUp == true)
     }
 
+    @Test("Model capabilities accept snake case, camel case, and absent fields")
+    func decodesModelCapabilities() throws {
+        let snakeCase = try JSONDecoder().decode(
+            PiSemanticCapabilities.self,
+            from: Data("{\"prompt\":true,\"list_models\":true,\"set_model\":true}".utf8)
+        )
+        let camelCase = try JSONDecoder().decode(
+            PiSemanticCapabilities.self,
+            from: Data("{\"prompt\":true,\"listModels\":true,\"setModel\":true}".utf8)
+        )
+        let absent = try JSONDecoder().decode(
+            PiSemanticCapabilities.self,
+            from: Data("{\"prompt\":true}".utf8)
+        )
+
+        #expect(snakeCase.listModels)
+        #expect(snakeCase.setModel)
+        #expect(camelCase.listModels)
+        #expect(camelCase.setModel)
+        #expect(!absent.listModels)
+        #expect(!absent.setModel)
+        #expect(!PiSemanticCapabilities.unavailable.listModels)
+        #expect(!PiSemanticCapabilities.unavailable.setModel)
+    }
+
     @Test("Snapshot retains unknown entries and accepts snake case aliases")
     func decodesSnapshotForwardCompatibly() throws {
         let snapshot = try JSONDecoder().decode(

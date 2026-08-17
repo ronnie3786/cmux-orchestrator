@@ -12,6 +12,12 @@ final class PiConversationStore {
     private(set) var isTruncated = false
     private(set) var bridgeConnected = false
     private(set) var contextUsage: PiContextUsage?
+    private(set) var currentModel: PiModelIdentity?
+    private(set) var availableModels: [PiAvailableModel] = []
+    private(set) var isLoadingModels = false
+    private(set) var isSettingModel = false
+    private(set) var modelCatalogError: String?
+    private(set) var isModelSwitchingUnsupported = false
     private(set) var isSubmitting = false
     private(set) var isAborting = false
     private(set) var lastError: String?
@@ -71,6 +77,10 @@ final class PiConversationStore {
                         continue followLoop
                     }
                     return
+                }
+
+                if pane.piSemantic?.capabilities.listModels == true, availableModels.isEmpty {
+                    Task { await loadModels(model: model, pane: pane) }
                 }
 
                 guard let events = await model.piConversationEvents(for: pane, after: reducer.cursor) else {
@@ -144,6 +154,31 @@ final class PiConversationStore {
         }
     }
 
+    func setModel(_ candidate: PiAvailableModel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
+        guard canSendCommands, !isSettingModel else { return false }
+        isSettingModel = true
+        commandNotice = nil
+        defer { isSettingModel = false }
+        do {
+            try await model.setPiModel(provider: candidate.provider, modelID: candidate.modelID, for: pane)
+            lastError = nil
+            commandNotice = "Model set to \(candidate.displayName)"
+            return true
+        } catch let APIError.server(status, _) where status == 501 {
+            lastError = "Model switching isn't supported by this Pi session"
+            return false
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    func retryLoadModels(model: HerdrAppModel, pane: HerdrPane) async {
+        modelCatalogError = nil
+        isModelSwitchingUnsupported = false
+        await loadModels(model: model, pane: pane)
+    }
+
     func respond(
         to interaction: PiPendingInteraction,
         response: PiInteractionResponseBody,
@@ -211,6 +246,12 @@ final class PiConversationStore {
         isTruncated = false
         bridgeConnected = false
         contextUsage = nil
+        currentModel = nil
+        availableModels = []
+        isLoadingModels = false
+        isSettingModel = false
+        modelCatalogError = nil
+        isModelSwitchingUnsupported = false
         isSubmitting = false
         isAborting = false
         lastError = nil
@@ -300,6 +341,23 @@ final class PiConversationStore {
         isTruncated = reducer.isTruncated
         bridgeConnected = reducer.bridgeConnected
         contextUsage = reducer.contextUsage
+        currentModel = reducer.currentModel
         revision &+= 1
+    }
+
+    private func loadModels(model: HerdrAppModel, pane: HerdrPane) async {
+        guard !isLoadingModels else { return }
+        isLoadingModels = true
+        defer { isLoadingModels = false }
+        do {
+            let response = try await model.fetchPiModels(for: pane)
+            availableModels = response.models
+            if currentModel == nil { currentModel = response.current }
+            modelCatalogError = nil
+        } catch let APIError.server(status, _) where status == 501 {
+            isModelSwitchingUnsupported = true
+        } catch {
+            modelCatalogError = "Couldn't load models"
+        }
     }
 }

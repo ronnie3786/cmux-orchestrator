@@ -222,6 +222,7 @@ def api_description() -> dict:
             "paneStream": "/api/v1/panes/{paneId}/stream",
             "piSnapshot": "/api/v1/panes/{paneId}/pi/snapshot",
             "piEvents": "/api/v1/panes/{paneId}/pi/events",
+            "piModels": "/api/v1/panes/{paneId}/pi/models",
             "alerts": "/api/v1/alerts",
             "pushStatus": "/api/v1/push/status",
             "liveActivities": "/api/v1/live-activities",
@@ -235,7 +236,7 @@ def api_description() -> dict:
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
             "POST /api/v1/panes/{paneId}/focus|split|send-text|send-keys|run|prompt|start-agent",
-            "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort",
+            "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort|model",
             "POST /api/v1/panes/{paneId}/pi/interactions/{interactionId}/respond",
             "POST /api/v1/alerts/{alertId}/read",
             "POST /api/v1/alerts/read-all",
@@ -510,6 +511,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if method == "GET" and len(tail) == 4 and tail[0] == "panes" and tail[2:] == ["pi", "events"]:
                 self._serve_pi_events(_identifier(tail[1], "pane ID"), query)
                 return None
+            if method == "GET" and len(tail) == 4 and tail[0] == "panes" and tail[2:] == ["pi", "models"]:
+                return service.pi_command(_identifier(tail[1], "pane ID"), "list_models", {})
             if method == "GET" and tail == ["alerts"]:
                 unread = _query_bool(query, "unread", False)
                 limit = _query_int(query, "limit", 100, minimum=1, maximum=500)
@@ -653,6 +656,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         if pi_action != "abort":
                             payload["text"] = _string(body.get("text"), "text", maximum=131072)
                         return service.pi_command(pane_id, pi_action.replace("-", "_"), payload)
+                    if method == "POST" and len(tail) == 4 and pi_action == "model":
+                        allowed_keys = {"provider", "id"}
+                        if set(body) != allowed_keys:
+                            raise HTTPValidationError("Request body must contain exactly provider and id")
+                        provider = _string(body.get("provider"), "provider", maximum=256)
+                        model_id = _string(body.get("id"), "id", maximum=256)
+                        return service.pi_command(
+                            pane_id,
+                            "set_model",
+                            {"provider": provider, "id": model_id},
+                        )
                     if (
                         method == "POST"
                         and len(tail) == 6

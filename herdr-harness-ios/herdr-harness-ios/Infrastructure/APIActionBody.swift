@@ -36,3 +36,8 @@ struct APIActionBody: Encodable, Sendable {
         self.command = command
     }
 }
+
+struct PiSetModelBody: Encodable, Sendable {
+    let provider: String
+    let id: String
+}

@@ -246,6 +246,21 @@ function contextUsage(ctx: ExtensionContext): JsonObject {
 	}
 }
 
+function projectAvailableModel(value: unknown): JsonObject | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const model = value as JsonObject;
+	const provider = model.provider;
+	const id = model.id ?? model.modelId;
+	if (typeof provider !== "string" || typeof id !== "string") return undefined;
+	const projected: JsonObject = { provider, id };
+	if (typeof model.name === "string") projected.name = model.name;
+	if (typeof model.reasoning === "boolean") projected.reasoning = model.reasoning;
+	if (typeof model.contextWindow === "number" && Number.isFinite(model.contextWindow)) {
+		projected.contextWindow = model.contextWindow;
+	}
+	return projected;
+}
+
 type SocketIdentity = { device: number; inode: number };
 
 function socketIdentity(metadata: Stats): SocketIdentity {
@@ -429,6 +444,8 @@ class BridgeRuntime {
 				steer: true,
 				followUp: true,
 				abort: true,
+				listModels: true,
+				setModel: true,
 				interactionResponse: false,
 			},
 			generated_at: new Date().toISOString(),
@@ -622,13 +639,15 @@ class BridgeRuntime {
 			return;
 		}
 		if (request.type === "command") {
-			this.command(socket, request);
+			void this.command(socket, request).catch((error) => {
+				this.respond(socket, request, false, undefined, "command_rejected", String((error as Error)?.message ?? error));
+			});
 			return;
 		}
 		this.respond(socket, request, false, undefined, "unsupported", "Unsupported Pi semantic request");
 	}
 
-	private command(socket: Socket, request: JsonObject): void {
+	private async command(socket: Socket, request: JsonObject): Promise<void> {
 		const ctx = this.latestContext;
 		if (!ctx) {
 			this.respond(socket, request, false, undefined, "bridge_unavailable", "Pi bridge is not ready");
@@ -637,6 +656,8 @@ class BridgeRuntime {
 		const command = String(request.command ?? "");
 		const payload = request.payload as JsonObject | undefined;
 		const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+		const provider = typeof payload?.provider === "string" ? payload.provider.trim() : "";
+		const id = typeof payload?.id === "string" ? payload.id.trim() : "";
 		try {
 			switch (command) {
 				case "prompt":
@@ -656,6 +677,30 @@ class BridgeRuntime {
 					if (ctx.isIdle()) throw new Error("Pi is already idle");
 					ctx.abort();
 					break;
+				case "list_models": {
+					const source = ctx.scopedModels.length > 0
+						? ctx.scopedModels.map((item) => item.model)
+						: ctx.modelRegistry.getAvailable();
+					const models = source.map(projectAvailableModel).filter((model): model is JsonObject => model !== undefined);
+					this.respond(socket, request, true, {
+						models,
+						current: modelIdentity(ctx.model),
+						scoped: ctx.scopedModels.length > 0,
+					});
+					return;
+				}
+				case "set_model": {
+					if (!provider || !id) throw new Error("Model provider and id are required");
+					const scoped = ctx.scopedModels.length > 0;
+					const model = scoped
+						? ctx.scopedModels.find((entry) => entry.model.provider === provider && entry.model.id === id)?.model
+						: ctx.modelRegistry.find(provider, id);
+					if (!model) throw new Error(scoped ? "Model is not in this session's scope" : "Unknown model");
+					const accepted = await this.pi.setModel(model);
+					if (!accepted) throw new Error("Model has no configured credentials");
+					this.respond(socket, request, true, { accepted: true, command: "set_model", model: modelIdentity(model) });
+					return;
+				}
 				case "interaction_response":
 					this.respond(socket, request, false, undefined, "unsupported", "Stock TUI extension dialogs stay in the terminal");
 					return;

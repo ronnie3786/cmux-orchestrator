@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 
 from herdr_harness.events import EventBroker
+from herdr_harness.pi_semantic import PiSemanticError
 from herdr_harness.server import make_server
 from herdr_harness.workspace_tools import WorkspaceToolError
 
@@ -23,6 +24,7 @@ class FakeHTTPService:
         self.environ = {}
         self.broker = EventBroker()
         self.pi_semantic = FakePiSemantic()
+        self.pi_command_error = None
         self.calls = []
         self.snapshot = {
             "version": "0.8.0",
@@ -132,6 +134,8 @@ class FakeHTTPService:
 
     def pi_command(self, pane_id, command, payload=None):
         self.calls.append((f"pi.{command}", {"pane_id": pane_id, "payload": payload or {}}))
+        if self.pi_command_error is not None:
+            raise self.pi_command_error
         return {"ok": True, "success": True, "result": {"accepted": True}}
 
     def list_alerts(self, **_options):
@@ -408,6 +412,7 @@ class HerdrHTTPTests(unittest.TestCase):
 
     def test_pi_snapshot_and_command_routes_preserve_the_semantic_contract(self):
         snapshot_status, _, snapshot = self.request("/api/v1/panes/w1:p1/pi/snapshot")
+        models_status, _, models = self.request("/api/v1/panes/w1:p1/pi/models")
         prompt_status, _, prompt = self.request(
             "/api/v1/panes/w1:p1/pi/prompt",
             method="POST",
@@ -428,6 +433,8 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(snapshot["protocol"], {"name": "herdr.pi.semantic", "version": 1})
         self.assertEqual(snapshot["entries"][0]["id"], "entry-1")
         self.assertFalse(snapshot["connected"])
+        self.assertEqual(models_status, 200)
+        self.assertTrue(models["success"])
         self.assertEqual(prompt_status, 200)
         self.assertTrue(prompt["success"])
         self.assertEqual(follow_status, 200)
@@ -435,6 +442,72 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertIn(("pi.prompt", {"pane_id": "w1:p1", "payload": {"text": "Fix the tests"}}), self.service.calls)
         self.assertIn(("pi.follow_up", {"pane_id": "w1:p1", "payload": {"text": "Then review it"}}), self.service.calls)
         self.assertIn(("pi.abort", {"pane_id": "w1:p1", "payload": {}}), self.service.calls)
+        self.assertIn(("pi.list_models", {"pane_id": "w1:p1", "payload": {}}), self.service.calls)
+
+    def test_pi_model_route_validates_and_forwards(self):
+        valid_status, _, valid = self.request(
+            "/api/v1/panes/w1:p1/pi/model",
+            method="POST",
+            payload={"provider": "anthropic", "id": "claude-sonnet"},
+        )
+        missing_provider_status, _, missing_provider = self.request(
+            "/api/v1/panes/w1:p1/pi/model",
+            method="POST",
+            payload={"id": "claude-sonnet"},
+        )
+        empty_provider_status, _, empty_provider = self.request(
+            "/api/v1/panes/w1:p1/pi/model",
+            method="POST",
+            payload={"provider": "", "id": "claude-sonnet"},
+        )
+        missing_id_status, _, missing_id = self.request(
+            "/api/v1/panes/w1:p1/pi/model",
+            method="POST",
+            payload={"provider": "anthropic"},
+        )
+        extra_key_status, _, extra_key = self.request(
+            "/api/v1/panes/w1:p1/pi/model",
+            method="POST",
+            payload={"provider": "anthropic", "id": "claude-sonnet", "extra": "nope"},
+        )
+
+        self.assertEqual(valid_status, 200)
+        self.assertTrue(valid["success"])
+        for status, response in (
+            (missing_provider_status, missing_provider),
+            (empty_provider_status, empty_provider),
+            (missing_id_status, missing_id),
+            (extra_key_status, extra_key),
+        ):
+            self.assertEqual(status, 400)
+            self.assertEqual(response["error"]["code"], "invalid_request")
+        self.assertIn(
+            (
+                "pi.set_model",
+                {
+                    "pane_id": "w1:p1",
+                    "payload": {"provider": "anthropic", "id": "claude-sonnet"},
+                },
+            ),
+            self.service.calls,
+        )
+
+    def test_pi_model_route_errors_map_to_the_bridges_reported_http_status(self):
+        self.service.pi_command_error = PiSemanticError("Unsupported Pi command", code="unsupported", status=501)
+        unsupported_status, _, unsupported_body = self.request("/api/v1/panes/w1:p1/pi/models")
+
+        self.service.pi_command_error = PiSemanticError("Pi rejected the command", code="command_rejected", status=409)
+        rejected_status, _, rejected_body = self.request(
+            "/api/v1/panes/w1:p1/pi/model",
+            method="POST",
+            payload={"provider": "anthropic", "id": "claude-sonnet"},
+        )
+        self.service.pi_command_error = None
+
+        self.assertEqual(unsupported_status, 501)
+        self.assertEqual(unsupported_body["error"]["code"], "unsupported")
+        self.assertEqual(rejected_status, 409)
+        self.assertEqual(rejected_body["error"]["code"], "command_rejected")
 
     def test_pi_interaction_response_is_bounded_and_forwarded(self):
         valid_status, _, _ = self.request(
