@@ -7,7 +7,7 @@
  *        while the server is reachable but not connected, iOS parity).
  */
 
-import { CheckCircle2, PauseCircle, Settings } from "lucide-react";
+import { CheckCircle2, Menu, PauseCircle, Settings } from "lucide-react";
 import { useConnectionStore, type ConnectionState } from "../store/connectionStore";
 
 function connectionTitle(connection: ConnectionState): string {
@@ -35,9 +35,17 @@ interface ConnectionBarProps {
   onClearToken?: () => void;
   /** Opens the settings sheet (iOS HomeHeaderView gear parity). */
   onOpenSettings: () => void;
+  /** Toggles the responsive sidebar drawer (visible <900 px only). */
+  onToggleSidebar: () => void;
+  sidebarOpen: boolean;
 }
 
-export function ConnectionBar({ onClearToken, onOpenSettings }: ConnectionBarProps) {
+export function ConnectionBar({
+  onClearToken,
+  onOpenSettings,
+  onToggleSidebar,
+  sidebarOpen,
+}: ConnectionBarProps) {
   const serverHost = useConnectionStore((state) => state.serverHost);
   const setServerHost = useConnectionStore((state) => state.setServerHost);
   const connection = useConnectionStore((state) => state.connection);
@@ -52,6 +60,18 @@ export function ConnectionBar({ onClearToken, onOpenSettings }: ConnectionBarPro
 
   return (
     <header className="connection-bar">
+      {/* Responsive drawer toggle (hidden ≥900 px — the sidebar is always visible). */}
+      <button
+        type="button"
+        className="icon-button icon-button-light sidebar-toggle"
+        onClick={onToggleSidebar}
+        title={sidebarOpen ? "Close session list" : "Open session list"}
+        aria-label={sidebarOpen ? "Close session list" : "Open session list"}
+        aria-expanded={sidebarOpen}
+        aria-controls="session-sidebar"
+      >
+        <Menu size={16} />
+      </button>
       <div className="connection-bar-brand" title="cmux harness">
         cmux
       </div>

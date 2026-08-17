@@ -40,6 +40,7 @@ import {
   groupedQuestionFallbackNote,
 } from "../../lib/feed";
 import { detect } from "../../terminal/detector";
+import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useGitStore } from "../../store/gitStore";
 import { useNewSessionStore } from "../../store/newSessionStore";
@@ -114,6 +115,7 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
   const toggleStar = useWorkspacesStore((s) => s.toggleStar);
   const screenText = useSessionStore((s) => s.screenText);
+  const screenError = useSessionStore((s) => s.screenError);
   const feedReplyPendingIDs = useSessionStore((s) => s.feedReplyPendingIDs);
   const openCodeIntegration = useWorkspacesStore((s) => s.openCodeIntegration);
 
@@ -196,18 +198,18 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
     }
   }, [renameValue, workspace.index]);
 
-  // Close menus/dialogs on Escape.
-  useEffect(() => {
-    if (!menuOpen && !renameOpen && !detailsOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+  // Close menus/dialogs on Escape — one layer for all three (only one can be
+  // open at a time; opening a dialog closes the menu). Top-most layer only.
+  const anyOverlayOpen = menuOpen || renameOpen || detailsOpen;
+  useEscapeLayer(
+    () => {
       setMenuOpen(false);
       setRenameOpen(false);
       setDetailsOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [menuOpen, renameOpen, detailsOpen]);
+    },
+    anyOverlayOpen,
+  );
+  useScrollLock(anyOverlayOpen);
 
   // --- Git tab lifecycle (iOS HarnessFeatureGitReducer parity) --------------
   //
@@ -480,6 +482,18 @@ export function WorkspaceDetailView({ workspace, group }: WorkspaceDetailViewPro
         {tab === "terminal" ? (
           <div className={`terminal-layout${easyMode ? " terminal-layout-easy" : ""}`}>
             <div className="terminal-panel">
+              {screenError !== null ? (
+                <div className="screen-error" role="alert">
+                  <span className="screen-error-text">Screen poll failing: {screenError}</span>
+                  <button
+                    type="button"
+                    className="screen-error-retry"
+                    onClick={() => void useSessionStore.getState().pollNow()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : null}
               <TerminalView text={screenText ?? ""} sessionID={id} />
             </div>
             {nativeFeedItem !== null ? (

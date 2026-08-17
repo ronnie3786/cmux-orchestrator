@@ -1,6 +1,6 @@
-import { useEffect } from "react";
 import { X } from "lucide-react";
 import { useNewSessionStore, type NewSessionMode } from "../../store/newSessionStore";
+import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 
 /**
  * Port of the iOS `NewSessionView` (SettingsNewSessionViews.swift):
@@ -27,17 +27,15 @@ export function NewSessionModal() {
   const creating = phase === "creating";
 
   // Escape cancels (blocked while the request is in flight, like Cancel).
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        if (!creating) cancel();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isOpen, creating, cancel]);
+  // The layer still consumes Esc while creating — it just does nothing with
+  // the key, which also blocks lower layers.
+  useEscapeLayer(
+    () => {
+      if (!creating) cancel();
+    },
+    isOpen,
+  );
+  useScrollLock(isOpen);
 
   if (!isOpen) return null;
 

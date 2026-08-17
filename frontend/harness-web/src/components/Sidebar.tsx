@@ -10,6 +10,7 @@
 import { Star } from "lucide-react";
 import { useConnectionStore } from "../store/connectionStore";
 import { useWorkspacesStore } from "../store/workspacesStore";
+import { useEscapeLayer } from "../hooks/useOverlay";
 import {
   groups,
   paneLabel,
@@ -31,7 +32,14 @@ function StateBadge({ needsYou }: { needsYou: boolean }) {
   );
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  /** Responsive drawer (visible only below the 900 px breakpoint). */
+  open?: boolean;
+  /** Called when the drawer should close (row tap, backdrop tap, Escape). */
+  onClose?: () => void;
+}
+
+export function Sidebar({ open = false, onClose }: SidebarProps) {
   const errorMessage = useConnectionStore((state) => state.errorMessage);
   const clearError = useConnectionStore((state) => state.clearError);
   const connect = useConnectionStore((state) => state.connect);
@@ -44,10 +52,18 @@ export function Sidebar() {
   const selectWorkspace = useWorkspacesStore((state) => state.selectWorkspace);
   const toggleStar = useWorkspacesStore((state) => state.toggleStar);
 
+  // Escape closes the drawer when it is open (only the top-most layer
+  // handles Esc — a modal opened over the drawer closes first).
+  useEscapeLayer(() => onClose?.(), open);
+
+  const close = () => onClose?.();
+
   const sessionGroups = groups(workspaces);
 
   return (
-    <aside className="sidebar">
+    <>
+      {open ? <div className="sidebar-backdrop" onClick={close} aria-hidden /> : null}
+      <aside className={`sidebar${open ? " sidebar-open" : ""}`} id="session-sidebar">
       {errorMessage !== null && (
         <div className="error-banner" role="alert">
           <span className="error-banner-text">{errorMessage}</span>
@@ -63,7 +79,12 @@ export function Sidebar() {
       )}
 
       <div className="sidebar-list">
-        {!hasReceivedStatus && <div className="sidebar-empty">Connecting…</div>}
+        {!hasReceivedStatus && (
+          <div className="sidebar-empty sidebar-empty-loading">
+            <span className="spinner spinner-small" aria-hidden />
+            Connecting…
+          </div>
+        )}
         {hasReceivedStatus && sessionGroups.length === 0 && <div className="sidebar-empty">No sessions</div>}
 
         {sessionGroups.map((group) => {
@@ -72,13 +93,17 @@ export function Sidebar() {
             <div className="session-group" key={group.id}>
               <div
                 className="session-group-header"
-                onClick={() => selectGroup(group.id)}
+                onClick={() => {
+                  selectGroup(group.id);
+                  close();
+                }}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     selectGroup(group.id);
+                    close();
                   }
                 }}
               >
@@ -104,13 +129,17 @@ export function Sidebar() {
                   <div
                     key={id}
                     className={`pane-row ${selected ? "pane-row-selected" : ""}`}
-                    onClick={() => selectWorkspace(id)}
+                    onClick={() => {
+                      selectWorkspace(id);
+                      close();
+                    }}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         selectWorkspace(id);
+                        close();
                       }
                     }}
                   >
@@ -123,6 +152,7 @@ export function Sidebar() {
           );
         })}
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

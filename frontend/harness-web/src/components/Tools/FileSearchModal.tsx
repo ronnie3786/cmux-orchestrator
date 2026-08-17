@@ -3,6 +3,7 @@ import { AlertTriangle, AtSign, FileSearch, FileText } from "lucide-react";
 import { fileSearch } from "../../api/endpoints";
 import type { ProjectFileMatch } from "../../api/types";
 import { useDraftStore } from "../../store/draftStore";
+import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 
 interface FileSearchModalProps {
   /** cmux index of the selected session. */
@@ -83,14 +84,9 @@ export function FileSearchModal({ index, onJumpToTerminal, onClose }: FileSearch
     return () => abortRef.current?.abort();
   }, []);
 
-  // Close on Escape (web idiom; iOS uses the Done button).
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Close on Escape (web idiom; iOS uses the Done button) — top-most layer only.
+  useEscapeLayer(onClose);
+  useScrollLock(true);
 
   // iOS `.appendFilePath`: backticked path token + terminal + focus + close.
   const insertPath = (path: string) => {

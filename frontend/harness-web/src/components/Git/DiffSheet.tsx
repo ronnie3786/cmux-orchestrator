@@ -14,6 +14,7 @@ import {
 import { formatDiffLineReviewPrompt } from "../../lib/reviewPrompt";
 import { useDraftStore } from "../../store/draftStore";
 import { useGitStore } from "../../store/gitStore";
+import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 
 interface DiffSheetProps {
   workspace: Workspace;
@@ -35,19 +36,19 @@ export function DiffSheet({ workspace, onJumpToTerminal }: DiffSheetProps) {
   const [selectedLine, setSelectedLine] = useState<ParsedDiffLine | null>(null);
 
   // Close on Escape (the Done button is the primary affordance).
-  useEffect(() => {
-    if (diffSheet === null) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+  // A selected line closes first — the layer stays registered the whole time
+  // the sheet is open, so Esc never reaches lower layers twice.
+  useEscapeLayer(
+    () => {
       if (selectedLine !== null) {
         setSelectedLine(null);
       } else {
         closeDiff();
       }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [diffSheet, selectedLine, closeDiff]);
+    },
+    diffSheet !== null,
+  );
+  useScrollLock(diffSheet !== null);
 
   if (diffSheet === null) return null;
 

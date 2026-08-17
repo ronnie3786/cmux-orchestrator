@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, Copy, Network, Plus, Settings, Trash2, X } from "lucide-react";
 import { getNetworkInfo } from "../../api/endpoints";
 import { getToken, setToken } from "../../api/client";
+import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 import type { NetworkInfoResponse } from "../../api/types";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useSourcesStore } from "../../store/sourcesStore";
@@ -44,14 +45,9 @@ export function SettingsModal({ onClose, onTokenChanged }: SettingsModalProps) {
   const [network, setNetwork] = useState<NetworkInfoResponse | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
 
-  // Escape closes (iOS: toolbar X / swipe down).
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  // Escape closes (iOS: toolbar X / swipe down) — top-most layer only.
+  useEscapeLayer(onClose);
+  useScrollLock(true);
 
   // The server knows its own addresses better than the browser does.
   useEffect(() => {

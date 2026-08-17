@@ -16,15 +16,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Mic, Pause, Play, Square, Trash2, X } from "lucide-react";
-import {
-  baselineWaveformSamples,
-  formatVoiceDuration,
-  pickRecorderMimeType,
-  sampleLevel,
-  voiceNoteFilename,
-  VOICE_NOTE_MAX_SECONDS,
-  WAVEFORM_SAMPLE_COUNT,
-} from "../../lib/voiceNote";
+import { baselineWaveformSamples, formatVoiceDuration, pickRecorderMimeType, sampleLevel, voiceNoteFilename, VOICE_NOTE_MAX_SECONDS, WAVEFORM_SAMPLE_COUNT } from "../../lib/voiceNote";
+import { useScrollLock } from "../../hooks/useOverlay";
 
 type RecorderStatus = "idle" | "recording" | "finished";
 
@@ -45,6 +38,10 @@ export function VoiceNoteSheet({ onSave, onDismiss }: VoiceNoteSheetProps) {
   const [playbackTime, setPlaybackTime] = useState(0);
   const [previewDuration, setPreviewDuration] = useState(0);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  // The sheet is not Esc-dismissable (iOS interactiveDismissDisabled parity),
+  // but the page behind it still gets the scroll lock like every overlay.
+  useScrollLock(true);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);

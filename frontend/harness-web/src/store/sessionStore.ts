@@ -21,6 +21,12 @@ interface SessionState {
   screenLines: number;
   /** Epoch ms of the last successful screen poll. */
   lastScreenAt: number | null;
+  /**
+   * Error message from the latest failed screen poll (null when healthy).
+   * The terminal panel shows a retry strip while this is set (Phase 7: every
+   * data surface gets a retry path).
+   */
+  screenError: string | null;
   isPolling: boolean;
   /**
    * Feed request IDs with a reply currently in flight. Held here (not in
@@ -69,9 +75,15 @@ async function pollOnce(): Promise<void> {
       screenText: res.screen,
       screenLines: res.lines ?? SCREEN_LINES,
       lastScreenAt: Date.now(),
+      screenError: null,
     });
-  } catch {
-    // The screen is a convenience signal; a failed tick waits for the next one.
+  } catch (error) {
+    // The screen is a convenience signal — a failed tick waits for the next
+    // one — but the failure is surfaced (retry strip) instead of swallowed.
+    const message = error instanceof Error ? error.message : "Screen poll failed";
+    if (useSessionStore.getState().screenError !== message) {
+      useSessionStore.setState({ screenError: message });
+    }
   } finally {
     inFlight = false;
   }
@@ -81,6 +93,7 @@ export const useSessionStore = create<SessionState>()((set) => ({
   screenText: null,
   screenLines: 0,
   lastScreenAt: null,
+  screenError: null,
   isPolling: false,
   feedReplyPendingIDs: new Set<string>(),
 
@@ -91,7 +104,7 @@ export const useSessionStore = create<SessionState>()((set) => ({
     }
     // A newly selected session starts with no screen (iOS clears
     // fullScreenText on selection), then the immediate tick fills it in.
-    set({ screenText: null, screenLines: 0, lastScreenAt: null, isPolling: true });
+    set({ screenText: null, screenLines: 0, lastScreenAt: null, screenError: null, isPolling: true });
     void pollOnce();
     intervalID = window.setInterval(() => {
       void pollOnce();

@@ -3,6 +3,7 @@ import { DollarSign, FileText, MoreHorizontal, RefreshCw, Terminal, Wand2 } from
 import { getSkills } from "../../api/endpoints";
 import type { ProjectSkill, SkillsResponse } from "../../api/types";
 import { useDraftStore } from "../../store/draftStore";
+import { useEscapeLayer } from "../../hooks/useOverlay";
 
 interface SkillsTabProps {
   /** cmux index of the selected session. */
@@ -80,15 +81,8 @@ export function SkillsTab({ index, onJumpToTerminal }: SkillsTabProps) {
     return () => abortRef.current?.abort();
   }, [loadSkills]);
 
-  // Close the row menu on Escape.
-  useEffect(() => {
-    if (openMenuID === null) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenMenuID(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openMenuID]);
+  // Close the row menu on Escape (top-most layer only).
+  useEscapeLayer(() => setOpenMenuID(null), openMenuID !== null);
 
   // iOS `appendSkillInvocation` / `appendCodexSkillInvocation` /
   // `appendSkillFilePath`: exact tokens + terminal + focus request.

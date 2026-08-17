@@ -3,6 +3,7 @@ import { KeyRound } from "lucide-react";
 import { getToken, setToken } from "./api/client";
 import { getFeed, getLog, getNotifications, getOpenCodeIntegration, getStatus } from "./api/endpoints";
 import { ConnectionBar } from "./components/ConnectionBar";
+import { ApprovalBanner } from "./components/ApprovalBanner";
 import { Sidebar } from "./components/Sidebar";
 import { NewSessionModal } from "./components/Sessions/NewSessionModal";
 import { SessionCreationProgressOverlay } from "./components/Sessions/SessionCreationProgressOverlay";
@@ -12,6 +13,7 @@ import { useConnectionStore } from "./store/connectionStore";
 import { useNewSessionStore } from "./store/newSessionStore";
 import { useSessionStore } from "./store/sessionStore";
 import { useWorkspacesStore } from "./store/workspacesStore";
+import { useSessionHashRoute } from "./hooks/useSessionHashRoute";
 import { groups, sessionGroupID, workspaceID } from "./lib/workspaceGroups";
 
 const POLL_INTERVAL_MS = 2_000;
@@ -20,6 +22,8 @@ export default function App() {
   const [token, setStoredToken] = useState<string>(() => getToken());
   const [draft, setDraft] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Responsive sidebar drawer (visible only below the 900 px breakpoint).
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const newSessionOpen = useNewSessionStore((state) => state.isOpen);
   const newSessionPhase = useNewSessionStore((state) => state.phase);
 
@@ -137,6 +141,15 @@ export default function App() {
     return () => useSessionStore.getState().stopPolling();
   }, [token, selectedWorkspaceID]);
 
+  // `#/sessions/<id>` deep links (Phase 7): load-time selection, hash sync on
+  // selection changes, and re-selection on manual hash edits.
+  useSessionHashRoute();
+
+  // Selecting a session (tap or deep link) closes the responsive drawer.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [selectedWorkspaceID]);
+
   const saveToken = () => {
     const value = draft.trim();
     if (!value) {
@@ -209,8 +222,14 @@ export default function App() {
 
   return (
     <div className="app">
-      <ConnectionBar onClearToken={clearToken} onOpenSettings={() => setSettingsOpen(true)} />
-      <Sidebar />
+      <ConnectionBar
+        onClearToken={clearToken}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onToggleSidebar={() => setSidebarOpen((open) => !open)}
+        sidebarOpen={sidebarOpen}
+      />
+      <ApprovalBanner />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <DetailPane />
       {newSessionOpen ? <NewSessionModal /> : null}
       {newSessionPhase !== "idle" ? <SessionCreationProgressOverlay /> : null}

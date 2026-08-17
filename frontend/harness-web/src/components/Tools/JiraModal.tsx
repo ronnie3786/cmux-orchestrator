@@ -11,6 +11,7 @@ import {
 import { getJiraAssigned, getJiraIssue } from "../../api/endpoints";
 import type { JiraTicket } from "../../api/types";
 import { useDraftStore } from "../../store/draftStore";
+import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 import { formatJiraTicketPrompt } from "../../lib/jiraPrompt";
 
 interface JiraModalProps {
@@ -104,14 +105,9 @@ export function JiraModal({ onJumpToTerminal, onClose }: JiraModalProps) {
     };
   }, [loadAssigned]);
 
-  // Close on Escape (web idiom; iOS uses the Done button).
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Close on Escape (web idiom; iOS uses the Done button) — top-most layer only.
+  useEscapeLayer(onClose);
+  useScrollLock(true);
 
   // iOS `.jiraLookupQueryChanged`: any edit clears the resolved ticket + error.
   const changeLookupQuery = (value: string) => {
