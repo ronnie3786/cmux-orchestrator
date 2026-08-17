@@ -16,6 +16,7 @@ struct PiConversationReducer: Sendable {
     private(set) var sessionID: String?
     private(set) var isTruncated = false
     private(set) var bridgeConnected = false
+    private(set) var contextUsage: PiContextUsage?
 
     private var activeTurnID: String?
     private var activeMessageID: String?
@@ -33,6 +34,7 @@ struct PiConversationReducer: Sendable {
         sessionID = Self.sessionIdentifier(in: snapshot.session)
         isTruncated = snapshot.truncated
         bridgeConnected = snapshot.connected
+        contextUsage = PiContextUsage(from: snapshot.state?["context"])
 
         for entry in snapshot.entries {
             projectSessionEntry(entry)
@@ -91,7 +93,12 @@ struct PiConversationReducer: Sendable {
             // Pi emits agent/turn start before the user message. Wait for the
             // first semantic item so we do not render an empty orphan rail.
             return .none
-        case "agent_end", "turn_end":
+        case "agent_end":
+            return .none
+        case "turn_end":
+            // Per-turn context reading lets the meter update live during a run.
+            // Keep the last known value while Pi reports unknown (post-compaction).
+            contextUsage = PiContextUsage(from: event["context"]) ?? contextUsage
             return .none
         case "agent_settled":
             let wasWorking = phase == .working

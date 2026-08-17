@@ -275,6 +275,51 @@ struct PiConversationReducerTests {
         #expect(reducer.pendingInteractions.isEmpty)
     }
 
+    @Test("Context usage projects from snapshots and updates on turn end")
+    func contextUsageProjectsFromSnapshotAndTurnEnd() throws {
+        var reducer = PiConversationReducer()
+
+        let snapshot = try decodeSnapshot(
+            entries: "[]",
+            state: "{\"isStreaming\":false,\"context\":{\"tokens\":12345,\"contextWindow\":192000,\"percent\":6.43}}"
+        )
+        reducer.replace(with: snapshot)
+        #expect(reducer.contextUsage?.tokens == 12345)
+        #expect(reducer.contextUsage?.contextWindow == 192000)
+        #expect(reducer.contextUsage?.fraction == 12345.0 / 192000)
+
+        let turnEnd = try envelope(
+            1,
+            "{\"type\":\"turn_end\",\"turnIndex\":1,\"context\":{\"tokens\":20000,\"contextWindow\":192000,\"percent\":10.4}}"
+        )
+        _ = reducer.apply(turnEnd)
+        #expect(reducer.contextUsage?.tokens == 20000)
+
+        // A null post-compaction reading keeps the last known value.
+        let compactedTurnEnd = try envelope(
+            2,
+            "{\"type\":\"turn_end\",\"turnIndex\":2,\"context\":{\"tokens\":null,\"contextWindow\":null,\"percent\":null}}"
+        )
+        _ = reducer.apply(compactedTurnEnd)
+        #expect(reducer.contextUsage?.tokens == 20000)
+
+        // An authoritative snapshot still wins, including "unknown".
+        let compactedSnapshot = try decodeSnapshot(
+            entries: "[]",
+            state: "{\"isStreaming\":false,\"context\":{\"tokens\":null,\"contextWindow\":null,\"percent\":null}}"
+        )
+        reducer.replace(with: compactedSnapshot)
+        #expect(reducer.contextUsage == nil)
+    }
+
+    @Test("Older snapshots without context reporting leave usage unknown")
+    func missingContextStaysUnknown() throws {
+        var reducer = PiConversationReducer()
+        let snapshot = try decodeSnapshot(entries: "[]")
+        reducer.replace(with: snapshot)
+        #expect(reducer.contextUsage == nil)
+    }
+
     private func decodeSnapshot(
         entries: String,
         state: String = "{\"isStreaming\":false}"

@@ -39,6 +39,11 @@ empty environment stay in memory. Records are namespaced by the normalized
 Herdr socket path so identically named panes in different Herdr sessions cannot
 share history.
 
+The snapshot's `state` object also carries `context: { tokens, contextWindow, percent }` (the
+active model's context usage, or nulls right after compaction before the next LLM
+response), and `turn_end` events carry the same `context` object so clients can update
+a live context meter during a run.
+
 Authenticated harness routes for a detected Pi pane are:
 
 - `GET /api/v1/panes/{paneId}/pi/snapshot`

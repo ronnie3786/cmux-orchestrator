@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { createJiti } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti.mjs";
 
 const temporary = mkdtempSync(join(tmpdir(), "pi-semantic-extension-test-"));
 process.env.HERDR_SOCKET_PATH = join(temporary, "herdr.sock");
@@ -12,6 +12,14 @@ process.env.HERDR_PANE_ID = "w1:p1";
 process.env.HERDR_PI_SEMANTIC_MAX_QUEUE_RECORDS = "8";
 process.env.HERDR_PI_SEMANTIC_MAX_QUEUE_BYTES = String(64 * 1024);
 
+const jitiCandidates = [
+	"/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti.mjs",
+	"/Users/ronnierocha/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti.mjs",
+	join(homedir(), "node_modules/jiti/lib/jiti.mjs"),
+];
+const jitiPath = jitiCandidates.find((candidate) => existsSync(candidate));
+if (!jitiPath) throw new Error(`jiti not found; tried:\n${jitiCandidates.join("\n")}`);
+const { createJiti } = await import(pathToFileURL(jitiPath).href);
 const jiti = createJiti(import.meta.url);
 const bridgeModule = await jiti.import("../extensions/pi-semantic-bridge.ts");
 const handlers = new Map();
@@ -23,6 +31,7 @@ const pi = {
 };
 
 let idle = true;
+let contextUsageValue = { tokens: 12_345, contextWindow: 192_000, percent: 6.43 };
 const entries = [
 	{
 		type: "message",
@@ -42,6 +51,7 @@ const context = {
 	model: { provider: "test", id: "model" },
 	thinkingLevel: "high",
 	isIdle: () => idle,
+	getContextUsage: () => contextUsageValue,
 	hasPendingMessages: () => false,
 	abort: () => { aborted = true; },
 	sessionManager: {
@@ -121,6 +131,7 @@ try {
 	assert.equal(snapshot.state.idle, true);
 	assert.equal(snapshot.state.working, false);
 	assert.equal(snapshot.state.isStreaming, false);
+	assert.deepEqual(snapshot.state.context, { tokens: 12_345, contextWindow: 192_000, percent: 6.43 });
 
 	const deltas = [];
 	const privateSentinel = "PRIVATE-SYSTEM-PROMPT-MUST-NOT-CROSS-WIRE";
@@ -164,6 +175,15 @@ try {
 	assert.equal(JSON.stringify(deltaRecords).includes('"partial"'), false);
 	assert.equal(JSON.stringify(deltaRecords).includes('"message":{"role":"assistant"'), false);
 
+	handlers.get("turn_end")({ type: "turn_end", turnIndex: 1 }, context);
+	const turnEndRecords = await readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "turn_end",
+	));
+	assert.deepEqual(
+		turnEndRecords.find((item) => item.event?.type === "turn_end").event.context,
+		{ tokens: 12_345, contextWindow: 192_000, percent: 6.43 },
+	);
+
 	entries.push({
 		type: "message",
 		id: "entry-2",
@@ -172,12 +192,16 @@ try {
 		message: { role: "assistant", content: [{ type: "text", text: "completed answer" }] },
 	});
 	idle = true;
+	contextUsageValue = undefined;
 	const settledCheckpoint = readRecords(subscription, (records) => records.some(
 		(item) => item.kind === "snapshot" && item.snapshot?.entries?.some((entry) => entry.id === "entry-2"),
 	));
 	await handlers.get("agent_settled")({ type: "agent_settled" }, context);
 	const settled = await settledCheckpoint;
 	assert.ok(settled.some((item) => item.kind === "snapshot" && item.snapshot.entries.at(-1).id === "entry-2"));
+	assert.deepEqual(settled.find((item) => item.kind === "snapshot").snapshot.state.context,
+		{ tokens: null, contextWindow: null, percent: null },
+	);
 
 	const prompt = await connect(socketPath);
 	const promptResponse = readRecords(prompt, (records) => records.some((item) => item.request_id === "prompt-1"));

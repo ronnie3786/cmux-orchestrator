@@ -15,6 +15,8 @@ struct PiChatView: View {
         VStack(spacing: 0) {
             PiConnectionBanner(connection: store.connection, message: store.lastError)
 
+            PiContextMeterView(usage: store.contextUsage)
+
             PiChatTimelineView(
                 store: store,
                 isConnected: store.canSendCommands

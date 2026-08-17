@@ -68,6 +68,28 @@ struct PiConversationDecodingTests {
         #expect(snapshot.oldestCursor == "3")
         #expect(snapshot.truncated)
         #expect(snapshot.entries.first?["payload"]?["x"]?.stringValue == "1")
+        #expect(!snapshot.reportsContextUsage)
+    }
+
+    @Test("Context telemetry presence distinguishes legacy snapshots")
+    func detectsContextTelemetry() throws {
+        let snapshot = try JSONDecoder().decode(
+            PiConversationSnapshot.self,
+            from: Data(
+                """
+                {
+                  "protocol":{"name":"herdr.pi.semantic","version":1},
+                  "paneId":"p1","available":true,"connected":true,
+                  "state":{"isStreaming":false,"context":{"tokens":null,"contextWindow":192000,"percent":null}},
+                  "entries":[],"pendingInteractions":[],"cursor":"1","truncated":false
+                }
+                """.utf8
+            )
+        )
+
+        // The field exists even when individual values are temporarily null.
+        // This is how the app distinguishes a new bridge from a legacy one.
+        #expect(snapshot.reportsContextUsage)
     }
 
     @Test("SSE parser preserves durable id and multiline payload")

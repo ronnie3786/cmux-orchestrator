@@ -168,7 +168,7 @@ function projectAssistantUpdate(event: JsonObject): JsonObject {
 	return { assistantMessageEvent: result };
 }
 
-function projectEvent(type: string, event: unknown): JsonObject | undefined {
+function projectEvent(type: string, event: unknown, ctx: ExtensionContext): JsonObject | undefined {
 	const value = event && typeof event === "object" ? event as JsonObject : {};
 	switch (type) {
 		case "before_agent_start":
@@ -182,7 +182,7 @@ function projectEvent(type: string, event: unknown): JsonObject | undefined {
 		case "agent_end":
 			return {};
 		case "turn_end":
-			return { turnIndex: value.turnIndex, timestamp: value.timestamp };
+			return { turnIndex: value.turnIndex, timestamp: value.timestamp, context: contextUsage(ctx) };
 		case "message_start":
 		case "message_end":
 			return { message: jsonSafe(value.message) };
@@ -226,6 +226,24 @@ function modelIdentity(value: unknown): JsonObject | null {
 		id: model.id ?? model.modelId,
 		name: model.name,
 	};
+}
+
+// Current context usage for the active model, projected null-safe. `tokens` and
+// `percent` are legitimately null right after compaction (before the next LLM
+// response), so clients must tolerate unknown values and fall back to their
+// last known reading.
+function contextUsage(ctx: ExtensionContext): JsonObject {
+	try {
+		const usage = ctx.getContextUsage();
+		if (!usage) return { tokens: null, contextWindow: null, percent: null };
+		return {
+			tokens: usage.tokens ?? null,
+			contextWindow: usage.contextWindow ?? null,
+			percent: usage.percent ?? null,
+		};
+	} catch {
+		return { tokens: null, contextWindow: null, percent: null };
+	}
 }
 
 type SocketIdentity = { device: number; inode: number };
@@ -352,7 +370,7 @@ class BridgeRuntime {
 	emit(type: string, payload: unknown, replaceKey?: string): void {
 		const ctx = this.latestContext;
 		if (!ctx) return;
-		const projected = projectEvent(type, payload);
+		const projected = projectEvent(type, payload, ctx);
 		if (projected === undefined) return;
 		const record: WireRecord = {
 			protocol: PROTOCOL,
@@ -387,6 +405,7 @@ class BridgeRuntime {
 					model: modelIdentity(ctx.model),
 					thinkingLevel: ctx.thinkingLevel,
 					mode: ctx.mode,
+					context: contextUsage(ctx),
 				},
 				entries: projection.entries,
 				pending_interactions: [],

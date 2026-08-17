@@ -15,6 +15,13 @@ struct PiConversationSnapshot: Decodable, Equatable, Sendable {
     let truncated: Bool
     let generatedAt: String?
 
+    /// Older Pi bridge sessions do not include this field. They still expose
+    /// a usable transcript, but must use snapshot polling instead of relying
+    /// on the newer live context/event contract.
+    var reportsContextUsage: Bool {
+        state?.value(for: "context") != nil
+    }
+
     enum CodingKeys: String, CodingKey {
         case ok
         case protocolInfo = "protocol"

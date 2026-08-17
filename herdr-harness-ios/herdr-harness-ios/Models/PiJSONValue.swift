@@ -106,6 +106,14 @@ extension PiJSONValue {
         return nil
     }
 
+    func number(for keys: String...) -> Double? {
+        guard let objectValue else { return nil }
+        for key in keys {
+            if case let .number(value)? = objectValue[key] { return value }
+        }
+        return nil
+    }
+
     var displayString: String {
         switch self {
         case let .string(value):
