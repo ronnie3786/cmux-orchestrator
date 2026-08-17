@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type { CmuxNotification, Workspace } from "../api/types";
+import type { CmuxNotification, FeedItem, Workspace } from "../api/types";
 import {
   displayName,
+  filterGroups,
+  groupMatchesFilter,
+  groupMatchesSearch,
   groupNeedsYou,
   groups,
   paneDisplayName,
   paneLabel,
   preferredWorkspaceID,
   sessionDisplayName,
+  SESSION_FILTERS,
   unreadCountForGroup,
+  workspaceAutoEnabled,
   workspaceID,
   workspaceNeedsYou,
 } from "./workspaceGroups";
@@ -123,5 +128,209 @@ describe("workspaceGroups", () => {
     expect(
       workspaceNeedsYou(target, [{ id: "1", is_read: true, workspace_id: "w1" }], []),
     ).toBe(false);
+  });
+
+  describe("groupMatchesSearch (iOS Workspace/WorkspaceSessionGroup.matchesSearch)", () => {
+    function singleGroup(overrides: Partial<Workspace>): ReturnType<typeof groups>[number] {
+      return groups([workspace({ index: 1, uuid: "u1", ...overrides })])[0];
+    }
+
+    it("matches everything for an empty or whitespace-only query", () => {
+      const group = singleGroup({ name: "anything" });
+      expect(groupMatchesSearch(group, "")).toBe(true);
+      expect(groupMatchesSearch(group, "   ")).toBe(true);
+    });
+
+    it("is case-insensitive and matches the group display name", () => {
+      const group = singleGroup({ name: "My Session" });
+      expect(groupMatchesSearch(group, "my session")).toBe(true);
+      expect(groupMatchesSearch(group, "MY SESSION")).toBe(true);
+      expect(groupMatchesSearch(group, "missing")).toBe(false);
+    });
+
+    it("matches each per-workspace field (name, customName, cwd, branch, surfaceLabel, surfaceTitle)", () => {
+      expect(groupMatchesSearch(singleGroup({ name: "proj-alpha" }), "alpha")).toBe(true);
+      expect(
+        groupMatchesSearch(singleGroup({ name: "other", customName: "My custom name" }), "custom"),
+      ).toBe(true);
+      expect(
+        groupMatchesSearch(
+          singleGroup({ name: "other", cwd: "/Users/ronnie/projects/harness" }),
+          "harness",
+        ),
+      ).toBe(true);
+      expect(
+        groupMatchesSearch(singleGroup({ name: "other", branch: "feat/thing" }), "FEAT"),
+      ).toBe(true);
+      expect(
+        groupMatchesSearch(singleGroup({ name: "other", surfaceLabel: "Left Pane" }), "left pane"),
+      ).toBe(true);
+      expect(
+        groupMatchesSearch(singleGroup({ name: "other", surfaceTitle: "Editor" }), "editor"),
+      ).toBe(true);
+      // Fields the web helper matched before the parity port still work.
+      expect(groupMatchesSearch(singleGroup({ name: "other", surfaceLabel: "/x : Terminal 2" }), "terminal 2")).toBe(true);
+    });
+
+    it("matches a pane label even when no other field does", () => {
+      // paneDisplayName falls back to surfaceTitle; nothing else contains "notes".
+      const group = singleGroup({ name: "other", surfaceTitle: "Notes" });
+      expect(groupMatchesSearch(group, "notes")).toBe(true);
+    });
+  });
+
+  describe("groupMatchesFilter (iOS SessionFilter parity)", () => {
+    const rowState = { notifications: [] as CmuxNotification[], feedItems: [] as FeedItem[] };
+
+    function groupOf(overrides: Partial<Workspace>): ReturnType<typeof groups>[number] {
+      return groups([workspace({ index: 1, uuid: "u1", ...overrides })])[0];
+    }
+
+    it("SESSION_FILTERS carries the iOS labels in order", () => {
+      expect(SESSION_FILTERS.map((option) => option.label)).toEqual(["All", "Needs You", "Auto"]);
+    });
+
+    it('"all" always matches', () => {
+      const group = groupOf({ enabled: false });
+      expect(groupMatchesFilter(group, "all", rowState)).toBe(true);
+    });
+
+    it('"needsYou" reuses the badge predicate (unread notifications or pending feed items)', () => {
+      const target = workspace({ index: 1, uuid: "w1", surfaceUuid: "su1" });
+      const group = groups([target])[0];
+      const unread = { id: "1", is_read: false, workspace_id: "w1" };
+      const unreadSurface = { id: "2", is_read: false, surface_id: "su1" };
+      const read = { id: "3", is_read: true, workspace_id: "w1" };
+      const feedByWorkspace: FeedItem = { requestID: "r1", kind: "approval", workspaceID: "w1" };
+      const feedBySurface: FeedItem = { requestID: "r2", kind: "question", surfaceID: "su1" };
+      const feedElsewhere: FeedItem = { requestID: "r3", kind: "approval", workspaceID: "wX" };
+
+      expect(groupMatchesFilter(group, "needsYou", { notifications: [unread], feedItems: [] })).toBe(true);
+      expect(groupMatchesFilter(group, "needsYou", { notifications: [unreadSurface], feedItems: [] })).toBe(true);
+      expect(groupMatchesFilter(group, "needsYou", { notifications: [read], feedItems: [] })).toBe(false);
+      expect(groupMatchesFilter(group, "needsYou", { notifications: [], feedItems: [feedByWorkspace] })).toBe(true);
+      expect(groupMatchesFilter(group, "needsYou", { notifications: [], feedItems: [feedBySurface] })).toBe(true);
+      expect(groupMatchesFilter(group, "needsYou", { notifications: [], feedItems: [feedElsewhere] })).toBe(false);
+      expect(groupMatchesFilter(group, "needsYou", rowState)).toBe(false);
+    });
+
+    it('"needsYou" on a multi-pane group: one pane needing attention flags the group', () => {
+      const group = groups([
+        workspace({ index: 1, uuid: "w1" }),
+        workspace({ index: 2, uuid: "w1", surfaceLabel: "Two", surfaceId: "s2", surfaceUuid: "su2" }),
+      ])[0];
+      const unreadOnSecondPane = { id: "1", is_read: false, surface_id: "su2" };
+      expect(
+        groupMatchesFilter(group, "needsYou", { notifications: [unreadOnSecondPane], feedItems: [] }),
+      ).toBe(true);
+    });
+
+    it('"auto" mirrors resolvedAutoMode.isEnabled (autoMode ?? (enabled ? auto : off), enabled when != off)', () => {
+      // Explicit modes win over `enabled`.
+      expect(
+        groupMatchesFilter(groupOf({ enabled: false, autoMode: "super" }), "auto", rowState),
+      ).toBe(true);
+      expect(
+        groupMatchesFilter(groupOf({ enabled: false, autoMode: "auto" }), "auto", rowState),
+      ).toBe(true);
+      expect(
+        groupMatchesFilter(groupOf({ enabled: true, autoMode: "off" }), "auto", rowState),
+      ).toBe(false);
+      // No explicit mode: resolve from `enabled`.
+      expect(groupMatchesFilter(groupOf({ enabled: true, autoMode: null }), "auto", rowState)).toBe(true);
+      expect(groupMatchesFilter(groupOf({ enabled: false, autoMode: null }), "auto", rowState)).toBe(false);
+      // Multi-pane: any pane auto-enabled flags the group (iOS `contains`).
+      const group = groups([
+        workspace({ index: 1, uuid: "w1", enabled: false, autoMode: null }),
+        workspace({
+          index: 2,
+          uuid: "w1",
+          surfaceLabel: "Two",
+          surfaceId: "s2",
+          enabled: true,
+          autoMode: "super",
+        }),
+      ])[0];
+      expect(groupMatchesFilter(group, "auto", rowState)).toBe(true);
+      // workspaceAutoEnabled agrees with the resolved mode.
+      expect(workspaceAutoEnabled(workspace({ enabled: false, autoMode: "super" }))).toBe(true);
+      expect(workspaceAutoEnabled(workspace({ enabled: true, autoMode: "off" }))).toBe(false);
+    });
+
+    it("needsYou filter and the badge predicate never disagree (property check)", () => {
+      const group = groups([
+        workspace({ index: 1, uuid: "w1", surfaceUuid: "su1" }),
+        workspace({ index: 2, uuid: "w1", surfaceLabel: "Two", surfaceId: "s2", surfaceUuid: "su2" }),
+        workspace({ index: 3, uuid: "w2", customName: "Second session" }),
+      ]);
+      const notificationCases: CmuxNotification[][] = [
+        [],
+        [{ id: "1", is_read: false, workspace_id: "w1" }],
+        [{ id: "2", is_read: false, surface_id: "su2" }],
+        [{ id: "3", is_read: true, workspace_id: "w1" }],
+        [{ id: "4", is_read: false, workspace_id: "other" }],
+      ];
+      const feedCases: FeedItem[][] = [
+        [],
+        [{ requestID: "r1", kind: "approval", workspaceID: "w2" }],
+        [{ requestID: "r2", kind: "question", surfaceID: "su1" }],
+      ];
+      for (const notifications of notificationCases) {
+        for (const feedItems of feedCases) {
+          for (const candidate of group) {
+            expect(
+              groupMatchesFilter(candidate, "needsYou", { notifications, feedItems }),
+              `group ${candidate.id} / ${notifications.length} notifications / ${feedItems.length} feed items`,
+            ).toBe(groupNeedsYou(candidate, notifications, feedItems));
+          }
+        }
+      }
+    });
+  });
+
+  describe("filterGroups (search AND filter)", () => {
+    const rowState = { notifications: [] as CmuxNotification[], feedItems: [] as FeedItem[] };
+
+    const alphaAuto = groups([workspace({ index: 1, uuid: "a", name: "alpha-app" })])[0];
+    const betaNeedsYou = groups([workspace({ index: 2, uuid: "b", name: "beta-app" })])[0];
+    const gamma = groups([workspace({ index: 3, uuid: "c", name: "gamma-app", enabled: false })])[0];
+    const allGroups = [alphaAuto, betaNeedsYou, gamma];
+    const unreadForBeta = { id: "1", is_read: false, workspace_id: "b" };
+    const stateWithBetaUnread = { notifications: [unreadForBeta], feedItems: [] as FeedItem[] };
+
+    it("returns every group with an empty search and the All filter", () => {
+      expect(filterGroups(allGroups, "", "all", rowState)).toEqual(allGroups);
+    });
+
+    it("search only (All filter)", () => {
+      expect(filterGroups(allGroups, "beta", "all", rowState).map((g) => g.id)).toEqual(["b"]);
+      expect(filterGroups(allGroups, "zzz", "all", rowState)).toEqual([]);
+    });
+
+    it("filter only (empty search)", () => {
+      expect(filterGroups(allGroups, "", "needsYou", stateWithBetaUnread).map((g) => g.id)).toEqual(["b"]);
+      expect(filterGroups(allGroups, "", "auto", rowState).map((g) => g.id)).toEqual(["a", "b"]);
+      expect(filterGroups(allGroups, "", "auto", stateWithBetaUnread).map((g) => g.id)).toEqual(["a", "b"]);
+    });
+
+    it("search AND filter: a group must satisfy both", () => {
+      // beta matches the search, and the filter (needsYou with the unread)
+      // matches beta too → beta survives.
+      expect(
+        filterGroups(allGroups, "beta", "needsYou", stateWithBetaUnread).map((g) => g.id),
+      ).toEqual(["b"]);
+      // alpha matches the filter but not the search → dropped; beta matches
+      // both → kept.
+      expect(filterGroups(allGroups, "beta", "auto", rowState).map((g) => g.id)).toEqual(["b"]);
+      // gamma matches the search but neither filter → dropped.
+      expect(filterGroups(allGroups, "gamma", "needsYou", stateWithBetaUnread)).toEqual([]);
+      expect(filterGroups(allGroups, "gamma", "auto", rowState)).toEqual([]);
+    });
+
+    it("preserves input order", () => {
+      expect(
+        filterGroups([gamma, alphaAuto, betaNeedsYou], "", "all", rowState).map((g) => g.id),
+      ).toEqual(["c", "a", "b"]);
+    });
   });
 });

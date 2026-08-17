@@ -175,14 +175,36 @@ export function paneLabel(_group: WorkspaceSessionGroup, workspace: Workspace, o
   return label === "Pane" || label.length === 0 ? `Pane ${offset + 1}` : label;
 }
 
-/** Mirrors WorkspaceSessionGroup.matchesSearch (used by Phase 2 search). */
+/**
+ * Mirrors Workspace.matchesSearch (iOS Models/SessionStateModels.swift):
+ * case-insensitive substring match against the display name, raw name,
+ * custom name, cwd, branch, surface label, and surface title.
+ * `query` must already be trimmed + lowercased (see groupMatchesSearch).
+ */
+function workspaceMatchesSearch(workspace: Workspace, query: string): boolean {
+  return [
+    displayName(workspace),
+    workspace.name,
+    workspace.customName,
+    workspace.cwd,
+    workspace.branch,
+    workspace.surfaceLabel,
+    workspace.surfaceTitle,
+  ].some((value) => value != null && value.toLowerCase().includes(query));
+}
+
+/**
+ * Mirrors WorkspaceSessionGroup.matchesSearch (iOS Models/WorkspaceModels.swift):
+ * the group display name, any member's searchable fields (see
+ * workspaceMatchesSearch), or any pane label.
+ */
 export function groupMatchesSearch(group: WorkspaceSessionGroup, searchText: string): boolean {
   const query = searchText.trim().toLowerCase();
   if (!query) return true;
   if (group.displayName.toLowerCase().includes(query)) return true;
   return group.workspaces.some(
     (workspace) =>
-      workspace.name.toLowerCase().includes(query) ||
+      workspaceMatchesSearch(workspace, query) ||
       paneDisplayName(workspace).toLowerCase().includes(query),
   );
 }
@@ -239,5 +261,75 @@ export function groupNeedsYou(
 ): boolean {
   return group.workspaces.some((workspace) =>
     workspaceNeedsYou(workspace, notifications, feedItems),
+  );
+}
+
+// --- session filter (iOS SessionFilter parity) ---------------------------------
+
+/** Mirrors SessionFilter (iOS Models/SessionStateModels.swift). */
+export type SessionFilter = "all" | "needsYou" | "auto";
+
+/** Mirrors SessionFilter.allCases with its labels ("All" / "Needs You" / "Auto"). */
+export const SESSION_FILTERS: ReadonlyArray<{ id: SessionFilter; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "needsYou", label: "Needs You" },
+  { id: "auto", label: "Auto" },
+];
+
+/**
+ * Row data a filter needs beyond the group itself. iOS derives "needs you"
+ * from log entries (latest action containing "human"); the web derives it
+ * from unread notifications + pending feed items — the exact source of the
+ * sidebar "Needs You" badge (see workspaceNeedsYou) — so the filter and the
+ * badge can never disagree.
+ */
+export interface SessionFilterRowState {
+  notifications: CmuxNotification[];
+  feedItems: FeedItem[];
+}
+
+/**
+ * Mirrors iOS `resolvedAutoMode.isEnabled`: `autoMode ?? (enabled ? .auto :
+ * .off)`, enabled when the resolved mode is not .off.
+ */
+export function workspaceAutoEnabled(workspace: Workspace): boolean {
+  return resolvedAutoMode(workspace) !== "off";
+}
+
+/**
+ * Mirrors `sessionFilterIncludes(group)` (iOS Feature/HarnessFeature.swift):
+ * - "all" → true
+ * - "needsYou" → group state is .waiting (web parity: groupNeedsYou, the
+ *   badge predicate)
+ * - "auto" → any pane's resolved auto mode is enabled (iOS:
+ *   `group.workspaces.contains { $0.resolvedAutoMode.isEnabled }`)
+ */
+export function groupMatchesFilter(
+  group: WorkspaceSessionGroup,
+  filter: SessionFilter,
+  rowState: SessionFilterRowState,
+): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "needsYou":
+      return groupNeedsYou(group, rowState.notifications, rowState.feedItems);
+    case "auto":
+      return group.workspaces.some((workspace) => workspaceAutoEnabled(workspace));
+  }
+}
+
+/**
+ * Mirrors `visibleWorkspaceGroups` (iOS Feature/HarnessFeature.swift):
+ * search AND filter, in that order.
+ */
+export function filterGroups(
+  all: WorkspaceSessionGroup[],
+  search: string,
+  filter: SessionFilter,
+  rowState: SessionFilterRowState,
+): WorkspaceSessionGroup[] {
+  return all.filter(
+    (group) => groupMatchesFilter(group, filter, rowState) && groupMatchesSearch(group, search),
   );
 }

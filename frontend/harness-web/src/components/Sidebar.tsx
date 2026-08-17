@@ -7,16 +7,20 @@
  * fires the selection side effects (push/clear, mark read) in the store.
  */
 
-import { Star } from "lucide-react";
+import { useState } from "react";
+import { Check, ChevronDown, Search, SlidersHorizontal, Star } from "lucide-react";
 import { useConnectionStore } from "../store/connectionStore";
 import { useWorkspacesStore } from "../store/workspacesStore";
 import { useEscapeLayer } from "../hooks/useOverlay";
 import {
+  filterGroups,
   groups,
   paneLabel,
+  SESSION_FILTERS,
   unreadCountForGroup,
   workspaceID,
   workspaceNeedsYou,
+  type SessionFilter,
 } from "../lib/workspaceGroups";
 
 function UnreadBadge({ count }: { count: number }) {
@@ -52,6 +56,16 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const selectWorkspace = useWorkspacesStore((state) => state.selectWorkspace);
   const toggleStar = useWorkspacesStore((state) => state.toggleStar);
 
+  // Search + filter (iOS SessionSearchFilterBar parity). Component-local state
+  // — iOS keeps it in the feature state and does not persist it.
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<SessionFilter>("all");
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const filterLabel = SESSION_FILTERS.find((option) => option.id === filter)?.label ?? "All";
+
+  // Escape closes the filter menu first (top-most layer), then the drawer.
+  useEscapeLayer(() => setFilterMenuOpen(false), filterMenuOpen);
+
   // Escape closes the drawer when it is open (only the top-most layer
   // handles Esc — a modal opened over the drawer closes first).
   useEscapeLayer(() => onClose?.(), open);
@@ -59,6 +73,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const close = () => onClose?.();
 
   const sessionGroups = groups(workspaces);
+  const visibleGroups = filterGroups(sessionGroups, search, filter, {
+    notifications,
+    feedItems,
+  });
 
   return (
     <>
@@ -78,6 +96,60 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         </div>
       )}
 
+      {/* iOS SessionSearchFilterBar: search field + filter menu, top of sidebar. */}
+      <div className="sidebar-toolbar">
+        <label className="sidebar-search">
+          <Search size={15} className="sidebar-search-icon" aria-hidden="true" />
+          <input
+            className="sidebar-search-input"
+            type="text"
+            value={search}
+            placeholder="Search sessions..."
+            onChange={(event) => setSearch(event.target.value)}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            aria-label="Search sessions"
+          />
+        </label>
+        <div className="sidebar-filter">
+          <button
+            type="button"
+            className="sidebar-filter-button"
+            aria-haspopup="menu"
+            aria-expanded={filterMenuOpen}
+            onClick={() => setFilterMenuOpen((openState) => !openState)}
+          >
+            <SlidersHorizontal size={15} className="sidebar-filter-icon" aria-hidden="true" />
+            <span className="sidebar-filter-label">{filterLabel}</span>
+            <ChevronDown size={14} className="sidebar-filter-chevron" aria-hidden="true" />
+          </button>
+          {filterMenuOpen ? (
+            <>
+              <div className="menu-backdrop" onClick={() => setFilterMenuOpen(false)} />
+              <div className="sidebar-filter-menu" role="menu">
+                {SESSION_FILTERS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={filter === option.id}
+                    className="menu-item"
+                    onClick={() => {
+                      setFilter(option.id);
+                      setFilterMenuOpen(false);
+                    }}
+                  >
+                    <span className="menu-item-label">{option.label}</span>
+                    {filter === option.id ? <Check size={14} className="menu-item-check" /> : null}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+
       <div className="sidebar-list">
         {!hasReceivedStatus && (
           <div className="sidebar-empty sidebar-empty-loading">
@@ -86,8 +158,14 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           </div>
         )}
         {hasReceivedStatus && sessionGroups.length === 0 && <div className="sidebar-empty">No sessions</div>}
+        {hasReceivedStatus && sessionGroups.length > 0 && visibleGroups.length === 0 && (
+          <div className="sidebar-empty sidebar-empty-no-matches">
+            <span className="sidebar-empty-title">No Matches</span>
+            <span className="sidebar-empty-message">Adjust search or filter.</span>
+          </div>
+        )}
 
-        {sessionGroups.map((group) => {
+        {visibleGroups.map((group) => {
           const unread = unreadCountForGroup(group, notifications);
           return (
             <div className="session-group" key={group.id}>
