@@ -69,6 +69,31 @@ struct HerdrModelTests {
         #expect(ServerConfiguration(urlString: value, token: "token") == nil)
     }
 
+    @MainActor
+    @Test("Sidebar navigation persists collapsed sections and opens workspaces")
+    func sidebarNavigation() {
+        UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
+        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
+
+        model.toggleSidebarSection("w1")
+        #expect(model.collapsedSidebarWorkspaceIDs.contains("w1"))
+        model.toggleSidebarSection("w1")
+        #expect(!model.collapsedSidebarWorkspaceIDs.contains("w1"))
+
+        model.openWorkspace(id: "w1")
+        let selectedWorkspaceID = model.selectedWorkspaceID
+        let selectedPaneID = model.selectedPaneID
+        let workspacePath = model.workspacePath
+        #expect(selectedWorkspaceID == "w1")
+        #expect(selectedPaneID == model.workspace(id: "w1")?.sortedPanes.first?.id)
+        #expect(workspacePath == [.workspace("w1")])
+
+        model.openWorkspace(id: "does-not-exist")
+        #expect(model.selectedWorkspaceID == selectedWorkspaceID)
+        #expect(model.selectedPaneID == selectedPaneID)
+        #expect(model.workspacePath == workspacePath)
+    }
+
     private func pane(
         id: String,
         tabID: String,

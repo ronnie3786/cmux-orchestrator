@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkspaceSearchField: View {
     @Binding var text: String
+    var placeholder: String = "filter spaces"
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -9,7 +10,7 @@ struct WorkspaceSearchField: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(isFocused ? HerdrTheme.accent : HerdrTheme.mist)
 
-            TextField("filter spaces", text: $text)
+            TextField(placeholder, text: $text)
                 .font(.body.monospaced())
                 .foregroundStyle(HerdrTheme.text)
                 .textInputAutocapitalization(.never)

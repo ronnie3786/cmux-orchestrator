@@ -11,6 +11,8 @@ final class HerdrAppModel {
     var selectedWorkspaceID: String?
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
+    var isSidebarPresented = false
+    var collapsedSidebarWorkspaceIDs: Set<String>
     var searchText = ""
     var filter: WorkspaceFilter = .all
     var errorMessage: String? {
@@ -47,6 +49,9 @@ final class HerdrAppModel {
         let uiTestToken = Self.launchArgumentValue("-HerdrUITestAPIToken", in: arguments)
             ?? Self.launchArgumentValue("-HerdrUITestToken", in: arguments)
             ?? ""
+        if arguments.contains("-HerdrResetSidebarState") {
+            defaults.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
+        }
         #else
         let uiTestServerURL: String? = nil
         let uiTestToken = ""
@@ -63,6 +68,9 @@ final class HerdrAppModel {
         hasCompletedSetup = forcedDemo || uiTestServerURL != nil || defaults.bool(forKey: "herdr.completedSetup")
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
+        collapsedSidebarWorkspaceIDs = Set(
+            defaults.stringArray(forKey: "herdr.sidebar.collapsedWorkspaces") ?? []
+        )
 
         if !isDemoMode,
            hasCompletedSetup,
@@ -662,6 +670,27 @@ final class HerdrAppModel {
         route(to: pane)
     }
 
+    func toggleSidebarSection(_ workspaceID: String) {
+        if collapsedSidebarWorkspaceIDs.contains(workspaceID) {
+            collapsedSidebarWorkspaceIDs.remove(workspaceID)
+        } else {
+            collapsedSidebarWorkspaceIDs.insert(workspaceID)
+        }
+        UserDefaults.standard.set(
+            Array(collapsedSidebarWorkspaceIDs),
+            forKey: "herdr.sidebar.collapsedWorkspaces"
+        )
+    }
+
+    func openWorkspace(id: String) {
+        guard let workspace = workspace(id: id) else { return }
+        isSidebarPresented = false
+        selectedTab = .workspaces
+        selectedWorkspaceID = id
+        selectedPaneID = workspace.sortedPanes.first?.id
+        workspacePath = [.workspace(id)]
+    }
+
     func open(url: URL) {
         guard url.scheme?.lowercased() == "herdr" else { return }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -824,6 +853,7 @@ final class HerdrAppModel {
         selectedWorkspaceID = nil
         selectedPaneID = nil
         workspacePath = []
+        isSidebarPresented = false
         lastUpdated = nil
         isRefreshing = false
         isSending = false
@@ -848,6 +878,16 @@ final class HerdrAppModel {
         if let selectedPaneID, !validPaneIDs.contains(selectedPaneID) {
             self.selectedPaneID = nil
         }
+        if !workspaces.isEmpty {
+            let prunedCollapsed = collapsedSidebarWorkspaceIDs.intersection(validWorkspaceIDs)
+            if prunedCollapsed != collapsedSidebarWorkspaceIDs {
+                collapsedSidebarWorkspaceIDs = prunedCollapsed
+                UserDefaults.standard.set(
+                    Array(collapsedSidebarWorkspaceIDs),
+                    forKey: "herdr.sidebar.collapsedWorkspaces"
+                )
+            }
+        }
     }
 
     private func resolvePendingPaneRoute() {
@@ -857,6 +897,7 @@ final class HerdrAppModel {
     }
 
     private func route(to pane: HerdrPane) {
+        isSidebarPresented = false
         selectedTab = .workspaces
         selectedWorkspaceID = pane.workspaceID
         selectedPaneID = pane.id

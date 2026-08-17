@@ -6,6 +6,7 @@ struct PaneSessionView: View {
     let hidesAppTabBar: Bool
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var output = "Connecting to terminal…"
     @State private var snapshotRevision = 0
     @State private var snapshotFrameSequence = 0
@@ -39,6 +40,14 @@ struct PaneSessionView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(hidesAppTabBar ? .hidden : .automatic, for: .tabBar)
         .toolbar {
+            if horizontalSizeClass == .compact {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Open navigator", systemImage: "sidebar.leading") {
+                        model.isSidebarPresented = true
+                    }
+                    .accessibilityIdentifier("sidebar-toggle")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 PaneActionsMenu(model: model, pane: currentPane, selectedMode: modeSelection)
             }

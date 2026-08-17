@@ -8,7 +8,10 @@ struct AppRootView: View {
     var body: some View {
         Group {
             if model.hasCompletedSetup {
-                appTabs
+                ZStack {
+                    appTabs
+                    SidebarDrawer(model: model)
+                }
             } else {
                 OnboardingView(model: model)
             }

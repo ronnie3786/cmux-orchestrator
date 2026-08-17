@@ -4,6 +4,7 @@ struct WorkspacePaneListView: View {
     @Bindable var model: HerdrAppModel
     let workspace: HerdrWorkspace
     let selectPane: (HerdrPane) -> Void
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isRenamingWorkspace = false
     @State private var isConfirmingWorkspaceClose = false
     @State private var workspaceName = ""
@@ -33,6 +34,14 @@ struct WorkspacePaneListView: View {
         .navigationTitle(workspace.label)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if horizontalSizeClass == .compact {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Open navigator", systemImage: "sidebar.leading") {
+                        model.isSidebarPresented = true
+                    }
+                    .accessibilityIdentifier("sidebar-toggle")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Workspace actions", systemImage: "ellipsis.circle") {
                     Button("Focus on Mac", systemImage: "scope") {
