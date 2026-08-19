@@ -1,0 +1,364 @@
+/* Git pane view + diff sheet (P11-run-A). Layout reuses .hz-detail-col. */
+
+.hz-git-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.hz-git-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+/* --- repository header ------------------------------------------------ */
+
+.hz-git-header {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.hz-git-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hz-git-branch {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+.hz-git-detached {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.hz-git-refresh {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.hz-git-refresh:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.hz-git-changed {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.hz-git-path {
+  font-size: 11.5px;
+  color: var(--muted-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- empty / loading states ------------------------------------------- */
+
+.hz-git-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 24px 8px;
+  text-align: center;
+}
+
+.hz-git-state-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hz-git-state-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- file sections ------------------------------------------------------ */
+
+.hz-git-section {
+  margin-bottom: 14px;
+}
+
+.hz-git-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+.hz-git-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.hz-git-row-diffable {
+  cursor: pointer;
+}
+
+.hz-git-row-diffable:hover {
+  background: var(--panel);
+}
+
+.hz-git-badge {
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.hz-git-badge-green {
+  color: var(--green);
+}
+
+.hz-git-badge-orange {
+  color: var(--orange);
+}
+
+.hz-git-badge-muted {
+  color: var(--muted-dim);
+}
+
+.hz-git-file {
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.hz-git-row-action {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.hz-git-row-action:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* --- recent commits ------------------------------------------------------ */
+
+.hz-git-commit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+}
+
+.hz-git-commit-message {
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.hz-git-commit-hash {
+  font-size: 11px;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+}
+
+/* --- diff sheet ----------------------------------------------------------- */
+
+.hz-diff-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.hz-diff-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, calc(100vw - 48px));
+  height: min(640px, calc(100vh - 96px));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #0b0e13;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.hz-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hz-diff-title {
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.hz-diff-section {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.hz-diff-done {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.hz-diff-done:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+}
+
+.hz-diff-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hz-diff-state {
+  padding: 24px 16px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.hz-diff-empty {
+  color: var(--muted-dim);
+}
+
+.hz-diff-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.hz-diff-error button {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.hz-diff-row {
+  display: flex;
+  align-items: baseline;
+}
+
+.hz-diff-gutter {
+  width: 40px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.hz-diff-marker {
+  width: 14px;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.hz-diff-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* Line colors: add green / minus red / hunk blue. */
+.hz-diff-row-addition {
+  background: rgba(48, 209, 88, 0.12);
+}
+
+.hz-diff-row-addition .hz-diff-marker {
+  color: var(--green);
+}
+
+.hz-diff-row-addition .hz-diff-text {
+  color: var(--green);
+}
+
+.hz-diff-row-deletion {
+  background: rgba(255, 69, 58, 0.12);
+}
+
+.hz-diff-row-deletion .hz-diff-marker {
+  color: var(--red);
+}
+
+.hz-diff-row-deletion .hz-diff-text {
+  color: var(--red);
+}
+
+.hz-diff-row-hunk {
+  padding: 4px 0 2px;
+}
+
+.hz-diff-row-hunk .hz-diff-text {
+  color: var(--accent);
+}
+
+.hz-diff-row-metadata .hz-diff-text {
+  color: var(--muted);
+}

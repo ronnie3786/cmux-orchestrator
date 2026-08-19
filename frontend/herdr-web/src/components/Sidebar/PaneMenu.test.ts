@@ -62,11 +62,26 @@ describe("menuItemsFor", () => {
     expect(items.find((item) => item.id === "viewTerminal")?.checked).toBe(true);
   });
 
-  it("non-Pi pane: no mode toggle", () => {
+  it("non-Pi pane: no mode toggle, View section present (Terminal/Git/Skills)", () => {
     const pane = makePane({ agent: "codex", agent_status: "working" });
-    const idList = ids(menuItemsFor(pane, { demo: false }));
+    const items = menuItemsFor(pane, { demo: false });
+    const idList = ids(items);
     expect(idList).not.toContain("viewChat");
     expect(idList).not.toContain("viewTerminal");
+    expect(idList).toContain("viewSection");
+    expect(idList).toContain("viewPaneTerminal");
+    expect(idList).toContain("viewPaneGit");
+    expect(idList).toContain("viewPaneSkills");
+    // Default view is terminal.
+    expect(items.find((item) => item.id === "viewPaneTerminal")?.checked).toBe(true);
+    expect(items.find((item) => item.id === "viewPaneGit")?.checked).toBe(false);
+  });
+
+  it("non-Pi pane honors a stored git override in the View section", () => {
+    const pane = makePane({ agent: "codex", agent_status: "working" });
+    const items = menuItemsFor(pane, { demo: false, view: "git" });
+    expect(items.find((item) => item.id === "viewPaneGit")?.checked).toBe(true);
+    expect(items.find((item) => item.id === "viewPaneTerminal")?.checked).toBe(false);
   });
 
   it("working agent pane: interrupt present, start agent absent", () => {
@@ -91,10 +106,12 @@ describe("menuItemsFor", () => {
     }
   });
 
-  it("demo mode: every mutating item disabled, mode toggle still enabled", () => {
+  it("demo mode: every mutating item disabled, view toggles still enabled (local state)", () => {
     const shell = menuItemsFor(makePane({ agent_status: "unknown" }), { demo: true });
+    const localView = new Set(["viewSection", "viewPaneTerminal", "viewPaneGit", "viewPaneSkills"]);
     for (const item of shell) {
-      expect(item.enabled).toBe(false);
+      if (item.id === "viewSection") continue;
+      expect(item.enabled).toBe(localView.has(item.id));
     }
 
     const pi = makePane({ agent: "pi", agent_status: "idle", pi_semantic: piSemantic });
@@ -103,7 +120,7 @@ describe("menuItemsFor", () => {
     expect(piItems.find((item) => item.id === "viewTerminal")?.enabled).toBe(true);
     expect(
       piItems.filter((item) => item.id !== "viewChat" && item.id !== "viewTerminal").every(
-        (item) => !item.enabled,
+        (item) => item.id === "viewSection" || !item.enabled,
       ),
     ).toBe(true);
   });
@@ -114,6 +131,10 @@ describe("menuItemsFor", () => {
     expect(labelOf("startAgent")).toBe("Start agent");
     expect(labelOf("rename")).toBe("Rename pane");
     expect(labelOf("close")).toBe("Close pane");
+    expect(labelOf("viewSection")).toBe("View");
+    expect(labelOf("viewPaneTerminal")).toBe("Terminal");
+    expect(labelOf("viewPaneGit")).toBe("Git");
+    expect(labelOf("viewPaneSkills")).toBe("Skills");
     const working = menuItemsFor(makePane({ agent: "codex", agent_status: "working" }), {
       demo: false,
     });

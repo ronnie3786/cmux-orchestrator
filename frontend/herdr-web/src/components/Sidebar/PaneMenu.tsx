@@ -4,6 +4,7 @@ import { ChevronLeft, MoreHorizontal } from "lucide-react";
 import { interruptAgent, renamePane, deletePane, startAgent } from "../../api/mutations";
 import { canControlNow, useConnectionStore } from "../../store/connectionStore";
 import { usePaneModeStore, type PaneMode } from "../../store/paneModeStore";
+import { usePaneViewStore, type PaneView } from "../../store/paneViewStore";
 import { chatDisplayName } from "../../lib/workspaceGroups";
 import { showToast } from "../../lib/toast";
 import type { Pane } from "../../types/herdr";
@@ -32,6 +33,10 @@ export const AGENT_PICKER: readonly AgentPickerOption[] = [
 export type PaneMenuItem =
   | { id: "viewChat"; label: string; enabled: boolean; checked: boolean }
   | { id: "viewTerminal"; label: string; enabled: boolean; checked: boolean }
+  | { id: "viewPaneTerminal"; label: string; enabled: boolean; checked: boolean }
+  | { id: "viewPaneGit"; label: string; enabled: boolean; checked: boolean }
+  | { id: "viewPaneSkills"; label: string; enabled: boolean; checked: boolean }
+  | { id: "viewSection"; label: string }
   | { id: "interrupt"; label: string; enabled: boolean }
   | { id: "startAgent"; label: string; enabled: boolean }
   | { id: "rename"; label: string; enabled: boolean }
@@ -43,11 +48,15 @@ export interface PaneMenuOptions {
   demo: boolean;
   /** Effective mode of a Pi pane; "chat" is the auto default. */
   mode?: PaneMode;
+  /** Effective view of a non-Pi pane; "terminal" is the default. */
+  view?: PaneView;
 }
 
 const LABELS = {
   chat: "Chat",
   terminal: "Terminal",
+  git: "Git",
+  skills: "Skills",
   interrupt: "Interrupt",
   startAgent: "Start agent",
   rename: "Rename pane",
@@ -78,6 +87,25 @@ export function menuItemsFor(pane: Pane, options: PaneMenuOptions): PaneMenuItem
       label: LABELS.terminal,
       enabled: true,
       checked: mode === "terminal",
+    });
+  } else {
+    // iOS PaneActionsMenu "View" section for non-Pi panes: Terminal / Git /
+    // Skills with checkmarks (doc 01 §3/§6). "Skills" is a placeholder view
+    // until the tools port (P11-run-B).
+    const view = options.view ?? "terminal";
+    items.push({ id: "viewSection", label: "View" });
+    items.push({
+      id: "viewPaneTerminal",
+      label: LABELS.terminal,
+      enabled: true,
+      checked: view === "terminal",
+    });
+    items.push({ id: "viewPaneGit", label: LABELS.git, enabled: true, checked: view === "git" });
+    items.push({
+      id: "viewPaneSkills",
+      label: LABELS.skills,
+      enabled: true,
+      checked: view === "skills",
     });
   }
   if (pane.agent_status === "working" || pane.agent !== undefined) {
@@ -126,8 +154,13 @@ export function PaneMenuButton({ pane, onNavigate }: PaneMenuButtonProps) {
   }, [popover.open]);
 
   const mode = usePaneModeStore((state) => state.modeFor(pane));
+  const paneView = usePaneViewStore((state) => state.viewFor(pane));
   const demo = useConnectionStore((state) => state.status) === "Demo";
-  const items = menuItemsFor(pane, { demo, mode: mode ?? undefined });
+  const items = menuItemsFor(pane, {
+    demo,
+    mode: mode ?? undefined,
+    view: paneView ?? undefined,
+  });
 
   const close = () => {
     popover.close();
@@ -147,6 +180,12 @@ export function PaneMenuButton({ pane, onNavigate }: PaneMenuButtonProps) {
 
   const selectMode = (next: PaneMode) => {
     usePaneModeStore.getState().setMode(pane.workspace_id, pane.pane_id, next);
+    onNavigate?.();
+    close();
+  };
+
+  const selectView = (next: PaneView) => {
+    usePaneViewStore.getState().setView(pane.workspace_id, pane.pane_id, next);
     onNavigate?.();
     close();
   };
@@ -202,6 +241,13 @@ export function PaneMenuButton({ pane, onNavigate }: PaneMenuButtonProps) {
       selectMode(item.id === "viewChat" ? "chat" : "terminal");
       return;
     }
+    if (item.id === "viewPaneTerminal" || item.id === "viewPaneGit" || item.id === "viewPaneSkills") {
+      selectView(
+        item.id === "viewPaneGit" ? "git" : item.id === "viewPaneSkills" ? "skills" : "terminal",
+      );
+      return;
+    }
+    if (item.id === "viewSection") return;
     if (!item.enabled || !gate()) return;
     switch (item.id) {
       case "interrupt":
@@ -285,26 +331,32 @@ function MenuStage({
 }) {
   return (
     <>
-      {items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          role="menuitem"
-          className={`hz-menu-item${
-            item.id === "close" ? " hz-menu-item-destructive" : ""
-          }${item.enabled ? "" : " hz-menu-item-disabled"}`}
-          onClick={() => onClick(item)}
-        >
-          {"checked" in item ? (
-            <span className="hz-menu-item-check" aria-hidden>
-              {item.checked ? "✓" : ""}
-            </span>
-          ) : (
-            <span className="hz-menu-item-check" aria-hidden />
-          )}
-          <span>{item.label}</span>
-        </button>
-      ))}
+      {items.map((item) =>
+        item.id === "viewSection" ? (
+          <div key={item.id} className="hz-popover-label">
+            {item.label}
+          </div>
+        ) : (
+          <button
+            key={item.id}
+            type="button"
+            role="menuitem"
+            className={`hz-menu-item${
+              item.id === "close" ? " hz-menu-item-destructive" : ""
+            }${item.enabled ? "" : " hz-menu-item-disabled"}`}
+            onClick={() => onClick(item)}
+          >
+            {"checked" in item ? (
+              <span className="hz-menu-item-check" aria-hidden>
+                {item.checked ? "✓" : ""}
+              </span>
+            ) : (
+              <span className="hz-menu-item-check" aria-hidden />
+            )}
+            <span>{item.label}</span>
+          </button>
+        ),
+      )}
     </>
   );
 }
