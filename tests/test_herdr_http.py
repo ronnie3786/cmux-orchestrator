@@ -818,5 +818,94 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(self.service.calls[-1][0], "live_activity.unregister")
 
 
+    def test_apple_app_site_association_is_public(self):
+        with urllib.request.urlopen(self.base + "/.well-known/apple-app-site-association", timeout=2) as response:
+            payload = json.loads(response.read())
+            content_type = response.headers.get("Content-Type", "")
+
+        detail = payload["applinks"]["details"][0]
+        self.assertIn("application/json", content_type)
+        self.assertEqual(
+            detail["appIDs"],
+            ["L2M32HMQZH.dev.ronnierocha.herdr-harness.herdr-harness-ios"],
+        )
+        self.assertEqual(detail["components"], [{"/": "/open/*"}])
+
+    def test_apple_app_site_association_honors_app_id_override(self):
+        service = FakeHTTPService()
+        service.environ = {"HERDR_HARNESS_APP_IDS": "TEAM1.example.app, TEAM2.example.other"}
+        server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            with urllib.request.urlopen(base + "/apple-app-site-association", timeout=2) as response:
+                payload = json.loads(response.read())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        self.assertEqual(
+            payload["applinks"]["details"][0]["appIDs"],
+            ["TEAM1.example.app", "TEAM2.example.other"],
+        )
+
+    def test_open_pane_fallback_page_is_public_and_escapes_the_id(self):
+        with urllib.request.urlopen(self.base + "/open/pane/w%3Ap4", timeout=2) as response:
+            page = response.read().decode()
+
+        status, _, body = self.request("/open/other", token=None)
+
+        self.assertIn("herdr://pane/w%3Ap4", page)
+        self.assertIn("w:p4", page)
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "not_found")
+
+    def test_open_pane_fallback_page_rejects_non_identifier_ids(self):
+        markup_status, _, markup_body = self.request(
+            "/open/pane/%3Cscript%3Ealert(1)%3C%2Fscript%3E", token=None
+        )
+        oversized_status, _, _ = self.request("/open/pane/" + "a" * 200, token=None)
+
+        self.assertEqual(markup_status, 404)
+        self.assertEqual(markup_body["error"]["code"], "not_found")
+        self.assertEqual(oversized_status, 404)
+
+    def test_pane_link_requires_token_and_builds_urls_from_public_url(self):
+        service = FakeHTTPService()
+        service.environ = {"HERDR_HARNESS_PUBLIC_URL": "https://rocketbot.tail1db61d.ts.net:8461"}
+        server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            request = urllib.request.Request(
+                base + "/api/v1/panes/w:p4/link",
+                headers={"Authorization": "Bearer test-secret"},
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                body = json.loads(response.read())
+            try:
+                with urllib.request.urlopen(base + "/api/v1/panes/w:p4/link", timeout=2):
+                    unauthorized = 200
+            except urllib.error.HTTPError as exc:
+                unauthorized = exc.code
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        self.assertEqual(unauthorized, 401)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["paneId"], "w:p4")
+        self.assertEqual(body["customSchemeLink"], "herdr://pane/w%3Ap4")
+        self.assertEqual(
+            body["universalLink"],
+            "https://rocketbot.tail1db61d.ts.net:8461/open/pane/w%3Ap4",
+        )
+        self.assertEqual(body["baseUrlSource"], "environment")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,5 +4,9 @@
 <dict>
 	<key>aps-environment</key>
 	<string>$(APS_ENVIRONMENT)</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:*.tail1db61d.ts.net?mode=developer</string>
+	</array>
 </dict>
 </plist>

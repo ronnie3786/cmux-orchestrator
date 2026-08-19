@@ -346,6 +346,57 @@ is intentionally public and contains no session data.
 See `herdr_harness/README.md` for the exact contract and APNs environment
 variables.
 
+## Universal links
+
+Any pane can be opened directly from a tappable link, so an agent that knows a
+pane ID can hand the user a link that lands on that exact chat.
+
+Two equivalent forms open the same pane:
+
+```text
+https://<mac-host>.<tailnet>.ts.net[:port]/open/pane/{paneId}
+herdr://pane/{paneId}
+```
+
+Percent-encode the pane ID (`w1:p2` becomes `w1%3Ap2`). Agents should prefer
+`GET /api/v1/panes/{paneId}/link` (bearer-protected), which returns
+`universalLink` and `customSchemeLink` built from the harness's own notion of
+its public base URL: `HERDR_HARNESS_PUBLIC_URL` if set, else
+`HERDR_HARNESS_TAILSCALE_URL`, else the request's Host header when an HTTPS
+front end vouches for it via `X-Forwarded-Proto` (tailscale serve sets it).
+
+Port matters for how the link opens. Apple only matches universal links on
+the default HTTPS port, so one-tap open-in-app requires fronting the harness
+at 443 (`tailscale serve --bg --https=443 9092`, when 443 is free on that
+Mac) and a portless base URL. On any other port — including the runbook's
+dedicated 8461 — the https link still reaches the right pane, just via a
+brief Safari hop: the unauthenticated `/open/pane/{paneId}` fallback page
+bounces through `herdr://pane/{paneId}` (Safari asks once to open the app).
+The `herdr://` form is always a direct one-tap open and needs no server.
+
+How the pieces fit:
+
+- `GET /.well-known/apple-app-site-association` is served unauthenticated so
+  iOS can validate the associated domain. App IDs default to this project's
+  team and bundle; override with a comma-separated `HERDR_HARNESS_APP_IDS`.
+- `GET /open/pane/{paneId}` is an unauthenticated fallback page that bounces
+  to `herdr://pane/{paneId}` when the link opens in a browser instead of the
+  app. It contains no session data.
+- The app entitlement uses `applinks:*.tail1db61d.ts.net?mode=developer`.
+  The `mode=developer` flag makes Developer Mode devices fetch the
+  association file directly from the host over the tailnet instead of
+  through Apple's CDN (which cannot reach a private tailnet host). The
+  fetch always targets port 443, which is why one-tap universal links
+  require the 443 front. This works for Xcode-installed development
+  builds; the wildcard covers every machine on the tailnet, so the same
+  build works against the personal and work Macs. A different tailnet
+  requires editing
+  `herdr-harness-ios/herdr-harness-ios/herdr_harness_ios.entitlements`.
+- `tailscale serve` must front the harness (see the setup runbook) so the
+  ts.net certificate is valid; associated domains require real HTTPS.
+- The custom scheme `herdr://pane/{paneId}` needs no server support and is
+  the fallback when the universal link association is unavailable.
+
 ## Optional background push alerts
 
 The app's local notification flow and Attention Deck can be exercised in the

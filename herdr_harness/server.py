@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import hmac
+import html
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from typing import Any, Optional
 from . import attachments, voice
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
+from .network import public_base_url
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError
 from .service import HerdrService
 from .terminal import TerminalObserverError
@@ -227,6 +229,12 @@ def api_description() -> dict:
             "alerts": "/api/v1/alerts",
             "pushStatus": "/api/v1/push/status",
             "liveActivities": "/api/v1/live-activities",
+            "paneLink": "/api/v1/panes/{paneId}/link",
+        },
+        "universalLinks": {
+            "appSiteAssociation": "/.well-known/apple-app-site-association",
+            "openPane": "/open/pane/{paneId}",
+            "customScheme": "herdr://pane/{paneId}",
         },
         "mutations": [
             "POST /api/v1/workspaces",
@@ -256,11 +264,37 @@ def api_description() -> dict:
     }
 
 
+DEFAULT_UNIVERSAL_LINK_APP_IDS = "L2M32HMQZH.dev.ronnierocha.herdr-harness.herdr-harness-ios"
+
+
+def _universal_link_app_ids(environ) -> list[str]:
+    raw = environ.get("HERDR_HARNESS_APP_IDS", "") or DEFAULT_UNIVERSAL_LINK_APP_IDS
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _open_pane_page(pane_id: str) -> str:
+    """Fallback page served when a universal link opens in a browser."""
+    scheme_link = "herdr://pane/" + urllib.parse.quote(pane_id, safe="")
+    escaped_link = html.escape(scheme_link, quote=True)
+    escaped_id = html.escape(pane_id)
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open in Herdr</title>
+<style>body{{background:#1e1e2e;color:#cdd6f4;font:16px/1.5 ui-monospace,Menlo,monospace;display:grid;place-items:center;min-height:100vh;margin:0}}main{{text-align:center;padding:24px}}a.button{{display:inline-block;margin-top:16px;padding:12px 20px;border-radius:12px;background:#89b4fa;color:#11111b;text-decoration:none;font-weight:650}}p.fine{{font-size:13px;color:#7f849c;margin-top:18px}}</style></head>
+<body><main><h1>Open in Herdr</h1>
+<p>pane <code>{escaped_id}</code></p>
+<a class="button" href="{escaped_link}">Open the app</a>
+<p class="fine">If nothing happens, install the Herdr Harness app on this device.</p>
+</main><script>window.location.href={json.dumps(scheme_link)};</script></body></html>"""
+
+
 def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
     """Create a request handler bound to one HerdrService."""
 
     configured_token = api_token if api_token is not None else service.environ.get("HERDR_HARNESS_API_TOKEN", "")
     cors_origin = service.environ.get("HERDR_HARNESS_CORS_ORIGIN", "")
+    universal_app_ids = _universal_link_app_ids(service.environ)
 
     class HerdrHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -355,6 +389,42 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     self._common_headers()
                     self.end_headers()
                     self.wfile.write(body)
+                    return
+                if method == "GET" and path in {
+                    "/.well-known/apple-app-site-association",
+                    "/apple-app-site-association",
+                }:
+                    # Served without auth: iOS fetches this anonymously when
+                    # validating associated domains (mode=developer).
+                    self._json_response(
+                        {
+                            "applinks": {
+                                "details": [
+                                    {
+                                        "appIDs": universal_app_ids,
+                                        "components": [{"/": "/open/*"}],
+                                    }
+                                ]
+                            }
+                        }
+                    )
+                    return
+                if segments[:1] == ["open"]:
+                    if (
+                        method == "GET"
+                        and len(segments) == 3
+                        and segments[1] == "pane"
+                        and _IDENTIFIER_RE.fullmatch(segments[2])
+                    ):
+                        body = _open_pane_page(segments[2]).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.send_header("Content-Length", str(len(body)))
+                        self._common_headers()
+                        self.end_headers()
+                        self.wfile.write(body)
+                    else:
+                        self._error(404, "not_found", "Unknown link")
                     return
                 if len(segments) < 2 or segments[:2] != ["api", "v1"]:
                     self._error(404, "not_found", "Endpoint not found")
@@ -530,6 +600,24 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return service.list_alerts(unread_only=unread, status=status, limit=limit)
             if method == "GET" and tail == ["push", "status"]:
                 return service.push_status()
+            if method == "GET" and len(tail) == 3 and tail[0] == "panes" and tail[2] == "link":
+                pane_id = _identifier(tail[1], "pane ID")
+                encoded = urllib.parse.quote(pane_id, safe="")
+                base_url, source = public_base_url(
+                    service.environ,
+                    host_header=self.headers.get("Host", ""),
+                    forwarded_proto=self.headers.get("X-Forwarded-Proto", ""),
+                )
+                response: dict[str, Any] = {
+                    "ok": True,
+                    "paneId": pane_id,
+                    "customSchemeLink": f"herdr://pane/{encoded}",
+                }
+                if base_url:
+                    response["universalLink"] = f"{base_url}/open/pane/{encoded}"
+                    response["baseUrl"] = base_url
+                    response["baseUrlSource"] = source
+                return response
             if method == "GET" and len(tail) == 3 and tail[0] == "panes" and tail[2] == "output":
                 pane_id = _identifier(tail[1], "pane ID")
                 source = (query.get("source") or ["recent_unwrapped"])[0].replace("-", "_")

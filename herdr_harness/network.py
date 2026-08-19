@@ -155,3 +155,40 @@ def network_payload(
         "tailscaleServePort": serve_port,
         "urls": urls,
     }
+
+
+def public_base_url(
+    environ: Optional[Mapping[str, str]] = None,
+    *,
+    host_header: str = "",
+    forwarded_proto: str = "",
+) -> tuple[str, str]:
+    """Resolve the externally reachable HTTPS base URL used in shareable links.
+
+    Returns (url, source); url is "" when nothing trustworthy is configured or
+    observable. Preference order: explicit HERDR_HARNESS_PUBLIC_URL, the
+    configured HERDR_HARNESS_TAILSCALE_URL, then the caller's Host header —
+    the latter only when an HTTPS front end vouches for it via
+    X-Forwarded-Proto (tailscale serve sets it). A discovered Tailscale
+    identity alone is deliberately not trusted: identity does not prove that
+    a Serve handler exists, matching the network_payload policy above.
+    """
+    env = os.environ if environ is None else environ
+    configured = _https_url(env.get("HERDR_HARNESS_PUBLIC_URL", ""))
+    if configured:
+        return configured, "environment"
+    tailscale_url = _https_url(env.get("HERDR_HARNESS_TAILSCALE_URL", ""))
+    if tailscale_url:
+        return tailscale_url, "environment"
+    if str(forwarded_proto or "").strip().lower() != "https":
+        return "", ""
+    raw_header = str(host_header or "").strip()
+    host = _normalize_host(raw_header)
+    if host:
+        port_suffix = ""
+        if ":" in raw_header and not raw_header.startswith("["):
+            candidate = raw_header.rsplit(":", 1)[1]
+            if candidate.isdigit() and 1 <= int(candidate) <= 65535:
+                port_suffix = f":{int(candidate)}"
+        return f"https://{host}{port_suffix}", "host header"
+    return "", ""

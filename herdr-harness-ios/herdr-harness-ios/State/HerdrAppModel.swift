@@ -781,16 +781,37 @@ final class HerdrAppModel {
     }
 
     func open(url: URL) {
-        guard url.scheme?.lowercased() == "herdr" else { return }
+        if let paneID = Self.paneID(from: url) {
+            openPane(id: paneID)
+        }
+    }
+
+    /// Resolves a pane ID from `herdr://pane/{id}` custom-scheme links and
+    /// `https://{host}/open/pane/{id}` universal links, plus the
+    /// `?pane=`/`?paneId=`/`?pane_id=` query forms of either.
+    nonisolated static func paneID(from url: URL) -> String? {
+        let scheme = url.scheme?.lowercased()
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let queryPaneID = components?.queryItems?.first {
             $0.name == "pane" || $0.name == "paneId" || $0.name == "pane_id"
         }?.value
-        let pathPaneID = url.host?.lowercased() == "pane"
-            ? url.pathComponents.dropFirst().first?.removingPercentEncoding
-            : nil
-        if let paneID = queryPaneID?.nonEmpty ?? pathPaneID?.nonEmpty {
-            openPane(id: paneID)
+        switch scheme {
+        case "herdr":
+            let pathPaneID = url.host?.lowercased() == "pane"
+                ? url.pathComponents.dropFirst().first?.removingPercentEncoding
+                : nil
+            return queryPaneID?.nonEmpty ?? pathPaneID?.nonEmpty
+        case "https", "http":
+            let parts = url.pathComponents.filter { $0 != "/" }
+            guard parts.count >= 2,
+                  parts[0].lowercased() == "open",
+                  parts[1].lowercased() == "pane" else { return nil }
+            if parts.count >= 3 {
+                return parts[2].nonEmpty
+            }
+            return queryPaneID?.nonEmpty
+        default:
+            return nil
         }
     }
 
