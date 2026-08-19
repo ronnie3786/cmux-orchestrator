@@ -18,17 +18,10 @@ export function useWorkspaceHashRoute(token: string): void {
   const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
   const selectedPaneId = useWorkspacesStore((state) => state.selectedPaneId);
 
-  // selection → hash.
-  useEffect(() => {
-    if (!token) return;
-    setHashRoute({
-      workspaceId: selectedWorkspaceId,
-      paneId: selectedPaneId,
-      params: parseHash(window.location.hash).params,
-    });
-  }, [token, selectedWorkspaceId, selectedPaneId]);
-
-  // data → repair selection from the hash (pending deep link).
+  // data → repair selection from the hash (pending deep link). MUST be
+  // declared before the selection→hash echo below: when the first snapshot
+  // lands, the repair runs first in the effect phase, so the echo sees the
+  // corrected selection through getState() instead of clobbering the URL.
   useEffect(() => {
     if (!token || data === null) return;
     const route = parseHash(window.location.hash);
@@ -39,6 +32,25 @@ export function useWorkspaceHashRoute(token: string): void {
       store.repairSelection(null, null);
     }
   }, [token, data]);
+
+  // selection → hash. Reads the store fresh (getState) because on the
+  // snapshot-landing commit the repair above has already updated the store
+  // while the hook closure still holds the pre-repair values. While no
+  // snapshot has loaded yet, a null selection means "pending deep link" —
+  // the URL's ws/pane must be preserved verbatim (writing them through the
+  // hook's nulls would clobber the deep link before the repair can read it).
+  useEffect(() => {
+    if (!token) return;
+    const store = useWorkspacesStore.getState();
+    if (store.selectedWorkspaceId === null && store.selectedPaneId === null && store.data === null) {
+      return;
+    }
+    setHashRoute({
+      workspaceId: store.selectedWorkspaceId,
+      paneId: store.selectedPaneId,
+      params: parseHash(window.location.hash).params,
+    });
+  }, [token, selectedWorkspaceId, selectedPaneId, data]);
 
   // hash → selection (manual edits, back/forward).
   useEffect(() => {
