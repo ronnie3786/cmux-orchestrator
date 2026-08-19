@@ -44,6 +44,24 @@
   color: var(--text);
 }
 
+.hz-sidebar-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.hz-sidebar-settings:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
 .hz-sidebar-close {
   margin-left: auto;
   padding: 3px 8px;

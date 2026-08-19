@@ -242,3 +242,18 @@ export interface Health {
   };
   generatedAt: string;
 }
+
+/** GET /api/v1/push/status (live-verified 2026-08-19). */
+export interface PushStatus {
+  ok: boolean;
+  apns: {
+    configured: boolean;
+    environment: string;
+    topicConfigured: boolean;
+    deviceCount: number;
+    liveActivityCount: number;
+    /** Present when unconfigured — why the credentials are missing. */
+    reason?: string;
+  };
+  generatedAt: string;
+}

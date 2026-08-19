@@ -6,12 +6,13 @@
  * return the shapes from herdr_harness/service.py (POSTs were not run live).
  */
 
-import { apiRequest } from "./client";
+import { apiRequest, getApiBaseUrl } from "./client";
 import type {
   AlertReadResponse,
   AlertsReadAllResponse,
   AlertsResponse,
   Health,
+  PushStatus,
   WorkspaceSingleResponse,
   WorkspacesResponse,
 } from "../types/herdr";
@@ -33,6 +34,11 @@ export function workspaces(): Promise<WorkspacesResponse> {
 
 export function workspace(id: string): Promise<WorkspaceSingleResponse> {
   return apiRequest<WorkspaceSingleResponse>(`/workspaces/${encodeURIComponent(id)}`);
+}
+
+/** GET /api/v1/push/status (live shape: {ok, apns: {...}, generatedAt}). */
+export function pushStatus(): Promise<PushStatus> {
+  return apiRequest<PushStatus>("/push/status");
 }
 
 export interface AlertQuery {
@@ -64,4 +70,9 @@ export function alertRead(alertId: string): Promise<AlertReadResponse> {
 
 export function alertsReadAll(): Promise<AlertsReadAllResponse> {
   return apiRequest<AlertsReadAllResponse>("/alerts/read-all", { method: "POST" });
+}
+
+/** Global topology SSE stream URL (base follows the configured server). */
+export function eventsUrl(): string {
+  return `${getApiBaseUrl()}/events`;
 }

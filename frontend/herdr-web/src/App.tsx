@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { configureClient, getToken, setToken } from "./api/client";
+import {
+  configureClient,
+  getToken,
+  setDemoRequestHandler,
+  setServerUrl,
+  setToken,
+} from "./api/client";
 import { useConnectionStore } from "./store/connectionStore";
 import { useEventStreamStore } from "./store/eventStream";
 import { useWorkspacesStore } from "./store/workspacesStore";
@@ -13,28 +19,39 @@ import { GitStatusView } from "./components/Git/GitStatusView";
 import { SkillsView } from "./components/Skills/SkillsView";
 import { PiChatPane } from "./components/Pi/PiChatView";
 import { Toast } from "./components/Toast/Toast";
+import { OnboardingView } from "./components/Onboarding/OnboardingView";
+import { SettingsModal } from "./components/Settings/SettingsModal";
+import { disableDemoMode, demoEnabled, demoRequest, enableDemoMode } from "./demo/demoAdapter";
 import { useWorkspaceHashRoute } from "./hooks/useWorkspaceHashRoute";
 import { usePaneModeStore } from "./store/paneModeStore";
 import { usePaneViewStore } from "./store/paneViewStore";
 import "./styles/app.css";
 
 /**
- * App shell (P3-run-A): token gate → 3-region layout — the "chats"
- * navigator rail | the workspace list | the detail placeholder.
+ * App shell: onboarding (no token, no demo) → 3-region layout — the "chats"
+ * navigator rail | the workspace list | the detail. Demo mode (no token
+ * needed) renders the same shell fed by the demo adapter; the "Demo data is
+ * active" banner sits in the workspace list header.
  *
  * With a token the app probes /health, arms the /workspaces refresh, and
  * opens the global SSE stream; the shell renders once the probe settles
- * (any 401 re-enters the token form via the client's onUnauthorized hook).
+ * (any 401 re-enters onboarding via the client's onUnauthorized hook).
  * Selection is driven by the `#ws=<id>&pane=<id>` hash route; the `deck=1`
  * param swaps the right region from the detail placeholder to the
  * Attention Deck (P3-run-B).
  */
 export default function App() {
   const [token, setStoredToken] = useState<string>(() => getToken());
-  const [draft, setDraft] = useState("");
   const [probed, setProbed] = useState(false);
   // Responsive "chats" drawer (visible only below the 900 px breakpoint).
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Bumped by Settings "Save and reconnect" to re-run the probe/SSE effect
+  // against the new server URL (the token is kept — a 401 re-enters
+  // onboarding via onUnauthorized).
+  const [serverGeneration, setServerGeneration] = useState(0);
+
+  const demo = useConnectionStore((state) => state.demo);
 
   const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
   const selectedPaneId = useWorkspacesStore((state) => state.selectedPaneId);
@@ -77,13 +94,16 @@ export default function App() {
     setSidebarOpen(false);
   };
 
-  // Any 401 from the API re-enters the token form (client contract).
+  // Any 401 from the API re-enters onboarding (client contract); the demo
+  // adapter is installed for the whole session.
   useEffect(() => {
     configureClient({ onUnauthorized: clearToken });
+    setDemoRequestHandler(demoRequest);
     // Stable setters + module stores — register once.
   }, []);
 
   // Mount with a token: probe /health, refresh the snapshot, open SSE.
+  // `serverGeneration` re-runs this after a Settings "Save and reconnect".
   useEffect(() => {
     if (!token) return;
     setProbed(false);
@@ -96,7 +116,7 @@ export default function App() {
     return () => {
       useEventStreamStore.getState().stop();
     };
-  }, [token]);
+  }, [token, serverGeneration]);
 
   useWorkspaceHashRoute(token);
 
@@ -125,51 +145,36 @@ export default function App() {
     setSidebarOpen(false);
   }, [selectedWorkspaceId]);
 
-  const saveToken = () => {
-    const value = draft.trim();
-    if (!value) return;
+  const saveToken = (serverUrl: string, value: string) => {
+    setServerUrl(serverUrl);
     setToken(value);
     useConnectionStore.getState().setToken(value);
     setStoredToken(value);
-    setDraft("");
   };
 
-  if (!token) {
+  // Settings "Save and reconnect" / "Connect a real server": persist the
+  // URL, leave demo mode if active, and re-probe + reopen the stream.
+  // Without a token this drops back into onboarding (demo off, no token).
+  const reconnect = (serverUrl: string) => {
+    if (demoEnabled()) {
+      disableDemoMode();
+    }
+    setServerUrl(serverUrl);
+    setSettingsOpen(false);
+    setServerGeneration((generation) => generation + 1);
+  };
+
+  const exploreDemo = () => {
+    enableDemoMode();
+  };
+
+  if (!demo && !token) {
     return (
-      <main className="screen">
-        <section className="card">
-          <h1>herdr</h1>
-          <p className="hint">Enter the pairing token printed in the herdr harness log.</p>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveToken();
-            }}
-          >
-            <label htmlFor="pairing-token" className="hint">
-              Pairing token
-            </label>
-            <input
-              id="pairing-token"
-              type="password"
-              className="token-input"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="Token from server log"
-              autoFocus
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button type="submit" className="primary" disabled={!draft.trim()}>
-              Connect
-            </button>
-          </form>
-        </section>
-      </main>
+      <OnboardingView onConnect={saveToken} onExploreDemo={exploreDemo} />
     );
   }
 
-  if (!probed) {
+  if (!demo && !probed) {
     return (
       <main className="screen">
         <section className="card">
@@ -193,7 +198,11 @@ export default function App() {
 
   return (
     <div className="hz-app-shell">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
       <WorkspaceListView onOpenNavigator={() => setSidebarOpen(true)} />
       {deckOpen ? (
         <AttentionView onClose={closeDeck} />
@@ -210,6 +219,9 @@ export default function App() {
       ) : (
         <DetailPlaceholder workspace={workspace} />
       )}
+      {settingsOpen ? (
+        <SettingsModal onClose={() => setSettingsOpen(false)} onReconnect={reconnect} />
+      ) : null}
       <Toast />
     </div>
   );

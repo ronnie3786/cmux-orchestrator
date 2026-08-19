@@ -13,6 +13,7 @@ vi.mock("../api/sse", () => ({
 }));
 vi.mock("../api/herdr", () => ({
   HERDR_BASE_URL: "http://127.0.0.1:9092/api/v1",
+  eventsUrl: () => "http://127.0.0.1:9092/api/v1/events",
   health: mocks.health,
   workspaces: mocks.workspaces,
   workspace: vi.fn(),

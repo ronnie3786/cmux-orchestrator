@@ -29,7 +29,7 @@
 import { create } from "zustand";
 import { openSSE } from "../api/sse";
 import type { SseHandle, SseState } from "../api/sse";
-import { HERDR_BASE_URL } from "../api/herdr";
+import { eventsUrl } from "../api/herdr";
 import { useAlertsStore } from "./alertsStore";
 import { useConnectionStore } from "./connectionStore";
 import { useWorkspacesStore } from "./workspacesStore";
@@ -185,7 +185,7 @@ export const useEventStreamStore = create<EventStreamState>()((set) => ({
     stopAll();
     set({ started: true, connected: false, lastEventId: null, refetchCount: 0 });
     handle = openSSE({
-      buildUrl: () => `${HERDR_BASE_URL}/events`,
+      buildUrl: () => eventsUrl(),
       token,
       cursorKind: "int-header",
       onEvent: dispatch,

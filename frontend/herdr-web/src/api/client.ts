@@ -1,5 +1,6 @@
 const TOKEN_STORAGE_KEY = "herdr.web.token";
-const DEFAULT_BASE_URL = "http://127.0.0.1:9092/api/v1";
+const SERVER_URL_STORAGE_KEY = "herdr.web.serverUrl";
+export const DEFAULT_SERVER_URL = "http://127.0.0.1:9092";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
@@ -19,7 +20,10 @@ export class ApiError extends Error {
 }
 
 export interface ApiClientOptions {
-  /** Base URL for relative paths (default: http://127.0.0.1:9092/api/v1). */
+  /**
+   * Full API base override (tests). Wins over the stored/default server URL.
+   * Default: `${serverUrl}/api/v1`.
+   */
   baseUrl?: string;
   /** Invoked on any 401 so the app can re-enter onboarding. */
   onUnauthorized?: () => void;
@@ -29,6 +33,21 @@ let clientOptions: ApiClientOptions = {};
 
 export function configureClient(options: ApiClientOptions): void {
   clientOptions = { ...clientOptions, ...options };
+}
+
+// --- demo seam ---------------------------------------------------------------
+// When installed (App mount), `apiRequest` consults it BEFORE fetching. A
+// returned value (anything but undefined) short-circuits the request; a thrown
+// error becomes the request's rejection (demo mode uses this to answer
+// unhandled routes with a benign 501 instead of a 401 that would kick the
+// user back to onboarding).
+
+type DemoRequestHandler = (path: string) => unknown;
+
+let demoRequestHandler: DemoRequestHandler | null = null;
+
+export function setDemoRequestHandler(handler: DemoRequestHandler | null): void {
+  demoRequestHandler = handler;
 }
 
 export function getToken(): string {
@@ -67,11 +86,57 @@ function errorFromPayload(payload: unknown, status: number): ApiError {
   return new ApiError("error", `HTTP ${status}`, status);
 }
 
+/**
+ * The persisted server root, or null when the app targets the default.
+ * Settings renders "This origin" for the unset case.
+ */
+export function getStoredServerUrl(): string | null {
+  try {
+    return localStorage.getItem(SERVER_URL_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Configured server root (no /api/v1): the persisted URL (Settings /
+ * onboarding "Save and reconnect") or the loopback default.
+ */
+export function getServerUrl(): string {
+  return getStoredServerUrl() ?? DEFAULT_SERVER_URL;
+}
+
+/**
+ * Persists the server root (Settings "Save and reconnect" / onboarding
+ * Connect). Trailing slashes are stripped; an empty value clears the
+ * override.
+ */
+export function setServerUrl(url: string): void {
+  const trimmed = url.trim().replace(/\/+$/, "");
+  try {
+    if (trimmed) {
+      localStorage.setItem(SERVER_URL_STORAGE_KEY, trimmed);
+    } else {
+      localStorage.removeItem(SERVER_URL_STORAGE_KEY);
+    }
+  } catch {
+    // Storage unavailable — the override just won't persist.
+  }
+}
+
+/** Full API base: the test override, else `<serverUrl>/api/v1`. */
+export function getApiBaseUrl(): string {
+  if (clientOptions.baseUrl) {
+    return clientOptions.baseUrl;
+  }
+  return `${getServerUrl()}/api/v1`;
+}
+
 function resolveUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) {
     return path;
   }
-  const baseUrl = clientOptions.baseUrl ?? DEFAULT_BASE_URL;
+  const baseUrl = getApiBaseUrl();
   return baseUrl + (path.startsWith("/") ? path : `/${path}`);
 }
 
@@ -100,6 +165,12 @@ export async function apiRequest<T>(
       controller.abort();
     } else {
       externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+  if (demoRequestHandler !== null) {
+    const demo = demoRequestHandler(path);
+    if (demo !== undefined) {
+      return demo as T;
     }
   }
   const headers = new Headers(init.headers);

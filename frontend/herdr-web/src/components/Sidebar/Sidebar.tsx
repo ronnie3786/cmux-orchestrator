@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Search, Settings } from "lucide-react";
 import { useWorkspacesStore } from "../../store/workspacesStore";
 import {
   compactStatus,
@@ -68,6 +68,8 @@ interface SidebarProps {
   /** Overlay drawer state (used below the 900 px breakpoint only). */
   open: boolean;
   onClose: () => void;
+  /** Opens the settings modal (web stand-in for the iOS Settings tab). */
+  onOpenSettings: () => void;
 }
 
 /**
@@ -78,7 +80,7 @@ interface SidebarProps {
  * footer. Persistent left rail at ≥900 px; overlay drawer with backdrop
  * below (Esc / backdrop / "Close navigator" close it).
  */
-export function Sidebar({ open, onClose }: SidebarProps) {
+export function Sidebar({ open, onClose, onOpenSettings }: SidebarProps) {
   const data = useWorkspacesStore((state) => state.data);
   const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
   const selectedPaneId = useWorkspacesStore((state) => state.selectedPaneId);
@@ -140,6 +142,14 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           <span className="hz-sidebar-brand">herdr</span>
           <button type="button" className="hz-sidebar-switch" onClick={onClose}>
             switch
+          </button>
+          <button
+            type="button"
+            className="hz-sidebar-settings"
+            onClick={onOpenSettings}
+            aria-label="Settings"
+          >
+            <Settings size={15} aria-hidden />
           </button>
           {open ? (
             <button type="button" className="hz-sidebar-close" onClick={onClose}>

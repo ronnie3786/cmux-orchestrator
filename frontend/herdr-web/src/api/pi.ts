@@ -14,8 +14,7 @@
  * segment, matching terminal.ts).
  */
 
-import { apiRequest } from "./client";
-import { HERDR_BASE_URL } from "./herdr";
+import { apiRequest, getApiBaseUrl } from "./client";
 import type { PiInteractionResponseBody, PiJSONValue } from "../pi/types";
 
 export type PiCommandPayload = {
@@ -45,7 +44,7 @@ export function piSnapshot(paneId: string): Promise<PiJSONValue> {
 export function piEventsUrl(paneId: string, after: string | number | null = null): string {
   const query =
     after !== null && after !== "" ? `?after=${encodeURIComponent(String(after))}` : "";
-  return `${HERDR_BASE_URL}/panes/${paneId}/pi/events${query}`;
+  return `${getApiBaseUrl()}/panes/${paneId}/pi/events${query}`;
 }
 
 /** GET /api/v1/panes/{id}/pi/models — bridge `list_models` passthrough. */

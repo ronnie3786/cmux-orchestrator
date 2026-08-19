@@ -33,6 +33,9 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<WorkspaceFilter>("all");
+  // Demo banner dismiss — per render only, never persisted (iOS keeps the
+  // banner in the workspace header while demo is active).
+  const [demoBannerDismissed, setDemoBannerDismissed] = useState(false);
 
   const all = useMemo(() => groups(data?.workspaces ?? []), [data]);
   const visible = useMemo(() => filterGroups(all, search, filter), [all, search, filter]);
@@ -67,7 +70,19 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
           <Menu size={16} aria-hidden />
         </button>
         <h1 className="hz-ws-list-title">Workspaces</h1>
-        {connectionStatus === "Demo" ? <div className="hz-demo-banner">Demo data is active</div> : null}
+        {connectionStatus === "Demo" && !demoBannerDismissed ? (
+          <div className="hz-demo-banner" role="status">
+            <span>Demo data is active</span>
+            <button
+              type="button"
+              className="hz-demo-banner-dismiss"
+              onClick={() => setDemoBannerDismissed(true)}
+              aria-label="Dismiss demo banner"
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
       </header>
 
       <div className="hz-ws-toolbar">

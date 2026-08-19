@@ -7,8 +7,7 @@
  * and is left untyped here).
  */
 
-import { apiRequest } from "./client";
-import { HERDR_BASE_URL } from "./herdr";
+import { apiRequest, getApiBaseUrl } from "./client";
 
 export interface TerminalOutputPayload {
   pane_id: string;
@@ -44,5 +43,5 @@ export function terminalOutput(paneId: string): Promise<TerminalOutputResponse> 
  * on every connection; the first frame of an attach is always full).
  */
 export function terminalStreamUrl(paneId: string, cols = 100, rows = 32): string {
-  return `${HERDR_BASE_URL}/panes/${encodeURIComponent(paneId)}/stream?cols=${cols}&rows=${rows}`;
+  return `${getApiBaseUrl()}/panes/${encodeURIComponent(paneId)}/stream?cols=${cols}&rows=${rows}`;
 }
