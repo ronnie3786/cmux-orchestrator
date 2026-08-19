@@ -9,6 +9,7 @@ import {
   Ticket,
 } from "lucide-react";
 import { jiraAssigned, jiraIssue, type JiraTicket } from "../../api/tools";
+import { ToolErrorCard } from "../Shared/ToolErrorCard";
 import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 import "./tools.css";
 
@@ -32,7 +33,9 @@ interface JiraProjectGroup {
  * "LOOKUP RESULT", "Paste a ticket key or browse URL from any project.",
  * "loading assigned tickets", "Jira unavailable", "no assigned tickets",
  * "Use exact lookup for another ticket." (Phase-1 strings where §6 is
- * silent: "Assigned" section header, "Done", the copy toast).
+ * silent: "Assigned" section header, "Done", the copy toast). The assigned
+ * list failure reuses the shared ToolErrorCard chrome (P11-run-B) keeping
+ * the byte-exact "Jira unavailable" + "Retry".
  */
 export function JiraModal({ onPick, onClose }: JiraModalProps) {
   // Lookup state.
@@ -44,7 +47,7 @@ export function JiraModal({ onPick, onClose }: JiraModalProps) {
   // Assigned state.
   const [tickets, setTickets] = useState<JiraTicket[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(false);
-  const [ticketsError, setTicketsError] = useState(false);
+  const [ticketsError, setTicketsError] = useState<string | null>(null);
 
   // Copy toast (Phase-1 timing: 1.6 s window, restarted on each copy).
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -56,13 +59,13 @@ export function JiraModal({ onPick, onClose }: JiraModalProps) {
   const loadAssigned = useCallback(() => {
     assignedAbortRef.current?.abort();
     setTicketsLoading(true);
-    setTicketsError(false);
+    setTicketsError(null);
     const controller = new AbortController();
     assignedAbortRef.current = controller;
     jiraAssigned(controller.signal)
       .then((response) => {
         setTicketsLoading(false);
-        setTicketsError(false);
+        setTicketsError(null);
         setTickets(
           [...(response.tickets ?? [])].sort((a, b) =>
             a.key.localeCompare(b.key, undefined, { sensitivity: "base" }),
@@ -72,7 +75,9 @@ export function JiraModal({ onPick, onClose }: JiraModalProps) {
       .catch((err) => {
         if (err instanceof Error && err.message === "Request cancelled") return;
         setTicketsLoading(false);
-        setTicketsError(true);
+        setTicketsError(
+          err instanceof Error && err.message !== "" ? err.message : "Couldn't load Jira tickets",
+        );
       });
   }, []);
 
@@ -251,15 +256,8 @@ export function JiraModal({ onPick, onClose }: JiraModalProps) {
                 <div className="spinner" aria-label="Loading assigned tickets" />
                 <span className="jira-loading-label">loading assigned tickets</span>
               </div>
-            ) : ticketsError ? (
-              <div className="git-error">
-                <span className="git-error-text">
-                  <AlertTriangle size={13} aria-hidden /> Jira unavailable
-                </span>
-                <button type="button" className="git-error-retry" onClick={loadAssigned}>
-                  Retry
-                </button>
-              </div>
+            ) : ticketsError !== null ? (
+              <ToolErrorCard tool="Jira" message={ticketsError} retryLabel="Retry" onRetry={loadAssigned} />
             ) : tickets.length === 0 ? (
               <div className="tools-modal-empty">
                 <Ticket size={20} aria-hidden />

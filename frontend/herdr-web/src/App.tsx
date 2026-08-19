@@ -10,7 +10,7 @@ import { DetailPlaceholder } from "./components/Detail/DetailPlaceholder";
 import { AttentionView } from "./components/Attention/AttentionView";
 import { TerminalView } from "./components/Terminal/TerminalView";
 import { GitStatusView } from "./components/Git/GitStatusView";
-import { SkillsViewPlaceholder } from "./components/Skills/SkillsViewPlaceholder";
+import { SkillsView } from "./components/Skills/SkillsView";
 import { PiChatPane } from "./components/Pi/PiChatView";
 import { Toast } from "./components/Toast/Toast";
 import { useWorkspaceHashRoute } from "./hooks/useWorkspaceHashRoute";
@@ -203,7 +203,7 @@ export default function App() {
         ) : effectiveView === "git" ? (
           <GitStatusView />
         ) : effectiveView === "skills" ? (
-          <SkillsViewPlaceholder />
+          <SkillsView />
         ) : (
           <TerminalView />
         )

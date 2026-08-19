@@ -9,9 +9,11 @@
  * above the composer (Phase-1 AttachmentTray pattern, doc 01 §6 states:
  * "uploading" / "attached" / "upload failed").
  */
-import { useRef, useState } from "react";
+import { forwardRef, useImperativeHandle, useRef, useState } from "react";
 import { Check, File as FileIcon, Loader2, X } from "lucide-react";
+import type { ProjectSkill } from "../../api/skills";
 import type { JiraTicket } from "../../api/tools";
+import { skillInsertToken, type SkillInsertStyle } from "../../lib/skillInsert";
 import { formatJiraTicketInsert } from "../../lib/promptInsert";
 import { useAttachmentsStore, type Attachment } from "../../store/attachmentsStore";
 import { FileSearchModal } from "../Tools/FileSearchModal";
@@ -20,72 +22,86 @@ import { PromptComposerView, type PromptComposerHandle } from "./PromptComposerV
 import type { AuxActionName } from "./ComposerAuxBar";
 import type { Pane } from "../../types/herdr";
 
-export function CommandLensDock({ pane }: { pane: Pane }) {
-  const workspaceId = pane.workspace_id;
-  const [modal, setModal] = useState<null | "file" | "jira">(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const composerRef = useRef<PromptComposerHandle>(null);
-  const attachments = useAttachmentsStore((state) => state.byWorkspace[workspaceId]);
-
-  const onAction = (name: AuxActionName): void => {
-    if (name === "attach") {
-      fileInputRef.current?.click();
-      return;
-    }
-    setModal(name === "@ file" ? "file" : "jira");
-  };
-
-  const insertFilePath = (path: string): void => {
-    composerRef.current?.insert(`\`${path}\``, "token");
-    setModal(null);
-  };
-
-  const insertJiraTicket = (ticket: JiraTicket): void => {
-    composerRef.current?.insert(formatJiraTicketInsert(ticket), "block");
-    setModal(null);
-  };
-
-  const onFilesPicked = (event: React.ChangeEvent<HTMLInputElement>): void => {
-    const files = event.target.files;
-    if (files !== null) {
-      for (const file of Array.from(files)) {
-        useAttachmentsStore.getState().uploadFile(workspaceId, file);
-      }
-    }
-    event.target.value = "";
-  };
-
-  return (
-    <div className="hz-pane-dock">
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        style={{ display: "none" }}
-        aria-hidden
-        tabIndex={-1}
-        onChange={onFilesPicked}
-      />
-      {attachments !== undefined && attachments.length > 0 ? (
-        <AttachmentChipRow
-          workspaceId={workspaceId}
-          attachments={attachments}
-        />
-      ) : null}
-      <PromptComposerView ref={composerRef} pane={pane} onAction={onAction} />
-      {modal === "file" ? (
-        <FileSearchModal
-          workspaceId={workspaceId}
-          onPick={insertFilePath}
-          onClose={() => setModal(null)}
-        />
-      ) : null}
-      {modal === "jira" ? (
-        <JiraModal onPick={insertJiraTicket} onClose={() => setModal(null)} />
-      ) : null}
-    </div>
-  );
+/** Imperative insert entry point for the Skills view (P11-run-B). */
+export interface CommandLensDockHandle {
+  /** Appends the byte-exact skill token (iOS SkillInsertionStyle) + refocuses. */
+  insertSkill: (skill: Pick<ProjectSkill, "name" | "skill_file_path">, style: SkillInsertStyle) => void;
 }
+
+export const CommandLensDock = forwardRef<CommandLensDockHandle, { pane: Pane }>(
+  function CommandLensDock({ pane }, ref) {
+    const workspaceId = pane.workspace_id;
+    const [modal, setModal] = useState<null | "file" | "jira">(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const composerRef = useRef<PromptComposerHandle>(null);
+    const attachments = useAttachmentsStore((state) => state.byWorkspace[workspaceId]);
+
+    useImperativeHandle(ref, () => ({
+      insertSkill: (skill, style) => {
+        composerRef.current?.insert(skillInsertToken(skill, style), "token");
+      },
+    }), []);
+
+    const onAction = (name: AuxActionName): void => {
+      if (name === "attach") {
+        fileInputRef.current?.click();
+        return;
+      }
+      setModal(name === "@ file" ? "file" : "jira");
+    };
+
+    const insertFilePath = (path: string): void => {
+      composerRef.current?.insert(`\`${path}\``, "token");
+      setModal(null);
+    };
+
+    const insertJiraTicket = (ticket: JiraTicket): void => {
+      composerRef.current?.insert(formatJiraTicketInsert(ticket), "block");
+      setModal(null);
+    };
+
+    const onFilesPicked = (event: React.ChangeEvent<HTMLInputElement>): void => {
+      const files = event.target.files;
+      if (files !== null) {
+        for (const file of Array.from(files)) {
+          useAttachmentsStore.getState().uploadFile(workspaceId, file);
+        }
+      }
+      event.target.value = "";
+    };
+
+    return (
+      <div className="hz-pane-dock">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          aria-hidden
+          tabIndex={-1}
+          onChange={onFilesPicked}
+        />
+        {attachments !== undefined && attachments.length > 0 ? (
+          <AttachmentChipRow
+            workspaceId={workspaceId}
+            attachments={attachments}
+          />
+        ) : null}
+        <PromptComposerView ref={composerRef} pane={pane} onAction={onAction} />
+        {modal === "file" ? (
+          <FileSearchModal
+            workspaceId={workspaceId}
+            onPick={insertFilePath}
+            onClose={() => setModal(null)}
+          />
+        ) : null}
+        {modal === "jira" ? (
+          <JiraModal onPick={insertJiraTicket} onClose={() => setModal(null)} />
+        ) : null}
+      </div>
+    );
+  },
+);
 
 function chipClass(state: Attachment["state"]): string {
   switch (state) {

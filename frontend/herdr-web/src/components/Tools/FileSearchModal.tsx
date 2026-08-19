@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, AtSign, FileSearch, FileText } from "lucide-react";
+import { AtSign, FileSearch, FileText } from "lucide-react";
 import { workspaceFiles, type WorkspaceFileMatch } from "../../api/tools";
+import { ToolErrorCard } from "../Shared/ToolErrorCard";
 import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 
 interface FileSearchModalProps {
@@ -18,7 +19,8 @@ interface FileSearchModalProps {
  *   cancellation (only the latest query's results render).
  * - Strings byte-exact per doc 01 §6: "WORKSPACE FILES", "MATCHES",
  *   "Done", "Retry" (Phase-1 strings where §6 is silent: "Search Files",
- *   "No Matches", the search placeholder).
+ *   "No Matches", the search placeholder). The failure state reuses the
+ *   shared ToolErrorCard chrome (P11-run-B) with the "Retry" label.
  */
 export function FileSearchModal({ workspaceId, onPick, onClose }: FileSearchModalProps) {
   const [query, setQuery] = useState("");
@@ -120,14 +122,7 @@ export function FileSearchModal({ workspaceId, onPick, onClose }: FileSearchModa
           ) : searching && results.length === 0 ? (
             spinner
           ) : error !== null ? (
-            <div className="git-error">
-              <span className="git-error-text">
-                <AlertTriangle size={13} aria-hidden /> {error}
-              </span>
-              <button type="button" className="git-error-retry" onClick={() => runSearch(query)}>
-                Retry
-              </button>
-            </div>
+            <ToolErrorCard message={error} retryLabel="Retry" onRetry={() => runSearch(query)} />
           ) : results.length === 0 ? (
             <div className="tools-modal-empty">
               <FileSearch size={20} aria-hidden />

@@ -22,25 +22,29 @@ export function isUpstreamError(error: unknown): boolean {
 }
 
 export interface ToolErrorCardProps {
-  /** Tool name: "Git" / "Skills" / "Jira" → renders `<Tool> unavailable`. */
-  tool: string;
+  /** Tool name: "Git" / "Skills" / "Jira" → renders `<Tool> unavailable`. Omit for a message-only card. */
+  tool?: string;
   /** Server error message (muted line). */
   message: string;
   onRetry: () => void;
+  /** Defaults to "Try again"; the file-search/Jira sheets say "Retry" (doc 01 §6). */
+  retryLabel?: string;
 }
 
-export function ToolErrorCard({ tool, message, onRetry }: ToolErrorCardProps) {
+export function ToolErrorCard({ tool, message, onRetry, retryLabel = "Try again" }: ToolErrorCardProps) {
   return (
     <div className="hz-tool-error" role="alert">
       <span className="hz-tool-error-icon" aria-hidden>
         <CloudOff size={22} />
       </span>
       <div className="hz-tool-error-body">
-        <span className="hz-tool-error-title">{tool} unavailable</span>
+        {tool !== undefined ? (
+          <span className="hz-tool-error-title">{tool} unavailable</span>
+        ) : null}
         <span className="hz-tool-error-message">{message}</span>
       </div>
       <button type="button" className="hz-tool-error-retry" onClick={onRetry}>
-        Try again
+        {retryLabel}
       </button>
     </div>
   );

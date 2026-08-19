@@ -19,6 +19,7 @@
  */
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { panePrompt, paneRun, paneSendKeys } from "../../api/paneCommands";
+import { useComposerDraftStore } from "../../store/composerDraftStore";
 import { useConnectionStore, type ConnectionStatus } from "../../store/connectionStore";
 import { showToast } from "../../lib/toast";
 import { appendPromptBlock, appendPromptToken } from "../../lib/promptInsert";
@@ -74,8 +75,15 @@ export interface PromptComposerHandle {
 
 export const PromptComposerView = forwardRef<PromptComposerHandle, PromptComposerViewProps>(
   function PromptComposerView({ pane, onAction }, ref) {
-    const [draft, setDraft] = useState("");
     const [sending, setSending] = useState(false);
+    // Per-pane draft (P11-run-B): survives the skills → terminal view switch
+    // so a skill insert made in the Skills view's dock lands in this pane's
+    // composer (iOS keeps the draft at model level per pane).
+    const paneId = pane.pane_id;
+    const draft = useComposerDraftStore((state) => state.drafts[paneId] ?? "");
+    const updateDraft = (update: (draft: string) => string): void => {
+      useComposerDraftStore.getState().setDraft(paneId, update);
+    };
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const focusEndRef = useRef(false);
     const status = useConnectionStore((state) => state.status);
@@ -95,12 +103,18 @@ export const PromptComposerView = forwardRef<PromptComposerHandle, PromptCompose
       }
     }, [draft]);
 
-    useImperativeHandle(ref, () => ({
-      insert: (text, kind) => {
-        focusEndRef.current = true;
-        setDraft((prev) => (kind === "token" ? appendPromptToken(text, prev) : appendPromptBlock(text, prev)));
-      },
-    }), []);
+    useImperativeHandle(
+      ref,
+      () => ({
+        insert: (text, kind) => {
+          focusEndRef.current = true;
+          updateDraft((prev) =>
+            kind === "token" ? appendPromptToken(text, prev) : appendPromptBlock(text, prev),
+          );
+        },
+      }),
+      [paneId],
+    );
 
   const send = async (): Promise<void> => {
     const text = draft.trim();
@@ -123,7 +137,7 @@ export const PromptComposerView = forwardRef<PromptComposerHandle, PromptCompose
           showToast(`Sent to ${agent}`);
         }
       }
-      setDraft("");
+      updateDraft(() => "");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Send failed");
     } finally {
@@ -150,7 +164,7 @@ export const PromptComposerView = forwardRef<PromptComposerHandle, PromptCompose
           rows={1}
           placeholder={composerPlaceholder(pane)}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => updateDraft(() => event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();

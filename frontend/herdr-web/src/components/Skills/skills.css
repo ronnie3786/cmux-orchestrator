@@ -1,31 +1,273 @@
-/* Skills view placeholder (P11-run-A) — replaced by the real view in run-B. */
+/* Skills pane view (P11-run-B). Layout reuses .hz-detail-col. */
 
 .hz-skills-col {
   display: flex;
   flex-direction: column;
 }
 
-.hz-skills-placeholder {
+.hz-skills-scroll {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 24px 16px;
-  text-align: center;
-  justify-content: center;
+  overflow-y: auto;
+  padding: 12px 14px;
 }
 
-.hz-skills-placeholder-title {
-  margin: 0;
+/* --- header -------------------------------------------------------------- */
+
+.hz-skills-header {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.hz-skills-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hz-skills-wand {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.hz-skills-title {
   font-size: 13px;
   font-weight: 600;
+  color: var(--text);
+}
+
+.hz-skills-count {
+  font-size: 11.5px;
   color: var(--muted);
 }
 
-.hz-skills-placeholder-copy {
-  margin: 0;
+.hz-skills-refresh {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
   font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.hz-skills-refresh:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.hz-skills-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.hz-skills-root {
+  margin-top: 6px;
+  font-size: 11.5px;
   color: var(--muted-dim);
-  max-width: 420px;
-  margin-inline: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- loading / empty ------------------------------------------------------- */
+
+.hz-skills-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 36px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.hz-skills-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 16px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  margin-bottom: 14px;
+}
+
+.hz-skills-empty > svg {
+  color: var(--muted-dim);
+}
+
+.hz-skills-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hz-skills-empty-sub {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 440px;
+}
+
+/* --- sections --------------------------------------------------------------- */
+
+.hz-skills-section {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.hz-skills-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hz-skills-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  text-decoration: underline;
+  flex-shrink: 0;
+}
+
+.hz-skills-section-detail {
+  font-size: 11px;
+  color: var(--muted-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.hz-skills-section-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.hz-skill-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hz-skill-row + .hz-skill-row {
+  border-top: 1px solid var(--line);
+}
+
+.hz-skill-row:hover {
+  background: var(--panel-strong);
+}
+
+.hz-skill-icon-user {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.hz-skill-icon-project {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.hz-skill-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.hz-skill-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-skill-path {
+  font-size: 11px;
+  color: var(--muted-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- insert card -------------------------------------------------------------- */
+
+.hz-skills-insert-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.hz-skills-insert-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.hz-skills-insert-copy {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- per-skill insert menu (panel chrome is .hz-popover) ---------------------- */
+
+.hz-skill-popover {
+  min-width: 180px;
+}
+
+.hz-skill-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hz-skill-menu-item:hover {
+  background: var(--panel-strong);
+}
+
+.hz-skill-menu-item svg {
+  color: var(--muted);
+  flex-shrink: 0;
 }
