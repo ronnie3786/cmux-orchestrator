@@ -1,0 +1,348 @@
+/*
+ * "chats" navigator rail. Persistent at ≥900 px (first grid column);
+ * fixed overlay drawer with backdrop below (Phase-1 responsive pattern).
+ * Status dots (.hz-dot-*) live in workspace.css — all component CSS is
+ * bundled together.
+ */
+
+.hz-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: linear-gradient(180deg, var(--bg-sidebar-top), var(--bg-sidebar-bottom));
+  border-right: 1px solid var(--line);
+}
+
+.hz-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px;
+}
+
+.hz-sidebar-brand {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  user-select: none;
+}
+
+.hz-sidebar-switch {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hz-sidebar-switch:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.hz-sidebar-close {
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hz-sidebar-close:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.hz-sidebar-new {
+  padding: 0 12px 8px;
+}
+
+.hz-sidebar-new-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.hz-sidebar-new-button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.hz-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.hz-sidebar-section-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--muted-dim);
+}
+
+.hz-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.hz-sidebar-search:focus-within {
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+}
+
+.hz-sidebar-search-icon {
+  color: var(--muted-dim);
+  flex-shrink: 0;
+}
+
+.hz-sidebar-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.hz-sidebar-search-input::placeholder {
+  color: var(--muted-dim);
+}
+
+/* --- tree ---------------------------------------------------------------------- */
+
+.hz-sidebar-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px 12px;
+}
+
+.hz-sidebar-empty {
+  margin: 18px 8px;
+  color: var(--muted-dim);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.hz-project-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.hz-project-row:hover {
+  background: var(--panel-strong);
+}
+
+.hz-project-row-selected {
+  background: rgba(47, 129, 247, 0.1);
+}
+
+.hz-project-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.hz-project-chevron:hover {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.hz-project-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hz-project-active {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(47, 129, 247, 0.15);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.hz-project-attention {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  flex-shrink: 0;
+}
+
+.hz-project-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 4px 16px;
+}
+
+.hz-project-empty {
+  padding: 4px 10px 6px 26px;
+  color: var(--muted-dim);
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+.hz-tab-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px 3px 26px;
+}
+
+.hz-tab-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hz-tab-count {
+  color: var(--muted-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hz-chat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 16px);
+  margin-left: 16px;
+  padding: 5px 10px 5px 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  color: var(--text);
+}
+
+.hz-chat-row:hover {
+  background: var(--panel-strong);
+}
+
+.hz-chat-row-selected {
+  background: rgba(47, 129, 247, 0.1);
+}
+
+.hz-chat-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hz-chat-row-selected .hz-chat-title,
+.hz-chat-row:hover .hz-chat-title {
+  color: var(--text);
+}
+
+.hz-chat-status {
+  color: var(--muted-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+/* --- footer --------------------------------------------------------------------- */
+
+.hz-sidebar-footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted-dim);
+  font-size: 11.5px;
+}
+
+/* --- overlay drawer (< 900 px) ---------------------------------------------------- */
+
+.hz-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 900px) {
+  .hz-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: min(320px, 85vw);
+    border-right: 1px solid var(--line-strong);
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+  }
+
+  .hz-sidebar-open {
+    transform: translateX(0);
+  }
+}
+
+@media (min-width: 901px) {
+  .hz-sidebar-close {
+    display: none;
+  }
+}

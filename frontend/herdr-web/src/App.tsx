@@ -1,61 +1,90 @@
 import { useEffect, useState } from "react";
-import { apiRequest, configureClient, getToken, setToken } from "./api/client";
-
-interface HealthResponse {
-  ok?: boolean;
-  herdr?: { connected?: boolean };
-}
+import { configureClient, getToken, setToken } from "./api/client";
+import { useConnectionStore } from "./store/connectionStore";
+import { useEventStreamStore } from "./store/eventStream";
+import { useWorkspacesStore } from "./store/workspacesStore";
+import { Sidebar } from "./components/Sidebar/Sidebar";
+import { WorkspaceListView } from "./components/Workspace/WorkspaceListView";
+import { DetailPlaceholder } from "./components/Detail/DetailPlaceholder";
+import { Toast } from "./components/Toast/Toast";
+import { useWorkspaceHashRoute } from "./hooks/useWorkspaceHashRoute";
+import "./styles/app.css";
 
 /**
- * P0 placeholder: token gate + /health probe only. Later phases replace this
- * with the full herdr UI; the token form and the onUnauthorized hook-up are
- * the durable parts.
+ * App shell (P3-run-A): token gate → 3-region layout — the "chats"
+ * navigator rail | the workspace list | the detail placeholder.
+ *
+ * With a token the app probes /health, arms the /workspaces refresh, and
+ * opens the global SSE stream; the shell renders once the probe settles
+ * (any 401 re-enters the token form via the client's onUnauthorized hook).
+ * Selection is driven by the `#ws=<id>&pane=<id>` hash route.
  */
 export default function App() {
   const [token, setStoredToken] = useState<string>(() => getToken());
   const [draft, setDraft] = useState("");
-  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [probed, setProbed] = useState(false);
+  // Responsive "chats" drawer (visible only below the 900 px breakpoint).
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
+  const data = useWorkspacesStore((state) => state.data);
 
   const clearToken = () => {
     setToken("");
+    useEventStreamStore.getState().stop();
+    useWorkspacesStore.setState({
+      data: null,
+      lastUpdated: null,
+      refreshing: false,
+      selectedWorkspaceId: null,
+      selectedPaneId: null,
+    });
+    useConnectionStore.setState({
+      status: "Offline",
+      streamOpen: false,
+      herdr: null,
+      herdrEventsConnected: null,
+      lastProbeAt: null,
+      demo: false,
+    });
     setStoredToken("");
-    setHealth(null);
+    setProbed(false);
+    setSidebarOpen(false);
   };
 
-  // Any 401 from the API re-enters onboarding (client contract).
+  // Any 401 from the API re-enters the token form (client contract).
   useEffect(() => {
     configureClient({ onUnauthorized: clearToken });
-    // Stable setters — register once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Stable setters + module stores — register once.
   }, []);
 
+  // Mount with a token: probe /health, refresh the snapshot, open SSE.
   useEffect(() => {
-    if (!token) {
-      return;
-    }
-    let cancelled = false;
-    setHealth(null);
-    apiRequest<HealthResponse>("/health")
-      .then((result) => {
-        if (!cancelled) {
-          setHealth(result);
-        }
-      })
-      .catch(() => {
-        // Non-401 failures stay on the placeholder; 401 is handled by
-        // onUnauthorized above (clears the token and shows the form).
-      });
+    if (!token) return;
+    setProbed(false);
+    void useConnectionStore
+      .getState()
+      .probe()
+      .then(() => setProbed(true));
+    void useWorkspacesStore.getState().refresh();
+    useEventStreamStore.getState().start(token);
     return () => {
-      cancelled = true;
+      useEventStreamStore.getState().stop();
     };
   }, [token]);
 
+  useWorkspaceHashRoute(token);
+
+  // Selecting something closes the responsive drawer (Phase-1 pattern).
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [selectedWorkspaceId]);
+
   const saveToken = () => {
     const value = draft.trim();
-    if (!value) {
-      return;
-    }
+    if (!value) return;
     setToken(value);
+    useConnectionStore.getState().setToken(value);
     setStoredToken(value);
     setDraft("");
   };
@@ -95,13 +124,26 @@ export default function App() {
     );
   }
 
-  const connected = health?.herdr?.connected;
+  if (!probed) {
+    return (
+      <main className="screen">
+        <section className="card">
+          <h1>herdr</h1>
+          <p className="hint">Connecting</p>
+        </section>
+      </main>
+    );
+  }
+
+  const workspace =
+    data?.workspaces.find((candidate) => candidate.workspace_id === selectedWorkspaceId) ?? null;
+
   return (
-    <main className="screen">
-      <section className="card">
-        <h1>connected</h1>
-        <p className="hint">herdr.connected: {connected === undefined ? "…" : String(connected)}</p>
-      </section>
-    </main>
+    <div className="hz-app-shell">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <WorkspaceListView onOpenNavigator={() => setSidebarOpen(true)} />
+      <DetailPlaceholder workspace={workspace} />
+      <Toast />
+    </div>
   );
 }

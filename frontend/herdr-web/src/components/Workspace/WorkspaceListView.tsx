@@ -1,0 +1,109 @@
+import { useMemo, useState } from "react";
+import { Menu, Search } from "lucide-react";
+import { useConnectionStore } from "../../store/connectionStore";
+import { useWorkspacesStore } from "../../store/workspacesStore";
+import {
+  filterGroups,
+  groups,
+  WORKSPACE_FILTERS,
+  type WorkspaceFilter,
+} from "../../lib/workspaceGroups";
+import { WorkspaceCardView } from "./WorkspaceCardView";
+import { AttentionStrip } from "./AttentionStrip";
+import "./workspace.css";
+
+interface WorkspaceListViewProps {
+  /** Opens the "chats" navigator drawer (visible below 900 px only). */
+  onOpenNavigator: () => void;
+}
+
+/**
+ * Middle column: the workspace list (iOS WorkspaceListView parity) —
+ * "Workspaces" title, search, segmented filter (All / Needs you / Active,
+ * lowercased render), attention strip (top 2), "spaces" section with
+ * "n / total", cards, and the empty state.
+ */
+export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
+  const data = useWorkspacesStore((state) => state.data);
+  const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
+  const connectionStatus = useConnectionStore((state) => state.status);
+
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<WorkspaceFilter>("all");
+
+  const all = useMemo(() => groups(data?.workspaces ?? []), [data]);
+  const visible = useMemo(() => filterGroups(all, search, filter), [all, search, filter]);
+
+  return (
+    <section className="hz-ws-list" aria-label="Workspaces">
+      <header className="hz-ws-list-header">
+        <button
+          type="button"
+          className="hz-nav-toggle"
+          onClick={onOpenNavigator}
+          aria-label="Open navigator"
+        >
+          <Menu size={16} aria-hidden />
+        </button>
+        <h1 className="hz-ws-list-title">Workspaces</h1>
+        {connectionStatus === "Demo" ? <div className="hz-demo-banner">Demo data is active</div> : null}
+      </header>
+
+      <div className="hz-ws-toolbar">
+        <label className="hz-ws-search">
+          <Search size={14} className="hz-ws-search-icon" aria-hidden="true" />
+          <input
+            className="hz-ws-search-input"
+            type="text"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="filter spaces"
+            aria-label="filter spaces"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+          />
+        </label>
+        <div className="hz-ws-filter" role="group" aria-label="Filter workspaces">
+          {WORKSPACE_FILTERS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`hz-ws-filter-option${filter === option.id ? " hz-ws-filter-option-active" : ""}`}
+              aria-pressed={filter === option.id}
+              onClick={() => setFilter(option.id)}
+            >
+              {option.rendered}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <AttentionStrip />
+
+      <div className="hz-ws-section-header">
+        <span className="hz-ws-section-label">spaces</span>
+        <span className="hz-ws-section-detail">
+          {visible.length} / {all.length}
+        </span>
+      </div>
+
+      <div className="hz-ws-cards">
+        {visible.length === 0 ? (
+          <div className="hz-ws-empty">
+            <p className="hz-ws-empty-title">No Herdr workspaces</p>
+            <p className="hz-ws-empty-sub">Create a workspace here or on your Mac to begin.</p>
+          </div>
+        ) : null}
+        {visible.map((group) => (
+          <WorkspaceCardView
+            key={group.workspaceId}
+            group={group}
+            selected={selectedWorkspaceId === group.workspaceId}
+            onSelect={() => useWorkspacesStore.getState().repairSelection(group.workspaceId, null)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
