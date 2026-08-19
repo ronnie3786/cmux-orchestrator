@@ -58,6 +58,16 @@ _AGENT_KINDS = frozenset(
 
 _DISCONNECT_ERRNOS = {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.EPIPE}
 
+_HERDR_WEB_STATIC = os.path.join(os.path.dirname(__file__), "static", "herdr-web")
+_HERDR_WEB_CONTENT_TYPES = {
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".json": "application/json",
+}
+
 
 SETUP_HTML = """<!doctype html>
 <html lang="en">
@@ -349,6 +359,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     self.end_headers()
                     self.wfile.write(body)
                     return
+                if method == "GET" and self._serve_herdr_web_static(path):
+                    return
                 if len(segments) < 2 or segments[:2] != ["api", "v1"]:
                     self._error(404, "not_found", "Endpoint not found")
                     return
@@ -407,6 +419,41 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(500, "internal_error", "The harness could not complete this request")
                 if service.environ.get("HERDR_HARNESS_HTTP_LOG") in {"1", "true", "yes"}:
                     raise
+
+        def _serve_herdr_web_static(self, path: str) -> bool:
+            if path == "/herdr-web":
+                target = os.path.join(_HERDR_WEB_STATIC, "index.html")
+            elif path.startswith("/herdr-web/"):
+                relative = path[len("/herdr-web/"):].strip("/")
+                if not relative:
+                    target = os.path.join(_HERDR_WEB_STATIC, "index.html")
+                else:
+                    resolved = os.path.normpath(os.path.join(_HERDR_WEB_STATIC, relative))
+                    try:
+                        if os.path.commonpath([_HERDR_WEB_STATIC, resolved]) != _HERDR_WEB_STATIC:
+                            return False
+                    except ValueError:
+                        return False
+                    target = resolved
+            else:
+                return False
+            if not os.path.isfile(target):
+                return False
+            content_type = _HERDR_WEB_CONTENT_TYPES.get(
+                os.path.splitext(target)[1].lower(), "application/octet-stream"
+            )
+            with open(target, "rb") as handle:
+                body = handle.read()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self._common_headers()
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return False
+            return True
 
         def _route(
             self,
