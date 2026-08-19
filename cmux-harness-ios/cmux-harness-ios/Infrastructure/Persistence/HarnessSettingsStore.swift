@@ -5,6 +5,7 @@ enum HarnessSettingsStore {
     private static let serverSourcesKey = "cmuxHarnessServerSources"
     private static let selectedServerSourceIDKey = "cmuxHarnessSelectedServerSourceID"
     private static let tailscaleHostKey = "cmuxHarnessTailscaleHost"
+    private static let harnessWebTokenKey = "cmuxHarnessWebToken"
     private static let lastSelectedWorkspaceIDKey = "cmuxHarnessLastSelectedWorkspaceID"
     private static let detailDraftsKey = "cmuxHarnessDetailDrafts"
     private static let demoServerURLInfoKey = "CMUXDemoServerURL"
@@ -173,6 +174,20 @@ enum HarnessSettingsStore {
                 UserDefaults.standard.removeObject(forKey: tailscaleHostKey)
             } else {
                 UserDefaults.standard.set(value, forKey: tailscaleHostKey)
+            }
+        }
+    }
+
+    static var harnessWebToken: String {
+        get {
+            UserDefaults.standard.string(forKey: harnessWebTokenKey) ?? ""
+        }
+        set {
+            let value = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty {
+                UserDefaults.standard.removeObject(forKey: harnessWebTokenKey)
+            } else {
+                UserDefaults.standard.set(value, forKey: harnessWebTokenKey)
             }
         }
     }

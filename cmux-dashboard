@@ -55,7 +55,7 @@ get_running_pids() {
     if [[ "$cmd" != *"dashboard.py"* ]]; then
       continue
     fi
-    for existing in "${pids[@]}"; do
+    for existing in ${pids[@]+"${pids[@]}"}; do
       if [[ "$existing" == "$pid" ]]; then
         continue 2
       fi
@@ -83,6 +83,9 @@ start_dashboard() {
   else
     nohup python3 "$ROOT_DIR/dashboard.py" >> "$LOG_FILE" 2>&1 &
   fi
+  # The dashboard startup line contains the harness-web shared token; keep
+  # the log (often /tmp) readable only by the owner.
+  chmod 600 "$LOG_FILE" 2>/dev/null || true
   echo $! > "$PID_FILE"
   echo "started dashboard.py (pid $!); logs: $LOG_FILE"
 }

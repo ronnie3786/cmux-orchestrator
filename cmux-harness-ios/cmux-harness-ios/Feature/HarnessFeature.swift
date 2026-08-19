@@ -37,6 +37,7 @@ struct HarnessFeature {
         var isDemoMode = HarnessSettingsStore.isLocalDemoMode
         var demoServerURLString = HarnessSettingsStore.demoServerURL
         var tailscaleHostString = HarnessSettingsStore.tailscaleHost
+        var harnessWebTokenString = HarnessSettingsStore.harnessWebToken
         var isDiscoveringServer = false
         var discoveredServers: [DiscoveredHarnessServer] = []
         var serverSetupMessage: String?

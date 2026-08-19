@@ -1,0 +1,255 @@
+/*
+ * Attention Deck (P3-run-B) — right region when the hash route contains
+ * deck=1. Dark/compact, following the app.css/global.css tokens and the
+ * existing hz-* list styles (workspace.css attention strip, detail.css).
+ */
+
+.hz-deck {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 20px 24px;
+}
+
+/* --- header ------------------------------------------------------------------ */
+
+.hz-deck-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hz-deck-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hz-deck-back {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.hz-deck-back:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.hz-deck-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.hz-deck-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.hz-deck-subtitle {
+  margin: 1px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hz-deck-read-all {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hz-deck-read-all:hover {
+  border-color: var(--line-strong);
+  background: var(--panel);
+}
+
+.hz-deck-copy {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted-dim);
+  max-width: 52ch;
+}
+
+/* --- sections ------------------------------------------------------------------ */
+
+.hz-deck-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hz-deck-section-label {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--muted-dim);
+}
+
+/* --- alert card ------------------------------------------------------------------ */
+
+.hz-alert-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.hz-alert-card:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+}
+
+/* Read-state dim (journal rows). */
+.hz-alert-card-read {
+  opacity: 0.55;
+}
+
+.hz-alert-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hz-alert-card-status {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.hz-alert-card-new {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hz-alert-card-time {
+  margin-left: auto;
+  color: var(--muted-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.hz-alert-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.hz-alert-card-message {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hz-alert-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hz-alert-card-pane {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hz-alert-card-open {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.hz-alert-card-open:hover {
+  text-decoration: underline;
+}
+
+.hz-alert-card-mark {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.hz-alert-card-mark:hover {
+  color: var(--text);
+}
+
+/* --- empty state ------------------------------------------------------------------ */
+
+.hz-deck-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+}
+
+.hz-deck-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.hz-deck-empty-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-dim);
+  max-width: 44ch;
+}

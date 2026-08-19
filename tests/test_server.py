@@ -15,7 +15,8 @@ from cmux_harness import auto_policy
 from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
 from cmux_harness import workspaces
-from cmux_harness.server import make_handler
+from cmux_harness import server as server_module
+from cmux_harness.server import load_or_create_web_token, make_handler
 from dashboard import DashboardHTTPServer
 
 REAL_SUBPROCESS_RUN = subprocess.run
@@ -2371,3 +2372,137 @@ class TestServerResponses(unittest.TestCase):
         self.assertIn(".debug-entry-head {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    min-height: 36px;", css)
         self.assertIn("'<div class=\"debug-entry-time\">' + esc(relativeTime(entry.timestamp)) + '</div>'", js)
         self.assertIn("'<div class=\"debug-event\">' + esc(entry.event || 'unknown') + '</div>'", js)
+
+
+class TestHarnessWebAuthAndStatic(unittest.TestCase):
+
+    def _make_handler(self, path, engine=None, web_token="", client_address=("192.168.1.50", 51234), headers=None):
+        handler_cls = make_handler(engine or Mock(), web_token=web_token)
+        handler = handler_cls.__new__(handler_cls)
+        handler.server = Mock(engine=engine or Mock(), server_address=("0.0.0.0", 9091))
+        handler.path = path
+        handler.client_address = client_address
+        handler.headers = headers or {}
+        handler.rfile = io.BytesIO()
+        handler.wfile = io.BytesIO()
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.send_error = Mock()
+        return handler
+
+    def _sent_json(self, handler):
+        self.assertEqual(handler.send_response.call_args[0][0], 200)
+        return json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+    def test_load_or_create_web_token_creates_then_reuses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_path = Path(tmpdir) / "web-token.txt"
+            first = load_or_create_web_token(token_path)
+            second = load_or_create_web_token(token_path)
+            self.assertEqual(first, second)
+            self.assertEqual(len(first), 32)
+            self.assertEqual(token_path.read_text(encoding="utf-8"), first)
+            self.assertEqual(token_path.stat().st_mode & 0o777, 0o600)
+
+    def test_auth_allows_when_no_token_configured(self):
+        handler = self._make_handler("/api/status", web_token="")
+        self.assertTrue(handler._auth_ok("/api/status"))
+
+    def test_auth_allows_loopback_without_header(self):
+        for client in (("127.0.0.1", 1234), ("::1", 1234)):
+            handler = self._make_handler("/api/status", web_token="secret", client_address=client)
+            self.assertTrue(handler._auth_ok("/api/status"))
+            handler.send_response.assert_not_called()
+
+    def test_auth_rejects_non_loopback_without_header(self):
+        handler = self._make_handler("/api/status", web_token="secret")
+        self.assertFalse(handler._auth_ok("/api/status"))
+        handler.send_response.assert_called_once_with(401)
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": False, "error": "unauthorized"})
+        handler.send_header.assert_any_call("Content-Type", "application/json")
+
+    def test_auth_rejects_non_loopback_with_bad_header(self):
+        handler = self._make_handler("/api/status", web_token="secret", headers={"X-Cmux-Token": "wrong"})
+        self.assertFalse(handler._auth_ok("/api/status"))
+        handler.send_response.assert_called_once_with(401)
+
+    def test_auth_allows_non_loopback_with_good_header(self):
+        handler = self._make_handler("/api/status", web_token="secret", headers={"X-Cmux-Token": "secret"})
+        self.assertTrue(handler._auth_ok("/api/status"))
+        handler.send_response.assert_not_called()
+
+    def test_auth_does_not_guard_static_paths(self):
+        handler = self._make_handler("/harness-web/", web_token="secret")
+        self.assertTrue(handler._auth_ok("/harness-web/"))
+        self.assertTrue(handler._auth_ok("/harness"))
+
+    def test_do_get_returns_401_for_unguarded_api_from_lan(self):
+        engine = Mock()
+        engine.get_status = Mock(return_value={"enabled": True, "workspaces": []})
+        handler = self._make_handler("/api/status", engine=engine, web_token="secret")
+        handler.do_GET()
+        handler.send_response.assert_called_once_with(401)
+        engine.get_status.assert_not_called()
+
+    def test_do_get_serves_api_when_token_header_present(self):
+        engine = Mock()
+        engine.get_status = Mock(return_value={"enabled": True, "workspaces": []})
+        handler = self._make_handler("/api/status", engine=engine, web_token="secret", headers={"X-Cmux-Token": "secret"})
+        handler.do_GET()
+        body = self._sent_json(handler)
+        self.assertTrue(body["enabled"])
+        engine.get_status.assert_called_once()
+
+    def _static_fixture(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        static_dir = Path(tmpdir.name) / "static"
+        (static_dir / "harness-web" / "assets").mkdir(parents=True)
+        (static_dir / "harness-web" / "index.html").write_text("<html>harness-web</html>", encoding="utf-8")
+        (static_dir / "harness-web" / "assets" / "app.js").write_text("console.log(1);", encoding="utf-8")
+        (static_dir / "outside-secret.txt").write_text("secret", encoding="utf-8")
+        return static_dir
+
+    def test_harness_web_serves_index_and_assets(self):
+        static_dir = self._static_fixture()
+        with patch.object(server_module, "_STATIC_DIR", static_dir):
+            handler = self._make_handler("/harness-web/", client_address=("127.0.0.1", 1))
+            self.assertTrue(handler._serve_harness_web_static("/harness-web/"))
+            self.assertEqual(handler.send_response.call_args[0][0], 200)
+            self.assertIn(b"harness-web", handler.wfile.getvalue())
+
+            handler = self._make_handler("/harness-web/assets/app.js", client_address=("127.0.0.1", 1))
+            self.assertTrue(handler._serve_harness_web_static("/harness-web/assets/app.js"))
+            for call in handler.send_header.call_args_list:
+                if call[0][0] == "Content-Type":
+                    self.assertEqual(call[0][1], "application/javascript; charset=utf-8")
+
+    def test_harness_web_unknown_non_asset_falls_back_to_index(self):
+        static_dir = self._static_fixture()
+        with patch.object(server_module, "_STATIC_DIR", static_dir):
+            handler = self._make_handler("/harness-web/some/route", client_address=("127.0.0.1", 1))
+            self.assertTrue(handler._serve_harness_web_static("/harness-web/some/route"))
+            self.assertIn(b"harness-web", handler.wfile.getvalue())
+
+    def test_harness_web_unknown_asset_404s(self):
+        static_dir = self._static_fixture()
+        with patch.object(server_module, "_STATIC_DIR", static_dir):
+            handler = self._make_handler("/harness-web/assets/missing.js", client_address=("127.0.0.1", 1))
+            self.assertFalse(handler._serve_harness_web_static("/harness-web/assets/missing.js"))
+            handler.send_response.assert_not_called()
+
+    def test_harness_web_blocks_path_traversal(self):
+        static_dir = self._static_fixture()
+        with patch.object(server_module, "_STATIC_DIR", static_dir):
+            handler = self._make_handler("/harness-web/../../outside-secret.txt", client_address=("127.0.0.1", 1))
+            self.assertFalse(handler._serve_harness_web_static("/harness-web/../../outside-secret.txt"))
+            handler.send_response.assert_not_called()
+
+    def test_harness_web_ignores_other_prefixes(self):
+        static_dir = self._static_fixture()
+        with patch.object(server_module, "_STATIC_DIR", static_dir):
+            handler = self._make_handler("/orchestrator-v2/", client_address=("127.0.0.1", 1))
+            self.assertFalse(handler._serve_harness_web_static("/orchestrator-v2/"))
+            handler.send_response.assert_not_called()

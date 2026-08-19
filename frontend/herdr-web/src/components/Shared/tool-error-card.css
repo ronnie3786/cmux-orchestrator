@@ -1,0 +1,60 @@
+/* Tool error card (P11-run-A) — generic cmux-proxy failure state. */
+
+.hz-tool-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.hz-tool-error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: var(--panel-strong);
+  color: var(--muted);
+}
+
+.hz-tool-error-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.hz-tool-error-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hz-tool-error-message {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.hz-tool-error-retry {
+  align-self: center;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.hz-tool-error-retry:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+}

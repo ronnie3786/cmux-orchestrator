@@ -1,0 +1,187 @@
+/* Pane menu (P10-run-B) — shared popover chrome for the pane ⋯ menu and the
+   workspace card ⋯ menu. The panel is portal-rendered into document.body
+   with fixed positioning (usePopover). */
+
+.hz-pane-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.hz-chat-row:hover .hz-pane-menu-toggle,
+.hz-pane-menu-toggle:hover,
+.hz-pane-menu-toggle:focus-visible,
+.hz-pane-menu-toggle[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.hz-pane-menu-toggle:hover {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.hz-ws-card-menu-toggle {
+  opacity: 0;
+}
+
+.hz-ws-card:hover .hz-ws-card-menu-toggle,
+.hz-ws-card-menu-toggle:hover,
+.hz-ws-card-menu-toggle:focus-visible,
+.hz-ws-card-menu-toggle[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.hz-popover {
+  position: fixed;
+  min-width: 176px;
+  max-width: 260px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #0b0e13;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  padding: 4px;
+}
+
+.hz-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  padding: 7px 9px;
+}
+
+.hz-menu-item:hover {
+  background: var(--panel-strong);
+}
+
+.hz-menu-item-destructive {
+  color: var(--red);
+}
+
+.hz-menu-item-disabled {
+  color: var(--muted-dim);
+}
+
+.hz-menu-item-check {
+  width: 12px;
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+  text-align: center;
+}
+
+.hz-menu-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 7px 9px 6px;
+  text-align: left;
+}
+
+.hz-menu-back:hover {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.hz-popover-label {
+  padding: 8px 10px 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hz-popover-message {
+  padding: 0 10px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hz-popover-input {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 0 10px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.hz-popover-input::placeholder {
+  color: var(--muted-dim);
+}
+
+.hz-popover-input:focus {
+  border-color: var(--accent);
+}
+
+.hz-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 2px 6px 4px;
+}
+
+.hz-popover-button {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.hz-popover-button:hover {
+  background: var(--panel-strong);
+}
+
+.hz-popover-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.hz-popover-button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.hz-popover-button-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  background: var(--accent);
+}
+
+.hz-popover-button-destructive {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
+.hz-popover-button-destructive:hover {
+  filter: brightness(1.1);
+  background: var(--red);
+}

@@ -3,6 +3,7 @@
 
 import errno
 import os
+import socket
 import sys
 import webbrowser
 from http.server import ThreadingHTTPServer
@@ -12,7 +13,7 @@ from cmux_harness.discovery import BonjourAdvertiser
 from cmux_harness.engine import HarnessEngine
 from cmux_harness.orchestrator_v2_runtime import OrchestratorV2Sidecar
 from cmux_harness.orchestrator_v2_watcher import OrchestratorV2Watcher
-from cmux_harness.server import make_handler
+from cmux_harness.server import load_or_create_web_token, make_handler
 
 
 _CLIENT_DISCONNECT_ERRNOS = {
@@ -51,7 +52,9 @@ def main():
     engine.callback_base_url = f"http://127.0.0.1:{port}"
     engine.start()
 
-    handler_class = make_handler(engine)
+    web_token = load_or_create_web_token()
+
+    handler_class = make_handler(engine, web_token=web_token)
 
     server = DashboardHTTPServer(("0.0.0.0", port), handler_class)
     server.engine = engine
@@ -67,6 +70,8 @@ def main():
     print(f"⚡ cmux harness home: http://localhost:{port}")
     print(f"   Harness:      http://localhost:{port}/harness")
     print(f"   Orchestrator V2: http://localhost:{port}/orchestrator-v2")
+    web_host = socket.gethostname() or "localhost"
+    print(f"harness-web ready: http://{web_host}:{port}/harness-web/#token={web_token}")
     if sidecar_started:
         print("   Orchestrator V2 agent sidecar: started")
     if advertised:

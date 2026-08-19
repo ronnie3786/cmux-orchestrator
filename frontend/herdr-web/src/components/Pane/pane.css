@@ -1,0 +1,121 @@
+/* Command Lens (P9-run-A): key deck + composer + aux chips, docked under the
+   terminal body in the detail column (non-Pi panes only). */
+
+/* run-B dock: attachment chip row + lens, pinned to the detail column bottom. */
+.hz-pane-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.hz-pane-attachments {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.hz-pane-lens {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.hz-pane-keydeck {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hz-pane-key {
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.hz-pane-key:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.hz-pane-key:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.hz-pane-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.hz-pane-composer-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 18px;
+  max-height: 54px; /* 3 lines */
+  overflow-y: auto;
+  resize: none;
+}
+
+.hz-pane-composer-input::placeholder {
+  color: var(--muted-dim);
+}
+
+.hz-pane-send {
+  flex: none;
+  padding: 6px 14px;
+  border: 1px solid rgba(47, 129, 247, 0.5);
+  border-radius: 999px;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hz-pane-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.hz-pane-aux {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hz-pane-aux-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.hz-pane-aux-chip:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.hz-pane-aux-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
