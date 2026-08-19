@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { getToken } from "../../api/client";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
+import { PromptComposerView } from "../Pane/PromptComposerView";
 import "./terminal.css";
 
 /**
@@ -16,6 +17,8 @@ import "./terminal.css";
  */
 export function TerminalView() {
   const paneId = useWorkspacesStore((state) => state.selectedPaneId);
+  const workspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
+  const data = useWorkspacesStore((state) => state.data);
   const source = useTerminalStore((state) => state.source);
   const frameSequence = useTerminalStore((state) => state.frameSequence);
   const cols = useTerminalStore((state) => state.cols);
@@ -25,6 +28,10 @@ export function TerminalView() {
   const renderSource = useTerminalStore((state) => state.renderSource);
   const lastError = useTerminalStore((state) => state.lastError);
   const grid = useTerminalStore((state) => state.grid);
+  const pane =
+    data?.workspaces.find((workspace) => workspace.workspace_id === workspaceId)?.panes.find(
+      (candidate) => candidate.pane_id === paneId,
+    ) ?? null;
 
   useEffect(() => {
     if (paneId === null) {
@@ -109,6 +116,7 @@ export function TerminalView() {
         </button>
       </div>
       {body}
+      {pane !== null && <PromptComposerView pane={pane} />}
     </main>
   );
 }
