@@ -13,13 +13,14 @@
  * is shown under the banner when present (the generic offline detail is
  * suppressed — the banner already says it).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getToken } from "../../api/client";
 import { parsePiMarkdown } from "../../pi/markdown";
 import { usePiStore } from "../../store/piStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
 import {
   decodePiSemanticCapability,
+  PI_SEMANTIC_CAPABILITIES_UNAVAILABLE,
   piContextUsageFraction,
   piContextUsagePercentText,
   piContextUsageSummary,
@@ -33,11 +34,13 @@ import type {
   PiConversationTurn,
   PiJSONValue,
   PiPendingInteraction,
-  PiSemanticCapability,
+  PiSemanticCapabilities,
   PiThinkingBlock,
   PiToolInvocation,
 } from "../../pi/types";
+import { InteractionCard } from "./InteractionCard";
 import { MarkdownBlocks, MarkdownText } from "./MarkdownBlocks";
+import { PiComposerDock } from "./PiComposer";
 import { ToolCard, formatElapsed } from "./ToolCard";
 import "./pi.css";
 
@@ -52,6 +55,8 @@ export interface PiChatViewProps {
   isTruncated: boolean;
   contextUsage: PiContextUsage | null;
   pendingInteractions?: PiPendingInteraction[];
+  /** Per-pane capability gate (the pane's pi_semantic, never global). */
+  capabilities?: PiSemanticCapabilities;
 }
 
 export function PiChatView({
@@ -62,6 +67,7 @@ export function PiChatView({
   isTruncated,
   contextUsage,
   pendingInteractions = [],
+  capabilities = PI_SEMANTIC_CAPABILITIES_UNAVAILABLE,
 }: PiChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
@@ -107,7 +113,8 @@ export function PiChatView({
       ? lastError
       : null;
   const hasContent = turns.some(piTurnHasVisibleContent);
-  const pendingCount = pendingInteractions.length;
+  const knownInteractions = pendingInteractions.filter((interaction) => interaction.kind !== "unknown");
+  const hasUnknownInteraction = knownInteractions.length !== pendingInteractions.length;
 
   return (
     <main className="hz-detail-col hz-pi-col">
@@ -147,13 +154,19 @@ export function PiChatView({
           Jump to latest
         </button>
       )}
-      {pendingCount > 0 && (
+      {knownInteractions.length > 0 && (
+        <div className="hz-pi-interaction-cards">
+          {knownInteractions.map((interaction) => (
+            <InteractionCard key={interaction.id} interaction={interaction} />
+          ))}
+        </div>
+      )}
+      {hasUnknownInteraction && (
         <p className="hz-pi-interactions" aria-live="polite">
           Pi needs your input
         </p>
       )}
-      {/* Composer mounts here in run-B. */}
-      <div data-pi-composer-mount />
+      <PiComposerDock capabilities={capabilities} />
     </main>
   );
 }
@@ -353,26 +366,30 @@ function ToolView({ tool, now }: { tool: PiToolInvocation; now: number }) {
 
 export function PiChatPane() {
   const paneId = useWorkspacesStore((state) => state.selectedPaneId);
+  const data = useWorkspacesStore((state) => state.data);
 
-  useEffect(() => {
-    if (paneId === null) return;
-    const data = useWorkspacesStore.getState().data;
+  // Decoded outside the effect so the per-pane capability gate (composer
+  // chips) reads the same object the follow loop uses.
+  const capability = useMemo(() => {
     const pane =
       data?.workspaces.flatMap((workspace) => workspace.panes).find((candidate) => candidate.pane_id === paneId) ??
       null;
     const semantic = pane?.pi_semantic;
-    if (semantic === undefined) return;
-    let capability: PiSemanticCapability;
+    if (semantic === undefined) return null;
     try {
-      capability = decodePiSemanticCapability(semantic as unknown as PiJSONValue);
+      return decodePiSemanticCapability(semantic as unknown as PiJSONValue);
     } catch {
-      return;
+      return null;
     }
+  }, [data, paneId]);
+
+  useEffect(() => {
+    if (paneId === null || capability === null) return;
     usePiStore.getState().follow(paneId, getToken(), capability);
     return () => {
       usePiStore.getState().stop(paneId);
     };
-  }, [paneId]);
+  }, [paneId, capability]);
 
   const connection = usePiStore((state) => state.connection);
   const lastError = usePiStore((state) => state.lastError);
@@ -391,6 +408,7 @@ export function PiChatPane() {
       isTruncated={isTruncated}
       contextUsage={contextUsage}
       pendingInteractions={pendingInteractions}
+      capabilities={capability?.capabilities ?? PI_SEMANTIC_CAPABILITIES_UNAVAILABLE}
     />
   );
 }
