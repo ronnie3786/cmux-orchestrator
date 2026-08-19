@@ -1,0 +1,52 @@
+[
+ {
+  "event": "ready",
+  "id": null,
+  "data": "{\"event\":\"ready\",\"generatedAt\":\"2026-08-19T00:30:58.172Z\",\"lastEventId\":13870,\"oldestEventId\":12847}"
+ },
+ {
+  "event": "pi.message_update",
+  "id": "12847",
+  "data": "{\"id\":12847,\"event\":\"pi.message_update\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pE\",\"session_id\":\"01a0176c-890f-73e2-9ae5-05567c1e6b4c\",\"cursor\":2777,\"event\":{\"assistantMessageEvent\":{\"type\":\"thinking_delta\",\"contentIndex\":0,\"delta\":\" a\"},\"type\":\"message_update\"},\"generated_at\":\"2026-08-19T00:30:52.926Z\"},\"generatedAt\":\"2026-08-19T00:30:52.929Z\"}"
+ },
+ {
+  "event": "pi.bridge.connection",
+  "id": "12863",
+  "data": "{\"id\":12863,\"event\":\"pi.bridge.connection\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pD\",\"session_id\":\"01a0176c-8910-73a9-a8c7-5d66d09249de\",\"cursor\":5258,\"event\":{\"type\":\"bridge.connection\",\"connected\":true},\"generated_at\":\"2026-08-19T00:30:53.012Z\"},\"generatedAt\":\"2026-08-19T00:30:53.016Z\"}"
+ },
+ {
+  "event": "pi.tool_execution_end",
+  "id": "12871",
+  "data": "{\"id\":12871,\"event\":\"pi.tool_execution_end\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pD\",\"session_id\":\"01a0176c-8910-73a9-a8c7-5d66d09249de\",\"cursor\":5259,\"event\":{\"toolCallId\":\"call_72e78f915d104133a129a572\",\"toolName\":\"read\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"import React from \\\"react\\\";\\n\\n// ============================================================================\\n// v1 tokens (unchanged) \u2014 the PR explainer video theme\\n// ============================================================================\\nexport const tokens = {\\n  canvas: \\\"#f8fafc\\\",\\n  text: \\\"#0f172a\\\",\\n  muted: \\\"#64748b\\\",\\n  secondary: \\\"#475569\\\",\\n  codeBg: \\\"#0f172a\\\",\\n  codeText: \\\"#e2e8f0\\\",\\n  cardBg: \\\"white\\\",\\n  radius: 8,\\n  outerPadding: 56,\\n  headerHeight: 112,\\n  contentHeight: 856,\\n  shadowSm: \\\"0 12px 34px #0f172a12\\\",\\n  shadowMd: \\\"0 18px 48px #0f172a14\\\",\\n  shadowLg: \\\"0 22px 70px #0f172a22\\\",\\n};\\n\\n// ============================================================================\\n// v2 diagram tokens \u2014 vendored diagram-design light skin, video-scaled \u00d72\\n// Source: assets/diagram-design/style-guide.md (default light skin).\\n// Every coordinat"
+ },
+ {
+  "event": "pi.message_start",
+  "id": "12873",
+  "data": "{\"id\":12873,\"event\":\"pi.message_start\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pD\",\"session_id\":\"01a0176c-8910-73a9-a8c7-5d66d09249de\",\"cursor\":5260,\"event\":{\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_72e78f915d104133a129a572\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"import React from \\\"react\\\";\\n\\n// ============================================================================\\n// v1 tokens (unchanged) \u2014 the PR explainer video theme\\n// ============================================================================\\nexport const tokens = {\\n  canvas: \\\"#f8fafc\\\",\\n  text: \\\"#0f172a\\\",\\n  muted: \\\"#64748b\\\",\\n  secondary: \\\"#475569\\\",\\n  codeBg: \\\"#0f172a\\\",\\n  codeText: \\\"#e2e8f0\\\",\\n  cardBg: \\\"white\\\",\\n  radius: 8,\\n  outerPadding: 56,\\n  headerHeight: 112,\\n  contentHeight: 856,\\n  shadowSm: \\\"0 12px 34px #0f172a12\\\",\\n  shadowMd: \\\"0 18px 48px #0f172a14\\\",\\n  shadowLg: \\\"0 22px 70px #0f172a22\\\",\\n};\\n\\n// ============================================================================\\n// v2 diagram tokens \u2014 vendored diagram-design light skin, video-scaled \u00d72\\n// Source: assets/diagram-design/style-guide.md (default light skin).\\n//"
+ },
+ {
+  "event": "pi.message_end",
+  "id": "12875",
+  "data": "{\"id\":12875,\"event\":\"pi.message_end\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pD\",\"session_id\":\"01a0176c-8910-73a9-a8c7-5d66d09249de\",\"cursor\":5261,\"event\":{\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_72e78f915d104133a129a572\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"import React from \\\"react\\\";\\n\\n// ============================================================================\\n// v1 tokens (unchanged) \u2014 the PR explainer video theme\\n// ============================================================================\\nexport const tokens = {\\n  canvas: \\\"#f8fafc\\\",\\n  text: \\\"#0f172a\\\",\\n  muted: \\\"#64748b\\\",\\n  secondary: \\\"#475569\\\",\\n  codeBg: \\\"#0f172a\\\",\\n  codeText: \\\"#e2e8f0\\\",\\n  cardBg: \\\"white\\\",\\n  radius: 8,\\n  outerPadding: 56,\\n  headerHeight: 112,\\n  contentHeight: 856,\\n  shadowSm: \\\"0 12px 34px #0f172a12\\\",\\n  shadowMd: \\\"0 18px 48px #0f172a14\\\",\\n  shadowLg: \\\"0 22px 70px #0f172a22\\\",\\n};\\n\\n// ============================================================================\\n// v2 diagram tokens \u2014 vendored diagram-design light skin, video-scaled \u00d72\\n// Source: assets/diagram-design/style-guide.md (default light skin).\\n// E"
+ },
+ {
+  "event": "pi.turn_end",
+  "id": "12877",
+  "data": "{\"id\":12877,\"event\":\"pi.turn_end\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pD\",\"session_id\":\"01a0176c-8910-73a9-a8c7-5d66d09249de\",\"cursor\":5262,\"event\":{\"turnIndex\":6,\"context\":{\"tokens\":96889,\"contextWindow\":1000000,\"percent\":9.6889},\"type\":\"turn_end\"},\"generated_at\":\"2026-08-19T00:30:53.074Z\"},\"generatedAt\":\"2026-08-19T00:30:53.077Z\"}"
+ },
+ {
+  "event": "pi.turn_start",
+  "id": "12879",
+  "data": "{\"id\":12879,\"event\":\"pi.turn_start\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pD\",\"session_id\":\"01a0176c-8910-73a9-a8c7-5d66d09249de\",\"cursor\":5263,\"event\":{\"type\":\"turn_start\",\"turnIndex\":7,\"timestamp\":1787099452685},\"generated_at\":\"2026-08-19T00:30:53.080Z\"},\"generatedAt\":\"2026-08-19T00:30:53.083Z\"}"
+ },
+ {
+  "event": "pi.tool_execution_start",
+  "id": "13604",
+  "data": "{\"id\":13604,\"event\":\"pi.tool_execution_start\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wH:pD\",\"session_id\":\"01a0176c-8910-73a9-a8c7-5d66d09249de\",\"cursor\":5327,\"event\":{\"toolCallId\":\"call_e9d161d09e574279915f3925\",\"toolName\":\"read\",\"args\":{\"path\":\"/Users/ronnierocha/.config/dox-agent/skills/github-pr-explainer-video-v2/references/remotion-visual-system/Root.tsx\"},\"type\":\"tool_execution_start\"},\"generated_at\":\"2026-08-19T00:30:56.582Z\"},\"generatedAt\":\"2026-08-19T00:30:56.586Z\"}"
+ },
+ {
+  "event": "pi.tool_execution_update",
+  "id": "13739",
+  "data": "{\"id\":13739,\"event\":\"pi.tool_execution_update\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"wN:p5\",\"session_id\":\"01a01242-ebee-7756-8316-af57babff136\",\"cursor\":124805,\"event\":{\"toolCallId\":\"chatcmpl-tool-8b6872313e3ea4c9\",\"toolName\":\"bash\",\"partialResult\":{\"content\":[]},\"type\":\"tool_execution_update\"},\"generated_at\":\"2026-08-19T00:30:57.280Z\"},\"generatedAt\":\"2026-08-19T00:30:57.284Z\"}"
+ }
+]
