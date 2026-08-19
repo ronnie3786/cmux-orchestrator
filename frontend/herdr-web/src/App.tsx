@@ -8,6 +8,7 @@ import { Sidebar } from "./components/Sidebar/Sidebar";
 import { WorkspaceListView } from "./components/Workspace/WorkspaceListView";
 import { DetailPlaceholder } from "./components/Detail/DetailPlaceholder";
 import { AttentionView } from "./components/Attention/AttentionView";
+import { TerminalView } from "./components/Terminal/TerminalView";
 import { Toast } from "./components/Toast/Toast";
 import { useWorkspaceHashRoute } from "./hooks/useWorkspaceHashRoute";
 import "./styles/app.css";
@@ -31,6 +32,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
+  const selectedPaneId = useWorkspacesStore((state) => state.selectedPaneId);
   const data = useWorkspacesStore((state) => state.data);
 
   const clearToken = () => {
@@ -166,7 +168,13 @@ export default function App() {
     <div className="hz-app-shell">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <WorkspaceListView onOpenNavigator={() => setSidebarOpen(true)} />
-      {deckOpen ? <AttentionView onClose={closeDeck} /> : <DetailPlaceholder workspace={workspace} />}
+      {deckOpen ? (
+        <AttentionView onClose={closeDeck} />
+      ) : selectedPaneId !== null ? (
+        <TerminalView />
+      ) : (
+        <DetailPlaceholder workspace={workspace} />
+      )}
       <Toast />
     </div>
   );

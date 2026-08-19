@@ -1,0 +1,99 @@
+/* Terminal detail column (P5). Layout reuses .hz-detail-col (detail.css). */
+
+.hz-terminal-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.hz-terminal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hz-terminal-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Source dots — amber/green/blue/red on the existing design tokens. */
+.hz-terminal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.hz-terminal-dot-connecting {
+  background: var(--orange);
+}
+
+.hz-terminal-dot-live {
+  background: var(--green);
+}
+
+.hz-terminal-dot-watching {
+  background: var(--accent);
+}
+
+.hz-terminal-dot-offline {
+  background: var(--red);
+}
+
+.hz-terminal-meta {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.hz-terminal-refresh {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.hz-terminal-refresh:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* The grid is the viewport (32 rows, no scroll); selectable text. */
+.hz-terminal-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.hz-terminal-line {
+  white-space: pre;
+  min-height: 1.4em;
+}
+
+/* The cursor run's foreground/background are already swapped by the grid
+   (inverse resolution); the class is a hook for future styling. */
+.hz-terminal-cursor {
+  outline: none;
+}
+
+.hz-terminal-message {
+  margin: 0;
+  padding: 24px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
