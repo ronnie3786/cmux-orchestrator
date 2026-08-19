@@ -157,6 +157,14 @@ actor HerdrAPIClient {
         try await mutation(path: "/api/v1/workspaces/\(workspaceID)/tabs", body: APIActionBody(label: label))
     }
 
+    func createQuickPiSession(label: String) async throws -> QuickPiSessionResponse {
+        try await request(
+            path: "/api/v1/quick-sessions/pi",
+            method: "POST",
+            body: APIActionBody(label: label)
+        )
+    }
+
     func splitPane(id: String, direction: String) async throws {
         try await mutation(path: "/api/v1/panes/\(id)/split", body: APIActionBody(direction: direction, ratio: 0.5))
     }
@@ -206,6 +214,10 @@ actor HerdrAPIClient {
 
     func markAlertRead(id: String) async throws {
         try await mutation(path: "/api/v1/alerts/\(id)/read", body: APIActionBody())
+    }
+
+    func markAllAlertsRead() async throws {
+        try await mutation(path: "/api/v1/alerts/read-all", body: APIActionBody())
     }
 
     func registerPushDevice(
@@ -476,6 +488,9 @@ actor HerdrAPIClient {
     }
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
+        if path == "/api/v1/quick-sessions/pi" {
+            return 75
+        }
         if method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream")) {
             return 24 * 60 * 60
         }

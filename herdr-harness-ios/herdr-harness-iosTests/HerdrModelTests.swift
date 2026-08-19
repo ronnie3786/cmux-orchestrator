@@ -94,6 +94,59 @@ struct HerdrModelTests {
         #expect(model.workspacePath == workspacePath)
     }
 
+    @Test("Universal and custom-scheme links resolve pane IDs")
+    func paneLinkParsing() throws {
+        let cases: [(String, String?)] = [
+            ("herdr://pane/w:p4", "w:p4"),
+            ("herdr://open?pane=w:p9", "w:p9"),
+            ("herdr://pane/w%3Ap4", "w:p4"),
+            ("https://rocketbot.tail1db61d.ts.net:8461/open/pane/w:p4", "w:p4"),
+            ("https://rocketbot.tail1db61d.ts.net:8461/open/pane/w%3Ap4", "w:p4"),
+            ("https://rocketbot.tail1db61d.ts.net/open/pane?pane_id=w:p9", "w:p9"),
+            ("https://rocketbot.tail1db61d.ts.net/OPEN/PANE/w:p4", "w:p4"),
+            ("https://rocketbot.tail1db61d.ts.net/open", nil),
+            ("https://rocketbot.tail1db61d.ts.net/open/workspace/w1", nil),
+            ("https://rocketbot.tail1db61d.ts.net/api/v1/health", nil),
+            ("mailto:someone@example.com", nil),
+        ]
+        for (raw, expected) in cases {
+            let url = try #require(URL(string: raw))
+            #expect(HerdrAppModel.paneID(from: url) == expected, "\(raw)")
+        }
+    }
+
+    @MainActor
+    @Test("Opening a universal link routes to the pane")
+    func universalLinkRoutesToPane() throws {
+        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
+        let paneID = try #require(model.workspace(id: "w1")?.sortedPanes.first?.id)
+        let encoded = try #require(
+            paneID.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        )
+        let url = try #require(
+            URL(string: "https://rocketbot.tail1db61d.ts.net:8461/open/pane/\(encoded)")
+        )
+
+        model.open(url: url)
+
+        #expect(model.selectedPaneID == paneID)
+        #expect(model.selectedTab == .workspaces)
+    }
+
+    @MainActor
+    @Test("Connection failures escalate only after the reconnect grace period")
+    func connectionFailureGracePeriod() {
+        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
+        let onset = Date(timeIntervalSinceReferenceDate: 0)
+
+        #expect(!model.noteConnectionFailure(now: onset))
+        #expect(!model.noteConnectionFailure(now: onset.addingTimeInterval(5)))
+        #expect(model.noteConnectionFailure(now: onset.addingTimeInterval(10.1)))
+
+        model.useDemo()
+        #expect(!model.noteConnectionFailure(now: onset.addingTimeInterval(100)))
+    }
+
     private func pane(
         id: String,
         tabID: String,

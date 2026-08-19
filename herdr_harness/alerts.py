@@ -214,12 +214,30 @@ class AlertStore:
             "action": {"type": "open_pane", "paneId": pane_id},
         }
 
+    def _mark_pane_alerts_read_locked(
+        self,
+        pane_id: str,
+        read_at: Optional[str] = None,
+    ) -> list[dict]:
+        """Mark unread alerts for one pane read while the caller holds ``_lock``."""
+
+        changed: list[dict] = []
+        timestamp = read_at or utc_now()
+        for alert in self._alerts:
+            if alert.get("paneId") != pane_id or alert.get("isRead"):
+                continue
+            alert["isRead"] = True
+            alert["readAt"] = timestamp
+            changed.append(dict(alert))
+        return changed
+
     def _observe(
         self,
         pane: dict,
         *,
         emit_when_new: bool = False,
         persist: bool = True,
+        resolved: Optional[list[dict]] = None,
     ) -> Optional[dict]:
         pane_id = str(pane.get("pane_id") or "")
         if not pane_id:
@@ -231,6 +249,16 @@ class AlertStore:
             if previous != current:
                 self._status_by_pane[pane_id] = current
                 self._mark_dirty_locked()
+                if (
+                    previous is not None
+                    and previous in self.ACTIONABLE_STATUSES
+                    and current not in self.ACTIONABLE_STATUSES
+                ):
+                    resolved_alerts = self._mark_pane_alerts_read_locked(pane_id)
+                    if resolved_alerts:
+                        self._mark_dirty_locked()
+                        if resolved is not None:
+                            resolved.extend(resolved_alerts)
             if previous is None and not emit_when_new:
                 if persist:
                     self._persist_locked()
@@ -247,11 +275,22 @@ class AlertStore:
                 self._persist_locked()
             return dict(alert)
 
-    def observe_snapshot(self, snapshot: dict, *, emit_initial: bool = False) -> list[dict]:
+    def observe_snapshot(
+        self,
+        snapshot: dict,
+        *,
+        emit_initial: bool = False,
+    ) -> tuple[list[dict], list[dict]]:
         panes = pane_index(snapshot)
         emitted: list[dict] = []
+        resolved: list[dict] = []
         for pane in panes.values():
-            alert = self._observe(pane, emit_when_new=emit_initial, persist=False)
+            alert = self._observe(
+                pane,
+                emit_when_new=emit_initial,
+                persist=False,
+                resolved=resolved,
+            )
             if alert:
                 emitted.append(alert)
         with self._lock:
@@ -260,21 +299,25 @@ class AlertStore:
                 if pane_id not in live_ids:
                     del self._status_by_pane[pane_id]
                     self._mark_dirty_locked()
+                    resolved_alerts = self._mark_pane_alerts_read_locked(pane_id)
+                    if resolved_alerts:
+                        self._mark_dirty_locked()
+                        resolved.extend(resolved_alerts)
             self._persist_locked()
-        return emitted
+        return emitted, resolved
 
     def observe_event(
         self,
         envelope: dict,
         *,
         lookup: Optional[Callable[[str], Optional[dict]]] = None,
-    ) -> Optional[dict]:
+    ) -> tuple[Optional[dict], list[dict]]:
         event_name = str(envelope.get("event") or "").replace(".", "_")
         if event_name != "pane_agent_status_changed":
-            return None
+            return None, []
         data = envelope.get("data")
         if not isinstance(data, dict):
-            return None
+            return None, []
         pane_id = str(data.get("pane_id") or "")
         base = lookup(pane_id) if lookup and pane_id else None
         pane = dict(base) if isinstance(base, dict) else {}
@@ -286,7 +329,11 @@ class AlertStore:
         pane["agent_info"] = agent_info
         # A status event is itself evidence of a transition. This matters for a
         # newly-created pane whose first snapshot may race the event stream.
-        return self._observe(pane, emit_when_new=True)
+        resolved: list[dict] = []
+        return (
+            self._observe(pane, emit_when_new=True, resolved=resolved),
+            resolved,
+        )
 
     def list(
         self,
@@ -322,6 +369,14 @@ class AlertStore:
                     self._persist_locked()
                 return dict(alert)
         return None
+
+    def mark_read_for_pane(self, pane_id: str, now: Optional[str] = None) -> list[dict]:
+        with self._lock:
+            changed = self._mark_pane_alerts_read_locked(pane_id, read_at=now)
+            if changed:
+                self._mark_dirty_locked()
+                self._persist_locked()
+            return changed
 
     def mark_all_read(self) -> list[dict]:
         changed: list[dict] = []

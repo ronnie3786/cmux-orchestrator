@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from herdr_harness.network import network_payload
+from herdr_harness.network import network_payload, public_base_url
 
 
 class HerdrNetworkTests(unittest.TestCase):
@@ -36,3 +36,48 @@ class HerdrNetworkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PublicBaseURLTests(unittest.TestCase):
+    def test_explicit_public_url_wins_over_everything(self):
+        environ = {
+            "HERDR_HARNESS_PUBLIC_URL": "https://links.tailnet.ts.net",
+            "HERDR_HARNESS_TAILSCALE_URL": "https://other.tailnet.ts.net:8461",
+        }
+
+        url, source = public_base_url(environ, host_header="ignored:9999")
+
+        self.assertEqual(url, "https://links.tailnet.ts.net")
+        self.assertEqual(source, "environment")
+
+    def test_configured_tailscale_url_is_second_preference(self):
+        environ = {"HERDR_HARNESS_TAILSCALE_URL": "https://workstation.tailnet.ts.net:8461"}
+
+        url, source = public_base_url(environ, host_header="ignored")
+
+        self.assertEqual(url, "https://workstation.tailnet.ts.net:8461")
+        self.assertEqual(source, "environment")
+
+    def test_discovered_tailscale_identity_alone_is_not_trusted(self):
+        environ = {"HERDR_HARNESS_TAILSCALE_HTTPS_PORT": "8443"}
+
+        url, source = public_base_url(environ, host_header="workstation.tailnet.ts.net:8443")
+
+        self.assertEqual(url, "")
+        self.assertEqual(source, "")
+
+    def test_host_header_needs_an_https_front_end_and_keeps_its_port(self):
+        url, source = public_base_url(
+            {},
+            host_header="workstation.tailnet.ts.net:8461",
+            forwarded_proto="https",
+        )
+        plain_url, plain_source = public_base_url({}, host_header="workstation.local:9092")
+        empty_url, empty_source = public_base_url({}, host_header="", forwarded_proto="https")
+
+        self.assertEqual(url, "https://workstation.tailnet.ts.net:8461")
+        self.assertEqual(source, "host header")
+        self.assertEqual(plain_url, "")
+        self.assertEqual(plain_source, "")
+        self.assertEqual(empty_url, "")
+        self.assertEqual(empty_source, "")

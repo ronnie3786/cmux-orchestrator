@@ -42,6 +42,11 @@ struct AppRootView: View {
             await herdPulse.synchronize(context: herdPulseContext)
         }
         .onOpenURL(perform: model.open)
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            if let url = activity.webpageURL {
+                model.open(url: url)
+            }
+        }
         .overlay(alignment: .top) {
             if let message = model.toastMessage {
                 ToastView(message: message, dismiss: model.clearToast)

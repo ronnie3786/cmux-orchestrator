@@ -25,6 +25,7 @@ class FakeHTTPService:
         self.broker = EventBroker()
         self.pi_semantic = FakePiSemantic()
         self.pi_command_error = None
+        self.pi_extension_args_calls = 0
         self.calls = []
         self.snapshot = {
             "version": "0.8.0",
@@ -109,6 +110,20 @@ class FakeHTTPService:
     def invoke(self, method, params):
         self.calls.append((method, params))
         return {"ok": True, "result": {"type": "ok", "method": method}}
+
+    def pi_extension_args(self):
+        self.pi_extension_args_calls += 1
+        return ["--extension", "/fake/bridge"]
+
+    def quick_pi_session(self, label):
+        self.calls.append(("quick_pi_session", {"label": label}))
+        return {
+            "ok": True,
+            "workspace_id": "w1",
+            "pane_id": "w1:p1",
+            "created_workspace": True,
+            "pi_extension_attached": True,
+        }
 
     def read_pane(self, pane_id, **options):
         self.calls.append(("pane.read", {"pane_id": pane_id, **options}))
@@ -263,6 +278,89 @@ class HerdrHTTPTests(unittest.TestCase):
                 {"focus": False, "env": {"DEMO": "1"}, "cwd": "/tmp", "label": "New Work"},
             ),
         )
+
+    def test_quick_pi_session_route_validates_and_forwards_label(self):
+        status, _, body = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "aug 18, 2:34 pm"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body,
+            {
+                "ok": True,
+                "workspace_id": "w1",
+                "pane_id": "w1:p1",
+                "created_workspace": True,
+                "pi_extension_attached": True,
+            },
+        )
+        self.assertEqual(
+            self.service.calls[-1],
+            ("quick_pi_session", {"label": "aug 18, 2:34 pm"}),
+        )
+
+        for label in ("", "   ", "x" * 121):
+            with self.subTest(label=label):
+                invalid_status, _, invalid_body = self.request(
+                    "/api/v1/quick-sessions/pi",
+                    method="POST",
+                    payload={"label": label},
+                )
+                self.assertEqual(invalid_status, 400)
+                self.assertEqual(invalid_body["error"]["code"], "invalid_request")
+
+    def test_start_agent_injects_pi_extension_only_when_args_are_empty(self):
+        path = "/api/v1/panes/w1:p1/start-agent"
+        expected = {
+            "pane_id": "w1:p1",
+            "name": "n",
+            "kind": "pi",
+            "args": ["--extension", "/fake/bridge"],
+            "timeout_ms": 30000,
+        }
+
+        for payload in (
+            {"name": "n", "kind": "pi"},
+            {"name": "n", "kind": "pi", "args": []},
+        ):
+            with self.subTest(payload=payload):
+                status, _, _ = self.request(path, method="POST", payload=payload)
+                self.assertEqual(status, 200)
+                self.assertEqual(self.service.calls[-1], ("agent.start", expected))
+        self.assertEqual(self.service.pi_extension_args_calls, 2)
+
+        status, _, _ = self.request(
+            path,
+            method="POST",
+            payload={"name": "n", "kind": "pi", "args": ["--foo"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "agent.start",
+                {**expected, "args": ["--foo"]},
+            ),
+        )
+        self.assertEqual(self.service.pi_extension_args_calls, 2)
+
+        status, _, _ = self.request(
+            path,
+            method="POST",
+            payload={"name": "n", "kind": "codex", "args": []},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "agent.start",
+                {**expected, "kind": "codex", "args": []},
+            ),
+        )
+        self.assertEqual(self.service.pi_extension_args_calls, 2)
 
     def test_relative_cwd_and_invalid_keys_are_rejected(self):
         cwd_status, _, cwd_body = self.request(
@@ -718,6 +816,95 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(unregistered, 200)
         self.assertEqual(self.service.calls[-2][0], "live_activity.register")
         self.assertEqual(self.service.calls[-1][0], "live_activity.unregister")
+
+
+    def test_apple_app_site_association_is_public(self):
+        with urllib.request.urlopen(self.base + "/.well-known/apple-app-site-association", timeout=2) as response:
+            payload = json.loads(response.read())
+            content_type = response.headers.get("Content-Type", "")
+
+        detail = payload["applinks"]["details"][0]
+        self.assertIn("application/json", content_type)
+        self.assertEqual(
+            detail["appIDs"],
+            ["L2M32HMQZH.dev.ronnierocha.herdr-harness.herdr-harness-ios"],
+        )
+        self.assertEqual(detail["components"], [{"/": "/open/*"}])
+
+    def test_apple_app_site_association_honors_app_id_override(self):
+        service = FakeHTTPService()
+        service.environ = {"HERDR_HARNESS_APP_IDS": "TEAM1.example.app, TEAM2.example.other"}
+        server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            with urllib.request.urlopen(base + "/apple-app-site-association", timeout=2) as response:
+                payload = json.loads(response.read())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        self.assertEqual(
+            payload["applinks"]["details"][0]["appIDs"],
+            ["TEAM1.example.app", "TEAM2.example.other"],
+        )
+
+    def test_open_pane_fallback_page_is_public_and_escapes_the_id(self):
+        with urllib.request.urlopen(self.base + "/open/pane/w%3Ap4", timeout=2) as response:
+            page = response.read().decode()
+
+        status, _, body = self.request("/open/other", token=None)
+
+        self.assertIn("herdr://pane/w%3Ap4", page)
+        self.assertIn("w:p4", page)
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "not_found")
+
+    def test_open_pane_fallback_page_rejects_non_identifier_ids(self):
+        markup_status, _, markup_body = self.request(
+            "/open/pane/%3Cscript%3Ealert(1)%3C%2Fscript%3E", token=None
+        )
+        oversized_status, _, _ = self.request("/open/pane/" + "a" * 200, token=None)
+
+        self.assertEqual(markup_status, 404)
+        self.assertEqual(markup_body["error"]["code"], "not_found")
+        self.assertEqual(oversized_status, 404)
+
+    def test_pane_link_requires_token_and_builds_urls_from_public_url(self):
+        service = FakeHTTPService()
+        service.environ = {"HERDR_HARNESS_PUBLIC_URL": "https://rocketbot.tail1db61d.ts.net:8461"}
+        server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            request = urllib.request.Request(
+                base + "/api/v1/panes/w:p4/link",
+                headers={"Authorization": "Bearer test-secret"},
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                body = json.loads(response.read())
+            try:
+                with urllib.request.urlopen(base + "/api/v1/panes/w:p4/link", timeout=2):
+                    unauthorized = 200
+            except urllib.error.HTTPError as exc:
+                unauthorized = exc.code
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        self.assertEqual(unauthorized, 401)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["paneId"], "w:p4")
+        self.assertEqual(body["customSchemeLink"], "herdr://pane/w%3Ap4")
+        self.assertEqual(
+            body["universalLink"],
+            "https://rocketbot.tail1db61d.ts.net:8461/open/pane/w%3Ap4",
+        )
+        self.assertEqual(body["baseUrlSource"], "environment")
 
 
 if __name__ == "__main__":

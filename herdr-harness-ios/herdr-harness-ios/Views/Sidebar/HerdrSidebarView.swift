@@ -44,6 +44,15 @@ struct HerdrSidebarView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-new-workspace")
 
+            Button("new pi session", systemImage: "bolt") {
+                Task { await model.createQuickPiSession() }
+            }
+            .font(.subheadline.monospaced().bold())
+            .foregroundStyle(HerdrTheme.accent)
+            .frame(minHeight: 44)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("sidebar-new-pi-session")
+
             HerdrSectionLabel(title: "chats", detail: "\(paneCount) total shown")
 
             ScrollView {

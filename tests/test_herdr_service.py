@@ -1,12 +1,14 @@
 import base64
 import copy
 import json
+import os
 import stat
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import herdr_harness
 from herdr_harness import attachments
 from herdr_harness.alerts import AlertStore
 from herdr_harness.client import HerdrClientError
@@ -84,6 +86,19 @@ def snapshot_with_status(status="working"):
     }
 
 
+def snapshot_with_statuses(first="working", second="working"):
+    snapshot = snapshot_with_status(first)
+    pane = copy.deepcopy(snapshot["panes"][0])
+    pane.update({"pane_id": "w1:p2", "terminal_id": "term_2", "agent_status": second, "focused": False})
+    agent = copy.deepcopy(snapshot["agents"][0])
+    agent.update({"pane_id": "w1:p2", "terminal_id": "term_2", "agent_status": second, "focused": False})
+    snapshot["panes"].append(pane)
+    snapshot["agents"].append(agent)
+    snapshot["workspaces"][0]["pane_count"] = 2
+    snapshot["tabs"][0]["pane_count"] = 2
+    return snapshot
+
+
 class FakeClient:
     def __init__(self, snapshots):
         self.snapshots = [copy.deepcopy(item) for item in snapshots]
@@ -103,6 +118,28 @@ class FakeClient:
     def request(self, method, params):
         self.requests.append((method, copy.deepcopy(params)))
         return {"type": "ok", "future_result": True}
+
+    def subscribe_forever(self, *_args, **_kwargs):
+        return None
+
+
+class FakeQuickSessionClient:
+    def __init__(self, snapshot, responses):
+        self._snapshot = copy.deepcopy(snapshot)
+        self.responses = responses
+        self.socket_path = "/private/tmp/fake-herdr.sock"
+        self.session = "quick-session-fixtures"
+        self.requests = []
+
+    def snapshot(self):
+        return copy.deepcopy(self._snapshot)
+
+    def request(self, method, params):
+        self.requests.append((method, copy.deepcopy(params)))
+        response = self.responses.get(method, {"ok": True})
+        if isinstance(response, Exception):
+            raise response
+        return response(params) if callable(response) else copy.deepcopy(response)
 
     def subscribe_forever(self, *_args, **_kwargs):
         return None
@@ -220,6 +257,155 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0]["status"], "blocked")
 
+    def test_focusing_pane_marks_only_that_panes_alerts_read(self):
+        client = FakeClient(
+            [
+                snapshot_with_statuses("working", "working"),
+                snapshot_with_statuses("blocked", "blocked"),
+            ]
+        )
+        service = HerdrService(client, environ={})
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        before = service.broker.latest_id
+
+        service._handle_event({"event": "pane.focused", "data": {"pane_id": "w1:p1"}})
+
+        alerts = service.list_alerts(unread_only=False, status=None, limit=10)["alerts"]
+        by_pane = {alert["paneId"]: alert for alert in alerts}
+        self.assertTrue(by_pane["w1:p1"]["isRead"])
+        self.assertFalse(by_pane["w1:p2"]["isRead"])
+        events = service.broker.after(before)
+        aggregate = [item for item in events if item["event"] == "alerts.read_state_changed"]
+        self.assertEqual(len(aggregate), 1)
+        self.assertEqual(aggregate[0]["data"]["unread_count"], service.alerts.unread_count())
+        self.assertFalse(any(item["event"] == "alert.updated" for item in events))
+
+    def test_mark_all_alerts_read_publishes_one_aggregate_event_without_per_alert_events(self):
+        client = FakeClient(
+            [
+                snapshot_with_statuses("working", "working"),
+                snapshot_with_statuses("blocked", "blocked"),
+            ]
+        )
+        service = HerdrService(client, environ={})
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        before = service.broker.latest_id
+
+        result = service.mark_all_alerts_read()
+
+        self.assertEqual(len(result["alerts"]), 2)
+        events = service.broker.after(before)
+        self.assertEqual(
+            sum(item["event"] == "alerts.read_state_changed" for item in events),
+            1,
+        )
+        self.assertFalse(any(item["event"] == "alert.updated" for item in events))
+
+    def test_mark_alert_read_publishes_per_alert_and_aggregate_events(self):
+        client = FakeClient([snapshot_with_status("working"), snapshot_with_status("blocked")])
+        service = HerdrService(client, environ={})
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        alert_id = service.list_alerts(unread_only=True, status=None, limit=10)["alerts"][0]["id"]
+        before = service.broker.latest_id
+
+        result = service.mark_alert_read(alert_id)
+
+        self.assertTrue(result["ok"])
+        events = service.broker.after(before)
+        self.assertEqual(sum(item["event"] == "alert.updated" for item in events), 1)
+        self.assertEqual(
+            sum(item["event"] == "alerts.read_state_changed" for item in events),
+            1,
+        )
+
+    def test_blocked_to_working_transition_auto_marks_alert_read(self):
+        service = HerdrService(
+            FakeClient(
+                [
+                    snapshot_with_status("working"),
+                    snapshot_with_status("blocked"),
+                    snapshot_with_status("working"),
+                ]
+            ),
+            environ={},
+        )
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+
+        service.refresh_snapshot()
+
+        alert = service.list_alerts(unread_only=False, status=None, limit=10)["alerts"][0]
+        self.assertTrue(alert["isRead"])
+        self.assertIsNotNone(alert["readAt"])
+
+    def test_done_to_idle_transition_auto_marks_alert_read(self):
+        service = HerdrService(
+            FakeClient(
+                [
+                    snapshot_with_status("working"),
+                    snapshot_with_status("done"),
+                    snapshot_with_status("idle"),
+                ]
+            ),
+            environ={},
+        )
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+
+        service.refresh_snapshot()
+
+        alert = service.list_alerts(unread_only=False, status=None, limit=10)["alerts"][0]
+        self.assertTrue(alert["isRead"])
+
+    def test_transition_out_persists_auto_read_batch_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = AlertStore(store_path=Path(temp_dir) / "alerts.json")
+            service = HerdrService(
+                FakeClient(
+                    [
+                        snapshot_with_status("working"),
+                        snapshot_with_status("blocked"),
+                        snapshot_with_status("working"),
+                    ]
+                ),
+                alerts=store,
+                environ={},
+            )
+            service.refresh_snapshot()
+            service.refresh_snapshot()
+
+            with patch.object(store, "_write", wraps=store._write) as write:
+                service.refresh_snapshot()
+
+            write.assert_called_once()
+
+    def test_pruned_pane_auto_marks_its_alerts_read(self):
+        missing_pane = snapshot_with_status("working")
+        missing_pane["panes"] = []
+        missing_pane["agents"] = []
+        missing_pane["workspaces"][0]["pane_count"] = 0
+        missing_pane["tabs"][0]["pane_count"] = 0
+        service = HerdrService(
+            FakeClient(
+                [
+                    snapshot_with_status("working"),
+                    snapshot_with_status("blocked"),
+                    missing_pane,
+                ]
+            ),
+            environ={},
+        )
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+
+        service.refresh_snapshot()
+
+        alert = service.list_alerts(unread_only=False, status=None, limit=10)["alerts"][0]
+        self.assertTrue(alert["isRead"])
+
     def test_cached_snapshot_survives_disconnect_and_health_marks_it_stale(self):
         client = FakeClient([snapshot_with_status()])
         push = FakePush()
@@ -277,6 +463,159 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(response, {"ok": True, "result": {"type": "ok", "future_result": True}})
         self.assertEqual(client.requests, [("pane.focus", {"pane_id": "w1:p1"})])
         self.assertEqual(service.snapshot_response()["snapshot"]["protocol"], 19)
+
+    def test_quick_pi_session_creates_random_tasks_and_accepts_pane_result(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random"},
+                    "pane": {"pane_id": "w-random:p1"},
+                }
+            },
+        )
+        with tempfile.TemporaryDirectory() as extension_path:
+            service = HerdrService(
+                client,
+                environ={"HERDR_HARNESS_PI_EXTENSION_PATH": extension_path},
+            )
+            result = service.quick_pi_session("aug 18, 2:34 pm")
+
+        self.assertEqual(
+            client.requests[0],
+            (
+                "workspace.create",
+                {"label": "random tasks", "cwd": os.path.expanduser("~"), "focus": True},
+            ),
+        )
+        self.assertEqual(
+            result,
+            {
+                "ok": True,
+                "workspace_id": "w-random",
+                "pane_id": "w-random:p1",
+                "created_workspace": True,
+                "pi_extension_attached": True,
+            },
+        )
+        self.assertEqual(
+            client.requests[1][1],
+            {
+                "pane_id": "w-random:p1",
+                "name": client.requests[1][1]["name"],
+                "kind": "pi",
+                "args": ["--extension", extension_path],
+                "timeout_ms": 30000,
+            },
+        )
+        self.assertRegex(client.requests[1][1]["name"], r"^quick-pi-[a-z0-9]{8}$")
+        self.assertEqual(
+            client.requests[2],
+            ("pane.rename", {"pane_id": "w-random:p1", "label": "aug 18, 2:34 pm"}),
+        )
+
+    def test_quick_pi_session_accepts_root_pane_from_workspace_create(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random"},
+                    "root_pane": {"pane_id": "w-random:p1"},
+                }
+            },
+        )
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+        )
+
+        result = service.quick_pi_session("new session")
+
+        self.assertEqual(result["pane_id"], "w-random:p1")
+        self.assertEqual(client.requests[1][1]["args"], [])
+        self.assertFalse(result["pi_extension_attached"])
+
+    def test_quick_pi_session_reuses_case_insensitive_random_tasks_workspace(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [{"workspace_id": "w-existing", "label": "  Random Tasks  "}]},
+            {"tab.create": {"tab": {"root_pane": {"pane_id": "w-existing:p2"}}}},
+        )
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+        )
+
+        result = service.quick_pi_session("new session")
+
+        self.assertNotIn("workspace.create", [method for method, _ in client.requests])
+        self.assertEqual(client.requests[0], ("tab.create", {"workspace_id": "w-existing", "focus": True}))
+        self.assertEqual(result["workspace_id"], "w-existing")
+        self.assertEqual(result["pane_id"], "w-existing:p2")
+        self.assertFalse(result["created_workspace"])
+
+    def test_quick_pi_session_uses_fresh_snapshot_when_cached_topology_is_stale(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": []},
+            {"tab.create": {"tab": {"root_pane": {"pane_id": "w-existing:p2"}}}},
+        )
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+        )
+        service.refresh_snapshot()
+        client._snapshot = {"workspaces": [{"workspace_id": "w-existing", "label": "random tasks"}]}
+
+        with patch.object(service, "refresh_snapshot", wraps=service.refresh_snapshot) as refresh_snapshot:
+            result = service.quick_pi_session("new session")
+
+        self.assertGreaterEqual(refresh_snapshot.call_count, 1)
+        self.assertNotIn("workspace.create", [method for method, _ in client.requests])
+        self.assertEqual(result["workspace_id"], "w-existing")
+        self.assertFalse(result["created_workspace"])
+
+    def test_quick_pi_session_ignores_pane_rename_failure(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random"},
+                    "pane": {"pane_id": "w-random:p1"},
+                },
+                "pane.rename": HerdrClientError("rename failed", code="herdr_unavailable"),
+            },
+        )
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+        )
+
+        result = service.quick_pi_session("new session")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(client.requests[-1], ("pane.rename", {"pane_id": "w-random:p1", "label": "new session"}))
+
+    def test_default_pi_extension_path_is_detected_when_present(self):
+        expected_path = Path(herdr_harness.__file__).resolve().parent.parent / "pi-semantic-bridge"
+        if not os.path.isdir(expected_path):
+            self.skipTest("repository Pi extension is unavailable")
+        service = HerdrService(
+            FakeQuickSessionClient({"workspaces": []}, {}),
+            environ={},
+        )
+
+        self.assertEqual(service.pi_extension_args(), ["--extension", str(expected_path)])
+
+    def test_pi_extension_override_expands_home_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            extension_path = Path(temp_dir) / "bridge"
+            extension_path.mkdir()
+            service = HerdrService(
+                FakeQuickSessionClient({"workspaces": []}, {}),
+                environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "~/bridge"},
+            )
+
+            with patch.dict(os.environ, {"HOME": temp_dir}):
+                self.assertEqual(service.pi_extension_args(), ["--extension", str(extension_path)])
 
     def test_workspace_tools_resolve_root_only_from_cached_workspace(self):
         with tempfile.TemporaryDirectory() as temp_dir:

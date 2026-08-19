@@ -8,6 +8,7 @@ import copy
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, TypeVar
 
@@ -23,6 +24,23 @@ from .terminal import TerminalObserver, TerminalObserverError
 
 
 _ToolResult = TypeVar("_ToolResult")
+
+
+def _find_pane_id(value: Any) -> Optional[str]:
+    if isinstance(value, dict):
+        pane_id = value.get("pane_id")
+        if isinstance(pane_id, (str, int)) and str(pane_id):
+            return str(pane_id)
+        for item in value.values():
+            found = _find_pane_id(item)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _find_pane_id(item)
+            if found:
+                return found
+    return None
 
 
 def _bounded_environment_int(
@@ -68,6 +86,7 @@ class HerdrService:
             on_event=self._publish_pi_event,
         )
         self._lock = threading.RLock()
+        self._quick_session_lock = threading.Lock()
         self._snapshot: Optional[dict] = None
         self._generated_at: Optional[str] = None
         self._last_error: Optional[str] = None
@@ -224,9 +243,11 @@ class HerdrService:
             # Rebuild pane-specific status subscriptions only after the cache
             # contains the new topology.
             self._restart_subscription.set()
-        emitted = self.alerts.observe_snapshot(snapshot, emit_initial=False)
+        emitted, resolved = self.alerts.observe_snapshot(snapshot, emit_initial=False)
         for alert in emitted:
             self._publish_alert(alert)
+        if resolved:
+            self._publish_read_state_changed()
         self.broker.publish(
             "snapshot.updated",
             {
@@ -300,10 +321,20 @@ class HerdrService:
 
     def _handle_event(self, envelope: dict) -> None:
         event_name = str(envelope.get("event") or "herdr.event")
-        alert = self.alerts.observe_event(envelope, lookup=self._lookup_pane)
+        alert, resolved = self.alerts.observe_event(envelope, lookup=self._lookup_pane)
         self.broker.publish(event_name, envelope)
         if alert:
             self._publish_alert(alert)
+        focus_changed: list[dict] = []
+        if event_name == "pane.focused":
+            data = envelope.get("data")
+            pane_id = ""
+            if isinstance(data, dict):
+                pane_id = str(data.get("pane_id") or _find_pane_id(data) or "")
+            if pane_id:
+                focus_changed = self.alerts.mark_read_for_pane(pane_id)
+        if resolved or focus_changed:
+            self._publish_read_state_changed()
         self._refresh_event.set()
 
     def _cached_snapshot(self) -> tuple[dict, str]:
@@ -772,6 +803,83 @@ class HerdrService:
             pass
         return {"ok": True, "result": result}
 
+    def pi_extension_args(self) -> list[str]:
+        override = self.environ.get("HERDR_HARNESS_PI_EXTENSION_PATH")
+        path = (
+            Path(override).expanduser()
+            if override
+            else Path(__file__).resolve().parent.parent / "pi-semantic-bridge"
+        )
+        return ["--extension", str(path)] if path.exists() else []
+
+    def quick_pi_session(self, label: str) -> dict:
+        with self._quick_session_lock:
+            snapshot = self.refresh_snapshot()
+            existing_workspace = next(
+                (
+                    item
+                    for item in snapshot.get("workspaces", [])
+                    if isinstance(item, dict)
+                    and str(item.get("label") or "").strip().casefold() == "random tasks"
+                ),
+                None,
+            )
+            if existing_workspace is None:
+                result = self.invoke(
+                    "workspace.create",
+                    {"label": "random tasks", "cwd": os.path.expanduser("~"), "focus": True},
+                )
+                raw = result["result"]
+                workspace = raw.get("workspace")
+                workspace_id = workspace.get("workspace_id") if isinstance(workspace, dict) else None
+                pane = raw.get("pane") or raw.get("root_pane")
+                pane_id = pane.get("pane_id") if isinstance(pane, dict) else None
+                if not workspace_id or not pane_id:
+                    raise HerdrClientError(
+                        "workspace.create did not return a workspace and pane",
+                        code="invalid_herdr_response",
+                    )
+                created_workspace = True
+            else:
+                workspace_id = str(existing_workspace["workspace_id"])
+                result = self.invoke("tab.create", {"workspace_id": workspace_id, "focus": True})
+                raw = result["result"]
+                pane = raw.get("pane") or raw.get("root_pane")
+                pane_id = pane.get("pane_id") if isinstance(pane, dict) else None
+                if not pane_id:
+                    pane_id = _find_pane_id(raw)
+                if not pane_id:
+                    raise HerdrClientError(
+                        "tab.create did not return a pane",
+                        code="invalid_herdr_response",
+                    )
+                created_workspace = False
+
+            extension_args = self.pi_extension_args()
+            pi_extension_attached = bool(extension_args)
+            name = "quick-pi-" + uuid.uuid4().hex[:8]
+            self.invoke(
+                "agent.start",
+                {
+                    "pane_id": pane_id,
+                    "name": name,
+                    "kind": "pi",
+                    "args": extension_args,
+                    "timeout_ms": 30000,
+                },
+            )
+            try:
+                self.invoke("pane.rename", {"pane_id": pane_id, "label": label})
+            except HerdrClientError:
+                pass
+            return {
+                "ok": True,
+                "workspace_id": workspace_id,
+                "pane_id": pane_id,
+                "created_workspace": created_workspace,
+                "pi_extension_attached": pi_extension_attached,
+            }
+
     def read_pane(
         self,
         pane_id: str,
@@ -811,14 +919,21 @@ class HerdrService:
         alert = self.alerts.mark_read(alert_id)
         if alert:
             self.broker.publish("alert.updated", alert)
+            self._publish_read_state_changed()
             return {"ok": True, "alert": alert, "unreadCount": self.alerts.unread_count()}
         return None
 
     def mark_all_alerts_read(self) -> dict:
         changed = self.alerts.mark_all_read()
-        for alert in changed:
-            self.broker.publish("alert.updated", alert)
+        if changed:
+            self._publish_read_state_changed()
         return {"ok": True, "alerts": changed, "unreadCount": self.alerts.unread_count()}
+
+    def _publish_read_state_changed(self) -> None:
+        self.broker.publish(
+            "alerts.read_state_changed",
+            {"unread_count": self.alerts.unread_count()},
+        )
 
     def _publish_alert(self, alert: dict) -> None:
         self.broker.publish("alert.created", alert)
