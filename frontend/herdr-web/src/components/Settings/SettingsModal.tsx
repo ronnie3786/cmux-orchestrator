@@ -76,6 +76,21 @@ export function SettingsModal({ onClose, onReconnect }: SettingsModalProps) {
     };
   }, [demo]);
 
+  /**
+   * Cross-origin hint: with the server's CORS off, the app can only reach a
+   * herdr on its own origin unless the server allows this origin.
+   */
+  const crossOriginHint = (): string | null => {
+    let parsed: URL;
+    try {
+      parsed = new URL(serverUrl.trim());
+    } catch {
+      return null;
+    }
+    if (parsed.origin === window.location.origin) return null;
+    return "The herdr server must be configured to allow this origin (HERDR_HARNESS_CORS_ORIGIN) or the app cannot reach it cross-origin.";
+  };
+
   const saveAndReconnect = () => {
     const error = validateServerUrl(serverUrl);
     if (error !== null) {
@@ -159,6 +174,9 @@ export function SettingsModal({ onClose, onReconnect }: SettingsModalProps) {
               <p className="hb-settings-error" role="alert">
                 {urlError}
               </p>
+            ) : null}
+            {crossOriginHint() !== null ? (
+              <p className="hb-settings-cors-hint">{crossOriginHint()}</p>
             ) : null}
             <button type="button" className="hb-settings-action" onClick={saveAndReconnect}>
               Save and reconnect

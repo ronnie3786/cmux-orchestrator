@@ -75,6 +75,24 @@ describe("menuItemsFor", () => {
     // Default view is terminal.
     expect(items.find((item) => item.id === "viewPaneTerminal")?.checked).toBe(true);
     expect(items.find((item) => item.id === "viewPaneGit")?.checked).toBe(false);
+    // Split pane group: every non-Pi pane, enabled outside demo.
+    expect(idList).toContain("splitSection");
+    const split = items.filter(
+      (item): item is Extract<PaneMenuItem, { id: "splitRight" | "splitDown" }> =>
+        item.id === "splitRight" || item.id === "splitDown",
+    );
+    expect(split.map((item) => item.id)).toEqual(["splitRight", "splitDown"]);
+    for (const item of split) {
+      expect(item.enabled).toBe(true);
+    }
+  });
+
+  it("Pi pane: no Split pane group (Pi owns the detail region)", () => {
+    const pane = makePane({ agent: "pi", agent_status: "idle", pi_semantic: piSemantic });
+    const idList = ids(menuItemsFor(pane, { demo: false }));
+    expect(idList).not.toContain("splitSection");
+    expect(idList).not.toContain("splitRight");
+    expect(idList).not.toContain("splitDown");
   });
 
   it("non-Pi pane honors a stored git override in the View section", () => {
@@ -110,7 +128,7 @@ describe("menuItemsFor", () => {
     const shell = menuItemsFor(makePane({ agent_status: "unknown" }), { demo: true });
     const localView = new Set(["viewSection", "viewPaneTerminal", "viewPaneGit", "viewPaneSkills"]);
     for (const item of shell) {
-      if (item.id === "viewSection") continue;
+      if (item.id === "viewSection" || item.id === "splitSection") continue;
       expect(item.enabled).toBe(localView.has(item.id));
     }
 
@@ -120,7 +138,7 @@ describe("menuItemsFor", () => {
     expect(piItems.find((item) => item.id === "viewTerminal")?.enabled).toBe(true);
     expect(
       piItems.filter((item) => item.id !== "viewChat" && item.id !== "viewTerminal").every(
-        (item) => item.id === "viewSection" || !item.enabled,
+        (item) => item.id === "viewSection" || !("enabled" in item && item.enabled),
       ),
     ).toBe(true);
   });
@@ -135,6 +153,9 @@ describe("menuItemsFor", () => {
     expect(labelOf("viewPaneTerminal")).toBe("Terminal");
     expect(labelOf("viewPaneGit")).toBe("Git");
     expect(labelOf("viewPaneSkills")).toBe("Skills");
+    expect(labelOf("splitSection")).toBe("Split pane");
+    expect(labelOf("splitRight")).toBe("Split right");
+    expect(labelOf("splitDown")).toBe("Split down");
     const working = menuItemsFor(makePane({ agent: "codex", agent_status: "working" }), {
       demo: false,
     });

@@ -28,6 +28,7 @@ import {
 } from "../../pi/types";
 import type {
   PiAssistantStatus,
+  PiSemanticCapability,
   PiContextUsage,
   PiConversationConnection,
   PiConversationPhase,
@@ -46,6 +47,32 @@ import "./pi.css";
 
 /** The store's generic bridge-offline detail (piStore) — redundant with the banner. */
 const BRIDGE_OFFLINE_DETAIL = "Pi is offline. The saved transcript is still available.";
+
+/**
+ * Stable serialization of the fields the follow loop actually depends on
+ * (available, protocol version, capability sub-fields). The /workspaces
+ * snapshot re-parses `pi_semantic` into a fresh object on every ~500 ms
+ * refresh; the key must stay identical for identical content so the
+ * follow/stop effect does not tear the Pi store down on every refresh.
+ */
+export function piCapabilityKey(capability: PiSemanticCapability | null): string {
+  if (capability === null) return "none";
+  const caps = capability.capabilities;
+  return JSON.stringify([
+    capability.available,
+    capability.protocolVersion,
+    [
+      caps.prompt,
+      caps.steer,
+      caps.followUp,
+      caps.abort,
+      caps.listModels,
+      caps.setModel,
+      caps.setThinkingLevel,
+      caps.interactionResponse,
+    ],
+  ]);
+}
 
 export interface PiChatViewProps {
   connection: PiConversationConnection;
@@ -324,6 +351,8 @@ function ThinkingView({ block, now }: { block: PiThinkingBlock; now: number }) {
         : !hasText
           ? "No reasoning text was provided."
           : null;
+  // Memoized: the 1 s tick re-renders every live turn — don't re-parse.
+  const blocks = useMemo(() => parsePiMarkdown(block.text), [block.text]);
 
   return (
     <div className={`hz-pi-thinking${open ? " hz-pi-thinking-open" : ""}`}>
@@ -343,7 +372,7 @@ function ThinkingView({ block, now }: { block: PiThinkingBlock; now: number }) {
       </button>
       <div className="hz-pi-thinking-body" hidden={!open}>
         {hasText ? (
-          <MarkdownBlocks blocks={parsePiMarkdown(block.text)} />
+          <MarkdownBlocks blocks={blocks} />
         ) : (
           <p className="hz-pi-thinking-empty">{fallback}</p>
         )}
@@ -383,13 +412,22 @@ export function PiChatPane() {
     }
   }, [data, paneId]);
 
+  // Data identity changes on every debounced refresh, but the decoded
+  // capability object is content-stable — key the effect on the stable
+  // serialization and pass the object via a ref so a mere re-parse never
+  // re-follows (tear-down + transcript reset).
+  const capabilityKey = piCapabilityKey(capability);
+  const capabilityRef = useRef<PiSemanticCapability | null>(null);
+  capabilityRef.current = capability;
+
   useEffect(() => {
-    if (paneId === null || capability === null) return;
-    usePiStore.getState().follow(paneId, getToken(), capability);
+    const current = capabilityRef.current;
+    if (paneId === null || current === null) return;
+    usePiStore.getState().follow(paneId, getToken(), current);
     return () => {
       usePiStore.getState().stop(paneId);
     };
-  }, [paneId, capability]);
+  }, [paneId, capabilityKey]);
 
   const connection = usePiStore((state) => state.connection);
   const lastError = usePiStore((state) => state.lastError);

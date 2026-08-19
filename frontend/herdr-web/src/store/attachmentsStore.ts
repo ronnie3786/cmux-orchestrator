@@ -58,8 +58,8 @@ const defaultUploadFn: AttachmentUploadFn = async (args) => {
     contentType: args.contentType,
     data: args.data,
   });
-  const path = (response.attachment?.path ?? "").trim();
-  if (path.length === 0) throw new Error("Attachment upload failed");
+  const path = response.attachment?.path;
+  if (path === null || path === undefined) throw new Error("Attachment upload failed");
   return { path };
 };
 

@@ -1,17 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import workspacesFixture from "../__fixtures__/workspaces.json";
 import { workspaceFromPaneId } from "../lib/hashRoute";
-import {
-  attentionPanes,
-  canControl,
-  useWorkspacesStore,
-  unreadAlertCount,
-  visibleWorkspaces,
-} from "./workspacesStore";
+import { attentionPanes, canControl, useWorkspacesStore } from "./workspacesStore";
 
-vi.mock("../api/herdr", () => ({
-  workspaces: vi.fn(async () => ({ ok: true, workspaces: [], alerts: [], generatedAt: "now" })),
-}));
+const mocks = vi.hoisted(() => ({ workspaces: vi.fn() }));
+
+vi.mock("../api/herdr", () => ({ workspaces: mocks.workspaces }));
 import type {
   AgentStatus,
   Pane,
@@ -64,7 +58,11 @@ function setSnapshot(panes: Pane[]): void {
   });
 }
 
+const emptySnapshot = () => ({ ok: true, workspaces: [], alerts: [], generatedAt: "now" });
+
 beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.workspaces.mockResolvedValue(emptySnapshot());
   useWorkspacesStore.setState({
     data: null,
     lastUpdated: null,
@@ -73,6 +71,11 @@ beforeEach(() => {
     selectedPaneId: null,
   });
 });
+
+/** Let queued microtasks (incl. the trailing refresh) settle. */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 describe("attentionPanes", () => {
   it("ranks blocked → done → working → idle → unknown, ties by revision desc", () => {
@@ -182,6 +185,55 @@ describe("repairSelection", () => {
   });
 });
 
+describe("refresh — in-flight guard (stream.reset trailing re-arm)", () => {
+  it("a refresh fired while one is in flight re-arms exactly one trailing refresh after settle", async () => {
+    let releaseFirst: (value: unknown) => void = () => {};
+    mocks.workspaces.mockImplementationOnce(() =>
+      new Promise((resolve) => {
+        releaseFirst = resolve;
+      }),
+    );
+
+    const first = useWorkspacesStore.getState().refresh();
+    await settle();
+    expect(mocks.workspaces).toHaveBeenCalledTimes(1);
+    expect(useWorkspacesStore.getState().refreshing).toBe(true);
+
+    // The stream.reset path: refresh while the first is still in flight.
+    await useWorkspacesStore.getState().refresh();
+    expect(mocks.workspaces).toHaveBeenCalledTimes(1); // not fired yet
+
+    releaseFirst(emptySnapshot());
+    await first;
+    await settle();
+
+    expect(mocks.workspaces).toHaveBeenCalledTimes(2); // exactly one trailing
+    expect(useWorkspacesStore.getState().refreshing).toBe(false);
+  });
+
+  it("multiple in-flight arms still coalesce to a single trailing refresh", async () => {
+    let releaseFirst: (value: unknown) => void = () => {};
+    mocks.workspaces.mockImplementationOnce(() =>
+      new Promise((resolve) => {
+        releaseFirst = resolve;
+      }),
+    );
+
+    const first = useWorkspacesStore.getState().refresh();
+    await settle();
+    await useWorkspacesStore.getState().refresh();
+    await useWorkspacesStore.getState().refresh();
+
+    releaseFirst(emptySnapshot());
+    await first;
+    await settle();
+    await settle();
+
+    expect(mocks.workspaces).toHaveBeenCalledTimes(2);
+    expect(useWorkspacesStore.getState().refreshing).toBe(false);
+  });
+});
+
 describe("refresh — repairNavigation guard (P12-run-B)", () => {
   it("prunes a selection the fresh snapshot no longer contains", async () => {
     useWorkspacesStore.setState({ data: fixture });
@@ -208,15 +260,6 @@ describe("refresh — repairNavigation guard (P12-run-B)", () => {
 describe("selectors over the live fixture", () => {
   beforeEach(() => {
     useWorkspacesStore.setState({ data: fixture });
-  });
-
-  it("visibleWorkspaces returns the full snapshot list", () => {
-    expect(visibleWorkspaces(useWorkspacesStore.getState())).toHaveLength(fixture.workspaces.length);
-  });
-
-  it("unreadAlertCount counts !isRead alerts in the snapshot", () => {
-    const expected = fixture.alerts.filter((alert) => !alert.isRead).length;
-    expect(unreadAlertCount(useWorkspacesStore.getState())).toBe(expected);
   });
 
   it("canControl flips with snapshot presence", () => {

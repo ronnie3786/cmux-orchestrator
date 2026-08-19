@@ -17,13 +17,6 @@ import type {
   WorkspacesResponse,
 } from "../types/herdr";
 
-/**
- * Same default as client.ts's (non-exported) DEFAULT_BASE_URL — keep in sync.
- * Exported so the SSE stream (store/eventStream.ts) builds its URL from the
- * client's configured base rather than a second hardcoded copy.
- */
-export const HERDR_BASE_URL = "http://127.0.0.1:9092/api/v1";
-
 export function health(): Promise<Health> {
   return apiRequest<Health>("/health");
 }

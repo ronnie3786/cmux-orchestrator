@@ -13,7 +13,7 @@
 
 import { create } from "zustand";
 import { workspaces as fetchWorkspaces } from "../api/herdr";
-import type { AgentStatus, Pane, Workspace, WorkspacesResponse } from "../types/herdr";
+import type { AgentStatus, Pane, WorkspacesResponse } from "../types/herdr";
 
 export interface Selection {
   workspaceId: string | null;
@@ -38,6 +38,12 @@ interface WorkspacesStoreState {
   repairSelection: (selectedWorkspaceId: string | null, selectedPaneId: string | null) => Selection;
 }
 
+// A refresh() fired while one is in flight re-arms EXACTLY ONE trailing
+// refresh after the in-flight one settles (module-scoped — the store is a
+// singleton). This keeps the eventStream "exactly one refresh on
+// stream.reset" contract when the reset lands mid-flight.
+let trailingRefreshArmed = false;
+
 export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => ({
   data: null,
   lastUpdated: null,
@@ -47,6 +53,7 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
 
   refresh: async () => {
     if (get().refreshing) {
+      trailingRefreshArmed = true;
       return;
     }
     set({ refreshing: true });
@@ -63,7 +70,12 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
     } catch {
       // Silent: keep the last good snapshot; the next event re-arms.
     } finally {
+      const trailing = trailingRefreshArmed;
+      trailingRefreshArmed = false;
       set({ refreshing: false });
+      if (trailing) {
+        void get().refresh();
+      }
     }
   },
 
@@ -102,11 +114,6 @@ const ATTENTION_RANK: Record<AgentStatus, number> = {
   unknown: 4,
 };
 
-/** Workspaces shown in the sidebar — the API returns exactly the visible set. */
-export function visibleWorkspaces(state: WorkspacesStoreState): Workspace[] {
-  return state.data?.workspaces ?? [];
-}
-
 /**
  * All panes, ranked blocked → done → working → idle → unknown, ties broken by
  * `revision` descending (most recently changed pane first).
@@ -120,11 +127,6 @@ export function attentionPanes(state: WorkspacesStoreState): Pane[] {
     }
     return b.revision - a.revision;
   });
-}
-
-/** Unread alerts embedded in the /workspaces snapshot (the snapshot caps the list). */
-export function unreadAlertCount(state: WorkspacesStoreState): number {
-  return (state.data?.alerts ?? []).filter((alert) => !alert.isRead).length;
 }
 
 /**

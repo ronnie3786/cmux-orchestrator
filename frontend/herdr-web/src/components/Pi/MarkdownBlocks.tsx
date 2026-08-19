@@ -5,12 +5,16 @@
  * spans/strong/em/code/a. Security: nothing is ever injected as HTML; the
  * only interactive element is <a> restricted to http(s)/mailto URLs.
  */
+import { useMemo } from "react";
 import type { ReactNode } from "react";
 import { parsePiMarkdown } from "../../pi/markdown";
 import type { PiMarkdownColumnAlignment, PiMarkdownBlock, PiMarkdownListItem } from "../../pi/types";
 
 export function MarkdownText({ text }: { text: string }) {
-  return <MarkdownBlocks blocks={parsePiMarkdown(text)} />;
+  // Memoized: streaming deltas re-render the turn on every render/tick —
+  // only a text change should re-parse.
+  const blocks = useMemo(() => parsePiMarkdown(text), [text]);
+  return <MarkdownBlocks blocks={blocks} />;
 }
 
 export function MarkdownBlocks({ blocks }: { blocks: PiMarkdownBlock[] }) {

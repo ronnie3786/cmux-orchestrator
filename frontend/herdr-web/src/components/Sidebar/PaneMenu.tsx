@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, MoreHorizontal } from "lucide-react";
-import { interruptAgent, renamePane, deletePane, startAgent } from "../../api/mutations";
+import { interruptAgent, renamePane, deletePane, startAgent, splitPane } from "../../api/mutations";
 import { canControlNow, useConnectionStore } from "../../store/connectionStore";
 import { usePaneModeStore, type PaneMode } from "../../store/paneModeStore";
 import { usePaneViewStore, type PaneView } from "../../store/paneViewStore";
@@ -37,6 +37,9 @@ export type PaneMenuItem =
   | { id: "viewPaneGit"; label: string; enabled: boolean; checked: boolean }
   | { id: "viewPaneSkills"; label: string; enabled: boolean; checked: boolean }
   | { id: "viewSection"; label: string }
+  | { id: "splitSection"; label: string }
+  | { id: "splitRight"; label: string; enabled: boolean }
+  | { id: "splitDown"; label: string; enabled: boolean }
   | { id: "interrupt"; label: string; enabled: boolean }
   | { id: "startAgent"; label: string; enabled: boolean }
   | { id: "rename"; label: string; enabled: boolean }
@@ -57,6 +60,9 @@ const LABELS = {
   terminal: "Terminal",
   git: "Git",
   skills: "Skills",
+  splitSection: "Split pane",
+  splitRight: "Split right",
+  splitDown: "Split down",
   interrupt: "Interrupt",
   startAgent: "Start agent",
   rename: "Rename pane",
@@ -69,6 +75,7 @@ const LABELS = {
  *    available && protocol v1).
  *  - Interrupt: agent panes (agent_status working or a detected agent).
  *  - Start agent: shell/unknown panes only.
+ *  - Split pane (right / down): non-Pi panes only.
  *  - Rename pane / Close pane: always.
  * Demo mode disables every mutating item; the mode toggle is always
  * enabled (local state only).
@@ -107,6 +114,11 @@ export function menuItemsFor(pane: Pane, options: PaneMenuOptions): PaneMenuItem
       enabled: true,
       checked: view === "skills",
     });
+    // Doc 01 §3: Split pane → Split right / Split down (non-Pi panes; the
+    // Pi pane owns the detail region instead). Mutating → demo disables it.
+    items.push({ id: "splitSection", label: LABELS.splitSection });
+    items.push({ id: "splitRight", label: LABELS.splitRight, enabled: !options.demo });
+    items.push({ id: "splitDown", label: LABELS.splitDown, enabled: !options.demo });
   }
   if (pane.agent_status === "working" || pane.agent !== undefined) {
     items.push({ id: "interrupt", label: LABELS.interrupt, enabled: !options.demo });
@@ -236,6 +248,18 @@ export function PaneMenuButton({ pane, onNavigate }: PaneMenuButtonProps) {
     }
   };
 
+  const runSplit = async (direction: "right" | "down") => {
+    close();
+    try {
+      await splitPane(pane.pane_id, direction);
+      showToast("Pane split");
+      // No manual refetch — snapshot.updated arms the debounced /workspaces
+      // refetch (eventStream).
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  };
+
   const clickItem = (item: PaneMenuItem) => {
     if (item.id === "viewChat" || item.id === "viewTerminal") {
       selectMode(item.id === "viewChat" ? "chat" : "terminal");
@@ -247,9 +271,15 @@ export function PaneMenuButton({ pane, onNavigate }: PaneMenuButtonProps) {
       );
       return;
     }
-    if (item.id === "viewSection") return;
+    if (item.id === "viewSection" || item.id === "splitSection") return;
     if (!item.enabled || !gate()) return;
     switch (item.id) {
+      case "splitRight":
+        void runSplit("right");
+        break;
+      case "splitDown":
+        void runSplit("down");
+        break;
       case "interrupt":
         void runInterrupt();
         break;
@@ -332,7 +362,7 @@ function MenuStage({
   return (
     <>
       {items.map((item) =>
-        item.id === "viewSection" ? (
+        item.id === "viewSection" || item.id === "splitSection" ? (
           <div key={item.id} className="hz-popover-label">
             {item.label}
           </div>

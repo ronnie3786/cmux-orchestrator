@@ -5,15 +5,18 @@
  *  - POST   /panes/{id}/start-agent  `{name, kind}`        → agent.start
  *  - POST   /panes/{id}/send-keys    `{keys: ["ctrl+c"]}`  (menu "Interrupt" —
  *    doc 01 §3: "Interrupt (sends ctrl+c)")
+ *  - POST   /panes/{id}/split        `{direction}`         (right (default) | down;
+ *    focus/cwd/env/ratio optional)
+ *  - POST   /panes/{id}/send-text    `{text}`              (low-level; the Command
+ *    Lens uses /run + /prompt instead)
  *  - PATCH  /panes/{id}              `{label}`             → rename pane
  *  - DELETE /panes/{id}                              → close pane
  *  - POST   /workspaces              `{cwd?, label?}`      → workspace.create
+ *  - POST   /workspaces/{id}/tabs    `{}`                 → new tab (cwd/label/
+ *    focus/env all optional)
+ *  - PATCH  /workspaces/{id}         `{label}`             → rename workspace
  *  - POST   /workspaces/{id}/focus                     → workspace.focus
  *  - DELETE /workspaces/{id}                           → workspace.close
- *
- * `stopAgent` targets POST /panes/{id}/stop, which is NOT in doc 02's route
- * table (the iOS app has no stop-agent action either). Kept for API
- * completeness per the plan; nothing in the UI calls it today.
  *
  * Mutation results are wrapped `{"ok":true,"result":<herdr result>}`. Pane
  * IDs are concatenated raw (the `:` in `w1:p1` is legal in a path segment).
@@ -48,14 +51,6 @@ export function startAgent(paneId: string, agent: StartableAgent): Promise<Mutat
 }
 
 /**
- * POST /api/v1/panes/{id}/stop — stop the pane's agent. NOT in doc 02's route
- * table; provided for completeness, unused by the UI (see header note).
- */
-export function stopAgent(paneId: string): Promise<MutationResult> {
-  return json("POST", `/panes/${paneId}/stop`);
-}
-
-/**
  * Menu "Interrupt": doc 01 §3 implements interrupt as a `ctrl+c` key send.
  * "ctrl+c" satisfies the send-keys whitelist ^[A-Za-z0-9+_-]{1,32}$.
  */
@@ -71,6 +66,24 @@ export function renamePane(paneId: string, label: string): Promise<MutationResul
 /** DELETE /api/v1/panes/{id} — close a pane. */
 export function deletePane(paneId: string): Promise<MutationResult> {
   return json("DELETE", `/panes/${paneId}`);
+}
+
+/**
+ * POST /api/v1/panes/{id}/split — doc 02 body `{direction: right (default) |
+ * down, focus? (default true), cwd?, env?, ratio? 0.05-0.95}`; the iOS menu
+ * (Split right / Split down) sends just the direction.
+ */
+export function splitPane(paneId: string, direction: "right" | "down"): Promise<MutationResult> {
+  return json("POST", `/panes/${paneId}/split`, { direction });
+}
+
+/**
+ * POST /api/v1/panes/{id}/send-text — the low-level text route (doc 02 §2).
+ * The Command Lens uses /run (shell) + /prompt (agent) instead; this is the
+ * API surface for future use, not wired to the composer.
+ */
+export function paneSendText(paneId: string, text: string): Promise<MutationResult> {
+  return json("POST", `/panes/${paneId}/send-text`, { text });
 }
 
 export interface CreateWorkspaceInput {
@@ -125,4 +138,17 @@ export function launchWorkspace(workspaceId: string): Promise<MutationResult> {
 /** DELETE /api/v1/workspaces/{id} — close a workspace. */
 export function closeWorkspace(workspaceId: string): Promise<MutationResult> {
   return json("DELETE", `/workspaces/${workspaceId}`);
+}
+
+/**
+ * POST /api/v1/workspaces/{id}/tabs — new tab. Body keys `{cwd?, label?,
+ * focus?, env?}` are all optional; the iOS action sends an empty body.
+ */
+export function createTab(workspaceId: string): Promise<MutationResult> {
+  return json("POST", `/workspaces/${workspaceId}/tabs`, {});
+}
+
+/** PATCH /api/v1/workspaces/{id} — rename a workspace (`{label}`). */
+export function renameWorkspace(workspaceId: string, label: string): Promise<MutationResult> {
+  return json("PATCH", `/workspaces/${workspaceId}`, { label });
 }

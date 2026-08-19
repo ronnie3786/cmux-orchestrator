@@ -236,10 +236,13 @@ describe("TerminalGrid edge behavior (mirrors Swift parser semantics)", () => {
 
     // Equal seq — stale. NOTE: the Swift source returns true here
     // (`guard frame.sequence > lastSequence else { return true }`); this port
-    // follows the P4 brief and returns false. The grid is untouched either way.
+    // follows the P4 brief and returns false so the store's frameSequence
+    // (fN counter) does NOT advance on a stale delta. The grid is untouched.
     expect(grid.apply(makeTerminalFrame(`${ESC}[1;1HZ`, false, 10, 5, 2))).toBe(false);
     expect(grid.plainText).toBe("hello\nworld");
     expect(grid.lastSequence).toBe(10);
+    expect(grid.columns).toBe(5);
+    expect(grid.rows).toBe(2);
 
     // Older seq — also stale.
     expect(grid.apply(makeTerminalFrame(`${ESC}[1;1MZ`, false, 9, 5, 2))).toBe(false);

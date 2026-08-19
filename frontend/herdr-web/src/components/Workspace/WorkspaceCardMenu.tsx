@@ -1,18 +1,40 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { MoreHorizontal } from "lucide-react";
-import { closeWorkspace, launchWorkspace } from "../../api/mutations";
-import { canControlNow } from "../../store/connectionStore";
+import { closeWorkspace, createTab, launchWorkspace, renameWorkspace } from "../../api/mutations";
+import { canControlNow, useConnectionStore } from "../../store/connectionStore";
 import { showToast } from "../../lib/toast";
 import { usePopover } from "../../hooks/usePopover";
 import "../Sidebar/pane-menu.css";
 
-type Stage = "menu" | "confirm";
+type Stage = "menu" | "rename" | "confirm";
 
 interface WorkspaceCardMenuProps {
   workspaceId: string;
   label: string;
   paneCount: number;
+}
+
+// --- menu model (pure — unit-tested in WorkspaceCardMenu.test.ts) -----------
+
+export type WorkspaceMenuItem =
+  | { id: "focus"; label: string; enabled: boolean }
+  | { id: "newTab"; label: string; enabled: boolean }
+  | { id: "rename"; label: string; enabled: boolean }
+  | { id: "close"; label: string; enabled: boolean };
+
+/**
+ * Every item is Live-gated ("Reconnect before controlling Herdr"); demo
+ * mode disables all of them.
+ */
+export function workspaceMenuItemsFor(options: { demo: boolean }): WorkspaceMenuItem[] {
+  const enabled = !options.demo;
+  return [
+    { id: "focus", label: "Focus on Mac", enabled },
+    { id: "newTab", label: "New tab", enabled },
+    { id: "rename", label: "Rename workspace", enabled },
+    { id: "close", label: "Close workspace", enabled },
+  ];
 }
 
 function errorMessage(error: unknown): string {
@@ -22,14 +44,20 @@ function errorMessage(error: unknown): string {
 /**
  * Workspace card ⋯ menu (iOS "Workspace actions" parity, doc 01 §3):
  * "Focus on Mac" (POST /workspaces/{id}/focus, toast "Workspace focused on
- * Mac") and "Close workspace" with the doc 01 §6 confirm copy "Close this
- * workspace?" + "All N pane processes in this workspace will stop."
- * (toast "Workspace closed"). Both are gated to Live connections
- * (P9 composer pattern, "Reconnect before controlling Herdr").
+ * Mac"), "New tab" (POST /workspaces/{id}/tabs, toast "Tab created"),
+ * "Rename workspace" (PATCH /workspaces/{id} {label}, toast "Workspace
+ * renamed"), and "Close workspace" with the doc 01 §6 confirm copy "Close
+ * this workspace?" + "All N pane processes in this workspace will stop."
+ * (toast "Workspace closed"). All gated to Live connections (P9 composer
+ * pattern, "Reconnect before controlling Herdr").
  */
 export function WorkspaceCardMenu({ workspaceId, label, paneCount }: WorkspaceCardMenuProps) {
   const popover = usePopover();
   const [stage, setStage] = useState<Stage>("menu");
+  const [draft, setDraft] = useState("");
+
+  const demo = useConnectionStore((state) => state.status) === "Demo";
+  const items = workspaceMenuItemsFor({ demo });
 
   // Clicking outside closes the panel without going through close() —
   // reset any sub-stage so the next open starts at the menu.
@@ -40,6 +68,7 @@ export function WorkspaceCardMenu({ workspaceId, label, paneCount }: WorkspaceCa
   const close = () => {
     popover.close();
     setStage("menu");
+    setDraft("");
   };
 
   const gate = (): boolean => {
@@ -53,6 +82,35 @@ export function WorkspaceCardMenu({ workspaceId, label, paneCount }: WorkspaceCa
     try {
       await launchWorkspace(workspaceId);
       showToast("Workspace focused on Mac");
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  };
+
+  const createNewTab = async () => {
+    close();
+    try {
+      await createTab(workspaceId);
+      showToast("Tab created");
+      // No manual refetch — snapshot.updated arms the debounced /workspaces
+      // refetch (eventStream).
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  };
+
+  const renameWorkspaceAction = async () => {
+    const nextLabel = draft.trim();
+    if (nextLabel.length === 0) {
+      close();
+      return;
+    }
+    close();
+    try {
+      await renameWorkspace(workspaceId, nextLabel);
+      showToast("Workspace renamed");
+      // No manual refetch — snapshot.updated arms the debounced /workspaces
+      // refetch (eventStream).
     } catch (error) {
       showToast(errorMessage(error));
     }
@@ -96,28 +154,61 @@ export function WorkspaceCardMenu({ workspaceId, label, paneCount }: WorkspaceCa
             >
               {stage === "menu" ? (
                 <>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="hz-menu-item"
-                    onClick={() => {
-                      if (gate()) void focusWorkspace();
+                  {items.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="menuitem"
+                      className={`hz-menu-item${
+                        item.id === "close" ? " hz-menu-item-destructive" : ""
+                      }${item.enabled ? "" : " hz-menu-item-disabled"}`}
+                      onClick={() => {
+                        if (!item.enabled || !gate()) return;
+                        if (item.id === "focus") void focusWorkspace();
+                        else if (item.id === "newTab") void createNewTab();
+                        else if (item.id === "rename") {
+                          setDraft(label);
+                          setStage("rename");
+                        } else setStage("confirm");
+                      }}
+                    >
+                      <span className="hz-menu-item-check" aria-hidden />
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </>
+              ) : null}
+              {stage === "rename" ? (
+                <>
+                  <div className="hz-popover-label">Workspace name</div>
+                  <input
+                    className="hz-popover-input"
+                    type="text"
+                    value={draft}
+                    placeholder="Workspace name"
+                    aria-label="Workspace name"
+                    autoFocus
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void renameWorkspaceAction();
                     }}
-                  >
-                    <span className="hz-menu-item-check" aria-hidden />
-                    <span>Focus on Mac</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="hz-menu-item hz-menu-item-destructive"
-                    onClick={() => {
-                      if (gate()) setStage("confirm");
-                    }}
-                  >
-                    <span className="hz-menu-item-check" aria-hidden />
-                    <span>Close workspace</span>
-                  </button>
+                  />
+                  <div className="hz-popover-message">
+                    The new label appears in Herdr on every connected client.
+                  </div>
+                  <div className="hz-popover-actions">
+                    <button type="button" className="hz-popover-button" onClick={close}>
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="hz-popover-button hz-popover-button-primary"
+                      disabled={!draft.trim()}
+                      onClick={() => void renameWorkspaceAction()}
+                    >
+                      Rename
+                    </button>
+                  </div>
                 </>
               ) : null}
               {stage === "confirm" ? (

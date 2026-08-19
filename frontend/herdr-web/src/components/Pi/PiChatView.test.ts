@@ -11,10 +11,39 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { PiConversationReducer } from "../../pi/reducer";
 import {
   decodePiConversationSnapshot,
+  decodePiSemanticCapability,
   type PiConversationEnvelope,
   type PiJSONValue,
+  type PiSemanticCapability,
 } from "../../pi/types";
-import { PiChatView, type PiChatViewProps } from "./PiChatView";
+import { PiChatView, piCapabilityKey, type PiChatViewProps } from "./PiChatView";
+
+function capabilityJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    available: true,
+    connected: true,
+    protocol_version: 1,
+    session_id: "s1",
+    cursor: 0,
+    oldest_cursor: 0,
+    capabilities: {
+      prompt: true,
+      steer: true,
+      followUp: true,
+      abort: false,
+      listModels: false,
+      setModel: false,
+      setThinkingLevel: false,
+      interactionResponse: false,
+    },
+    generated_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  });
+}
+
+function capability(overrides: Record<string, unknown> = {}): PiSemanticCapability {
+  return decodePiSemanticCapability(capabilityJson(overrides));
+}
 
 function snapshot(
   entries: string,
@@ -285,6 +314,37 @@ describe("PiChatView", () => {
       const html = render(chatProps(reducer));
       expect(html).toContain(text);
       expect(html).toContain(band);
+    }
+  });
+
+  it("piCapabilityKey: identical content from fresh objects keys identically, each field flips the key", () => {
+    // The refresh re-parse produces a fresh object; same content → same key.
+    expect(piCapabilityKey(capability())).toBe(piCapabilityKey(capability()));
+    expect(piCapabilityKey(null)).toBe("none");
+
+    const baseline = piCapabilityKey(capability());
+    const topLevel: Record<string, unknown> = {
+      available: false,
+      protocol_version: 2,
+    };
+    for (const [field, value] of Object.entries(topLevel)) {
+      expect(piCapabilityKey(capability({ [field]: value })), field).not.toBe(baseline);
+    }
+    const baseCaps: Record<string, boolean> = {
+      prompt: true,
+      steer: true,
+      followUp: true,
+      abort: false,
+      listModels: false,
+      setModel: false,
+      setThinkingLevel: false,
+      interactionResponse: false,
+    };
+    for (const [field, value] of Object.entries(baseCaps)) {
+      expect(
+        piCapabilityKey(capability({ capabilities: { ...baseCaps, [field]: !value } })),
+        field,
+      ).not.toBe(baseline);
     }
   });
 

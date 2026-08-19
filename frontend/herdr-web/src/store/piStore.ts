@@ -78,7 +78,6 @@ import type {
   PiPendingInteraction,
   PiPromptDisposition,
   PiSemanticCapability,
-  PiSemanticCapabilities,
 } from "../pi/types";
 
 /** Swift `APIError` names / doc 01 §4.4. */
@@ -264,22 +263,6 @@ function snapshotContentChanged(
     previous.oldestCursor !== current.oldestCursor ||
     previous.truncated !== current.truncated
   );
-}
-
-/**
- * Swift `PiPromptComposerConfiguration.preferredDisposition`
- * (`availableDispositions.first ?? .prompt`) — phase- and
- * capability-driven: idle/failed → prompt; working → steer, then
- * followUp, then prompt.
- */
-export function preferredPiDisposition(
-  capabilities: PiSemanticCapabilities,
-  phase: PiConversationPhase,
-): PiPromptDisposition {
-  if (phase !== "working") return "prompt";
-  if (capabilities.steer) return "steer";
-  if (capabilities.followUp) return "followUp";
-  return "prompt";
 }
 
 const LOADING_CONNECTION: PiConversationConnection = { state: "loading" };

@@ -27,6 +27,7 @@ import { openSSE, type SseHandle, type SseState } from "../api/sse";
 import { makeTerminalFrame, type TerminalFrame } from "../terminal/frame";
 import { TerminalGrid } from "../terminal/grid";
 import { isStreamStale, shouldDisplaySnapshot } from "../terminal/refreshPolicy";
+import { TerminalSSEParser, TerminalStreamError } from "../terminal/sseParser";
 
 export type TerminalSource = "connecting" | "live" | "watching" | "offline";
 
@@ -121,51 +122,87 @@ export const useTerminalStore = create<TerminalStoreState>()((set, get) => {
     }
   };
 
-  const handleEvent = (expectedSession: number, event: string, data: string): void => {
+  const handleReady = (data: string): void => {
+    // The parser discards ready's payload; cols/rows come from the raw data.
+    const payload = parseJson(data) as
+      | { paneId?: unknown; cols?: unknown; rows?: unknown }
+      | null;
+    lastStreamActivityAt = Date.now();
+    const cols =
+      payload !== null && Number.isFinite(payload.cols) ? (payload.cols as number) : STREAM_COLS;
+    const rows =
+      payload !== null && Number.isFinite(payload.rows) ? (payload.rows as number) : STREAM_ROWS;
+    set({ cols, rows, source: "live", lastError: null });
+  };
+
+  const handleFrame = (expectedSession: number, frame: TerminalFrame): void => {
     if (expectedSession !== session) {
       return;
     }
-    if (event === "ready") {
-      const payload = parseJson(data) as
-        | { paneId?: unknown; cols?: unknown; rows?: unknown }
-        | null;
-      lastStreamActivityAt = Date.now();
-      const cols =
-        payload !== null && Number.isFinite(payload.cols) ? (payload.cols as number) : STREAM_COLS;
-      const rows =
-        payload !== null && Number.isFinite(payload.rows) ? (payload.rows as number) : STREAM_ROWS;
-      set({ cols, rows, source: "live", lastError: null });
+    lastStreamActivityAt = Date.now();
+    const grid = get().grid;
+    if (grid === null) {
       return;
     }
-    if (event === "terminal.frame") {
-      lastStreamActivityAt = Date.now();
-      const grid = get().grid;
-      if (grid === null) {
-        return;
-      }
-      const payload = parseJson(data);
-      if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-        return;
-      }
-      // A rejected stale/invalid frame is a no-op, not an error: only an
-      // applied frame advances frameSequence.
-      const applied = grid.apply(payload as TerminalFrame);
-      if (applied) {
-        set({
-          frameSequence: (payload as TerminalFrame).seq,
-          renderSource: "stream",
-          source: "live",
-        });
-      }
+    // A rejected stale/invalid frame is a no-op, not an error: only an
+    // applied frame advances frameSequence.
+    const applied = grid.apply(frame);
+    if (applied) {
+      set({ frameSequence: frame.seq, renderSource: "stream", source: "live" });
+    }
+  };
+
+  /** terminal.closed / terminal.error — the parser ends the stream here. */
+  const handleStreamEnd = (expectedSession: number, data: string): void => {
+    if (expectedSession !== session) {
       return;
     }
-    if (event === "terminal.closed" || event === "terminal.error") {
-      const message = streamEndMessage(data);
-      sseHandle?.close();
-      sseHandle = null;
-      set({ source: "offline", lastError: message });
+    const message = streamEndMessage(data);
+    sseHandle?.close();
+    sseHandle = null;
+    set({ source: "offline", lastError: message });
+  };
+
+  const handleEvent = (
+    expectedSession: number,
+    parser: TerminalSSEParser,
+    event: string,
+    data: string,
+  ): void => {
+    if (expectedSession !== session) {
+      return;
     }
-    // Unknown events (heartbeat, …) are keep-alives — nothing to do.
+    // The ported parser is the single frame-parsing path (1:1 with the
+    // Swift TerminalSSEParser): feed the block back as SSE lines and route
+    // its dispatched events to the store handlers.
+    let parsed: ReturnType<TerminalSSEParser["consume"]> = null;
+    try {
+      if (event !== "message") parser.consume(`event: ${event}`);
+      for (const line of data.split("\n")) {
+        parsed = parser.consume(`data: ${line}`) ?? parsed;
+      }
+      parsed = parser.consume("") ?? parsed;
+    } catch (error) {
+      if (error instanceof TerminalStreamError && error.code === "streamEnded") {
+        handleStreamEnd(expectedSession, data);
+        return;
+      }
+      // "invalidResponse": an undecodable frame — a no-op, not an error
+      // (matches the pre-parser inline behavior for malformed frames).
+      return;
+    }
+    switch (parsed?.kind) {
+      case "ready":
+        handleReady(data);
+        break;
+      case "frame":
+        handleFrame(expectedSession, parsed.frame);
+        break;
+      case "activity":
+      default:
+        // Heartbeats / unknown events are keep-alives — nothing to do.
+        break;
+    }
   };
 
   const handleState = (expectedSession: number, state: SseState): void => {
@@ -276,12 +313,13 @@ export const useTerminalStore = create<TerminalStoreState>()((set, get) => {
         lastError: null,
         grid,
       });
+      const parser = new TerminalSSEParser();
       sseHandle = openSSE({
         cursorKind: "none",
         token,
         backoff: STREAM_BACKOFF,
         buildUrl: () => terminalStreamUrl(paneId, STREAM_COLS, STREAM_ROWS),
-        onEvent: (event, data) => handleEvent(expectedSession, event, data),
+        onEvent: (event, data) => handleEvent(expectedSession, parser, event, data),
         onState: (state) => handleState(expectedSession, state),
       });
       pollTimer = setInterval(() => {

@@ -216,12 +216,14 @@ export class TerminalGrid {
   /**
    * Port of `apply(_ frame: TerminalFrame) -> Bool`.
    *
-   * NOTE (deviation flagged): the P4 brief says a stale delta
-   * (`frame.seq <= lastSequence`) should return false; the Swift source
-   * returns `true` here (`guard frame.sequence > lastSequence else { return true }`)
-   * without parsing or updating `lastSequence`. This port follows the P4
-   * brief (return false, non-destructive) — the grid is left untouched in
-   * both variants.
+   * NOTE (deviation flagged): Swift returns `true` on a stale delta
+   * (`frame.seq <= lastSequence`) (`guard frame.sequence > lastSequence
+   * else { return true }`) without parsing or updating `lastSequence`.
+   * This port intentionally returns `false` instead (P4 brief). The
+   * difference is load-bearing for the caller: terminalStore advances its
+   * frameSequence (the fN counter) ONLY when apply returns true — a stale
+   * delta must not advance the fN counter, so the `false` is required.
+   * The grid itself is left untouched in both variants.
    */
   apply(frame: TerminalFrame): boolean {
     if (frame.type !== "terminal.frame" || frame.width <= 0 || frame.height <= 0) {

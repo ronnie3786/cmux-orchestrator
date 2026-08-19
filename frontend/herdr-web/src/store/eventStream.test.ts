@@ -12,7 +12,6 @@ vi.mock("../api/sse", () => ({
   openSSE: mocks.openSSE,
 }));
 vi.mock("../api/herdr", () => ({
-  HERDR_BASE_URL: "http://127.0.0.1:9092/api/v1",
   eventsUrl: () => "http://127.0.0.1:9092/api/v1/events",
   health: mocks.health,
   workspaces: mocks.workspaces,
@@ -146,6 +145,37 @@ describe("eventStream", () => {
 
     // The stream state never flipped to Offline for the reset.
     expect(useConnectionStore.getState().status).toBe("Live");
+  });
+
+  it("stream.reset while a refresh is in flight → exactly one additional refresh after settle", async () => {
+    let releaseFirst: (value: unknown) => void = () => {};
+    mocks.workspaces.mockImplementationOnce(() =>
+      new Promise((resolve) => {
+        releaseFirst = resolve;
+      }),
+    );
+    useEventStreamStore.getState().start("tok");
+    sseConfig().onState("open", 0);
+    emit("ready", { lastEventId: 1 });
+
+    // Arm the debounced refetch and let it fire → a refresh is now in flight.
+    emit("snapshot.updated", { id: 1, event: "snapshot.updated", data: {} });
+    vi.advanceTimersByTime(500);
+    expect(mocks.workspaces).toHaveBeenCalledTimes(1);
+    expect(useWorkspacesStore.getState().refreshing).toBe(true);
+
+    // The reset lands mid-flight: it must NOT drop the refetch, and it must
+    // not double up past the single trailing re-arm.
+    emit("stream.reset", { reason: "replay_gap" });
+    expect(mocks.workspaces).toHaveBeenCalledTimes(1);
+
+    releaseFirst({ ok: true, workspaces: [], alerts: [], generatedAt: "now" });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(mocks.workspaces).toHaveBeenCalledTimes(2);
+    expect(useWorkspacesStore.getState().refreshing).toBe(false);
+
+    vi.advanceTimersByTime(10_000);
+    expect(mocks.workspaces).toHaveBeenCalledTimes(2);
   });
 
   it("3 snapshot.updated within 500 ms → exactly 1 refetch", () => {

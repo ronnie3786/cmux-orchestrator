@@ -59,8 +59,24 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+/**
+ * Consumer callbacks must never be able to kill the stream loop: a throwing
+ * onEvent/onState is swallowed (no logging in this codebase).
+ */
+function guarded<T extends unknown[]>(fn: (...args: T) => void): (...args: T) => void {
+  return (...args: T): void => {
+    try {
+      fn(...args);
+    } catch {
+      // Swallowed by design.
+    }
+  };
+}
+
 export function openSSE(config: SseConfig): SseHandle {
   const backoff: SseBackoff = { ...DEFAULT_BACKOFF, ...config.backoff };
+  const onEvent = guarded(config.onEvent);
+  const onState = guarded(config.onState);
 
   let closed = false;
   let suspended = false;
@@ -137,7 +153,7 @@ export function openSSE(config: SseConfig): SseHandle {
     let dataLines: string[] = [];
 
     const dispatch = (): void => {
-      config.onEvent(eventName, dataLines.join("\n"), lastId);
+      onEvent(eventName, dataLines.join("\n"), lastId);
       eventName = "message";
       dataLines = [];
     };
@@ -192,7 +208,7 @@ export function openSSE(config: SseConfig): SseHandle {
         if (openAt === null) {
           // "open" is reported on the first byte of the stream.
           openAt = Date.now();
-          config.onState("open", attempt);
+          onState("open", attempt);
         }
         buffer += decoder.decode(value, { stream: true });
         let separator = buffer.indexOf("\n\n");
@@ -230,7 +246,7 @@ export function openSSE(config: SseConfig): SseHandle {
         continue;
       }
       if (attempt > 0) {
-        config.onState("reconnecting", attempt);
+        onState("reconnecting", attempt);
       }
       try {
         await connect();
@@ -294,7 +310,7 @@ export function openSSE(config: SseConfig): SseHandle {
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
       }
-      config.onState("closed", attempt);
+      onState("closed", attempt);
     },
   };
 }
