@@ -94,6 +94,20 @@ struct HerdrModelTests {
         #expect(model.workspacePath == workspacePath)
     }
 
+    @MainActor
+    @Test("Connection failures escalate only after the reconnect grace period")
+    func connectionFailureGracePeriod() {
+        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
+        let onset = Date(timeIntervalSinceReferenceDate: 0)
+
+        #expect(!model.noteConnectionFailure(now: onset))
+        #expect(!model.noteConnectionFailure(now: onset.addingTimeInterval(5)))
+        #expect(model.noteConnectionFailure(now: onset.addingTimeInterval(10.1)))
+
+        model.useDemo()
+        #expect(!model.noteConnectionFailure(now: onset.addingTimeInterval(100)))
+    }
+
     private func pane(
         id: String,
         tabID: String,

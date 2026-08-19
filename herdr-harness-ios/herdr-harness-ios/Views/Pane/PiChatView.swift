@@ -25,6 +25,7 @@ struct PiChatView: View {
             ) { interaction, response in
                 await store.respond(to: interaction, response: response, model: model, pane: pane)
             }
+            .id(pane.id)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let notice = store.commandNotice {

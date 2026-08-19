@@ -13,6 +13,7 @@ enum HerdrHaptic: Equatable, Sendable {
     case gitStaged
     case gitUnstaged
     case recordingStarted
+    case recordingLocked
     case recordingStopped
     case transcriptionStarted
     case transcriptionSucceeded
@@ -37,7 +38,7 @@ enum HerdrHaptic: Equatable, Sendable {
             .increase
         case .gitUnstaged:
             .decrease
-        case .recordingStarted, .transcriptionStarted:
+        case .recordingStarted, .recordingLocked, .transcriptionStarted:
             .start
         case .recordingStopped, .stopped:
             .stop

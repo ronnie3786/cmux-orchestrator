@@ -9,6 +9,7 @@ struct PiChatTimelineView: View {
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @State private var isNearBottom = true
     @State private var lastAutoScrollStructure: PiChatTimelineStructure?
+    @State private var hasRevealedContent = false
 
     init(
         store: PiConversationStore,
@@ -66,7 +67,7 @@ struct PiChatTimelineView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 24)
                 .animation(
-                    PiChatMotion.structuralAnimation(reduceMotion: reduceMotion),
+                    hasRevealedContent ? PiChatMotion.structuralAnimation(reduceMotion: reduceMotion) : nil,
                     value: structure
                 )
             }
@@ -81,10 +82,39 @@ struct PiChatTimelineView: View {
             )
             .onAppear {
                 lastAutoScrollStructure = structure
+                hasRevealedContent = structure.identifiers.contains("transcript:content")
             }
             .onChange(of: store.revision) { _, _ in
-                let structureChanged = lastAutoScrollStructure != structure
+                let previousStructure = lastAutoScrollStructure
+                let structureChanged = previousStructure != structure
                 lastAutoScrollStructure = structure
+
+                let hadContent = previousStructure?.identifiers.contains("transcript:content") ?? false
+                let hasContentNow = structure.identifiers.contains("transcript:content")
+
+                if hasContentNow, !hadContent {
+                    // Initial reveal of a populated transcript: do NOT animate a scrollTo here.
+                    // Animating scrollTo(edge: .bottom) here resolves against the LazyVStack's
+                    // ESTIMATED content height, which shrinks as real rows lay out and leaves the
+                    // viewport stranded past the end of content. `.defaultScrollAnchor(.bottom)`
+                    // keeps the viewport pinned to the bottom as content grows, so just let it.
+                    hasRevealedContent = true
+                    isNearBottom = true
+                    Task { @MainActor in
+                        // Belt-and-braces re-clamp once layout has settled, but only if the
+                        // user hasn't scrolled away in the meantime.
+                        guard isNearBottom else { return }
+                        scrollPosition.scrollTo(edge: .bottom)
+                    }
+                    return
+                }
+
+                if !hasContentNow {
+                    // Store reset back to empty (e.g. reconnect/session switch) — take the
+                    // reveal path again on the next population.
+                    hasRevealedContent = false
+                }
+
                 guard isNearBottom else { return }
 
                 if structureChanged, !reduceMotion {

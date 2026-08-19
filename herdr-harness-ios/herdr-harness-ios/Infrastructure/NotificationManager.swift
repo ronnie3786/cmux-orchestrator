@@ -43,6 +43,23 @@ enum NotificationManager {
         )
     }
 
+    static func removeDelivered(alertIDs: Set<String>) async {
+        guard !alertIDs.isEmpty else { return }
+        let center = UNUserNotificationCenter.current()
+        let identifiers = await center.deliveredNotifications().compactMap { notification -> String? in
+            let content = notification.request.content
+            let alertID = content.userInfo["alertId"] as? String
+                ?? content.userInfo["alert_id"] as? String
+            guard alertIDs.contains(notification.request.identifier) ||
+                    alertID.map { alertIDs.contains($0) } == true
+            else { return nil }
+            return notification.request.identifier
+        }
+        if !identifiers.isEmpty {
+            center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        }
+    }
+
     static func registerForRemoteNotifications() {
         UIApplication.shared.registerForRemoteNotifications()
     }

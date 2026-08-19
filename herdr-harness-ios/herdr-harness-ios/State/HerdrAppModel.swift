@@ -40,6 +40,9 @@ final class HerdrAppModel {
     @ObservationIgnored private var pendingPaneID: String?
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
+    @ObservationIgnored private var reconnectFailureStartedAt: Date?
+    @ObservationIgnored private var pendingConnectionErrorMessage: String?
+    private static let connectionFailureGrace: TimeInterval = 10
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         let defaults = UserDefaults.standard
@@ -200,11 +203,16 @@ final class HerdrAppModel {
                 try await refresh(using: client, expectedGeneration: generation)
                 connectionState = .live
                 lastPresentedConnectionError = nil
+                reconnectFailureStartedAt = nil
+                pendingConnectionErrorMessage = nil
                 retryDelay = 2
                 for try await event in await client.events() {
                     try Task.checkCancellation()
                     guard generation == connectionGeneration else { return }
-                    if event.event == "snapshot.updated" || Self.piCapabilityEvents.contains(event.event) {
+                    if event.event == "snapshot.updated" ||
+                        event.event == "alert.created" ||
+                        event.event == "alerts.read_state_changed" ||
+                        Self.piCapabilityEvents.contains(event.event) {
                         try await refresh(
                             using: client,
                             showSpinner: false,
@@ -218,11 +226,17 @@ final class HerdrAppModel {
                 return
             } catch {
                 guard generation == connectionGeneration else { return }
-                connectionState = .failed
                 let message = error.localizedDescription
-                if lastPresentedConnectionError != message {
-                    lastPresentedConnectionError = message
-                    errorMessage = message
+                pendingConnectionErrorMessage = message
+                let shouldEscalate = noteConnectionFailure(now: .now)
+                if shouldEscalate {
+                    connectionState = .failed
+                    if lastPresentedConnectionError != message {
+                        lastPresentedConnectionError = message
+                        errorMessage = message
+                    }
+                } else {
+                    connectionState = .connecting
                 }
                 do {
                     try await Task.sleep(for: .seconds(retryDelay))
@@ -234,6 +248,14 @@ final class HerdrAppModel {
                 connectionState = .connecting
             }
         }
+    }
+
+    func noteConnectionFailure(now: Date) -> Bool {
+        guard let reconnectFailureStartedAt else {
+            self.reconnectFailureStartedAt = now
+            return false
+        }
+        return now.timeIntervalSince(reconnectFailureStartedAt) >= Self.connectionFailureGrace
     }
 
     func refresh() async {
@@ -608,6 +630,22 @@ final class HerdrAppModel {
         return succeeded
     }
 
+    func createQuickPiSession() async {
+        if isDemoMode {
+            toastMessage = "quick pi sessions need a live connection"
+            return
+        }
+        let label = Date.now.formatted(.dateTime.month(.abbreviated).day().hour().minute()).lowercased()
+        var spawnedPaneID: String?
+        await perform("pi session spawning") { client in
+            let response = try await client.createQuickPiSession(label: label)
+            spawnedPaneID = response.paneID
+        }
+        if let spawnedPaneID {
+            openPane(id: spawnedPaneID)
+        }
+    }
+
     func createTab(in workspace: HerdrWorkspace) async {
         await perform("Tab created") { client in
             try await client.createTab(
@@ -638,6 +676,36 @@ final class HerdrAppModel {
         guard let client else { return }
         do {
             try await client.markAlertRead(id: alert.id)
+            try await refresh(
+                using: client,
+                showSpinner: false,
+                expectedGeneration: connectionGeneration
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func markAllAlertsRead() async {
+        if isDemoMode {
+            alerts = alerts.map { item in
+                HerdrAlert(
+                    id: item.id,
+                    workspaceID: item.workspaceID,
+                    paneID: item.paneID,
+                    status: item.status,
+                    title: item.title,
+                    message: item.message,
+                    createdAt: item.createdAt,
+                    isRead: true
+                )
+            }
+            await NotificationManager.setBadge(unreadAlertCount)
+            return
+        }
+        guard let client else { return }
+        do {
+            try await client.markAllAlertsRead()
             try await refresh(
                 using: client,
                 showSpinner: false,
@@ -740,6 +808,13 @@ final class HerdrAppModel {
         let previousAlertIDs = Set(alerts.map(\.id))
         workspaces = response.workspaces
         alerts = response.alerts
+        let currentAlertIDs = Set(alerts.map(\.id))
+        let readAlertIDs = Set(alerts.filter(\.isRead).map(\.id))
+        let removedAlertIDs = previousAlertIDs.subtracting(currentAlertIDs)
+        let staleAlertIDs = readAlertIDs.union(removedAlertIDs)
+        if !staleAlertIDs.isEmpty {
+            await NotificationManager.removeDelivered(alertIDs: staleAlertIDs)
+        }
         lastUpdated = .now
         errorMessage = nil
         lastPresentedConnectionError = nil
@@ -882,6 +957,8 @@ final class HerdrAppModel {
         remotePushDeliveryVerified = false
         remotePushRegistrationError = nil
         lastPresentedConnectionError = nil
+        reconnectFailureStartedAt = nil
+        pendingConnectionErrorMessage = nil
     }
 
     private func repairNavigation() {

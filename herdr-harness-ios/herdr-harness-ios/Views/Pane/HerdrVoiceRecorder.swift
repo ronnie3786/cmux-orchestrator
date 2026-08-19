@@ -22,9 +22,9 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     private(set) var playbackTime: TimeInterval = 0
     var errorMessage: String?
 
-    private var recorder: AVAudioRecorder?
+    nonisolated(unsafe) private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
-    private var recordingTimer: Timer?
+    nonisolated(unsafe) private var recordingTimer: Timer?
     private var playbackTimer: Timer?
     private var startGeneration = 0
 
@@ -35,6 +35,13 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     var playbackProgress: Double {
         guard elapsedTime > 0 else { return 0 }
         return min(max(playbackTime / elapsedTime, 0), 1)
+    }
+
+    deinit {
+        recordingTimer?.invalidate()
+        if recorder?.isRecording == true {
+            recorder?.stop()
+        }
     }
 
     func toggleRecording() {

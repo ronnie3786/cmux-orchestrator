@@ -24,6 +24,31 @@ struct WorkspacesResponse: Decodable, Sendable {
     }
 }
 
+struct QuickPiSessionResponse: Decodable, Sendable {
+    let ok: Bool
+    let workspaceID: String
+    let paneID: String
+    let createdWorkspace: Bool
+    let piExtensionAttached: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case workspaceID = "workspace_id"
+        case paneID = "pane_id"
+        case createdWorkspace = "created_workspace"
+        case piExtensionAttached = "pi_extension_attached"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? true
+        workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceID) ?? ""
+        paneID = try container.decodeIfPresent(String.self, forKey: .paneID) ?? ""
+        createdWorkspace = try container.decodeIfPresent(Bool.self, forKey: .createdWorkspace) ?? false
+        piExtensionAttached = try container.decodeIfPresent(Bool.self, forKey: .piExtensionAttached) ?? false
+    }
+}
+
 struct PaneOutputResponse: Decodable, Sendable {
     let ok: Bool
     let paneID: String

@@ -12,9 +12,23 @@ struct AttentionView: View {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     header
 
-                    if !model.alerts.isEmpty {
-                        sectionTitle("Recent signals", count: model.alerts.count)
-                        ForEach(model.alerts) { alert in
+                    if model.unreadAlertCount > 0 {
+                        HStack {
+                            Text("Recent signals").font(.headline.bold())
+                            Spacer()
+                            if model.unreadAlertCount > 0 {
+                                Button("Mark all read") {
+                                    Task { await model.markAllAlertsRead() }
+                                }
+                                .font(.caption.monospaced().bold())
+                                .foregroundStyle(HerdrTheme.accent)
+                                .accessibilityIdentifier("attention-mark-all-read")
+                            }
+                            Text("\(model.unreadAlertCount)")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(model.alerts.filter { !$0.isRead }) { alert in
                             if let pane = model.pane(id: alert.paneID) {
                                 Button {
                                     selectPane(pane, alert)

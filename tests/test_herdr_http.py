@@ -25,6 +25,7 @@ class FakeHTTPService:
         self.broker = EventBroker()
         self.pi_semantic = FakePiSemantic()
         self.pi_command_error = None
+        self.pi_extension_args_calls = 0
         self.calls = []
         self.snapshot = {
             "version": "0.8.0",
@@ -109,6 +110,20 @@ class FakeHTTPService:
     def invoke(self, method, params):
         self.calls.append((method, params))
         return {"ok": True, "result": {"type": "ok", "method": method}}
+
+    def pi_extension_args(self):
+        self.pi_extension_args_calls += 1
+        return ["--extension", "/fake/bridge"]
+
+    def quick_pi_session(self, label):
+        self.calls.append(("quick_pi_session", {"label": label}))
+        return {
+            "ok": True,
+            "workspace_id": "w1",
+            "pane_id": "w1:p1",
+            "created_workspace": True,
+            "pi_extension_attached": True,
+        }
 
     def read_pane(self, pane_id, **options):
         self.calls.append(("pane.read", {"pane_id": pane_id, **options}))
@@ -263,6 +278,89 @@ class HerdrHTTPTests(unittest.TestCase):
                 {"focus": False, "env": {"DEMO": "1"}, "cwd": "/tmp", "label": "New Work"},
             ),
         )
+
+    def test_quick_pi_session_route_validates_and_forwards_label(self):
+        status, _, body = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "aug 18, 2:34 pm"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body,
+            {
+                "ok": True,
+                "workspace_id": "w1",
+                "pane_id": "w1:p1",
+                "created_workspace": True,
+                "pi_extension_attached": True,
+            },
+        )
+        self.assertEqual(
+            self.service.calls[-1],
+            ("quick_pi_session", {"label": "aug 18, 2:34 pm"}),
+        )
+
+        for label in ("", "   ", "x" * 121):
+            with self.subTest(label=label):
+                invalid_status, _, invalid_body = self.request(
+                    "/api/v1/quick-sessions/pi",
+                    method="POST",
+                    payload={"label": label},
+                )
+                self.assertEqual(invalid_status, 400)
+                self.assertEqual(invalid_body["error"]["code"], "invalid_request")
+
+    def test_start_agent_injects_pi_extension_only_when_args_are_empty(self):
+        path = "/api/v1/panes/w1:p1/start-agent"
+        expected = {
+            "pane_id": "w1:p1",
+            "name": "n",
+            "kind": "pi",
+            "args": ["--extension", "/fake/bridge"],
+            "timeout_ms": 30000,
+        }
+
+        for payload in (
+            {"name": "n", "kind": "pi"},
+            {"name": "n", "kind": "pi", "args": []},
+        ):
+            with self.subTest(payload=payload):
+                status, _, _ = self.request(path, method="POST", payload=payload)
+                self.assertEqual(status, 200)
+                self.assertEqual(self.service.calls[-1], ("agent.start", expected))
+        self.assertEqual(self.service.pi_extension_args_calls, 2)
+
+        status, _, _ = self.request(
+            path,
+            method="POST",
+            payload={"name": "n", "kind": "pi", "args": ["--foo"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "agent.start",
+                {**expected, "args": ["--foo"]},
+            ),
+        )
+        self.assertEqual(self.service.pi_extension_args_calls, 2)
+
+        status, _, _ = self.request(
+            path,
+            method="POST",
+            payload={"name": "n", "kind": "codex", "args": []},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "agent.start",
+                {**expected, "kind": "codex", "args": []},
+            ),
+        )
+        self.assertEqual(self.service.pi_extension_args_calls, 2)
 
     def test_relative_cwd_and_invalid_keys_are_rejected(self):
         cwd_status, _, cwd_body = self.request(

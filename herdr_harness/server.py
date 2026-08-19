@@ -244,6 +244,13 @@ def api_description() -> dict:
             "POST /api/v1/push/devices|unregister",
             "POST /api/v1/live-activities|unregister",
             "POST /api/v1/voice/transcriptions",
+            "POST /api/v1/quick-sessions/pi",
+        ],
+        "sseEvents": [
+            "snapshot.updated",
+            "alert.created",
+            "alert.updated",
+            "alerts.read_state_changed",
         ],
         "generatedAt": utc_now(),
     }
@@ -698,6 +705,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         )
             if method == "POST" and len(tail) == 3 and tail[0] == "agents" and tail[2] == "prompt":
                 return self._prompt(_identifier(tail[1], "agent target"), body)
+            if method == "POST" and tail == ["quick-sessions", "pi"]:
+                label = _string(body.get("label"), "label", maximum=120)
+                return service.quick_pi_session(label)
             if method == "POST" and tail == ["alerts", "read-all"]:
                 return service.mark_all_alerts_read()
             if method == "POST" and len(tail) == 3 and tail[0] == "alerts" and tail[2] == "read":
@@ -795,6 +805,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             clean_args = []
             for item in args:
                 clean_args.append(_string(item, "agent argument", maximum=4096, allow_empty=True))
+            if kind == "pi" and not clean_args:
+                clean_args = service.pi_extension_args()
             timeout = body.get("timeoutMs", 30000)
             if not isinstance(timeout, int) or isinstance(timeout, bool) or not 3001 <= timeout <= 300000:
                 raise HTTPValidationError("timeoutMs must be greater than 3000 and at most 300000")

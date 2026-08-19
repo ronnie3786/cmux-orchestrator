@@ -5,6 +5,7 @@ import SwiftUI
 /// The view is intentionally closure-driven so the composer owns presentation
 /// and networking state while this control stays reusable and previewable.
 struct ComposerAuxiliaryBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let attach: () -> Void
     let recordVoice: () -> Void
     let searchFiles: () -> Void
@@ -12,8 +13,10 @@ struct ComposerAuxiliaryBar: View {
     let voicePhase: HerdrQuickVoiceCapture.Phase
     let beginVoiceHold: () -> Void
     let endVoiceHold: () -> Void
+    let finishLockedVoiceCapture: () -> Void
 
     @State private var hapticPulse = HerdrHapticPulse()
+    @State private var isLockPulsing = false
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -21,6 +24,12 @@ struct ComposerAuxiliaryBar: View {
             controls(showsTitles: false)
         }
         .herdrHaptic(trigger: hapticPulse)
+        .onChange(of: voicePhase) { _, phase in
+            isLockPulsing = phase == .locked
+        }
+        .onAppear {
+            isLockPulsing = voicePhase == .locked
+        }
     }
 
     private func controls(showsTitles: Bool) -> some View {
@@ -93,7 +102,7 @@ struct ComposerAuxiliaryBar: View {
                     .tint(HerdrTheme.mist)
                     .frame(width: 16, height: 16)
             } else {
-                Image(systemName: "mic.fill")
+                Image(systemName: voicePhase == .locked ? "lock.fill" : "mic.fill")
                     .font(.subheadline.weight(.semibold))
             }
 
@@ -113,10 +122,22 @@ struct ComposerAuxiliaryBar: View {
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         .contentShape(.rect)
+        .scaleEffect(voicePhase == .locked && isLockPulsing && !reduceMotion ? 1.035 : 1)
+        .opacity(voicePhase == .locked && isLockPulsing && !reduceMotion ? 0.86 : 1)
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+            value: isLockPulsing
+        )
         .onTapGesture {
-            guard voicePhase == .idle else { return }
-            hapticPulse.fire(.selection)
-            recordVoice()
+            switch voicePhase {
+            case .idle:
+                hapticPulse.fire(.selection)
+                recordVoice()
+            case .locked:
+                finishLockedVoiceCapture()
+            case .recording, .transcribing:
+                break
+            }
         }
         .gesture(
             LongPressGesture(minimumDuration: 0.35)
@@ -131,14 +152,18 @@ struct ComposerAuxiliaryBar: View {
     }
 
     private var voiceForeground: Color {
-        voicePhase == .recording ? HerdrTheme.ink : HerdrTheme.mist
+        isRecordingOrLocked ? HerdrTheme.ink : HerdrTheme.mist
     }
 
     private var voiceBackground: Color {
-        voicePhase == .recording ? HerdrTheme.alert : HerdrTheme.elevated
+        isRecordingOrLocked ? HerdrTheme.alert : HerdrTheme.elevated
     }
 
     private var voiceBorder: Color {
-        voicePhase == .recording ? HerdrTheme.alert : HerdrTheme.surface
+        isRecordingOrLocked ? HerdrTheme.alert : HerdrTheme.surface
+    }
+
+    private var isRecordingOrLocked: Bool {
+        voicePhase == .recording || voicePhase == .locked
     }
 }
