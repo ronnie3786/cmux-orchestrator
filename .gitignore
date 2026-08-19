@@ -14,3 +14,6 @@ xcuserdata/
 
 .qa/
 node_modules/
+
+# Generated SPA bundle (built by frontend/herdr-web at deploy time)
+herdr_harness/static/herdr-web/

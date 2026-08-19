@@ -5,9 +5,9 @@ export default defineConfig({
   plugins: [react()],
   base: "/herdr-web/",
   build: {
-    // Writes into the cmux-herdr-harness worktree's static dir (untracked
-    // build output — that repo is otherwise read-only for this project).
-    outDir: "../../../cmux-herdr-harness/herdr_harness/static/herdr-web",
+    // Writes into this repo's herdr server static dir (untracked build
+    // output, generated at deploy).
+    outDir: "../../herdr_harness/static/herdr-web",
     emptyOutDir: true
   }
 });

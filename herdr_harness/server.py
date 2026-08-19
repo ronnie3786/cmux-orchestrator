@@ -400,8 +400,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                if method == "GET" and self._serve_herdr_web_static(path):
-                    return
                 if method == "GET" and path in {
                     "/.well-known/apple-app-site-association",
                     "/apple-app-site-association",
@@ -437,6 +435,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         self.wfile.write(body)
                     else:
                         self._error(404, "not_found", "Unknown link")
+                    return
+                if method == "GET" and self._serve_herdr_web_static(path):
                     return
                 if len(segments) < 2 or segments[:2] != ["api", "v1"]:
                     self._error(404, "not_found", "Endpoint not found")
