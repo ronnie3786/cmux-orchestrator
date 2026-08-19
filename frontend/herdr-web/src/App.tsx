@@ -3,9 +3,11 @@ import { configureClient, getToken, setToken } from "./api/client";
 import { useConnectionStore } from "./store/connectionStore";
 import { useEventStreamStore } from "./store/eventStream";
 import { useWorkspacesStore } from "./store/workspacesStore";
+import { getHashRoute, parseHash, setHashRoute, subscribeHash } from "./lib/hashRoute";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { WorkspaceListView } from "./components/Workspace/WorkspaceListView";
 import { DetailPlaceholder } from "./components/Detail/DetailPlaceholder";
+import { AttentionView } from "./components/Attention/AttentionView";
 import { Toast } from "./components/Toast/Toast";
 import { useWorkspaceHashRoute } from "./hooks/useWorkspaceHashRoute";
 import "./styles/app.css";
@@ -17,7 +19,9 @@ import "./styles/app.css";
  * With a token the app probes /health, arms the /workspaces refresh, and
  * opens the global SSE stream; the shell renders once the probe settles
  * (any 401 re-enters the token form via the client's onUnauthorized hook).
- * Selection is driven by the `#ws=<id>&pane=<id>` hash route.
+ * Selection is driven by the `#ws=<id>&pane=<id>` hash route; the `deck=1`
+ * param swaps the right region from the detail placeholder to the
+ * Attention Deck (P3-run-B).
  */
 export default function App() {
   const [token, setStoredToken] = useState<string>(() => getToken());
@@ -74,6 +78,26 @@ export default function App() {
   }, [token]);
 
   useWorkspaceHashRoute(token);
+
+  // Attention deck (P3-run-B): `deck=1` in the hash opens the deck in the
+  // right region. Anchor navigation (#deck=1 from the attention strip, alert
+  // deep links) arrives via hashchange; the back button clears the param via
+  // replaceState and updates the state directly (replaceState fires no event).
+  const [deckOpen, setDeckOpen] = useState<boolean>(
+    () => parseHash(window.location.hash).params.deck === "1",
+  );
+  useEffect(
+    () =>
+      subscribeHash(() => setDeckOpen(parseHash(window.location.hash).params.deck === "1")),
+    [],
+  );
+  const closeDeck = () => {
+    const route = getHashRoute();
+    const params = { ...route.params };
+    delete params.deck;
+    setHashRoute({ ...route, params });
+    setDeckOpen(false);
+  };
 
   // Selecting something closes the responsive drawer (Phase-1 pattern).
   useEffect(() => {
@@ -142,7 +166,7 @@ export default function App() {
     <div className="hz-app-shell">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <WorkspaceListView onOpenNavigator={() => setSidebarOpen(true)} />
-      <DetailPlaceholder workspace={workspace} />
+      {deckOpen ? <AttentionView onClose={closeDeck} /> : <DetailPlaceholder workspace={workspace} />}
       <Toast />
     </div>
   );
