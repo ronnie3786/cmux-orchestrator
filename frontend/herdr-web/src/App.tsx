@@ -12,6 +12,7 @@ import { TerminalView } from "./components/Terminal/TerminalView";
 import { PiChatPane } from "./components/Pi/PiChatView";
 import { Toast } from "./components/Toast/Toast";
 import { useWorkspaceHashRoute } from "./hooks/useWorkspaceHashRoute";
+import { usePaneModeStore } from "./store/paneModeStore";
 import "./styles/app.css";
 
 /**
@@ -171,6 +172,11 @@ export default function App() {
     selectedPane?.pi_semantic !== undefined &&
     selectedPane.pi_semantic.available &&
     selectedPane.pi_semantic.protocol_version === 1;
+  // Pi panes default to Chat; a stored "terminal" override (pane ⋯ menu) wins.
+  const paneMode = usePaneModeStore((state) =>
+    selectedPane !== null ? state.modeFor(selectedPane) : null,
+  );
+  const showPiChat = supportsPiChat && paneMode !== "terminal";
 
   return (
     <div className="hz-app-shell">
@@ -179,7 +185,7 @@ export default function App() {
       {deckOpen ? (
         <AttentionView onClose={closeDeck} />
       ) : selectedPaneId !== null ? (
-        supportsPiChat ? (
+        showPiChat ? (
           <PiChatPane />
         ) : (
           <TerminalView />

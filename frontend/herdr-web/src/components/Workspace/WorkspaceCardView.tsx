@@ -1,6 +1,7 @@
 import { statusTitle, type WorkspaceGroup } from "../../lib/workspaceGroups";
 import type { Pane } from "../../types/herdr";
 import { TopologyRadar } from "../Sidebar/TopologyRadar";
+import { WorkspaceCardMenu } from "./WorkspaceCardMenu";
 import "./workspace.css";
 
 interface WorkspaceCardViewProps {
@@ -56,6 +57,11 @@ export function WorkspaceCardView({
           <span className={`hz-ws-card-status hz-ws-card-status-${group.agentStatus}`}>
             {statusTitle(group.agentStatus)}
           </span>
+          <WorkspaceCardMenu
+            workspaceId={group.workspaceId}
+            label={group.label}
+            paneCount={group.paneCount}
+          />
         </div>
         <div className="hz-ws-card-detail">
           <span className="hz-ws-card-branch">{group.branch}</span>

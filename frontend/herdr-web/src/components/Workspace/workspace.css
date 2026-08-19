@@ -497,3 +497,68 @@
     opacity: 0.35;
   }
 }
+
+/* --- create workspace modal (P10-run-B, iOS CreateWorkspaceView parity) ------ */
+
+.create-ws-modal {
+  width: min(440px, 100%);
+  height: auto;
+}
+
+.create-ws-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.create-ws-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.create-ws-field-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.create-ws-input {
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  outline: none;
+}
+
+.create-ws-input::placeholder {
+  color: var(--muted-dim);
+}
+
+.create-ws-input:focus {
+  border-color: var(--accent);
+}
+
+.create-ws-info {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.create-ws-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.create-ws-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}

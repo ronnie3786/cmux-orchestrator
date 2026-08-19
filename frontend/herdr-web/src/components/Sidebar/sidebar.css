@@ -274,6 +274,7 @@
   background: transparent;
   text-align: left;
   color: var(--text);
+  cursor: pointer;
 }
 
 .hz-chat-row:hover {

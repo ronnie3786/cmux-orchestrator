@@ -50,6 +50,15 @@ interface ConnectionStoreState {
   probe: () => Promise<void>;
 }
 
+/**
+ * Imperative control gate (P9 composer pattern): mutations fire only
+ * against a Live connection. Demo/Offline/Unavailable callers surface
+ * "Reconnect before controlling Herdr" instead.
+ */
+export function canControlNow(): boolean {
+  return useConnectionStore.getState().status === "Live";
+}
+
 export const useConnectionStore = create<ConnectionStoreState>()((set, get) => ({
   status: "Offline",
   streamOpen: false,

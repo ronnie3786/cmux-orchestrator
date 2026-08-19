@@ -7,8 +7,12 @@ import {
   groups,
   type ChatRow,
 } from "../../lib/workspaceGroups";
+import { canControlNow } from "../../store/connectionStore";
 import { showToast } from "../../lib/toast";
+import type { Pane } from "../../types/herdr";
 import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
+import { PaneMenuButton } from "./PaneMenu";
+import { CreateWorkspaceModal } from "../Workspace/CreateWorkspaceModal";
 import "./sidebar.css";
 
 const COLLAPSED_STORAGE_KEY = "herdr.web.sidebar.collapsedWorkspaces";
@@ -27,17 +31,36 @@ function loadCollapsed(): Set<string> {
   return new Set();
 }
 
-function ChatRowView({ chat, selected, onSelect }: { chat: ChatRow; selected: boolean; onSelect: () => void }) {
+function ChatRowView({
+  chat,
+  pane,
+  selected,
+  onSelect,
+}: {
+  chat: ChatRow;
+  pane: Pane;
+  selected: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <button
-      type="button"
+    <div
       className={`hz-chat-row${selected ? " hz-chat-row-selected" : ""}`}
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
     >
       <span className={`hz-dot hz-dot-${chat.status}`} aria-hidden />
       <span className="hz-chat-title">{chat.title}</span>
       <span className="hz-chat-status">{compactStatus(chat.status)}</span>
-    </button>
+      <PaneMenuButton pane={pane} onNavigate={onSelect} />
+    </div>
   );
 }
 
@@ -62,6 +85,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
+  const [createOpen, setCreateOpen] = useState(false);
 
   // Drawer hygiene (Phase-1 overlay pattern): Esc closes the drawer, body
   // scroll locks while it is open.
@@ -78,6 +102,14 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   }, [collapsed]);
 
   const all = useMemo(() => groups(data?.workspaces ?? []), [data]);
+  // Raw Pane objects by id (ChatRow only carries display fields).
+  const panesById = useMemo(() => {
+    const map = new Map<string, Pane>();
+    for (const workspace of data?.workspaces ?? []) {
+      for (const pane of workspace.panes) map.set(pane.pane_id, pane);
+    }
+    return map;
+  }, [data]);
   const filtering = query.trim().length > 0;
   const visible = useMemo(
     () => (filtering ? all.filter((group) => groupMatchesSearch(group, query)) : all),
@@ -120,13 +152,19 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           <button
             type="button"
             className="hz-sidebar-new-button"
-            // P10 wires the real create flow (POST /workspaces).
-            onClick={() => showToast("Workspace created")}
+            onClick={() => {
+              if (!canControlNow()) {
+                showToast("Reconnect before controlling Herdr");
+                return;
+              }
+              setCreateOpen(true);
+            }}
           >
             <Plus size={14} aria-hidden />
             <span>new workspace</span>
           </button>
         </div>
+        {createOpen ? <CreateWorkspaceModal onClose={() => setCreateOpen(false)} /> : null}
 
         <div className="hz-sidebar-section">
           <span className="hz-sidebar-section-label">chats</span>
@@ -210,6 +248,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                           <ChatRowView
                             key={chat.paneId}
                             chat={chat}
+                            pane={panesById.get(chat.paneId)!}
                             selected={
                               selectedWorkspaceId === group.workspaceId && selectedPaneId === chat.paneId
                             }
@@ -222,6 +261,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                       <ChatRowView
                         key={chat.paneId}
                         chat={chat}
+                        pane={panesById.get(chat.paneId)!}
                         selected={
                           selectedWorkspaceId === group.workspaceId && selectedPaneId === chat.paneId
                         }
