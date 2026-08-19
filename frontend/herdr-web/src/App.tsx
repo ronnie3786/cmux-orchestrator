@@ -37,6 +37,17 @@ export default function App() {
   const selectedPaneId = useWorkspacesStore((state) => state.selectedPaneId);
   const data = useWorkspacesStore((state) => state.data);
 
+  // Pi pane mode override ("chat" | "terminal", pane ⋯ menu). This hook MUST
+  // run unconditionally — before the early returns below — or the hook order
+  // changes once the token is entered and React throws #310.
+  const selectedWorkspace =
+    data?.workspaces.find((candidate) => candidate.workspace_id === selectedWorkspaceId) ?? null;
+  const selectedPane =
+    selectedWorkspace?.panes.find((candidate) => candidate.pane_id === selectedPaneId) ?? null;
+  const paneMode = usePaneModeStore((state) =>
+    selectedPane !== null ? state.modeFor(selectedPane) : null,
+  );
+
   const clearToken = () => {
     setToken("");
     useEventStreamStore.getState().stop();
@@ -163,19 +174,13 @@ export default function App() {
     );
   }
 
-  const workspace =
-    data?.workspaces.find((candidate) => candidate.workspace_id === selectedWorkspaceId) ?? null;
-  const selectedPane =
-    workspace?.panes.find((candidate) => candidate.pane_id === selectedPaneId) ?? null;
+  const workspace = selectedWorkspace;
   // Pi capability gate (doc 01 §4.4): available && protocol version 1.
   const supportsPiChat =
     selectedPane?.pi_semantic !== undefined &&
     selectedPane.pi_semantic.available &&
     selectedPane.pi_semantic.protocol_version === 1;
   // Pi panes default to Chat; a stored "terminal" override (pane ⋯ menu) wins.
-  const paneMode = usePaneModeStore((state) =>
-    selectedPane !== null ? state.modeFor(selectedPane) : null,
-  );
   const showPiChat = supportsPiChat && paneMode !== "terminal";
 
   return (
