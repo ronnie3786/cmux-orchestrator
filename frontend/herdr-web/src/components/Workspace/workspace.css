@@ -247,8 +247,8 @@
 
 .hz-ws-card {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: center;
+  gap: 12px;
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -256,6 +256,20 @@
   background: var(--panel);
   text-align: left;
   color: var(--text);
+  cursor: pointer;
+}
+
+.hz-ws-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hz-ws-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .hz-ws-card:hover {
@@ -359,6 +373,64 @@
   margin-left: auto;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* --- topology radar (2x2 mini grid on the card, P10-run-A) ------------------------- */
+
+.hz-radar {
+  display: grid;
+  grid-template-columns: repeat(2, 16px);
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.hz-radar-cell {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-strong);
+}
+
+.hz-radar-cell:hover {
+  border-color: var(--line-strong);
+}
+
+/* Cell border follows the pane state (same palette as the status dots). */
+.hz-radar-cell-idle {
+  border-color: rgba(138, 145, 156, 0.45);
+}
+
+.hz-radar-cell-working {
+  border-color: rgba(255, 159, 10, 0.55);
+}
+
+.hz-radar-cell-blocked {
+  border-color: rgba(255, 69, 58, 0.6);
+}
+
+.hz-radar-cell-done {
+  border-color: rgba(48, 209, 88, 0.55);
+}
+
+.hz-radar-cell-selected {
+  border-color: var(--accent);
+  background: rgba(47, 129, 247, 0.15);
+}
+
+.hz-radar-cell .hz-radar-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.hz-radar-empty {
+  color: var(--muted-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* --- empty state ------------------------------------------------------------------ */

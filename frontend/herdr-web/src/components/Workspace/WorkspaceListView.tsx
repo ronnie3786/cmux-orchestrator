@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Menu, Search } from "lucide-react";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
+import { getHashRoute, setHashRoute } from "../../lib/hashRoute";
+import type { Pane } from "../../types/herdr";
 import {
   filterGroups,
   groups,
@@ -26,6 +28,7 @@ interface WorkspaceListViewProps {
 export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
   const data = useWorkspacesStore((state) => state.data);
   const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
+  const selectedPaneId = useWorkspacesStore((state) => state.selectedPaneId);
   const connectionStatus = useConnectionStore((state) => state.status);
 
   const [search, setSearch] = useState("");
@@ -33,6 +36,24 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
 
   const all = useMemo(() => groups(data?.workspaces ?? []), [data]);
   const visible = useMemo(() => filterGroups(all, search, filter), [all, search, filter]);
+  const panesByWorkspace = useMemo(() => {
+    const map = new Map<string, Pane[]>();
+    for (const workspace of data?.workspaces ?? []) map.set(workspace.workspace_id, workspace.panes);
+    return map;
+  }, [data]);
+
+  // Radar cell click: select the pane and close the attention deck (deck=1)
+  // if it is open. replaceState fires no hashchange, so a synthetic event
+  // lets App re-read the deck param.
+  const selectPane = (workspaceId: string, paneId: string) => {
+    useWorkspacesStore.getState().repairSelection(workspaceId, paneId);
+    const route = getHashRoute();
+    if (route.params.deck === undefined) return;
+    const params = { ...route.params };
+    delete params.deck;
+    setHashRoute({ ...route, params });
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  };
 
   return (
     <section className="hz-ws-list" aria-label="Workspaces">
@@ -101,6 +122,9 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
             group={group}
             selected={selectedWorkspaceId === group.workspaceId}
             onSelect={() => useWorkspacesStore.getState().repairSelection(group.workspaceId, null)}
+            panes={panesByWorkspace.get(group.workspaceId) ?? []}
+            selectedPaneId={selectedPaneId}
+            onSelectPane={(paneId) => selectPane(group.workspaceId, paneId)}
           />
         ))}
       </div>
