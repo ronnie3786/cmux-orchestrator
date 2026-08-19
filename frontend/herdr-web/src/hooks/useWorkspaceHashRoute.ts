@@ -1,5 +1,11 @@
 import { useEffect } from "react";
-import { parseHash, setHashRoute, subscribeHash } from "../lib/hashRoute";
+import {
+  parseHash,
+  setHashRoute,
+  subscribeHash,
+  workspaceFromPaneId,
+  type HashRoute,
+} from "../lib/hashRoute";
 import { useWorkspacesStore } from "../store/workspacesStore";
 
 /**
@@ -11,8 +17,36 @@ import { useWorkspacesStore } from "../store/workspacesStore";
  *   snapshot — repairSelection prunes dead ids and reselects the first
  *   workspace when the selection vanished (iOS repairNavigation parity).
  *   A `ws` id that arrived before the first snapshot is re-applied once
- *   the data lands (the iOS pending-pane pattern).
+ *   the data lands (the iOS pending-pane pattern). A pane-only deep link
+ *   (`#pane=wB:p1`, no `#ws=`) resolves the workspace from the pane id
+ *   prefix the same way, so the pending-pane queue works without a ws id.
  */
+
+/** The repairSelection arguments a hash route implies ("none" = no-op). */
+export type RouteRepair =
+  | { workspaceId: string | null; paneId: string | null }
+  | "none";
+
+/**
+ * Pure route guard (the data→repair and hashchange effects share it):
+ * `#ws=` wins; a pane-only `#pane=` resolves its workspace from the pane id
+ * prefix (workspaceFromPaneId — null keeps the repairSelection first-
+ * workspace fallback for unresolvable ids); with no ids in the URL a
+ * missing selection is repaired to the first workspace.
+ */
+export function repairArgsForRoute(
+  route: HashRoute,
+  selectedWorkspaceId: string | null,
+): RouteRepair {
+  if (route.workspaceId !== null) {
+    return { workspaceId: route.workspaceId, paneId: route.paneId };
+  }
+  if (route.paneId !== null) {
+    return { workspaceId: workspaceFromPaneId(route.paneId), paneId: route.paneId };
+  }
+  return selectedWorkspaceId === null ? { workspaceId: null, paneId: null } : "none";
+}
+
 export function useWorkspaceHashRoute(token: string): void {
   const data = useWorkspacesStore((state) => state.data);
   const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
@@ -26,10 +60,9 @@ export function useWorkspaceHashRoute(token: string): void {
     if (!token || data === null) return;
     const route = parseHash(window.location.hash);
     const store = useWorkspacesStore.getState();
-    if (route.workspaceId !== null) {
-      store.repairSelection(route.workspaceId, route.paneId);
-    } else if (store.selectedWorkspaceId === null) {
-      store.repairSelection(null, null);
+    const args = repairArgsForRoute(route, store.selectedWorkspaceId);
+    if (args !== "none") {
+      store.repairSelection(args.workspaceId, args.paneId);
     }
   }, [token, data]);
 
@@ -52,13 +85,16 @@ export function useWorkspaceHashRoute(token: string): void {
     });
   }, [token, selectedWorkspaceId, selectedPaneId, data]);
 
-  // hash → selection (manual edits, back/forward).
+  // hash → selection (manual edits, back/forward) — same guard as the
+  // data→repair effect, so a manually typed `#pane=wB:p1` also resolves.
   useEffect(() => {
     if (!token) return;
     return subscribeHash(() => {
-      const route = parseHash(window.location.hash);
-      if (route.workspaceId === null) return;
-      useWorkspacesStore.getState().repairSelection(route.workspaceId, route.paneId);
+      const store = useWorkspacesStore.getState();
+      const args = repairArgsForRoute(parseHash(window.location.hash), store.selectedWorkspaceId);
+      if (args !== "none") {
+        store.repairSelection(args.workspaceId, args.paneId);
+      }
     });
   }, [token]);
 }

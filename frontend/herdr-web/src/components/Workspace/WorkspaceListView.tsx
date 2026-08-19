@@ -4,6 +4,7 @@ import { useConnectionStore } from "../../store/connectionStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
 import { getHashRoute, setHashRoute } from "../../lib/hashRoute";
 import type { Pane } from "../../types/herdr";
+import { useEscapeLayer, useScrollLock } from "../../hooks/useOverlay";
 import {
   filterGroups,
   groups,
@@ -15,17 +16,22 @@ import { AttentionStrip } from "./AttentionStrip";
 import "./workspace.css";
 
 interface WorkspaceListViewProps {
-  /** Opens the "chats" navigator drawer (visible below 900 px only). */
+  /** Opens the "chats" navigator drawer (visible below 1100 px only). */
   onOpenNavigator: () => void;
+  /** Phone (<700 px): the list itself is an overlay drawer. */
+  drawerOpen: boolean;
+  onCloseDrawer: () => void;
 }
 
 /**
  * Middle column: the workspace list (iOS WorkspaceListView parity) —
  * "Workspaces" title, search, segmented filter (All / Needs you / Active,
  * lowercased render), attention strip (top 2), "spaces" section with
- * "n / total", cards, and the empty state.
+ * "n / total", cards, and the empty state. Below 700 px the whole column
+ * is an overlay drawer (backdrop / Esc / "Close workspaces", same chrome as
+ * the chats sidebar drawer).
  */
-export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
+export function WorkspaceListView({ onOpenNavigator, drawerOpen, onCloseDrawer }: WorkspaceListViewProps) {
   const data = useWorkspacesStore((state) => state.data);
   const selectedWorkspaceId = useWorkspacesStore((state) => state.selectedWorkspaceId);
   const selectedPaneId = useWorkspacesStore((state) => state.selectedPaneId);
@@ -37,6 +43,11 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
   // banner in the workspace header while demo is active).
   const [demoBannerDismissed, setDemoBannerDismissed] = useState(false);
 
+  // Drawer hygiene (same overlay pattern as the chats sidebar): Esc closes,
+  // body scroll locks while open.
+  useEscapeLayer(onCloseDrawer, drawerOpen);
+  useScrollLock(drawerOpen);
+
   const all = useMemo(() => groups(data?.workspaces ?? []), [data]);
   const visible = useMemo(() => filterGroups(all, search, filter), [all, search, filter]);
   const panesByWorkspace = useMemo(() => {
@@ -47,9 +58,11 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
 
   // Radar cell click: select the pane and close the attention deck (deck=1)
   // if it is open. replaceState fires no hashchange, so a synthetic event
-  // lets App re-read the deck param.
+  // lets App re-read the deck param. Selecting from the phone drawer also
+  // closes it (tapping the already-selected workspace included).
   const selectPane = (workspaceId: string, paneId: string) => {
     useWorkspacesStore.getState().repairSelection(workspaceId, paneId);
+    if (drawerOpen) onCloseDrawer();
     const route = getHashRoute();
     if (route.params.deck === undefined) return;
     const params = { ...route.params };
@@ -59,7 +72,10 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
   };
 
   return (
-    <section className="hz-ws-list" aria-label="Workspaces">
+    <section
+      className={`hz-ws-list${drawerOpen ? " hz-ws-list-open" : ""}`}
+      aria-label="Workspaces"
+    >
       <header className="hz-ws-list-header">
         <button
           type="button"
@@ -70,6 +86,11 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
           <Menu size={16} aria-hidden />
         </button>
         <h1 className="hz-ws-list-title">Workspaces</h1>
+        {drawerOpen ? (
+          <button type="button" className="hz-ws-list-close" onClick={onCloseDrawer}>
+            Close workspaces
+          </button>
+        ) : null}
         {connectionStatus === "Demo" && !demoBannerDismissed ? (
           <div className="hz-demo-banner" role="status">
             <span>Demo data is active</span>
@@ -136,7 +157,10 @@ export function WorkspaceListView({ onOpenNavigator }: WorkspaceListViewProps) {
             key={group.workspaceId}
             group={group}
             selected={selectedWorkspaceId === group.workspaceId}
-            onSelect={() => useWorkspacesStore.getState().repairSelection(group.workspaceId, null)}
+            onSelect={() => {
+              useWorkspacesStore.getState().repairSelection(group.workspaceId, null);
+              if (drawerOpen) onCloseDrawer();
+            }}
             panes={panesByWorkspace.get(group.workspaceId) ?? []}
             selectedPaneId={selectedPaneId}
             onSelectPane={(paneId) => selectPane(group.workspaceId, paneId)}

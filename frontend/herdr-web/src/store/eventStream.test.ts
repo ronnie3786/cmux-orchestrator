@@ -231,3 +231,48 @@ describe("eventStream", () => {
     expect(useConnectionStore.getState().status).toBe("Unavailable");
   });
 });
+
+describe("connection issue alert (P12-run-B)", () => {
+  it("sets the issue on stream drop and clears it on reopen", () => {
+    useEventStreamStore.getState().start("tok");
+    sseConfig().onState("open", 0);
+    expect(useEventStreamStore.getState().issue).toBeNull();
+
+    sseConfig().onState("reconnecting", 1);
+    expect(useEventStreamStore.getState().issue).toBe("Live stream dropped — reconnecting");
+
+    sseConfig().onState("open", 1);
+    expect(useEventStreamStore.getState().issue).toBeNull();
+  });
+
+  it("sets the issue from a herdr drop with the error as detail", () => {
+    useEventStreamStore.getState().start("tok");
+    sseConfig().onState("open", 0);
+
+    emit("connection.changed", {
+      id: 1,
+      event: "connection.changed",
+      data: { state: "disconnected", error: "herdr socket closed" },
+    });
+    expect(useEventStreamStore.getState().issue).toBe("herdr socket closed");
+
+    emit("connection.changed", {
+      id: 2,
+      event: "connection.changed",
+      data: { state: "connected", error: null },
+    });
+    expect(useEventStreamStore.getState().issue).toBeNull();
+  });
+
+  it("uses the fallback detail when the drop carries no error", () => {
+    useEventStreamStore.getState().start("tok");
+    sseConfig().onState("open", 0);
+
+    emit("connection.changed", {
+      id: 1,
+      event: "connection.changed",
+      data: { state: "disconnected", error: null },
+    });
+    expect(useEventStreamStore.getState().issue).toBe("herdr event stream disconnected");
+  });
+});

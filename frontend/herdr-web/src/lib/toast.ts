@@ -7,7 +7,7 @@
 import { create } from "zustand";
 
 /** iOS ToastView auto-dismiss window. */
-const TOAST_DURATION_MS = 2_200;
+export const TOAST_DURATION_MS = 2_200;
 
 interface ToastState {
   message: string | null;

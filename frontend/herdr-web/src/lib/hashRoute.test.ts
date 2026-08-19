@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseHash, serializeHash } from "./hashRoute";
+import { parseHash, serializeHash, workspaceFromPaneId } from "./hashRoute";
 
 const EMPTY = { workspaceId: null, paneId: null, params: {} };
 
@@ -62,6 +62,26 @@ describe("parseHash", () => {
 
   it("ignores empty segments", () => {
     expect(parseHash("#ws=w1&&")).toEqual({ workspaceId: "w1", paneId: null, params: {} });
+  });
+});
+
+describe("workspaceFromPaneId", () => {
+  it("resolves the workspace prefix of a pane id", () => {
+    expect(workspaceFromPaneId("wB:p1")).toBe("wB");
+    expect(workspaceFromPaneId("w1:p1")).toBe("w1");
+  });
+
+  it("keeps the first segment when the id has more colons", () => {
+    expect(workspaceFromPaneId("a:b:c")).toBe("a");
+  });
+
+  it("returns null for ids without a colon", () => {
+    expect(workspaceFromPaneId("p1")).toBe(null);
+    expect(workspaceFromPaneId("")).toBe(null);
+  });
+
+  it("returns null for a leading colon (empty workspace id)", () => {
+    expect(workspaceFromPaneId(":p1")).toBe(null);
   });
 });
 

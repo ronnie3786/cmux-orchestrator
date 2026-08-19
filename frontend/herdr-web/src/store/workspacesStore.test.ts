@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import workspacesFixture from "../__fixtures__/workspaces.json";
+import { workspaceFromPaneId } from "../lib/hashRoute";
 import {
   attentionPanes,
   canControl,
@@ -7,6 +8,10 @@ import {
   unreadAlertCount,
   visibleWorkspaces,
 } from "./workspacesStore";
+
+vi.mock("../api/herdr", () => ({
+  workspaces: vi.fn(async () => ({ ok: true, workspaces: [], alerts: [], generatedAt: "now" })),
+}));
 import type {
   AgentStatus,
   Pane,
@@ -99,6 +104,45 @@ describe("attentionPanes", () => {
   });
 });
 
+describe("pane-only deep links (P12-run-B pending-pane queue)", () => {
+  beforeEach(() => {
+    useWorkspacesStore.setState({ data: fixture });
+  });
+
+  const firstWorkspace = fixture.workspaces[0]!;
+  const firstPane = firstWorkspace.panes[0]!;
+
+  it("resolves a live pane-only link via the pane id prefix", () => {
+    const selection = useWorkspacesStore
+      .getState()
+      .repairSelection(workspaceFromPaneId("w1:p1"), "w1:p1");
+    expect(selection).toEqual({ workspaceId: "w1", paneId: "w1:p1" });
+  });
+
+  it("falls back to the workspace's first pane for a dead pane id", () => {
+    const selection = useWorkspacesStore
+      .getState()
+      .repairSelection(workspaceFromPaneId("w1:pDead"), "w1:pDead");
+    expect(selection.workspaceId).toBe("w1");
+    expect(selection.paneId).toBe(firstWorkspace.panes[0]!.pane_id);
+  });
+
+  it("falls back to the first workspace (and its first pane) for a dead workspace prefix", () => {
+    const selection = useWorkspacesStore
+      .getState()
+      .repairSelection(workspaceFromPaneId("wDead:pDead"), "wDead:pDead");
+    expect(selection.workspaceId).toBe(firstWorkspace.workspace_id);
+    expect(selection.paneId).toBe(firstPane.pane_id);
+  });
+
+  it("unresolvable pane ids (no colon) fall back to the first workspace/pane", () => {
+    expect(workspaceFromPaneId("p1")).toBe(null);
+    const selection = useWorkspacesStore.getState().repairSelection(null, "p1");
+    expect(selection.workspaceId).toBe(firstWorkspace.workspace_id);
+    expect(selection.paneId).toBe(firstPane.pane_id);
+  });
+});
+
 describe("repairSelection", () => {
   it("keeps a live workspace + pane selection", () => {
     useWorkspacesStore.setState({ data: fixture });
@@ -135,6 +179,29 @@ describe("repairSelection", () => {
   it("returns null selection with no snapshot and no input", () => {
     const selection = useWorkspacesStore.getState().repairSelection(null, null);
     expect(selection).toEqual({ workspaceId: null, paneId: null });
+  });
+});
+
+describe("refresh — repairNavigation guard (P12-run-B)", () => {
+  it("prunes a selection the fresh snapshot no longer contains", async () => {
+    useWorkspacesStore.setState({ data: fixture });
+    useWorkspacesStore
+      .getState()
+      .repairSelection("w1", "w1:p1");
+
+    // The refetched snapshot is empty (mocked): the dead selection is
+    // pruned to null instead of outliving its workspace.
+    await useWorkspacesStore.getState().refresh();
+    expect(useWorkspacesStore.getState().selectedWorkspaceId).toBe(null);
+    expect(useWorkspacesStore.getState().selectedPaneId).toBe(null);
+  });
+
+  it("keeps a live selection untouched", async () => {
+    useWorkspacesStore.setState({ data: null });
+    // Same empty snapshot lands while nothing is selected: stays null,
+    // and the pending-deep-link case is left to the route hook's repair.
+    await useWorkspacesStore.getState().refresh();
+    expect(useWorkspacesStore.getState().selectedWorkspaceId).toBe(null);
   });
 });
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Menu } from "lucide-react";
 import {
   configureClient,
   getToken,
@@ -19,6 +20,7 @@ import { GitStatusView } from "./components/Git/GitStatusView";
 import { SkillsView } from "./components/Skills/SkillsView";
 import { PiChatPane } from "./components/Pi/PiChatView";
 import { Toast } from "./components/Toast/Toast";
+import { ConnectionIssue } from "./components/Shared/ConnectionIssue";
 import { OnboardingView } from "./components/Onboarding/OnboardingView";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { disableDemoMode, demoEnabled, demoRequest, enableDemoMode } from "./demo/demoAdapter";
@@ -43,8 +45,10 @@ import "./styles/app.css";
 export default function App() {
   const [token, setStoredToken] = useState<string>(() => getToken());
   const [probed, setProbed] = useState(false);
-  // Responsive "chats" drawer (visible only below the 900 px breakpoint).
+  // Responsive drawers: the "chats" navigator rail becomes a drawer below
+  // 1100 px; the workspace list becomes one too below 700 px (phone).
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [wsDrawerOpen, setWsDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Bumped by Settings "Save and reconnect" to re-run the probe/SSE effect
   // against the new server URL (the token is kept — a 401 re-enters
@@ -92,6 +96,7 @@ export default function App() {
     setStoredToken("");
     setProbed(false);
     setSidebarOpen(false);
+    setWsDrawerOpen(false);
   };
 
   // Any 401 from the API re-enters onboarding (client contract); the demo
@@ -140,10 +145,11 @@ export default function App() {
     setDeckOpen(false);
   };
 
-  // Selecting something closes the responsive drawer (Phase-1 pattern).
+  // Selecting something closes the responsive drawers (Phase-1 pattern).
   useEffect(() => {
     setSidebarOpen(false);
-  }, [selectedWorkspaceId]);
+    setWsDrawerOpen(false);
+  }, [selectedWorkspaceId, selectedPaneId]);
 
   const saveToken = (serverUrl: string, value: string) => {
     setServerUrl(serverUrl);
@@ -203,7 +209,34 @@ export default function App() {
         onClose={() => setSidebarOpen(false)}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      <WorkspaceListView onOpenNavigator={() => setSidebarOpen(true)} />
+      <WorkspaceListView
+        onOpenNavigator={() => setSidebarOpen(true)}
+        drawerOpen={wsDrawerOpen}
+        onCloseDrawer={() => setWsDrawerOpen(false)}
+      />
+      {/* Phone top bar (visible <700 px only): both drawer triggers live in
+          the detail region's header area, since the workspace list itself is
+          a drawer at this width. */}
+      <div className="hz-phone-topbar">
+        <button
+          type="button"
+          className="hz-nav-toggle"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open navigator"
+        >
+          <Menu size={16} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="hz-phone-topbar-workspaces"
+          onClick={() => setWsDrawerOpen(true)}
+        >
+          workspaces
+        </button>
+      </div>
+      {wsDrawerOpen ? (
+        <div className="hz-ws-drawer-backdrop" onClick={() => setWsDrawerOpen(false)} aria-hidden />
+      ) : null}
       {deckOpen ? (
         <AttentionView onClose={closeDeck} />
       ) : selectedPaneId !== null ? (
@@ -222,6 +255,7 @@ export default function App() {
       {settingsOpen ? (
         <SettingsModal onClose={() => setSettingsOpen(false)} onReconnect={reconnect} />
       ) : null}
+      <ConnectionIssue />
       <Toast />
     </div>
   );

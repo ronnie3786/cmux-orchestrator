@@ -61,6 +61,18 @@ export function serializeHash(route: HashRoute): string {
   return pairs.length > 0 ? `#${pairs.join("&")}` : "";
 }
 
+/**
+ * Workspace id a pane deep link belongs to: pane ids are
+ * `<workspaceId>:<paneId>`, so `#pane=wB:p1` alone resolves workspace `wB`.
+ * Returns null when the id has no (or a leading) colon — repairSelection
+ * then falls back to the first workspace (repairNavigation parity).
+ */
+export function workspaceFromPaneId(paneId: string): string | null {
+  const colon = paneId.indexOf(":");
+  if (colon <= 0) return null;
+  return paneId.slice(0, colon);
+}
+
 /** Read the current route from window.location.hash. */
 export function getHashRoute(): HashRoute {
   return parseHash(window.location.hash);

@@ -21,6 +21,25 @@
   padding: 14px 16px 8px;
 }
 
+/* "Close workspaces" — phone drawer (<700 px) only; shown via app.css. */
+.hz-ws-list-close {
+  display: none;
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hz-ws-list-close:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
 .hz-ws-list-title {
   margin: 0;
   font-size: 17px;

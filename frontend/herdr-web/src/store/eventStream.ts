@@ -46,6 +46,14 @@ export interface EventStreamState {
   lastEventId: number | null;
   /** Monotonic debug/test counter of /workspaces refetches triggered here. */
   refetchCount: number;
+  /**
+   * The "Connection issue" alert detail: set when the live stream drops
+   * (SSE reconnecting) or herdr reports itself disconnected
+   * (connection.changed state != "connected"); cleared on open/ready or a
+   * "connected" event. Live mode only — the demo adapter never runs this
+   * stream.
+   */
+  issue: string | null;
 
   /** Opens the global stream (idempotent — stops any existing one first). */
   start: (token: string) => void;
@@ -147,9 +155,15 @@ function dispatch(event: string, data: string): void {
     const inner = (payload as { data?: unknown } | null)?.data;
     const body =
       inner !== null && typeof inner === "object" && "state" in inner ? inner : payload;
-    useConnectionStore
-      .getState()
-      .applyConnectionChanged(body as { state?: string; error?: string | null });
+    const { state, error } = body as { state?: string; error?: string | null };
+    useConnectionStore.getState().applyConnectionChanged({ state, error });
+    if (state === "connected") {
+      useEventStreamStore.setState({ issue: null });
+    } else {
+      useEventStreamStore.setState({
+        issue: typeof error === "string" && error.length > 0 ? error : "herdr event stream disconnected",
+      });
+    }
     return;
   }
 
@@ -173,6 +187,13 @@ function dispatch(event: string, data: string): void {
 
 function handleState(state: SseState): void {
   useConnectionStore.getState().setStreamOpen(state === "open");
+  if (state === "open") {
+    useEventStreamStore.setState({ issue: null });
+  } else if (state === "reconnecting" && useEventStreamStore.getState().issue === null) {
+    // "reconnecting" only fires once the first open attempt failed or the
+    // stream dropped — exactly the down state the alert should show.
+    useEventStreamStore.setState({ issue: "Live stream dropped — reconnecting" });
+  }
 }
 
 export const useEventStreamStore = create<EventStreamState>()((set) => ({
@@ -180,10 +201,11 @@ export const useEventStreamStore = create<EventStreamState>()((set) => ({
   connected: false,
   lastEventId: null,
   refetchCount: 0,
+  issue: null,
 
   start: (token) => {
     stopAll();
-    set({ started: true, connected: false, lastEventId: null, refetchCount: 0 });
+    set({ started: true, connected: false, lastEventId: null, refetchCount: 0, issue: null });
     handle = openSSE({
       buildUrl: () => eventsUrl(),
       token,
@@ -195,6 +217,6 @@ export const useEventStreamStore = create<EventStreamState>()((set) => ({
 
   stop: () => {
     stopAll();
-    set({ started: false, connected: false });
+    set({ started: false, connected: false, issue: null });
   },
 }));

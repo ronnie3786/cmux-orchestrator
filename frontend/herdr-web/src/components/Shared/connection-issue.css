@@ -1,0 +1,46 @@
+/* "Connection issue" alert — top-right, above the centered toast (z 80). */
+
+.hz-connection-issue {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 81;
+  width: min(320px, calc(100vw - 28px));
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #0c0f14;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.hz-connection-issue-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.hz-connection-issue-detail {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.hz-connection-issue-dismiss {
+  margin-top: 8px;
+  margin-left: auto;
+  display: block;
+  padding: 4px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hz-connection-issue-dismiss:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

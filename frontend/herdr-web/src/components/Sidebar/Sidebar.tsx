@@ -65,7 +65,7 @@ function ChatRowView({
 }
 
 interface SidebarProps {
-  /** Overlay drawer state (used below the 900 px breakpoint only). */
+  /** Overlay drawer state (used below the 1100 px breakpoint only). */
   open: boolean;
   onClose: () => void;
   /** Opens the settings modal (web stand-in for the iOS Settings tab). */
@@ -77,7 +77,7 @@ interface SidebarProps {
  * "switch", "chats" section with a "filter chats" input, "new workspace",
  * the workspace → tab → chat tree (collapsed set persisted to localStorage
  * and honored only when unfiltered, iOS SidebarTree), and a "N total shown"
- * footer. Persistent left rail at ≥900 px; overlay drawer with backdrop
+ * footer. Persistent left rail at ≥1100 px; overlay drawer with backdrop
  * below (Esc / backdrop / "Close navigator" close it).
  */
 export function Sidebar({ open, onClose, onOpenSettings }: SidebarProps) {

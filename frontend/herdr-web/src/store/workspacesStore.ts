@@ -53,6 +53,13 @@ export const useWorkspacesStore = create<WorkspacesStoreState>()((set, get) => (
     try {
       const data = await fetchWorkspaces();
       set({ data, lastUpdated: Date.now() });
+      // repairNavigation guard: a pane/workspace closed out from under us is
+      // pruned against the fresh snapshot (the current selection is the
+      // source of truth; the hash is kept in sync by the route hook).
+      const { selectedWorkspaceId, selectedPaneId } = get();
+      if (selectedWorkspaceId !== null || selectedPaneId !== null) {
+        get().repairSelection(selectedWorkspaceId, selectedPaneId);
+      }
     } catch {
       // Silent: keep the last good snapshot; the next event re-arms.
     } finally {

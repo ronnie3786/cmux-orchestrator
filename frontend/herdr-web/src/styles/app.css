@@ -1,7 +1,14 @@
 /*
- * P3-run-A: 3-region app shell — "chats" navigator rail | workspace list |
- * detail. Below 900 px the rail becomes a fixed overlay drawer (styled in
- * components/Sidebar/sidebar.css) and the middle/right columns stack.
+ * P3-run-A shell, P12-run-B breakpoints — "chats" navigator rail |
+ * workspace list | detail, three form factors:
+ *   >= 1100 px   3 columns, rail persistent (the iPad parity).
+ *   700-1100 px  2 columns (workspace list | detail); the rail is the
+ *                overlay drawer (components/Sidebar/sidebar.css).
+ *   < 700 px     single column (detail only); both the rail and the
+ *                workspace list are overlay drawers opened from the phone
+ *                top bar. The terminal/Pi views degrade at 390 px: the key
+ *                deck wraps (all 8 keys stay reachable), the Pi composer
+ *                swaps to short labels at 560 px (pi.css).
  */
 
 .hz-app-shell {
@@ -27,7 +34,8 @@
   grid-row: 1;
 }
 
-/* Drawer toggle (middle-column header) — hidden on the desktop rail. */
+/* Drawer toggles — the chats hamburger (ws-list header) and the phone top
+   bar (detail region) triggers; both hidden on the desktop rail. */
 .hz-nav-toggle {
   display: none;
   align-items: center;
@@ -46,16 +54,62 @@
   color: var(--text);
 }
 
-@media (max-width: 900px) {
+.hz-phone-topbar {
+  display: none;
+}
+
+/* 700-1100 px: two columns — workspace list | detail; the chats rail is the
+   overlay drawer. */
+@media (max-width: 1100px) {
   .hz-app-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(280px, 380px) 1fr;
   }
 
   .hz-app-shell > .hz-ws-list {
     grid-column: 1;
+  }
+
+  .hz-app-shell > .hz-detail-col {
+    grid-column: 2;
+  }
+
+  .hz-nav-toggle {
+    display: inline-flex;
+  }
+}
+
+/* <700 px: single column — detail only; both lists are drawers. */
+@media (max-width: 699px) {
+  .hz-app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .hz-phone-topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    grid-column: 1;
     grid-row: 1;
-    border-right: none;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .hz-phone-topbar-workspaces {
+    margin-left: auto;
+    padding: 4px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .hz-phone-topbar-workspaces:hover {
+    border-color: var(--line-strong);
   }
 
   .hz-app-shell > .hz-detail-col {
@@ -63,7 +117,38 @@
     grid-row: 2;
   }
 
-  .hz-nav-toggle {
-    display: inline-flex;
+  /* Workspace list → overlay drawer (same chrome as the chats drawer:
+     backdrop at z 35, drawer at z 40, Esc + "Close workspaces" in TSX). */
+  .hz-app-shell > .hz-ws-list {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: min(340px, 88vw);
+    border-right: 1px solid var(--line-strong);
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
   }
+
+  .hz-app-shell > .hz-ws-list.hz-ws-list-open {
+    transform: translateX(0);
+  }
+
+  /* The drawer's own chats toggle is dead weight on a phone — the top bar
+     owns both triggers. */
+  .hz-ws-list .hz-nav-toggle {
+    display: none;
+  }
+
+  .hz-ws-list-close {
+    display: inline-block;
+  }
+}
+
+.hz-ws-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  background: rgba(0, 0, 0, 0.55);
 }
