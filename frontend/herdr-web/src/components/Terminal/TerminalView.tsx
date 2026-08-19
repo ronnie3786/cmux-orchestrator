@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { getToken } from "../../api/client";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useWorkspacesStore } from "../../store/workspacesStore";
-import { PromptComposerView } from "../Pane/PromptComposerView";
+import { CommandLensDock } from "../Pane/CommandLensDock";
 import "./terminal.css";
 
 /**
@@ -116,7 +116,7 @@ export function TerminalView() {
         </button>
       </div>
       {body}
-      {pane !== null && <PromptComposerView pane={pane} />}
+      {pane !== null && <CommandLensDock pane={pane} />}
     </main>
   );
 }

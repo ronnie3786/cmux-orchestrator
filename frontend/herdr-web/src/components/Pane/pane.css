@@ -1,6 +1,19 @@
 /* Command Lens (P9-run-A): key deck + composer + aux chips, docked under the
    terminal body in the detail column (non-Pi panes only). */
 
+/* run-B dock: attachment chip row + lens, pinned to the detail column bottom. */
+.hz-pane-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.hz-pane-attachments {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
 .hz-pane-lens {
   display: flex;
   flex-direction: column;

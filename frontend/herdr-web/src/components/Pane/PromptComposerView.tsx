@@ -17,10 +17,11 @@
  * The pure helpers (composerAgentName / composerPlaceholder /
  * composerDispatch / canSend) are exported for unit tests.
  */
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { panePrompt, paneRun, paneSendKeys } from "../../api/paneCommands";
 import { useConnectionStore, type ConnectionStatus } from "../../store/connectionStore";
 import { showToast } from "../../lib/toast";
+import { appendPromptBlock, appendPromptToken } from "../../lib/promptInsert";
 import type { Pane } from "../../types/herdr";
 import { ComposerAuxBar, type AuxActionName } from "./ComposerAuxBar";
 import { TerminalKeyDeck, type PaneKey } from "./TerminalKeyDeck";
@@ -62,21 +63,44 @@ export interface PromptComposerViewProps {
   onAction?: (name: AuxActionName) => void;
 }
 
-export function PromptComposerView({ pane, onAction }: PromptComposerViewProps) {
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const status = useConnectionStore((state) => state.status);
+/**
+ * Imperative insert entry point for the aux modals (doc 01 §4.3): appends a
+ * token (space-separated) or block (blank-line separated) and refocuses the
+ * textarea with the caret at the end.
+ */
+export interface PromptComposerHandle {
+  insert: (text: string, kind: "token" | "block") => void;
+}
 
-  // Textarea auto-grows 1–3 lines (same technique as PiComposer).
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (el === null) {
-      return;
-    }
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 3 * lineHeight(el))}px`;
-  }, [draft]);
+export const PromptComposerView = forwardRef<PromptComposerHandle, PromptComposerViewProps>(
+  function PromptComposerView({ pane, onAction }, ref) {
+    const [draft, setDraft] = useState("");
+    const [sending, setSending] = useState(false);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const focusEndRef = useRef(false);
+    const status = useConnectionStore((state) => state.status);
+
+    // Textarea auto-grows 1–3 lines (same technique as PiComposer).
+    useEffect(() => {
+      const el = textareaRef.current;
+      if (el === null) {
+        return;
+      }
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 3 * lineHeight(el))}px`;
+      if (focusEndRef.current) {
+        focusEndRef.current = false;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }, [draft]);
+
+    useImperativeHandle(ref, () => ({
+      insert: (text, kind) => {
+        focusEndRef.current = true;
+        setDraft((prev) => (kind === "token" ? appendPromptToken(text, prev) : appendPromptBlock(text, prev)));
+      },
+    }), []);
 
   const send = async (): Promise<void> => {
     const text = draft.trim();
@@ -146,7 +170,7 @@ export function PromptComposerView({ pane, onAction }: PromptComposerViewProps) 
       <ComposerAuxBar onAction={onAction ?? (() => undefined)} />
     </div>
   );
-}
+});
 
 function lineHeight(el: HTMLTextAreaElement): number {
   const value = Number.parseFloat(getComputedStyle(el).lineHeight);

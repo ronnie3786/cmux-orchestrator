@@ -1,0 +1,14 @@
+/* Command Lens tool modals (P9-run-B). The base modal/sheet styles live in
+   styles/global.css (ported Phase-1 blocks); this file only carries the
+   herdr-specific additions. */
+
+.jira-loading-label {
+  margin-left: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.jira-empty-hint {
+  font-size: 12px;
+  color: var(--muted-dim);
+}
