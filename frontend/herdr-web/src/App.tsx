@@ -9,6 +9,7 @@ import { WorkspaceListView } from "./components/Workspace/WorkspaceListView";
 import { DetailPlaceholder } from "./components/Detail/DetailPlaceholder";
 import { AttentionView } from "./components/Attention/AttentionView";
 import { TerminalView } from "./components/Terminal/TerminalView";
+import { PiChatPane } from "./components/Pi/PiChatView";
 import { Toast } from "./components/Toast/Toast";
 import { useWorkspaceHashRoute } from "./hooks/useWorkspaceHashRoute";
 import "./styles/app.css";
@@ -163,6 +164,13 @@ export default function App() {
 
   const workspace =
     data?.workspaces.find((candidate) => candidate.workspace_id === selectedWorkspaceId) ?? null;
+  const selectedPane =
+    workspace?.panes.find((candidate) => candidate.pane_id === selectedPaneId) ?? null;
+  // Pi capability gate (doc 01 §4.4): available && protocol version 1.
+  const supportsPiChat =
+    selectedPane?.pi_semantic !== undefined &&
+    selectedPane.pi_semantic.available &&
+    selectedPane.pi_semantic.protocol_version === 1;
 
   return (
     <div className="hz-app-shell">
@@ -171,7 +179,11 @@ export default function App() {
       {deckOpen ? (
         <AttentionView onClose={closeDeck} />
       ) : selectedPaneId !== null ? (
-        <TerminalView />
+        supportsPiChat ? (
+          <PiChatPane />
+        ) : (
+          <TerminalView />
+        )
       ) : (
         <DetailPlaceholder workspace={workspace} />
       )}
