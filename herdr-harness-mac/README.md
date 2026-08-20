@@ -1,9 +1,14 @@
 # Herdr Harness for Mac
 
 A native macOS companion to the Herdr Harness iOS app — same Catppuccin Mocha aesthetic, same
-attention-first workflow, full feature parity, rebuilt around a Mac-native shell: a persistent
-sidebar (workspaces → tabs → chats), a resizable chat/terminal detail view, real keyboard input
-to terminals, menu-bar fleet pulse, and system keyboard shortcuts.
+attention-first workflow, near-complete feature parity, rebuilt around a Mac-native shell: a
+persistent sidebar (workspaces → tabs → chats), a resizable chat/terminal detail view, real
+keyboard input to terminals, menu-bar fleet pulse, and system keyboard shortcuts.
+
+The shell is the deliberate difference. iOS's workspace *switcher* screen — status filter chips
+(all / needs you / active), the inline top-2 attention strip, and the git-worktree sibling rails —
+has no Mac counterpart: the always-visible sidebar and the Attention scope (⌘1) replace it, and
+those three affordances are dropped rather than reproduced.
 
 Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party dependencies · macOS 26.
 
@@ -17,7 +22,7 @@ Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party depen
 - **Live terminal** — the same bounded ANSI grid engine as iOS (full + delta frames over SSE,
   snapshot fallback), plus real Mac keyboard routing: click the terminal to focus it and type;
   arrows/tab/esc/ctrl-C go straight through. The compact key deck stays for parity.
-- **Prompt composer** — status-aware suggestions, the auxiliary bar (attach / voice / @file /
+- **Prompt composer** — status-aware placeholder text, the auxiliary bar (attach / voice / @file /
   Jira), shared drafts between chat and terminal modes. Enter sends, Shift+Enter inserts a
   newline, Cmd+Enter always sends.
 - **Voice** — tap the mic for the long-form recorder sheet, press-and-hold to dictate
@@ -28,7 +33,9 @@ Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party depen
 - **Workspace overview** — fleet summary, pane topology radar built from Herdr's real split
   geometry, git status/diffs, skills, project file search, Jira tickets, attachments.
 - **Herd Pulse in the menu bar** — the iOS Live Activity becomes a menu-bar extra with the same
-  privacy-safe aggregate (counts only, never names).
+  privacy-safe aggregate (counts only, never names). Start it from the toolbar's pulse button or
+  View ▸ Start Herd Pulse (⇧⌘P); the extra is only inserted while Pulse is on. The event stream
+  and the pulse feed outlive the window, so closing it keeps alerts and the menu bar live.
 
 ## Requirements
 

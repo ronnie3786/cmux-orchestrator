@@ -63,6 +63,7 @@ struct HerdPulseMenuBarCard: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -83,10 +84,21 @@ struct HerdPulseMenuBarCard: View {
 
     private var state: HerdPulseContentState? { pulse.contentState }
 
+    /// Staleness is a statement about the *feed*, not about how long the fleet
+    /// has been quiet. `updatedAt` only moves when the aggregate changes, so an
+    /// idle-but-healthy herd would otherwise start claiming "Last known" after
+    /// 15 minutes while the footer still reads "Live".
     private var isStale: Bool {
-        guard let state else { return true }
-        if state.connection == .offline { return true }
-        return Date.now.timeIntervalSince1970 - Double(state.updatedAt) > 15 * 60
+        switch state?.connection {
+        case .live, .demo:
+            false
+        case .reconnecting:
+            // Reconnecting is not yet a lie — it becomes one once the numbers
+            // have had time to move on without us.
+            Date.now.timeIntervalSince1970 - Double(state?.updatedAt ?? 0) > 15 * 60
+        case .offline, nil:
+            true
+        }
     }
 
     private var header: some View {
@@ -215,7 +227,10 @@ struct HerdPulseMenuBarCard: View {
     private func openHerdr() {
         dismiss()
         NSApp.activate()
-        NSApp.windows.first(where: \.canBecomeMain)?.makeKeyAndOrderFront(nil)
+        // Must be `openWindow`, not a scan of `NSApp.windows`: SwiftUI destroys
+        // the window's `NSWindow` on close, which is exactly when this button
+        // matters — there would be nothing left to bring forward.
+        openWindow(id: HerdrWindowID.main)
     }
 }
 

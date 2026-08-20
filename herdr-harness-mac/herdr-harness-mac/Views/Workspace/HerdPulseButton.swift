@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// Start/stop Herd Pulse.
+///
+/// iOS drew this as a 48pt square in the workspace switcher's header. The Mac
+/// has no such header — the switcher became the sidebar — so this is the
+/// detail toolbar's pulse control, sized like a toolbar item and tinted by
+/// whether Pulse is live. It is the visible twin of the View ▸ Start Herd Pulse
+/// command; without one of them the menu-bar extra can never be inserted.
 struct HerdPulseButton: View {
     @Environment(HerdPulseCoordinator.self) private var pulse
 
@@ -11,32 +18,11 @@ struct HerdPulseButton: View {
             Task { await pulse.toggle() }
         }
         .labelStyle(.iconOnly)
-        .font(.headline.bold())
         .foregroundStyle(pulse.isRunning ? HerdrTheme.signal : HerdrTheme.mist)
-        .frame(width: 48, height: 48)
-        .background(HerdrTheme.elevated)
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(
-                    pulse.isRunning ? HerdrTheme.signal.opacity(0.5) : HerdrTheme.surface,
-                    lineWidth: 1
-                )
-        }
-        .overlay(alignment: .topTrailing) {
-            Circle()
-                .fill(pulse.isRunning ? HerdrTheme.signal : HerdrTheme.muted)
-                .frame(width: 8, height: 8)
-                .overlay {
-                    Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 1)
-                }
-                .padding(7)
-                .accessibilityHidden(true)
-        }
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-        .buttonStyle(.plain)
         .disabled(pulse.isBusy)
         .help(pulse.isRunning ? "Stop Herd Pulse" : "Start Herd Pulse")
         .accessibilityValue(pulse.statusText)
         .accessibilityHint(pulse.backgroundUpdatesText)
+        .accessibilityIdentifier("herd-pulse-button")
     }
 }

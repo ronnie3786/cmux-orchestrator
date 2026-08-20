@@ -95,7 +95,7 @@ struct AttentionView: View {
     }
 
     /// `.refreshable` has no pull gesture on macOS, so the deck carries its own
-    /// refresh affordance — same square-icon recipe as `WorkspaceHeader`.
+    /// refresh affordance — same square-icon recipe the iOS workspace header used.
     private var refreshButton: some View {
         Button("Refresh", systemImage: "arrow.clockwise") {
             Task { await model.refresh() }

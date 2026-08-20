@@ -12,7 +12,11 @@ struct WorkspaceNavigationView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            HerdrSidebarView(model: model)
+            HerdrSidebarView(
+                model: model,
+                openPane: openSession,
+                openWorkspace: { shell.showWorkspace(id: $0.id, model: model) }
+            )
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
                 .background(HerdrTheme.ink)
         } detail: {
@@ -40,9 +44,7 @@ struct WorkspaceNavigationView: View {
             }
         case .workspace:
             if let workspace = model.workspace(id: model.selectedWorkspaceID) {
-                WorkspacePaneListView(model: model, workspace: workspace) { pane in
-                    model.selectedPaneID = pane.id
-                }
+                WorkspacePaneListView(model: model, workspace: workspace, selectPane: openSession)
             } else {
                 placeholder(
                     "Choose a workspace",
@@ -52,12 +54,21 @@ struct WorkspaceNavigationView: View {
             }
         case .attention:
             AttentionView(model: model) { pane, alert in
-                model.openPane(id: pane.id)
+                openSession(pane)
                 if let alert {
                     Task { await model.markAlertRead(alert) }
                 }
             }
         }
+    }
+
+    /// Every "open this pane" affordance goes through here. Assigning
+    /// `selectedPaneID` alone is not enough: when the pane is already selected
+    /// the assignment is a no-op and the detail would stay on whatever scope
+    /// the user is looking at.
+    private func openSession(_ pane: HerdrPane) {
+        shell.showSession()
+        model.openPane(id: pane.id)
     }
 
     @ToolbarContentBuilder
@@ -72,6 +83,10 @@ struct WorkspaceNavigationView: View {
             .pickerStyle(.segmented)
             .labelStyle(.iconOnly)
             .accessibilityIdentifier("detail-scope-picker")
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            HerdPulseButton()
         }
 
         ToolbarItem(placement: .primaryAction) {

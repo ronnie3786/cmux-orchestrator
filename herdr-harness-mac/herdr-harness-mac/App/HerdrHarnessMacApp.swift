@@ -1,15 +1,26 @@
 import SwiftUI
 
+/// Scene identifiers. `HerdPulseMenuBarCard` needs the main window's id so
+/// "Open Herdr" can *re*-open it after the user closed it — the case the button
+/// exists for.
+enum HerdrWindowID {
+    static let main = "herdr-main"
+}
+
 @main
 struct HerdrHarnessMacApp: App {
     @NSApplicationDelegateAdaptor(HerdrMacAppDelegate.self) private var appDelegate
     @State private var model = HerdrAppModel()
     @State private var herdPulse = HerdPulseCoordinator()
     @State private var shell = HerdrShellState()
+    @State private var connectionDriver = HerdrConnectionDriver()
 
     var body: some Scene {
-        WindowGroup {
-            AppRootView(model: model, shell: shell)
+        // A single `Window`, not a `WindowGroup`: Herdr shows one fleet, and a
+        // uniquely-identified window is the only kind `openWindow(id:)` can
+        // bring back once it has been closed.
+        Window("Herdr", id: HerdrWindowID.main) {
+            AppRootView(model: model, shell: shell, driver: connectionDriver)
                 .environment(herdPulse)
                 .frame(minWidth: 1000, minHeight: 680)
                 .background(HerdrTheme.ink)
@@ -21,7 +32,7 @@ struct HerdrHarnessMacApp: App {
         // supplies the only chrome the window needs.
         .windowStyle(.hiddenTitleBar)
         .commands {
-            HerdrMacCommands(model: model, shell: shell)
+            HerdrMacCommands(model: model, shell: shell, herdPulse: herdPulse)
         }
 
         // ⌘, — replaces the iOS Settings tab.
@@ -43,6 +54,7 @@ struct HerdrHarnessMacApp: App {
 struct HerdrMacCommands: Commands {
     let model: HerdrAppModel
     @Bindable var shell: HerdrShellState
+    @Bindable var herdPulse: HerdPulseCoordinator
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -78,6 +90,15 @@ struct HerdrMacCommands: Commands {
             .keyboardShortcut("4", modifiers: .command)
 
             Divider()
+
+            // The only in-app way to start Pulse. The menu-bar extra is not
+            // inserted while Pulse is off, so its own Start button cannot be
+            // the entry point — it does not exist yet.
+            Button(herdPulse.isRunning ? "Stop Herd Pulse" : "Start Herd Pulse") {
+                Task { await herdPulse.toggle() }
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .disabled(herdPulse.isBusy)
 
             Button("Refresh") {
                 Task { await model.refresh() }
