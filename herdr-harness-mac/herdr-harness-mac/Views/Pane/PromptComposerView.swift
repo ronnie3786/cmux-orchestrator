@@ -4,12 +4,20 @@ import UniformTypeIdentifiers
 /// The shared prompt composer, hosted by both the terminal pane and Pi chat.
 ///
 /// Mac notes:
-/// - The chevron latch survives. On iOS it swapped the software keyboard for the
-///   tool deck; on the Mac there is no keyboard to dismiss, so it is a pure
-///   disclosure of the auxiliary bar plus the secondary key row — and it never
-///   steals focus from the field.
+/// - The chevron latch is gone. It existed on iOS to trade the software
+///   keyboard for the tool deck; a Mac has neither the keyboard to hide nor the
+///   width problem that justified hiding anything. The auxiliary tools and the
+///   terminal keys now share one always-visible row *above* the input, so the
+///   thing you type into is the bottom-most, closest-to-hand element and the
+///   tools never move.
 /// - Return sends, Shift/Option+Return inserts a newline, Command+Return always
 ///   sends. `onKeyPress` owns that mapping; `onSubmit` stays as a backstop.
+/// - Typing `$` at a token boundary raises `ComposerSkillsHUD` — the workspace's
+///   skills, filtered as you type, accepted with Return/Tab. It is an
+///   accelerator: it never takes focus, never blocks a send, and any signal
+///   that you did not mean a skill (space, escape, no matches) makes it vanish
+///   without touching the draft. All of its rules live in
+///   `ComposerSkillsPalette`.
 /// - Attachments come from one `fileImporter` (the Mac open panel already
 ///   browses Photos) plus drag-and-drop onto the composer.
 struct PromptComposerView: View {
@@ -25,7 +33,6 @@ struct PromptComposerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var isFocused: Bool
-    @State private var isExpanded = false
     @State private var isShowingFileImporter = false
     @State private var isShowingVoiceRecorder = false
     @State private var isShowingFileSearch = false
@@ -37,6 +44,9 @@ struct PromptComposerView: View {
     @State private var isCTACapture = false
     @State private var draftContainsDictation = false
     @State private var isLockPulsing = false
+    @State private var skillsPalette = ComposerSkillsPalette()
+    @State private var didLoadSkills = false
+    @State private var isLoadingSkills = false
 
     init(
         model: HerdrAppModel,
@@ -79,20 +89,6 @@ struct PromptComposerView: View {
                     stop: stopPi
                 )
                     .transition(semanticControlTransition)
-            }
-
-            if isExpanded {
-                ComposerAuxiliaryBar(
-                    attach: { isShowingFileImporter = true },
-                    recordVoice: { isShowingVoiceRecorder = true },
-                    searchFiles: { isShowingFileSearch = true },
-                    chooseJira: { isShowingJira = true },
-                    voicePhase: quickVoiceCapture.phase,
-                    beginVoiceHold: beginQuickVoiceCapture,
-                    endVoiceHold: finishQuickVoiceCapture,
-                    finishLockedVoiceCapture: finishLockedQuickVoiceCapture
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             if let piConfiguration,
@@ -140,16 +136,34 @@ struct PromptComposerView: View {
                     .transition(semanticControlTransition)
             }
 
-            composerRow
+            composerToolRow
 
-            TerminalKeyDeck(model: model, pane: pane, isExpanded: isExpanded)
+            composerRow
         }
-        .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: isExpanded)
         .animation(
             reduceMotion ? nil : .snappy(duration: 0.24),
             value: piConfiguration?.phase
         )
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: quickVoiceCapture.phase)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.16), value: skillsPalette.isVisible)
+        .overlay(alignment: .topLeading) {
+            if skillsPalette.isVisible {
+                // Floats above the whole composer instead of pushing it down:
+                // the draft must not move under the caret while the HUD is up.
+                // Overriding the child's `.top` guide with its own bottom edge
+                // is what lifts it clear of the stack.
+                ComposerSkillsHUD(
+                    matches: skillsPalette.matches,
+                    highlightedIndex: skillsPalette.highlightedIndex,
+                    query: skillsPalette.query,
+                    visibleRowCount: skillsPalette.visibleRowCount,
+                    select: acceptSkill(at:),
+                    highlight: { index in skillsPalette.highlight(index) }
+                )
+                .alignmentGuide(.top) { dimensions in dimensions[.bottom] + 8 }
+                .transition(semanticControlTransition)
+            }
+        }
         .herdrHaptic(trigger: hapticPulse)
         .onAppear {
             quickVoiceCapture.onLock = {
@@ -162,11 +176,6 @@ struct PromptComposerView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
-                quickVoiceCapture.cancel()
-            }
-        }
-        .onChange(of: isExpanded) { _, expanded in
-            if !expanded, quickVoiceCapture.phase == .recording {
                 quickVoiceCapture.cancel()
             }
         }
@@ -185,6 +194,11 @@ struct PromptComposerView: View {
             if updatedDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 draftContainsDictation = false
             }
+            updateSkillsPalette()
+        }
+        .onChange(of: isFocused) { _, focused in
+            // Leaving the field is as clear a "not now" as pressing escape.
+            if !focused { skillsPalette.dismiss() }
         }
         .onChange(of: focusRequest) {
             isFocused = true
@@ -273,30 +287,67 @@ struct PromptComposerView: View {
 
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            Button {
-                isExpanded.toggle()
-            } label: {
-                Image(systemName: "chevron.up")
-                    .font(.headline.weight(.bold))
-                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                    .foregroundStyle(isExpanded ? HerdrTheme.ink : HerdrTheme.accent)
-                    .frame(width: 48, height: 48)
-                    .background(isExpanded ? HerdrTheme.accent : HerdrTheme.elevated)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                            .strokeBorder(isExpanded ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)
-                    }
-                    .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-            }
-            .buttonStyle(.plain)
-            .disabled(isQuickVoiceCaptureActive)
-            .help(isExpanded ? "Hide the composer tools" : "Show attach, voice, file and Jira tools")
-            .accessibilityLabel(isExpanded ? "Collapse composer controls" : "Expand composer controls")
-            .accessibilityIdentifier("terminal-controls-toggle")
-
             composerInput
 
             trailingComposerButton
+        }
+    }
+
+    /// Tools left, terminal keys right, one hairline between them — always
+    /// visible, in both chat and terminal modes, because the keys route through
+    /// send-keys either way.
+    ///
+    /// The fit is decided for the row as a whole and degrades in that order:
+    /// drop the tool titles, then the key labels, then fold the four
+    /// second-tier keys into an overflow menu. Only the narrowest windows ever
+    /// see the last step.
+    private var composerToolRow: some View {
+        ViewThatFits(in: .horizontal) {
+            toolRow(showsToolTitles: true, showsKeyLabels: true)
+            toolRow(showsToolTitles: false, showsKeyLabels: true)
+            toolRow(showsToolTitles: false, showsKeyLabels: false)
+            toolRow(
+                showsToolTitles: false,
+                showsKeyLabels: false,
+                keys: TerminalPresetKey.primaryRow,
+                overflow: TerminalPresetKey.secondaryRow
+            )
+        }
+        .accessibilityIdentifier("composer-tool-row")
+    }
+
+    private func toolRow(
+        showsToolTitles: Bool,
+        showsKeyLabels: Bool,
+        keys: [TerminalPresetKey] = TerminalPresetKey.deckRow,
+        overflow: [TerminalPresetKey] = []
+    ) -> some View {
+        HStack(spacing: 10) {
+            ComposerAuxiliaryBar(
+                attach: { isShowingFileImporter = true },
+                recordVoice: { isShowingVoiceRecorder = true },
+                searchFiles: { isShowingFileSearch = true },
+                chooseJira: { isShowingJira = true },
+                voicePhase: quickVoiceCapture.phase,
+                beginVoiceHold: beginQuickVoiceCapture,
+                endVoiceHold: finishQuickVoiceCapture,
+                finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
+                showsTitles: showsToolTitles
+            )
+            .fixedSize(horizontal: true, vertical: false)
+
+            Rectangle()
+                .fill(HerdrTheme.surface)
+                .frame(width: 1, height: ComposerDeckMetrics.controlHeight - 8)
+                .accessibilityHidden(true)
+
+            TerminalKeyDeck(
+                model: model,
+                pane: pane,
+                keys: keys,
+                overflow: overflow,
+                showsLabels: showsKeyLabels
+            )
         }
     }
 
@@ -322,6 +373,33 @@ struct PromptComposerView: View {
                     .focused($isFocused)
                     .onSubmit(send)
                     .onKeyPress(.return, phases: .down, action: handleReturnKey)
+                    .onKeyPress(.upArrow, phases: .down) { _ in
+                        moveSkillsHighlight(by: -1)
+                    }
+                    .onKeyPress(.downArrow, phases: .down) { _ in
+                        moveSkillsHighlight(by: 1)
+                    }
+                    .onKeyPress(.tab, phases: .down) { _ in
+                        guard skillsPalette.isVisible else { return .ignored }
+                        acceptSkill()
+                        return .handled
+                    }
+                    .onKeyPress(.escape, phases: .down) { _ in
+                        // Leaves the typed text exactly where it is; only the
+                        // HUD goes away, and this `$token` will not raise it
+                        // again.
+                        guard skillsPalette.isVisible else { return .ignored }
+                        skillsPalette.dismiss()
+                        return .handled
+                    }
+                    .onKeyPress(.space, phases: .down) { press in
+                        // A space is the user saying "not a skill". The HUD
+                        // leaves and the space types normally, so this handler
+                        // deliberately reports `.ignored`.
+                        guard skillsPalette.isVisible, press.modifiers.isEmpty else { return .ignored }
+                        skillsPalette.dismiss()
+                        return .ignored
+                    }
                     .padding(.horizontal, 13)
                     .padding(.vertical, 12)
                     .frame(minHeight: 48)
@@ -437,15 +515,6 @@ struct PromptComposerView: View {
         !hasDraftText && attachments.isEmpty
     }
 
-    private var isQuickVoiceCaptureActive: Bool {
-        switch quickVoiceCapture.phase {
-        case .idle:
-            false
-        case .recording, .locked, .transcribing:
-            true
-        }
-    }
-
     private var isCTALockedCapture: Bool {
         isCTACapture && quickVoiceCapture.phase == .locked
     }
@@ -493,12 +562,77 @@ struct PromptComposerView: View {
     /// that routes Return past this handler degrades to "Return sends" rather
     /// than to a composer that cannot submit.
     private func handleReturnKey(_ press: KeyPress) -> KeyPress.Result {
-        guard !press.modifiers.contains(.shift), !press.modifiers.contains(.option) else {
-            draft.append("\n")
+        // With the skills HUD up, Return commits the highlighted skill and
+        // never the message — sending out from under a visible picker would be
+        // the worst kind of surprise.
+        if skillsPalette.isVisible,
+           !press.modifiers.contains(.shift),
+           !press.modifiers.contains(.option) {
+            acceptSkill()
             return .handled
+        }
+        guard !press.modifiers.contains(.shift), !press.modifiers.contains(.option) else {
+            // Hand the chord back to the field editor, which binds it to
+            // `insertNewlineIgnoringFieldEditor:` — a line break at the caret,
+            // and no submit. Appending here instead would drop the break at the
+            // end of the draft no matter where the caret was.
+            return .ignored
         }
         send()
         return .handled
+    }
+
+    // MARK: - `$` skills HUD
+
+    /// Re-runs the palette against the current draft after every edit.
+    ///
+    /// `TextField` publishes no caret on macOS, so the caret is taken to be the
+    /// end of the draft — true for typing, and the worst a mid-string edit can
+    /// do is leave the HUD closed.
+    private func updateSkillsPalette() {
+        skillsPalette.textDidChange(draft, caret: draft.count)
+        loadSkillsIfNeeded()
+    }
+
+    /// Fetches the workspace's skills the first time a `$` token appears, then
+    /// re-filters — the HUD fills itself in mid-keystroke rather than making
+    /// the first `$` of a session a dead one. Failures stay silent: this is an
+    /// accelerator, and `WorkspaceSkillsView` is where skills errors belong.
+    private func loadSkillsIfNeeded() {
+        guard !didLoadSkills,
+              !isLoadingSkills,
+              ComposerSkillsPalette.tokenStart(in: Array(draft), caret: draft.count) != nil
+        else { return }
+        isLoadingSkills = true
+        Task {
+            defer { isLoadingSkills = false }
+            guard let response = try? await model.fetchSkills(for: workspace) else { return }
+            didLoadSkills = true
+            skillsPalette.replaceSkills(
+                response.resolvedProjectSkills + response.resolvedUserSkills
+            )
+        }
+    }
+
+    private func moveSkillsHighlight(by delta: Int) -> KeyPress.Result {
+        guard skillsPalette.isVisible else { return .ignored }
+        skillsPalette.moveHighlight(by: delta)
+        return .handled
+    }
+
+    private func acceptSkill() {
+        apply(skillsPalette.accept())
+    }
+
+    private func acceptSkill(at index: Int) {
+        apply(skillsPalette.accept(at: index))
+    }
+
+    private func apply(_ acceptance: ComposerSkillsPalette.Acceptance?) {
+        guard let acceptance else { return }
+        draft = acceptance.text
+        hapticPulse.fire(.selection)
+        isFocused = true
     }
 
     private func appendToken(_ token: String) {

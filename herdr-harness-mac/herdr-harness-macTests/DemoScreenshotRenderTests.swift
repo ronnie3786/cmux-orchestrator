@@ -223,9 +223,9 @@ struct DemoScreenshotRenderTests {
         result.expectSubstantial()
     }
 
-    // MARK: - 07 · Composer with the auxiliary bar open
+    // MARK: - 07 · Composer with its tool row
 
-    @Test("Composer renders with the auxiliary bar disclosed")
+    @Test("Composer renders the tool row above the input")
     func rendersComposerWithAuxiliaryBar() async throws {
         let model = HerdrRenderFixtures.demoModel()
         let pane = try HerdrRenderFixtures.piCapablePane()
@@ -235,33 +235,19 @@ struct DemoScreenshotRenderTests {
             "07-composer.png",
             size: CGSize(width: 900, height: 300)
         ) {
-            // `PromptComposerView.isExpanded` is private view state and the
-            // chevron cannot be clicked offscreen, so the disclosed layout is
-            // reproduced by stacking the real `ComposerAuxiliaryBar` above the
-            // real composer — the same two views, in the same order, that the
-            // latch reveals.
-            VStack(spacing: 8) {
-                ComposerAuxiliaryBar(
-                    attach: {},
-                    recordVoice: {},
-                    searchFiles: {},
-                    chooseJira: {},
-                    voicePhase: .idle,
-                    beginVoiceHold: {},
-                    endVoiceHold: {},
-                    finishLockedVoiceCapture: {}
-                )
-
-                PromptComposerView(
-                    model: model,
-                    pane: pane,
-                    workspace: workspace,
-                    draft: .constant("steer: keep the follow loop off scenePhase"),
-                    attachments: .constant([]),
-                    focusRequest: 0,
-                    piConfiguration: HerdrRenderFixtures.composerConfiguration()
-                )
-            }
+            // The composer mounts its own tool row now — tools left, terminal
+            // keys right, always visible. Nothing is stacked on top of it here:
+            // stacking a second `ComposerAuxiliaryBar` would render the tools
+            // twice and misrepresent the layout this PNG documents.
+            PromptComposerView(
+                model: model,
+                pane: pane,
+                workspace: workspace,
+                draft: .constant("steer: keep the follow loop off scenePhase"),
+                attachments: .constant([]),
+                focusRequest: 0,
+                piConfiguration: HerdrRenderFixtures.composerConfiguration()
+            )
             .padding(12)
         }
 

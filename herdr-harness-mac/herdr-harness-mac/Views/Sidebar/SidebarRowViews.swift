@@ -1,5 +1,48 @@
 import SwiftUI
 
+/// Mac-only divergence from iOS: the navigator drops per-status hues.
+///
+/// On the phone the sidebar was a drawer you glanced at; on the Mac it is on
+/// screen for the whole session, and five status hues repeated down every row
+/// turned the column into a rainbow that fought the detail pane for attention.
+/// So the sidebar spends exactly one tone on everything status-derived — dots,
+/// status words, and the attention count. Differentiation comes from the
+/// terminal glyph (`●` / `○` / `·`), the status word itself, and the count.
+///
+/// `mist` (Catppuccin Subtext0) is the tone: it is the theme's designated
+/// secondary-information color, already used by the tab rows here, and reads at
+/// ~7.9:1 against `ink`. `accent` was the other candidate and was rejected on
+/// purpose — it means "interactive / selected" everywhere else in this column
+/// (the new-workspace buttons, the selection rail, the focused-workspace
+/// marker), and spending it on status would erase that meaning.
+///
+/// Deliberately scoped to the sidebar: `AgentStatus.color` and every other
+/// surface (pane headers, status rails, the Attention deck) keep full status
+/// color. Do not "fix" this by changing the shared type.
+private enum SidebarTone {
+    /// The single hue for every status-derived element in these rows.
+    static let status = HerdrTheme.mist
+
+    /// The attention count stays the loudest thing in a row — it is one of the
+    /// two signals left after the hues went away — so it is a solid chip in the
+    /// same tone rather than a second color.
+    static let badgeFill = status
+    static let badgeLabel = HerdrTheme.ink
+}
+
+/// Sidebar-local twin of `HerdrStatusDot`: same glyph and accessibility label,
+/// single tone instead of `status.color`. The shared component is untouched.
+private struct SidebarStatusDot: View {
+    let status: AgentStatus
+
+    var body: some View {
+        Text(status.terminalGlyph)
+            .font(.body.monospaced().bold())
+            .foregroundStyle(SidebarTone.status)
+            .accessibilityLabel(status.title)
+    }
+}
+
 struct SidebarProjectRow: View {
     let workspace: HerdrWorkspace
     let isExpanded: Bool
@@ -15,7 +58,7 @@ struct SidebarProjectRow: View {
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
 
-                HerdrStatusDot(status: workspace.agentStatus)
+                SidebarStatusDot(status: workspace.agentStatus)
 
                 Text(workspace.label)
                     .font(.subheadline.monospaced().bold())
@@ -34,10 +77,11 @@ struct SidebarProjectRow: View {
                 if workspace.attentionCount > 0 {
                     Text("\(workspace.attentionCount)")
                         .font(.caption2.monospaced().bold())
-                        .foregroundStyle(HerdrTheme.ink)
+                        .foregroundStyle(SidebarTone.badgeLabel)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(HerdrTheme.alert, in: Capsule())
+                        .background(SidebarTone.badgeFill, in: Capsule())
+                        .accessibilityLabel("\(workspace.attentionCount) needing attention")
                 }
             }
             .padding(.horizontal, 12)
@@ -47,11 +91,19 @@ struct SidebarProjectRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .help(workspace.displayPath.isEmpty ? workspace.label : workspace.displayPath)
+        .help(tooltip)
         .accessibilityIdentifier("sidebar-workspace-\(workspace.id)")
         .accessibilityElement(children: .combine)
         .accessibilityValue(isExpanded ? "expanded" : "collapsed")
         .accessibilityHint("Collapses or expands this workspace's chats")
+    }
+
+    /// The chat rows below spell their status out in words; a workspace row only
+    /// ever carried it as a hue. With one tone the hover tooltip is where that
+    /// detail goes — the mac-native place for it, and no extra chrome in the row.
+    private var tooltip: String {
+        let location = workspace.displayPath.isEmpty ? workspace.label : workspace.displayPath
+        return "\(location) — \(workspace.agentStatus.title)"
     }
 }
 
@@ -95,7 +147,7 @@ struct SidebarChatRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                HerdrStatusDot(status: pane.agentStatus)
+                SidebarStatusDot(status: pane.agentStatus)
 
                 Text(pane.displayTitle)
                     .font(.subheadline.monospaced())
@@ -106,7 +158,7 @@ struct SidebarChatRow: View {
 
                 Text(pane.agentStatus.compactTitle.lowercased())
                     .font(.caption.monospaced())
-                    .foregroundStyle(pane.agentStatus.labelColor)
+                    .foregroundStyle(SidebarTone.status)
                     .fixedSize()
             }
             .padding(.leading, 34)

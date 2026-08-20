@@ -61,24 +61,15 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
             "Canned response chips should not consume pane space"
         )
 
-        for key in ["up", "down", "tab", "enter"] {
+        // The disclosure latch is gone: the tool row is always mounted, and at
+        // this window size the whole key deck fits as buttons.
+        for key in ["up", "down", "tab", "enter", "left", "right", "escape", "backspace"] {
             XCTAssertTrue(
-                app.buttons["terminal-key-\(key)"].exists,
-                "The collapsed key deck should show the primary row"
+                app.buttons["terminal-key-\(key)"].waitForExistence(timeout: 3),
+                "The always-visible key deck should show every preset key"
             )
         }
-        XCTAssertFalse(app.buttons["terminal-key-left"].exists)
-        saveScreenshot("01-terminal-collapsed", app: app, directory: screenshotDirectory)
-
-        app.buttons["terminal-controls-toggle"].click()
-        XCTAssertTrue(app.buttons["terminal-key-left"].waitForExistence(timeout: 3))
-        for key in ["left", "right", "escape", "backspace"] {
-            XCTAssertTrue(
-                app.buttons["terminal-key-\(key)"].exists,
-                "Expanding the composer should reveal the secondary row"
-            )
-        }
-        saveScreenshot("02-terminal-expanded", app: app, directory: screenshotDirectory)
+        saveScreenshot("01-terminal-deck", app: app, directory: screenshotDirectory)
 
         try selectPaneMode(.git, in: app)
         XCTAssertTrue(
@@ -114,10 +105,6 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
         saveScreenshot("05-skills", app: app, directory: screenshotDirectory)
 
         try selectPaneMode(.terminal, in: app)
-        let controlsToggle = app.buttons["terminal-controls-toggle"]
-        XCTAssertTrue(controlsToggle.waitForExistence(timeout: 5))
-        controlsToggle.click()
-
         let fileTool = app.buttons["Insert a workspace file path"]
         XCTAssertTrue(fileTool.waitForExistence(timeout: 3))
         fileTool.click()
@@ -206,7 +193,8 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
             "The window should refuse to shrink under the shell's minimum height"
         )
 
-        app.buttons["terminal-controls-toggle"].click()
+        // No latch to open — the tools ride the always-visible row, and the fit
+        // ladder drops their titles rather than the buttons themselves.
         for label in [
             "Attach a file",
             "Record a voice note",

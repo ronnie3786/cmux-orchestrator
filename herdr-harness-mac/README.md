@@ -15,16 +15,22 @@ Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party depen
 ## What's in the app
 
 - **Sidebar navigator** — workspaces at the top level, panes grouped by tab beneath them, click a
-  chat row to make it the main view. Collapse state persists across launches.
+  chat row to make it the main view. Collapse state persists across launches. Rows are styled in
+  a single calm tone (no per-status hues) — the status word and unread count carry the signal.
 - **Native Pi chat** — the rich chat timeline (streaming turns, collapsed thinking, tool cards,
   interaction/permission cards, markdown with tables and code blocks, context meter, model +
   thinking-level switching) with the terminal always one toggle away.
 - **Live terminal** — the same bounded ANSI grid engine as iOS (full + delta frames over SSE,
   snapshot fallback), plus real Mac keyboard routing: click the terminal to focus it and type;
   arrows/tab/esc/ctrl-C go straight through. The compact key deck stays for parity.
-- **Prompt composer** — status-aware placeholder text, the auxiliary bar (attach / voice / @file /
-  Jira), shared drafts between chat and terminal modes. Enter sends, Shift+Enter inserts a
-  newline, Cmd+Enter always sends.
+- **Prompt composer** — Mac has the room, so nothing hides: the tool row (attach / voice /
+  @file / Jira) and the terminal key deck share one always-visible row directly above the input.
+  Status-aware placeholder text, shared drafts between chat and terminal modes. Enter sends,
+  Shift+Enter inserts a newline, Cmd+Enter always sends.
+- **`$` skills palette** — type `$` at a word boundary to raise a filtering HUD of the
+  workspace's skills. Arrow keys move the highlight, Enter/Tab (or click) inserts the skill,
+  Esc dismisses, and space dismisses while typing normally — so a stray `$` never gets in your
+  way. Zero matches auto-dismisses; only a fresh `$` re-opens it.
 - **Voice** — tap the mic for the long-form recorder sheet, press-and-hold to dictate
   (auto-locks after a beat). Recordings are mono 16 kHz WAV, transcribed by your private
   Parakeet endpoint with on-device Speech as fallback.

@@ -2,6 +2,11 @@ import SwiftUI
 
 struct HerdrSidebarView: View {
     @Bindable var model: HerdrAppModel
+    /// Routing is the shell's job — the sidebar states the intent, it does not
+    /// infer it from a selection change (clicking the already-selected chat has
+    /// to work too).
+    let openPane: (HerdrPane) -> Void
+    let openWorkspace: (HerdrWorkspace) -> Void
     @State private var query = ""
     @State private var isPresentingCreateWorkspace = false
     @State private var renamingWorkspace: HerdrWorkspace?
@@ -60,7 +65,7 @@ struct HerdrSidebarView: View {
                             )
                             .contextMenu {
                                 Button("Open workspace", systemImage: "arrow.right.square") {
-                                    model.openWorkspace(id: entry.workspace.id)
+                                    openWorkspace(entry.workspace)
                                 }
                                 Button("Focus on Mac", systemImage: "scope") {
                                     Task { await model.focus(entry.workspace) }
@@ -301,6 +306,6 @@ struct HerdrSidebarView: View {
     }
 
     private func open(_ pane: HerdrPane) {
-        model.openPane(id: pane.id)
+        openPane(pane)
     }
 }

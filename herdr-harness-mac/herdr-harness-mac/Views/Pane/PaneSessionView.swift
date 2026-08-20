@@ -74,6 +74,17 @@ struct PaneSessionView: View {
             defer { isManuallyRefreshing = false }
             await refreshOutput(forceSnapshot: terminalSource != .stream)
         }
+        // View ▸ Focus Chat (⌘2) / Focus Terminal (⌘3). The shell cannot set
+        // the mode itself — `selectedMode` belongs to whichever session is
+        // mounted — so the commands post and the session listens.
+        .task {
+            for await notification in NotificationCenter.default.notifications(
+                named: .herdrFocusPaneMode
+            ) {
+                guard let mode = notification.object as? PaneDetailMode else { continue }
+                focus(mode: mode)
+            }
+        }
         .task(id: piChatTaskID) {
             guard selectedMode == .chat,
                   currentPane.supportsPiSemanticChat
@@ -241,6 +252,27 @@ struct PaneSessionView: View {
         composerDraft = trimmed.isEmpty ? token : "\(trimmed) \(token)"
         selectedMode = .terminal
         composerFocusRequest &+= 1
+    }
+
+    /// Switches mode *and* puts the caret where the command's name promises:
+    /// "Focus Chat" focuses the composer, "Focus Terminal" focuses the keyboard
+    /// surface. Chat is refused on a pane that has no Pi session — the mode
+    /// would only render the unavailable placeholder.
+    private func focus(mode: PaneDetailMode) {
+        switch mode {
+        case .chat:
+            guard currentPane.supportsPiSemanticChat else { return }
+            didAutoSelectChat = true
+            selectedMode = .chat
+            isTerminalFocused = false
+            composerFocusRequest &+= 1
+        case .terminal:
+            didAutoSelectChat = true
+            selectedMode = .terminal
+            isTerminalFocused = true
+        default:
+            selectedMode = mode
+        }
     }
 
     private func discardComposerState() {

@@ -1,14 +1,20 @@
 import SwiftUI
 
-/// The expandable utility row shown above the pane composer.
+/// The utility controls in the composer's tool row.
 ///
 /// The view is intentionally closure-driven so the composer owns presentation
 /// and networking state while this control stays reusable and previewable.
 ///
-/// Mac notes: the gestures are the iOS ones verbatim — a click opens the voice
-/// note sheet, a press-and-hold dictates — because that muscle memory is the
-/// point of this bar. What the Mac adds is discoverability the phone did not
-/// need: hover lifts each control and `.help` spells out what a hold does.
+/// Mac notes: there is no latch any more. These four tools sit on the row above
+/// the input, permanently visible, next to the terminal keys — a Mac window has
+/// the width for them and hiding them behind a chevron only cost a click. The
+/// buttons hug their content so the keys get the leftover width, and they are
+/// compact (`ComposerDeckMetrics.controlHeight`) rather than touch-sized.
+///
+/// The gestures are the iOS ones verbatim — a click opens the voice note sheet,
+/// a press-and-hold dictates — because that muscle memory is the point of this
+/// bar. What the Mac adds is discoverability the phone did not need: hover
+/// lifts each control and `.help` spells out what a hold does.
 struct ComposerAuxiliaryBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let attach: () -> Void
@@ -19,6 +25,10 @@ struct ComposerAuxiliaryBar: View {
     let beginVoiceHold: () -> Void
     let endVoiceHold: () -> Void
     let finishLockedVoiceCapture: () -> Void
+    /// `nil` lets the bar pick its own fit. The composer's tool row sets it
+    /// explicitly, because the fit has to be decided for the whole row — keys
+    /// included — not for these four buttons in isolation.
+    var showsTitles: Bool?
 
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var isLockPulsing = false
@@ -29,9 +39,15 @@ struct ComposerAuxiliaryBar: View {
     private static let voiceControl = "voice"
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            controls(showsTitles: true)
-            controls(showsTitles: false)
+        Group {
+            if let showsTitles {
+                controls(showsTitles: showsTitles)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    controls(showsTitles: true)
+                    controls(showsTitles: false)
+                }
+            }
         }
         .herdrHaptic(trigger: hapticPulse)
         .onChange(of: voicePhase) { _, phase in
@@ -46,7 +62,7 @@ struct ComposerAuxiliaryBar: View {
     }
 
     private func controls(showsTitles: Bool) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: ComposerDeckMetrics.spacing) {
             auxiliaryButton(
                 identity: "attach",
                 title: "attach",
@@ -91,9 +107,9 @@ struct ComposerAuxiliaryBar: View {
             hapticPulse.fire(.selection)
             action()
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
 
                 if showsTitle {
                     Text(title)
@@ -102,8 +118,8 @@ struct ComposerAuxiliaryBar: View {
                 }
             }
             .foregroundStyle(hoveredControl == identity ? HerdrTheme.text : HerdrTheme.mist)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.horizontal, showsTitle ? 8 : 12)
+            .frame(minHeight: ComposerDeckMetrics.controlHeight)
+            .padding(.horizontal, 10)
             .background(HerdrTheme.elevated)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
@@ -124,14 +140,15 @@ struct ComposerAuxiliaryBar: View {
     }
 
     private func voiceButton(showsTitle: Bool) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 6) {
             if voicePhase == .transcribing {
                 ProgressView()
+                    .controlSize(.small)
                     .tint(HerdrTheme.mist)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 14, height: 14)
             } else {
                 Image(systemName: voicePhase == .locked ? "lock.fill" : "mic.fill")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
             }
 
             if showsTitle {
@@ -141,8 +158,8 @@ struct ComposerAuxiliaryBar: View {
             }
         }
         .foregroundStyle(voiceForeground)
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .padding(.horizontal, showsTitle ? 8 : 12)
+        .frame(minHeight: ComposerDeckMetrics.controlHeight)
+        .padding(.horizontal, 10)
         .background(voiceBackground)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
