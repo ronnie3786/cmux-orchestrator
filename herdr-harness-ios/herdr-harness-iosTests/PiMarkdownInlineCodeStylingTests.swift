@@ -4,14 +4,14 @@ import Testing
 
 @Suite("Pi markdown inline-code styling")
 struct PiMarkdownInlineCodeStylingTests {
-    @Test("Only inline-code runs receive the chip background")
+    @Test("Only inline-code runs receive the color")
     func stylesOnlyCodeRuns() {
         let source = "use `foo` now and `bar`"
         let rendered = PiMarkdownText.render(source)
         let styled = PiMarkdownText.applyingInlineCodeStyle(
             rendered,
             font: .system(size: 13, weight: .medium, design: .monospaced),
-            background: .red
+            color: .red
         )
 
         var sawCodeRun = false
@@ -19,8 +19,10 @@ struct PiMarkdownInlineCodeStylingTests {
             let isCode = run.inlinePresentationIntent?.contains(.code) == true
             if isCode {
                 sawCodeRun = true
-                #expect(run.backgroundColor == .red)
+                #expect(run.foregroundColor == .red)
+                #expect(run.backgroundColor == nil)
             } else {
+                #expect(run.foregroundColor == nil)
                 #expect(run.backgroundColor == nil)
             }
         }
@@ -34,11 +36,12 @@ struct PiMarkdownInlineCodeStylingTests {
         let styled = PiMarkdownText.applyingInlineCodeStyle(
             rendered,
             font: .system(size: 13, weight: .medium, design: .monospaced),
-            background: .red
+            color: .red
         )
 
         #expect(String(styled.characters) == String(rendered.characters))
         for run in styled.runs {
+            #expect(run.foregroundColor == nil)
             #expect(run.backgroundColor == nil)
         }
     }

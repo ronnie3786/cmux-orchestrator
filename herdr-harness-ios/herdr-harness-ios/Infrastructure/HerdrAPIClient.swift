@@ -184,6 +184,14 @@ actor HerdrAPIClient {
         try await mutation(path: "/api/v1/panes/\(id)/focus", body: APIActionBody())
     }
 
+    func setPaneStar(id: String, starred: Bool) async throws {
+        let _: MutationResponse = try await request(
+            path: "/api/v1/panes/\(id)/star",
+            method: "POST",
+            body: StarBody(starred: starred)
+        )
+    }
+
     func closePane(id: String) async throws {
         try await mutation(path: "/api/v1/panes/\(id)", method: "DELETE", body: APIActionBody())
     }
@@ -638,4 +646,8 @@ private struct ServerErrorEnvelope: Decodable {
     }
 
     let error: Payload
+}
+
+private struct StarBody: Encodable, Sendable {
+    let starred: Bool
 }

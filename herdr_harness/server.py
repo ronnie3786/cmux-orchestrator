@@ -232,6 +232,7 @@ def api_description() -> dict:
             "events": "/api/v1/events",
             "paneOutput": "/api/v1/panes/{paneId}/output",
             "paneStream": "/api/v1/panes/{paneId}/stream",
+            "paneStar": "/api/v1/panes/{paneId}/star",
             "piSnapshot": "/api/v1/panes/{paneId}/pi/snapshot",
             "piEvents": "/api/v1/panes/{paneId}/pi/events",
             "piModels": "/api/v1/panes/{paneId}/pi/models",
@@ -255,6 +256,7 @@ def api_description() -> dict:
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
             "POST /api/v1/panes/{paneId}/focus|split|send-text|send-keys|run|prompt|start-agent",
+            "POST /api/v1/panes/{paneId}/star",
             "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort|model|thinking-level",
             "POST /api/v1/panes/{paneId}/pi/interactions/{interactionId}/respond",
             "POST /api/v1/alerts/{alertId}/read",
@@ -269,6 +271,7 @@ def api_description() -> dict:
             "alert.created",
             "alert.updated",
             "alerts.read_state_changed",
+            "stars.changed",
         ],
         "generatedAt": utc_now(),
     }
@@ -785,6 +788,14 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         )
                     if action == "prompt":
                         return self._prompt(pane_id, body)
+                    if action == "star":
+                        if "starred" not in body:
+                            raise HTTPValidationError("starred is required")
+                        starred = _boolean(body.get("starred"), "starred")
+                        result = service.set_pane_star(pane_id, starred)
+                        if result is None:
+                            raise HTTPValidationError("Pane not found", code="pane_not_found", status=404)
+                        return result
                     if action in {"start-agent", "agents"}:
                         return self._start_agent(pane_id, body)
                 if len(tail) >= 4 and tail[2] == "pi":

@@ -20,6 +20,7 @@ from .network import network_payload
 from .normalization import composite_workspaces, pane_index
 from .pi_semantic import PiSemanticManager
 from .push_notifications import APNsManager
+from .stars import StarStore
 from .terminal import TerminalObserver, TerminalObserverError
 
 
@@ -66,6 +67,7 @@ class HerdrService:
         client: Optional[HerdrClient] = None,
         *,
         alerts: Optional[AlertStore] = None,
+        stars: Optional[StarStore] = None,
         broker: Optional[EventBroker] = None,
         push: Optional[APNsManager] = None,
         environ: Optional[Mapping[str, str]] = None,
@@ -78,6 +80,8 @@ class HerdrService:
         self.cmux_tools = tools or cmux_tools.CmuxToolsClient(environ=self.environ)
         alert_store_path = self.environ.get("HERDR_HARNESS_ALERT_STORE_PATH") or None
         self.alerts = alerts or AlertStore(store_path=alert_store_path)
+        star_store_path = self.environ.get("HERDR_HARNESS_STAR_STORE_PATH") or None
+        self.stars = stars or StarStore(store_path=star_store_path)
         self.broker = broker or EventBroker()
         self.push = push or APNsManager(environ=self.environ)
         self.pi_semantic = pi_semantic or PiSemanticManager(
@@ -248,6 +252,11 @@ class HerdrService:
             self._publish_alert(alert)
         if resolved:
             self._publish_read_state_changed()
+        if self.stars.prune(current_pane_ids):
+            self.broker.publish(
+                "stars.changed",
+                {"paneId": None, "starred": False, "starredPaneIds": self.stars.list()},
+            )
         self.broker.publish(
             "snapshot.updated",
             {
@@ -363,6 +372,7 @@ class HerdrService:
                 composite_workspaces(snapshot),
             ),
             "alerts": self.alerts.list(limit=100),
+            "starredPaneIds": self.stars.list(),
             "generatedAt": generated_at,
         }
 
@@ -934,6 +944,23 @@ class HerdrService:
             "alerts.read_state_changed",
             {"unread_count": self.alerts.unread_count()},
         )
+
+    def set_pane_star(self, pane_id: str, starred: bool) -> Optional[dict]:
+        if self._lookup_pane(pane_id) is None:
+            return None
+        changed = self.stars.set(pane_id, starred)
+        if changed:
+            self.broker.publish(
+                "stars.changed",
+                {"paneId": pane_id, "starred": starred, "starredPaneIds": self.stars.list()},
+            )
+        return {
+            "ok": True,
+            "paneId": pane_id,
+            "starred": starred,
+            "starredPaneIds": self.stars.list(),
+            "generatedAt": utc_now(),
+        }
 
     def _publish_alert(self, alert: dict) -> None:
         self.broker.publish("alert.created", alert)

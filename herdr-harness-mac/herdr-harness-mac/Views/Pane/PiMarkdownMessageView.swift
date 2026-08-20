@@ -19,7 +19,7 @@ struct PiMarkdownMessageView: View {
                 font: HerdrProse.font(.body, scale: fontScale),
                 cacheRenderedText: false,
                 inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
-                inlineCodeBackground: HerdrProse.inlineCodeBackground
+                inlineCodeColor: HerdrProse.inlineCodeColor
             )
                 .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
         } else {

@@ -65,6 +65,10 @@ def main(argv: list[str] | None = None) -> int:
         os.path.expanduser("~/.config/herdr-harness/alerts.json"),
     )
     service_environ.setdefault(
+        "HERDR_HARNESS_STAR_STORE_PATH",
+        os.path.expanduser("~/.config/herdr-harness/stars.json"),
+    )
+    service_environ.setdefault(
         "HERDR_HARNESS_PI_STORE_PATH",
         os.path.expanduser("~/.config/herdr-harness/pi-semantic.sqlite3"),
     )

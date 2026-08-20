@@ -5,6 +5,7 @@ struct WorkspacesResponse: Decodable, Sendable {
     let workspaces: [HerdrWorkspace]
     let alerts: [HerdrAlert]
     let generatedAt: String?
+    let starredPaneIDs: [String]?
 
     enum CodingKeys: String, CodingKey {
         case ok
@@ -12,6 +13,7 @@ struct WorkspacesResponse: Decodable, Sendable {
         case alerts
         case generatedAt
         case generatedAtSnake = "generated_at"
+        case starredPaneIDs = "starredPaneIds"
     }
 
     init(from decoder: Decoder) throws {
@@ -21,6 +23,7 @@ struct WorkspacesResponse: Decodable, Sendable {
         alerts = try container.decodeIfPresent([HerdrAlert].self, forKey: .alerts) ?? []
         generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt)
             ?? container.decodeIfPresent(String.self, forKey: .generatedAtSnake)
+        starredPaneIDs = try container.decodeIfPresent([String].self, forKey: .starredPaneIDs)
     }
 }
 

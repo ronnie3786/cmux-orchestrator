@@ -11,7 +11,7 @@ struct PiCodeBlockView: View {
             HStack {
                 Text((language ?? "code").lowercased())
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(HerdrTheme.muted)
+                    .foregroundStyle(HerdrTheme.code.opacity(0.75))
                 Spacer()
                 Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
                     copyCode()

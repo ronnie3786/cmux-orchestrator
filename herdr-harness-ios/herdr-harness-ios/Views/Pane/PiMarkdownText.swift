@@ -4,7 +4,7 @@ struct PiMarkdownText: View {
     let source: String
     let font: Font
     var inlineCodeFont: Font? = nil
-    var inlineCodeBackground: Color? = nil
+    var inlineCodeColor: Color? = nil
     private let rendered: AttributedString
 
     init(
@@ -12,12 +12,12 @@ struct PiMarkdownText: View {
         font: Font = .body,
         cacheRenderedText: Bool = true,
         inlineCodeFont: Font? = nil,
-        inlineCodeBackground: Color? = nil
+        inlineCodeColor: Color? = nil
     ) {
         self.source = source
         self.font = font
         self.inlineCodeFont = inlineCodeFont
-        self.inlineCodeBackground = inlineCodeBackground
+        self.inlineCodeColor = inlineCodeColor
         rendered = cacheRenderedText
             ? PiMarkdownInlineCache.shared.rendered(source)
             : PiMarkdownInlineCache.render(source)
@@ -25,8 +25,8 @@ struct PiMarkdownText: View {
 
     var body: some View {
         let styled: AttributedString
-        if let inlineCodeFont, let inlineCodeBackground {
-            styled = Self.applyingInlineCodeStyle(rendered, font: inlineCodeFont, background: inlineCodeBackground)
+        if let inlineCodeFont, let inlineCodeColor {
+            styled = Self.applyingInlineCodeStyle(rendered, font: inlineCodeFont, color: inlineCodeColor)
         } else {
             styled = rendered
         }
@@ -41,12 +41,12 @@ struct PiMarkdownText: View {
         PiMarkdownInlineCache.render(source)
     }
 
-    static func applyingInlineCodeStyle(_ source: AttributedString, font: Font, background: Color) -> AttributedString {
+    static func applyingInlineCodeStyle(_ source: AttributedString, font: Font, color: Color) -> AttributedString {
         var result = source
         for run in result.runs {
             guard let intent = run.inlinePresentationIntent, intent.contains(.code) else { continue }
             result[run.range].font = font
-            result[run.range].backgroundColor = background
+            result[run.range].foregroundColor = color
         }
         return result
     }

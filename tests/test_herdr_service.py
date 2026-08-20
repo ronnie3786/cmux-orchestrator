@@ -13,6 +13,7 @@ from herdr_harness import attachments
 from herdr_harness.alerts import AlertStore
 from herdr_harness.client import HerdrClientError
 from herdr_harness.service import HerdrService
+from herdr_harness.stars import StarStore
 from herdr_harness.terminal import TerminalObserverError
 
 
@@ -756,6 +757,114 @@ class HerdrServiceTests(unittest.TestCase):
             malformed = AlertStore(store_path=store_path)
             self.assertEqual(malformed.list(limit=10), [])
             self.assertEqual(malformed.unread_count(), 0)
+
+    def test_star_store_persists_starred_panes_across_service_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "stars.json"
+            first_service = HerdrService(
+                FakeClient([snapshot_with_status("working")]),
+                stars=StarStore(store_path=store_path),
+                environ={},
+            )
+            first_service.refresh_snapshot()
+
+            result = first_service.set_pane_star("w1:p1", True)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(stat.S_IMODE(store_path.stat().st_mode), 0o600)
+            persisted = json.loads(store_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["version"], 1)
+            self.assertIsInstance(persisted["starred"], dict)
+            self.assertIsInstance(persisted["starred"]["w1:p1"], str)
+
+            second_service = HerdrService(
+                FakeClient([snapshot_with_status("working")]),
+                stars=StarStore(store_path=store_path),
+                environ={},
+            )
+            self.assertEqual(second_service.stars.list(), ["w1:p1"])
+
+    def test_setting_pane_star_publishes_once_and_idempotent_reset_publishes_nothing(self):
+        service = HerdrService(FakeClient([snapshot_with_status("working")]), environ={})
+        service.refresh_snapshot()
+        before = service.broker.latest_id
+
+        service.set_pane_star("w1:p1", True)
+
+        self.assertEqual(
+            sum(item["event"] == "stars.changed" for item in service.broker.after(before)),
+            1,
+        )
+        before_second_set = service.broker.latest_id
+
+        service.set_pane_star("w1:p1", True)
+
+        self.assertEqual(service.broker.after(before_second_set), [])
+
+    def test_refresh_snapshot_prunes_dead_starred_pane_and_publishes_change(self):
+        missing_pane = snapshot_with_status("working")
+        missing_pane["panes"] = []
+        missing_pane["agents"] = []
+        missing_pane["workspaces"][0]["pane_count"] = 0
+        missing_pane["tabs"][0]["pane_count"] = 0
+        service = HerdrService(
+            FakeClient([snapshot_with_status("working"), missing_pane]),
+            environ={},
+        )
+        service.refresh_snapshot()
+        service.set_pane_star("w1:p1", True)
+        self.assertEqual(service.stars.list(), ["w1:p1"])
+        before = service.broker.latest_id
+
+        service.refresh_snapshot()
+
+        self.assertEqual(service.stars.list(), [])
+        self.assertTrue(
+            any(item["event"] == "stars.changed" for item in service.broker.after(before))
+        )
+
+    def test_star_store_defensively_loads_malformed_and_oversized_payloads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "stars.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "starred": {
+                            "invalid": 42,
+                            **{
+                                f"w1:p{index}": f"2026-08-20T00:00:{index:02d}Z"
+                                for index in range(12)
+                            },
+                        },
+                        "junk": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store_path.chmod(0o644)
+
+            store = StarStore(maximum=10, store_path=store_path)
+
+            self.assertEqual(store.list(), [f"w1:p{index}" for index in range(10)])
+            self.assertEqual(stat.S_IMODE(store_path.stat().st_mode), 0o600)
+
+            store_path.write_bytes(b"x" * (StarStore.MAX_STORE_BYTES + 1))
+            oversized = StarStore(store_path=store_path)
+            self.assertEqual(oversized.list(), [])
+
+            store_path.write_text("{not-json", encoding="utf-8")
+            malformed = StarStore(store_path=store_path)
+            self.assertEqual(malformed.list(), [])
+
+    def test_workspaces_response_includes_starred_pane_ids(self):
+        service = HerdrService(FakeClient([snapshot_with_status("working")]), environ={})
+        service.refresh_snapshot()
+        service.set_pane_star("w1:p1", True)
+
+        response = service.workspaces_response()
+
+        self.assertEqual(response["starredPaneIds"], ["w1:p1"])
 
 
 if __name__ == "__main__":

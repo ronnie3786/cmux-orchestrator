@@ -15,7 +15,7 @@ struct PiMarkdownListView: View {
                         item.text,
                         font: HerdrProse.font(.listItem),
                         inlineCodeFont: HerdrProse.inlineCodeFont(.listItem),
-                        inlineCodeBackground: HerdrProse.inlineCodeBackground
+                        inlineCodeColor: HerdrProse.inlineCodeColor
                     )
                         .lineSpacing(HerdrProse.lineSpacing(.listItem))
                         .frame(maxWidth: .infinity, alignment: .leading)

@@ -94,9 +94,8 @@ enum HerdrProse {
         .system(size: (role.baseSize * 0.9).rounded(), weight: .medium, design: .monospaced)
     }
 
-    /// Background for inline-code chips: a translucent tint of the elevated
-    /// surface color, distinct from the darker recessed fenced-code panel.
-    static let inlineCodeBackground: Color = HerdrTheme.elevated.opacity(0.55)
+    /// Foreground color for inline `code` spans within prose.
+    static let inlineCodeColor: Color = HerdrTheme.code
 
     /// `.lineSpacing(...)` for reading-prose roles (body, quote, list items).
     /// Call sites for headings and tables keep their own existing tight

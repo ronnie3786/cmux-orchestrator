@@ -215,6 +215,7 @@ final class HerdrAppModel {
                     if event.event == "snapshot.updated" ||
                         event.event == "alert.created" ||
                         event.event == "alerts.read_state_changed" ||
+                        event.event == "stars.changed" ||
                         Self.piCapabilityEvents.contains(event.event) {
                         try await refresh(
                             using: client,
@@ -796,6 +797,9 @@ final class HerdrAppModel {
             starredChatIDs.insert(paneID)
         }
         UserDefaults.standard.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
+        guard !isDemoMode, canControl, let client else { return }
+        let starred = starredChatIDs.contains(paneID)
+        Task { try? await client.setPaneStar(id: paneID, starred: starred) }
     }
 
     func openWorkspace(id: String) {
@@ -856,6 +860,13 @@ final class HerdrAppModel {
         let previousAlertIDs = Set(alerts.map(\.id))
         workspaces = response.workspaces
         alerts = response.alerts
+        if let serverStars = response.starredPaneIDs {
+            let stars = Set(serverStars)
+            if stars != starredChatIDs {
+                starredChatIDs = stars
+                UserDefaults.standard.set(Array(stars), forKey: "herdr.sidebar.starredChats")
+            }
+        }
         let currentAlertIDs = Set(alerts.map(\.id))
         let readAlertIDs = Set(alerts.filter(\.isRead).map(\.id))
         let removedAlertIDs = previousAlertIDs.subtracting(currentAlertIDs)

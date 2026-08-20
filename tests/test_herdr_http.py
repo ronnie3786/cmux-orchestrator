@@ -53,7 +53,13 @@ class FakeHTTPService:
     def workspaces_response(self):
         workspace = dict(self.snapshot["workspaces"][0])
         workspace.update({"tabs": [], "panes": [], "agents": [], "layouts": []})
-        return {"ok": True, "workspaces": [workspace], "alerts": [], "generatedAt": "now"}
+        return {
+            "ok": True,
+            "workspaces": [workspace],
+            "alerts": [],
+            "starredPaneIds": [],
+            "generatedAt": "now",
+        }
 
     def workspace_response(self, workspace_id):
         if workspace_id != "w1":
@@ -164,6 +170,16 @@ class FakeHTTPService:
     def mark_all_alerts_read(self):
         return {"ok": True, "alerts": [], "unreadCount": 0}
 
+    def set_pane_star(self, pane_id, starred):
+        self.calls.append(("pane.star", {"pane_id": pane_id, "starred": starred}))
+        return {
+            "ok": True,
+            "paneId": pane_id,
+            "starred": starred,
+            "starredPaneIds": ["w1:p1"] if starred else [],
+            "generatedAt": "now",
+        }
+
     def push_status(self):
         return {"ok": True, "apns": {"configured": False, "deviceCount": 0}}
 
@@ -261,6 +277,37 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(workspaces["workspaces"][0]["workspace_id"], "w1")
         self.assertEqual(workspaces["workspaces"][0]["tabs"], [])
         self.assertIn("alerts", workspaces)
+        self.assertIn("starredPaneIds", workspaces)
+
+    def test_pane_star_route_validates_and_forwards(self):
+        status, _, body = self.request(
+            "/api/v1/panes/w1:p1/star",
+            method="POST",
+            payload={"starred": True},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["starred"])
+        self.assertEqual(
+            self.service.calls[-1],
+            ("pane.star", {"pane_id": "w1:p1", "starred": True}),
+        )
+
+        missing_status, _, missing_body = self.request(
+            "/api/v1/panes/w1:p1/star",
+            method="POST",
+            payload={},
+        )
+        self.assertEqual(missing_status, 400)
+        self.assertEqual(missing_body["error"]["code"], "invalid_request")
+
+        bad_type_status, _, bad_type_body = self.request(
+            "/api/v1/panes/w1:p1/star",
+            method="POST",
+            payload={"starred": "yes"},
+        )
+        self.assertEqual(bad_type_status, 400)
+        self.assertEqual(bad_type_body["error"]["code"], "invalid_request")
 
     def test_workspace_create_validates_and_forwards_native_params(self):
         status, _, body = self.request(

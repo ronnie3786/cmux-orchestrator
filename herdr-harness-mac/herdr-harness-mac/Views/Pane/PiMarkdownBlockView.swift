@@ -12,7 +12,7 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: HerdrProse.font(.body, scale: fontScale),
                 inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
-                inlineCodeBackground: HerdrProse.inlineCodeBackground
+                inlineCodeColor: HerdrProse.inlineCodeColor
             )
                 .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
         case let .heading(_, level, text):
@@ -20,7 +20,7 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: headingFont(level),
                 inlineCodeFont: HerdrProse.inlineCodeFont(headingRole(level), scale: fontScale),
-                inlineCodeBackground: HerdrProse.inlineCodeBackground
+                inlineCodeColor: HerdrProse.inlineCodeColor
             )
                 .lineSpacing(2)
                 .accessibilityAddTraits(.isHeader)
@@ -34,7 +34,7 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: HerdrProse.font(.quote, scale: fontScale),
                 inlineCodeFont: HerdrProse.inlineCodeFont(.quote, scale: fontScale),
-                inlineCodeBackground: HerdrProse.inlineCodeBackground
+                inlineCodeColor: HerdrProse.inlineCodeColor
             )
                 .lineSpacing(HerdrProse.lineSpacing(.quote, scale: fontScale))
                 .foregroundStyle(HerdrTheme.mist)
