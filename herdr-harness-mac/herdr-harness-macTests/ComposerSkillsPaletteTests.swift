@@ -70,14 +70,14 @@ struct ComposerSkillsPaletteTests {
 
     // MARK: - Filtering
 
-    @Test("Filtering is case-insensitive and prefers prefixes over fuzzy hits")
+    @Test("Filtering is case-insensitive and ranks prefixes above containment")
     func filtersPrefixesFirst() {
         var palette = makePalette()
 
         palette.textDidChange("$SE", caret: 3)
 
-        // "self-qa" is a prefix hit; "release-ios" only matches as a
-        // subsequence, so it sorts after.
+        // "self-qa" starts with "se" (tier 0, prefix); "release-ios" only
+        // contains "se" (tier 1, containment), so it sorts after.
         #expect(palette.matches.map(\.name) == ["self-qa", "release-ios"])
     }
 
@@ -131,6 +131,38 @@ struct ComposerSkillsPaletteTests {
 
         #expect(palette.isVisible)
         #expect(palette.matches.map(\.name) == ["swiftui-pro"])
+    }
+
+    @Test("Ranking puts prefix hits first, alphabetically, then containment, then path-only hits")
+    func ranksMatchesByStrength() {
+        var palette = makePalette()
+
+        palette.textDidChange("$s", caret: 2)
+
+        // self-qa/swiftui-pro start with "s", release-ios contains it, and
+        // handoff only reaches it through the skills directory in its path.
+        #expect(palette.matches.map(\.name) == ["self-qa", "swiftui-pro", "release-ios", "handoff"])
+    }
+
+    @Test("A query that only the file path contains still matches")
+    func filtersByPath() {
+        var palette = makePalette()
+
+        palette.textDidChange("$claude", caret: 7)
+
+        #expect(palette.matches.map(\.name) == ["release-ios", "self-qa", "swiftui-pro"])
+    }
+
+    @Test("Accepting always leaves exactly one trailing space")
+    func acceptanceAddsOneTrailingSpace() {
+        var palette = makePalette()
+        palette.textDidChange("$sw", caret: 3)
+
+        let acceptance = palette.accept()
+
+        #expect(acceptance?.token == "$swiftui-pro ")
+        #expect(acceptance?.text.hasSuffix("pro ") == true)
+        #expect(acceptance?.text.hasSuffix("pro  ") == false)
     }
 
     // MARK: - Highlight
@@ -188,6 +220,33 @@ struct ComposerSkillsPaletteTests {
         #expect(palette.highlightedIndex == 1)
     }
 
+    // MARK: - Selection reset
+
+    @Test("A keystroke that does not change the list keeps the highlight")
+    func keepsHighlightWhenTheListDoesNotChange() {
+        var palette = makePalette()
+        palette.textDidChange("$sk", caret: 3)
+        #expect(palette.matches.map(\.name) == ["handoff", "release-ios", "self-qa", "swiftui-pro"])
+        palette.moveHighlight(by: 2)
+        #expect(palette.highlightedIndex == 2)
+
+        // "sk"/"ski" only match through the skills segment of every path, so
+        // the list is identical and the user's row survives.
+        palette.textDidChange("$ski", caret: 4)
+        #expect(palette.highlightedIndex == 2)
+    }
+
+    @Test("A changed list sends the highlight back to the top")
+    func resetsHighlightWhenTheListChanges() {
+        var palette = makePalette()
+        palette.textDidChange("$sk", caret: 3)
+        palette.moveHighlight(by: 2)
+
+        palette.textDidChange("$s", caret: 2)
+
+        #expect(palette.highlightedIndex == 0)
+    }
+
     @Test("The HUD reports at most six visible rows")
     func capsVisibleRows() {
         var palette = ComposerSkillsPalette(
@@ -232,11 +291,11 @@ struct ComposerSkillsPaletteTests {
         var palette = makePalette()
         palette.textDidChange("$s", caret: 2)
 
-        // Prefix hits sort first, so row 1 is the second prefix match.
+        // Prefix hits sort alphabetically, so row 0 is self-qa and row 1 is swiftui-pro.
         let acceptance = palette.accept(at: 1)
 
-        #expect(acceptance?.token == "$self-qa ")
-        #expect(acceptance?.text == "$self-qa ")
+        #expect(acceptance?.token == "$swiftui-pro ")
+        #expect(acceptance?.text == "$swiftui-pro ")
     }
 
     @Test("Accepting is impossible while the HUD is hidden")
@@ -383,8 +442,54 @@ struct ComposerSkillsPaletteTests {
         #expect(tokenStart("$a", caret: 9) == nil)
     }
 
+    // MARK: - Filter algorithm
+
+    @Test("A skipping subsequence finds the skill the reference app promises")
+    func findsSkippingSubsequences() {
+        #expect(names("rjt") == ["run-jira-tests"])
+    }
+
+    @Test("A hyphenated query is three tokens, not one")
+    func tokenizesBoundaries() {
+        #expect(ComposerSkillsPalette.tokens(in: "ios-pr-review") == ["ios", "pr", "review"])
+        #expect(ComposerSkillsPalette.tokens(in: "Run.Jira:Tests") == ["run", "jira", "tests"])
+        // release-ios has ios, but neither pr nor review. Every token must land.
+        #expect(names("ios-pr-review") == ["ios-pr-review"])
+    }
+
+    @Test("A symbol-only query falls back to a plain substring match")
+    func filtersSymbolOnlyQueries() {
+        // Hyphenated names rank together alphabetically; handoff only reaches
+        // the tier through agent-registry in its path.
+        #expect(names("-") == ["ios-pr-review", "release-ios", "run-jira-tests", "handoff"])
+        #expect(names("…").isEmpty)
+    }
+
+    @Test("Ranking walks prefix, containment, subsequence, then path")
+    func ranksEachMatchTier() {
+        #expect(names("re") == ["release-ios", "ios-pr-review", "run-jira-tests", "handoff"])
+        #expect(ComposerSkillsPalette.rank(Self.algorithmSkills[2], tokens: ["re"]) == 0)
+        #expect(ComposerSkillsPalette.rank(Self.algorithmSkills[1], tokens: ["re"]) == 1)
+        #expect(ComposerSkillsPalette.rank(Self.algorithmSkills[0], tokens: ["re"]) == 2)
+        #expect(ComposerSkillsPalette.rank(Self.algorithmSkills[3], tokens: ["re"]) == 3)
+    }
+
+    @Test("An empty query keeps the server's order")
+    func keepsServerOrderForEmptyQueries() {
+        #expect(names("") == Self.algorithmSkills.map(\.name))
+    }
+
+    @Test("Matching is case-insensitive")
+    func matchesIgnoringCase() {
+        #expect(names("IOS-PR") == ["ios-pr-review"])
+    }
+
     private func tokenStart(_ text: String, caret: Int) -> Int? {
         ComposerSkillsPalette.tokenStart(in: Array(text), caret: caret)
+    }
+
+    private func names(_ query: String) -> [String] {
+        ComposerSkillsPalette.filter(Self.algorithmSkills, query: query).map(\.name)
     }
 
     // MARK: - Fixtures
@@ -394,6 +499,13 @@ struct ComposerSkillsPaletteTests {
         ProjectSkill(name: "self-qa", skillFilePath: "./.claude/skills/self-qa/SKILL.md", scope: "project"),
         ProjectSkill(name: "release-ios", skillFilePath: "./.claude/skills/release-ios/SKILL.md", scope: "project"),
         ProjectSkill(name: "handoff", skillFilePath: "~/.codex/skills/handoff/SKILL.md", scope: "user"),
+    ]
+
+    private static let algorithmSkills = [
+        ProjectSkill(name: "run-jira-tests", skillFilePath: "./.claude/skills/run-jira-tests/SKILL.md", scope: "project"),
+        ProjectSkill(name: "ios-pr-review", skillFilePath: "./.claude/skills/ios-pr-review/SKILL.md", scope: "project"),
+        ProjectSkill(name: "release-ios", skillFilePath: "./.claude/skills/release-ios/SKILL.md", scope: "project"),
+        ProjectSkill(name: "handoff", skillFilePath: "~/.codex/skills/agent-registry/handoff/SKILL.md", scope: "user"),
     ]
 
     private func makePalette() -> ComposerSkillsPalette {

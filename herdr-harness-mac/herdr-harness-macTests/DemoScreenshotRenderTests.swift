@@ -235,10 +235,12 @@ struct DemoScreenshotRenderTests {
             "07-composer.png",
             size: CGSize(width: 900, height: 300)
         ) {
-            // The composer mounts its own tool row now — tools left, terminal
-            // keys right, always visible. Nothing is stacked on top of it here:
-            // stacking a second `ComposerAuxiliaryBar` would render the tools
-            // twice and misrepresent the layout this PNG documents.
+            // Composer owns one always-visible row, tools left and terminal keys right.
+            // Pin its widest form: ViewThatFits lays out candidates to measure them, and a
+            // losing candidate's tools can linger in an offscreen NSHostingView snapshot.
+            // Without that pin, this test may document a second row the app never draws.
+            // At 900pt, .automatic would choose this widest form anyway, so this PNG is
+            // still the real on-screen layout. Runtime .automatic behavior stays untouched.
             PromptComposerView(
                 model: model,
                 pane: pane,
@@ -246,7 +248,8 @@ struct DemoScreenshotRenderTests {
                 draft: .constant("steer: keep the follow loop off scenePhase"),
                 attachments: .constant([]),
                 focusRequest: 0,
-                piConfiguration: HerdrRenderFixtures.composerConfiguration()
+                piConfiguration: HerdrRenderFixtures.composerConfiguration(),
+                toolRowFit: .pinnedWidest
             )
             .padding(12)
         }

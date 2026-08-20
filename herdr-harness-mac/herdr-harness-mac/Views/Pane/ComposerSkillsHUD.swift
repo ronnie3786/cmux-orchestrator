@@ -8,6 +8,8 @@ import SwiftUI
 /// clicks and hovers back.
 struct ComposerSkillsHUD: View {
     let matches: [ProjectSkill]
+    /// How many skills the workspace has in total — the denominator in the footer count.
+    let totalCount: Int
     let highlightedIndex: Int
     let query: String
     let visibleRowCount: Int
@@ -40,6 +42,12 @@ struct ComposerSkillsHUD: View {
                     proxy.scrollTo(index, anchor: .center)
                 }
             }
+
+            Rectangle()
+                .fill(HerdrTheme.surface)
+                .frame(height: 1)
+
+            footer
         }
         .frame(maxWidth: 460, alignment: .leading)
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
@@ -70,7 +78,7 @@ struct ComposerSkillsHUD: View {
 
             Spacer(minLength: 8)
 
-            Text("↑↓ move · ⏎ insert · esc")
+            Text("↑↓ move")
                 .font(.caption2.monospaced())
                 .foregroundStyle(HerdrTheme.muted)
                 .lineLimit(1)
@@ -79,6 +87,29 @@ struct ComposerSkillsHUD: View {
         .padding(.vertical, 7)
         .background(HerdrTheme.elevated)
         .accessibilityHidden(true)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Text(countSummary)
+            Spacer(minLength: 8)
+            Text("↩ insert · esc")
+        }
+        .font(.caption2.monospaced())
+        .foregroundStyle(HerdrTheme.muted)
+        .lineLimit(1)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(HerdrTheme.elevated)
+        .accessibilityHidden(true)
+    }
+
+    /// "12 of 47 skills" while filtering, plain "47 skills" when the query is
+    /// empty — the denominator never shrinks below what is on screen.
+    private var countSummary: String {
+        let total = max(totalCount, matches.count)
+        let noun = total == 1 ? "skill" : "skills"
+        return query.isEmpty ? "\(total) \(noun)" : "\(matches.count) of \(total) \(noun)"
     }
 
     private func row(_ skill: ProjectSkill, at index: Int) -> some View {

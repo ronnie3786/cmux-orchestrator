@@ -150,22 +150,65 @@ struct ComposerSkillsPalette: Equatable, Sendable {
         return nil
     }
 
-    /// Case-insensitive fuzzy-prefix filter on the skill name: exact prefixes
-    /// first, then names that contain the query letters in order.
+    /// Splits a query the way the reference HUD does: on any non-alphanumeric
+    /// boundary, lowercased — so `ios-pr-review` is three tokens that each have
+    /// to land, not one hyphenated string that matches nothing.
+    static func tokens(in query: String) -> [String] {
+        query.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+    }
+
+    /// Matches every token against the name or `skillFilePath`, this app's
+    /// stand-in for the reference HUD's description/badge haystack because it
+    /// is the second line every row already shows. Loose subsequences stay
+    /// name-only so paths cannot flood the list.
     static func filter(_ skills: [ProjectSkill], query: String) -> [ProjectSkill] {
         guard !query.isEmpty else { return skills }
-        let needle = query.lowercased()
-        var prefixed: [ProjectSkill] = []
-        var fuzzy: [ProjectSkill] = []
-        for skill in skills {
-            let name = skill.name.lowercased()
-            if name.hasPrefix(needle) {
-                prefixed.append(skill)
-            } else if isSubsequence(needle, of: name) {
-                fuzzy.append(skill)
+        let tokens = tokens(in: query)
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matched: [ProjectSkill]
+        let rankingTokens: [String]
+        if tokens.isEmpty {
+            guard !trimmed.isEmpty else { return skills }
+            // A query of pure punctuation still means something ("-"): fall back
+            // to one plain substring match rather than matching everything.
+            matched = skills.filter { skill in
+                skill.name.lowercased().contains(trimmed)
+                    || skill.skillFilePath.lowercased().contains(trimmed)
             }
+            rankingTokens = [trimmed]
+        } else {
+            matched = skills.filter { skill in
+                let name = skill.name.lowercased()
+                let path = skill.skillFilePath.lowercased()
+                return tokens.allSatisfy { token in
+                    name.contains(token)
+                        || path.contains(token)
+                        || isSubsequence(token, of: name)
+                }
+            }
+            rankingTokens = tokens
         }
-        return prefixed + fuzzy
+        return matched.sorted { lhs, rhs in
+            let lhsRank = rank(lhs, tokens: rankingTokens)
+            let rhsRank = rank(rhs, tokens: rankingTokens)
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            if comparison != .orderedSame { return comparison == .orderedAscending }
+            return lhs.skillFilePath.localizedCaseInsensitiveCompare(rhs.skillFilePath) == .orderedAscending
+        }
+    }
+
+    /// (0) name starts with a token, (1) name contains one, (2) name matches one
+    /// as a subsequence, (3) matched only through the path. Alphabetical inside
+    /// a tier — see `filter`.
+    static func rank(_ skill: ProjectSkill, tokens: [String]) -> Int {
+        let name = skill.name.lowercased()
+        if tokens.contains(where: { name.hasPrefix($0) }) { return 0 }
+        if tokens.contains(where: { name.contains($0) }) { return 1 }
+        if tokens.contains(where: { isSubsequence($0, of: name) }) { return 2 }
+        return 3
     }
 
     /// Whether `needle`'s characters appear in `haystack` in order.
@@ -212,10 +255,13 @@ struct ComposerSkillsPalette: Equatable, Sendable {
             return
         }
 
+        // The highlight belongs to the list, not to the keystroke: a changed
+        // list is a changed set of choices and goes back to the top, while a
+        // keystroke that narrows nothing leaves the row the user moved to alone.
+        if !isVisible || currentMatches != matches { highlightedIndex = 0 }
         tokenStart = start
         query = currentQuery
         matches = currentMatches
-        highlightedIndex = 0
         isVisible = true
     }
 

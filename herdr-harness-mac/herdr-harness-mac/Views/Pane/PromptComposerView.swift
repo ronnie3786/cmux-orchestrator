@@ -1,6 +1,18 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// How the composer's tool row decides its fit.
+///
+/// The app always uses `.automatic`. `.pinnedWidest` exists for the offscreen
+/// render tests: `ViewThatFits` measures every candidate, and a candidate that
+/// loses the measurement can still leave its tools in an `NSHostingView`
+/// snapshot — a screenshot showing two tool rows for a composer that only ever
+/// mounts one.
+enum ComposerToolRowFit: Equatable, Sendable {
+    case automatic
+    case pinnedWidest
+}
+
 /// The shared prompt composer, hosted by both the terminal pane and Pi chat.
 ///
 /// Mac notes:
@@ -29,6 +41,7 @@ struct PromptComposerView: View {
     let focusRequest: Int
     let dismissFocusRequest: Int
     let piConfiguration: PiPromptComposerConfiguration?
+    let toolRowFit: ComposerToolRowFit
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -56,7 +69,8 @@ struct PromptComposerView: View {
         attachments: Binding<[TerminalAttachment]>,
         focusRequest: Int,
         dismissFocusRequest: Int = 0,
-        piConfiguration: PiPromptComposerConfiguration? = nil
+        piConfiguration: PiPromptComposerConfiguration? = nil,
+        toolRowFit: ComposerToolRowFit = .automatic
     ) {
         self.model = model
         self.pane = pane
@@ -66,6 +80,7 @@ struct PromptComposerView: View {
         self.focusRequest = focusRequest
         self.dismissFocusRequest = dismissFocusRequest
         self.piConfiguration = piConfiguration
+        self.toolRowFit = toolRowFit
         _disposition = State(initialValue: piConfiguration?.preferredDisposition ?? .prompt)
     }
 
@@ -154,6 +169,7 @@ struct PromptComposerView: View {
                 // is what lifts it clear of the stack.
                 ComposerSkillsHUD(
                     matches: skillsPalette.matches,
+                    totalCount: skillsPalette.skills.count,
                     highlightedIndex: skillsPalette.highlightedIndex,
                     query: skillsPalette.query,
                     visibleRowCount: skillsPalette.visibleRowCount,
@@ -302,16 +318,23 @@ struct PromptComposerView: View {
     /// second-tier keys into an overflow menu. Only the narrowest windows ever
     /// see the last step.
     private var composerToolRow: some View {
-        ViewThatFits(in: .horizontal) {
-            toolRow(showsToolTitles: true, showsKeyLabels: true)
-            toolRow(showsToolTitles: false, showsKeyLabels: true)
-            toolRow(showsToolTitles: false, showsKeyLabels: false)
-            toolRow(
-                showsToolTitles: false,
-                showsKeyLabels: false,
-                keys: TerminalPresetKey.primaryRow,
-                overflow: TerminalPresetKey.secondaryRow
-            )
+        Group {
+            switch toolRowFit {
+            case .automatic:
+                ViewThatFits(in: .horizontal) {
+                    toolRow(showsToolTitles: true, showsKeyLabels: true)
+                    toolRow(showsToolTitles: false, showsKeyLabels: true)
+                    toolRow(showsToolTitles: false, showsKeyLabels: false)
+                    toolRow(
+                        showsToolTitles: false,
+                        showsKeyLabels: false,
+                        keys: TerminalPresetKey.primaryRow,
+                        overflow: TerminalPresetKey.secondaryRow
+                    )
+                }
+            case .pinnedWidest:
+                toolRow(showsToolTitles: true, showsKeyLabels: true)
+            }
         }
         .accessibilityIdentifier("composer-tool-row")
     }
