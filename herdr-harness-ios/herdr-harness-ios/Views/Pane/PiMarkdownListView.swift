@@ -4,14 +4,19 @@ struct PiMarkdownListView: View {
     let items: [PiMarkdownListItem]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .top, spacing: 8) {
                     marker(for: item.marker)
                         .frame(width: 24, alignment: .trailing)
                         .padding(.top, 2)
                         .accessibilityHidden(true)
-                    PiMarkdownText(item.text, font: HerdrProse.font(.listItem))
+                    PiMarkdownText(
+                        item.text,
+                        font: HerdrProse.font(.listItem),
+                        inlineCodeFont: HerdrProse.inlineCodeFont(.listItem),
+                        inlineCodeBackground: HerdrProse.inlineCodeBackground
+                    )
                         .lineSpacing(HerdrProse.lineSpacing(.listItem))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -28,11 +33,11 @@ struct PiMarkdownListView: View {
         case .bullet:
             Text("•")
                 .font(.body.weight(.bold))
-                .foregroundStyle(HerdrTheme.accent)
+                .foregroundStyle(HerdrTheme.muted)
         case let .number(number):
             Text("\(number).")
                 .font(.callout.monospacedDigit())
-                .foregroundStyle(HerdrTheme.accent)
+                .foregroundStyle(HerdrTheme.muted)
         case let .task(isCompleted):
             Image(systemName: isCompleted ? "checkmark.square.fill" : "square")
                 .font(.callout.weight(.semibold))

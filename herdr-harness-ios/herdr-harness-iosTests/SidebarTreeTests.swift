@@ -150,23 +150,68 @@ struct SidebarTreeTests {
         #expect(tree[0].sections[1].chats.map(\.id) == ["w1:p3"])
     }
 
-    @Test("Builds and filters starred chats across workspaces")
-    func buildsStarredChats() {
+    @Test("Builds and filters starred groups across workspaces")
+    func buildsStarredGroups() {
         let starredIDs: Set<String> = ["w2:p1", "w1:p2"]
 
-        let allStarred = SidebarTree.starredChats(
+        let allStarred = SidebarTree.starredGroups(
             workspaces: workspaces,
             query: "",
             starredIDs: starredIDs
         )
-        #expect(allStarred.map(\.id) == ["w1:p2", "w2:p1"])
+        #expect(allStarred.map(\.id) == ["starred:w1", "starred:w2"])
+        #expect(allStarred[0].chats.map(\.id) == ["w1:p2"])
+        #expect(allStarred[1].chats.map(\.id) == ["w2:p1"])
 
-        let matchingStarred = SidebarTree.starredChats(
+        let matchingStarred = SidebarTree.starredGroups(
             workspaces: workspaces,
             query: "Auth",
             starredIDs: starredIDs
         )
-        #expect(matchingStarred.map(\.id) == ["w1:p2"])
+        #expect(matchingStarred.map(\.id) == ["starred:w1"])
+        #expect(matchingStarred[0].chats.map(\.id) == ["w1:p2"])
+    }
+
+    @Test("Orders starred groups and chats deterministically")
+    func ordersStarredGroupsAndChats() {
+        let groups = SidebarTree.starredGroups(
+            workspaces: workspaces,
+            query: "",
+            starredIDs: ["w3:p1", "w1:p3", "w1:p1"]
+        )
+
+        #expect(groups.map(\.id) == ["starred:w1", "starred:w3"])
+        #expect(groups[0].chats.map(\.id) == ["w1:p1", "w1:p3"])
+    }
+
+    @Test("Omits workspaces without matching starred chats")
+    func omitsWorkspacesWithoutMatchingStarredChats() {
+        let noMatches = SidebarTree.starredGroups(
+            workspaces: workspaces,
+            query: "",
+            starredIDs: ["nonexistent"]
+        )
+        #expect(noMatches.isEmpty)
+
+        let oneWorkspace = SidebarTree.starredGroups(
+            workspaces: workspaces,
+            query: "",
+            starredIDs: ["w3:p1"]
+        )
+        #expect(oneWorkspace.map(\.id) == ["starred:w3"])
+        #expect(oneWorkspace[0].chats.map(\.id) == ["w3:p1"])
+    }
+
+    @Test("Filters starred chats within groups by pane title")
+    func filtersStarredChatsWithinGroupsByPaneTitle() {
+        let groups = SidebarTree.starredGroups(
+            workspaces: workspaces,
+            query: "  member  ",
+            starredIDs: ["w1:p1", "w1:p2", "w2:p1"]
+        )
+
+        #expect(groups.map(\.id) == ["starred:w1"])
+        #expect(groups[0].chats.map(\.id) == ["w1:p1"])
     }
 
     private var workspaces: [HerdrWorkspace] {

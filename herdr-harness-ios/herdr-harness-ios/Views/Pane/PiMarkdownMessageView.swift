@@ -13,12 +13,18 @@ struct PiMarkdownMessageView: View {
 
     var body: some View {
         if isStreaming {
-            PiMarkdownText(source, font: HerdrProse.font(.body), cacheRenderedText: false)
+            PiMarkdownText(
+                source,
+                font: HerdrProse.font(.body),
+                cacheRenderedText: false,
+                inlineCodeFont: HerdrProse.inlineCodeFont(.body),
+                inlineCodeBackground: HerdrProse.inlineCodeBackground
+            )
                 .lineSpacing(HerdrProse.lineSpacing(.body))
         } else {
             VStack(alignment: .leading, spacing: HerdrProse.blockSpacing) {
                 ForEach(blocks) { block in
-                    PiMarkdownBlockView(block: block)
+                    PiMarkdownBlockView(block: block, isFirst: block.id == blocks.first?.id)
                 }
             }
         }

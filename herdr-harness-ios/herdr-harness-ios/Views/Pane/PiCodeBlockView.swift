@@ -9,7 +9,7 @@ struct PiCodeBlockView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(language?.uppercased() ?? "CODE")
+                Text((language ?? "code").lowercased())
                     .font(.caption.weight(.bold))
                     .foregroundStyle(HerdrTheme.muted)
                 Spacer()
@@ -29,23 +29,28 @@ struct PiCodeBlockView: View {
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(HerdrTheme.elevated.opacity(0.52))
+            .padding(.vertical, 6)
+            .background(HerdrTheme.ink.opacity(0.85))
+
+            Rectangle()
+                .fill(HerdrTheme.surface.opacity(0.5))
+                .frame(height: 1)
 
             ScrollView(.horizontal) {
                 Text(code)
-                    .font(.callout.monospaced())
+                    .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(HerdrTheme.text)
                     .textSelection(.enabled)
+                    .lineSpacing(4)
                     .padding(12)
             }
             .scrollIndicators(.visible)
         }
-        .background(HerdrTheme.ink.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
+        .background(HerdrTheme.crust, in: RoundedRectangle(cornerRadius: 10))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .stroke(HerdrTheme.surface.opacity(0.72), lineWidth: 1)
+                .stroke(HerdrTheme.surface.opacity(0.5), lineWidth: 1)
         }
         .herdrHaptic(trigger: hapticPulse)
     }

@@ -5,14 +5,19 @@ struct PiMarkdownListView: View {
     @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .top, spacing: 8) {
                     marker(for: item.marker)
                         .frame(width: 24, alignment: .trailing)
                         .padding(.top, 2)
                         .accessibilityHidden(true)
-                    PiMarkdownText(item.text, font: HerdrProse.font(.listItem, scale: fontScale))
+                    PiMarkdownText(
+                        item.text,
+                        font: HerdrProse.font(.listItem, scale: fontScale),
+                        inlineCodeFont: HerdrProse.inlineCodeFont(.listItem, scale: fontScale),
+                        inlineCodeBackground: HerdrProse.inlineCodeBackground
+                    )
                         .lineSpacing(HerdrProse.lineSpacing(.listItem, scale: fontScale))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -29,11 +34,11 @@ struct PiMarkdownListView: View {
         case .bullet:
             Text("•")
                 .herdrFont(.body, weight: .bold)
-                .foregroundStyle(HerdrTheme.accent)
+                .foregroundStyle(HerdrTheme.muted)
         case let .number(number):
             Text("\(number).")
                 .herdrFont(.callout, monospacedDigit: true)
-                .foregroundStyle(HerdrTheme.accent)
+                .foregroundStyle(HerdrTheme.muted)
         case let .task(isCompleted):
             Image(systemName: isCompleted ? "checkmark.square.fill" : "square")
                 .herdrFont(.callout, weight: .semibold)

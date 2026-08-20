@@ -17,6 +17,13 @@ enum SidebarTree {
         var id: String { tab.id }
     }
 
+    struct StarredGroup: Identifiable, Equatable {
+        let workspace: HerdrWorkspace
+        let chats: [HerdrPane]
+
+        var id: String { "starred:\(workspace.id)" }
+    }
+
     static func build(
         workspaces: [HerdrWorkspace],
         query: String,
@@ -34,16 +41,21 @@ enum SidebarTree {
         }
     }
 
-    static func starredChats(
+    static func starredGroups(
         workspaces: [HerdrWorkspace],
         query: String,
         starredIDs: Set<String>
-    ) -> [HerdrPane] {
+    ) -> [StarredGroup] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return workspaces
-            .flatMap(\.panes)
-            .filter { starredIDs.contains($0.id) && matchesPaneQuery($0, query: trimmedQuery) }
-            .sorted { $0.paneID < $1.paneID }
+            .sorted { $0.number < $1.number }
+            .compactMap { workspace in
+                let chats = workspace.panes
+                    .filter { starredIDs.contains($0.id) && matchesPaneQuery($0, query: trimmedQuery) }
+                    .sorted { $0.paneID < $1.paneID }
+                guard !chats.isEmpty else { return nil }
+                return StarredGroup(workspace: workspace, chats: chats)
+            }
     }
 
     private static func buildEntry(

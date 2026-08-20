@@ -73,6 +73,7 @@ struct DemoScreenshotRenderTests {
     func rendersSidebar() async throws {
         let model = HerdrRenderFixtures.demoModel()
         model.selectedPaneID = "w1:p2"
+        model.starredChatIDs = ["w1:p1", "w2:p1"]
 
         let result = try await HerdrRenderHarness.render(
             "02-sidebar.png",
@@ -88,6 +89,7 @@ struct DemoScreenshotRenderTests {
     func rendersSidebarAtXXLargeTextScale() async throws {
         let model = HerdrRenderFixtures.demoModel()
         model.selectedPaneID = "w1:p2"
+        model.starredChatIDs = ["w1:p1", "w2:p1"]
 
         let defaultResult = try await HerdrRenderHarness.render(
             "02-sidebar.png",
@@ -674,6 +676,21 @@ enum HerdrRenderFixtures {
         ```
 
         Next I'll check the composer's Return-key mapping.
+
+        ## Follow loop audit
+
+        The dual feed held up under **12k events**. Inline `scenePhase` checks stay hot, and `TerminalRefreshPolicy.balanced` now drives the poll cadence.
+
+        ### Next steps
+
+        1. Wire `followTaskID` into the pane registry
+        2. Drop the legacy `onChange` observer
+
+        > The refresh policy must never outlive its pane — tear it down in `deinit`.
+
+        ---
+
+        Shipping this behind the `mac-follow-loop` flag.
         """
 
         let events: [String] = [

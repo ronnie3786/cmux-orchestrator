@@ -41,9 +41,9 @@ enum HerdrProse {
         var weight: Font.Weight {
             switch self {
             case .body, .quote, .listItem, .tableCell: .regular
-            case .heading1, .heading2, .heading3: .bold
+            case .heading1, .heading2, .heading3: .semibold
             case .heading4: .semibold
-            case .heading5, .heading6: .bold
+            case .heading5, .heading6: .semibold
             case .tableHeader: .semibold
             }
         }
@@ -55,7 +55,7 @@ enum HerdrProse {
 
     /// Spacing between adjacent markdown blocks (paragraph, heading, list,
     /// quote, table, code) inside a single rendered message.
-    static let blockSpacing: CGFloat = 9
+    static let blockSpacing: CGFloat = 12
 
     /// Spacing between conversation turns in `PiChatTimelineView`.
     static let turnSpacing: CGFloat = 28
@@ -73,11 +73,31 @@ enum HerdrProse {
         .custom(postScriptName(for: role), size: role.baseSize * scale.rawValue)
     }
 
+    /// Monospaced chip font for inline `code` spans within prose, sized
+    /// relative to the surrounding role and the user's font-scale preference.
+    static func inlineCodeFont(_ role: Role, scale: HerdrFontScale) -> Font {
+        .system(size: (role.baseSize * 0.9 * scale.rawValue).rounded(), weight: .medium, design: .monospaced)
+    }
+
+    /// Background for inline-code chips: a translucent tint of the elevated
+    /// surface color, distinct from the darker recessed fenced-code panel.
+    static let inlineCodeBackground: Color = HerdrTheme.elevated.opacity(0.55)
+
     /// `.lineSpacing(...)` for reading-prose roles (body, quote, list items)
     /// at the given scale. Call sites for headings and tables keep their own
     /// existing tight spacing instead of calling this.
     static func lineSpacing(_ role: Role, scale: HerdrFontScale) -> CGFloat {
         (role.baseSize * scale.rawValue * 0.35).rounded()
+    }
+
+    /// Extra space ABOVE a heading, added on top of `blockSpacing`, so
+    /// headings read as new sections rather than just another paragraph.
+    static func headingTopSpacing(_ level: Int) -> CGFloat {
+        switch level {
+        case ...2: 12
+        case 3: 6
+        default: 2
+        }
     }
 
     private static func postScriptName(for role: Role) -> String {

@@ -16,6 +16,7 @@ enum HerdrTheme {
     static let working = Color(red: 0.976, green: 0.886, blue: 0.686)
     static let alert = Color(red: 0.953, green: 0.545, blue: 0.659)
     static let warning = Color(red: 0.980, green: 0.702, blue: 0.529)
+    static let crust = Color(red: 0.067, green: 0.067, blue: 0.106)     // ≈ #11111B
 
     static let cardRadius = 16.0
     static let compactRadius = 10.0

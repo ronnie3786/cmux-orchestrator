@@ -3,26 +3,52 @@ import SwiftUI
 struct PiMarkdownText: View {
     let source: String
     let font: Font
+    var inlineCodeFont: Font? = nil
+    var inlineCodeBackground: Color? = nil
     private let rendered: AttributedString
 
     init(
         _ source: String,
         font: Font = .body,
-        cacheRenderedText: Bool = true
+        cacheRenderedText: Bool = true,
+        inlineCodeFont: Font? = nil,
+        inlineCodeBackground: Color? = nil
     ) {
         self.source = source
         self.font = font
+        self.inlineCodeFont = inlineCodeFont
+        self.inlineCodeBackground = inlineCodeBackground
         rendered = cacheRenderedText
             ? PiMarkdownInlineCache.shared.rendered(source)
             : PiMarkdownInlineCache.render(source)
     }
 
     var body: some View {
-        Text(rendered)
+        let styled: AttributedString
+        if let inlineCodeFont, let inlineCodeBackground {
+            styled = Self.applyingInlineCodeStyle(rendered, font: inlineCodeFont, background: inlineCodeBackground)
+        } else {
+            styled = rendered
+        }
+        return Text(styled)
             .font(font)
             .foregroundStyle(HerdrTheme.text)
             .tint(HerdrTheme.accent)
             .textSelection(.enabled)
+    }
+
+    static func render(_ source: String) -> AttributedString {
+        PiMarkdownInlineCache.render(source)
+    }
+
+    static func applyingInlineCodeStyle(_ source: AttributedString, font: Font, background: Color) -> AttributedString {
+        var result = source
+        for run in result.runs {
+            guard let intent = run.inlinePresentationIntent, intent.contains(.code) else { continue }
+            result[run.range].font = font
+            result[run.range].backgroundColor = background
+        }
+        return result
     }
 }
 

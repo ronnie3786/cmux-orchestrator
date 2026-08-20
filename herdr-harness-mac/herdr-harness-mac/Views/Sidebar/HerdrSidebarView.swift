@@ -51,13 +51,25 @@ struct HerdrSidebarView: View {
             HerdrSectionLabel(title: "chats", detail: "\(paneCount) total shown")
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if !starredChats.isEmpty {
-                        HerdrSectionLabel(title: "starred", detail: "\(starredChats.count)")
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if !starredGroups.isEmpty {
+                        HerdrSectionLabel(title: "starred", detail: "\(starredCount)")
                             .padding(.top, 4)
-                        ForEach(starredChats) { pane in
-                            chatRow(pane)
+                        ForEach(starredGroups) { group in
+                            Text(group.workspace.label.lowercased())
+                                .herdrFont(.caption, monospaced: true)
+                                .foregroundStyle(HerdrTheme.muted)
+                                .lineLimit(1)
+                                .padding(.leading, 34)
+                                .padding(.top, 6)
+                            ForEach(group.chats) { chatRow($0) }
                         }
+
+                        Rectangle()
+                            .fill(HerdrTheme.surface.opacity(0.65))
+                            .frame(height: 1)
+                            .padding(.top, 10)
+                            .padding(.bottom, 6)
                     }
 
                     if tree.isEmpty {
@@ -128,18 +140,18 @@ struct HerdrSidebarView: View {
                             Rectangle()
                                 .fill(HerdrTheme.surface.opacity(0.65))
                                 .frame(height: 1)
+                                .padding(.vertical, 8)
                         }
                     }
                 }
             }
             .scrollIndicators(.hidden)
         }
-        .padding(.horizontal, HerdrTheme.pagePadding)
+        .padding(.horizontal, 10)
         .padding(.top, 12)
         .padding(.bottom, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HerdrTheme.ink)
-        .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
         .sheet(isPresented: $isPresentingCreateWorkspace) {
             CreateWorkspaceView { label, cwd in
                 let created = await model.createWorkspace(label: label, cwd: cwd)
@@ -207,12 +219,16 @@ struct HerdrSidebarView: View {
         )
     }
 
-    private var starredChats: [HerdrPane] {
-        SidebarTree.starredChats(workspaces: model.workspaces, query: query, starredIDs: model.starredChatIDs)
+    private var starredGroups: [SidebarTree.StarredGroup] {
+        SidebarTree.starredGroups(workspaces: model.workspaces, query: query, starredIDs: model.starredChatIDs)
+    }
+
+    private var starredCount: Int {
+        starredGroups.reduce(0) { $0 + $1.chats.count }
     }
 
     private var paneCount: Int {
-        starredChats.count + tree.reduce(0) { count, entry in
+        starredCount + tree.reduce(0) { count, entry in
             count + entry.looseChats.count + entry.sections.reduce(0) { $0 + $1.chats.count }
         }
     }

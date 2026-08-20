@@ -17,13 +17,15 @@ struct PiMarkdownMessageView: View {
             PiMarkdownText(
                 source,
                 font: HerdrProse.font(.body, scale: fontScale),
-                cacheRenderedText: false
+                cacheRenderedText: false,
+                inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
+                inlineCodeBackground: HerdrProse.inlineCodeBackground
             )
                 .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
         } else {
             VStack(alignment: .leading, spacing: HerdrProse.blockSpacing) {
                 ForEach(blocks) { block in
-                    PiMarkdownBlockView(block: block)
+                    PiMarkdownBlockView(block: block, isFirst: block.id == blocks.first?.id)
                 }
             }
         }
