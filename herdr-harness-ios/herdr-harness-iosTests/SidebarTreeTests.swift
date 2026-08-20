@@ -137,6 +137,38 @@ struct SidebarTreeTests {
         #expect(tree[0].looseChats.map(\.id) == ["loose:p1", "loose:p2"])
     }
 
+    @Test("Excludes starred chats from workspace sections")
+    func excludesStarredChatsFromTree() {
+        let tree = SidebarTree.build(
+            workspaces: workspaces,
+            query: "",
+            collapsedWorkspaceIDs: [],
+            starredIDs: ["w1:p2"]
+        )
+
+        #expect(tree[0].sections[0].chats.map(\.id) == ["w1:p1"])
+        #expect(tree[0].sections[1].chats.map(\.id) == ["w1:p3"])
+    }
+
+    @Test("Builds and filters starred chats across workspaces")
+    func buildsStarredChats() {
+        let starredIDs: Set<String> = ["w2:p1", "w1:p2"]
+
+        let allStarred = SidebarTree.starredChats(
+            workspaces: workspaces,
+            query: "",
+            starredIDs: starredIDs
+        )
+        #expect(allStarred.map(\.id) == ["w1:p2", "w2:p1"])
+
+        let matchingStarred = SidebarTree.starredChats(
+            workspaces: workspaces,
+            query: "Auth",
+            starredIDs: starredIDs
+        )
+        #expect(matchingStarred.map(\.id) == ["w1:p2"])
+    }
+
     private var workspaces: [HerdrWorkspace] {
         [workspaceThree, workspaceOne, workspaceTwo]
     }

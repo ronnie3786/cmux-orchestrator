@@ -57,6 +57,14 @@ struct HerdrSidebarView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if !starredChats.isEmpty {
+                        HerdrSectionLabel(title: "starred", detail: "\(starredChats.count)")
+                            .padding(.top, 4)
+                        ForEach(starredChats) { pane in
+                            chatRow(pane)
+                        }
+                    }
+
                     if tree.isEmpty {
                         emptyState
                             .frame(maxWidth: .infinity)
@@ -197,12 +205,17 @@ struct HerdrSidebarView: View {
         SidebarTree.build(
             workspaces: model.workspaces,
             query: query,
-            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs
+            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
+            starredIDs: model.starredChatIDs
         )
     }
 
+    private var starredChats: [HerdrPane] {
+        SidebarTree.starredChats(workspaces: model.workspaces, query: query, starredIDs: model.starredChatIDs)
+    }
+
     private var paneCount: Int {
-        tree.reduce(0) { count, entry in
+        starredChats.count + tree.reduce(0) { count, entry in
             count + entry.looseChats.count + entry.sections.reduce(0) { $0 + $1.chats.count }
         }
     }
@@ -253,9 +266,16 @@ struct HerdrSidebarView: View {
         SidebarChatRow(
             pane: pane,
             isSelected: pane.id == model.selectedPaneID,
+            isStarred: model.starredChatIDs.contains(pane.id),
             action: { open(pane) }
         )
         .contextMenu {
+            Button(
+                model.starredChatIDs.contains(pane.id) ? "Unstar chat" : "Star chat",
+                systemImage: model.starredChatIDs.contains(pane.id) ? "star.slash" : "star"
+            ) {
+                model.toggleStarredChat(pane.id)
+            }
             Button("Focus on Mac", systemImage: "scope") {
                 Task { await model.focus(pane) }
             }

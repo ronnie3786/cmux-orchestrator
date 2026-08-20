@@ -20,22 +20,37 @@ enum SidebarTree {
     static func build(
         workspaces: [HerdrWorkspace],
         query: String,
-        collapsedWorkspaceIDs: Set<String>
+        collapsedWorkspaceIDs: Set<String>,
+        starredIDs: Set<String> = []
     ) -> [ProjectEntry] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return workspaces.sorted { $0.number < $1.number }.compactMap { workspace in
             buildEntry(
                 for: workspace,
                 query: trimmedQuery,
-                collapsedWorkspaceIDs: collapsedWorkspaceIDs
+                collapsedWorkspaceIDs: collapsedWorkspaceIDs,
+                starredIDs: starredIDs
             )
         }
+    }
+
+    static func starredChats(
+        workspaces: [HerdrWorkspace],
+        query: String,
+        starredIDs: Set<String>
+    ) -> [HerdrPane] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return workspaces
+            .flatMap(\.panes)
+            .filter { starredIDs.contains($0.id) && matchesPaneQuery($0, query: trimmedQuery) }
+            .sorted { $0.paneID < $1.paneID }
     }
 
     private static func buildEntry(
         for workspace: HerdrWorkspace,
         query: String,
-        collapsedWorkspaceIDs: Set<String>
+        collapsedWorkspaceIDs: Set<String>,
+        starredIDs: Set<String>
     ) -> ProjectEntry? {
         let sortedTabs = workspace.tabs.sorted { $0.number < $1.number }
         let tabIDs = Set(sortedTabs.map(\.id))
@@ -45,7 +60,7 @@ enum SidebarTree {
             $0.label.localizedStandardContains(query)
         }.map(\.id))
         let matchingPaneIDs = Set(workspace.panes.filter {
-            $0.displayTitle.localizedStandardContains(query)
+            matchesPaneQuery($0, query: query)
         }.map(\.id))
 
         guard query.isEmpty || workspaceMatches || !matchingTabIDs.isEmpty || !matchingPaneIDs.isEmpty else {
@@ -54,10 +69,11 @@ enum SidebarTree {
 
         let filteredPanes: [HerdrPane]
         if query.isEmpty || workspaceMatches {
-            filteredPanes = workspace.panes
+            filteredPanes = workspace.panes.filter { !starredIDs.contains($0.id) }
         } else {
             filteredPanes = workspace.panes.filter {
-                matchingPaneIDs.contains($0.id) || matchingTabIDs.contains($0.tabID)
+                !starredIDs.contains($0.id)
+                    && (matchingPaneIDs.contains($0.id) || matchingTabIDs.contains($0.tabID))
             }
         }
 
@@ -78,5 +94,9 @@ enum SidebarTree {
             sections: sections,
             looseChats: looseChats
         )
+    }
+
+    private static func matchesPaneQuery(_ pane: HerdrPane, query: String) -> Bool {
+        query.isEmpty || pane.displayTitle.localizedStandardContains(query)
     }
 }

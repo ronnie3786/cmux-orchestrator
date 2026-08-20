@@ -13,6 +13,7 @@ final class HerdrAppModel {
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
     var collapsedSidebarWorkspaceIDs: Set<String>
+    var starredChatIDs: Set<String>
     var searchText = ""
     var filter: WorkspaceFilter = .all
     var errorMessage: String? {
@@ -54,6 +55,7 @@ final class HerdrAppModel {
             ?? ""
         if arguments.contains("-HerdrResetSidebarState") {
             defaults.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
+            defaults.removeObject(forKey: "herdr.sidebar.starredChats")
         }
         #else
         let uiTestServerURL: String? = nil
@@ -74,6 +76,7 @@ final class HerdrAppModel {
         collapsedSidebarWorkspaceIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedWorkspaces") ?? []
         )
+        starredChatIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.starredChats") ?? [])
 
         if !isDemoMode,
            hasCompletedSetup,
@@ -784,6 +787,15 @@ final class HerdrAppModel {
             Array(collapsedSidebarWorkspaceIDs),
             forKey: "herdr.sidebar.collapsedWorkspaces"
         )
+    }
+
+    func toggleStarredChat(_ paneID: String) {
+        if starredChatIDs.contains(paneID) {
+            starredChatIDs.remove(paneID)
+        } else {
+            starredChatIDs.insert(paneID)
+        }
+        UserDefaults.standard.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
     }
 
     func openWorkspace(id: String) {

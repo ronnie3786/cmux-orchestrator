@@ -14,14 +14,42 @@ enum KeychainStore {
             kSecUseDataProtectionKeychain as String: true,
         ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8)
+        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+           let data = result as? Data,
+           let value = String(data: data, encoding: .utf8),
+           !value.isEmpty {
+            return value
+        }
+
+        guard let fallbackValue = UserDefaults.standard.string(forKey: fallbackKey(for: account)),
+              !fallbackValue.isEmpty
         else { return "" }
-        return value
+
+        _ = writeToKeychain(fallbackValue, for: account)
+        return fallbackValue
     }
 
     static func set(_ value: String, for account: String) {
+        let status = writeToKeychain(value, for: account)
+        #if DEBUG
+        if status != errSecSuccess {
+            print("KeychainStore: write failed with status \(status)")
+        }
+        #endif
+
+        if value.isEmpty {
+            UserDefaults.standard.removeObject(forKey: fallbackKey(for: account))
+        } else {
+            UserDefaults.standard.set(value, forKey: fallbackKey(for: account))
+        }
+    }
+
+    private static func fallbackKey(for account: String) -> String {
+        "herdr.keychainFallback.\(account)"
+    }
+
+    @discardableResult
+    private static func writeToKeychain(_ value: String, for account: String) -> OSStatus {
         let key: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -30,10 +58,12 @@ enum KeychainStore {
         ]
         let data = Data(value.utf8)
         let attributes: [String: Any] = [kSecValueData as String: data]
-        if SecItemUpdate(key as CFDictionary, attributes as CFDictionary) == errSecItemNotFound {
+        let updateStatus = SecItemUpdate(key as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecItemNotFound {
             var insert = key
             insert[kSecValueData as String] = data
-            SecItemAdd(insert as CFDictionary, nil)
+            return SecItemAdd(insert as CFDictionary, nil)
         }
+        return updateStatus
     }
 }

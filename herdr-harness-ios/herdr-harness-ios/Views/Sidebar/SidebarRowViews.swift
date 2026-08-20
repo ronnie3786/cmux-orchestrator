@@ -82,6 +82,7 @@ struct SidebarSectionRow: View {
 struct SidebarChatRow: View {
     let pane: HerdrPane
     let isSelected: Bool
+    var isStarred: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -95,6 +96,12 @@ struct SidebarChatRow: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                if isStarred {
+                    Image(systemName: "star.fill")
+                        .font(.caption2)
+                        .foregroundStyle(HerdrTheme.muted)
+                }
 
                 Text(pane.agentStatus.compactTitle.lowercased())
                     .font(.caption.monospaced())
