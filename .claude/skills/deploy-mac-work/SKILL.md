@@ -38,3 +38,12 @@ commit: `ssh ... 'git -C ~/Documents/Development/cmux-harness log --oneline -1'`
 - `git pull --ff-only` is safe: that clone carries only untracked local files (artifacts/, docs).
   If it ever refuses, inspect `git status` — never force.
 - Xcode there is ≥26.6; build takes ~2-4 min.
+- The Python harness (port 9092) is launchd-managed: `com.ronnierocha.herdr-harness`, launched
+  via `~/.config/herdr-harness/launch-herdr-harness.sh`, which (since 2026-08-20) cds into
+  `~/Documents/Development/cmux-harness` — the SAME clone this skill pulls. After backend
+  (`herdr_harness/`) changes, restart it: `launchctl kickstart -k gui/$(id -u)/com.ronnierocha.herdr-harness`
+  (sessions live in the separate `herdr-server`; a harness restart only blips SSE).
+- `herdr_harness/static/herdr-web` is a gitignored Vite bundle (built from `frontend/herdr-web`);
+  it was copied into this clone on 2026-08-20 — rebuild/copy it if `/herdr-web` ever 404s.
+- Do NOT touch `~/Documents/Development/cmux-herdr-harness` — an older duplicate checkout with
+  another session's uncommitted WIP (protocol-aware subscriptions); pane wV:p1 owns it.
