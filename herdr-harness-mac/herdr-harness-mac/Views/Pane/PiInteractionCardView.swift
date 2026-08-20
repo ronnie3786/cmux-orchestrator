@@ -11,12 +11,12 @@ struct PiInteractionCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(interaction.title, systemImage: "person.crop.circle.badge.questionmark")
-                .font(.headline)
+                .herdrFont(.headline)
                 .foregroundStyle(HerdrTheme.text)
 
             if let message = interaction.message {
                 Text(message)
-                    .font(.callout)
+                    .herdrFont(.callout)
                     .foregroundStyle(HerdrTheme.mist)
             }
 
@@ -26,7 +26,7 @@ struct PiInteractionCardView: View {
                 submit(.cancelled)
             }
             .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.mist, emphasis: .text))
-            .font(.caption)
+            .herdrFont(.caption)
             .frame(minHeight: PiChatChrome.controlHeight)
             .disabled(isSubmitting)
         }
@@ -69,7 +69,7 @@ struct PiInteractionCardView: View {
                 Button("Submit", systemImage: "arrow.up.circle.fill", action: submitText)
                     .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.accent, emphasis: .text))
                     .labelStyle(.iconOnly)
-                    .font(.title2)
+                    .herdrFont(.title2)
                     .disabled(trimmedText.isEmpty || isSubmitting)
             }
         }

@@ -34,12 +34,12 @@ struct HerdrVoiceNoteRecorderSheet: View {
 
                     VStack(spacing: 6) {
                         Text(formattedDuration(recorder.elapsedTime))
-                            .font(.largeTitle.monospaced().weight(.semibold))
+                            .herdrFont(.largeTitle, monospaced: true, weight: .semibold)
                             .monospacedDigit()
                             .foregroundStyle(HerdrTheme.text)
 
                         Text(statusText)
-                            .font(.footnote.monospaced().weight(.semibold))
+                            .herdrFont(.footnote, monospaced: true, weight: .semibold)
                             .foregroundStyle(statusColor)
                             .multilineTextAlignment(.center)
                     }
@@ -50,14 +50,14 @@ struct HerdrVoiceNoteRecorderSheet: View {
 
                     if let errorMessage = recorder.errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .font(.footnote.monospaced())
+                            .herdrFont(.footnote, monospaced: true)
                             .foregroundStyle(HerdrTheme.alert)
                             .multilineTextAlignment(.center)
                     }
 
                     if let transcriptionError {
                         Label(transcriptionError, systemImage: "waveform.badge.exclamationmark")
-                            .font(.footnote.monospaced())
+                            .herdrFont(.footnote, monospaced: true)
                             .foregroundStyle(HerdrTheme.alert)
                             .multilineTextAlignment(.center)
                     }
@@ -144,9 +144,9 @@ struct HerdrVoiceNoteRecorderSheet: View {
         } label: {
             VStack(spacing: 9) {
                 Image(systemName: recorder.isRecording ? "stop.fill" : "mic.fill")
-                    .font(.title.weight(.bold))
+                    .herdrFont(.title, weight: .bold)
                 Text(recorder.isRecording ? "STOP" : "RECORD")
-                    .font(.caption.monospaced().weight(.bold))
+                    .herdrFont(.caption, monospaced: true, weight: .bold)
             }
             .foregroundStyle(recorder.isRecording ? HerdrTheme.ink : HerdrTheme.graphite)
             .frame(width: 108, height: 92)
@@ -172,7 +172,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
                 }
             } label: {
                 Image(systemName: recorder.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.headline.weight(.bold))
+                    .herdrFont(.headline, weight: .bold)
                     .foregroundStyle(HerdrTheme.ink)
                     .frame(width: 44, height: 44)
                     .background(HerdrTheme.accent)
@@ -184,10 +184,10 @@ struct HerdrVoiceNoteRecorderSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("PREVIEW")
-                        .font(.caption2.monospaced().weight(.bold))
+                        .herdrFont(.caption2, monospaced: true, weight: .bold)
                     Spacer()
                     Text("\(formattedDuration(recorder.playbackTime)) / \(formattedDuration(recorder.elapsedTime))")
-                        .font(.caption2.monospaced().weight(.semibold))
+                        .herdrFont(.caption2, monospaced: true, weight: .semibold)
                         .monospacedDigit()
                 }
                 .foregroundStyle(HerdrTheme.mist)

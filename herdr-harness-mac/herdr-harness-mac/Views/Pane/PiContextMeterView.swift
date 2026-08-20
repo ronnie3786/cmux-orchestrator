@@ -11,7 +11,7 @@ struct PiContextMeterView: View {
         if let usage, let fraction = usage.fraction {
             HStack(spacing: 10) {
                 Image(systemName: "memorychip")
-                    .font(.caption2.weight(.semibold))
+                    .herdrFont(.caption2, weight: .semibold)
                     .foregroundStyle(barColor)
                     .accessibilityHidden(true)
 
@@ -27,12 +27,12 @@ struct PiContextMeterView: View {
                 .frame(height: 4)
 
                 Text(usage.summary ?? "…")
-                    .font(.caption2.monospaced())
+                    .herdrFont(.caption2, monospaced: true)
                     .foregroundStyle(HerdrTheme.mist)
                     .lineLimit(1)
 
                 Text(usage.percentText ?? "…")
-                    .font(.caption2.monospaced().bold())
+                    .herdrFont(.caption2, monospaced: true, weight: .bold)
                     .foregroundStyle(barColor)
                     .lineLimit(1)
             }

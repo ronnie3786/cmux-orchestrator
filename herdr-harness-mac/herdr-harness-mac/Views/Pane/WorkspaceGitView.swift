@@ -54,7 +54,7 @@ struct WorkspaceGitView: View {
                     .foregroundStyle(HerdrTheme.mauve)
 
                 Text(status?.branch?.nonEmpty ?? workspace.tokens["branch"]?.nonEmpty ?? "detached")
-                    .font(.headline.monospaced().bold())
+                    .herdrFont(.headline, monospaced: true, weight: .bold)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
@@ -62,7 +62,7 @@ struct WorkspaceGitView: View {
 
                 if let status {
                     Text(status.hasChanges ? "\(status.changeCount) changed" : "clean")
-                        .font(.caption.monospaced().bold())
+                        .herdrFont(.caption, monospaced: true, weight: .bold)
                         .foregroundStyle(status.hasChanges ? HerdrTheme.working : HerdrTheme.success)
                 }
 
@@ -78,7 +78,7 @@ struct WorkspaceGitView: View {
             }
 
             Text(status?.cwd?.nonEmpty ?? workspace.displayPath)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .lineLimit(2)
                 .truncationMode(.middle)
@@ -171,7 +171,7 @@ struct WorkspaceGitView: View {
             ProgressView()
                 .tint(HerdrTheme.accent)
             Text("Reading workspace Git state…")
-                .font(.subheadline.monospaced())
+                .herdrFont(.subheadline, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
         }
         .frame(maxWidth: .infinity, minHeight: 92)
@@ -181,16 +181,16 @@ struct WorkspaceGitView: View {
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Git unavailable", systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline.monospaced().bold())
+                .herdrFont(.subheadline, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.alert)
             Text(message)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
             Button("Try again", systemImage: "arrow.clockwise") {
                 Task { await refresh() }
             }
             .buttonStyle(.plain)
-            .font(.subheadline.monospaced().bold())
+            .herdrFont(.subheadline, monospaced: true, weight: .bold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 44)
         }
@@ -206,13 +206,13 @@ struct WorkspaceGitView: View {
     private func emptyCard(title: String, detail: String, symbol: String) -> some View {
         VStack(spacing: 8) {
             Image(systemName: symbol)
-                .font(.title2)
+                .herdrFont(.title2)
                 .foregroundStyle(symbol.hasPrefix("checkmark") ? HerdrTheme.success : HerdrTheme.mist)
             Text(title)
-                .font(.subheadline.monospaced().bold())
+                .herdrFont(.subheadline, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
             Text(detail)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .multilineTextAlignment(.center)
         }
@@ -314,7 +314,7 @@ private struct GitSectionHeader: View {
             Spacer()
             Text("\(count)")
         }
-        .font(.caption.monospaced())
+        .herdrFont(.caption, monospaced: true)
         .foregroundStyle(HerdrTheme.mist)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -333,7 +333,7 @@ private struct GitFileRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Text(file.status)
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .foregroundStyle(section == .staged ? HerdrTheme.success : HerdrTheme.working)
                 .frame(width: 22)
 
@@ -341,7 +341,7 @@ private struct GitFileRow: View {
                 selectDiff(file.file, section)
             } label: {
                 Text(file.file)
-                    .font(.callout.monospaced())
+                    .herdrFont(.callout, monospaced: true)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(2)
                     .truncationMode(.middle)
@@ -356,7 +356,7 @@ private struct GitFileRow: View {
                 mutate(file.file, section)
             }
             .buttonStyle(.plain)
-            .font(.caption.monospaced().bold())
+            .herdrFont(.caption, monospaced: true, weight: .bold)
             .foregroundStyle(section == .staged ? HerdrTheme.warning : HerdrTheme.success)
             .frame(minWidth: 56, minHeight: 44)
             .disabled(isPending)
@@ -377,12 +377,12 @@ private struct GitCommitRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Text(commit.hash)
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.mauve)
                 .lineLimit(1)
 
             Text(commit.message)
-                .font(.callout)
+                .herdrFont(.callout)
                 .foregroundStyle(HerdrTheme.text)
                 .lineLimit(3)
 
@@ -427,7 +427,7 @@ private struct WorkspaceGitDiffView: View {
                             LazyVStack(alignment: .leading, spacing: 0) {
                                 ForEach(Array(diffLines(diff).enumerated()), id: \.offset) { _, line in
                                     Text(line.isEmpty ? " " : line)
-                                        .font(.caption.monospaced())
+                                        .herdrFont(.caption, monospaced: true)
                                         .foregroundStyle(diffColor(line))
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 2)
@@ -447,7 +447,7 @@ private struct WorkspaceGitDiffView: View {
                     }
                 } else {
                     ProgressView("Loading diff…")
-                        .font(.subheadline.monospaced())
+                        .herdrFont(.subheadline, monospaced: true)
                         .tint(HerdrTheme.accent)
                         .foregroundStyle(HerdrTheme.mist)
                 }

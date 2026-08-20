@@ -47,7 +47,7 @@ struct HerdPulseMenuBarLabel: View {
             Image(systemName: "waveform.path.ecg")
             if let count = HerdPulseMenuBarPresentation.badgeCount(for: state) {
                 Text("\(count)")
-                    .font(.caption.monospaced().bold())
+                    .herdrFont(.caption, monospaced: true, weight: .bold)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -108,7 +108,7 @@ struct HerdPulseMenuBarCard: View {
                     HerdPulseStatusRail(state: state)
                 }
                 Text("HERD PULSE")
-                    .font(.caption.monospaced().bold())
+                    .herdrFont(.caption, monospaced: true, weight: .bold)
                     .foregroundStyle(HerdPulseTheme.mist)
             }
 
@@ -116,10 +116,10 @@ struct HerdPulseMenuBarCard: View {
 
             VStack(alignment: .trailing, spacing: 3) {
                 Text("\(state?.paneCount ?? 0)")
-                    .font(.title.monospaced().bold())
+                    .herdrFont(.title, monospaced: true, weight: .bold)
                     .foregroundStyle(phaseColor)
                 Text("panes")
-                    .font(.caption.monospaced())
+                    .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(HerdPulseTheme.mist)
             }
             .accessibilityElement(children: .combine)
@@ -129,11 +129,11 @@ struct HerdPulseMenuBarCard: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(HerdPulseMenuBarPresentation.title(for: state, isStale: isStale))
-                .font(.headline.monospaced().bold())
+                .herdrFont(.headline, monospaced: true, weight: .bold)
                 .foregroundStyle(isStale ? HerdPulseTheme.mist : HerdPulseTheme.text)
 
             Text(HerdPulseMenuBarPresentation.detail(for: state))
-                .font(.subheadline.monospaced())
+                .herdrFont(.subheadline, monospaced: true)
                 .foregroundStyle(HerdPulseTheme.mist)
                 .lineLimit(1)
         }
@@ -158,11 +158,11 @@ struct HerdPulseMenuBarCard: View {
                 .accessibilityHidden(true)
 
             Text(HerdPulseMenuBarPresentation.connectionTitle(for: state?.connection))
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdPulseMenuBarPresentation.connectionColor(for: state?.connection))
 
             Text(HerdPulseMenuBarPresentation.workspaceSummary(for: state))
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdPulseTheme.mist)
 
             Spacer(minLength: 6)
@@ -208,10 +208,10 @@ struct HerdPulseMenuBarCard: View {
     private func metric(_ label: String, value: Int, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("\(value)")
-                .font(.headline.monospaced().bold())
+                .herdrFont(.headline, monospaced: true, weight: .bold)
                 .foregroundStyle(color)
             Text(label)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdPulseTheme.mist)
         }
         .accessibilityElement(children: .combine)
@@ -219,7 +219,7 @@ struct HerdPulseMenuBarCard: View {
 
     private func updatedLabel(at date: Date) -> some View {
         Text("updated \(date, style: .relative) ago")
-            .font(.caption.monospaced())
+            .herdrFont(.caption, monospaced: true)
             .foregroundStyle(HerdPulseTheme.mist)
             .lineLimit(1)
     }
@@ -243,7 +243,7 @@ private struct HerdPulseMenuBarButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.caption.monospaced().bold())
+            .herdrFont(.caption, monospaced: true, weight: .bold)
             .foregroundStyle(isProminent ? HerdPulseTheme.accent : HerdPulseTheme.text)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 7)

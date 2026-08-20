@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let piStreamLog = OSLog(subsystem: "dev.ronnierocha.herdr-harness", category: "pi-stream")
 
 actor HerdrAPIClient {
     private let configuration: ServerConfiguration
@@ -354,6 +357,7 @@ actor HerdrAPIClient {
                     var parser = PiConversationSSEParser()
 
                     for try await line in bytes.lines {
+                        os_signpost(.event, log: piStreamLog, name: "sse.line")
                         try Task.checkCancellation()
                         if let event = try parser.consume(line: line) {
                             continuation.yield(event)

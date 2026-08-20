@@ -7,7 +7,7 @@ struct ToastView: View {
     var body: some View {
         Button(action: dismiss) {
             Label(message, systemImage: "checkmark.circle.fill")
-                .font(.subheadline.bold())
+                .herdrFont(.subheadline, weight: .bold)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)

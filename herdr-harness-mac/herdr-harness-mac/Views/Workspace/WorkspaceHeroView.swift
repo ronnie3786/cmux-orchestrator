@@ -8,11 +8,11 @@ struct WorkspaceHeroView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(workspace.label)
-                        .font(.title.bold())
+                        .herdrFont(.title, weight: .bold)
                         .fontDesign(.rounded)
                     if !workspace.displayPath.isEmpty {
                         Text(workspace.displayPath)
-                            .font(.footnote)
+                            .herdrFont(.footnote)
                             .fontDesign(.monospaced)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
@@ -36,7 +36,7 @@ struct WorkspaceHeroView: View {
                         .lineLimit(1)
                 }
             }
-            .font(.caption)
+            .herdrFont(.caption)
             .foregroundStyle(HerdrTheme.mist)
         }
         .padding(HerdrTheme.cardPadding)

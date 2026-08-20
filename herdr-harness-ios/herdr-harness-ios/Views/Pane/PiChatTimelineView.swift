@@ -9,7 +9,8 @@ struct PiChatTimelineView: View {
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @State private var isNearBottom = true
     @State private var lastAutoScrollStructure: PiChatTimelineStructure?
-    @State private var hasRevealedContent = false
+    @State private var revealState = PiChatRevealState()
+    @State private var settleGeneration = 0
 
     init(
         store: PiConversationStore,
@@ -67,12 +68,36 @@ struct PiChatTimelineView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 24)
                 .animation(
-                    hasRevealedContent ? PiChatMotion.structuralAnimation(reduceMotion: reduceMotion) : nil,
+                    revealState.phase == .revealed
+                        ? PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)
+                        : nil,
                     value: structure
                 )
             }
             .scrollPosition($scrollPosition)
             .defaultScrollAnchor(.bottom)
+            .onScrollGeometryChange(
+                for: PiChatScrollMetrics.self,
+                of: {
+                    PiChatScrollMetrics(
+                        contentHeight: $0.contentSize.height,
+                        containerHeight: $0.containerSize.height
+                    )
+                }
+            ) { _, metrics in
+                settleGeneration &+= 1
+                let generation = settleGeneration
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(60))
+                    guard generation == settleGeneration else { return }
+                    apply(revealState.settledHeightDidChange(
+                        contentHeight: metrics.contentHeight,
+                        containerHeight: metrics.containerHeight
+                    ))
+                }
+            }
+            .opacity(revealState.phase == .revealed ? 1 : 0)
+            .animation(nil, value: revealState.phase)
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
             .simultaneousGesture(
@@ -82,7 +107,13 @@ struct PiChatTimelineView: View {
             )
             .onAppear {
                 lastAutoScrollStructure = structure
-                hasRevealedContent = structure.identifiers.contains("transcript:content")
+                revealState.structureDidChange(
+                    hadContent: false,
+                    hasContent: structure.identifiers.contains("transcript:content"),
+                    structureChanged: true,
+                    isNearBottom: true,
+                    reduceMotion: reduceMotion
+                )
             }
             .onChange(of: store.revision) { _, _ in
                 let previousStructure = lastAutoScrollStructure
@@ -92,39 +123,13 @@ struct PiChatTimelineView: View {
                 let hadContent = previousStructure?.identifiers.contains("transcript:content") ?? false
                 let hasContentNow = structure.identifiers.contains("transcript:content")
 
-                if hasContentNow, !hadContent {
-                    // Initial reveal of a populated transcript: do NOT animate a scrollTo here.
-                    // Animating scrollTo(edge: .bottom) here resolves against the LazyVStack's
-                    // ESTIMATED content height, which shrinks as real rows lay out and leaves the
-                    // viewport stranded past the end of content. `.defaultScrollAnchor(.bottom)`
-                    // keeps the viewport pinned to the bottom as content grows, so just let it.
-                    hasRevealedContent = true
-                    isNearBottom = true
-                    Task { @MainActor in
-                        // Belt-and-braces re-clamp once layout has settled, but only if the
-                        // user hasn't scrolled away in the meantime.
-                        guard isNearBottom else { return }
-                        scrollPosition.scrollTo(edge: .bottom)
-                    }
-                    return
-                }
-
-                if !hasContentNow {
-                    // Store reset back to empty (e.g. reconnect/session switch) — take the
-                    // reveal path again on the next population.
-                    hasRevealedContent = false
-                }
-
-                guard isNearBottom else { return }
-
-                if structureChanged, !reduceMotion {
-                    withAnimation(PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)) {
-                        scrollPosition.scrollTo(edge: .bottom)
-                    }
-                } else {
-                    // Deliberately no animation while tokens and tool output stream.
-                    scrollPosition.scrollTo(edge: .bottom)
-                }
+                revealState.structureDidChange(
+                    hadContent: hadContent,
+                    hasContent: hasContentNow,
+                    structureChanged: structureChanged,
+                    isNearBottom: isNearBottom,
+                    reduceMotion: reduceMotion
+                )
             }
 
             if !isNearBottom {
@@ -168,5 +173,25 @@ struct PiChatTimelineView: View {
         .foregroundStyle(HerdrTheme.text)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 44)
+    }
+
+    @MainActor
+    private func apply(_ action: PiChatRevealAction) {
+        switch action {
+        case .none:
+            return
+        case .revealAfterScrollingToBottom:
+            isNearBottom = true
+            scrollPosition.scrollTo(edge: .bottom)
+        case let .scrollToBottom(animated):
+            guard isNearBottom else { return }
+            if animated {
+                withAnimation(PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)) {
+                    scrollPosition.scrollTo(edge: .bottom)
+                }
+            } else {
+                scrollPosition.scrollTo(edge: .bottom)
+            }
+        }
     }
 }

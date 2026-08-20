@@ -109,11 +109,11 @@ struct ComposerAuxiliaryBar: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.caption.weight(.semibold))
+                    .herdrFont(.caption, weight: .semibold)
 
                 if showsTitle {
                     Text(title)
-                        .font(.caption.monospaced().weight(.semibold))
+                        .herdrFont(.caption, monospaced: true, weight: .semibold)
                         .lineLimit(1)
                 }
             }
@@ -148,12 +148,12 @@ struct ComposerAuxiliaryBar: View {
                     .frame(width: 14, height: 14)
             } else {
                 Image(systemName: voicePhase == .locked ? "lock.fill" : "mic.fill")
-                    .font(.caption.weight(.semibold))
+                    .herdrFont(.caption, weight: .semibold)
             }
 
             if showsTitle {
                 Text("voice")
-                    .font(.caption.monospaced().weight(.semibold))
+                    .herdrFont(.caption, monospaced: true, weight: .semibold)
                     .lineLimit(1)
             }
         }

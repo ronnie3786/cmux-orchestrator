@@ -13,7 +13,7 @@ struct WorkspaceSearchField: View {
             TextField(placeholder, text: $text)
                 // Plain style, or AppKit draws its own bezel inside our chrome.
                 .textFieldStyle(.plain)
-                .font(.body.monospaced())
+                .herdrFont(.body, monospaced: true)
                 .foregroundStyle(HerdrTheme.text)
                 .autocorrectionDisabled()
                 .focused($isFocused)

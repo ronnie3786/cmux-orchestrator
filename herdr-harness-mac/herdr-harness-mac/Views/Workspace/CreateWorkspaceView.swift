@@ -27,7 +27,7 @@ struct CreateWorkspaceView: View {
 
                 Section {
                     Label("Herdr opens one shell pane in this folder. Split panes or start an agent after it appears.", systemImage: "info.circle")
-                        .font(.footnote)
+                        .herdrFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }

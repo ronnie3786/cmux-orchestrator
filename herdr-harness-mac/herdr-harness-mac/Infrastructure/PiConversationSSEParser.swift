@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let piStreamLog = OSLog(subsystem: "dev.ronnierocha.herdr-harness", category: "pi-stream")
 
 struct PiConversationSSEParser {
     private var eventName = "message"
@@ -58,6 +61,7 @@ struct PiConversationSSEParser {
             }
             do {
                 let envelope = try decoder.decode(PiConversationEnvelope.self, from: data)
+                os_signpost(.event, log: piStreamLog, name: "sse.envelope")
                 resetRecord()
                 return .envelope(envelope.withCursor(dispatchedID))
             } catch {

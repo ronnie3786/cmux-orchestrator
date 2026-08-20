@@ -84,6 +84,31 @@ struct DemoScreenshotRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Sidebar changes at XX-Large text scale")
+    func rendersSidebarAtXXLargeTextScale() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        model.selectedPaneID = "w1:p2"
+
+        let defaultResult = try await HerdrRenderHarness.render(
+            "02-sidebar.png",
+            size: CGSize(width: 300, height: 760)
+        ) {
+            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+        }
+
+        let xxLargeResult = try await HerdrRenderHarness.render(
+            "02b-sidebar-xxlarge.png",
+            size: CGSize(width: 300, height: 760)
+        ) {
+            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+                .environment(\.herdrFontScale, .xxLarge)
+        }
+
+        defaultResult.expectSubstantial()
+        xxLargeResult.expectSubstantial()
+        #expect(xxLargeResult.byteCount != defaultResult.byteCount)
+    }
+
     // MARK: - 03 · Attention deck
 
     @Test("Attention deck renders alerts and the live queue")
@@ -159,7 +184,7 @@ struct DemoScreenshotRenderTests {
                         PaneTerminalView(
                             pane: pane,
                             output: grid.plainText,
-                            attributedOutput: grid.attributedText,
+                            attributedOutput: grid.attributedText(),
                             revision: 4_812,
                             dimensions: "\(grid.columns)×\(grid.rows)",
                             source: .stream,

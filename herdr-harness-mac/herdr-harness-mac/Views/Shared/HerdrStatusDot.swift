@@ -5,7 +5,7 @@ struct HerdrStatusDot: View {
 
     var body: some View {
         Text(status.terminalGlyph)
-            .font(.body.monospaced().bold())
+            .herdrFont(.body, monospaced: true, weight: .bold)
             .foregroundStyle(status.color)
             .accessibilityLabel(status.title)
     }

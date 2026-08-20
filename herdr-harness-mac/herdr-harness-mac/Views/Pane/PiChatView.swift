@@ -12,7 +12,11 @@ struct PiChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PiConnectionBanner(connection: store.connection, message: store.lastError)
+            PiConnectionBanner(
+                connection: store.connection,
+                message: store.lastError,
+                transport: store.transport
+            )
 
             PiContextMeterView(usage: store.contextUsage)
 
@@ -28,7 +32,7 @@ struct PiChatView: View {
 
             if let notice = store.commandNotice {
                 Text(notice)
-                    .font(.caption)
+                    .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.signal)
                     .padding(.horizontal, 12)
                     .padding(.top, 6)

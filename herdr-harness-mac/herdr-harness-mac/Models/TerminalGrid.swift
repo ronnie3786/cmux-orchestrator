@@ -54,7 +54,7 @@ struct TerminalGrid: Sendable {
         .trimmingTrailingNewlines()
     }
 
-    var attributedText: AttributedString {
+    func attributedText(scale: HerdrFontScale = .default) -> AttributedString {
         let visible = visibleRows(includeCursor: true)
         guard !visible.isEmpty else { return AttributedString("") }
 
@@ -72,7 +72,7 @@ struct TerminalGrid: Sendable {
                 if let background = colors.background {
                     value.backgroundColor = background
                 }
-                var font = Font.footnote.monospaced()
+                var font = HerdrTheme.scaled(.footnote, scale: scale, monospaced: true)
                 if runStyle.bold { font = font.bold() }
                 if runStyle.italic { font = font.italic() }
                 value.font = font

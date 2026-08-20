@@ -58,7 +58,7 @@ struct TerminalKeyDeck: View {
                     Image(systemName: key.systemImage)
                 }
             }
-            .font(.caption.monospaced().bold())
+            .herdrFont(.caption, monospaced: true, weight: .bold)
             .lineLimit(1)
             .minimumScaleFactor(0.72)
             .frame(maxWidth: .infinity, minHeight: ComposerDeckMetrics.controlHeight)
@@ -102,7 +102,7 @@ struct TerminalKeyDeck: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .frame(minWidth: 26, minHeight: ComposerDeckMetrics.controlHeight)
                 .contentShape(.rect)
         }

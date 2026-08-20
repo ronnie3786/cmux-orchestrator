@@ -19,10 +19,10 @@ struct FleetSummaryView: View {
     private func metric(value: Int, label: String, symbol: String) -> some View {
         VStack(spacing: 5) {
             Label("\(value)", systemImage: symbol)
-                .font(.headline.bold())
+                .herdrFont(.headline, weight: .bold)
                 .foregroundStyle(value > 0 && label == "need you" ? HerdrTheme.alert : .primary)
             Text(label)
-                .font(.caption)
+                .herdrFont(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)

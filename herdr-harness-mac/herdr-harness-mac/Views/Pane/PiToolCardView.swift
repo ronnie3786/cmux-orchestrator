@@ -42,11 +42,11 @@ struct PiToolCardView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(presentation.title)
-                    .font(.caption.weight(.semibold))
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
                 if let subtitle = presentation.subtitle {
                     Text(subtitle)
-                        .font(.caption.monospaced())
+                        .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
                 }
@@ -55,12 +55,12 @@ struct PiToolCardView: View {
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 2) {
                 statusLabel
-                    .font(.caption.weight(.semibold))
+                    .herdrFont(.caption, weight: .semibold)
                     .id(statusMotionKey)
                     .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 if let elapsedDuration {
                     Text(elapsedDuration)
-                        .font(.caption.monospacedDigit())
+                        .herdrFont(.caption, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.muted)
                 }
             }
@@ -82,7 +82,7 @@ struct PiToolCardView: View {
             }
             if tool.arguments == nil, tool.result == nil {
                 Text("Waiting for tool details…")
-                    .font(.caption)
+                    .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.muted)
                     .transition(.opacity)
             }
@@ -97,10 +97,10 @@ struct PiToolCardView: View {
     private func toolSection(_ label: String, value: PiJSONValue) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label.uppercased())
-                .font(.caption.weight(.bold))
+                .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.muted)
             Text(value.displayString)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

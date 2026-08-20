@@ -11,7 +11,7 @@ struct PaneCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Text(pane.displayTitle)
-                        .font(.headline.bold())
+                        .herdrFont(.headline, weight: .bold)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Spacer()
@@ -27,7 +27,7 @@ struct PaneCardView: View {
                             .truncationMode(.middle)
                     }
                 }
-                .font(.caption)
+                .herdrFont(.caption)
                 .foregroundStyle(.secondary)
 
                 HStack {
@@ -35,13 +35,13 @@ struct PaneCardView: View {
                     Spacer()
                     Text("rev \(pane.revision)")
                 }
-                .font(.caption)
+                .herdrFont(.caption)
                 .fontDesign(.monospaced)
                 .foregroundStyle(.tertiary)
             }
 
             Image(systemName: "chevron.right")
-                .font(.caption.bold())
+                .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(.tertiary)
         }
         .padding(15)

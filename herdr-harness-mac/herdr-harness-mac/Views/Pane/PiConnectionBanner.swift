@@ -3,6 +3,7 @@ import SwiftUI
 struct PiConnectionBanner: View {
     let connection: PiConversationConnection
     let message: String?
+    let transport: PiStreamTransport
 
     var body: some View {
         if let content {
@@ -16,7 +17,7 @@ struct PiConnectionBanner: View {
                         .foregroundStyle(content.tint)
                 }
                 Text(message ?? content.text)
-                    .font(.caption)
+                    .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.mist)
                     .lineLimit(2)
                 Spacer(minLength: 0)
@@ -25,6 +26,20 @@ struct PiConnectionBanner: View {
             .padding(.vertical, 9)
             .background(content.tint.opacity(0.09))
             .accessibilityElement(children: .combine)
+        } else if connection == .connected, transport == .polling {
+            HStack {
+                Text("polling")
+                    .herdrFont(.caption, monospaced: true)
+                    .foregroundStyle(HerdrTheme.warning)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(HerdrTheme.warning.opacity(0.12), in: Capsule())
+                    .accessibilityIdentifier("pi-transport-polling")
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
         }
     }
 

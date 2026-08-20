@@ -14,6 +14,7 @@ struct HerdrHarnessMacApp: App {
     @State private var herdPulse = HerdPulseCoordinator()
     @State private var shell = HerdrShellState()
     @State private var connectionDriver = HerdrConnectionDriver()
+    @State private var fontScale = HerdrFontScaleStore()
 
     var body: some Scene {
         // A single `Window`, not a `WindowGroup`: Herdr shows one fleet, and a
@@ -22,6 +23,9 @@ struct HerdrHarnessMacApp: App {
         Window("Herdr", id: HerdrWindowID.main) {
             AppRootView(model: model, shell: shell, driver: connectionDriver)
                 .environment(herdPulse)
+                // Apple documents `dynamicTypeSize` as not affecting text size
+                // on macOS, so Herdr uses this custom scale environment instead.
+                .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 1000, minHeight: 680)
                 .background(HerdrTheme.ink)
                 .preferredColorScheme(.dark)
@@ -32,12 +36,18 @@ struct HerdrHarnessMacApp: App {
         // supplies the only chrome the window needs.
         .windowStyle(.hiddenTitleBar)
         .commands {
-            HerdrMacCommands(model: model, shell: shell, herdPulse: herdPulse)
+            HerdrMacCommands(
+                model: model,
+                shell: shell,
+                herdPulse: herdPulse,
+                fontScale: fontScale
+            )
         }
 
         // ⌘, — replaces the iOS Settings tab.
         Settings {
-            SettingsView(model: model)
+            SettingsView(model: model, fontScale: fontScale)
+                .environment(\.herdrFontScale, fontScale.scale)
                 .frame(width: 560, height: 640)
                 .background(HerdrTheme.ink)
                 .preferredColorScheme(.dark)
@@ -46,6 +56,7 @@ struct HerdrHarnessMacApp: App {
 
         // Herd Pulse: the menu-bar replacement for the iOS Live Activity.
         HerdPulseMenuBar.scene(pulse: herdPulse)
+            .environment(\.herdrFontScale, fontScale.scale)
     }
 }
 
@@ -55,6 +66,7 @@ struct HerdrMacCommands: Commands {
     let model: HerdrAppModel
     @Bindable var shell: HerdrShellState
     @Bindable var herdPulse: HerdPulseCoordinator
+    @Bindable var fontScale: HerdrFontScaleStore
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -104,6 +116,23 @@ struct HerdrMacCommands: Commands {
                 Task { await model.refresh() }
             }
             .keyboardShortcut("r", modifiers: .command)
+
+            Divider()
+
+            Button("Increase Text Size") {
+                fontScale.increase()
+            }
+            .keyboardShortcut("+", modifiers: .command)
+
+            Button("Decrease Text Size") {
+                fontScale.decrease()
+            }
+            .keyboardShortcut("-", modifiers: .command)
+
+            Button("Reset Text Size") {
+                fontScale.reset()
+            }
+            .keyboardShortcut("0", modifiers: .command)
         }
 
         CommandMenu("Navigate") {

@@ -12,7 +12,7 @@ struct PiCodeBlockView: View {
         VStack(spacing: 0) {
             HStack {
                 Text(language?.uppercased() ?? "CODE")
-                    .font(.caption.weight(.bold))
+                    .herdrFont(.caption, weight: .bold)
                     .foregroundStyle(HerdrTheme.muted)
                 Spacer()
                 Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
@@ -24,7 +24,7 @@ struct PiCodeBlockView: View {
                         copied = false
                     }
                 }
-                .font(.caption)
+                .herdrFont(.caption)
                 .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)
                 .buttonStyle(.plain)
                 .frame(minHeight: 22)
@@ -38,7 +38,7 @@ struct PiCodeBlockView: View {
 
             ScrollView(.horizontal) {
                 Text(code)
-                    .font(.callout.monospaced())
+                    .herdrFont(.callout, monospaced: true)
                     .foregroundStyle(HerdrTheme.text)
                     .textSelection(.enabled)
                     .padding(12)

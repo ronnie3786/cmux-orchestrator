@@ -16,15 +16,15 @@ struct PaneSessionHeader: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(pane.displayAgentName.lowercased())
-                        .font(.subheadline.monospaced().bold())
+                        .herdrFont(.subheadline, monospaced: true, weight: .bold)
                         .foregroundStyle(HerdrTheme.text)
                     Text(pane.agentStatus.compactTitle.lowercased())
-                        .font(.caption.monospaced())
+                        .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(pane.agentStatus.labelColor)
                 }
 
                 Text(context)
-                    .font(.caption.monospaced())
+                    .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(HerdrTheme.mist)
                     .lineLimit(1)
                     .truncationMode(.middle)

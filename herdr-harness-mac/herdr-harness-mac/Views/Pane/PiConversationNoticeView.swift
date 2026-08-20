@@ -10,11 +10,11 @@ struct PiConversationNoticeView: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(notice.title)
-                    .font(.caption.weight(.semibold))
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
                 if let detail = notice.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.caption)
+                        .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.muted)
                         .lineLimit(4)
                 }

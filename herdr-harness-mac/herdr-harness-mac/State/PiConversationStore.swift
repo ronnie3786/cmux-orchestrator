@@ -1,5 +1,13 @@
 import Foundation
 import Observation
+import os
+
+enum PiStreamTransport: Equatable, Sendable {
+    case liveStream
+    case polling
+}
+
+private let piStreamLog = OSLog(subsystem: "dev.ronnierocha.herdr-harness", category: "pi-stream")
 
 @MainActor
 @Observable
@@ -24,8 +32,11 @@ final class PiConversationStore {
     private(set) var isAborting = false
     private(set) var lastError: String?
     private(set) var commandNotice: String?
+    private(set) var transport: PiStreamTransport = .liveStream
 
     @ObservationIgnored private var reducer = PiConversationReducer()
+    @ObservationIgnored private var coalescer = PiStreamCoalescer()
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
 
     var hasContent: Bool {
         turns.contains(where: \.hasVisibleContent)
@@ -55,7 +66,7 @@ final class PiConversationStore {
                 }
 
                 reducer.replace(with: snapshot)
-                publishReducerState()
+                schedulePublish(.streamReset)
                 guard !Task.isCancelled else { return }
                 connection = snapshot.connected ? .connected : .bridgeOffline
                 lastError = snapshot.connected
@@ -85,6 +96,7 @@ final class PiConversationStore {
                     Task { await loadModels(model: model, pane: pane) }
                 }
 
+                transport = .liveStream
                 guard let events = await model.piConversationEvents(for: pane, after: reducer.cursor) else {
                     throw APIError.streamEnded
                 }
@@ -219,7 +231,7 @@ final class PiConversationStore {
                 in: pane
             )
             reducer.removeInteraction(id: interaction.id)
-            publishReducerState()
+            schedulePublish(.pendingInteraction)
             lastError = nil
             return true
         } catch {
@@ -247,8 +259,22 @@ final class PiConversationStore {
                 // It says nothing about the extension socket behind it.
                 continue
             case let .envelope(envelope):
+                let previousPhase = reducer.phase
+                let previousTurnCount = reducer.turns.count
+                let previousPendingInteractions = reducer.pendingInteractions
+                let previousBridgeConnected = reducer.bridgeConnected
+                os_signpost(.begin, log: piStreamLog, name: "reducer.apply")
                 let effect = reducer.apply(envelope)
-                publishReducerState()
+                os_signpost(.end, log: piStreamLog, name: "reducer.apply")
+                schedulePublish(
+                    trigger(
+                        for: effect,
+                        previousPhase: previousPhase,
+                        previousTurnCount: previousTurnCount,
+                        previousPendingInteractions: previousPendingInteractions,
+                        previousBridgeConnected: previousBridgeConnected
+                    )
+                )
                 connection = reducer.bridgeConnected ? .connected : .bridgeOffline
                 lastError = reducer.bridgeConnected ? nil : "Pi is offline. The saved transcript is still available."
                 if effect == .needsSnapshot {
@@ -260,6 +286,9 @@ final class PiConversationStore {
     }
 
     func reset() {
+        flushTask?.cancel()
+        flushTask = nil
+        coalescer = PiStreamCoalescer()
         reducer = PiConversationReducer()
         turns = []
         pendingInteractions = []
@@ -281,6 +310,7 @@ final class PiConversationStore {
         isAborting = false
         lastError = nil
         commandNotice = nil
+        transport = .liveStream
     }
 
     /// Legacy bridges can provide a durable snapshot without a compatible
@@ -291,6 +321,7 @@ final class PiConversationStore {
         pane: HerdrPane,
         initialSnapshot: PiConversationSnapshot
     ) async -> Bool {
+        transport = .polling
         var previousSnapshot = initialSnapshot
         var retryDelay = 2.0
 
@@ -310,7 +341,7 @@ final class PiConversationStore {
 
                 if snapshotContentChanged(from: previousSnapshot, to: snapshot) {
                     reducer.replace(with: snapshot)
-                    publishReducerState()
+                    schedulePublish(.streamReset)
                     guard !Task.isCancelled else { return false }
                     previousSnapshot = snapshot
                 }
@@ -360,6 +391,7 @@ final class PiConversationStore {
     }
 
     private func publishReducerState() {
+        os_signpost(.event, log: piStreamLog, name: "publish")
         turns = reducer.turns
         pendingInteractions = reducer.pendingInteractions
         phase = reducer.phase
@@ -369,6 +401,61 @@ final class PiConversationStore {
         currentModel = reducer.currentModel
         thinkingLevel = reducer.thinkingLevel
         revision &+= 1
+    }
+
+    private func trigger(
+        for effect: PiConversationReducer.Effect,
+        previousPhase: PiConversationPhase,
+        previousTurnCount: Int,
+        previousPendingInteractions: [PiPendingInteraction],
+        previousBridgeConnected: Bool
+    ) -> PiStreamCoalescer.Trigger {
+        switch effect {
+        case .needsSnapshot:
+            .streamReset
+        case .completed:
+            .turnCompletion
+        case .interactionRequested:
+            .pendingInteraction
+        case .failed:
+            .phaseTransition
+        case .none:
+            if reducer.bridgeConnected != previousBridgeConnected {
+                .connectionChange
+            } else if reducer.phase != previousPhase {
+                .phaseTransition
+            } else if reducer.pendingInteractions != previousPendingInteractions {
+                .pendingInteraction
+            } else if reducer.turns.count > previousTurnCount {
+                .turnBoundary
+            } else {
+                .delta
+            }
+        }
+    }
+
+    private func schedulePublish(_ trigger: PiStreamCoalescer.Trigger) {
+        let clock = ContinuousClock()
+        switch coalescer.register(trigger, now: clock.now) {
+        case .flushNow:
+            flushTask?.cancel()
+            flushTask = nil
+            publishReducerState()
+            coalescer.markFlushed()
+        case let .coalesce(deadline):
+            guard flushTask == nil else { return }
+            flushTask = Task { [weak self] in
+                do {
+                    try await clock.sleep(until: deadline)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, let self else { return }
+                self.publishReducerState()
+                self.coalescer.markFlushed()
+                self.flushTask = nil
+            }
+        }
     }
 
     private func loadModels(model: HerdrAppModel, pane: HerdrPane) async {

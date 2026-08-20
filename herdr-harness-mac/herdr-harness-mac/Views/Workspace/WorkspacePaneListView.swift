@@ -95,10 +95,10 @@ struct WorkspacePaneListView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(tab.label, systemImage: "square.on.square")
-                    .font(.headline.bold())
+                    .herdrFont(.headline, weight: .bold)
                 Spacer()
                 Text("^[\(panes.count) pane](inflect: true)")
-                    .font(.caption)
+                    .herdrFont(.caption)
                     .foregroundStyle(.secondary)
             }
             paneRows(panes)

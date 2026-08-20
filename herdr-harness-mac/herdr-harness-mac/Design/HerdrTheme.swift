@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum HerdrTheme {
@@ -22,4 +23,63 @@ enum HerdrTheme {
     static let pagePadding = 18.0
     static let cardPadding = 16.0
     static let rowSpacing = 12.0
+}
+
+extension HerdrTheme {
+    /// Fallback font scaling: Apple documents `dynamicTypeSize` as having no
+    /// effect on text size on macOS. Read AppKit's preferred point size and
+    /// rebuild a concrete SwiftUI font scaled by the user's chosen value.
+    static func scaled(
+        _ style: Font.TextStyle,
+        scale: HerdrFontScale,
+        monospaced: Bool = false,
+        weight: Font.Weight? = nil
+    ) -> Font {
+        let base = NSFont.preferredFont(forTextStyle: style.appKitTextStyle)
+        return .system(
+            size: base.pointSize * scale.rawValue,
+            weight: weight ?? base.herdrFontWeight,
+            design: monospaced ? .monospaced : .default
+        )
+    }
+}
+
+private extension NSFont {
+    var herdrFontWeight: Font.Weight {
+        let traits = fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        let value = (traits?[.weight] as? NSNumber)?.doubleValue ?? 0
+        let named: [(CGFloat, Font.Weight)] = [
+            (NSFont.Weight.ultraLight.rawValue, .ultraLight),
+            (NSFont.Weight.thin.rawValue, .thin),
+            (NSFont.Weight.light.rawValue, .light),
+            (NSFont.Weight.regular.rawValue, .regular),
+            (NSFont.Weight.medium.rawValue, .medium),
+            (NSFont.Weight.semibold.rawValue, .semibold),
+            (NSFont.Weight.bold.rawValue, .bold),
+            (NSFont.Weight.heavy.rawValue, .heavy),
+            (NSFont.Weight.black.rawValue, .black),
+        ]
+        return named.min {
+            abs($0.0 - CGFloat(value)) < abs($1.0 - CGFloat(value))
+        }?.1 ?? .regular
+    }
+}
+
+private extension Font.TextStyle {
+    var appKitTextStyle: NSFont.TextStyle {
+        switch self {
+        case .largeTitle: .largeTitle
+        case .title: .title1
+        case .title2: .title2
+        case .title3: .title3
+        case .headline: .headline
+        case .subheadline: .subheadline
+        case .body: .body
+        case .callout: .callout
+        case .footnote: .footnote
+        case .caption: .caption1
+        case .caption2: .caption2
+        @unknown default: .body
+        }
+    }
 }

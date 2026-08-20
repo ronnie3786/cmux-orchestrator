@@ -142,7 +142,7 @@ struct PromptComposerView: View {
 
             if quickVoiceCapture.phase == .locked {
                 Text("recording locked · tap mic to finish")
-                    .font(.caption.monospaced().weight(.semibold))
+                    .herdrFont(.caption, monospaced: true, weight: .semibold)
                     .foregroundStyle(HerdrTheme.alert)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -390,7 +390,7 @@ struct PromptComposerView: View {
             } else {
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...5)
-                    .font(.body.monospaced())
+                    .herdrFont(.body, monospaced: true)
                     .foregroundStyle(HerdrTheme.text)
                     .textFieldStyle(.plain)
                     .focused($isFocused)
@@ -451,22 +451,25 @@ struct PromptComposerView: View {
 
     private var trailingComposerButton: some View {
         Button(action: handleTrailingComposerAction) {
-            if isCTACaptureInProgress {
-                Image(systemName: "stop.fill")
-            } else if isCTAMicAvailable {
-                Image(systemName: "mic.fill")
-            } else if isSubmitting {
-                ProgressView()
-                    .tint(HerdrTheme.ink)
-            } else {
-                Image(systemName: effectiveDisposition.symbol)
+            Group {
+                if isCTACaptureInProgress {
+                    Image(systemName: "stop.fill")
+                } else if isCTAMicAvailable {
+                    Image(systemName: "mic.fill")
+                } else if isSubmitting {
+                    ProgressView()
+                        .tint(HerdrTheme.ink)
+                } else {
+                    Image(systemName: effectiveDisposition.symbol)
+                }
             }
+            .frame(width: 48, height: 48)
+            .background(isCTALockedCapture ? HerdrTheme.alert : HerdrTheme.accent)
+            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+            .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         }
-        .font(.headline.bold())
+        .herdrFont(.headline, weight: .bold)
         .foregroundStyle(HerdrTheme.ink)
-        .frame(width: 48, height: 48)
-        .background(isCTALockedCapture ? HerdrTheme.alert : HerdrTheme.accent)
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         .scaleEffect(isCTALockedCapture && isLockPulsing && !reduceMotion ? 1.035 : 1)
         .opacity(trailingComposerOpacity)
         .animation(

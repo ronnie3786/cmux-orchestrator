@@ -42,14 +42,14 @@ struct WorkspaceSkillsView: View {
                     .foregroundStyle(HerdrTheme.mauve)
 
                 Text("workspace skills")
-                    .font(.headline.monospaced().bold())
+                    .herdrFont(.headline, monospaced: true, weight: .bold)
                     .foregroundStyle(HerdrTheme.text)
 
                 Spacer(minLength: 8)
 
                 if let response {
                     Text("\(response.resolvedProjectSkills.count + response.resolvedUserSkills.count) found")
-                        .font(.caption.monospaced().bold())
+                        .herdrFont(.caption, monospaced: true, weight: .bold)
                         .foregroundStyle(HerdrTheme.signal)
                 }
 
@@ -65,7 +65,7 @@ struct WorkspaceSkillsView: View {
             }
 
             Text(response?.rootPath?.nonEmpty ?? workspace.displayPath)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .lineLimit(2)
                 .truncationMode(.middle)
@@ -111,10 +111,10 @@ struct WorkspaceSkillsView: View {
 
         VStack(alignment: .leading, spacing: 8) {
             Label("Add to terminal", systemImage: "arrow.turn.down.left")
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.accent)
             Text("Choose a skill, then insert it as a Claude command, Codex invocation, or file reference.")
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -128,7 +128,7 @@ struct WorkspaceSkillsView: View {
             ProgressView()
                 .tint(HerdrTheme.accent)
             Text("Indexing project and user skills…")
-                .font(.subheadline.monospaced())
+                .herdrFont(.subheadline, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
         }
         .frame(maxWidth: .infinity, minHeight: 92)
@@ -138,16 +138,16 @@ struct WorkspaceSkillsView: View {
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Skills unavailable", systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline.monospaced().bold())
+                .herdrFont(.subheadline, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.alert)
             Text(message)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
             Button("Try again", systemImage: "arrow.clockwise") {
                 Task { await refresh() }
             }
             .buttonStyle(.plain)
-            .font(.subheadline.monospaced().bold())
+            .herdrFont(.subheadline, monospaced: true, weight: .bold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 44)
         }
@@ -163,13 +163,13 @@ struct WorkspaceSkillsView: View {
     private var emptyCard: some View {
         VStack(spacing: 8) {
             Image(systemName: "wand.and.stars")
-                .font(.title2)
+                .herdrFont(.title2)
                 .foregroundStyle(HerdrTheme.mist)
             Text("No skills found")
-                .font(.subheadline.monospaced().bold())
+                .herdrFont(.subheadline, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
             Text("Add project skills under .claude/skills or user skills under your configured skills directory.")
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -226,7 +226,7 @@ private struct SkillScopeSection: View {
                         .truncationMode(.middle)
                 }
             }
-            .font(.caption.monospaced())
+            .herdrFont(.caption, monospaced: true)
             .foregroundStyle(HerdrTheme.mist)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -271,11 +271,11 @@ private struct SkillMenuRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(skill.name)
-                        .font(.subheadline.monospaced().bold())
+                        .herdrFont(.subheadline, monospaced: true, weight: .bold)
                         .foregroundStyle(HerdrTheme.text)
                         .lineLimit(1)
                     Text(skill.skillFilePath)
-                        .font(.caption.monospaced())
+                        .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -284,7 +284,7 @@ private struct SkillMenuRow: View {
                 Spacer(minLength: 8)
 
                 Image(systemName: "plus.square.fill")
-                    .font(.title3)
+                    .herdrFont(.title3)
                     .foregroundStyle(HerdrTheme.accent)
             }
             .padding(.horizontal, 14)

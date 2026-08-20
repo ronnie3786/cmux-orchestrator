@@ -4,6 +4,7 @@ struct PiMarkdownMessageView: View {
     let source: String
     let isStreaming: Bool
     private let blocks: [PiMarkdownBlock]
+    @Environment(\.herdrFontScale) private var fontScale
 
     init(source: String, isStreaming: Bool) {
         self.source = source
@@ -13,7 +14,11 @@ struct PiMarkdownMessageView: View {
 
     var body: some View {
         if isStreaming {
-            PiMarkdownText(source, cacheRenderedText: false)
+            PiMarkdownText(
+                source,
+                font: HerdrTheme.scaled(.body, scale: fontScale),
+                cacheRenderedText: false
+            )
                 .lineSpacing(3)
         } else {
             VStack(alignment: .leading, spacing: 12) {

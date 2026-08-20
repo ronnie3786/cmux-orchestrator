@@ -563,6 +563,21 @@ final class HerdrAppModel {
         }
     }
 
+    func startNewPiChat(in pane: HerdrPane) async {
+        if isDemoMode {
+            toastMessage = "started a new pi chat"
+            return
+        }
+        guard canControl, self.pane(id: pane.id) != nil, let client else { return }
+        do {
+            try await client.sendText(toPane: pane.id, text: "/new", submit: false)
+            try await client.sendKeys(toPane: pane.id, keys: ["enter"])
+            toastMessage = "started a new pi chat"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func split(_ pane: HerdrPane, direction: String) async {
         await perform("Pane split") { client in
             try await client.splitPane(id: pane.id, direction: direction)

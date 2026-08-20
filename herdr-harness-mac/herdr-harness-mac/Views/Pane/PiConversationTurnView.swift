@@ -28,7 +28,7 @@ struct PiConversationTurnView: View {
                             .controlSize(.small)
                             .tint(HerdrTheme.mauve)
                         Text("Pi is starting…")
-                            .font(.callout)
+                            .herdrFont(.callout)
                             .foregroundStyle(HerdrTheme.mist)
                     }
                     .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))

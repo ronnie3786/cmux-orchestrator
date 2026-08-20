@@ -37,7 +37,7 @@ private struct SidebarStatusDot: View {
 
     var body: some View {
         Text(status.terminalGlyph)
-            .font(.body.monospaced().bold())
+            .herdrFont(.body, monospaced: true, weight: .bold)
             .foregroundStyle(SidebarTone.status)
             .accessibilityLabel(status.title)
     }
@@ -53,7 +53,7 @@ struct SidebarProjectRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "chevron.right")
-                    .font(.caption2.bold())
+                    .herdrFont(.caption2, weight: .bold)
                     .foregroundStyle(HerdrTheme.mist)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
@@ -61,13 +61,13 @@ struct SidebarProjectRow: View {
                 SidebarStatusDot(status: workspace.agentStatus)
 
                 Text(workspace.label)
-                    .font(.subheadline.monospaced().bold())
+                    .herdrFont(.subheadline, monospaced: true, weight: .bold)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
                 if workspace.focused {
                     Text("active")
-                        .font(.caption.monospaced().bold())
+                        .herdrFont(.caption, monospaced: true, weight: .bold)
                         .foregroundStyle(HerdrTheme.accent)
                         .fixedSize()
                 }
@@ -76,7 +76,7 @@ struct SidebarProjectRow: View {
 
                 if workspace.attentionCount > 0 {
                     Text("\(workspace.attentionCount)")
-                        .font(.caption2.monospaced().bold())
+                        .herdrFont(.caption2, monospaced: true, weight: .bold)
                         .foregroundStyle(SidebarTone.badgeLabel)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -113,18 +113,18 @@ struct SidebarSectionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "square.on.square")
-                .font(.caption2)
+                .herdrFont(.caption2)
                 .foregroundStyle(HerdrTheme.mist)
 
             Text(tab.label)
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.mist)
                 .lineLimit(1)
 
             Spacer()
 
             Text("\(tab.paneCount)")
-                .font(.caption2.monospaced())
+                .herdrFont(.caption2, monospaced: true)
                 .foregroundStyle(HerdrTheme.muted)
                 .fixedSize()
         }
@@ -150,14 +150,14 @@ struct SidebarChatRow: View {
                 SidebarStatusDot(status: pane.agentStatus)
 
                 Text(pane.displayTitle)
-                    .font(.subheadline.monospaced())
+                    .herdrFont(.subheadline, monospaced: true)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text(pane.agentStatus.compactTitle.lowercased())
-                    .font(.caption.monospaced())
+                    .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(SidebarTone.status)
                     .fixedSize()
             }

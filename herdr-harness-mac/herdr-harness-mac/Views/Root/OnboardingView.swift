@@ -30,10 +30,10 @@ struct OnboardingView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("herdr")
-                    .font(.largeTitle.bold())
+                    .herdrFont(.largeTitle, weight: .bold)
                     .fontDesign(.rounded)
                 Text("Your agents, within reach")
-                    .font(.subheadline)
+                    .herdrFont(.subheadline)
                     .foregroundStyle(HerdrTheme.mist)
             }
         }
@@ -42,10 +42,10 @@ struct OnboardingView: View {
     private var promise: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Know where to look.")
-                .font(.largeTitle.bold())
+                .herdrFont(.largeTitle, weight: .bold)
                 .fontDesign(.rounded)
             Text("Move from workspace to pane to live agent in seconds. Herdr keeps the terminals real; this app keeps the decisions close.")
-                .font(.title3)
+                .herdrFont(.title3)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -55,7 +55,7 @@ struct OnboardingView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 18) {
                 Label("Connect to your Mac", systemImage: "macbook.and.iphone")
-                    .font(.headline.bold())
+                    .herdrFont(.headline, weight: .bold)
 
                 TextField("https://your-mac.tailnet.ts.net", text: $model.serverURLString)
                     .textContentType(.URL)
@@ -80,7 +80,7 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
 
                 Label("Use localhost when Herdr runs on this Mac, or the private HTTPS URL from tailscale serve status for another Mac. The token stays in Keychain.", systemImage: "lock.shield")
-                    .font(.footnote)
+                    .herdrFont(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

@@ -62,12 +62,12 @@ private struct TerminalToolbar: View {
             HerdrStatusDot(status: pane.agentStatus)
 
             Label(source.label, systemImage: source.symbol)
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .foregroundStyle(source.color)
                 .symbolEffect(.pulse, options: .repeating, isActive: source == .connecting)
 
             Text(metadata)
-                .font(.caption.monospaced())
+                .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .lineLimit(1)
 
@@ -122,7 +122,7 @@ private struct TerminalOutputView: View {
                             Text(attributedOutput)
                         } else {
                             Text(output)
-                                .font(.footnote.monospaced())
+                                .herdrFont(.footnote, monospaced: true)
                                 .foregroundStyle(HerdrTheme.text)
                         }
                     }

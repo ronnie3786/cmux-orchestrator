@@ -15,7 +15,7 @@ struct HerdrSectionLabel: View {
                     .foregroundStyle(HerdrTheme.mist)
             }
         }
-        .font(.subheadline.monospaced())
+        .herdrFont(.subheadline, monospaced: true)
         .foregroundStyle(HerdrTheme.mist)
         .accessibilityElement(children: .combine)
     }

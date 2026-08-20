@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PiMarkdownListView: View {
     let items: [PiMarkdownListItem]
+    @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -11,7 +12,7 @@ struct PiMarkdownListView: View {
                         .frame(width: 24, alignment: .trailing)
                         .padding(.top, 2)
                         .accessibilityHidden(true)
-                    PiMarkdownText(item.text)
+                    PiMarkdownText(item.text, font: HerdrTheme.scaled(.body, scale: fontScale))
                         .lineSpacing(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -27,15 +28,15 @@ struct PiMarkdownListView: View {
         switch marker {
         case .bullet:
             Text("•")
-                .font(.body.weight(.bold))
+                .herdrFont(.body, weight: .bold)
                 .foregroundStyle(HerdrTheme.accent)
         case let .number(number):
             Text("\(number).")
-                .font(.callout.monospacedDigit())
+                .herdrFont(.callout, monospacedDigit: true)
                 .foregroundStyle(HerdrTheme.accent)
         case let .task(isCompleted):
             Image(systemName: isCompleted ? "checkmark.square.fill" : "square")
-                .font(.callout.weight(.semibold))
+                .herdrFont(.callout, weight: .semibold)
                 .foregroundStyle(isCompleted ? HerdrTheme.success : HerdrTheme.muted)
         }
     }

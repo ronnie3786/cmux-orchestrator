@@ -31,20 +31,20 @@ private struct ComposerAttachmentChip: View {
     var body: some View {
         HStack(spacing: 9) {
             Image(systemName: fileIcon)
-                .font(.subheadline.weight(.semibold))
+                .herdrFont(.subheadline, weight: .semibold)
                 .foregroundStyle(statusColor)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.displayName)
-                    .font(.caption.monospaced().weight(.semibold))
+                    .herdrFont(.caption, monospaced: true, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 180, alignment: .leading)
 
                 Text(statusText)
-                    .font(.caption2.monospaced())
+                    .herdrFont(.caption2, monospaced: true)
                     .foregroundStyle(statusColor)
                     .lineLimit(1)
             }
@@ -53,7 +53,7 @@ private struct ComposerAttachmentChip: View {
 
             Button(action: remove) {
                 Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
+                    .herdrFont(.caption, weight: .bold)
                     .frame(width: 44, height: 44)
                     .contentShape(.rect)
             }
@@ -84,14 +84,14 @@ private struct ComposerAttachmentChip: View {
 
         case .uploaded:
             Image(systemName: "checkmark")
-                .font(.caption.weight(.bold))
+                .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.success)
                 .accessibilityLabel("Ready")
 
         case .failed:
             Button(action: retry) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.caption.weight(.bold))
+                    .herdrFont(.caption, weight: .bold)
                     .frame(width: 44, height: 44)
                     .contentShape(.rect)
             }

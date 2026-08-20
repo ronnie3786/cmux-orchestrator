@@ -15,7 +15,7 @@ struct AlertCardView: View {
                         Spacer()
                         if !alert.isRead {
                             Text("NEW")
-                                .font(.caption.bold())
+                                .herdrFont(.caption, weight: .bold)
                                 .foregroundStyle(HerdrTheme.ink)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 4)
@@ -23,22 +23,22 @@ struct AlertCardView: View {
                         }
                     }
                     Text(alert.title)
-                        .font(.headline.bold())
+                        .herdrFont(.headline, weight: .bold)
                         .foregroundStyle(.primary)
                     if !alert.message.isEmpty {
                         Text(alert.message)
-                            .font(.subheadline)
+                            .herdrFont(.subheadline)
                             .foregroundStyle(.secondary)
                             .lineLimit(3)
                     }
                     Label(agentLabel, systemImage: pane == nil ? "archivebox" : "cpu")
-                        .font(.caption)
+                        .herdrFont(.caption)
                         .foregroundStyle(.tertiary)
                 }
 
                 if pane != nil {
                     Image(systemName: "chevron.right")
-                        .font(.caption.bold())
+                        .herdrFont(.caption, weight: .bold)
                         .foregroundStyle(.tertiary)
                         .padding(.top, 4)
                 }

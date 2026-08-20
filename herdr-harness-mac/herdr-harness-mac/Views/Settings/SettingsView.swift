@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: HerdrAppModel
+    @Bindable var fontScale: HerdrFontScaleStore
 
     var body: some View {
         Form {
@@ -9,6 +10,7 @@ struct SettingsView: View {
             connectionSection
             voiceSection
             alertSection
+            textSizeSection
             privacySection
             aboutSection
         }
@@ -101,13 +103,34 @@ struct SettingsView: View {
         }
     }
 
+    private var textSizeSection: some View {
+        Section {
+            Picker("Text size", selection: $fontScale.scale) {
+                ForEach(HerdrFontScale.allCases) { scale in
+                    Text(scale.label).tag(scale)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("settings-text-size-picker")
+
+            Text("the quick agent jumps over the lazy herd")
+                .font(HerdrTheme.scaled(.caption, scale: fontScale.scale, monospaced: true))
+                .foregroundStyle(HerdrTheme.mist)
+                .accessibilityIdentifier("settings-text-size-preview")
+        } header: {
+            HerdrSectionLabel(title: "text size")
+        } footer: {
+            Text("Applies across Herdr's windows and menu bar.")
+        }
+    }
+
     private var privacySection: some View {
         Section("Private by design") {
             Label("The raw Herdr socket never leaves your Mac", systemImage: "lock.shield")
             Label("Terminal control requires your pairing token", systemImage: "key.horizontal")
             Label("Tailscale keeps the server inside your tailnet", systemImage: "network.badge.shield.half.filled")
         }
-        .font(.subheadline)
+        .herdrFont(.subheadline)
     }
 
     private var aboutSection: some View {
@@ -116,9 +139,9 @@ struct SettingsView: View {
                 HerdrBrandMark(size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Herdr")
-                        .font(.headline.bold())
+                        .herdrFont(.headline, weight: .bold)
                     Text("Remote command deck · 0.1")
-                        .font(.caption)
+                        .herdrFont(.caption)
                         .foregroundStyle(.secondary)
                 }
             }

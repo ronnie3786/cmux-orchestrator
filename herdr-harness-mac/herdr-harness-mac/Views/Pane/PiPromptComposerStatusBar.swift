@@ -12,7 +12,7 @@ struct PiPromptComposerStatusBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Label("Pi is working", systemImage: "sparkles")
-                .font(.caption.weight(.medium))
+                .herdrFont(.caption, weight: .medium)
                 .foregroundStyle(HerdrTheme.working)
 
             Spacer(minLength: 4)
@@ -32,7 +32,7 @@ struct PiPromptComposerStatusBar: View {
                 }
             } label: {
                 Label(disposition.shortLabel, systemImage: disposition.symbol)
-                    .font(.caption.weight(.semibold))
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.accent)
                     .padding(.horizontal, 10)
                     .frame(minHeight: 36)
@@ -46,7 +46,7 @@ struct PiPromptComposerStatusBar: View {
 
             Button("Stop", systemImage: "stop.fill", role: .destructive, action: stop)
                 .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.alert, emphasis: .text))
-                .font(.caption.weight(.semibold))
+                .herdrFont(.caption, weight: .semibold)
                 .frame(minHeight: PiChatChrome.controlHeight)
                 .disabled(!canAbort)
                 .accessibilityIdentifier("pi-chat-stop")

@@ -6,7 +6,7 @@ struct AgentStatusBadge: View {
 
     var body: some View {
         Label(compact ? status.compactTitle : status.title, systemImage: status.symbol)
-            .font(.caption.bold())
+            .herdrFont(.caption, weight: .bold)
             .foregroundStyle(status.labelColor)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)

@@ -51,7 +51,7 @@ private struct PiDisclosureHeader: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
+                    .herdrFont(.caption2, weight: .semibold)
                     .foregroundStyle(.tint)
                     .opacity(isHovering ? 1 : 0.62)
                     .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))

@@ -2,11 +2,12 @@ import SwiftUI
 
 struct PiMarkdownBlockView: View {
     let block: PiMarkdownBlock
+    @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
         switch block {
         case let .paragraph(_, text):
-            PiMarkdownText(text)
+            PiMarkdownText(text, font: HerdrTheme.scaled(.body, scale: fontScale))
                 .lineSpacing(3)
         case let .heading(_, level, text):
             PiMarkdownText(text, font: headingFont(level))
@@ -17,7 +18,7 @@ struct PiMarkdownBlockView: View {
         case let .list(_, items):
             PiMarkdownListView(items: items)
         case let .quote(_, text):
-            PiMarkdownText(text)
+            PiMarkdownText(text, font: HerdrTheme.scaled(.body, scale: fontScale))
                 .lineSpacing(3)
                 .italic()
                 .foregroundStyle(HerdrTheme.mist)
@@ -41,12 +42,12 @@ struct PiMarkdownBlockView: View {
 
     private func headingFont(_ level: Int) -> Font {
         switch level {
-        case 1: .title2.weight(.bold)
-        case 2: .title3.weight(.bold)
-        case 3: .headline.weight(.bold)
-        case 4: .subheadline.weight(.semibold)
-        case 5: .footnote.weight(.bold)
-        default: .caption.weight(.bold)
+        case 1: HerdrTheme.scaled(.title2, scale: fontScale, weight: .bold)
+        case 2: HerdrTheme.scaled(.title3, scale: fontScale, weight: .bold)
+        case 3: HerdrTheme.scaled(.headline, scale: fontScale, weight: .bold)
+        case 4: HerdrTheme.scaled(.subheadline, scale: fontScale, weight: .semibold)
+        case 5: HerdrTheme.scaled(.footnote, scale: fontScale, weight: .bold)
+        default: HerdrTheme.scaled(.caption, scale: fontScale, weight: .bold)
         }
     }
 }

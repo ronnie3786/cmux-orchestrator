@@ -67,11 +67,11 @@ struct ComposerSkillsHUD: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "wand.and.stars")
-                .font(.caption.weight(.semibold))
+                .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.mauve)
 
             Text("$\(query)")
-                .font(.caption.monospaced().bold())
+                .herdrFont(.caption, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -79,7 +79,7 @@ struct ComposerSkillsHUD: View {
             Spacer(minLength: 8)
 
             Text("↑↓ move")
-                .font(.caption2.monospaced())
+                .herdrFont(.caption2, monospaced: true)
                 .foregroundStyle(HerdrTheme.muted)
                 .lineLimit(1)
         }
@@ -95,7 +95,7 @@ struct ComposerSkillsHUD: View {
             Spacer(minLength: 8)
             Text("↩ insert · esc")
         }
-        .font(.caption2.monospaced())
+        .herdrFont(.caption2, monospaced: true)
         .foregroundStyle(HerdrTheme.muted)
         .lineLimit(1)
         .padding(.horizontal, 12)
@@ -122,18 +122,18 @@ struct ComposerSkillsHUD: View {
                     .frame(width: 2)
 
                 Image(systemName: skill.scope == "user" ? "person.crop.circle" : "shippingbox")
-                    .font(.caption)
+                    .herdrFont(.caption)
                     .foregroundStyle(skill.scope == "user" ? HerdrTheme.signal : HerdrTheme.mauve)
                     .frame(width: 16)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(skill.name)
-                        .font(.subheadline.monospaced().bold())
+                        .herdrFont(.subheadline, monospaced: true, weight: .bold)
                         .foregroundStyle(HerdrTheme.text)
                         .lineLimit(1)
 
                     Text(skill.skillFilePath)
-                        .font(.caption2.monospaced())
+                        .herdrFont(.caption2, monospaced: true)
                         .foregroundStyle(HerdrTheme.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)

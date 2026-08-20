@@ -66,10 +66,10 @@ struct PiModelPickerChip: View {
                 .truncationMode(.middle)
             if isInteractive {
                 Image(systemName: "chevron.up.down")
-                    .font(.caption2)
+                    .herdrFont(.caption2)
             }
         }
-        .font(.caption.weight(.semibold))
+        .herdrFont(.caption, weight: .semibold)
         .foregroundStyle(isInteractive ? HerdrTheme.accent : HerdrTheme.mist)
         .padding(.horizontal, 10)
         .frame(minHeight: 36)

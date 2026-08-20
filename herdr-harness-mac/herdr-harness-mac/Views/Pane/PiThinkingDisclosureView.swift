@@ -3,12 +3,13 @@ import SwiftUI
 struct PiThinkingDisclosureView: View {
     let block: PiThinkingBlock
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.herdrFontScale) private var fontScale
     @State private var isExpanded = false
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
-            PiMarkdownText(visibleText, font: .callout)
+            PiMarkdownText(visibleText, font: HerdrTheme.scaled(.callout, scale: fontScale))
                 .foregroundStyle(HerdrTheme.mist)
                 .padding(.top, 10)
         } label: {
@@ -29,7 +30,7 @@ struct PiThinkingDisclosureView: View {
                 .accessibilityHidden(true)
 
                 Text(block.isStreaming ? "Thinking" : "Thought process")
-                    .font(.caption.weight(.semibold))
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
                     .contentTransition(.opacity)
 
@@ -37,7 +38,7 @@ struct PiThinkingDisclosureView: View {
 
                 if block.isStreaming, let startedAt = block.startedAt {
                     Text(startedAt, style: .relative)
-                        .font(.caption.monospacedDigit())
+                        .herdrFont(.caption, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.muted)
                         .transition(.opacity)
                 }

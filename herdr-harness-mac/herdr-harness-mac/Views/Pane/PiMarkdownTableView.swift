@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PiMarkdownTableView: View {
     let table: PiMarkdownTable
+    @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
         ScrollView(.horizontal) {
@@ -30,7 +31,9 @@ struct PiMarkdownTableView: View {
             ForEach(Array(cells.enumerated()), id: \.offset) { columnIndex, cell in
                 PiMarkdownText(
                     cell,
-                    font: rowIndex == nil ? .callout.weight(.semibold) : .callout
+                    font: rowIndex == nil
+                        ? HerdrTheme.scaled(.callout, scale: fontScale, weight: .semibold)
+                        : HerdrTheme.scaled(.callout, scale: fontScale)
                 )
                 .multilineTextAlignment(textAlignment(for: columnIndex))
                 .frame(

@@ -22,7 +22,7 @@ struct HerdrSidebarView: View {
                 HerdrBrandMark(size: 28)
 
                 Text("herdr")
-                    .font(.headline.monospaced().bold())
+                    .herdrFont(.headline, monospaced: true, weight: .bold)
                     .foregroundStyle(HerdrTheme.text)
 
                 Spacer()
@@ -33,7 +33,7 @@ struct HerdrSidebarView: View {
             Button("new workspace", systemImage: "plus") {
                 isPresentingCreateWorkspace = true
             }
-            .font(.subheadline.monospaced().bold())
+            .herdrFont(.subheadline, monospaced: true, weight: .bold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 28)
             .buttonStyle(.plain)
@@ -42,7 +42,7 @@ struct HerdrSidebarView: View {
             Button("new pi session", systemImage: "bolt") {
                 Task { await model.createQuickPiSession() }
             }
-            .font(.subheadline.monospaced().bold())
+            .herdrFont(.subheadline, monospaced: true, weight: .bold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 28)
             .buttonStyle(.plain)
@@ -110,7 +110,7 @@ struct HerdrSidebarView: View {
 
                                 if entry.sections.isEmpty && entry.looseChats.isEmpty {
                                     Text("no panes yet")
-                                        .font(.caption.monospaced())
+                                        .herdrFont(.caption, monospaced: true)
                                         .foregroundStyle(HerdrTheme.muted)
                                         .padding(.leading, 34)
                                         .frame(minHeight: 24)

@@ -37,6 +37,14 @@ struct PaneActionsMenu: View {
             }
             .disabled(!model.canControl)
 
+            if pane.supportsPiSemanticChat || [pane.agent, pane.displayAgent].contains(where: { $0?.caseInsensitiveCompare("pi") == .orderedSame }) {
+                Button("New Pi chat", systemImage: "plus.bubble") {
+                    Task { await model.startNewPiChat(in: pane) }
+                }
+                .accessibilityIdentifier("pane-action-new-pi-chat")
+                .disabled(!model.canControl)
+            }
+
             Button("Rename pane", systemImage: "pencil") {
                 renameText = pane.displayTitle
                 isRenaming = true

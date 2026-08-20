@@ -13,7 +13,11 @@ struct PiChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PiConnectionBanner(connection: store.connection, message: store.lastError)
+            PiConnectionBanner(
+                connection: store.connection,
+                message: store.lastError,
+                transport: store.transport
+            )
 
             PiContextMeterView(usage: store.contextUsage)
 

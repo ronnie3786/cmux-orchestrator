@@ -9,7 +9,7 @@ struct PiAssistantMessageView: View {
 
             if case let .failed(message) = block.status {
                 Label(message ?? "Response stopped with an error", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.alert)
             }
         }

@@ -58,12 +58,12 @@ struct WorkspaceFileSearchSheet: View {
     private var searchField: some View {
         HStack(spacing: 9) {
             Image(systemName: "at")
-                .font(.subheadline.weight(.bold))
+                .herdrFont(.subheadline, weight: .bold)
                 .foregroundStyle(HerdrTheme.accent)
 
             TextField("Search project files", text: $query)
                 .textFieldStyle(.plain)
-                .font(.body.monospaced())
+                .herdrFont(.body, monospaced: true)
                 .foregroundStyle(HerdrTheme.text)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
@@ -117,11 +117,11 @@ struct WorkspaceFileSearchSheet: View {
                 LazyVStack(spacing: 0) {
                     HStack {
                         Text("MATCHES")
-                            .font(.caption2.monospaced().weight(.bold))
+                            .herdrFont(.caption2, monospaced: true, weight: .bold)
                             .foregroundStyle(HerdrTheme.mist)
                         Spacer()
                         Text("\(results.count)")
-                            .font(.caption2.monospaced())
+                            .herdrFont(.caption2, monospaced: true)
                             .foregroundStyle(HerdrTheme.mist)
                     }
                     .padding(.horizontal, HerdrTheme.pagePadding)
@@ -134,19 +134,19 @@ struct WorkspaceFileSearchSheet: View {
                         } label: {
                             HStack(spacing: 11) {
                                 Image(systemName: "doc.text")
-                                    .font(.subheadline)
+                                    .herdrFont(.subheadline)
                                     .foregroundStyle(HerdrTheme.accent)
                                     .frame(width: 24)
 
                                 Text(file.path)
-                                    .font(.callout.monospaced())
+                                    .herdrFont(.callout, monospaced: true)
                                     .foregroundStyle(HerdrTheme.text)
                                     .lineLimit(2)
                                     .truncationMode(.middle)
                                     .frame(maxWidth: .infinity, alignment: .leading)
 
                                 Image(systemName: "plus")
-                                    .font(.caption.weight(.bold))
+                                    .herdrFont(.caption, weight: .bold)
                                     .foregroundStyle(HerdrTheme.signal)
                                     .frame(width: 44, height: 44)
                             }
@@ -171,11 +171,11 @@ struct WorkspaceFileSearchSheet: View {
     private func statePanel(title: String, detail: String, systemImage: String) -> some View {
         ContentUnavailableView {
             Label(title, systemImage: systemImage)
-                .font(.headline.monospaced())
+                .herdrFont(.headline, monospaced: true)
                 .foregroundStyle(HerdrTheme.text)
         } description: {
             Text(detail)
-                .font(.footnote.monospaced())
+                .herdrFont(.footnote, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -184,10 +184,10 @@ struct WorkspaceFileSearchSheet: View {
     private func errorPanel(_ message: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.title2)
+                .herdrFont(.title2)
                 .foregroundStyle(HerdrTheme.warning)
             Text(message)
-                .font(.footnote.monospaced())
+                .herdrFont(.footnote, monospaced: true)
                 .foregroundStyle(HerdrTheme.text)
                 .multilineTextAlignment(.center)
             Button("Retry") {

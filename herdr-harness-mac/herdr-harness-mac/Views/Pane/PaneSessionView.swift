@@ -18,6 +18,7 @@ struct PaneSessionView: View {
     /// survives only so existing call sites keep compiling.
     var hidesAppTabBar = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.herdrFontScale) private var fontScale
     @FocusState private var isTerminalFocused: Bool
     @State private var keyboardRouter = TerminalKeyboardRouter()
     @State private var output = "Connecting to terminal…"
@@ -119,7 +120,7 @@ struct PaneSessionView: View {
         .overlay(alignment: .top) {
             if let outputError {
                 Label(outputError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption.bold())
+                    .herdrFont(.caption, weight: .bold)
                     .foregroundStyle(HerdrTheme.ink)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
@@ -198,7 +199,7 @@ struct PaneSessionView: View {
             PaneTerminalView(
                 pane: currentPane,
                 output: output,
-                attributedOutput: terminalSource == .stream ? terminalGrid.attributedText : nil,
+                attributedOutput: terminalSource == .stream ? terminalGrid.attributedText(scale: fontScale) : nil,
                 revision: terminalSource == .stream ? frameSequence : snapshotRevision,
                 dimensions: terminalSource == .stream ? "\(terminalGrid.columns)×\(terminalGrid.rows)" : nil,
                 source: terminalSource,
