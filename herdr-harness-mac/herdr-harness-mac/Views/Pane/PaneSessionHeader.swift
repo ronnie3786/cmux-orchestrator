@@ -8,6 +8,7 @@ import SwiftUI
 struct PaneSessionHeader: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
+    let store: PiConversationStore
 
     var body: some View {
         HStack(spacing: 11) {
@@ -31,6 +32,8 @@ struct PaneSessionHeader: View {
             }
 
             Spacer(minLength: 8)
+
+            LastPromptPeekButton(message: PiLastPrompt.lastUserMessage(in: store.turns))
 
             Button("Focus on Mac", systemImage: pane.focused ? "scope" : "macwindow") {
                 Task { await model.focus(pane) }

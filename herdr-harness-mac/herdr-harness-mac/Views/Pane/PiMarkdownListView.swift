@@ -12,8 +12,8 @@ struct PiMarkdownListView: View {
                         .frame(width: 24, alignment: .trailing)
                         .padding(.top, 2)
                         .accessibilityHidden(true)
-                    PiMarkdownText(item.text, font: HerdrTheme.scaled(.body, scale: fontScale))
-                        .lineSpacing(2)
+                    PiMarkdownText(item.text, font: HerdrProse.font(.listItem, scale: fontScale))
+                        .lineSpacing(HerdrProse.lineSpacing(.listItem, scale: fontScale))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.leading, CGFloat(min(item.depth, 6)) * 17)

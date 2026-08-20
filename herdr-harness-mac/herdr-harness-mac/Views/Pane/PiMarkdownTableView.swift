@@ -32,8 +32,8 @@ struct PiMarkdownTableView: View {
                 PiMarkdownText(
                     cell,
                     font: rowIndex == nil
-                        ? HerdrTheme.scaled(.callout, scale: fontScale, weight: .semibold)
-                        : HerdrTheme.scaled(.callout, scale: fontScale)
+                        ? HerdrProse.font(.tableHeader, scale: fontScale)
+                        : HerdrProse.font(.tableCell, scale: fontScale)
                 )
                 .multilineTextAlignment(textAlignment(for: columnIndex))
                 .frame(

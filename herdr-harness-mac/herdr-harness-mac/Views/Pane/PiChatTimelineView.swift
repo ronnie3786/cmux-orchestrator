@@ -31,7 +31,7 @@ struct PiChatTimelineView: View {
 
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
+                LazyVStack(alignment: .leading, spacing: HerdrProse.turnSpacing) {
                     transcriptHeader
                         .transition(.opacity)
 

@@ -6,8 +6,8 @@ struct PiMarkdownBlockView: View {
     var body: some View {
         switch block {
         case let .paragraph(_, text):
-            PiMarkdownText(text)
-                .lineSpacing(3)
+            PiMarkdownText(text, font: HerdrProse.font(.body))
+                .lineSpacing(HerdrProse.lineSpacing(.body))
         case let .heading(_, level, text):
             PiMarkdownText(text, font: headingFont(level))
                 .lineSpacing(2)
@@ -17,8 +17,8 @@ struct PiMarkdownBlockView: View {
         case let .list(_, items):
             PiMarkdownListView(items: items)
         case let .quote(_, text):
-            PiMarkdownText(text)
-                .lineSpacing(3)
+            PiMarkdownText(text, font: HerdrProse.font(.quote))
+                .lineSpacing(HerdrProse.lineSpacing(.quote))
                 .italic()
                 .foregroundStyle(HerdrTheme.mist)
                 .padding(.leading, 14)
@@ -41,12 +41,12 @@ struct PiMarkdownBlockView: View {
 
     private func headingFont(_ level: Int) -> Font {
         switch level {
-        case 1: .title2.weight(.bold)
-        case 2: .title3.weight(.bold)
-        case 3: .headline.weight(.bold)
-        case 4: .subheadline.weight(.semibold)
-        case 5: .footnote.weight(.bold)
-        default: .caption.weight(.bold)
+        case 1: HerdrProse.font(.heading1)
+        case 2: HerdrProse.font(.heading2)
+        case 3: HerdrProse.font(.heading3)
+        case 4: HerdrProse.font(.heading4)
+        case 5: HerdrProse.font(.heading5)
+        default: HerdrProse.font(.heading6)
         }
     }
 }

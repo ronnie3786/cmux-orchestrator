@@ -30,7 +30,7 @@ struct PiMarkdownTableView: View {
             ForEach(Array(cells.enumerated()), id: \.offset) { columnIndex, cell in
                 PiMarkdownText(
                     cell,
-                    font: rowIndex == nil ? .callout.weight(.semibold) : .callout
+                    font: rowIndex == nil ? HerdrProse.font(.tableHeader) : HerdrProse.font(.tableCell)
                 )
                 .multilineTextAlignment(textAlignment(for: columnIndex))
                 .frame(

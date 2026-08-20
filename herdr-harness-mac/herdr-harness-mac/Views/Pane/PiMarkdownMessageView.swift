@@ -16,12 +16,12 @@ struct PiMarkdownMessageView: View {
         if isStreaming {
             PiMarkdownText(
                 source,
-                font: HerdrTheme.scaled(.body, scale: fontScale),
+                font: HerdrProse.font(.body, scale: fontScale),
                 cacheRenderedText: false
             )
-                .lineSpacing(3)
+                .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: HerdrProse.blockSpacing) {
                 ForEach(blocks) { block in
                     PiMarkdownBlockView(block: block)
                 }

@@ -13,10 +13,10 @@ struct PiMarkdownMessageView: View {
 
     var body: some View {
         if isStreaming {
-            PiMarkdownText(source, cacheRenderedText: false)
-                .lineSpacing(3)
+            PiMarkdownText(source, font: HerdrProse.font(.body), cacheRenderedText: false)
+                .lineSpacing(HerdrProse.lineSpacing(.body))
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: HerdrProse.blockSpacing) {
                 ForEach(blocks) { block in
                     PiMarkdownBlockView(block: block)
                 }

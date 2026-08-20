@@ -56,6 +56,7 @@ struct PiThinkingDisclosureView: View {
         .contentShape(Rectangle())
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-thinking-\(block.id)")
+        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private var visibleText: String {

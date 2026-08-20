@@ -31,6 +31,7 @@ struct PiToolCardView: View {
         .contentShape(Rectangle())
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-tool-\(tool.callID)")
+        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private func label(_ presentation: PiToolPresentation) -> some View {

@@ -7,8 +7,8 @@ struct PiMarkdownBlockView: View {
     var body: some View {
         switch block {
         case let .paragraph(_, text):
-            PiMarkdownText(text, font: HerdrTheme.scaled(.body, scale: fontScale))
-                .lineSpacing(3)
+            PiMarkdownText(text, font: HerdrProse.font(.body, scale: fontScale))
+                .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
         case let .heading(_, level, text):
             PiMarkdownText(text, font: headingFont(level))
                 .lineSpacing(2)
@@ -18,8 +18,8 @@ struct PiMarkdownBlockView: View {
         case let .list(_, items):
             PiMarkdownListView(items: items)
         case let .quote(_, text):
-            PiMarkdownText(text, font: HerdrTheme.scaled(.body, scale: fontScale))
-                .lineSpacing(3)
+            PiMarkdownText(text, font: HerdrProse.font(.quote, scale: fontScale))
+                .lineSpacing(HerdrProse.lineSpacing(.quote, scale: fontScale))
                 .italic()
                 .foregroundStyle(HerdrTheme.mist)
                 .padding(.leading, 14)
@@ -42,12 +42,12 @@ struct PiMarkdownBlockView: View {
 
     private func headingFont(_ level: Int) -> Font {
         switch level {
-        case 1: HerdrTheme.scaled(.title2, scale: fontScale, weight: .bold)
-        case 2: HerdrTheme.scaled(.title3, scale: fontScale, weight: .bold)
-        case 3: HerdrTheme.scaled(.headline, scale: fontScale, weight: .bold)
-        case 4: HerdrTheme.scaled(.subheadline, scale: fontScale, weight: .semibold)
-        case 5: HerdrTheme.scaled(.footnote, scale: fontScale, weight: .bold)
-        default: HerdrTheme.scaled(.caption, scale: fontScale, weight: .bold)
+        case 1: HerdrProse.font(.heading1, scale: fontScale)
+        case 2: HerdrProse.font(.heading2, scale: fontScale)
+        case 3: HerdrProse.font(.heading3, scale: fontScale)
+        case 4: HerdrProse.font(.heading4, scale: fontScale)
+        case 5: HerdrProse.font(.heading5, scale: fontScale)
+        default: HerdrProse.font(.heading6, scale: fontScale)
         }
     }
 }

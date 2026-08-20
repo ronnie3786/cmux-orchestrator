@@ -49,6 +49,11 @@ struct PaneSessionView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
+                LastPromptPeekButton(
+                    message: PiLastPrompt.lastUserMessage(in: piConversationStore.turns)
+                )
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 PaneActionsMenu(model: model, pane: currentPane, selectedMode: modeSelection)
             }
         }

@@ -46,7 +46,7 @@ struct PaneSessionView: View {
             HerdrBackground()
 
             VStack(spacing: 0) {
-                PaneSessionHeader(model: model, pane: currentPane)
+                PaneSessionHeader(model: model, pane: currentPane, store: piConversationStore)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
 

@@ -172,7 +172,7 @@ struct DemoScreenshotRenderTests {
                 HerdrBackground()
 
                 VStack(spacing: 0) {
-                    PaneSessionHeader(model: model, pane: pane)
+                    PaneSessionHeader(model: model, pane: pane, store: PiConversationStore())
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
 
