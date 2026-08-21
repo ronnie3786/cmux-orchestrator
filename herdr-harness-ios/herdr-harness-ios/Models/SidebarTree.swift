@@ -24,6 +24,15 @@ enum SidebarTree {
         var id: String { "starred:\(workspace.id)" }
     }
 
+    struct MachineGroup: Identifiable, Equatable {
+        let machine: HerdrMachine
+        let state: ConnectionState
+        let isExpanded: Bool
+        let entries: [ProjectEntry]
+
+        var id: String { "machine:\(machine.id)" }
+    }
+
     static func build(
         workspaces: [HerdrWorkspace],
         query: String,
@@ -44,11 +53,20 @@ enum SidebarTree {
     static func starredGroups(
         workspaces: [HerdrWorkspace],
         query: String,
-        starredIDs: Set<String>
+        starredIDs: Set<String>,
+        machines: [HerdrMachine] = []
     ) -> [StarredGroup] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let machineOrder = Dictionary(uniqueKeysWithValues: machines.enumerated().map { ($0.element.id, $0.offset) })
         return workspaces
-            .sorted { $0.number < $1.number }
+            .sorted {
+                let lhsMachine = MachineScopedID.split($0.id)?.machineID
+                let rhsMachine = MachineScopedID.split($1.id)?.machineID
+                let lhsOrder = lhsMachine.flatMap { machineOrder[$0] } ?? Int.max
+                let rhsOrder = rhsMachine.flatMap { machineOrder[$0] } ?? Int.max
+                if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
+                return $0.number < $1.number
+            }
             .compactMap { workspace in
                 let chats = workspace.panes
                     .filter { starredIDs.contains($0.id) && matchesPaneQuery($0, query: trimmedQuery) }
@@ -56,6 +74,31 @@ enum SidebarTree {
                 guard !chats.isEmpty else { return nil }
                 return StarredGroup(workspace: workspace, chats: chats)
             }
+    }
+
+    static func machineGroups(
+        machines: [HerdrMachine],
+        states: [String: ConnectionState],
+        workspaces: [HerdrWorkspace],
+        query: String,
+        collapsedMachineIDs: Set<String>,
+        collapsedWorkspaceIDs: Set<String>,
+        starredIDs: Set<String> = []
+    ) -> [MachineGroup] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return machines.map { machine in
+            MachineGroup(
+                machine: machine,
+                state: states[machine.id] ?? .disconnected,
+                isExpanded: trimmedQuery.isEmpty ? !collapsedMachineIDs.contains(machine.id) : true,
+                entries: build(
+                    workspaces: workspaces.filter { $0.machineID == machine.id },
+                    query: query,
+                    collapsedWorkspaceIDs: collapsedWorkspaceIDs,
+                    starredIDs: starredIDs
+                )
+            )
+        }
     }
 
     private static func buildEntry(

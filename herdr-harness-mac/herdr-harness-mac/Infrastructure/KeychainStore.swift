@@ -44,6 +44,17 @@ enum KeychainStore {
         }
     }
 
+    static func removeValue(for account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+        SecItemDelete(query as CFDictionary)
+        UserDefaults.standard.removeObject(forKey: fallbackKey(for: account))
+    }
+
     private static func fallbackKey(for account: String) -> String {
         "herdr.keychainFallback.\(account)"
     }

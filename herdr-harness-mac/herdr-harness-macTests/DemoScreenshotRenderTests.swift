@@ -34,7 +34,7 @@ struct DemoScreenshotRenderTests {
     @Test("Root shell renders the navigator beside the detail column")
     func rendersRootShell() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        model.openPane(id: "w1:p2")
+        model.openPane(id: "demo1|w1:p2")
         let shell = HerdrShellState()
         let pane = try #require(model.pane(id: model.selectedPaneID))
         #expect(shell.resolvedScope(for: model) == .session)
@@ -72,8 +72,8 @@ struct DemoScreenshotRenderTests {
     @Test("Sidebar renders the workspace tree")
     func rendersSidebar() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        model.selectedPaneID = "w1:p2"
-        model.starredChatIDs = ["w1:p1", "w2:p1"]
+        model.selectedPaneID = "demo1|w1:p2"
+        model.starredChatIDs = ["demo1|w1:p1", "demo1|w2:p1"]
 
         let result = try await HerdrRenderHarness.render(
             "02-sidebar.png",
@@ -88,8 +88,8 @@ struct DemoScreenshotRenderTests {
     @Test("Sidebar changes at XX-Large text scale")
     func rendersSidebarAtXXLargeTextScale() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        model.selectedPaneID = "w1:p2"
-        model.starredChatIDs = ["w1:p1", "w2:p1"]
+        model.selectedPaneID = "demo1|w1:p2"
+        model.starredChatIDs = ["demo1|w1:p1", "demo1|w2:p1"]
 
         let defaultResult = try await HerdrRenderHarness.render(
             "02-sidebar.png",
@@ -132,8 +132,8 @@ struct DemoScreenshotRenderTests {
     @Test("Workspace overview renders the fleet summary, hero, and pane cards")
     func rendersWorkspaceOverview() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        let workspace = try #require(model.workspace(id: "w1"))
-        model.selectedPaneID = "w1:p1"
+        let workspace = try #require(model.workspace(id: "demo1|w1"))
+        model.selectedPaneID = "demo1|w1:p1"
 
         let result = try await HerdrRenderHarness.render(
             "04-workspace.png",
@@ -150,7 +150,7 @@ struct DemoScreenshotRenderTests {
     @Test("Pane session renders a streamed terminal frame above the composer")
     func rendersTerminalSession() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        let pane = try #require(model.pane(id: "w1:p2"))
+        let pane = try #require(model.pane(id: "demo1|w1:p2"))
         let workspace = try #require(model.workspace(containing: pane))
         let grid = HerdrRenderFixtures.cannedTerminalGrid(
             text: DemoData.terminalText(for: pane.id)
@@ -221,7 +221,7 @@ struct DemoScreenshotRenderTests {
     @Test("Pi chat renders a synthetic transcript with thinking, code, and tools")
     func rendersPiChatTimeline() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        let workspace = try #require(model.workspace(id: "w1"))
+        let workspace = try #require(model.workspace(id: "demo1|w1"))
         let pane = try HerdrRenderFixtures.piCapablePane()
         let store = try await HerdrRenderFixtures.populatedPiStore()
 
@@ -256,7 +256,7 @@ struct DemoScreenshotRenderTests {
     func rendersComposerWithAuxiliaryBar() async throws {
         let model = HerdrRenderFixtures.demoModel()
         let pane = try HerdrRenderFixtures.piCapablePane()
-        let workspace = try #require(model.workspace(id: "w1"))
+        let workspace = try #require(model.workspace(id: "demo1|w1"))
 
         let result = try await HerdrRenderHarness.render(
             "07-composer.png",

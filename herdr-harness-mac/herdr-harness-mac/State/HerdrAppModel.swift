@@ -4,6 +4,15 @@ import Observation
 @MainActor
 @Observable
 final class HerdrAppModel {
+    struct MachineRuntime {
+        var client: HerdrAPIClient?
+        var connection: ActiveServerConnection?
+        var state: ConnectionState = .disconnected
+        var lastUpdated: Date?
+        var lastError: String?
+        var firstFailureAt: Date?
+    }
+
     var workspaces: [HerdrWorkspace] = []
     var alerts: [HerdrAlert] = []
     var connectionState: ConnectionState = .disconnected
@@ -13,6 +22,7 @@ final class HerdrAppModel {
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
     var collapsedSidebarWorkspaceIDs: Set<String>
+    var collapsedSidebarMachineIDs: Set<String>
     var starredChatIDs: Set<String>
     var searchText = ""
     var filter: WorkspaceFilter = .all
@@ -26,6 +36,9 @@ final class HerdrAppModel {
     var isSending = false
     var connectionGeneration = 0
     private(set) var activeServerConnection: ActiveServerConnection?
+    var machineStates: [String: ConnectionState] = [:]
+    var machines: [HerdrMachine]
+    var machineScope: MachineScope
     var serverURLString: String
     var apiToken: String
     var isDemoMode: Bool
@@ -36,17 +49,20 @@ final class HerdrAppModel {
     var remotePushDeliveryVerified = false
     var remotePushRegistrationError: String?
 
-    @ObservationIgnored private var client: HerdrAPIClient?
+    private let userDefaults: UserDefaults
+    @ObservationIgnored private var runtimes: [String: MachineRuntime] = [:]
     @ObservationIgnored private var pendingPushToken: String?
     @ObservationIgnored private var pendingPaneID: String?
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
-    @ObservationIgnored private var reconnectFailureStartedAt: Date?
-    @ObservationIgnored private var pendingConnectionErrorMessage: String?
     private static let connectionFailureGrace: TimeInterval = 10
 
-    init(arguments: [String] = ProcessInfo.processInfo.arguments) {
-        let defaults = UserDefaults.standard
+    init(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        userDefaults: UserDefaults = .standard
+    ) {
+        self.userDefaults = userDefaults
+        let defaults = userDefaults
         let forcedDemo = arguments.contains("-HerdrDemoMode")
         #if DEBUG
         let uiTestServerURL = Self.launchArgumentValue("-HerdrUITestServerURL", in: arguments)
@@ -61,12 +77,21 @@ final class HerdrAppModel {
         let uiTestServerURL: String? = nil
         let uiTestToken = ""
         #endif
+        Self.migrateMachinesIfNeeded(defaults: defaults)
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
+        let persistedMachines = Self.loadMachines(defaults: defaults)
+        machines = uiTestServerURL.map {
+            [HerdrMachine(id: "ui-test", name: Self.machineName(for: $0), urlString: $0)]
+        } ?? persistedMachines
+        machineScope = MachineScope.load(from: defaults)
+        let primaryMachine = persistedMachines.first
         let storedURLString = uiTestServerURL
-            ?? defaults.string(forKey: "herdr.serverURL")
+            ?? primaryMachine?.urlString
             ?? bundledURL?.nonEmpty
             ?? "http://localhost:9092"
-        let storedToken = uiTestServerURL == nil ? KeychainStore.value(for: "api-token") : uiTestToken
+        let storedToken = uiTestServerURL == nil
+            ? primaryMachine.map { KeychainStore.value(for: "api-token.\($0.id)") } ?? ""
+            : uiTestToken
         serverURLString = storedURLString
         apiToken = storedToken
         isDemoMode = uiTestServerURL == nil && (forcedDemo || defaults.bool(forKey: "herdr.demoMode"))
@@ -76,16 +101,28 @@ final class HerdrAppModel {
         collapsedSidebarWorkspaceIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedWorkspaces") ?? []
         )
+        collapsedSidebarMachineIDs = Set(
+            defaults.stringArray(forKey: "herdr.sidebar.collapsedMachines") ?? []
+        )
         starredChatIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.starredChats") ?? [])
 
-        if !isDemoMode,
-           hasCompletedSetup,
-           let configuration = ServerConfiguration(urlString: storedURLString, token: storedToken) {
-            client = HerdrAPIClient(configuration: configuration)
-            activeServerConnection = ActiveServerConnection(
-                configuration: configuration,
-                generation: connectionGeneration
-            )
+        if case let .machine(id) = machineScope, !persistedMachines.contains(where: { $0.id == id }) {
+            machineScope = .all
+        }
+
+        if !isDemoMode, hasCompletedSetup {
+            for machine in machines {
+                let token = machine.id == "ui-test" ? uiTestToken : KeychainStore.value(for: "api-token.\(machine.id)")
+                guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { continue }
+                let connection = ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
+                runtimes[machine.id] = MachineRuntime(
+                    client: HerdrAPIClient(configuration: configuration),
+                    connection: connection
+                )
+                machineStates[machine.id] = .disconnected
+            }
+            updateAggregateConnectionState()
+            mirrorPrimaryConnection()
         }
 
         if isDemoMode {
@@ -116,6 +153,19 @@ final class HerdrAppModel {
     var workingCount: Int { workspaces.flatMap(\.panes).count(where: { $0.agentStatus == .working }) }
     var paneCount: Int { workspaces.reduce(0) { $0 + $1.paneCount } }
     var canControl: Bool { isDemoMode || connectionState == .live }
+
+    func canControl(machineID: String) -> Bool {
+        isDemoMode || connectionState(forMachine: machineID) == .live
+    }
+
+    func connectionState(forMachine id: String) -> ConnectionState {
+        machineStates[id] ?? (isDemoMode ? .demo : .disconnected)
+    }
+
+    func setMachineScope(_ scope: MachineScope) {
+        machineScope = scope
+        scope.save(to: userDefaults)
+    }
     var activeServerConfiguration: ServerConfiguration? {
         guard !isDemoMode,
               let activeServerConnection,
@@ -142,7 +192,7 @@ final class HerdrAppModel {
     }
 
     func workspace(containing pane: HerdrPane) -> HerdrWorkspace? {
-        workspace(id: pane.workspaceID)
+        workspaces.first { $0.machineID == pane.machineID && $0.workspaceID == pane.workspaceID }
     }
 
     func connect() {
@@ -150,20 +200,38 @@ final class HerdrAppModel {
             errorMessage = "Use HTTPS, or HTTP only when connecting to localhost."
             return
         }
-        UserDefaults.standard.set(serverURLString, forKey: "herdr.serverURL")
+        if isDemoMode {
+            machines = Self.loadMachines(defaults: userDefaults)
+        }
+        let name = Self.machineName(for: serverURLString)
+        let machine: HerdrMachine
+        if let first = machines.first {
+            machine = HerdrMachine(id: first.id, name: first.name.isEmpty ? name : first.name, urlString: serverURLString)
+            machines[0] = machine
+        } else {
+            machine = HerdrMachine(id: UUID().uuidString, name: name, urlString: serverURLString)
+            machines = [machine]
+        }
+        persistMachines()
+        userDefaults.set(serverURLString, forKey: "herdr.serverURL")
         UserDefaults.standard.set(false, forKey: "herdr.demoMode")
         UserDefaults.standard.set(true, forKey: "herdr.completedSetup")
-        KeychainStore.set(apiToken, for: "api-token")
+        KeychainStore.set(apiToken, for: "api-token.\(machine.id)")
         isDemoMode = false
         hasCompletedSetup = true
         errorMessage = nil
         resetConnectionState()
         connectionGeneration += 1
-        client = HerdrAPIClient(configuration: configuration)
-        activeServerConnection = ActiveServerConnection(
-            configuration: configuration,
-            generation: connectionGeneration
+        runtimes[machine.id] = MachineRuntime(
+            client: HerdrAPIClient(configuration: configuration),
+            connection: ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
         )
+        machineStates[machine.id] = .disconnected
+        mirrorPrimaryConnection()
+        let generation = connectionGeneration
+        Task { [weak self] in
+            await self?.autoNameFromNetwork(machineID: machine.id, expectedName: name, generation: generation)
+        }
     }
 
     func useDemo() {
@@ -180,8 +248,70 @@ final class HerdrAppModel {
         UserDefaults.standard.set(false, forKey: "herdr.demoMode")
         isDemoMode = false
         hasCompletedSetup = false
+        machines = Self.loadMachines(defaults: userDefaults)
+        if let primary = machines.first {
+            serverURLString = primary.urlString
+            apiToken = KeychainStore.value(for: "api-token.\(primary.id)")
+        }
         resetConnectionState()
         connectionGeneration += 1
+    }
+
+    @discardableResult
+    func addMachine(name: String, urlString: String, token: String) -> Bool {
+        guard ServerConfiguration(urlString: urlString, token: token) != nil else {
+            errorMessage = "Use HTTPS, or HTTP only when connecting to localhost."
+            return false
+        }
+        leaveDemoForMachineManagementIfNeeded()
+        let machine = HerdrMachine(
+            id: UUID().uuidString,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? Self.machineName(for: urlString),
+            urlString: urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        machines.append(machine)
+        persistMachines()
+        KeychainStore.set(token, for: "api-token.\(machine.id)")
+        hasCompletedSetup = true
+        UserDefaults.standard.set(true, forKey: "herdr.completedSetup")
+        errorMessage = nil
+        connectionGeneration += 1
+        return true
+    }
+
+    @discardableResult
+    func updateMachine(id: String, name: String, urlString: String, token: String) -> Bool {
+        guard ServerConfiguration(urlString: urlString, token: token) != nil else {
+            errorMessage = "Use HTTPS, or HTTP only when connecting to localhost."
+            return false
+        }
+        guard let index = machines.firstIndex(where: { $0.id == id }) else {
+            errorMessage = "Machine not found."
+            return false
+        }
+        machines[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            ?? Self.machineName(for: urlString)
+        machines[index].urlString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        persistMachines()
+        KeychainStore.set(token, for: "api-token.\(id)")
+        if machines.first?.id == id {
+            serverURLString = machines[index].urlString
+            apiToken = token
+        }
+        errorMessage = nil
+        connectionGeneration += 1
+        return true
+    }
+
+    func reorderMachines(from source: IndexSet, to destination: Int) {
+        let moving = source.map { machines[$0] }
+        for index in source.sorted(by: >) {
+            machines.remove(at: index)
+        }
+        let insertionIndex = destination - source.count(where: { $0 < destination })
+        machines.insert(contentsOf: moving, at: insertionIndex)
+        persistMachines()
+        mirrorPrimaryConnection()
     }
 
     func runConnection() async {
@@ -190,76 +320,30 @@ final class HerdrAppModel {
             loadDemo()
             return
         }
-        guard let activeServerConnection,
-              activeServerConnection.generation == generation,
-              let client
-        else {
+        guard !machines.isEmpty else {
             connectionState = .disconnected
             return
         }
-        connectionState = .connecting
-        await syncPushDevice(using: client, expectedGeneration: generation)
-        var retryDelay = 2.0
-
-        while !Task.isCancelled {
-            do {
-                try await refresh(using: client, expectedGeneration: generation)
-                connectionState = .live
-                lastPresentedConnectionError = nil
-                reconnectFailureStartedAt = nil
-                pendingConnectionErrorMessage = nil
-                retryDelay = 2
-                for try await event in await client.events() {
-                    try Task.checkCancellation()
-                    guard generation == connectionGeneration else { return }
-                    if event.event == "snapshot.updated" ||
-                        event.event == "alert.created" ||
-                        event.event == "alerts.read_state_changed" ||
-                        event.event == "stars.changed" ||
-                        Self.piCapabilityEvents.contains(event.event) {
-                        try await refresh(
-                            using: client,
-                            showSpinner: false,
-                            expectedGeneration: generation
-                        )
-                    } else if event.event == "push.delivery" {
-                        await handlePushDelivery(event)
-                    }
+        for machine in machines { prepareRuntime(for: machine, generation: generation) }
+        updateAggregateConnectionState()
+        await withTaskGroup(of: Void.self) { group in
+            for machine in machines {
+                group.addTask {
+                    await self.runMachineConnection(machine: machine, expectedGeneration: generation)
                 }
-            } catch is CancellationError {
-                return
-            } catch {
-                guard generation == connectionGeneration else { return }
-                let message = error.localizedDescription
-                pendingConnectionErrorMessage = message
-                let shouldEscalate = noteConnectionFailure(now: .now)
-                if shouldEscalate {
-                    connectionState = .failed
-                    if lastPresentedConnectionError != message {
-                        lastPresentedConnectionError = message
-                        errorMessage = message
-                    }
-                } else {
-                    connectionState = .connecting
-                }
-                do {
-                    try await Task.sleep(for: .seconds(retryDelay))
-                } catch {
-                    return
-                }
-                retryDelay = min(retryDelay * 2, 15)
-                guard generation == connectionGeneration else { return }
-                connectionState = .connecting
             }
         }
     }
 
-    func noteConnectionFailure(now: Date) -> Bool {
-        guard let reconnectFailureStartedAt else {
-            self.reconnectFailureStartedAt = now
+    func noteConnectionFailure(machineID: String, now: Date) -> Bool {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        guard let firstFailureAt = runtime.firstFailureAt else {
+            runtime.firstFailureAt = now
+            runtimes[machineID] = runtime
             return false
         }
-        return now.timeIntervalSince(reconnectFailureStartedAt) >= Self.connectionFailureGrace
+        runtimes[machineID] = runtime
+        return now.timeIntervalSince(firstFailureAt) >= Self.connectionFailureGrace
     }
 
     func refresh() async {
@@ -267,13 +351,16 @@ final class HerdrAppModel {
             loadDemo()
             return
         }
-        guard let client else { return }
         let generation = connectionGeneration
-        do {
-            try await refresh(using: client, expectedGeneration: generation)
-            connectionState = .live
-        } catch {
-            errorMessage = error.localizedDescription
+        for machine in machines {
+            guard let client = client(forMachine: machine.id) else { continue }
+            do {
+                try await refresh(machineID: machine.id, using: client, expectedGeneration: generation)
+                setRuntimeState(.live, for: machine.id)
+            } catch {
+                guard generation == connectionGeneration else { return }
+                setRuntimeState(.failed, for: machine.id, error: error.localizedDescription)
+            }
         }
     }
 
@@ -281,24 +368,26 @@ final class HerdrAppModel {
         if isDemoMode {
             return PaneOutputResponse(
                 ok: true,
-                paneID: pane.id,
+                paneID: pane.paneID,
                 text: DemoData.terminalText(for: pane.id),
                 revision: pane.revision,
                 truncated: false
             )
         }
-        guard canControl, self.pane(id: pane.id) != nil, let client else {
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
         }
-        return try await client.fetchPaneOutput(paneID: pane.id)
+        return try await client.fetchPaneOutput(paneID: pane.paneID)
     }
 
     func fetchGitStatus(for workspace: HerdrWorkspace) async throws -> WorkspaceGitStatus {
         if isDemoMode { return DemoData.gitStatus(for: workspace) }
-        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+        guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,
+              let client = client(forMachine: workspace.machineID) else {
             throw APIError.invalidResponse
         }
-        return try await client.fetchGitStatus(workspaceID: workspace.id)
+        return try await client.fetchGitStatus(workspaceID: workspace.workspaceID)
     }
 
     func fetchGitDiff(
@@ -307,11 +396,12 @@ final class HerdrAppModel {
         section: GitFileSection
     ) async throws -> WorkspaceGitDiffResponse {
         if isDemoMode { return DemoData.gitDiff(file: file, section: section) }
-        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+        guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,
+              let client = client(forMachine: workspace.machineID) else {
             throw APIError.invalidResponse
         }
         return try await client.fetchGitDiff(
-            workspaceID: workspace.id,
+            workspaceID: workspace.workspaceID,
             file: file,
             section: section
         )
@@ -322,10 +412,11 @@ final class HerdrAppModel {
             toastMessage = "Staged \(file)"
             return
         }
-        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+        guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,
+              let client = client(forMachine: workspace.machineID) else {
             throw APIError.invalidResponse
         }
-        try await client.stageGitFile(workspaceID: workspace.id, file: file)
+        try await client.stageGitFile(workspaceID: workspace.workspaceID, file: file)
         toastMessage = "Staged \(file)"
     }
 
@@ -334,32 +425,35 @@ final class HerdrAppModel {
             toastMessage = "Unstaged \(file)"
             return
         }
-        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+        guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,
+              let client = client(forMachine: workspace.machineID) else {
             throw APIError.invalidResponse
         }
-        try await client.unstageGitFile(workspaceID: workspace.id, file: file)
+        try await client.unstageGitFile(workspaceID: workspace.workspaceID, file: file)
         toastMessage = "Unstaged \(file)"
     }
 
     func fetchSkills(for workspace: HerdrWorkspace) async throws -> SkillsResponse {
         if isDemoMode { return DemoData.skills(for: workspace) }
-        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+        guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,
+              let client = client(forMachine: workspace.machineID) else {
             throw APIError.invalidResponse
         }
-        return try await client.fetchSkills(workspaceID: workspace.id)
+        return try await client.fetchSkills(workspaceID: workspace.workspaceID)
     }
 
     func searchFiles(in workspace: HerdrWorkspace, query: String) async throws -> [ProjectFileMatch] {
         if isDemoMode { return DemoData.fileSearch(query: query, workspace: workspace).files }
-        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+        guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,
+              let client = client(forMachine: workspace.machineID) else {
             throw APIError.invalidResponse
         }
-        return try await client.searchFiles(workspaceID: workspace.id, query: query).files
+        return try await client.searchFiles(workspaceID: workspace.workspaceID, query: query).files
     }
 
     func fetchAssignedJiraTickets() async throws -> [JiraTicket] {
         if isDemoMode { return DemoData.jiraTickets.tickets }
-        guard canControl, let client else { throw APIError.invalidResponse }
+        guard canControl, let client = primaryClient else { throw APIError.invalidResponse }
         return try await client.fetchAssignedJiraTickets().tickets
     }
 
@@ -372,7 +466,7 @@ final class HerdrAppModel {
             }
             throw APIError.server(status: 404, message: "Jira ticket not found.")
         }
-        guard canControl, let client else { throw APIError.invalidResponse }
+        guard canControl, let client = primaryClient else { throw APIError.invalidResponse }
         let response = try await client.fetchJiraTicket(query: query)
         guard let ticket = response.ticket else {
             throw APIError.server(status: 404, message: response.error ?? "Jira ticket not found.")
@@ -393,15 +487,16 @@ final class HerdrAppModel {
                 contentType: contentType,
                 size: 0,
                 path: "/tmp/herdr-demo-attachments/\(fileURL.lastPathComponent)",
-                workspaceID: workspace.id,
+                workspaceID: workspace.workspaceID,
                 createdAt: ISO8601DateFormatter().string(from: .now)
             )
         }
-        guard canControl, self.workspace(id: workspace.id) != nil, let client else {
+        guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,
+              let client = client(forMachine: workspace.machineID) else {
             throw APIError.invalidResponse
         }
         let response = try await client.uploadAttachment(
-            workspaceID: workspace.id,
+            workspaceID: workspace.workspaceID,
             fileURL: fileURL,
             contentType: contentType
         )
@@ -425,7 +520,7 @@ final class HerdrAppModel {
             )
         }
 
-        let privateClient = preferPrivateTranscription && canControl ? client : nil
+        let privateClient = preferPrivateTranscription && canControl ? primaryClient : nil
         return try await VoiceTranscriptionPipeline.run(
             preferPrivate: privateClient != nil,
             privateTranscription: {
@@ -453,23 +548,26 @@ final class HerdrAppModel {
     }
 
     func terminalEvents(for pane: HerdrPane) async -> AsyncThrowingStream<TerminalStreamEvent, any Error>? {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else { return nil }
-        return await client.terminalEvents(paneID: pane.id)
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return nil }
+        return await client.terminalEvents(paneID: pane.paneID)
     }
 
     func fetchPiConversationSnapshot(for pane: HerdrPane) async throws -> PiConversationSnapshot {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
         }
-        return try await client.fetchPiConversationSnapshot(paneID: pane.id)
+        return try await client.fetchPiConversationSnapshot(paneID: pane.paneID)
     }
 
     func piConversationEvents(
         for pane: HerdrPane,
         after cursor: String?
     ) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>? {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else { return nil }
-        return await client.piConversationEvents(paneID: pane.id, after: cursor)
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return nil }
+        return await client.piConversationEvents(paneID: pane.paneID, after: cursor)
     }
 
     func sendPiConversationPrompt(
@@ -480,18 +578,19 @@ final class HerdrAppModel {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty,
               !isDemoMode,
-              canControl,
+              canControl(machineID: pane.machineID),
               self.pane(id: pane.id) != nil,
-              let client
+              let client = client(forMachine: pane.machineID)
         else { throw APIError.invalidResponse }
-        try await client.sendPiPrompt(paneID: pane.id, text: prompt, disposition: disposition)
+        try await client.sendPiPrompt(paneID: pane.paneID, text: prompt, disposition: disposition)
     }
 
     func abortPiConversation(for pane: HerdrPane) async throws {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
         }
-        try await client.abortPiConversation(paneID: pane.id)
+        try await client.abortPiConversation(paneID: pane.paneID)
     }
 
     func respondToPiInteraction(
@@ -499,35 +598,39 @@ final class HerdrAppModel {
         response: PiInteractionResponseBody,
         in pane: HerdrPane
     ) async throws {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
         }
         try await client.respondToPiInteraction(
-            paneID: pane.id,
+            paneID: pane.paneID,
             interactionID: id,
             response: response
         )
     }
 
     func fetchPiModels(for pane: HerdrPane) async throws -> PiModelCatalogResponse {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
         }
-        return try await client.fetchPiModels(paneID: pane.id)
+        return try await client.fetchPiModels(paneID: pane.paneID)
     }
 
     func setPiModel(provider: String, modelID: String, for pane: HerdrPane) async throws {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
         }
-        try await client.setPiModel(paneID: pane.id, provider: provider, modelID: modelID)
+        try await client.setPiModel(paneID: pane.paneID, provider: provider, modelID: modelID)
     }
 
     func setPiThinkingLevel(level: String, for pane: HerdrPane) async throws -> String? {
-        guard !isDemoMode, canControl, self.pane(id: pane.id) != nil, let client else {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
         }
-        return try await client.setPiThinkingLevel(paneID: pane.id, level: level)
+        return try await client.setPiThinkingLevel(paneID: pane.paneID, level: level)
     }
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
@@ -537,14 +640,15 @@ final class HerdrAppModel {
             toastMessage = "Sent to \(pane.displayAgentName)"
             return true
         }
-        guard !isSending, canControl, self.pane(id: pane.id) != nil, let client else { return false }
+        guard !isSending, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return false }
         isSending = true
         defer { isSending = false }
         do {
             if pane.agentStatus == .unknown {
-                try await client.sendText(toPane: pane.id, text: prompt, submit: true)
+                try await client.sendText(toPane: pane.paneID, text: prompt, submit: true)
             } else {
-                try await client.promptPane(id: pane.id, text: prompt)
+                try await client.promptPane(id: pane.paneID, text: prompt)
             }
             toastMessage = "Sent to \(pane.displayAgentName)"
             return true
@@ -559,9 +663,10 @@ final class HerdrAppModel {
             toastMessage = keys.joined(separator: " + ").uppercased()
             return
         }
-        guard canControl, self.pane(id: pane.id) != nil, let client else { return }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return }
         do {
-            try await client.sendKeys(toPane: pane.id, keys: keys)
+            try await client.sendKeys(toPane: pane.paneID, keys: keys)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -572,10 +677,11 @@ final class HerdrAppModel {
             toastMessage = "started a new pi chat"
             return
         }
-        guard canControl, self.pane(id: pane.id) != nil, let client else { return }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return }
         do {
-            try await client.sendText(toPane: pane.id, text: "/new", submit: false)
-            try await client.sendKeys(toPane: pane.id, keys: ["enter"])
+            try await client.sendText(toPane: pane.paneID, text: "/new", submit: false)
+            try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
             toastMessage = "started a new pi chat"
         } catch {
             errorMessage = error.localizedDescription
@@ -583,80 +689,80 @@ final class HerdrAppModel {
     }
 
     func split(_ pane: HerdrPane, direction: String) async {
-        await perform("Pane split") { client in
-            try await client.splitPane(id: pane.id, direction: direction)
+        await perform("Pane split", machineID: pane.machineID) { client in
+            try await client.splitPane(id: pane.paneID, direction: direction)
         }
     }
 
     func focus(_ pane: HerdrPane) async {
-        await perform("Focused on Mac") { client in
-            try await client.focusPane(id: pane.id)
+        await perform("Focused on Mac", machineID: pane.machineID) { client in
+            try await client.focusPane(id: pane.paneID)
         }
     }
 
     func close(_ pane: HerdrPane) async {
-        await perform("Pane closed") { client in
-            try await client.closePane(id: pane.id)
+        await perform("Pane closed", machineID: pane.machineID) { client in
+            try await client.closePane(id: pane.paneID)
         }
     }
 
     func rename(_ pane: HerdrPane, label: String) async {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        await perform("Pane renamed") { client in
-            try await client.renamePane(id: pane.id, label: trimmed)
+        await perform("Pane renamed", machineID: pane.machineID) { client in
+            try await client.renamePane(id: pane.paneID, label: trimmed)
         }
     }
 
     func focus(_ workspace: HerdrWorkspace) async {
-        await perform("Workspace focused on Mac") { client in
-            try await client.focusWorkspace(id: workspace.id)
+        await perform("Workspace focused on Mac", machineID: workspace.machineID) { client in
+            try await client.focusWorkspace(id: workspace.workspaceID)
         }
     }
 
     func rename(_ workspace: HerdrWorkspace, label: String) async {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        await perform("Workspace renamed") { client in
-            try await client.renameWorkspace(id: workspace.id, label: trimmed)
+        await perform("Workspace renamed", machineID: workspace.machineID) { client in
+            try await client.renameWorkspace(id: workspace.workspaceID, label: trimmed)
         }
     }
 
     func close(_ workspace: HerdrWorkspace) async {
-        await perform("Workspace closed") { client in
-            try await client.closeWorkspace(id: workspace.id)
+        await perform("Workspace closed", machineID: workspace.machineID) { client in
+            try await client.closeWorkspace(id: workspace.workspaceID)
         }
     }
 
     func startAgent(in pane: HerdrPane, kind: String) async {
         let normalizedKind = kind.lowercased()
-        let suffix = pane.id.replacing(":", with: "-")
-        await perform("\(kind.capitalized) started") { client in
+        let suffix = pane.paneID.replacing(":", with: "-")
+        await perform("\(kind.capitalized) started", machineID: pane.machineID) { client in
             try await client.startAgent(
-                inPane: pane.id,
+                inPane: pane.paneID,
                 name: "mobile-\(suffix)",
                 kind: normalizedKind
             )
         }
     }
 
-    func createWorkspace(label: String, cwd: String) async -> Bool {
+    func createWorkspace(label: String, cwd: String, machineID: String? = nil) async -> Bool {
         var succeeded = false
-        await perform("Workspace created") { client in
+        await perform("Workspace created", machineID: machineID ?? machines.first?.id) { client in
             try await client.createWorkspace(label: label, cwd: cwd)
             succeeded = true
         }
         return succeeded
     }
 
-    func createQuickPiSession() async {
+    func createQuickPiSession(machineID: String? = nil) async {
         if isDemoMode {
             toastMessage = "quick pi sessions need a live connection"
             return
         }
         let label = Date.now.formatted(.dateTime.month(.abbreviated).day().hour().minute()).lowercased()
         var spawnedPaneID: String?
-        await perform("pi session spawning") { client in
+        await perform("pi session spawning", machineID: machineID ?? machines.first?.id) { client in
             let response = try await client.createQuickPiSession(label: label)
             spawnedPaneID = response.paneID
         }
@@ -666,9 +772,9 @@ final class HerdrAppModel {
     }
 
     func createTab(in workspace: HerdrWorkspace) async {
-        await perform("Tab created") { client in
+        await perform("Tab created", machineID: workspace.machineID) { client in
             try await client.createTab(
-                workspaceID: workspace.id,
+                workspaceID: workspace.workspaceID,
                 label: "Tab \(workspace.tabCount + 1)"
             )
         }
@@ -679,7 +785,7 @@ final class HerdrAppModel {
             alerts = alerts.map { item in
                 guard item.id == alert.id else { return item }
                 return HerdrAlert(
-                    id: item.id,
+                    id: item.rawID,
                     workspaceID: item.workspaceID,
                     paneID: item.paneID,
                     status: item.status,
@@ -687,15 +793,16 @@ final class HerdrAppModel {
                     message: item.message,
                     createdAt: item.createdAt,
                     isRead: true
-                )
+                ).stamped(machineID: item.machineID)
             }
             await NotificationManager.setBadge(unreadAlertCount)
             return
         }
-        guard let client else { return }
+        guard let client = client(forMachine: alert.machineID) else { return }
         do {
-            try await client.markAlertRead(id: alert.id)
+            try await client.markAlertRead(id: alert.rawID)
             try await refresh(
+                machineID: alert.machineID,
                 using: client,
                 showSpinner: false,
                 expectedGeneration: connectionGeneration
@@ -709,7 +816,7 @@ final class HerdrAppModel {
         if isDemoMode {
             alerts = alerts.map { item in
                 HerdrAlert(
-                    id: item.id,
+                    id: item.rawID,
                     workspaceID: item.workspaceID,
                     paneID: item.paneID,
                     status: item.status,
@@ -717,21 +824,19 @@ final class HerdrAppModel {
                     message: item.message,
                     createdAt: item.createdAt,
                     isRead: true
-                )
+                ).stamped(machineID: item.machineID)
             }
             await NotificationManager.setBadge(unreadAlertCount)
             return
         }
-        guard let client else { return }
-        do {
-            try await client.markAllAlertsRead()
-            try await refresh(
-                using: client,
-                showSpinner: false,
-                expectedGeneration: connectionGeneration
-            )
-        } catch {
-            errorMessage = error.localizedDescription
+        for machine in machines {
+            guard let client = client(forMachine: machine.id) else { continue }
+            do {
+                try await client.markAllAlertsRead()
+                try await refresh(machineID: machine.id, using: client, showSpinner: false, expectedGeneration: connectionGeneration)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -764,13 +869,15 @@ final class HerdrAppModel {
 
     func registerPushDevice(token: String) async {
         pendingPushToken = token
-        guard let client else { return }
-        await syncPushDevice(using: client, expectedGeneration: connectionGeneration)
+        for machine in machines where runtimes[machine.id]?.state == .live {
+            guard let client = client(forMachine: machine.id) else { continue }
+            await syncPushDevice(machineID: machine.id, using: client, expectedGeneration: connectionGeneration)
+        }
     }
 
     func openPane(id paneID: String) {
         guard !paneID.isEmpty else { return }
-        guard let pane = pane(id: paneID) else {
+        guard let pane = pane(id: paneID) ?? resolveRawPane(id: paneID) else {
             pendingPaneID = paneID
             return
         }
@@ -784,9 +891,21 @@ final class HerdrAppModel {
         } else {
             collapsedSidebarWorkspaceIDs.insert(workspaceID)
         }
-        UserDefaults.standard.set(
+        userDefaults.set(
             Array(collapsedSidebarWorkspaceIDs),
             forKey: "herdr.sidebar.collapsedWorkspaces"
+        )
+    }
+
+    func toggleSidebarMachineSection(_ machineID: String) {
+        if collapsedSidebarMachineIDs.contains(machineID) {
+            collapsedSidebarMachineIDs.remove(machineID)
+        } else {
+            collapsedSidebarMachineIDs.insert(machineID)
+        }
+        userDefaults.set(
+            Array(collapsedSidebarMachineIDs),
+            forKey: "herdr.sidebar.collapsedMachines"
         )
     }
 
@@ -796,10 +915,12 @@ final class HerdrAppModel {
         } else {
             starredChatIDs.insert(paneID)
         }
-        UserDefaults.standard.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
-        guard !isDemoMode, canControl, let client else { return }
+        userDefaults.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
+        guard !isDemoMode, let pane = pane(id: paneID), canControl(machineID: pane.machineID),
+              let client = client(forMachine: pane.machineID) else { return }
         let starred = starredChatIDs.contains(paneID)
-        Task { try? await client.setPaneStar(id: paneID, starred: starred) }
+        let rawID = pane.paneID
+        Task { try? await client.setPaneStar(id: rawID, starred: starred) }
     }
 
     func openWorkspace(id: String) {
@@ -847,6 +968,7 @@ final class HerdrAppModel {
     }
 
     private func refresh(
+        machineID: String,
         using client: HerdrAPIClient,
         showSpinner: Bool = true,
         expectedGeneration: Int
@@ -857,18 +979,15 @@ final class HerdrAppModel {
         }
         let response = try await client.fetchWorkspaces()
         guard expectedGeneration == connectionGeneration else { throw CancellationError() }
-        let previousAlertIDs = Set(alerts.map(\.id))
-        workspaces = response.workspaces
-        alerts = response.alerts
-        if let serverStars = response.starredPaneIDs {
-            let stars = Set(serverStars)
-            if stars != starredChatIDs {
-                starredChatIDs = stars
-                UserDefaults.standard.set(Array(stars), forKey: "herdr.sidebar.starredChats")
-            }
-        }
-        let currentAlertIDs = Set(alerts.map(\.id))
-        let readAlertIDs = Set(alerts.filter(\.isRead).map(\.id))
+        let previousAlerts = alerts.filter { $0.machineID == machineID }
+        let previousAlertIDs = Set(previousAlerts.map(\.id))
+        let freshWorkspaces = response.workspaces.map { $0.stamped(machineID: machineID) }
+        let freshAlerts = response.alerts.map { $0.stamped(machineID: machineID) }
+        workspaces = workspaces.filter { $0.machineID != machineID } + freshWorkspaces
+        alerts = alerts.filter { $0.machineID != machineID } + freshAlerts
+        reconcileStarredChats(machineID: machineID, serverStarredRawIDs: response.starredPaneIDs)
+        let currentAlertIDs = Set(freshAlerts.map(\.id))
+        let readAlertIDs = Set(freshAlerts.filter(\.isRead).map(\.id))
         let removedAlertIDs = previousAlertIDs.subtracting(currentAlertIDs)
         let staleAlertIDs = readAlertIDs.union(removedAlertIDs)
         if !staleAlertIDs.isEmpty {
@@ -878,25 +997,25 @@ final class HerdrAppModel {
         errorMessage = nil
         lastPresentedConnectionError = nil
 
-        repairNavigation()
+        repairNavigation(machineID: machineID, freshWorkspaces: freshWorkspaces)
         resolvePendingPaneRoute()
 
         if smartAlertsEnabled && !remotePushConfigured {
-            for alert in alerts where !alert.isRead && !previousAlertIDs.contains(alert.id) {
+            for alert in freshAlerts where !alert.isRead && !previousAlertIDs.contains(alert.id) {
                 await NotificationManager.post(alert)
             }
         }
-        for alert in alerts where !alert.isRead && pendingLocalAlertIDs.contains(alert.id) {
+        for alert in freshAlerts where !alert.isRead && pendingLocalAlertIDs.contains(alert.id) {
             await NotificationManager.post(alert)
             pendingLocalAlertIDs.remove(alert.id)
         }
         await NotificationManager.setBadge(unreadAlertCount)
     }
 
-    private func syncPushDevice(using client: HerdrAPIClient, expectedGeneration: Int) async {
+    private func syncPushDevice(machineID: String, using client: HerdrAPIClient, expectedGeneration: Int) async {
         guard let token = pendingPushToken,
-              activeServerConnection?.generation == expectedGeneration,
-              activeServerConnection?.configuration.token.isEmpty == false
+              runtimes[machineID]?.connection?.generation == expectedGeneration,
+              runtimes[machineID]?.connection?.configuration.token.isEmpty == false
         else {
             remotePushConfigured = false
             remotePushDeliveryVerified = false
@@ -931,13 +1050,14 @@ final class HerdrAppModel {
 
     private func perform(
         _ successMessage: String,
+        machineID: String?,
         operation: (HerdrAPIClient) async throws -> Void
     ) async {
         if isDemoMode {
             toastMessage = successMessage
             return
         }
-        guard canControl, let client else {
+        guard let machineID, canControl(machineID: machineID), let client = client(forMachine: machineID) else {
             toastMessage = "Reconnect before controlling Herdr"
             return
         }
@@ -947,6 +1067,7 @@ final class HerdrAppModel {
             guard generation == connectionGeneration else { return }
             toastMessage = successMessage
             try await refresh(
+                machineID: machineID,
                 using: client,
                 showSpinner: false,
                 expectedGeneration: generation
@@ -992,15 +1113,36 @@ final class HerdrAppModel {
     }
 
     private func loadDemo() {
-        workspaces = DemoData.workspaces
-        alerts = DemoData.alerts
+        machines = [
+            HerdrMachine(id: "demo1", name: "rocketbot", urlString: ""),
+            HerdrMachine(id: "demo2", name: "work mbp", urlString: ""),
+        ]
+        if case let .machine(id) = machineScope, !machines.contains(where: { $0.id == id }) {
+            setMachineScope(.all)
+        }
+        workspaces = DemoData.workspaces.map { $0.stamped(machineID: "demo1") }
+            + DemoData.workspacesForWorkMBP.map { $0.stamped(machineID: "demo2") }
+        alerts = DemoData.alerts.map { $0.stamped(machineID: "demo1") }
+        runtimes = Dictionary(uniqueKeysWithValues: machines.map {
+            ($0.id, MachineRuntime(state: .demo))
+        })
+        machineStates = Dictionary(uniqueKeysWithValues: machines.map { ($0.id, ConnectionState.demo) })
+        let demoStars = starredChatIDs.filter {
+            guard let scope = MachineScopedID.split($0) else { return false }
+            return scope.machineID == "demo1" || scope.machineID == "demo2"
+        }
+        if demoStars.isEmpty {
+            starredChatIDs.formUnion(["demo1|w1:p1", "demo2|w1:p1"])
+            userDefaults.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
+        }
         selectedWorkspaceID = selectedWorkspaceID ?? workspaces.first?.id
         connectionState = .demo
         lastUpdated = .now
     }
 
     private func resetConnectionState() {
-        client = nil
+        runtimes = [:]
+        machineStates = [:]
         activeServerConnection = nil
         connectionState = .disconnected
         workspaces = []
@@ -1016,39 +1158,44 @@ final class HerdrAppModel {
         remotePushDeliveryVerified = false
         remotePushRegistrationError = nil
         lastPresentedConnectionError = nil
-        reconnectFailureStartedAt = nil
-        pendingConnectionErrorMessage = nil
     }
 
-    private func repairNavigation() {
-        let validWorkspaceIDs = Set(workspaces.map(\.id))
-        let validPaneIDs = Set(workspaces.flatMap(\.panes).map(\.id))
+    private func repairNavigation(machineID: String, freshWorkspaces: [HerdrWorkspace]) {
+        let validWorkspaceIDs = Set(freshWorkspaces.map(\.id))
+        let validPaneIDs = Set(freshWorkspaces.flatMap(\.panes).map(\.id))
         workspacePath = workspacePath.filter { route in
             switch route {
-            case let .workspace(id): validWorkspaceIDs.contains(id)
-            case let .pane(id): validPaneIDs.contains(id)
+            case let .workspace(id):
+                guard MachineScopedID.split(id)?.machineID == machineID else { return true }
+                return validWorkspaceIDs.contains(id)
+            case let .pane(id):
+                guard MachineScopedID.split(id)?.machineID == machineID else { return true }
+                return validPaneIDs.contains(id)
             }
         }
-        if selectedWorkspaceID == nil || !validWorkspaceIDs.contains(selectedWorkspaceID ?? "") {
-            selectedWorkspaceID = workspaces.first?.id
+        if let selectedWorkspaceID,
+           MachineScopedID.split(selectedWorkspaceID)?.machineID == machineID,
+           !validWorkspaceIDs.contains(selectedWorkspaceID) {
+            self.selectedWorkspaceID = workspaces.first?.id
         }
-        if let selectedPaneID, !validPaneIDs.contains(selectedPaneID) {
+        if let selectedPaneID,
+           MachineScopedID.split(selectedPaneID)?.machineID == machineID,
+           !validPaneIDs.contains(selectedPaneID) {
             self.selectedPaneID = nil
         }
-        if !workspaces.isEmpty {
-            let prunedCollapsed = collapsedSidebarWorkspaceIDs.intersection(validWorkspaceIDs)
-            if prunedCollapsed != collapsedSidebarWorkspaceIDs {
-                collapsedSidebarWorkspaceIDs = prunedCollapsed
-                UserDefaults.standard.set(
-                    Array(collapsedSidebarWorkspaceIDs),
-                    forKey: "herdr.sidebar.collapsedWorkspaces"
-                )
-            }
+        let untouchedCollapsed = collapsedSidebarWorkspaceIDs.filter {
+            MachineScopedID.split($0)?.machineID != machineID
+        }
+        let prunedCollapsed = untouchedCollapsed.union(collapsedSidebarWorkspaceIDs
+            .filter { MachineScopedID.split($0)?.machineID == machineID && validWorkspaceIDs.contains($0) })
+        if prunedCollapsed != collapsedSidebarWorkspaceIDs {
+            collapsedSidebarWorkspaceIDs = prunedCollapsed
+            userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
         }
     }
 
     private func resolvePendingPaneRoute() {
-        guard let pendingPaneID, let pane = pane(id: pendingPaneID) else { return }
+        guard let pendingPaneID, let pane = resolveRawPane(id: pendingPaneID) else { return }
         self.pendingPaneID = nil
         route(to: pane)
     }
@@ -1056,12 +1203,12 @@ final class HerdrAppModel {
     private func route(to pane: HerdrPane) {
         isSidebarPresented = false
         selectedTab = .workspaces
-        selectedWorkspaceID = pane.workspaceID
+        selectedWorkspaceID = workspace(containing: pane)?.id
         selectedPaneID = pane.id
-        workspacePath = [.workspace(pane.workspaceID), .pane(pane.id)]
+        workspacePath = selectedWorkspaceID.map { [.workspace($0), .pane(pane.id)] } ?? [.pane(pane.id)]
     }
 
-    private func handlePushDelivery(_ event: HerdrEvent) async {
+    private func handlePushDelivery(_ event: HerdrEvent, machineID: String) async {
         guard case let .object(payload) = event.data else { return }
         let sent: Int
         if case let .number(value) = payload["sent"] { sent = Int(value) } else { sent = 0 }
@@ -1079,11 +1226,216 @@ final class HerdrAppModel {
         remotePushDeliveryVerified = false
         remotePushRegistrationError = "APNs delivery failed, local alerts remain active"
         guard let alertID else { return }
-        if let alert = alerts.first(where: { $0.id == alertID && !$0.isRead }) {
+        let scopedID = MachineScopedID.compose(machineID: machineID, rawID: alertID)
+        if let alert = alerts.first(where: { $0.machineID == machineID && $0.rawID == alertID && !$0.isRead }) {
             await NotificationManager.post(alert)
         } else {
-            pendingLocalAlertIDs.insert(alertID)
+            pendingLocalAlertIDs.insert(scopedID)
         }
+    }
+
+    nonisolated static func aggregateConnectionState(
+        machineStates: [ConnectionState],
+        isDemoMode: Bool,
+        hasMachines: Bool
+    ) -> ConnectionState {
+        if isDemoMode { return .demo }
+        if !hasMachines { return .disconnected }
+        if machineStates.contains(.live) { return .live }
+        if machineStates.contains(.connecting) { return .connecting }
+        return .failed
+    }
+
+    func reconcileStarredChats(machineID: String, serverStarredRawIDs: [String]?) {
+        guard let serverStarredRawIDs else { return }
+        let otherMachines = starredChatIDs.filter { MachineScopedID.split($0)?.machineID != machineID }
+        let scoped = Set(serverStarredRawIDs.map { MachineScopedID.compose(machineID: machineID, rawID: $0) })
+        let merged = otherMachines.union(scoped)
+        guard merged != starredChatIDs else { return }
+        starredChatIDs = merged
+        userDefaults.set(Array(merged), forKey: "herdr.sidebar.starredChats")
+    }
+
+    func removeMachine(id: String) {
+        machines.removeAll { $0.id == id }
+        if !isDemoMode {
+            persistMachines()
+            KeychainStore.removeValue(for: "api-token.\(id)")
+        }
+        runtimes[id] = nil
+        machineStates[id] = nil
+        workspaces.removeAll { $0.machineID == id }
+        alerts.removeAll { $0.machineID == id }
+        starredChatIDs = starredChatIDs.filter { MachineScopedID.split($0)?.machineID != id }
+        collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
+        collapsedSidebarMachineIDs.remove(id)
+        userDefaults.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
+        userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
+        userDefaults.set(Array(collapsedSidebarMachineIDs), forKey: "herdr.sidebar.collapsedMachines")
+        if case let .machine(scopeID) = machineScope, scopeID == id {
+            machineScope = .all
+            machineScope.save(to: userDefaults)
+        }
+        connectionGeneration += 1
+        updateAggregateConnectionState()
+        mirrorPrimaryConnection()
+    }
+
+    private var primaryClient: HerdrAPIClient? {
+        machines.first.flatMap { runtimes[$0.id]?.client }
+    }
+
+    private func client(forMachine id: String) -> HerdrAPIClient? {
+        runtimes[id]?.client
+    }
+
+    private func prepareRuntime(for machine: HerdrMachine, generation: Int) {
+        let token = KeychainStore.value(for: "api-token.\(machine.id)")
+        guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { return }
+        runtimes[machine.id] = MachineRuntime(
+            client: HerdrAPIClient(configuration: configuration),
+            connection: ActiveServerConnection(configuration: configuration, generation: generation),
+            state: .connecting
+        )
+        machineStates[machine.id] = .connecting
+        mirrorPrimaryConnection()
+    }
+
+    private func runMachineConnection(machine: HerdrMachine, expectedGeneration: Int) async {
+        var retryDelay = 2.0
+        while !Task.isCancelled && expectedGeneration == connectionGeneration {
+            guard let client = client(forMachine: machine.id) else { return }
+            do {
+                try await refresh(machineID: machine.id, using: client, expectedGeneration: expectedGeneration)
+                guard expectedGeneration == connectionGeneration else { return }
+                setRuntimeState(.live, for: machine.id)
+                await syncPushDevice(machineID: machine.id, using: client, expectedGeneration: expectedGeneration)
+                retryDelay = 2
+                for try await event in await client.events() {
+                    try Task.checkCancellation()
+                    guard expectedGeneration == connectionGeneration else { return }
+                    if event.event == "snapshot.updated" || event.event == "alert.created" ||
+                        event.event == "alerts.read_state_changed" || event.event == "stars.changed" ||
+                        Self.piCapabilityEvents.contains(event.event) {
+                        try await refresh(machineID: machine.id, using: client, showSpinner: false, expectedGeneration: expectedGeneration)
+                    } else if event.event == "push.delivery" {
+                        await handlePushDelivery(event, machineID: machine.id)
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard expectedGeneration == connectionGeneration else { return }
+                let failed = noteConnectionFailure(machineID: machine.id, now: .now)
+                setRuntimeState(failed ? .failed : .connecting, for: machine.id, error: error.localizedDescription)
+                if connectionState == .failed, lastPresentedConnectionError != error.localizedDescription {
+                    lastPresentedConnectionError = error.localizedDescription
+                    errorMessage = error.localizedDescription
+                }
+                do { try await Task.sleep(for: .seconds(retryDelay)) } catch { return }
+                retryDelay = min(retryDelay * 2, 15)
+            }
+        }
+    }
+
+    private func setRuntimeState(_ state: ConnectionState, for machineID: String, error: String? = nil) {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.state = state
+        runtime.lastError = error
+        if state == .live {
+            runtime.firstFailureAt = nil
+            runtime.lastUpdated = .now
+        }
+        runtimes[machineID] = runtime
+        machineStates[machineID] = state
+        updateAggregateConnectionState()
+        mirrorPrimaryConnection()
+    }
+
+    private func updateAggregateConnectionState() {
+        connectionState = Self.aggregateConnectionState(
+            machineStates: machines.map { self.machineStates[$0.id] ?? .disconnected },
+            isDemoMode: isDemoMode,
+            hasMachines: !machines.isEmpty
+        )
+    }
+
+    private func mirrorPrimaryConnection() {
+        activeServerConnection = machines.first.flatMap { runtimes[$0.id]?.connection }
+    }
+
+    private func leaveDemoForMachineManagementIfNeeded() {
+        guard isDemoMode else { return }
+        machines = Self.loadMachines(defaults: userDefaults)
+        isDemoMode = false
+        hasCompletedSetup = true
+        UserDefaults.standard.set(false, forKey: "herdr.demoMode")
+        UserDefaults.standard.set(true, forKey: "herdr.completedSetup")
+        resetConnectionState()
+    }
+
+    private func autoNameFromNetwork(machineID: String, expectedName: String, generation: Int) async {
+        guard let client = client(forMachine: machineID) else { return }
+        guard let network = try? await client.fetchNetworkInfo(), generation == connectionGeneration,
+              let index = machines.firstIndex(where: { $0.id == machineID }),
+              machines[index].name == expectedName
+        else { return }
+        let name = Self.networkMachineName(dnsName: network.tailscaleDNSName, hostname: network.hostname)
+        guard !name.isEmpty else { return }
+        machines[index].name = name
+        persistMachines()
+    }
+
+    private func resolveRawPane(id rawID: String) -> HerdrPane? {
+        let matches = workspaces.flatMap(\.panes).filter { $0.paneID == rawID }
+        guard matches.count > 1 else { return matches.first }
+        if let alert = alerts.filter({ $0.paneID == rawID }).max(by: { $0.createdAt < $1.createdAt }),
+           let pane = matches.first(where: { $0.machineID == alert.machineID }) {
+            return pane
+        }
+        for machine in machines {
+            if let pane = matches.first(where: { $0.machineID == machine.id }) { return pane }
+        }
+        return matches.first
+    }
+
+    private func persistMachines() {
+        userDefaults.set(try? JSONEncoder().encode(machines), forKey: "herdr.machines")
+    }
+
+    private static func loadMachines(defaults: UserDefaults) -> [HerdrMachine] {
+        guard let data = defaults.data(forKey: "herdr.machines"),
+              let machines = try? JSONDecoder().decode([HerdrMachine].self, from: data) else { return [] }
+        return machines
+    }
+
+    private static func migrateMachinesIfNeeded(defaults: UserDefaults) {
+        guard defaults.object(forKey: "herdr.machines") == nil else { return }
+        guard let urlString = defaults.string(forKey: "herdr.serverURL") else {
+            defaults.set(try? JSONEncoder().encode([HerdrMachine]()), forKey: "herdr.machines")
+            return
+        }
+        let machine = HerdrMachine(id: UUID().uuidString, name: Self.machineName(for: urlString), urlString: urlString)
+        KeychainStore.set(KeychainStore.value(for: "api-token"), for: "api-token.\(machine.id)")
+        for key in ["herdr.sidebar.starredChats", "herdr.sidebar.collapsedWorkspaces"] {
+            let values = defaults.stringArray(forKey: key) ?? []
+            defaults.set(values.map { MachineScopedID.compose(machineID: machine.id, rawID: $0) }, forKey: key)
+        }
+        defaults.set(try? JSONEncoder().encode([machine]), forKey: "herdr.machines")
+    }
+
+    private static func machineName(for urlString: String) -> String {
+        guard let host = URLComponents(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines))?.host else {
+            return "my mac"
+        }
+        let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        if ["localhost", "127.0.0.1", "::1"].contains(normalized) { return "my mac" }
+        return host.split(separator: ".").first.map(String.init) ?? "my mac"
+    }
+
+    private static func networkMachineName(dnsName: String, hostname: String) -> String {
+        let candidate = dnsName.nonEmpty ?? hostname
+        return candidate.split(separator: ".").first.map(String.init) ?? ""
     }
 }
 

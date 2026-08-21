@@ -11,12 +11,24 @@ struct HerdrWorkspace: Codable, Equatable, Hashable, Identifiable, Sendable {
     let agentStatus: AgentStatus
     let tokens: [String: String]
     let worktree: HerdrWorktree?
-    let tabs: [HerdrTab]
-    let panes: [HerdrPane]
+    var tabs: [HerdrTab]
+    var panes: [HerdrPane]
     let agents: [HerdrAgent]
     let layouts: [HerdrLayout]
 
-    var id: String { workspaceID }
+    var machineID: String = ""
+
+    var id: String {
+        machineID.isEmpty ? workspaceID : MachineScopedID.compose(machineID: machineID, rawID: workspaceID)
+    }
+
+    func stamped(machineID: String) -> HerdrWorkspace {
+        var copy = self
+        copy.machineID = machineID
+        copy.tabs = tabs.map { $0.stamped(machineID: machineID) }
+        copy.panes = panes.map { $0.stamped(machineID: machineID) }
+        return copy
+    }
 
     var displayPath: String {
         if let worktree { return worktree.checkoutPath }

@@ -49,6 +49,48 @@ struct SidebarProjectRow: View {
     }
 }
 
+struct SidebarMachineRow: View {
+    let machine: HerdrMachine
+    let state: ConnectionState
+    let paneCount: Int
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.bold())
+                    .foregroundStyle(HerdrTheme.mist)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.snappy, value: isExpanded)
+
+                Circle()
+                    .fill(state.color)
+                    .frame(width: 8, height: 8)
+
+                Text(machine.name.lowercased())
+                    .font(.subheadline.monospaced().bold())
+                    .foregroundStyle(HerdrTheme.text)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text("\(paneCount) panes")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(HerdrTheme.muted)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 48)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("sidebar-machine-\(machine.id)")
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityHint("Collapses or expands this machine's chats")
+    }
+}
+
 struct SidebarSectionRow: View {
     let tab: HerdrTab
 

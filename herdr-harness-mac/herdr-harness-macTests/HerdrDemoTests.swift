@@ -22,6 +22,11 @@ struct HerdrDemoTests {
                 #expect(layout.panes.allSatisfy { paneIDs.contains($0.id) })
             }
         }
+        for workspace in DemoData.workspacesForWorkMBP {
+            #expect(workspace.paneCount == workspace.panes.count)
+            #expect(workspace.tabCount == workspace.tabs.count)
+            #expect(workspace.panes.allSatisfy { $0.workspaceID == workspace.id })
+        }
     }
 
     @Test("Demo model promotes blocked and completed sessions")
@@ -29,11 +34,11 @@ struct HerdrDemoTests {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
 
         #expect(model.connectionState == .demo)
-        #expect(model.visibleWorkspaces.map(\.id) == ["w1", "w2", "w3"])
-        #expect(model.attentionPanes.map(\.id) == ["w1:p2", "w2:p1"])
+        #expect(model.visibleWorkspaces.map(\.id) == ["demo1|w1", "demo2|w1", "demo1|w2", "demo2|w2", "demo1|w3"])
+        #expect(model.attentionPanes.map(\.id) == ["demo1|w1:p2", "demo1|w2:p1", "demo2|w2:p1"])
         #expect(model.unreadAlertCount == 2)
-        #expect(model.workingCount == 2)
-        #expect(model.paneCount == 6)
+        #expect(model.workingCount == 3)
+        #expect(model.paneCount == 9)
     }
 
     @Test("Search and filters inspect workspace, pane, and activity metadata")
@@ -41,23 +46,23 @@ struct HerdrDemoTests {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
 
         model.searchText = "pagination"
-        #expect(model.visibleWorkspaces.map(\.id) == ["w2"])
+        #expect(model.visibleWorkspaces.map(\.id) == ["demo1|w2"])
 
         model.searchText = ""
         model.filter = .active
-        #expect(model.visibleWorkspaces.map(\.id) == ["w1", "w2"])
+        #expect(model.visibleWorkspaces.map(\.id) == ["demo1|w1", "demo2|w1", "demo1|w2"])
 
         model.filter = .attention
-        #expect(model.visibleWorkspaces.map(\.id) == ["w1", "w2"])
+        #expect(model.visibleWorkspaces.map(\.id) == ["demo1|w1", "demo1|w2", "demo2|w2"])
     }
 
     @Test("Demo terminal and prompt actions behave without network access")
     func terminalAndPromptActions() async throws {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
-        let pane = try #require(model.pane(id: "w1:p2"))
+        let pane = try #require(model.pane(id: "demo1|w1:p2"))
 
         let output = try await model.fetchOutput(for: pane)
-        #expect(output.paneID == pane.id)
+        #expect(output.paneID == pane.paneID)
         #expect(output.text.contains("Waiting for your response"))
         #expect(output.revision == pane.revision)
 

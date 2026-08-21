@@ -60,9 +60,33 @@ enum DemoData {
         ),
     ]
 
+    static let workspacesForWorkMBP: [HerdrWorkspace] = [
+        workspace(
+            id: "w1",
+            number: 1,
+            label: "Herdr Mac",
+            path: "/Users/ronnie/Work/herdr-harness",
+            panes: [
+                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Connection runtime", agent: "Codex", revision: 28),
+                pane(id: "w1:p2", tabID: "w1:t1", status: .idle, title: "Release checklist", agent: "Claude", revision: 12),
+            ],
+            layouts: [layout(workspaceID: "w1", tabID: "w1:t1", paneIDs: ["w1:p1", "w1:p2"])]
+        ),
+        workspace(
+            id: "w2",
+            number: 2,
+            label: "Infra Notes",
+            path: "/Users/ronnie/Work/infra",
+            panes: [
+                pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Tailscale check", agent: "Codex", revision: 7),
+            ],
+            layouts: [layout(workspaceID: "w2", tabID: "w2:t1", paneIDs: ["w2:p1"])]
+        ),
+    ]
+
     static func terminalText(for paneID: String) -> String {
         switch paneID {
-        case "w1:p2":
+        case "demo1|w1:p2":
             """
             ╭─ Claude · Auth reducer review ─────────────────────────────╮
             │ I can update the authentication dependency and regenerate │
@@ -76,7 +100,7 @@ enum DemoData {
 
             ❯ Waiting for your response
             """
-        case "w2:p1":
+        case "demo1|w2:p1":
             """
             ✓ Added cursor pagination to MemberConnection
             ✓ Preserved legacy page-number compatibility
@@ -87,6 +111,24 @@ enum DemoData {
             No schema-breaking changes were introduced.
 
             Ready for review.
+            """
+        case "demo2|w1:p2":
+            """
+            Release checklist
+
+            ✓ Tagged the candidate build
+            ✓ Confirmed the migration notes
+            ◐ Waiting on App Store review wording
+
+            Next: send the release summary to the team.
+            """
+        case "demo2|w2:p1":
+            """
+            ✓ Tailscale Serve is reachable
+            ✓ DNS name resolves inside the tailnet
+            ✓ Health probe returned 200
+
+            Connection runtime is ready for the next deploy.
             """
         default:
             """

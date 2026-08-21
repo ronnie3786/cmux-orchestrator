@@ -85,6 +85,10 @@ struct OnboardingView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Text("You can add more machines later in Settings.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             .padding(22)
         }

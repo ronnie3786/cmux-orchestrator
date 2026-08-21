@@ -7,7 +7,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 statusSection
-                connectionSection
+                machinesSection
                 voiceSection
                 alertSection
                 privacySection
@@ -26,6 +26,7 @@ struct SettingsView: View {
             }
             LabeledContent("Workspaces", value: "\(model.workspaces.count)")
             LabeledContent("Live panes", value: "\(model.paneCount)")
+            LabeledContent("Machines", value: "\(model.machines.count) \(model.machines.count == 1 ? "machine" : "machines") · \(liveMachineCount) live")
             if let lastUpdated = model.lastUpdated {
                 LabeledContent("Last update") {
                     Text(lastUpdated, style: .relative)
@@ -36,27 +37,45 @@ struct SettingsView: View {
         }
     }
 
-    private var connectionSection: some View {
+    private var machinesSection: some View {
         Section {
-            TextField("Server URL", text: $model.serverURLString)
-                .textContentType(.URL)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            ForEach(model.machines) { machine in
+                NavigationLink {
+                    MachineEditorView(model: model, machine: machine)
+                } label: {
+                    MachineListRow(machine: machine, state: model.connectionState(forMachine: machine.id))
+                }
+                .accessibilityIdentifier("settings-machine-row-\(machine.id)")
+            }
 
-            SecureField("Pairing token", text: $model.apiToken)
-                .textContentType(.password)
+            NavigationLink {
+                MachineEditorView(model: model, machine: nil)
+            } label: {
+                Label("add machine", systemImage: "plus")
+            }
+            .accessibilityIdentifier("settings-add-machine")
 
-            Button("Save and reconnect", systemImage: "arrow.trianglehead.2.clockwise.rotate.90", action: model.connect)
+            NavigationLink {
+                MachinesView(model: model)
+            } label: {
+                Label("Manage machines", systemImage: "server.rack")
+            }
+            .accessibilityIdentifier("settings-manage-machines")
 
             if model.isDemoMode {
                 Button("Connect a real server", systemImage: "server.rack", action: model.leaveDemo)
             } else {
                 Button("Use demo data", systemImage: "sparkles", action: model.useDemo)
             }
+        } header: {
+            Label("Machines", systemImage: "server.rack")
         } footer: {
-            Text("Use the private HTTPS address created by Tailscale Serve. The bearer token is stored in Keychain and sent only to this server.")
+            Text("Use the private HTTPS address created by Tailscale Serve. Each bearer token is stored in Keychain and sent only to its machine.")
         }
+    }
+
+    private var liveMachineCount: Int {
+        model.machines.count(where: { model.connectionState(forMachine: $0.id) == .live })
     }
 
     private var alertSection: some View {

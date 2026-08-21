@@ -9,7 +9,17 @@ struct HerdrTab: Codable, Equatable, Hashable, Identifiable, Sendable {
     let paneCount: Int
     let agentStatus: AgentStatus
 
-    var id: String { tabID }
+    var machineID: String = ""
+
+    var id: String {
+        machineID.isEmpty ? tabID : MachineScopedID.compose(machineID: machineID, rawID: tabID)
+    }
+
+    func stamped(machineID: String) -> HerdrTab {
+        var copy = self
+        copy.machineID = machineID
+        return copy
+    }
 
     enum CodingKeys: String, CodingKey {
         case tabID = "tab_id"

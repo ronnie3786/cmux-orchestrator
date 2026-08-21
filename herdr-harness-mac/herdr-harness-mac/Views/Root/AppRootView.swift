@@ -151,7 +151,13 @@ struct AppRootView: View {
         }
         .sheet(isPresented: $shell.isCreatingWorkspace) {
             CreateWorkspaceView { label, cwd in
-                await model.createWorkspace(label: label, cwd: cwd)
+                let machineID: String?
+                if case let .machine(id) = model.machineScope {
+                    machineID = id
+                } else {
+                    machineID = model.machines.first?.id
+                }
+                return await model.createWorkspace(label: label, cwd: cwd, machineID: machineID)
             }
             .frame(minWidth: 460, minHeight: 340)
         }

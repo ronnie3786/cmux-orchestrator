@@ -19,7 +19,7 @@ import SwiftUI
 /// Deliberately scoped to the sidebar: `AgentStatus.color` and every other
 /// surface (pane headers, status rails, the Attention deck) keep full status
 /// color. Do not "fix" this by changing the shared type.
-private enum SidebarTone {
+enum SidebarTone {
     /// The single hue for every status-derived element in these rows.
     static let status = HerdrTheme.mist
 
@@ -104,6 +104,62 @@ struct SidebarProjectRow: View {
     private var tooltip: String {
         let location = workspace.displayPath.isEmpty ? workspace.label : workspace.displayPath
         return "\(location) — \(workspace.agentStatus.title)"
+    }
+}
+
+struct SidebarMachineRow: View {
+    let machine: HerdrMachine
+    let state: ConnectionState
+    let paneCount: Int
+    let isExpanded: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .herdrFont(.caption2, weight: .bold)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.snappy, value: isExpanded)
+
+                Circle()
+                    .fill(SidebarTone.status.opacity(statusOpacity))
+                    .frame(width: 8, height: 8)
+
+                Text(machine.name.lowercased())
+                    .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                    .foregroundStyle(HerdrTheme.text)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text("\(paneCount) panes")
+                    .herdrFont(.caption, monospaced: true)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 30)
+            .contentShape(Rectangle())
+            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help("\(machine.name) — \(machine.urlString) — \(state.title)")
+        .accessibilityIdentifier("sidebar-machine-\(machine.id)")
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityHint("Collapses or expands this machine's chats")
+    }
+
+    private var statusOpacity: Double {
+        switch state {
+        case .live, .demo: 1
+        case .connecting: 0.7
+        case .disconnected, .failed: 0.45
+        }
     }
 }
 

@@ -15,17 +15,17 @@ final class HerdrSidebarUITests: HerdrUITestCase {
 
         // No drawer to open: the navigator is a column, present from launch.
         XCTAssertTrue(
-            app.buttons["sidebar-workspace-w1"].waitForExistence(timeout: 10),
+            app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10),
             "The persistent sidebar should list demo workspaces at launch"
         )
         XCTAssertTrue(
-            app.buttons["sidebar-workspace-w2"].exists,
+            app.buttons["sidebar-workspace-demo1|w2"].exists,
             "Every workspace stays visible — the Mac sidebar never closes"
         )
 
-        app.buttons["sidebar-pane-w1:p2"].click()
+        app.buttons["sidebar-pane-demo1|w1:p2"].click()
         XCTAssertTrue(
-            app.control(identifier: "terminal-w1:p2").waitForExistence(timeout: 5),
+            app.control(identifier: "terminal-demo1|w1:p2").waitForExistence(timeout: 5),
             "Selecting a chat row should mount that pane's session in the detail column"
         )
         // The Mac replacement for the iOS navigation-bar title assertion: the
@@ -36,9 +36,9 @@ final class HerdrSidebarUITests: HerdrUITestCase {
         )
 
         // Cross-workspace hop — on iOS this needed a second `sidebar-toggle` tap.
-        app.buttons["sidebar-pane-w2:p1"].click()
+        app.buttons["sidebar-pane-demo1|w2:p1"].click()
         XCTAssertTrue(
-            app.control(identifier: "terminal-w2:p1").waitForExistence(timeout: 5),
+            app.control(identifier: "terminal-demo1|w2:p1").waitForExistence(timeout: 5),
             "A pane in another workspace should replace the detail column in place"
         )
         XCTAssertTrue(
@@ -52,19 +52,19 @@ final class HerdrSidebarUITests: HerdrUITestCase {
         let app = launchDemoApp()
 
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w1:p1"].waitForExistence(timeout: 10),
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10),
             "-HerdrResetSidebarState should leave every workspace expanded"
         )
 
-        app.buttons["sidebar-workspace-w1"].click()
+        app.buttons["sidebar-workspace-demo1|w1"].click()
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w1:p1"].waitForNonExistence(timeout: 3),
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForNonExistence(timeout: 3),
             "Clicking the workspace row should collapse its chats"
         )
 
-        app.buttons["sidebar-workspace-w1"].click()
+        app.buttons["sidebar-workspace-demo1|w1"].click()
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w1:p1"].waitForExistence(timeout: 3),
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 3),
             "Clicking it again should restore them"
         )
     }
@@ -77,7 +77,7 @@ final class HerdrSidebarUITests: HerdrUITestCase {
         let app = launchDemoApp()
 
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w1:p1"].waitForExistence(timeout: 10),
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10),
             "The demo fleet should be listed before filtering"
         )
 
@@ -96,21 +96,21 @@ final class HerdrSidebarUITests: HerdrUITestCase {
         filter.typeText("pagination")
 
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w2:p1"].waitForExistence(timeout: 3),
+            app.buttons["sidebar-pane-demo1|w2:p1"].waitForExistence(timeout: 3),
             "A pane-title match should survive the filter"
         )
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w1:p1"].waitForNonExistence(timeout: 3),
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForNonExistence(timeout: 3),
             "Workspaces with no match should drop out of the tree"
         )
         XCTAssertFalse(
-            app.buttons["sidebar-workspace-w3"].exists,
+            app.buttons["sidebar-workspace-demo1|w3"].exists,
             "Release Train has nothing matching 'pagination'"
         )
 
         app.control(named: "Clear workspace filter").click()
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w1:p1"].waitForExistence(timeout: 3),
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 3),
             "Clearing the filter should restore the whole tree"
         )
     }

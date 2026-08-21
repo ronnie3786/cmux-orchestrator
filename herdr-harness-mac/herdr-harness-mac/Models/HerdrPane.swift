@@ -20,7 +20,17 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     let tokens: [String: String]
     let piSemantic: PiSemanticCapability?
 
-    var id: String { paneID }
+    var machineID: String = ""
+
+    var id: String {
+        machineID.isEmpty ? paneID : MachineScopedID.compose(machineID: machineID, rawID: paneID)
+    }
+
+    func stamped(machineID: String) -> HerdrPane {
+        var copy = self
+        copy.machineID = machineID
+        return copy
+    }
 
     var displayTitle: String {
         for candidate in [label, title, terminalTitleStripped, displayAgent, agent] {

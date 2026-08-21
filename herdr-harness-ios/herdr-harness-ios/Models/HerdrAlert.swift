@@ -1,7 +1,7 @@
 import Foundation
 
 struct HerdrAlert: Decodable, Equatable, Hashable, Identifiable, Sendable {
-    let id: String
+    let rawID: String
     let workspaceID: String
     let paneID: String
     let status: AgentStatus
@@ -9,6 +9,18 @@ struct HerdrAlert: Decodable, Equatable, Hashable, Identifiable, Sendable {
     let message: String
     let createdAt: String
     let isRead: Bool
+
+    var machineID: String = ""
+
+    var id: String {
+        machineID.isEmpty ? rawID : MachineScopedID.compose(machineID: machineID, rawID: rawID)
+    }
+
+    func stamped(machineID: String) -> HerdrAlert {
+        var copy = self
+        copy.machineID = machineID
+        return copy
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -38,7 +50,7 @@ struct HerdrAlert: Decodable, Equatable, Hashable, Identifiable, Sendable {
         status = try container.decodeIfPresent(AgentStatus.self, forKey: .status)
             ?? container.decodeIfPresent(AgentStatus.self, forKey: .kind)
             ?? .unknown
-        id = try container.decodeIfPresent(String.self, forKey: .id) ?? "\(paneID):\(status.rawValue)"
+        rawID = try container.decodeIfPresent(String.self, forKey: .id) ?? "\(paneID):\(status.rawValue)"
         title = try container.decodeIfPresent(String.self, forKey: .title) ?? status.title
         message = try container.decodeIfPresent(String.self, forKey: .message) ?? ""
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
@@ -60,7 +72,7 @@ struct HerdrAlert: Decodable, Equatable, Hashable, Identifiable, Sendable {
         createdAt: String,
         isRead: Bool
     ) {
-        self.id = id
+        self.rawID = id
         self.workspaceID = workspaceID
         self.paneID = paneID
         self.status = status

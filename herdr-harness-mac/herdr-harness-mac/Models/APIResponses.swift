@@ -27,6 +27,51 @@ struct WorkspacesResponse: Decodable, Sendable {
     }
 }
 
+struct HealthProbeResponse: Decodable, Sendable {
+    let ok: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = (try? container.decodeIfPresent(Bool.self, forKey: .ok)) ?? true
+    }
+}
+
+struct NetworkInfoResponse: Decodable, Sendable {
+    let ok: Bool
+    let hostname: String
+    let tailscaleDNSName: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case hostname
+        case tailscale
+    }
+
+    private struct Tailscale: Decodable, Sendable {
+        let dnsName: String
+
+        enum CodingKeys: String, CodingKey {
+            case dnsName
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            dnsName = (try? container.decodeIfPresent(String.self, forKey: .dnsName)) ?? ""
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = (try? container.decodeIfPresent(Bool.self, forKey: .ok)) ?? true
+        hostname = (try? container.decodeIfPresent(String.self, forKey: .hostname)) ?? ""
+        tailscaleDNSName = (try? container.decodeIfPresent(Tailscale.self, forKey: .tailscale))?.dnsName ?? ""
+    }
+}
+
 struct QuickPiSessionResponse: Decodable, Sendable {
     let ok: Bool
     let workspaceID: String

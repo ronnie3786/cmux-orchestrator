@@ -75,18 +75,18 @@ struct HerdrModelTests {
         UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
 
-        model.toggleSidebarSection("w1")
-        #expect(model.collapsedSidebarWorkspaceIDs.contains("w1"))
-        model.toggleSidebarSection("w1")
-        #expect(!model.collapsedSidebarWorkspaceIDs.contains("w1"))
+        model.toggleSidebarSection("demo1|w1")
+        #expect(model.collapsedSidebarWorkspaceIDs.contains("demo1|w1"))
+        model.toggleSidebarSection("demo1|w1")
+        #expect(!model.collapsedSidebarWorkspaceIDs.contains("demo1|w1"))
 
-        model.openWorkspace(id: "w1")
+        model.openWorkspace(id: "demo1|w1")
         let selectedWorkspaceID = model.selectedWorkspaceID
         let selectedPaneID = model.selectedPaneID
         let workspacePath = model.workspacePath
-        #expect(selectedWorkspaceID == "w1")
-        #expect(selectedPaneID == model.workspace(id: "w1")?.sortedPanes.first?.id)
-        #expect(workspacePath == [.workspace("w1")])
+        #expect(selectedWorkspaceID == "demo1|w1")
+        #expect(selectedPaneID == model.workspace(id: "demo1|w1")?.sortedPanes.first?.id)
+        #expect(workspacePath == [.workspace("demo1|w1")])
 
         model.openWorkspace(id: "does-not-exist")
         #expect(model.selectedWorkspaceID == selectedWorkspaceID)
@@ -119,7 +119,8 @@ struct HerdrModelTests {
     @Test("Opening a universal link routes to the pane")
     func universalLinkRoutesToPane() throws {
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
-        let paneID = try #require(model.workspace(id: "w1")?.sortedPanes.first?.id)
+        let pane = try #require(model.workspace(id: "demo1|w1")?.sortedPanes.first)
+        let paneID = pane.paneID
         let encoded = try #require(
             paneID.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
         )
@@ -129,7 +130,7 @@ struct HerdrModelTests {
 
         model.open(url: url)
 
-        #expect(model.selectedPaneID == paneID)
+        #expect(model.selectedPaneID == pane.id)
         #expect(model.selectedTab == .workspaces)
     }
 
@@ -139,12 +140,21 @@ struct HerdrModelTests {
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
         let onset = Date(timeIntervalSinceReferenceDate: 0)
 
-        #expect(!model.noteConnectionFailure(now: onset))
-        #expect(!model.noteConnectionFailure(now: onset.addingTimeInterval(5)))
-        #expect(model.noteConnectionFailure(now: onset.addingTimeInterval(10.1)))
+        #expect(!model.noteConnectionFailure(machineID: "test-machine", now: onset))
+        #expect(!model.noteConnectionFailure(machineID: "test-machine", now: onset.addingTimeInterval(5)))
+        #expect(model.noteConnectionFailure(machineID: "test-machine", now: onset.addingTimeInterval(10.1)))
 
         model.useDemo()
-        #expect(!model.noteConnectionFailure(now: onset.addingTimeInterval(100)))
+        #expect(!model.noteConnectionFailure(machineID: "test-machine", now: onset.addingTimeInterval(100)))
+    }
+
+    @Test("Aggregate connection state follows machine state priority")
+    func aggregateConnectionState() {
+        #expect(HerdrAppModel.aggregateConnectionState(machineStates: [.failed], isDemoMode: true, hasMachines: true) == .demo)
+        #expect(HerdrAppModel.aggregateConnectionState(machineStates: [], isDemoMode: false, hasMachines: false) == .disconnected)
+        #expect(HerdrAppModel.aggregateConnectionState(machineStates: [.failed, .live], isDemoMode: false, hasMachines: true) == .live)
+        #expect(HerdrAppModel.aggregateConnectionState(machineStates: [.failed, .connecting], isDemoMode: false, hasMachines: true) == .connecting)
+        #expect(HerdrAppModel.aggregateConnectionState(machineStates: [.failed], isDemoMode: false, hasMachines: true) == .failed)
     }
 
     private func pane(

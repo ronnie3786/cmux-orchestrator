@@ -6,7 +6,7 @@ import XCTest
 /// you get to each screen changed. iOS drilled in (workspace card → pane card →
 /// full-screen pane) and hid the tab bar on arrival. The Mac shell selects a
 /// chat row in the permanent sidebar and swaps the detail column, so the walk
-/// starts at `sidebar-pane-w1:p2` and every "full-screen cover" is a sheet.
+/// starts at `sidebar-pane-demo1|w1:p2` and every "full-screen cover" is a sheet.
 ///
 /// The landscape + accessibility-text-size test has no Mac analogue (no
 /// orientations, no `UIContentSizeCategory`); its job — proving the composer's
@@ -37,7 +37,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
     func testPaneModesAndExpandableControls() throws {
         let app = launchDemoApp()
 
-        let blockedPane = app.buttons["sidebar-pane-w1:p2"]
+        let blockedPane = app.buttons["sidebar-pane-demo1|w1:p2"]
         XCTAssertTrue(
             blockedPane.waitForExistence(timeout: 10),
             "The demo fleet should populate the sidebar"
@@ -170,7 +170,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
     func testComposerControlsStayReachableAtTheMinimumWindowSize() throws {
         let app = launchDemoApp()
 
-        let blockedPane = app.buttons["sidebar-pane-w1:p2"]
+        let blockedPane = app.buttons["sidebar-pane-demo1|w1:p2"]
         XCTAssertTrue(blockedPane.waitForExistence(timeout: 10))
         blockedPane.click()
         XCTAssertTrue(app.control(identifier: "prompt-composer").waitForExistence(timeout: 5))

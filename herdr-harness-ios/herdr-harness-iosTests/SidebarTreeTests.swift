@@ -214,6 +214,95 @@ struct SidebarTreeTests {
         #expect(groups[0].chats.map(\.id) == ["w1:p1"])
     }
 
+    @Test("Machine groups keep machine-list order and include empty machines")
+    func machineGroupsHonorMachineOrder() {
+        let first = HerdrMachine(id: "first", name: "First", urlString: "https://first.example.com")
+        let second = HerdrMachine(id: "second", name: "Second", urlString: "https://second.example.com")
+        let empty = HerdrMachine(id: "empty", name: "Empty", urlString: "https://empty.example.com")
+        let groups = SidebarTree.machineGroups(
+            machines: [second, empty, first],
+            states: ["first": .live, "second": .failed],
+            workspaces: [workspaceOne.stamped(machineID: "first"), workspaceTwo.stamped(machineID: "second")],
+            query: "",
+            collapsedMachineIDs: ["second"],
+            collapsedWorkspaceIDs: []
+        )
+
+        #expect(groups.map(\.id) == ["machine:second", "machine:empty", "machine:first"])
+        #expect(!groups[0].isExpanded)
+        #expect(groups[1].isExpanded)
+        #expect(groups[1].entries.isEmpty)
+        #expect(groups[0].state == .failed)
+    }
+
+    @Test("Searching force-expands collapsed machine groups")
+    func machineGroupSearchForcesExpansion() {
+        let machine = HerdrMachine(id: "one", name: "One", urlString: "https://one.example.com")
+        let groups = SidebarTree.machineGroups(
+            machines: [machine],
+            states: [:],
+            workspaces: [workspaceOne.stamped(machineID: "one")],
+            query: "auth",
+            collapsedMachineIDs: ["one"],
+            collapsedWorkspaceIDs: []
+        )
+
+        #expect(groups.count == 1)
+        #expect(groups[0].isExpanded)
+        #expect(groups[0].entries.count == 1)
+    }
+
+    @Test("Machine groups and nested workspace IDs remain unique across raw ID collisions")
+    func machineGroupsUseScopedIDs() {
+        let first = HerdrMachine(id: "one", name: "One", urlString: "https://one.example.com")
+        let second = HerdrMachine(id: "two", name: "Two", urlString: "https://two.example.com")
+        let groups = SidebarTree.machineGroups(
+            machines: [first, second],
+            states: [:],
+            workspaces: [workspaceOne.stamped(machineID: "one"), workspaceOne.stamped(machineID: "two")],
+            query: "",
+            collapsedMachineIDs: [],
+            collapsedWorkspaceIDs: []
+        )
+
+        #expect(groups.map(\.id) == ["machine:one", "machine:two"])
+        #expect(groups[0].entries[0].id == "one|w1")
+        #expect(groups[1].entries[0].id == "two|w1")
+        #expect(groups[0].entries[0].id != groups[1].entries[0].id)
+    }
+
+    @Test("Starred groups sort by machine order then workspace number")
+    func starredGroupsHonorMachineOrder() {
+        let first = HerdrMachine(id: "one", name: "One", urlString: "https://one.example.com")
+        let second = HerdrMachine(id: "two", name: "Two", urlString: "https://two.example.com")
+        let firstW1 = workspaceOne.stamped(machineID: "one")
+        let firstW2 = workspaceTwo.stamped(machineID: "one")
+        let secondW1 = workspaceOne.stamped(machineID: "two")
+        let groups = SidebarTree.starredGroups(
+            workspaces: [firstW2, secondW1, firstW1],
+            query: "",
+            starredIDs: ["one|w1:p1", "one|w2:p1", "two|w1:p1"],
+            machines: [second, first]
+        )
+
+        #expect(groups.map(\.id) == ["starred:two|w1", "starred:one|w1", "starred:one|w2"])
+        #expect(Set(groups.map(\.id)).count == 3)
+    }
+
+    @Test("A single machine still produces one machine group")
+    func singleMachineStillProducesGroup() {
+        let machine = HerdrMachine(id: "one", name: "One", urlString: "https://one.example.com")
+        let groups = SidebarTree.machineGroups(
+            machines: [machine],
+            states: [:],
+            workspaces: [workspaceOne.stamped(machineID: "one")],
+            query: "",
+            collapsedMachineIDs: [],
+            collapsedWorkspaceIDs: []
+        )
+        #expect(groups.count == 1)
+    }
+
     private var workspaces: [HerdrWorkspace] {
         [workspaceThree, workspaceOne, workspaceTwo]
     }

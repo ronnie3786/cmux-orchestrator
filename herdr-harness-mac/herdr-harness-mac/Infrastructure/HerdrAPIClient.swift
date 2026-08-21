@@ -18,6 +18,14 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/workspaces")
     }
 
+    func fetchHealthProbe() async throws -> HealthProbeResponse {
+        try await request(path: "/api/v1/health")
+    }
+
+    func fetchNetworkInfo() async throws -> NetworkInfoResponse {
+        try await request(path: "/api/v1/network")
+    }
+
     func fetchPaneOutput(paneID: String, lines: Int = 160) async throws -> PaneOutputResponse {
         try await request(
             path: "/api/v1/panes/\(paneID)/output",
@@ -500,6 +508,9 @@ actor HerdrAPIClient {
     }
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
+        if path == "/api/v1/health" || path == "/api/v1/network" {
+            return 8
+        }
         if path == "/api/v1/quick-sessions/pi" {
             return 75
         }

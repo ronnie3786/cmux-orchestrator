@@ -12,7 +12,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     func testViewMenuMovesTheDetailScope() throws {
         let app = launchDemoApp()
         XCTAssertTrue(
-            app.buttons["sidebar-pane-w1:p1"].waitForExistence(timeout: 10),
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10),
             "The demo fleet should be loaded before driving the menus"
         )
 
@@ -32,7 +32,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         }
         overview.click()
         XCTAssertTrue(
-            app.control(identifier: "pane-w1:p1").waitForExistence(timeout: 5),
+            app.control(identifier: "pane-demo1|w1:p1").waitForExistence(timeout: 5),
             "Workspace Overview should show the selected workspace's pane cards"
         )
     }
@@ -40,7 +40,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     @MainActor
     func testNavigateMenuStepsThroughPanes() throws {
         let app = launchDemoApp()
-        XCTAssertTrue(app.buttons["sidebar-pane-w1:p1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10))
 
         guard let nextPane = app.menuBarItem("Navigate", item: "Next Pane") else {
             return XCTFail("Navigate ▸ Next Pane should exist")
@@ -50,7 +50,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
 
         // Nothing was selected, so the first pane in sidebar order wins.
         XCTAssertTrue(
-            app.control(identifier: "terminal-w1:p1").waitForExistence(timeout: 5),
+            app.control(identifier: "terminal-demo1|w1:p1").waitForExistence(timeout: 5),
             "Next Pane should open a pane session in the detail column"
         )
 
@@ -59,7 +59,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         }
         previousPane.click()
         XCTAssertTrue(
-            app.control(identifier: "terminal-w3:p1").waitForExistence(timeout: 5),
+            app.control(identifier: "terminal-demo1|w3:p1").waitForExistence(timeout: 5),
             "Stepping back from the first pane should wrap to the last one"
         )
     }
@@ -67,9 +67,9 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     @MainActor
     func testCommandOneReachesTheAttentionDeckFromTheKeyboard() throws {
         let app = launchDemoApp()
-        XCTAssertTrue(app.buttons["sidebar-pane-w1:p2"].waitForExistence(timeout: 10))
-        app.buttons["sidebar-pane-w1:p2"].click()
-        XCTAssertTrue(app.control(identifier: "terminal-w1:p2").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["sidebar-pane-demo1|w1:p2"].waitForExistence(timeout: 10))
+        app.buttons["sidebar-pane-demo1|w1:p2"].click()
+        XCTAssertTrue(app.control(identifier: "terminal-demo1|w1:p2").waitForExistence(timeout: 5))
 
         app.typeKey("1", modifierFlags: .command)
 
@@ -82,7 +82,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     @MainActor
     func testFileMenuOffersNewWorkspaceInDemoMode() throws {
         let app = launchDemoApp()
-        XCTAssertTrue(app.buttons["sidebar-workspace-w1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
 
         guard let newWorkspace = app.menuBarItem("File", item: "New Workspace") else {
             return XCTFail("File ▸ New Workspace should exist")
@@ -95,7 +95,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     @MainActor
     func testDetailToolbarExposesTheScopePicker() throws {
         let app = launchDemoApp()
-        XCTAssertTrue(app.buttons["sidebar-workspace-w1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
 
         XCTAssertTrue(
             app.control(identifier: "detail-scope-picker").waitForExistence(timeout: 5),

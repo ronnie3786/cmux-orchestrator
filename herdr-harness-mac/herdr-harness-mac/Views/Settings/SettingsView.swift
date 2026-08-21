@@ -3,11 +3,14 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var fontScale: HerdrFontScaleStore
+    @State private var isPresentingMachines = false
+    @State private var isPresentingMachineEditor = false
+    @State private var editingMachine: HerdrMachine?
 
     var body: some View {
         Form {
             statusSection
-            connectionSection
+            machinesSection
             voiceSection
             alertSection
             textSizeSection
@@ -18,6 +21,14 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .scrollContentBackground(.hidden)
         .background(HerdrBackground())
+        .sheet(isPresented: $isPresentingMachines) {
+            MachinesView(model: model)
+                .frame(minWidth: 460, minHeight: 420)
+        }
+        .sheet(isPresented: $isPresentingMachineEditor) {
+            MachineEditorView(model: model, machine: editingMachine)
+                .frame(minWidth: 480, minHeight: 420)
+        }
     }
 
     private var statusSection: some View {
@@ -27,6 +38,10 @@ struct SettingsView: View {
             }
             LabeledContent("Workspaces", value: "\(model.workspaces.count)")
             LabeledContent("Live panes", value: "\(model.paneCount)")
+            LabeledContent(
+                "Machines",
+                value: "\(model.machines.count) \(model.machines.count == 1 ? "machine" : "machines") · \(liveMachineCount) live"
+            )
             if let lastUpdated = model.lastUpdated {
                 LabeledContent("Last update") {
                     Text(lastUpdated, style: .relative)
@@ -37,25 +52,55 @@ struct SettingsView: View {
         }
     }
 
-    private var connectionSection: some View {
+    private var machinesSection: some View {
         Section {
-            TextField("Server URL", text: $model.serverURLString)
-                .textContentType(.URL)
-                .autocorrectionDisabled()
+            ForEach(model.machines) { machine in
+                Button {
+                    editingMachine = machine
+                    isPresentingMachineEditor = true
+                } label: {
+                    HStack(spacing: 10) {
+                        MachineListRow(
+                            machine: machine,
+                            state: model.connectionState(forMachine: machine.id)
+                        )
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .herdrFont(.caption, weight: .bold)
+                            .foregroundStyle(HerdrTheme.muted)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("settings-machine-row-\(machine.id)")
+            }
 
-            SecureField("Pairing token", text: $model.apiToken)
-                .textContentType(.password)
+            Button {
+                editingMachine = nil
+                isPresentingMachineEditor = true
+            } label: {
+                Label("add machine", systemImage: "plus")
+            }
+            .accessibilityIdentifier("settings-add-machine")
 
-            Button("Save and reconnect", systemImage: "arrow.trianglehead.2.clockwise.rotate.90", action: model.connect)
+            Button("Manage machines", systemImage: "server.rack") {
+                isPresentingMachines = true
+            }
+            .accessibilityIdentifier("settings-manage-machines")
 
             if model.isDemoMode {
                 Button("Connect a real server", systemImage: "server.rack", action: model.leaveDemo)
             } else {
                 Button("Use demo data", systemImage: "sparkles", action: model.useDemo)
             }
+        } header: {
+            Label("Machines", systemImage: "server.rack")
         } footer: {
-            Text("Use the private HTTPS address created by Tailscale Serve. The bearer token is stored in Keychain and sent only to this server.")
+            Text("Use the private HTTPS address created by Tailscale Serve. Each bearer token is stored in Keychain and sent only to its machine.")
         }
+    }
+
+    private var liveMachineCount: Int {
+        model.machines.count(where: { model.connectionState(forMachine: $0.id) == .live })
     }
 
     private var alertSection: some View {
