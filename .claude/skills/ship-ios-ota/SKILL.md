@@ -57,9 +57,11 @@ curl -sk -o /dev/null -w 'ipa:%{http_code} size:%{size_download}\n' https://rock
 
 All must be 200 and the served size must equal the local IPA byte count. If the IPA/index
 fail: the `serve.py` process does not survive reboots — restart with
-`nohup python3 ~/herdr-ota/serve.py >/dev/null 2>&1 &` (binds 127.0.0.1:8811; the
-`tailscale serve --bg --https=8462 8811` mapping DOES persist and shows in
-`tailscale serve status`).
+`nohup python3 ~/herdr-ota/serve.py >/dev/null 2>&1 &` (binds 127.0.0.1:8812; the
+`tailscale serve --bg --https=8462 8812` mapping DOES persist and shows in
+`tailscale serve status`). Moved from 8811 on 2026-08-21: a skylight-dashboard
+calendar service (openclaw workspace) now owns 8811 — if the served size is a few
+hundred bytes of calendar JSON, something re-took the port; check `lsof -nP -iTCP:8812`.
 
 ## Deliver
 
