@@ -428,8 +428,7 @@ class CleanupManager:
         self._mutate(run_id, mutate, allow_cancelled=allow_cancelled)
 
     def _defaults(self) -> dict:
-        catalog = self.list_models()['default']
-        default_model = self.environ.get('HERDR_HARNESS_CLEANUP_MODEL') or (f"{catalog['provider']}/{catalog['id']}" if catalog.get('provider') and catalog.get('id') else catalog.get('id'))
+        default_model = self.environ.get('HERDR_HARNESS_CLEANUP_MODEL', '')
         thinking = self.environ.get('HERDR_HARNESS_CLEANUP_THINKING', 'medium')
         return {'model': default_model, 'thinkingLevel': thinking if thinking in THINKING_LEVELS else 'medium', 'costThresholdUSD': _env_float(self.environ, 'HERDR_HARNESS_CLEANUP_COST_THRESHOLD', 2.0, 0, 1000), 'tailLines': _env_int(self.environ, 'HERDR_HARNESS_CLEANUP_TAIL_LINES', 400, 1, 5000), 'minConfidence': 0.6}
 
@@ -438,7 +437,7 @@ class CleanupManager:
         config = self._defaults()
         config.update({key: options[key] for key in config if key in options})
         model = config.get('model')
-        if model is not None and (not isinstance(model, str) or not model or len(model) > 256 or ('/' in model and (not model.split('/', 1)[0] or not model.split('/', 1)[1]))):
+        if model not in (None, '') and (not isinstance(model, str) or len(model) > 256 or ('/' in model and (not model.split('/', 1)[0] or not model.split('/', 1)[1]))):
             raise CleanupError('model is invalid', code='invalid_request', status=400)
         if config['thinkingLevel'] not in THINKING_LEVELS:
             raise CleanupError('thinkingLevel is invalid', code='invalid_request', status=400)
@@ -765,8 +764,6 @@ class CleanupManager:
                 '-p',
                 '--mode',
                 'json',
-                '--model',
-                str(config.get('model') or ''),
                 '--thinking',
                 config['thinkingLevel'],
                 '--tools',
@@ -777,10 +774,13 @@ class CleanupManager:
                 charter,
                 prompt,
             ]
+            if config.get('model'):
+                cmd[4:4] = ['--model', str(config['model'])]
             env = {key: value for (key, value) in os.environ.items() if not key.startswith('HERDR_')}
             env.update({key: value for (key, value) in self.environ.items() if not key.startswith('HERDR_')})
             env['PI_SKIP_VERSION_CHECK'] = '1'
             lines: list[str] = []
+            stderr = ''
             final = ''
             timed_out = False
             try:
@@ -799,7 +799,9 @@ class CleanupManager:
                 self._judge_process = process
             selector = selectors.DefaultSelector()
             assert process.stdout is not None
+            assert process.stderr is not None
             selector.register(process.stdout, selectors.EVENT_READ)
+            selector.register(process.stderr, selectors.EVENT_READ)
             judge_timeout = timeout
             if judge_timeout is None:
                 judge_timeout = _env_int(
@@ -821,29 +823,37 @@ class CleanupManager:
                         if process.poll() is None:
                             timed_out = True
                         break
-                    line = process.stdout.readline()
-                    if not line:
-                        break
-                    lines.append(line)
-                    try:
-                        event = json.loads(line)
-                        event = event.get('event', event) if isinstance(event, dict) else {}
-                    except json.JSONDecodeError:
-                        continue
-                    if event.get('type') == 'message_end':
-                        message = event.get('message') if isinstance(event.get('message'), dict) else {}
-                        if isinstance(message.get('text'), str):
-                            final = message['text']
-                        else:
-                            final = ''.join(
-                                str(item.get('text') or '')
-                                for item in message.get('content', [])
-                                if isinstance(item, dict) and item.get('type') == 'text'
-                            )
-                        usage = message.get('usage') if isinstance(message.get('usage'), dict) else {}
-                        cost = usage.get('cost') if isinstance(usage.get('cost'), dict) else {}
-                        total_cost += _number(cost.get('total')) or 0.0
-                    if event.get('type') == 'agent_end':
+                    stdout_finished = False
+                    for (key, _) in ready:
+                        if key.fileobj is process.stderr:
+                            stderr = (stderr + process.stderr.readline(2001))[-2000:]
+                            continue
+                        line = process.stdout.readline()
+                        if not line:
+                            stdout_finished = True
+                            continue
+                        lines.append(line)
+                        try:
+                            event = json.loads(line)
+                            event = event.get('event', event) if isinstance(event, dict) else {}
+                        except json.JSONDecodeError:
+                            continue
+                        if event.get('type') == 'message_end':
+                            message = event.get('message') if isinstance(event.get('message'), dict) else {}
+                            if isinstance(message.get('text'), str):
+                                final = message['text']
+                            else:
+                                final = ''.join(
+                                    str(item.get('text') or '')
+                                    for item in message.get('content', [])
+                                    if isinstance(item, dict) and item.get('type') == 'text'
+                                )
+                            usage = message.get('usage') if isinstance(message.get('usage'), dict) else {}
+                            cost = usage.get('cost') if isinstance(usage.get('cost'), dict) else {}
+                            total_cost += _number(cost.get('total')) or 0.0
+                        if event.get('type') == 'agent_end':
+                            stdout_finished = True
+                    if stdout_finished:
                         break
             finally:
                 selector.close()
@@ -860,6 +870,9 @@ class CleanupManager:
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait()
+                if process.stderr is not None:
+                    while line := process.stderr.readline(2001):
+                        stderr = (stderr + line)[-2000:]
                 if process.stdout is not None:
                     process.stdout.close()
                 if process.stderr is not None:
@@ -871,7 +884,10 @@ class CleanupManager:
             previous_attempt = ''
             if attempts > 1 and raw_path.exists():
                 previous_attempt = raw_path.read_text() + '\n---retry---\n'
-            _atomic_text(raw_path, previous_attempt + ''.join(lines))
+            stdout = ''.join(lines)
+            if stdout and not stdout.endswith('\n'):
+                stdout += '\n'
+            _atomic_text(raw_path, previous_attempt + stdout + '---stderr---\n' + stderr)
             parsed = None if timed_out else _extract_json(final)
             if isinstance(parsed, dict) and isinstance(parsed.get('workspaceId'), str) and isinstance(parsed.get('panes'), list):
                 panes = {pane_id: _default_verdict('no verdict returned') for pane_id in pane_id_list}
@@ -907,8 +923,13 @@ class CleanupManager:
                 f'fenced ```json code block matching the schema below, and nothing else.\n\n{_required_judge_output(workspace_id, pane_id_list)}'
             )
         if timed_out:
-            return failure(f'batch timed out after {judge_timeout}s')
-        return failure(f'judge output failed validation: {diagnosis}')
+            message = f'batch timed out after {judge_timeout}s'
+        else:
+            message = f'judge output failed validation: {diagnosis}'
+        stderr_line = next((line.strip() for line in stderr.splitlines() if line.strip()), '')
+        if stderr_line:
+            message += f'; stderr: {stderr_line}'
+        return failure(message)
 
     def _run_object(self, run: dict, report: Optional[dict]=None) -> dict:
         config_source = run.get('config') if isinstance(run.get('config'), dict) else {}

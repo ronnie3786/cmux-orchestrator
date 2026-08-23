@@ -110,7 +110,9 @@ def write_fake_pi(directory):
                 time.sleep(3600)
             if mode == "slow":
                 time.sleep(1.5)
-            if mode == "retry" and invocation == 1:
+            if mode == "stderr_invalid":
+                print("No API key found for fireworks.", file=sys.stderr, flush=True)
+            elif mode == "retry" and invocation == 1:
                 print("not json at all", flush=True)
                 print(json.dumps({"type": "agent_end"}), flush=True)
             elif mode == "schema_retry" and invocation == 1:
@@ -518,7 +520,7 @@ class CleanupManagerTests(unittest.TestCase):
 
 
 class CleanupJudgeTests(unittest.TestCase):
-    def _manager_with_batch(self, directory, mode, *, counter_path=None):
+    def _manager_with_batch(self, directory, mode, *, counter_path=None, model=None):
         fake_pi = write_fake_pi(directory)
         environ = {
             "HERDR_HARNESS_CLEANUP_RUNS_ROOT": directory,
@@ -534,7 +536,7 @@ class CleanupJudgeTests(unittest.TestCase):
         run_dir = manager._run_dir(run_id)
         (run_dir / "judge" / "sessions").mkdir(parents=True)
         (run_dir / "evidence").mkdir()
-        (run_dir / "run.json").write_text(json.dumps({"config": {"model": None, "thinkingLevel": "medium"}}))
+        (run_dir / "run.json").write_text(json.dumps({"config": {"model": model, "thinkingLevel": "medium"}}))
         workspace = {"workspace_id": "w1", "label": "One"}
         entries = [{"workspace": workspace, "pane": {}, "meta": {"paneId": "w1:p1"}, "base": run_dir / "evidence"}]
         return manager, run_id, workspace, entries, Path(environ["FAKE_PI_ARGV_FILE"])
@@ -550,6 +552,39 @@ class CleanupJudgeTests(unittest.TestCase):
             self.assertTrue(verdict["closeRecommended"])
             self.assertAlmostEqual(verdict["confidence"], 0.95)
             self.assertAlmostEqual(result["costUSD"], 0.00165)
+
+    def test_judge_passes_model_only_when_explicitly_configured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager, run_id, workspace, entries, argv_path = self._manager_with_batch(directory, "valid")
+
+            manager._run_judge_batch(run_id, 1, workspace, entries)
+
+            argv = json.loads(argv_path.read_text().splitlines()[0])
+            self.assertNotIn("--model", argv)
+        with tempfile.TemporaryDirectory() as directory:
+            manager, run_id, workspace, entries, argv_path = self._manager_with_batch(
+                directory,
+                "valid",
+                model="provider/model",
+            )
+
+            manager._run_judge_batch(run_id, 1, workspace, entries)
+
+            argv = json.loads(argv_path.read_text().splitlines()[0])
+            self.assertIn("--model", argv)
+            self.assertEqual(argv[argv.index("--model") + 1], "provider/model")
+
+    def test_judge_surfaces_stderr_when_output_is_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager, run_id, workspace, entries, _argv_path = self._manager_with_batch(directory, "stderr_invalid")
+
+            result = manager._run_judge_batch(run_id, 1, workspace, entries)
+
+            self.assertTrue(result["judgeFailed"])
+            self.assertIn("No API key found for fireworks.", result["lastError"])
+            raw = (manager._run_dir(run_id) / "judge" / "batch-1.jsonl").read_text()
+            self.assertIn("---stderr---", raw)
+            self.assertIn("No API key found for fireworks.", raw)
 
     def test_judge_retries_malformed_output_and_keeps_both_attempts(self):
         with tempfile.TemporaryDirectory() as directory:
