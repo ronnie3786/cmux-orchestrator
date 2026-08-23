@@ -14,6 +14,7 @@ from herdr_harness.alerts import AlertStore
 from herdr_harness.cleanup import (
     CleanupError,
     CleanupManager,
+    _age_int,
     _rail_pane,
     _rail_workspace,
     _resolve_pi_bin,
@@ -184,6 +185,16 @@ def wait_for_run(test_case, manager, run_id, timeout=10):
 
 
 class CleanupPureTests(unittest.TestCase):
+    def test_age_int_rounds_fractional_ages_and_preserves_none(self):
+        done_alert_age = _age_int(369398.1364490986)
+        session_file_age = _age_int(529216.9183209419)
+
+        self.assertEqual(done_alert_age, 369398)
+        self.assertEqual(session_file_age, 529217)
+        self.assertIs(type(done_alert_age), int)
+        self.assertIs(type(session_file_age), int)
+        self.assertIsNone(_age_int(None))
+
     def test_resolve_pi_bin_prefers_env_override(self):
         self.assertEqual(
             _resolve_pi_bin({'HERDR_HARNESS_CLEANUP_PI_BIN': '/some/value'}),
@@ -409,6 +420,39 @@ class CleanupManagerTests(unittest.TestCase):
             self.assertGreaterEqual(meta["doneAlertAgeSeconds"], 0)
             self.assertLess(meta["doneAlertAgeSeconds"], 30)
             self.assertGreaterEqual(meta["unreadAlerts"], 1)
+
+    def test_collector_serializes_integer_age_signals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_pi = write_fake_pi(directory)
+            client = FakeClient([snapshot(status="working"), snapshot(status="done"), snapshot(status="done")])
+            alerts = AlertStore(store_path=None)
+            service = HerdrService(
+                client,
+                alerts=alerts,
+                environ={
+                    "HERDR_HARNESS_CLEANUP_RUNS_ROOT": directory,
+                    "HERDR_HARNESS_CLEANUP_DWELL_SECONDS": "0",
+                    "HERDR_HARNESS_CLEANUP_PI_BIN": str(fake_pi),
+                    "FAKE_PI_MODE": "valid",
+                },
+            )
+            service.refresh_snapshot()
+            service.refresh_snapshot()
+
+            result = service.cleanup.start_run({"keepEvidence": True})
+            run = wait_for_run(self, service.cleanup, result["runId"])
+            self.assertEqual(run["run"]["status"], "done")
+            pane_root = Path(directory) / result["runId"] / "evidence" / "workspaces" / "w1" / "panes" / "w1%3Ap1"
+            meta = json.loads((pane_root / "meta.json").read_text())
+            report = json.loads((Path(directory) / result["runId"] / "report.json").read_text())
+            signals = report["workspaces"][0]["panes"][0]["signals"]
+
+            for key in ("doneAlertAgeSeconds", "blockedAlertAgeSeconds", "piStateAgeSeconds", "sessionFileAgeSeconds"):
+                value = meta[key]
+                self.assertTrue(value is None or (isinstance(value, int) and not isinstance(value, bool)))
+            for key in ("doneAlertAgeSeconds", "sessionFileAgeSeconds"):
+                value = signals[key]
+                self.assertTrue(value is None or (isinstance(value, int) and not isinstance(value, bool)))
 
     def test_collector_reads_unread_alerts_beyond_response_limit(self):
         with tempfile.TemporaryDirectory() as directory:

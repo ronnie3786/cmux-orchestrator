@@ -61,6 +61,15 @@ struct CleanupReportDecodingTests {
         #expect(report.summary?.panesScanned == 2)
     }
 
+    @Test("Fractional pane signal ages decode without corrupting the envelope")
+    func fractionalSignalAges() throws {
+        let report = try JSONDecoder().decode(CleanupRunEnvelope.self, from: Data(fractionalSignalsFixture.utf8))
+        let pane = try #require(report.workspaces?.first?.panes.first)
+
+        #expect(pane.signals?.doneAlertAgeSeconds == 369398.1364490986)
+        #expect(pane.signals?.sessionFileAgeSeconds == 529216.9183209419)
+    }
+
     @Test("Null report fields are tolerated")
     func nullFields() throws {
         let report = try JSONDecoder().decode(CleanupRunEnvelope.self, from: Data(nullFixture.utf8))
@@ -87,6 +96,10 @@ struct CleanupReportDecodingTests {
 
     private let collectingFixture = #"""
     {"ok":true,"runId":"clr_1a2b3c4d5e6f","status":"collecting","startedAt":"2026-08-21T20:04:11Z","finishedAt":null,"session":"default","config":{"model":"custom-lux-dspark/qwen3.8-27b-nvfp4-dspark","thinkingLevel":"medium","costThresholdUSD":2.0,"tailLines":400,"minConfidence":0.6},"workspaceIds":[],"keepEvidence":false,"error":null,"phase":"collecting","phaseDetail":"Capturing pane pi · fix-login-flake (2 of 7)","progress":{"done":2,"total":7},"phaseHistory":[{"phase":"collecting","startedAt":"2026-08-21T20:04:11Z","finishedAt":null,"detail":null}]}
+    """#
+
+    private let fractionalSignalsFixture = #"""
+    {"ok":true,"run":{"runId":"clr_fractional","status":"done","phase":"done","progress":{"done":1,"total":1},"config":{"model":"test","thinkingLevel":"medium","costThresholdUSD":2.0},"judge":{"batches":1,"failedBatches":0,"costUSD":0.0,"durationMs":1}},"workspaces":[{"workspaceId":"w1","workspaceCloseRecommended":false,"workspaceSafeToClose":false,"workspaceBlockedBy":[],"git":{"state":"clean"},"panes":[{"paneId":"w1:p1","agentKind":"pi","agentStatus":"done","classification":"completed","confidence":0.9,"reason":"Done.","closeRecommended":true,"safeToClose":true,"blockedBy":[],"costOverThreshold":false,"signals":{"doneAlertAgeSeconds":369398.1364490986,"revisionChanged":false,"sessionFileAgeSeconds":529216.9183209419,"starred":false,"focused":true,"unreadAlerts":0}}]}]}
     """#
 
     private let terminalFixture = #"""

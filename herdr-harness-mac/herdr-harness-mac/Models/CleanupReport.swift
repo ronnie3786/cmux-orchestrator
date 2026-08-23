@@ -397,9 +397,9 @@ enum CleanupClassification: String, Codable, Sendable, Equatable {
 }
 
 struct CleanupSignals: Codable, Sendable, Equatable {
-    let doneAlertAgeSeconds: Int?
+    let doneAlertAgeSeconds: Double?
     let revisionChanged: Bool?
-    let sessionFileAgeSeconds: Int?
+    let sessionFileAgeSeconds: Double?
     let starred: Bool?
     let focused: Bool?
     let unreadAlerts: Int?

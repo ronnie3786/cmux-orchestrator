@@ -93,7 +93,7 @@ final class CleanupRunController {
             activeRunID = response.runID
             lastEnvelope = envelope
             transition(to: .running(envelope), runID: response.runID)
-            cleanupLog.info("run started id=\(response.runID) \(self.runContext)")
+            cleanupLog.info("run started id=\(response.runID, privacy: .public) \(self.runContext, privacy: .public)")
             beginPolling(runID: response.runID)
         } catch {
             transition(to: .failure(error.localizedDescription))
@@ -107,7 +107,7 @@ final class CleanupRunController {
             return
         }
 
-        cleanupLog.info("retry requested run=\(runID)")
+        cleanupLog.info("retry requested run=\(runID, privacy: .public)")
         stopPolling()
         resetPollFailureState()
         if let lastEnvelope {
@@ -119,7 +119,7 @@ final class CleanupRunController {
     }
 
     func startOver() async {
-        cleanupLog.info("start over requested run=\(self.activeRunID ?? "none")")
+        cleanupLog.info("start over requested run=\(self.activeRunID ?? "none", privacy: .public)")
         if let runID = activeRunID {
             stopPolling()
             do {
@@ -139,7 +139,7 @@ final class CleanupRunController {
     func apply(paneIDs: [String], workspaceIDs: [String]) async {
         guard case let .report(envelope) = state else { return }
         let runID = envelope.run.runID
-        cleanupLog.info("apply requested run=\(runID)")
+        cleanupLog.info("apply requested run=\(runID, privacy: .public)")
         transition(to: .applying, runID: runID)
         do {
             let response = try await applyRun(envelope.run.runID, paneIDs, workspaceIDs)
@@ -151,7 +151,7 @@ final class CleanupRunController {
 
     func cancelRun() async {
         guard let runID = activeRunID else { return }
-        cleanupLog.info("cancel requested run=\(runID)")
+        cleanupLog.info("cancel requested run=\(runID, privacy: .public)")
         stopPolling()
         do {
             try await cancel(runID)
@@ -173,7 +173,7 @@ final class CleanupRunController {
 
     func resumeIfNeeded() {
         guard case .running = state, let runID = activeRunID, pollingTask == nil else { return }
-        cleanupLog.info("reattaching polling run=\(runID)")
+        cleanupLog.info("reattaching polling run=\(runID, privacy: .public)")
         beginPolling(runID: runID)
     }
 
@@ -185,7 +185,7 @@ final class CleanupRunController {
             var exitReason = "finished"
             defer {
                 self?.clearPollingTask(generation: generation)
-                cleanupLog.info("polling exited run=\(runID): \(exitReason)")
+                cleanupLog.info("polling exited run=\(runID, privacy: .public): \(exitReason, privacy: .public)")
             }
             while !Task.isCancelled {
                 do {
@@ -239,7 +239,7 @@ final class CleanupRunController {
             guard activeRunID == runID else { return }
             consecutivePollFailures += 1
             lastPollFailureMessage = error.localizedDescription
-            cleanupLog.error("poll failed run=\(runID) count=\(self.consecutivePollFailures): \(error.localizedDescription)")
+            cleanupLog.error("poll failed run=\(runID, privacy: .public) count=\(self.consecutivePollFailures): \(error.localizedDescription, privacy: .public)")
             if consecutivePollFailures >= Self.maxConsecutivePollFailures {
                 transition(
                     to: .failure(
@@ -288,7 +288,7 @@ final class CleanupRunController {
         let oldLabel = Self.stateLabel(state)
         state = newState
         cleanupLog.info(
-            "state \(oldLabel) -> \(Self.stateLabel(newState)) run=\(runID ?? self.activeRunID ?? "none")"
+            "state \(oldLabel, privacy: .public) -> \(Self.stateLabel(newState), privacy: .public) run=\(runID ?? self.activeRunID ?? "none", privacy: .public)"
         )
     }
 

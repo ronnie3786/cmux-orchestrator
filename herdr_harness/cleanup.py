@@ -118,6 +118,11 @@ def _number(value: Any) -> Optional[float]:
     """Return a numeric value as a float, excluding booleans."""
     return float(value) if isinstance(value, (int, float)) and (not isinstance(value, bool)) else None
 
+def _age_int(value: Any) -> Optional[int]:
+    """Coerce a numeric age-in-seconds value to a whole-second int, preserving None."""
+    number = _number(value)
+    return int(round(number)) if number is not None else None
+
 def _env_int(environ: Mapping[str, str], name: str, default: int, minimum: int, maximum: int) -> int:
     """Read a bounded integer environment setting."""
     try:
@@ -567,7 +572,7 @@ class CleanupManager:
             for (kind, key) in (('agent_done', 'doneAlertAgeSeconds'), ('agent_blocked', 'blockedAlertAgeSeconds')):
                 dates = [_parse_time(item.get('createdAt')) for item in alerts if isinstance(item, dict) and item.get('paneId') == pane_id and (item.get('kind') == kind)]
                 dates = [item for item in dates if item is not None]
-                ages[key] = max(0, now - max(dates)) if dates else None
+                ages[key] = _age_int(max(0, now - max(dates))) if dates else None
             updated = None
             try:
                 updated = self.service.pi_semantic.state_updated_at(pane_id)
@@ -608,8 +613,8 @@ class CleanupManager:
                 'stateChangeSeq': pi_cap.get('stateChangeSeq'),
                 'doneAlertAgeSeconds': ages['doneAlertAgeSeconds'],
                 'blockedAlertAgeSeconds': ages['blockedAlertAgeSeconds'],
-                'piStateAgeSeconds': max(0, now - updated_at) if updated_at is not None else None,
-                'sessionFileAgeSeconds': cost['sessionFileAgeSeconds'],
+                'piStateAgeSeconds': _age_int(max(0, now - updated_at)) if updated_at is not None else None,
+                'sessionFileAgeSeconds': _age_int(cost['sessionFileAgeSeconds']),
                 'unreadAlerts': pane_unread_alerts,
                 'endsAtShellPrompt': bool(re.search('[$#%>]\\s*$', last_nonempty_line)),
                 'hasProcessExitedMarker': bool(re.search('(?i)process exited|command not found: $|\\[Process completed\\]', tail)),
