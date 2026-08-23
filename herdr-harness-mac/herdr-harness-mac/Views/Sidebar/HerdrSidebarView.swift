@@ -17,8 +17,10 @@ struct HerdrSidebarView: View {
     @State private var paneName = ""
     @State private var closingWorkspace: HerdrWorkspace?
     @State private var closingPane: HerdrPane?
+    @State private var cleanupPresenter = CleanupSheetPresenter()
 
     var body: some View {
+        @Bindable var cleanupPresenter = cleanupPresenter
         VStack(alignment: .leading, spacing: 12) {
             header
 
@@ -59,6 +61,11 @@ struct HerdrSidebarView: View {
         .sheet(isPresented: $isPresentingMachines) {
             MachinesView(model: model)
                 .frame(minWidth: 460, minHeight: 420)
+        }
+        .sheet(item: $cleanupPresenter.target) { target in
+            if let controller = cleanupPresenter.controller {
+                CleanupSheet(target: target, controller: controller)
+            }
         }
         .alert("Rename workspace", isPresented: isRenamingWorkspace) {
             TextField("Workspace name", text: $workspaceName)
@@ -227,6 +234,7 @@ struct HerdrSidebarView: View {
                     isExpanded: group.isExpanded,
                     action: { toggle(group.machine) }
                 )
+                .contextMenu { machineMenu(group.machine) }
                 if group.isExpanded {
                     if group.entries.isEmpty {
                         Text("no workspaces yet")
@@ -301,8 +309,19 @@ struct HerdrSidebarView: View {
             renamingWorkspace = workspace
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
+        .accessibilityIdentifier("sidebar-workspace-cleanup-\(workspace.workspaceID)")
         Button("New tab", systemImage: "plus.square.on.square") {
             Task { await model.createTab(in: workspace) }
+        }
+        .disabled(!model.canControl(machineID: workspace.machineID))
+        Button("Smart Cleanup This Workspace…", systemImage: "sparkles") {
+            cleanupPresenter.present(CleanupSheetTarget(
+                id: "\(workspace.machineID)|cleanup|\(workspace.workspaceID)",
+                machineID: workspace.machineID,
+                machineName: machineName(for: workspace.machineID),
+                workspaceID: workspace.workspaceID,
+                workspaceLabel: workspace.label
+            ), using: model)
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
         Divider()
@@ -310,6 +329,25 @@ struct HerdrSidebarView: View {
             closingWorkspace = workspace
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
+    }
+
+    @ViewBuilder
+    private func machineMenu(_ machine: HerdrMachine) -> some View {
+        Button("Smart Cleanup…", systemImage: "sparkles") {
+            cleanupPresenter.present(CleanupSheetTarget(
+                id: "\(machine.id)|cleanup|all",
+                machineID: machine.id,
+                machineName: machine.name,
+                workspaceID: nil,
+                workspaceLabel: nil
+            ), using: model)
+        }
+        .disabled(!model.canControl(machineID: machine.id))
+        .accessibilityIdentifier("sidebar-machine-cleanup-\(machine.id)")
+    }
+
+    private func machineName(for machineID: String) -> String {
+        model.machines.first(where: { $0.id == machineID })?.name ?? "this machine"
     }
 
     private var separator: some View {

@@ -40,6 +40,45 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/workspaces/\(workspaceID)/git")
     }
 
+    func startCleanupRun(_ request: CleanupStartRunRequest) async throws -> CleanupStartRunResponse {
+        try await self.request(path: "/api/v1/cleanup/runs", method: "POST", body: request)
+    }
+
+    func fetchCleanupRun(id: String) async throws -> CleanupRunEnvelope {
+        try await request(path: "/api/v1/cleanup/runs/\(id)")
+    }
+
+    func fetchCleanupRuns(limit: Int = 10) async throws -> CleanupRunListResponse {
+        try await request(
+            path: "/api/v1/cleanup/runs",
+            query: [URLQueryItem(name: "limit", value: String(limit))]
+        )
+    }
+
+    func applyCleanupRun(
+        id: String,
+        paneIDs: [String],
+        workspaceIDs: [String]
+    ) async throws -> CleanupApplyResponse {
+        try await request(
+            path: "/api/v1/cleanup/runs/\(id)/apply",
+            method: "POST",
+            body: CleanupApplyRequest(paneIDs: paneIDs, workspaceIDs: workspaceIDs)
+        )
+    }
+
+    func cancelCleanupRun(id: String) async throws {
+        let _: MutationResponse = try await request(
+            path: "/api/v1/cleanup/runs/\(id)/cancel",
+            method: "POST",
+            body: APIActionBody()
+        )
+    }
+
+    func fetchCleanupModels() async throws -> CleanupModelCatalog {
+        try await request(path: "/api/v1/cleanup/models")
+    }
+
     func fetchGitDiff(
         workspaceID: String,
         file: String,

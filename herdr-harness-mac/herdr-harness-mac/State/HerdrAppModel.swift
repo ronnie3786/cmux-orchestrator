@@ -433,6 +433,117 @@ final class HerdrAppModel {
         toastMessage = "Unstaged \(file)"
     }
 
+    func startCleanup(machineID: String, workspaceIDs: [String]) async throws -> CleanupStartRunResponse {
+        if isDemoMode {
+            return CleanupStartRunResponse(ok: true, runID: "clr_demo", status: .collecting)
+        }
+        guard canControl(machineID: machineID),
+              workspaceIDs.allSatisfy({ rawID in workspaces.contains { $0.machineID == machineID && $0.workspaceID == rawID } }),
+              let client = client(forMachine: machineID) else {
+            throw APIError.invalidResponse
+        }
+        let settings = CleanupSettings.load(from: .standard)
+        return try await client.startCleanupRun(
+            CleanupStartRunRequest(
+                model: settings.model.isEmpty ? nil : settings.model,
+                thinkingLevel: settings.thinkingLevel,
+                costThresholdUSD: settings.costThresholdUSD,
+                tailLines: nil,
+                keepEvidence: nil,
+                workspaceIDs: workspaceIDs.isEmpty ? nil : workspaceIDs
+            )
+        )
+    }
+
+    func fetchCleanupRun(machineID: String, runID: String) async throws -> CleanupRunEnvelope {
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.invalidResponse
+        }
+        return try await client.fetchCleanupRun(id: runID)
+    }
+
+    func applyCleanupRun(
+        machineID: String,
+        runID: String,
+        paneIDs: [String],
+        workspaceIDs: [String]
+    ) async throws -> CleanupApplyResponse {
+        if isDemoMode {
+            let response = CleanupApplyResponse(
+                applied: CleanupAppliedItems(panes: paneIDs, workspaces: workspaceIDs),
+                skipped: []
+            )
+            toastMessage = "Closed \(paneIDs.count) panes"
+            return response
+        }
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.invalidResponse
+        }
+        let response = try await client.applyCleanupRun(
+            id: runID,
+            paneIDs: paneIDs,
+            workspaceIDs: workspaceIDs
+        )
+        toastMessage = "Closed \(response.applied.panes.count) panes"
+        return response
+    }
+
+    func cancelCleanupRun(machineID: String, runID: String) async throws {
+        guard !isDemoMode, canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            if isDemoMode { return }
+            throw APIError.invalidResponse
+        }
+        try await client.cancelCleanupRun(id: runID)
+    }
+
+    func fetchCleanupModels(machineID: String? = nil) async throws -> CleanupModelCatalog {
+        if isDemoMode {
+            return CleanupModelCatalog(
+                ok: true,
+                models: [CleanupAvailableModel(
+                    provider: "custom-lux-dspark",
+                    modelID: "qwen3.8-27b-nvfp4-dspark",
+                    name: "Qwen3.8 27B (dspark)",
+                    contextWindow: 122_900
+                )],
+                defaultModel: CleanupModelDefault(
+                    provider: "custom-lux-dspark",
+                    modelID: "qwen3.8-27b-nvfp4-dspark",
+                    thinkingLevel: .medium
+                )
+            )
+        }
+        let client = machineID.flatMap { self.client(forMachine: $0) } ?? primaryClient
+        guard let client else { throw APIError.invalidResponse }
+        return try await client.fetchCleanupModels()
+    }
+
+    func makeCleanupController(for target: CleanupSheetTarget) -> CleanupRunController {
+        CleanupRunController(
+            isDemoMode: isDemoMode,
+            start: { _ in
+                try await self.startCleanup(
+                    machineID: target.machineID,
+                    workspaceIDs: target.workspaceID.map { [$0] } ?? []
+                )
+            },
+            fetch: { runID in
+                try await self.fetchCleanupRun(machineID: target.machineID, runID: runID)
+            },
+            apply: { runID, paneIDs, workspaceIDs in
+                try await self.applyCleanupRun(
+                    machineID: target.machineID,
+                    runID: runID,
+                    paneIDs: paneIDs,
+                    workspaceIDs: workspaceIDs
+                )
+            },
+            cancel: { runID in
+                try await self.cancelCleanupRun(machineID: target.machineID, runID: runID)
+            }
+        )
+    }
+
     func fetchSkills(for workspace: HerdrWorkspace) async throws -> SkillsResponse {
         if isDemoMode { return DemoData.skills(for: workspace) }
         guard canControl(machineID: workspace.machineID), self.workspace(id: workspace.id) != nil,

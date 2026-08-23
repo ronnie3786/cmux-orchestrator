@@ -3,9 +3,13 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var fontScale: HerdrFontScaleStore
+    @Bindable var cleanupSettings: CleanupSettingsStore
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
+    @State private var cleanupCatalog: CleanupModelCatalog?
+    @State private var isLoadingCleanupModels = false
+    @State private var cleanupModelsError: String?
 
     var body: some View {
         Form {
@@ -13,6 +17,7 @@ struct SettingsView: View {
             machinesSection
             voiceSection
             alertSection
+            cleanupSection
             textSizeSection
             privacySection
             aboutSection
@@ -29,6 +34,7 @@ struct SettingsView: View {
             MachineEditorView(model: model, machine: editingMachine)
                 .frame(minWidth: 480, minHeight: 420)
         }
+        .task { await loadCleanupModels() }
     }
 
     private var statusSection: some View {
@@ -167,6 +173,95 @@ struct SettingsView: View {
         } footer: {
             Text("Applies across Herdr's windows and menu bar.")
         }
+    }
+
+    private var cleanupSection: some View {
+        Section {
+            LabeledContent("Judge model") {
+                Menu {
+                    if isLoadingCleanupModels {
+                        ProgressView()
+                    } else if let cleanupModelsError {
+                        Text(cleanupModelsError).disabled(true)
+                        Button("Retry") { Task { await loadCleanupModels() } }
+                            .accessibilityIdentifier("settings-cleanup-model-retry")
+                    } else if let cleanupCatalog, !cleanupCatalog.models.isEmpty {
+                        ForEach(groupedCleanupProviders, id: \.self) { provider in
+                            Section(provider) {
+                                ForEach(cleanupModelsByProvider[provider] ?? []) { candidate in
+                                    Button {
+                                        cleanupSettings.model = candidate.id
+                                    } label: {
+                                        Label(
+                                            candidate.displayName,
+                                            systemImage: selectedCleanupModel == candidate.id ? "checkmark.circle.fill" : "cpu"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Text("No models available").disabled(true)
+                        Button("Retry") { Task { await loadCleanupModels() } }
+                            .accessibilityIdentifier("settings-cleanup-model-retry")
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "cpu")
+                        Text(selectedCleanupModel)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .herdrFont(.caption2)
+                    }
+                    .herdrFont(.caption, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.accent)
+                }
+                .accessibilityIdentifier("settings-cleanup-model-picker")
+            }
+
+            Picker("Thinking level", selection: $cleanupSettings.thinkingLevel) {
+                ForEach(CleanupThinkingLevel.allCases) { level in
+                    Text(level.label).tag(level)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings-cleanup-thinking-picker")
+
+            TextField(
+                "Cost flag threshold",
+                value: $cleanupSettings.costThresholdUSD,
+                format: .number.precision(.fractionLength(2))
+            )
+            .accessibilityIdentifier("settings-cleanup-cost-threshold")
+        } header: {
+            Text("Smart Cleanup")
+        } footer: {
+            Text("Sessions at or above this reported cost are flagged in cleanup reports. Pane content is sent to whichever judge model you pick, a cloud model uploads pane text to that provider, while the local custom-lux-dspark model keeps it on this machine's tailnet.")
+        }
+    }
+
+    private var cleanupModelsByProvider: [String: [CleanupAvailableModel]] {
+        Dictionary(grouping: cleanupCatalog?.models ?? [], by: \.provider)
+    }
+
+    private var groupedCleanupProviders: [String] { cleanupModelsByProvider.keys.sorted() }
+
+    private var selectedCleanupModel: String {
+        if !cleanupSettings.model.isEmpty { return cleanupSettings.model }
+        if let fullID = cleanupCatalog?.defaultModel?.fullID { return fullID }
+        return "Server default"
+    }
+
+    private func loadCleanupModels() async {
+        guard !isLoadingCleanupModels else { return }
+        isLoadingCleanupModels = true
+        cleanupModelsError = nil
+        do {
+            cleanupCatalog = try await model.fetchCleanupModels()
+        } catch {
+            cleanupModelsError = error.localizedDescription
+        }
+        isLoadingCleanupModels = false
     }
 
     private var privacySection: some View {

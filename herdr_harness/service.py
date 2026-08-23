@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping, Optional, TypeVar
 from .alerts import AlertStore, utc_now
 from . import attachments, cmux_tools, voice, workspace_tools
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
+from .cleanup import CleanupManager
 from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
@@ -73,6 +74,7 @@ class HerdrService:
         environ: Optional[Mapping[str, str]] = None,
         tools: Optional[cmux_tools.CmuxToolsClient] = None,
         pi_semantic: Optional[PiSemanticManager] = None,
+        cleanup: Optional[CleanupManager] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -89,6 +91,7 @@ class HerdrService:
             environ=None if production_environment else self.environ,
             on_event=self._publish_pi_event,
         )
+        self.cleanup = cleanup or CleanupManager(self, environ=self.environ)
         self._lock = threading.RLock()
         self._quick_session_lock = threading.Lock()
         self._snapshot: Optional[dict] = None

@@ -683,6 +683,15 @@ class PiSemanticJournal:
                     known[key] = copy.deepcopy(value)
             return known
 
+    def state_updated_at(self, pane_id: str, *, namespace: str = "") -> Optional[str]:
+        storage_pane_id = self._storage_pane_id(pane_id, namespace)
+        with self._lock:
+            row = self._database.execute(
+                "SELECT updated_at FROM pi_semantic_state WHERE pane_id = ?",
+                (storage_pane_id,),
+            ).fetchone()
+            return str(row["updated_at"]) if row is not None else None
+
 
 def _pi_pane_ids(snapshot: dict) -> set[str]:
     result: set[str] = set()
@@ -1007,6 +1016,9 @@ class PiSemanticManager:
 
     def bounds(self, pane_id: str) -> tuple[int, int]:
         return self.journal.bounds(pane_id, namespace=self.namespace)
+
+    def state_updated_at(self, pane_id: str) -> Optional[str]:
+        return self.journal.state_updated_at(pane_id, namespace=self.namespace)
 
     def wait_after(self, pane_id: str, cursor: int, *, timeout: float = 15.0) -> list[dict]:
         return self.journal.wait_after(pane_id, cursor, timeout=timeout, namespace=self.namespace)

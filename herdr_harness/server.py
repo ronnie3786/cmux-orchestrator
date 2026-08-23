@@ -18,6 +18,7 @@ from typing import Any, Optional
 from . import attachments, voice
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
+from .cleanup import CleanupError
 from .network import public_base_url
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError
 from .service import HerdrService
@@ -27,6 +28,7 @@ from .workspace_tools import WorkspaceToolError
 
 MAX_BODY_BYTES = 1024 * 1024
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
+_RUN_ID_RE = re.compile(r"^clr_[0-9a-f]{12}$")
 _AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _KEY_RE = re.compile(r"^[A-Za-z0-9+_-]{1,32}$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -110,6 +112,13 @@ def _identifier(value: Any, label: str = "identifier") -> str:
     text = str(value or "")
     if not _IDENTIFIER_RE.fullmatch(text):
         raise HTTPValidationError(f"{label} is invalid")
+    return text
+
+
+def _run_id(value: Any) -> str:
+    text = str(value or "")
+    if not _RUN_ID_RE.fullmatch(text):
+        raise HTTPValidationError("Run not found", code="not_found", status=404)
     return text
 
 
@@ -241,6 +250,9 @@ def api_description() -> dict:
             "pushStatus": "/api/v1/push/status",
             "liveActivities": "/api/v1/live-activities",
             "paneLink": "/api/v1/panes/{paneId}/link",
+            "cleanupRuns": "/api/v1/cleanup/runs",
+            "cleanupRun": "/api/v1/cleanup/runs/{runId}",
+            "cleanupModels": "/api/v1/cleanup/models",
         },
         "universalLinks": {
             "appSiteAssociation": "/.well-known/apple-app-site-association",
@@ -265,6 +277,9 @@ def api_description() -> dict:
             "POST /api/v1/live-activities|unregister",
             "POST /api/v1/voice/transcriptions",
             "POST /api/v1/quick-sessions/pi",
+            "POST /api/v1/cleanup/runs",
+            "POST /api/v1/cleanup/runs/{runId}/apply",
+            "POST /api/v1/cleanup/runs/{runId}/cancel",
         ],
         "sseEvents": [
             "snapshot.updated",
@@ -272,6 +287,7 @@ def api_description() -> dict:
             "alert.updated",
             "alerts.read_state_changed",
             "stars.changed",
+            "cleanup.run_updated",
         ],
         "generatedAt": utc_now(),
     }
@@ -476,7 +492,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 body = self._read_json(maximum=maximum) if method in {"POST", "PATCH", "DELETE"} else {}
                 response = self._route(method, segments, query, body)
                 if response is not None:
-                    self._json_response(response)
+                    if isinstance(response, tuple):
+                        payload, status = response
+                        self._json_response(payload, status)
+                    else:
+                        self._json_response(response)
             except HTTPValidationError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except HerdrAPIError as exc:
@@ -486,6 +506,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except TerminalObserverError as exc:
                 self._error(503, "terminal_observer_unavailable", str(exc))
             except PiSemanticError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except CleanupError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except WorkspaceToolError as exc:
                 self._error(exc.status, exc.code, str(exc))
@@ -541,7 +563,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             segments: list[str],
             query: dict[str, list[str]],
             body: dict,
-        ) -> Optional[dict]:
+        ) -> Optional[dict | tuple[dict, int]]:
             # segments starts with api, v1.
             tail = segments[2:]
             if method == "GET" and not tail:
@@ -648,6 +670,45 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 if status is not None and status not in {"blocked", "done"}:
                     raise HTTPValidationError("status must be blocked or done")
                 return service.list_alerts(unread_only=unread, status=status, limit=limit)
+            if method == "POST" and tail == ["cleanup", "runs"]:
+                options: dict[str, Any] = {}
+                if "model" in body:
+                    options["model"] = _string(body.get("model"), "model", maximum=256)
+                if "thinkingLevel" in body:
+                    options["thinkingLevel"] = _string(body.get("thinkingLevel"), "thinkingLevel", maximum=32)
+                if "costThresholdUSD" in body:
+                    value = body.get("costThresholdUSD")
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        raise HTTPValidationError("costThresholdUSD must be a number")
+                    options["costThresholdUSD"] = float(value)
+                if "tailLines" in body:
+                    value = body.get("tailLines")
+                    if not isinstance(value, int) or isinstance(value, bool):
+                        raise HTTPValidationError("tailLines must be an integer")
+                    options["tailLines"] = value
+                if "keepEvidence" in body:
+                    options["keepEvidence"] = _boolean(body.get("keepEvidence"), "keepEvidence")
+                if "workspaceIds" in body:
+                    raw_ids = body.get("workspaceIds")
+                    if not isinstance(raw_ids, list) or len(raw_ids) > 200:
+                        raise HTTPValidationError("workspaceIds must be an array with at most 200 entries")
+                    options["workspaceIds"] = [_identifier(item, "workspace ID") for item in raw_ids]
+                return service.cleanup.start_run(options), 202
+            if method == "GET" and tail == ["cleanup", "runs"]:
+                return service.cleanup.list_runs(_query_int(query, "limit", 10, minimum=1, maximum=100))
+            if method == "GET" and len(tail) == 3 and tail[:2] == ["cleanup", "runs"]:
+                return service.cleanup.get_run(_run_id(tail[2]))
+            if method == "POST" and len(tail) == 4 and tail[:2] == ["cleanup", "runs"] and tail[3] == "apply":
+                pane_values, workspace_values = body.get("paneIds", []), body.get("workspaceIds", [])
+                if not isinstance(pane_values, list) or len(pane_values) > 500:
+                    raise HTTPValidationError("paneIds must be an array with at most 500 entries")
+                if not isinstance(workspace_values, list) or len(workspace_values) > 200:
+                    raise HTTPValidationError("workspaceIds must be an array with at most 200 entries")
+                return service.cleanup.apply_run(_run_id(tail[2]), [_identifier(item, "pane ID") for item in pane_values], [_identifier(item, "workspace ID") for item in workspace_values])
+            if method == "POST" and len(tail) == 4 and tail[:2] == ["cleanup", "runs"] and tail[3] == "cancel":
+                return service.cleanup.cancel_run(_run_id(tail[2]))
+            if method == "GET" and tail == ["cleanup", "models"]:
+                return service.cleanup.list_models()
             if method == "GET" and tail == ["push", "status"]:
                 return service.push_status()
             if method == "GET" and len(tail) == 3 and tail[0] == "panes" and tail[2] == "link":

@@ -15,6 +15,7 @@ struct HerdrHarnessMacApp: App {
     @State private var shell = HerdrShellState()
     @State private var connectionDriver = HerdrConnectionDriver()
     @State private var fontScale = HerdrFontScaleStore()
+    @State private var cleanupSettings = CleanupSettingsStore()
 
     var body: some Scene {
         // A single `Window`, not a `WindowGroup`: Herdr shows one fleet, and a
@@ -46,7 +47,7 @@ struct HerdrHarnessMacApp: App {
 
         // ⌘, — replaces the iOS Settings tab.
         Settings {
-            SettingsView(model: model, fontScale: fontScale)
+            SettingsView(model: model, fontScale: fontScale, cleanupSettings: cleanupSettings)
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(width: 560, height: 640)
                 .background(HerdrTheme.ink)

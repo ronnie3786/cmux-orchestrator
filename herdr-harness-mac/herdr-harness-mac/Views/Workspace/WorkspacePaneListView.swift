@@ -7,8 +7,10 @@ struct WorkspacePaneListView: View {
     @State private var isRenamingWorkspace = false
     @State private var isConfirmingWorkspaceClose = false
     @State private var workspaceName = ""
+    @State private var cleanupPresenter = CleanupSheetPresenter()
 
     var body: some View {
+        @Bindable var cleanupPresenter = cleanupPresenter
         ZStack {
             HerdrBackground()
 
@@ -54,6 +56,17 @@ struct WorkspacePaneListView: View {
                     Button("Refresh", systemImage: "arrow.clockwise") {
                         Task { await model.refresh() }
                     }
+                    Button("Smart Cleanup This Workspace…", systemImage: "sparkles") {
+                        cleanupPresenter.present(CleanupSheetTarget(
+                            id: "\(workspace.machineID)|cleanup|\(workspace.workspaceID)",
+                            machineID: workspace.machineID,
+                            machineName: model.machines.first(where: { $0.id == workspace.machineID })?.name ?? "this machine",
+                            workspaceID: workspace.workspaceID,
+                            workspaceLabel: workspace.label
+                        ), using: model)
+                    }
+                    .disabled(!model.canControl(machineID: workspace.machineID))
+                    .accessibilityIdentifier("workspace-cleanup-\(workspace.workspaceID)")
                     Divider()
                     Button("Close workspace", systemImage: "xmark.rectangle", role: .destructive) {
                         isConfirmingWorkspaceClose = true
@@ -83,6 +96,11 @@ struct WorkspacePaneListView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("All \(workspace.paneCount) pane processes in this workspace will stop.")
+        }
+        .sheet(item: $cleanupPresenter.target) { target in
+            if let controller = cleanupPresenter.controller {
+                CleanupSheet(target: target, controller: controller)
+            }
         }
     }
 
@@ -121,4 +139,5 @@ struct WorkspacePaneListView: View {
             }
         }
     }
+
 }
