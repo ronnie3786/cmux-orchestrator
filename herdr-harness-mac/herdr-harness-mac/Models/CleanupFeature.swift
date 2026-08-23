@@ -1,3 +1,3 @@
 enum CleanupFeature {
-    static let version = "v0.02"
+    static let version = "v0.03"
 }

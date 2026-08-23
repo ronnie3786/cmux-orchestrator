@@ -97,6 +97,23 @@ def _resolve_pi_bin(environ: Mapping[str, str], *, candidates: Optional[list[Pat
             return str(path)
     return None
 
+def _judge_child_path(pi_bin: str, existing_path: Optional[str]) -> str:
+    """Build PATH for a judge subprocess, including common Node.js bin directories."""
+    candidates = [
+        os.path.dirname(pi_bin),
+        str(Path('~/.npm-global/bin').expanduser()),
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+        str(Path('~/.local/bin').expanduser()),
+    ]
+    directories: list[str] = []
+    for directory in candidates:
+        if os.path.isdir(directory) and directory not in directories:
+            directories.append(directory)
+    if existing_path is not None:
+        directories.append(existing_path)
+    return os.pathsep.join(directories)
+
 def _number(value: Any) -> Optional[float]:
     """Return a numeric value as a float, excluding booleans."""
     return float(value) if isinstance(value, (int, float)) and (not isinstance(value, bool)) else None
@@ -779,6 +796,7 @@ class CleanupManager:
             env = {key: value for (key, value) in os.environ.items() if not key.startswith('HERDR_')}
             env.update({key: value for (key, value) in self.environ.items() if not key.startswith('HERDR_')})
             env['PI_SKIP_VERSION_CHECK'] = '1'
+            env['PATH'] = _judge_child_path(pi_bin, env.get('PATH'))
             lines: list[str] = []
             stderr = ''
             final = ''

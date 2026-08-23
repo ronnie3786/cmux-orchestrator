@@ -94,6 +94,10 @@ def write_fake_pi(directory):
             if argv_path:
                 with open(argv_path, "a", encoding="utf-8") as handle:
                     handle.write(json.dumps(sys.argv) + "\\n")
+            path_path = os.environ.get("FAKE_PI_PATH_FILE")
+            if path_path:
+                with open(path_path, "w", encoding="utf-8") as handle:
+                    handle.write(os.environ.get("PATH", ""))
             counter_path = os.environ.get("FAKE_PI_COUNTER_FILE")
             invocation = 0
             if counter_path:
@@ -520,7 +524,7 @@ class CleanupManagerTests(unittest.TestCase):
 
 
 class CleanupJudgeTests(unittest.TestCase):
-    def _manager_with_batch(self, directory, mode, *, counter_path=None, model=None):
+    def _manager_with_batch(self, directory, mode, *, counter_path=None, model=None, extra_environ=None):
         fake_pi = write_fake_pi(directory)
         environ = {
             "HERDR_HARNESS_CLEANUP_RUNS_ROOT": directory,
@@ -530,6 +534,8 @@ class CleanupJudgeTests(unittest.TestCase):
         }
         if counter_path is not None:
             environ["FAKE_PI_COUNTER_FILE"] = str(counter_path)
+        if extra_environ is not None:
+            environ.update(extra_environ)
         service = HerdrService(FakeClient([snapshot()]), environ=environ)
         manager = service.cleanup
         run_id = "clr_0123456789ab"
@@ -552,6 +558,26 @@ class CleanupJudgeTests(unittest.TestCase):
             self.assertTrue(verdict["closeRecommended"])
             self.assertAlmostEqual(verdict["confidence"], 0.95)
             self.assertAlmostEqual(result["costUSD"], 0.00165)
+
+    def test_judge_child_path_prepends_pi_bin_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path_file = Path(directory) / "path.txt"
+            sentinel_path = os.pathsep.join(["/usr/bin", "/bin"])
+            manager, run_id, workspace, entries, _argv_path = self._manager_with_batch(
+                directory,
+                "valid",
+                extra_environ={
+                    "FAKE_PI_PATH_FILE": str(path_file),
+                    "PATH": sentinel_path,
+                },
+            )
+
+            manager._run_judge_batch(run_id, 1, workspace, entries)
+
+            captured_path = path_file.read_text().split(os.pathsep)
+            self.assertEqual(os.path.realpath(captured_path[0]), os.path.realpath(directory))
+            self.assertIn("/usr/bin", captured_path)
+            self.assertIn("/bin", captured_path)
 
     def test_judge_passes_model_only_when_explicitly_configured(self):
         with tempfile.TemporaryDirectory() as directory:
