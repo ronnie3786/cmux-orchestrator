@@ -22,6 +22,7 @@ from herdr_harness.cleanup import (
     resolve_pi_cost,
     session_slug,
 )
+from herdr_harness.pi_semantic import PI_SEMANTIC_PROTOCOL
 from herdr_harness.server import make_server
 from herdr_harness.service import HerdrService
 from herdr_harness.stars import StarStore
@@ -424,7 +425,23 @@ class CleanupManagerTests(unittest.TestCase):
     def test_collector_serializes_integer_age_signals(self):
         with tempfile.TemporaryDirectory() as directory:
             fake_pi = write_fake_pi(directory)
-            client = FakeClient([snapshot(status="working"), snapshot(status="done"), snapshot(status="done")])
+            pi_session = Path(directory) / "pi-session.jsonl"
+            pi_session.write_text(
+                json.dumps({
+                    "type": "message",
+                    "message": {"role": "assistant", "usage": {"totalTokens": 3, "cost": {"total": 0.01}}},
+                }) + "\n"
+            )
+            t = time.time()
+            fractional_mtime = t - 0.3591364490986
+            os.utime(pi_session, (fractional_mtime, fractional_mtime))
+
+            def pi_snapshot(status):
+                snap = snapshot(status=status)
+                snap["panes"][0]["agent"] = "pi"
+                return snap
+
+            client = FakeClient([pi_snapshot("working"), pi_snapshot("done"), pi_snapshot("done")])
             alerts = AlertStore(store_path=None)
             service = HerdrService(
                 client,
@@ -438,6 +455,16 @@ class CleanupManagerTests(unittest.TestCase):
             )
             service.refresh_snapshot()
             service.refresh_snapshot()
+            service.pi_semantic.journal.ingest(
+                "w1:p1",
+                {
+                    "protocol": PI_SEMANTIC_PROTOCOL,
+                    "pane_id": "w1:p1",
+                    "kind": "snapshot",
+                    "snapshot": {"session": {"file": str(pi_session)}, "entries": []},
+                },
+                namespace=service.pi_semantic.namespace,
+            )
 
             result = service.cleanup.start_run({"keepEvidence": True})
             run = wait_for_run(self, service.cleanup, result["runId"])

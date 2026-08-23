@@ -283,7 +283,7 @@ def resolve_pi_cost(snapshot: Optional[dict], pane: dict, environ: Mapping[str, 
         age = max(0.0, (time.time() if now is None else now) - candidate.stat().st_mtime)
     except (OSError, UnicodeError):
         return {'costUSD': None, 'costSource': None, 'totalTokens': None, 'sessionFileAgeSeconds': None}
-    return {'costUSD': cost, 'costSource': 'sessionFile', 'totalTokens': tokens if token_matched else None, 'sessionFileAgeSeconds': age}
+    return {'costUSD': cost, 'costSource': 'sessionFile', 'totalTokens': tokens if token_matched else None, 'sessionFileAgeSeconds': _age_int(age)}
 
 def _rail_pane(pane_signals: dict, config: dict, verdict: dict) -> list[str]:
     """Return the deterministic safety rails blocking a pane close."""
@@ -614,7 +614,6 @@ class CleanupManager:
                 'doneAlertAgeSeconds': ages['doneAlertAgeSeconds'],
                 'blockedAlertAgeSeconds': ages['blockedAlertAgeSeconds'],
                 'piStateAgeSeconds': _age_int(max(0, now - updated_at)) if updated_at is not None else None,
-                'sessionFileAgeSeconds': _age_int(cost['sessionFileAgeSeconds']),
                 'unreadAlerts': pane_unread_alerts,
                 'endsAtShellPrompt': bool(re.search('[$#%>]\\s*$', last_nonempty_line)),
                 'hasProcessExitedMarker': bool(re.search('(?i)process exited|command not found: $|\\[Process completed\\]', tail)),
