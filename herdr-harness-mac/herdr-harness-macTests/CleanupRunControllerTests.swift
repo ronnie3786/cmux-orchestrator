@@ -122,6 +122,107 @@ struct CleanupRunControllerTests {
         #expect(await starts.count() == 1)
     }
 
+    @Test("A partial run with a workspace payload remains a report")
+    func partialRunWithPayloadProducesReport() async throws {
+        let envelope = partialEnvelope(workspaces: [minimalWorkspaceReport])
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            pollInterval: .milliseconds(1),
+            start: { _ in CleanupStartRunResponse(ok: true, runID: "clr_partial", status: .collecting) },
+            fetch: { _ in envelope },
+            apply: { _, _, _ in CleanupApplyResponse(applied: CleanupAppliedItems(panes: [], workspaces: []), skipped: []) },
+            cancel: { _ in }
+        )
+
+        await controller.start()
+        guard try await waitForReport(from: controller) else {
+            Issue.record("Timed out waiting for a partial cleanup report")
+            return
+        }
+        guard case let .report(report) = controller.state else {
+            Issue.record("Expected a partial cleanup report")
+            return
+        }
+        #expect(report.run.status == .partial)
+        #expect(report.run.error == "pi_unavailable")
+        #expect(report.workspaces?.isEmpty == false)
+    }
+
+    @Test("A partial run without a workspace payload shows both server errors")
+    func partialRunWithoutPayloadProducesFailure() async throws {
+        let envelope = partialEnvelope(workspaces: nil)
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            pollInterval: .milliseconds(1),
+            start: { _ in CleanupStartRunResponse(ok: true, runID: "clr_partial", status: .collecting) },
+            fetch: { _ in envelope },
+            apply: { _, _, _ in CleanupApplyResponse(applied: CleanupAppliedItems(panes: [], workspaces: []), skipped: []) },
+            cancel: { _ in }
+        )
+
+        await controller.start()
+        guard try await waitForFailure(from: controller) else {
+            Issue.record("Timed out waiting for partial cleanup failure")
+            return
+        }
+        guard case let .failure(message) = controller.state else {
+            Issue.record("Expected a partial cleanup failure")
+            return
+        }
+        #expect(message.contains("pi_unavailable"))
+        #expect(message.contains("context_deadline_exceeded"))
+    }
+
+    private func partialEnvelope(workspaces: [CleanupWorkspaceReport]?) -> CleanupRunEnvelope {
+        CleanupRunEnvelope(
+            ok: true,
+            run: CleanupRun(
+                runID: "clr_partial",
+                status: .partial,
+                phase: .failed,
+                judge: CleanupJudgeSummary(
+                    batches: 1,
+                    failedBatches: 1,
+                    costUSD: 0,
+                    durationMs: 1,
+                    lastError: "context_deadline_exceeded"
+                ),
+                error: "pi_unavailable"
+            ),
+            workspaces: workspaces,
+            summary: nil
+        )
+    }
+
+    private var minimalWorkspaceReport: CleanupWorkspaceReport {
+        CleanupWorkspaceReport(
+            workspaceID: "workspace-1",
+            label: "Workspace",
+            workspaceCloseRecommended: false,
+            workspaceSafeToClose: false,
+            workspaceBlockedBy: [],
+            git: CleanupGitStatus(state: .clean),
+            panes: [
+                CleanupPaneReport(
+                    paneID: "workspace-1:pane-1",
+                    title: "Pane",
+                    agentKind: "pi",
+                    agentStatus: .idle,
+                    classification: .stale,
+                    confidence: 0.8,
+                    reason: "Deterministic signal",
+                    closeRecommended: false,
+                    safeToClose: false,
+                    blockedBy: [],
+                    costUSD: nil,
+                    costSource: nil,
+                    costOverThreshold: false,
+                    signals: nil
+                )
+            ]
+        )
+    }
+
     private func waitForReport(from controller: CleanupRunController) async throws -> Bool {
         if case .report = controller.state {
             return true

@@ -16,6 +16,7 @@ from herdr_harness.cleanup import (
     CleanupManager,
     _rail_pane,
     _rail_workspace,
+    _resolve_pi_bin,
     pi_sessions_root,
     resolve_pi_cost,
     session_slug,
@@ -177,6 +178,40 @@ def wait_for_run(test_case, manager, run_id, timeout=10):
 
 
 class CleanupPureTests(unittest.TestCase):
+    def test_resolve_pi_bin_prefers_env_override(self):
+        self.assertEqual(
+            _resolve_pi_bin({'HERDR_HARNESS_CLEANUP_PI_BIN': '/some/value'}),
+            '/some/value',
+        )
+
+    def test_resolve_pi_bin_uses_path_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pi = Path(directory) / 'pi'
+            pi.write_text('#!/bin/sh\n')
+            os.chmod(pi, 0o755)
+
+            resolved = _resolve_pi_bin({'PATH': directory})
+
+            self.assertEqual(os.path.realpath(resolved), os.path.realpath(pi))
+
+    def test_resolve_pi_bin_uses_candidate_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pi = root / 'candidate-pi'
+            pi.write_text('#!/bin/sh\n')
+            os.chmod(pi, 0o755)
+
+            resolved = _resolve_pi_bin(
+                {'PATH': str(root / 'empty')},
+                candidates=[root / 'missing-pi', pi],
+            )
+
+            self.assertEqual(resolved, str(pi))
+
+    def test_resolve_pi_bin_returns_none_when_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(_resolve_pi_bin({'PATH': directory}, candidates=[]))
+
     def test_session_cost_resolution_and_environment_precedence(self):
         self.assertEqual(
             session_slug("/Users/ronnierocha/projects/cmux-orchestrator"),
@@ -288,7 +323,7 @@ class CleanupManagerTests(unittest.TestCase):
             self.assertEqual(envelope["run"]["config"]["model"], "")
             self.assertEqual(envelope["run"]["progress"], {"done": 0, "total": 0})
             self.assertEqual(envelope["run"]["phaseHistory"], [])
-            self.assertEqual(envelope["run"]["judge"], {"batches": 0, "failedBatches": 0, "costUSD": 0.0, "durationMs": 0})
+            self.assertEqual(envelope["run"]["judge"], {"batches": 0, "failedBatches": 0, "costUSD": 0.0, "durationMs": 0, "lastError": None})
 
     def test_unavailable_judge_still_produces_partial_report_and_path_validation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -305,6 +340,9 @@ class CleanupManagerTests(unittest.TestCase):
             run = wait_for_run(self, service.cleanup, result["runId"])
             self.assertEqual(run["run"]["status"], "partial")
             self.assertEqual(run["run"]["error"], "pi_unavailable")
+            self.assertIsInstance(run["run"]["judge"]["lastError"], str)
+            self.assertTrue(run["run"]["judge"]["lastError"])
+            self.assertIn("spawn pi", run["run"]["judge"]["lastError"])
             evidence = Path(directory) / result["runId"] / "evidence" / "workspaces" / "w1" / "panes" / "w1%3Ap1" / "meta.json"
             self.assertTrue(evidence.is_file())
             with self.assertRaises(CleanupError) as context:
@@ -328,6 +366,7 @@ class CleanupManagerTests(unittest.TestCase):
             result = service.cleanup.start_run({"keepEvidence": True})
             run = wait_for_run(self, service.cleanup, result["runId"])
             self.assertEqual(run["run"]["status"], "done")
+            self.assertIsNone(run["run"]["judge"]["lastError"])
             root = Path(directory) / result["runId"] / "evidence" / "workspaces" / "w1" / "panes"
             pane_a = json.loads((root / "w1%3Ap1" / "meta.json").read_text())
             pane_b = json.loads((root / "w1%3Ap2" / "meta.json").read_text())

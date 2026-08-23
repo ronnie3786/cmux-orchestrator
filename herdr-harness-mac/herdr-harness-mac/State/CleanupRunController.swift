@@ -171,10 +171,12 @@ final class CleanupRunController {
             guard activeRunID == runID else { return }
             consecutivePollFailures = 0
             lastEnvelope = envelope
-            if envelope.run.status == .failed, envelope.workspaces == nil {
-                state = .failure(envelope.run.error ?? "Cleanup failed")
-            } else if envelope.run.status.isTerminal {
-                state = .report(envelope)
+            if envelope.run.status.isTerminal {
+                if envelope.workspaces != nil {
+                    state = .report(envelope)
+                } else {
+                    state = .failure(Self.failureMessage(for: envelope.run))
+                }
             } else {
                 state = .running(envelope)
             }
@@ -233,6 +235,14 @@ final class CleanupRunController {
             workspaces: nil,
             summary: nil
         )
+    }
+
+    private static func failureMessage(for run: CleanupRun) -> String {
+        var message = run.error ?? "Cleanup failed"
+        if let lastError = run.judge?.lastError, !lastError.isEmpty, lastError != message {
+            message += "\n\nJudge error: \(lastError)"
+        }
+        return message
     }
 
     static func demoRunningSnapshot(phase: CleanupPhase) -> CleanupRunEnvelope {
@@ -299,7 +309,7 @@ final class CleanupRunController {
                 finishedAt: finishedAt,
                 session: "default",
                 config: demoConfig,
-                judge: CleanupJudgeSummary(batches: 2, failedBatches: 0, costUSD: 0.031, durationMs: 83_210)
+                judge: CleanupJudgeSummary(batches: 2, failedBatches: 0, costUSD: 0.031, durationMs: 83_210, lastError: nil)
             ),
             workspaces: [demoWorkspaceOne, demoWorkspaceTwo],
             summary: CleanupSummary(

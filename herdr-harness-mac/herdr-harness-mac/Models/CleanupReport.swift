@@ -229,6 +229,7 @@ struct CleanupJudgeSummary: Codable, Sendable, Equatable {
     let failedBatches: Int
     let costUSD: Double
     let durationMs: Int
+    let lastError: String?
 }
 
 struct CleanupWorkspaceReport: Codable, Sendable, Equatable, Identifiable {

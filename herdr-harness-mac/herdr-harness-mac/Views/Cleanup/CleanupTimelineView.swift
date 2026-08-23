@@ -51,6 +51,7 @@ struct CleanupTimelineView: View {
                     Text(failureMessage)
                         .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.alert)
+                        .textSelection(.enabled)
                 }
             }
             .padding(.bottom, phase == .done ? 0 : 12)

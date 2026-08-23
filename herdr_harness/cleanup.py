@@ -28,6 +28,7 @@ _CLASSIFICATIONS = {'completed', 'stale', 'active', 'blocked', 'needs_human', 'u
 _REASON_MAXIMUM = 280
 _EVIDENCE_CITED_MAXIMUM = 8
 _EVIDENCE_CITED_ITEM_MAXIMUM = 120
+_LAST_ERROR_MAXIMUM = 300
 def _required_judge_output(workspace_id: str, pane_ids: list[str]) -> str:
     """Return the required judge schema for one workspace batch."""
     output = {
@@ -75,6 +76,26 @@ def pi_sessions_root(environ: Mapping[str, str]) -> Path:
     if environ.get('PI_CODING_AGENT_DIR'):
         return Path(str(environ['PI_CODING_AGENT_DIR'])).expanduser() / 'sessions'
     return Path('~/.pi/agent/sessions').expanduser()
+
+def _resolve_pi_bin(environ: Mapping[str, str], *, candidates: Optional[list[Path]] = None) -> Optional[str]:
+    """Resolve the Pi executable, preferring an explicit user override."""
+    override = environ.get('HERDR_HARNESS_CLEANUP_PI_BIN')
+    if override:
+        return override
+    resolved = shutil.which('pi', path=environ.get('PATH'))
+    if resolved:
+        return resolved
+    paths = candidates if candidates is not None else [
+        Path('~/.npm-global/bin/pi').expanduser(),
+        Path('/opt/homebrew/bin/pi').expanduser(),
+        Path('/usr/local/bin/pi').expanduser(),
+        Path('~/.local/bin/pi').expanduser(),
+    ]
+    for path in paths:
+        path = path.expanduser()
+        if path.exists() and os.access(path, os.X_OK):
+            return str(path)
+    return None
 
 def _number(value: Any) -> Optional[float]:
     """Return a numeric value as a float, excluding booleans."""
@@ -630,6 +651,7 @@ class CleanupManager:
         failed = 0
         cost = 0.0
         unavailable = False
+        last_error: Optional[str] = None
         for (number, (workspace, entries)) in enumerate(groups, 1):
             self._raise_if_cancelled(run_id)
             label = workspace.get('label') or workspace.get('workspace_id')
@@ -639,6 +661,8 @@ class CleanupManager:
             else:
                 result = self._run_judge_batch(run_id, number, workspace, entries)
                 unavailable = result.get('piUnavailable', False)
+            if isinstance(result.get('lastError'), str):
+                last_error = result['lastError']
             self._raise_if_cancelled(run_id)
             failed += bool(result['judgeFailed'])
             cost += result['costUSD']
@@ -667,7 +691,7 @@ class CleanupManager:
         status = 'partial' if failed else 'done'
         error = 'pi_unavailable' if unavailable else None
         finished = utc_now()
-        report = {'ok': True, 'run': {'runId': run_id, 'status': status, 'startedAt': run['startedAt'], 'finishedAt': finished, 'session': run['session'], 'config': run['config'], 'judge': {'batches': len(groups), 'failedBatches': failed, 'costUSD': cost, 'durationMs': int((time.monotonic() - start) * 1000)}}, 'workspaces': workspaces, 'summary': summary}
+        report = {'ok': True, 'run': {'runId': run_id, 'status': status, 'startedAt': run['startedAt'], 'finishedAt': finished, 'session': run['session'], 'config': run['config'], 'judge': {'batches': len(groups), 'failedBatches': failed, 'costUSD': cost, 'durationMs': int((time.monotonic() - start) * 1000), 'lastError': last_error}}, 'workspaces': workspaces, 'summary': summary}
         self._raise_if_cancelled(run_id)
         _atomic_json(self._run_dir(run_id) / 'report.json', report)
         self._finish_phase(run_id, f"{summary['closeCandidates']} candidates, {summary['railBlocked']} rail-blocked")
@@ -713,10 +737,29 @@ class CleanupManager:
         )
         attempts = 0
         total_cost = 0.0
+        pi_bin = _resolve_pi_bin(self.environ)
+
+        def failure(message: str, *, pi_unavailable: bool = False) -> dict:
+            last_error = _short_text(message, _LAST_ERROR_MAXIMUM)
+            print(f'[cleanup] run {run_id} batch {number} judge failed: {last_error}', file=sys.stderr, flush=True)
+            result = {
+                'judgeFailed': True,
+                'panes': {pane_id: _default_verdict() for pane_id in pane_id_list},
+                'costUSD': total_cost,
+                'lastError': last_error,
+            }
+            if pi_unavailable:
+                result['piUnavailable'] = True
+            return result
+
+        if pi_bin is None:
+            return failure(
+                'pi binary not found; searched PATH, ~/.npm-global/bin, /opt/homebrew/bin, /usr/local/bin, ~/.local/bin',
+                pi_unavailable=True,
+            )
         while attempts < 2:
             self._raise_if_cancelled(run_id)
             attempts += 1
-            pi_bin = self.environ.get('HERDR_HARNESS_CLEANUP_PI_BIN') or shutil.which('pi') or 'pi'
             cmd = [
                 pi_bin,
                 '-p',
@@ -750,13 +793,8 @@ class CleanupManager:
                     text=True,
                     bufsize=1,
                 )
-            except OSError:
-                return {
-                    'judgeFailed': True,
-                    'piUnavailable': True,
-                    'panes': {pane_id: _default_verdict() for pane_id in pane_ids},
-                    'costUSD': total_cost,
-                }
+            except OSError as exc:
+                return failure(f'failed to spawn pi ({pi_bin}): {exc}', pi_unavailable=True)
             with self._lock:
                 self._judge_process = process
             selector = selectors.DefaultSelector()
@@ -868,7 +906,9 @@ class CleanupManager:
                 f'\n\nYour previous output failed validation: {diagnosis}. Respond again with exactly one '
                 f'fenced ```json code block matching the schema below, and nothing else.\n\n{_required_judge_output(workspace_id, pane_id_list)}'
             )
-        return {'judgeFailed': True, 'panes': {pane_id: _default_verdict() for pane_id in pane_id_list}, 'costUSD': total_cost}
+        if timed_out:
+            return failure(f'batch timed out after {judge_timeout}s')
+        return failure(f'judge output failed validation: {diagnosis}')
 
     def _run_object(self, run: dict, report: Optional[dict]=None) -> dict:
         config_source = run.get('config') if isinstance(run.get('config'), dict) else {}
@@ -914,6 +954,7 @@ class CleanupManager:
                 'failedBatches': judge_source.get('failedBatches') if isinstance(judge_source.get('failedBatches'), int) and not isinstance(judge_source.get('failedBatches'), bool) else 0,
                 'costUSD': _number(judge_source.get('costUSD')) or 0.0,
                 'durationMs': judge_source.get('durationMs') if isinstance(judge_source.get('durationMs'), int) and not isinstance(judge_source.get('durationMs'), bool) else 0,
+                'lastError': judge_source.get('lastError') if isinstance(judge_source.get('lastError'), str) else None,
             }
         return value
 

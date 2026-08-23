@@ -11,6 +11,9 @@ struct CleanupReportView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if envelope.run.status == .partial {
+                        partialRunWarning
+                    }
                     if let summary = envelope.summary, !summary.costFlags.isEmpty {
                         costFlags(summary)
                     }
@@ -34,6 +37,34 @@ struct CleanupReportView: View {
         } message: {
             Text("Herdr will re-check its safety rails before closing anything.")
         }
+    }
+
+    private var partialRunWarning: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("AI judge unavailable — showing deterministic signals only", systemImage: "exclamationmark.triangle.fill")
+                .herdrFont(.headline, weight: .bold)
+                .foregroundStyle(HerdrTheme.alert)
+            if let error = envelope.run.error, !error.isEmpty {
+                Text(error)
+                    .herdrFont(.subheadline)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .textSelection(.enabled)
+            }
+            if let lastError = envelope.run.judge?.lastError, !lastError.isEmpty {
+                Text(lastError)
+                    .herdrFont(.subheadline)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .textSelection(.enabled)
+            }
+            Button("Retry", systemImage: "arrow.clockwise") {
+                Task { await controller.retry() }
+            }
+            .accessibilityIdentifier("cleanup-report-retry")
+        }
+        .padding(14)
+        .background(HerdrTheme.alert.opacity(0.12))
+        .clipShape(.rect(cornerRadius: 12))
+        .accessibilityIdentifier("cleanup-partial-banner")
     }
 
     private func costFlags(_ summary: CleanupSummary) -> some View {

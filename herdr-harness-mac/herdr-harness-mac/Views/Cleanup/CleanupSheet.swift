@@ -13,7 +13,6 @@ struct CleanupSheet: View {
     @Bindable var controller: CleanupRunController
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openSettings) private var openSettings
-    @State private var isShowingExplainer = false
 
     var body: some View {
         content
@@ -24,16 +23,6 @@ struct CleanupSheet: View {
                     Button("Done") { dismiss() }
                         .accessibilityIdentifier("cleanup-done")
                 }
-                ToolbarItem(placement: .automatic) {
-                    Button("How this works", systemImage: "info.circle") { isShowingExplainer = true }
-                        .accessibilityIdentifier("cleanup-info")
-                }
-            }
-            .sheet(isPresented: $isShowingExplainer) {
-                CleanupExplainerView()
-                    .frame(minWidth: 520)
-                    .padding()
-                    .background(HerdrTheme.ink)
             }
     }
 
@@ -63,13 +52,11 @@ struct CleanupSheet: View {
     private var idleContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Smart Cleanup")
-                    .herdrFont(.title2, weight: .bold)
+                titleRow
                 Text("Review \(scopeDescription) on \(target.machineName) before anything is closed.")
                     .herdrFont(.body)
                     .foregroundStyle(HerdrTheme.mist)
                 configChips
-                CleanupExplainerView()
                 trustCaption
                 Button("Run Smart Cleanup", systemImage: "sparkles") {
                     Task { await controller.start() }
@@ -110,8 +97,7 @@ struct CleanupSheet: View {
 
     private func runningContent(_ run: CleanupRun, failureMessage: String?) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Smart Cleanup")
-                .herdrFont(.title2, weight: .bold)
+            titleRow
             Text("Reviewing \(scopeDescription) on \(target.machineName)")
                 .herdrFont(.body)
                 .foregroundStyle(HerdrTheme.mist)
@@ -137,6 +123,20 @@ struct CleanupSheet: View {
             Spacer()
         }
         .padding(24)
+    }
+
+    private var titleRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("Smart Cleanup")
+                .herdrFont(.title2, weight: .bold)
+            Text(CleanupFeature.version)
+                .herdrFont(.caption2, weight: .semibold)
+                .foregroundStyle(HerdrTheme.muted)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(HerdrTheme.elevated)
+                .clipShape(.capsule)
+        }
     }
 
     private func appliedContent(_ response: CleanupApplyResponse) -> some View {

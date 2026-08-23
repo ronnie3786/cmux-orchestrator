@@ -236,7 +236,12 @@ struct SettingsView: View {
         } header: {
             Text("Smart Cleanup")
         } footer: {
-            Text("Sessions at or above this reported cost are flagged in cleanup reports. Pane content is sent to whichever judge model you pick, a cloud model uploads pane text to that provider, while the local custom-lux-dspark model keeps it on this machine's tailnet.")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Sessions at or above this reported cost are flagged in cleanup reports. Pane content is sent to whichever judge model you pick, a cloud model uploads pane text to that provider, while the local custom-lux-dspark model keeps it on this machine's tailnet.")
+                Text("Smart Cleanup \(CleanupFeature.version)")
+                    .herdrFont(.caption2)
+                    .foregroundStyle(HerdrTheme.muted)
+            }
         }
     }
 
