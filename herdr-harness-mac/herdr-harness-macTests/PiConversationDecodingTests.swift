@@ -85,6 +85,7 @@ struct PiConversationDecodingTests {
                   "entries":[{"type":"future_entry","id":"e1","payload":{"x":1}}],
                   "pending_interactions":[],
                   "cursor":17,
+                  "latest_cursor":18,
                   "oldest_cursor":"3",
                   "truncated":true
                 }
@@ -94,6 +95,7 @@ struct PiConversationDecodingTests {
 
         #expect(snapshot.paneID == "w1:p1")
         #expect(snapshot.cursor == "17")
+        #expect(snapshot.latestCursor == "18")
         #expect(snapshot.oldestCursor == "3")
         #expect(snapshot.truncated)
         #expect(snapshot.entries.first?["payload"]?["x"]?.stringValue == "1")

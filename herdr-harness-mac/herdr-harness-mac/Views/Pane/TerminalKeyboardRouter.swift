@@ -21,24 +21,25 @@ final class TerminalKeyboardRouter {
     private static let coalesceWindow = Duration.milliseconds(30)
 
     private var pendingText = ""
-    private var pendingPaneID: String?
+    private var pendingPane: HerdrPane?
     private var coalesceTask: Task<Void, Never>?
     private var lastSend: Task<Void, Never>?
-    private var client: HerdrAPIClient?
-    private var clientGeneration: Int?
+    private var sendEpoch = 0
+    private var queuedSendCount = 0
+    private var didReportDroppedInput = false
 
     /// Classifies one keystroke and puts it on the wire.
     ///
     /// Returns `.ignored` for anything the terminal has no business eating, so
     /// SwiftUI can route it onwards (menus, the composer, system shortcuts).
     func handle(_ press: KeyPress, model: HerdrAppModel, pane: HerdrPane) -> KeyPress.Result {
-        guard model.canControl else { return .ignored }
+        guard model.canControl(machineID: pane.machineID) else { return .ignored }
 
         switch TerminalKeyboardMapping.outcome(for: press) {
         case .ignored:
             return .ignored
         case let .text(text):
-            append(text, paneID: pane.id, model: model)
+            append(text, pane: pane, model: model)
             return .handled
         case let .keys(keys):
             send(keys: keys, to: pane, model: model)
@@ -51,13 +52,20 @@ final class TerminalKeyboardRouter {
     func flush(model: HerdrAppModel) {
         coalesceTask?.cancel()
         coalesceTask = nil
-        guard !pendingText.isEmpty, let paneID = pendingPaneID else { return }
+        guard !pendingText.isEmpty, let pane = pendingPane else { return }
 
         let text = pendingText
         pendingText = ""
-        pendingPaneID = nil
-        enqueue { [weak self] in
-            await self?.sendText(text, toPaneID: paneID, model: model)
+        pendingPane = nil
+        enqueueText(text, to: pane, model: model)
+    }
+
+    /// Places an already-coalesced text payload on the serial terminal wire.
+    /// Keeping this separate from `flush` makes every text route use the same
+    /// pane-aware model handoff.
+    func enqueueText(_ text: String, to pane: HerdrPane, model: HerdrAppModel) {
+        enqueue(model: model) {
+            await model.sendText(text, to: pane)
         }
     }
 
@@ -68,16 +76,16 @@ final class TerminalKeyboardRouter {
         coalesceTask?.cancel()
         coalesceTask = nil
         pendingText = ""
-        pendingPaneID = nil
+        pendingPane = nil
     }
 
     // MARK: - Buffering
 
-    private func append(_ text: String, paneID: String, model: HerdrAppModel) {
-        if pendingPaneID != paneID {
+    private func append(_ text: String, pane: HerdrPane, model: HerdrAppModel) {
+        if pendingPane?.id != pane.id {
             flush(model: model)
         }
-        pendingPaneID = paneID
+        pendingPane = pane
         pendingText += text
 
         guard coalesceTask == nil else { return }
@@ -92,57 +100,46 @@ final class TerminalKeyboardRouter {
     private func send(keys: [String], to pane: HerdrPane, model: HerdrAppModel) {
         // Anything already typed belongs in front of the key that follows it.
         flush(model: model)
-        enqueue { await model.sendKeys(keys, to: pane) }
+        enqueue(model: model) { await model.sendKeys(keys, to: pane) }
     }
 
     /// Serialises sends. tmux applies input in arrival order, so requests must
     /// not be allowed to overlap.
-    private func enqueue(_ operation: @escaping @Sendable @MainActor () async -> Void) {
+    func enqueue(
+        model: HerdrAppModel,
+        _ operation: @escaping @Sendable @MainActor () async -> Bool
+    ) {
+        guard queuedSendCount < 8 else {
+            if !didReportDroppedInput {
+                didReportDroppedInput = true
+                model.toastMessage = "Input backlog, dropped pending input"
+            }
+            return
+        }
+        queuedSendCount += 1
+        let epoch = sendEpoch
         let previous = lastSend
-        lastSend = Task { @MainActor in
+        lastSend = Task { @MainActor [weak self] in
             if let previous {
                 _ = await previous.value
             }
-            await operation()
+            guard let self else { return }
+            defer {
+                self.queuedSendCount -= 1
+                if self.queuedSendCount == 0 { self.didReportDroppedInput = false }
+            }
+            guard epoch == self.sendEpoch, !Task.isCancelled else { return }
+            guard await operation() else {
+                self.dropRemainingSends()
+                return
+            }
         }
     }
 
-    // MARK: - Transport
-
-    private func sendText(_ text: String, toPaneID paneID: String, model: HerdrAppModel) async {
-        guard !model.isDemoMode,
-              model.canControl,
-              model.pane(id: paneID) != nil,
-              let client = apiClient(for: model)
-        else { return }
-
-        do {
-            try await client.sendText(toPane: paneID, text: text, submit: false)
-        } catch {
-            model.errorMessage = error.localizedDescription
-        }
-    }
-
-    /// `HerdrAppModel` keeps its client private, so the router builds its own
-    /// from the same active configuration and rebuilds it whenever the app
-    /// reconnects. `activeServerConfiguration` is already nil in demo mode and
-    /// whenever the connection generation has moved on, so this cannot outlive
-    /// a connection.
-    private func apiClient(for model: HerdrAppModel) -> HerdrAPIClient? {
-        guard let configuration = model.activeServerConfiguration else {
-            client = nil
-            clientGeneration = nil
-            return nil
-        }
-
-        if let client, clientGeneration == model.connectionGeneration {
-            return client
-        }
-
-        let created = HerdrAPIClient(configuration: configuration)
-        client = created
-        clientGeneration = model.connectionGeneration
-        return created
+    private func dropRemainingSends() {
+        // Keep the task chain intact so stale work drains in order and a new
+        // send never overlaps work that was already queued.
+        sendEpoch &+= 1
     }
 }
 

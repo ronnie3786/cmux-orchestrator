@@ -16,6 +16,7 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        HerdrPerfDiagnostics.start()
         VoiceRecordingPolicy.removeStaleTemporaryRecordings()
         UNUserNotificationCenter.current().delegate = self
     }

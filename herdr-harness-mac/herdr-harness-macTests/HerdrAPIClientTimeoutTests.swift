@@ -18,4 +18,10 @@ struct HerdrAPIClientTimeoutTests {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/events", method: "GET") == 24 * 60 * 60)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces", method: "GET") == 15)
     }
+
+    @Test func terminalMutationsFailFast() {
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-text", method: "POST") == 5)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-keys", method: "POST") == 5)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/run", method: "POST") == 5)
+    }
 }

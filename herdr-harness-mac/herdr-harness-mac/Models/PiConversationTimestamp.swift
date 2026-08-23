@@ -1,6 +1,20 @@
 import Foundation
 
 enum PiConversationTimestamp {
+    // ISO8601DateFormatter is documented as thread-safe. These immutable
+    // formatters avoid allocating one for every streamed or snapshot entry.
+    // TODO: Revisit if Foundation changes that thread-safety guarantee.
+    nonisolated(unsafe) private static let withFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    nonisolated(unsafe) private static let withoutFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
     static func date(from value: PiJSONValue?) -> Date? {
         guard let value else { return nil }
         switch value {
@@ -12,11 +26,8 @@ enum PiConversationTimestamp {
             if let number = Double(string) {
                 return Date(timeIntervalSince1970: number > 10_000_000_000 ? number / 1_000 : number)
             }
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = formatter.date(from: string) { return date }
-            formatter.formatOptions = [.withInternetDateTime]
-            return formatter.date(from: string)
+            if let date = withFractional.date(from: string) { return date }
+            return withoutFractional.date(from: string)
         case .bool, .object, .array, .null:
             return nil
         }

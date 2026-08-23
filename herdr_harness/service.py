@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import hashlib
+import json
 import os
 import threading
 import time
@@ -26,6 +28,22 @@ from .terminal import TerminalObserver, TerminalObserverError
 
 
 _ToolResult = TypeVar("_ToolResult")
+
+SNAPSHOT_DEBOUNCE_SECONDS = 0.25
+SNAPSHOT_MAX_DELAY_SECONDS = 1.0
+GLOBAL_PI_EVENT_TYPES = frozenset(
+    {
+        "bridge.connection",
+        "session_start",
+        "session_shutdown",
+        "session_info_changed",
+        "session_tree",
+        "session_compact",
+        "stream.reset",
+        "agent_settled",
+    }
+)
+_VOLATILE_SNAPSHOT_KEYS = frozenset({"generated_at", "generatedAt", "updated_at", "updatedAt"})
 
 
 def _find_pane_id(value: Any) -> Optional[str]:
@@ -95,6 +113,7 @@ class HerdrService:
         self._lock = threading.RLock()
         self._quick_session_lock = threading.Lock()
         self._snapshot: Optional[dict] = None
+        self._snapshot_fingerprint: Optional[str] = None
         self._generated_at: Optional[str] = None
         self._last_error: Optional[str] = None
         self._request_connected = False
@@ -105,10 +124,17 @@ class HerdrService:
         self._restart_subscription = threading.Event()
         self._event_thread: Optional[threading.Thread] = None
         self._refresh_thread: Optional[threading.Thread] = None
+        self._snapshot_debounce_seconds = _bounded_environment_int(
+            self.environ,
+            "HERDR_HARNESS_SNAPSHOT_DEBOUNCE_MS",
+            int(SNAPSHOT_DEBOUNCE_SECONDS * 1000),
+            minimum=0,
+            maximum=2000,
+        ) / 1000.0
         self._terminal_limit = _bounded_environment_int(
             self.environ,
             "HERDR_HARNESS_TERMINAL_MAX_STREAMS",
-            8,
+            16,
             minimum=1,
             maximum=64,
         )
@@ -177,7 +203,7 @@ class HerdrService:
                 return
             self._started = True
         try:
-            self.refresh_snapshot()
+            self.refresh_snapshot(force=True)
         except HerdrClientError:
             pass
         self.pi_semantic.start()
@@ -214,9 +240,18 @@ class HerdrService:
     def _publish_pi_event(self, envelope: dict) -> None:
         event = envelope.get("event") if isinstance(envelope, dict) else None
         event_type = str(event.get("type") or "event") if isinstance(event, dict) else "event"
-        self.broker.publish(f"pi.{event_type}", envelope)
+        if event_type in GLOBAL_PI_EVENT_TYPES:
+            self.broker.publish(f"pi.{event_type}", envelope)
 
-    def refresh_snapshot(self) -> dict:
+    @staticmethod
+    def _snapshot_fingerprint_for(snapshot: dict) -> str:
+        """Fingerprint stable native state while ignoring transport timestamps."""
+
+        stable = {key: value for key, value in snapshot.items() if key not in _VOLATILE_SNAPSHOT_KEYS}
+        encoded = json.dumps(stable, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        return hashlib.sha1(encoded).hexdigest()
+
+    def refresh_snapshot(self, *, force: bool = False) -> dict:
         try:
             snapshot = self.client.snapshot()
         except HerdrClientError as exc:
@@ -228,8 +263,11 @@ class HerdrService:
         if not isinstance(snapshot, dict):
             raise HerdrClientError("Herdr returned an invalid snapshot", code="invalid_herdr_response")
         generated_at = utc_now()
+        fingerprint = self._snapshot_fingerprint_for(snapshot)
         with self._lock:
             had_snapshot = self._snapshot is not None
+            connection_recovered = not self._request_connected
+            changed = force or not had_snapshot or fingerprint != self._snapshot_fingerprint
             previous_pane_ids = {
                 str(item.get("pane_id"))
                 for item in (self._snapshot or {}).get("panes", [])
@@ -241,6 +279,7 @@ class HerdrService:
                 if isinstance(item, dict) and item.get("pane_id")
             }
             self._snapshot = copy.deepcopy(snapshot)
+            self._snapshot_fingerprint = fingerprint
             self._generated_at = generated_at
             self._request_connected = True
             if self._events_connected:
@@ -260,22 +299,24 @@ class HerdrService:
                 "stars.changed",
                 {"paneId": None, "starred": False, "starredPaneIds": self.stars.list()},
             )
-        self.broker.publish(
-            "snapshot.updated",
-            {
-                "generatedAt": generated_at,
-                "initial": not had_snapshot,
-                "focusedWorkspaceId": snapshot.get("focused_workspace_id"),
-                "focusedTabId": snapshot.get("focused_tab_id"),
-                "focusedPaneId": snapshot.get("focused_pane_id"),
-                "paneRevisions": {
-                    str(item.get("pane_id")): item.get("revision")
-                    for item in snapshot.get("panes", [])
-                    if isinstance(item, dict) and item.get("pane_id")
+        if changed:
+            self.broker.publish(
+                "snapshot.updated",
+                {
+                    "generatedAt": generated_at,
+                    "initial": not had_snapshot,
+                    "focusedWorkspaceId": snapshot.get("focused_workspace_id"),
+                    "focusedTabId": snapshot.get("focused_tab_id"),
+                    "focusedPaneId": snapshot.get("focused_pane_id"),
+                    "paneRevisions": {
+                        str(item.get("pane_id")): item.get("revision")
+                        for item in snapshot.get("panes", [])
+                        if isinstance(item, dict) and item.get("pane_id")
+                    },
                 },
-            },
-        )
-        self._publish_herd_pulse()
+            )
+        if changed or connection_recovered:
+            self._publish_herd_pulse()
         return copy.deepcopy(snapshot)
 
     def _refresh_loop(self) -> None:
@@ -286,7 +327,16 @@ class HerdrService:
             if not self._refresh_event.is_set():
                 continue
             self._refresh_event.clear()
-            if self._stop_event.wait(0.05):
+            first_set_at = time.monotonic()
+            while not self._stop_event.is_set():
+                remaining = SNAPSHOT_MAX_DELAY_SECONDS - (time.monotonic() - first_set_at)
+                if remaining <= 0:
+                    break
+                if self._refresh_event.wait(min(self._snapshot_debounce_seconds, remaining)):
+                    self._refresh_event.clear()
+                    continue
+                break
+            if self._stop_event.is_set():
                 return
             try:
                 self.refresh_snapshot()
@@ -386,22 +436,28 @@ class HerdrService:
         return self.pi_semantic.command(pane_id, command, payload)
 
     def workspace_response(self, workspace_id: str) -> Optional[dict]:
-        response = self.workspaces_response()
-        workspace = next(
-            (item for item in response["workspaces"] if item.get("workspace_id") == workspace_id),
+        snapshot, generated_at = self._cached_snapshot()
+        workspace_record = next(
+            (
+                item for item in snapshot.get("workspaces", [])
+                if isinstance(item, dict) and item.get("workspace_id") == workspace_id
+            ),
             None,
         )
-        if workspace is None:
+        if workspace_record is None:
             return None
+        filtered_snapshot = {**snapshot, "workspaces": [workspace_record]}
+        workspace = composite_workspaces(filtered_snapshot)[0]
+        workspace = self.pi_semantic.enrich_workspaces(snapshot, [workspace])[0]
         return {
             "ok": True,
             "workspace": workspace,
             "alerts": [
                 item
-                for item in response["alerts"]
+                for item in self.alerts.list(limit=100)
                 if item.get("workspaceId") == workspace_id
             ],
-            "generatedAt": response["generatedAt"],
+            "generatedAt": generated_at,
         }
 
     def _workspace_tool_context(self, workspace_id: str) -> tuple[dict, Path]:

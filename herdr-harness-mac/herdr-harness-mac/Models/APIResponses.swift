@@ -165,9 +165,33 @@ struct PushStatusResponse: Decodable, Sendable {
     let apns: APNsStatus
 }
 
-struct HerdrEvent: Decodable, Sendable {
+struct HerdrEvent: Decodable, Equatable, Sendable {
+    let id: Int?
     let event: String
     let data: JSONValue?
+
+    init(id: Int? = nil, event: String, data: JSONValue?) {
+        self.id = id
+        self.event = event
+        self.data = data
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, event, data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let numericID = try container.decodeIfPresent(Int.self, forKey: .id) {
+            id = numericID
+        } else if let stringID = try container.decodeIfPresent(String.self, forKey: .id) {
+            id = Int(stringID)
+        } else {
+            id = nil
+        }
+        event = try container.decodeIfPresent(String.self, forKey: .event) ?? "message"
+        data = try container.decodeIfPresent(JSONValue.self, forKey: .data)
+    }
 }
 
 struct TerminalFrame: Decodable, Equatable, Sendable {
@@ -214,7 +238,7 @@ enum TerminalStreamEvent: Equatable, Sendable {
     case frame(TerminalFrame)
 }
 
-enum JSONValue: Decodable, Sendable {
+enum JSONValue: Decodable, Equatable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)

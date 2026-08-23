@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import os
 
 enum HerdrTheme {
     // Catppuccin Mocha, Herdr's default terminal palette.
@@ -28,6 +29,15 @@ enum HerdrTheme {
 }
 
 extension HerdrTheme {
+    private struct ScaledFontKey: Hashable, Sendable {
+        let style: Font.TextStyle
+        let scale: Double
+        let monospaced: Bool
+        let weight: Font.Weight?
+    }
+
+    private static let scaledFontCache = OSAllocatedUnfairLock<[ScaledFontKey: Font]>(initialState: [:])
+
     /// Fallback font scaling: Apple documents `dynamicTypeSize` as having no
     /// effect on text size on macOS. Read AppKit's preferred point size and
     /// rebuild a concrete SwiftUI font scaled by the user's chosen value.
@@ -37,12 +47,18 @@ extension HerdrTheme {
         monospaced: Bool = false,
         weight: Font.Weight? = nil
     ) -> Font {
+        let key = ScaledFontKey(style: style, scale: scale.rawValue, monospaced: monospaced, weight: weight)
+        if let cached = scaledFontCache.withLock({ $0[key] }) {
+            return cached
+        }
         let base = NSFont.preferredFont(forTextStyle: style.appKitTextStyle)
-        return .system(
+        let font: Font = .system(
             size: base.pointSize * scale.rawValue,
             weight: weight ?? base.herdrFontWeight,
             design: monospaced ? .monospaced : .default
         )
+        scaledFontCache.withLock { $0[key] = font }
+        return font
     }
 }
 

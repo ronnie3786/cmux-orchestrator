@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+import os
+
+private let terminalGridLog = OSLog(subsystem: "dev.ronnierocha.herdr-harness", category: "terminal")
 
 struct TerminalGrid: Sendable {
     private struct Cell: Equatable, Sendable {
@@ -55,9 +58,15 @@ struct TerminalGrid: Sendable {
     }
 
     func attributedText(scale: HerdrFontScale = .default) -> AttributedString {
+        os_signpost(.begin, log: terminalGridLog, name: "grid.render")
+        defer { os_signpost(.end, log: terminalGridLog, name: "grid.render") }
         let visible = visibleRows(includeCursor: true)
         guard !visible.isEmpty else { return AttributedString("") }
 
+        let baseFont = HerdrTheme.scaled(.footnote, scale: scale, monospaced: true)
+        let boldFont = baseFont.bold()
+        let italicFont = baseFont.italic()
+        let boldItalicFont = baseFont.bold().italic()
         var result = AttributedString()
         for rowIndex in visible.indices {
             let row = visible[rowIndex]
@@ -72,10 +81,12 @@ struct TerminalGrid: Sendable {
                 if let background = colors.background {
                     value.backgroundColor = background
                 }
-                var font = HerdrTheme.scaled(.footnote, scale: scale, monospaced: true)
-                if runStyle.bold { font = font.bold() }
-                if runStyle.italic { font = font.italic() }
-                value.font = font
+                switch (runStyle.bold, runStyle.italic) {
+                case (true, true): value.font = boldItalicFont
+                case (true, false): value.font = boldFont
+                case (false, true): value.font = italicFont
+                case (false, false): value.font = baseFont
+                }
                 if runStyle.underline { value.underlineStyle = .single }
                 result.append(value)
             }
@@ -101,6 +112,8 @@ struct TerminalGrid: Sendable {
     }
 
     mutating func apply(_ frame: TerminalFrame) -> Bool {
+        os_signpost(.begin, log: terminalGridLog, name: "grid.apply")
+        defer { os_signpost(.end, log: terminalGridLog, name: "grid.apply") }
         guard frame.type == "terminal.frame",
               frame.width > 0,
               frame.height > 0,

@@ -1023,7 +1023,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             )
 
         def _serve_events(self, query: dict[str, list[str]]) -> None:
-            raw_id = self.headers.get("Last-Event-ID") or (query.get("after") or ["0"])[0]
+            header_id = self.headers.get("Last-Event-ID")
+            has_cursor = header_id is not None or "after" in query
+            raw_id = header_id if header_id is not None else (query.get("after") or ["0"])[0]
             try:
                 last_id = max(0, int(raw_id))
             except (TypeError, ValueError) as exc:
@@ -1038,7 +1040,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             latest_id = service.broker.latest_id
             oldest_id = service.broker.oldest_id
             reset_reason = None
-            if last_id > latest_id:
+            if not has_cursor:
+                # A fresh client needs one compact refresh trigger, not every
+                # historical event which can each cause a full workspace fetch.
+                last_id = latest_id
+            elif last_id > latest_id:
                 reset_reason = "backend_restarted"
                 last_id = 0
             elif last_id and last_id < oldest_id - 1:
@@ -1049,6 +1055,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 "generatedAt": utc_now(),
                 "lastEventId": latest_id,
                 "oldestEventId": oldest_id,
+                "resumeFrom": last_id,
             }
             self.wfile.write(b"retry: 1000\n")
             self.wfile.write(f"event: ready\ndata: {json.dumps(ready, separators=(',', ':'))}\n\n".encode("utf-8"))
@@ -1062,8 +1069,32 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self.wfile.write(
                     f"event: stream.reset\ndata: {json.dumps(reset, separators=(',', ':'))}\n\n".encode("utf-8")
                 )
+            if not has_cursor:
+                synthetic = {
+                    "generatedAt": utc_now(),
+                    "initial": True,
+                    "synthetic": True,
+                    "paneRevisions": {},
+                }
+                self.wfile.write(
+                    f"event: snapshot.updated\ndata: {json.dumps(synthetic, separators=(',', ':'))}\n\n".encode("utf-8")
+                )
             self.wfile.flush()
+
+            def write_events(events: list[dict]) -> int:
+                cursor = last_id
+                for item in events:
+                    event_name = _EVENT_NAME_RE.sub("_", str(item.get("event") or "message"))
+                    payload = json.dumps(item, separators=(",", ":"), ensure_ascii=False)
+                    self.wfile.write(
+                        f"id: {item['id']}\nevent: {event_name}\ndata: {payload}\n\n".encode("utf-8")
+                    )
+                    self.wfile.flush()
+                    cursor = max(cursor, int(item["id"]))
+                return cursor
+
             if once:
+                last_id = write_events(service.broker.after(last_id))
                 self.close_connection = True
                 return
             while True:
@@ -1072,14 +1103,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     self.wfile.write(f": heartbeat {utc_now()}\n\n".encode("utf-8"))
                     self.wfile.flush()
                     continue
-                for item in events:
-                    event_name = _EVENT_NAME_RE.sub("_", str(item.get("event") or "message"))
-                    payload = json.dumps(item, separators=(",", ":"), ensure_ascii=False)
-                    self.wfile.write(
-                        f"id: {item['id']}\nevent: {event_name}\ndata: {payload}\n\n".encode("utf-8")
-                    )
-                    self.wfile.flush()
-                    last_id = max(last_id, int(item["id"]))
+                last_id = write_events(events)
 
         def _serve_terminal_stream(self, pane_id: str, *, cols: int, rows: int) -> None:
             observer = service.terminal_observer(pane_id, cols=cols, rows=rows)

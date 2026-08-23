@@ -90,7 +90,7 @@ Configuration:
 - `HERDR_HARNESS_ALERT_STORE_PATH`: persisted alert journal. The launcher
   defaults to `~/.config/herdr-harness/alerts.json` with mode `0600`.
 - `HERDR_HARNESS_TERMINAL_MAX_STREAMS`: concurrent terminal observer limit,
-  default `8`.
+  default `16`.
 - `HERDR_HARNESS_TERMINAL_MAX_SECONDS`: renewal lifetime for each observer,
   default `3600`.
 
@@ -211,6 +211,16 @@ Prefix every path above with `/api/v1`. Input lengths, ratios, key names,
 statuses, paths, and timeouts are bounded in `server.py`; invalid input returns
 an error envelope with HTTP 4xx. `GET /api/v1` returns a machine-readable route
 index. SSE sends `stream.reset` when replay continuity cannot be guaranteed.
+
+### Event stream resume
+
+`GET /api/v1/events` without `Last-Event-ID` or an `after` query starts at the
+current broker cursor instead of replaying its retained ring. After `ready`, it
+sends one synthetic `snapshot.updated` record so a newly connected client
+refreshes once. The `ready` payload includes `resumeFrom`, which is the cursor
+to retain for a later reconnect. Supplying `after=N` or `Last-Event-ID: N`
+preserves normal replay behavior, including `after=0` replaying the retained
+history.
 
 ## Demo topology
 

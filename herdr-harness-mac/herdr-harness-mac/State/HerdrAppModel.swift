@@ -11,6 +11,11 @@ final class HerdrAppModel {
         var lastUpdated: Date?
         var lastError: String?
         var firstFailureAt: Date?
+        var lastRefreshCompletedAt: ContinuousClock.Instant?
+        var pendingRefresh = false
+        var deferredRefreshTask: Task<Void, Never>?
+        var lastEventID: Int?
+        var didSweepDelivered = false
     }
 
     var workspaces: [HerdrWorkspace] = []
@@ -34,7 +39,11 @@ final class HerdrAppModel {
     var lastUpdated: Date?
     var isRefreshing = false
     var isSending = false
-    var connectionGeneration = 0
+    var connectionGeneration = 0 {
+        didSet {
+            if connectionGeneration != oldValue { cancelDeferredRefreshes() }
+        }
+    }
     private(set) var activeServerConnection: ActiveServerConnection?
     var machineStates: [String: ConnectionState] = [:]
     var machines: [HerdrMachine]
@@ -55,7 +64,14 @@ final class HerdrAppModel {
     @ObservationIgnored private var pendingPaneID: String?
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
+    @ObservationIgnored private var lastBadgeCount: Int?
+    /// Internal test seam for deterministic URLProtocol-backed clients.
+    @ObservationIgnored var clientFactory: (ServerConfiguration) -> HerdrAPIClient = {
+        HerdrAPIClient(configuration: $0)
+    }
+    @ObservationIgnored var fleetRefreshRetryBase: Duration = .seconds(2)
     private static let connectionFailureGrace: TimeInterval = 10
+    private static let fleetRefreshWindow = Duration.milliseconds(200)
 
     init(
         arguments: [String] = ProcessInfo.processInfo.arguments,
@@ -116,7 +132,7 @@ final class HerdrAppModel {
                 guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { continue }
                 let connection = ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
                 runtimes[machine.id] = MachineRuntime(
-                    client: HerdrAPIClient(configuration: configuration),
+                    client: clientFactory(configuration),
                     connection: connection
                 )
                 machineStates[machine.id] = .disconnected
@@ -223,7 +239,7 @@ final class HerdrAppModel {
         resetConnectionState()
         connectionGeneration += 1
         runtimes[machine.id] = MachineRuntime(
-            client: HerdrAPIClient(configuration: configuration),
+            client: clientFactory(configuration),
             connection: ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
         )
         machineStates[machine.id] = .disconnected
@@ -769,17 +785,37 @@ final class HerdrAppModel {
         }
     }
 
-    func sendKeys(_ keys: [String], to pane: HerdrPane) async {
+    @discardableResult
+    func sendKeys(_ keys: [String], to pane: HerdrPane) async -> Bool {
         if isDemoMode {
             toastMessage = keys.joined(separator: " + ").uppercased()
-            return
+            return true
         }
         guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
-              let client = client(forMachine: pane.machineID) else { return }
+              let client = client(forMachine: pane.machineID) else { return false }
         do {
             try await client.sendKeys(toPane: pane.paneID, keys: keys)
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func sendText(_ text: String, to pane: HerdrPane) async -> Bool {
+        if isDemoMode {
+            toastMessage = "Sent to \(pane.displayAgentName)"
+            return true
+        }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return false }
+        do {
+            try await client.sendText(toPane: pane.paneID, text: text, submit: false)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -906,7 +942,7 @@ final class HerdrAppModel {
                     isRead: true
                 ).stamped(machineID: item.machineID)
             }
-            await NotificationManager.setBadge(unreadAlertCount)
+            updateBadgeIfNeeded()
             return
         }
         guard let client = client(forMachine: alert.machineID) else { return }
@@ -937,7 +973,7 @@ final class HerdrAppModel {
                     isRead: true
                 ).stamped(machineID: item.machineID)
             }
-            await NotificationManager.setBadge(unreadAlertCount)
+            updateBadgeIfNeeded()
             return
         }
         for machine in machines {
@@ -1078,12 +1114,13 @@ final class HerdrAppModel {
         }
     }
 
-    private func refresh(
+    func refresh(
         machineID: String,
         using client: HerdrAPIClient,
         showSpinner: Bool = true,
         expectedGeneration: Int
     ) async throws {
+        HerdrPerfDiagnostics.checkpoint("fleet.refresh")
         if showSpinner { isRefreshing = true }
         defer {
             if showSpinner, expectedGeneration == connectionGeneration { isRefreshing = false }
@@ -1092,21 +1129,33 @@ final class HerdrAppModel {
         guard expectedGeneration == connectionGeneration else { throw CancellationError() }
         let previousAlerts = alerts.filter { $0.machineID == machineID }
         let previousAlertIDs = Set(previousAlerts.map(\.id))
+        let previousReadAlertIDs = Set(previousAlerts.filter(\.isRead).map(\.id))
         let freshWorkspaces = response.workspaces.map { $0.stamped(machineID: machineID) }
         let freshAlerts = response.alerts.map { $0.stamped(machineID: machineID) }
-        workspaces = workspaces.filter { $0.machineID != machineID } + freshWorkspaces
-        alerts = alerts.filter { $0.machineID != machineID } + freshAlerts
+        let mergedWorkspaces = workspaces.filter { $0.machineID != machineID } + freshWorkspaces
+        let mergedAlerts = alerts.filter { $0.machineID != machineID } + freshAlerts
+        if mergedWorkspaces != workspaces { workspaces = mergedWorkspaces }
+        if mergedAlerts != alerts { alerts = mergedAlerts }
         reconcileStarredChats(machineID: machineID, serverStarredRawIDs: response.starredPaneIDs)
         let currentAlertIDs = Set(freshAlerts.map(\.id))
         let readAlertIDs = Set(freshAlerts.filter(\.isRead).map(\.id))
         let removedAlertIDs = previousAlertIDs.subtracting(currentAlertIDs)
-        let staleAlertIDs = readAlertIDs.union(removedAlertIDs)
-        if !staleAlertIDs.isEmpty {
-            await NotificationManager.removeDelivered(alertIDs: staleAlertIDs)
+        let staleAlertIDs = readAlertIDs.subtracting(previousReadAlertIDs).union(removedAlertIDs)
+        let shouldSweepDelivered = !(runtimes[machineID]?.didSweepDelivered ?? false)
+        if shouldSweepDelivered {
+            var runtime = runtimes[machineID] ?? MachineRuntime()
+            runtime.didSweepDelivered = true
+            runtimes[machineID] = runtime
+        }
+        let deliveredAlertIDs = shouldSweepDelivered
+            ? staleAlertIDs.union(readAlertIDs)
+            : staleAlertIDs
+        if !deliveredAlertIDs.isEmpty {
+            Task { await NotificationManager.removeDelivered(alertIDs: deliveredAlertIDs) }
         }
         lastUpdated = .now
-        errorMessage = nil
-        lastPresentedConnectionError = nil
+        if errorMessage != nil { errorMessage = nil }
+        if lastPresentedConnectionError != nil { lastPresentedConnectionError = nil }
 
         repairNavigation(machineID: machineID, freshWorkspaces: freshWorkspaces)
         resolvePendingPaneRoute()
@@ -1120,7 +1169,14 @@ final class HerdrAppModel {
             await NotificationManager.post(alert)
             pendingLocalAlertIDs.remove(alert.id)
         }
-        await NotificationManager.setBadge(unreadAlertCount)
+        updateBadgeIfNeeded()
+    }
+
+    private func updateBadgeIfNeeded() {
+        let count = unreadAlertCount
+        guard count != lastBadgeCount else { return }
+        lastBadgeCount = count
+        Task { await NotificationManager.setBadge(count) }
     }
 
     private func syncPushDevice(machineID: String, using client: HerdrAPIClient, expectedGeneration: Int) async {
@@ -1213,6 +1269,7 @@ final class HerdrAppModel {
         "pi.session_shutdown",
         "pi.session_info_changed",
         "pi.session_tree",
+        "pi.session_compact",
     ]
 
     private func matchesSearch(_ workspace: HerdrWorkspace) -> Bool {
@@ -1252,6 +1309,7 @@ final class HerdrAppModel {
     }
 
     private func resetConnectionState() {
+        cancelDeferredRefreshes()
         runtimes = [:]
         machineStates = [:]
         activeServerConnection = nil
@@ -1269,12 +1327,13 @@ final class HerdrAppModel {
         remotePushDeliveryVerified = false
         remotePushRegistrationError = nil
         lastPresentedConnectionError = nil
+        lastBadgeCount = nil
     }
 
     private func repairNavigation(machineID: String, freshWorkspaces: [HerdrWorkspace]) {
         let validWorkspaceIDs = Set(freshWorkspaces.map(\.id))
         let validPaneIDs = Set(freshWorkspaces.flatMap(\.panes).map(\.id))
-        workspacePath = workspacePath.filter { route in
+        let repairedPath = workspacePath.filter { route in
             switch route {
             case let .workspace(id):
                 guard MachineScopedID.split(id)?.machineID == machineID else { return true }
@@ -1284,6 +1343,7 @@ final class HerdrAppModel {
                 return validPaneIDs.contains(id)
             }
         }
+        if repairedPath != workspacePath { workspacePath = repairedPath }
         if let selectedWorkspaceID,
            MachineScopedID.split(selectedWorkspaceID)?.machineID == machineID,
            !validWorkspaceIDs.contains(selectedWorkspaceID) {
@@ -1368,6 +1428,7 @@ final class HerdrAppModel {
     }
 
     func removeMachine(id: String) {
+        runtimes[id]?.deferredRefreshTask?.cancel()
         machines.removeAll { $0.id == id }
         if !isDemoMode {
             persistMachines()
@@ -1400,11 +1461,13 @@ final class HerdrAppModel {
         runtimes[id]?.client
     }
 
-    private func prepareRuntime(for machine: HerdrMachine, generation: Int) {
+    /// Internal setup seam used by deterministic URLProtocol-backed tests.
+    func prepareRuntime(for machine: HerdrMachine, generation: Int) {
+        runtimes[machine.id]?.deferredRefreshTask?.cancel()
         let token = KeychainStore.value(for: "api-token.\(machine.id)")
         guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { return }
         runtimes[machine.id] = MachineRuntime(
-            client: HerdrAPIClient(configuration: configuration),
+            client: clientFactory(configuration),
             connection: ActiveServerConnection(configuration: configuration, generation: generation),
             state: .connecting
         )
@@ -1418,17 +1481,30 @@ final class HerdrAppModel {
             guard let client = client(forMachine: machine.id) else { return }
             do {
                 try await refresh(machineID: machine.id, using: client, expectedGeneration: expectedGeneration)
+                noteRefreshCompleted(for: machine.id)
                 guard expectedGeneration == connectionGeneration else { return }
                 setRuntimeState(.live, for: machine.id)
                 await syncPushDevice(machineID: machine.id, using: client, expectedGeneration: expectedGeneration)
                 retryDelay = 2
-                for try await event in await client.events() {
+                for try await event in await client.events(after: runtimes[machine.id]?.lastEventID) {
                     try Task.checkCancellation()
                     guard expectedGeneration == connectionGeneration else { return }
+                    if event.event == "ready" { seedLastEventIDFromReady(event, for: machine.id) }
+                    recordLastEventID(event.id, for: machine.id)
+                    if event.event == "stream.reset", streamResetIsBackendRestart(event) {
+                        resetLastEventID(for: machine.id)
+                    }
                     if event.event == "snapshot.updated" || event.event == "alert.created" ||
-                        event.event == "alerts.read_state_changed" || event.event == "stars.changed" ||
+                        event.event == "alert.updated" || event.event == "alerts.read_state_changed" ||
+                        event.event == "stars.changed" || event.event == "stream.reset" ||
                         Self.piCapabilityEvents.contains(event.event) {
-                        try await refresh(machineID: machine.id, using: client, showSpinner: false, expectedGeneration: expectedGeneration)
+                        if !shouldSkipSyntheticConnectRefresh(event, machineID: machine.id) {
+                            noteFleetRefreshNeeded(
+                                machineID: machine.id,
+                                client: client,
+                                expectedGeneration: expectedGeneration
+                            )
+                        }
                     } else if event.event == "push.delivery" {
                         await handlePushDelivery(event, machineID: machine.id)
                     }
@@ -1437,16 +1513,125 @@ final class HerdrAppModel {
                 return
             } catch {
                 guard expectedGeneration == connectionGeneration else { return }
-                let failed = noteConnectionFailure(machineID: machine.id, now: .now)
-                setRuntimeState(failed ? .failed : .connecting, for: machine.id, error: error.localizedDescription)
-                if connectionState == .failed, lastPresentedConnectionError != error.localizedDescription {
-                    lastPresentedConnectionError = error.localizedDescription
-                    errorMessage = error.localizedDescription
-                }
+                handleRefreshFailure(error, machineID: machine.id, expectedGeneration: expectedGeneration)
                 do { try await Task.sleep(for: .seconds(retryDelay)) } catch { return }
                 retryDelay = min(retryDelay * 2, 15)
             }
         }
+    }
+
+    private func recordLastEventID(_ eventID: Int?, for machineID: String) {
+        guard let eventID else { return }
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.lastEventID = eventID
+        runtimes[machineID] = runtime
+    }
+
+    private func resetLastEventID(for machineID: String) {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.lastEventID = nil
+        runtimes[machineID] = runtime
+    }
+
+    private func streamResetIsBackendRestart(_ event: HerdrEvent) -> Bool {
+        guard case let .object(values)? = event.data,
+              case let .string(reason)? = values["reason"] else { return false }
+        return reason == "backend_restarted"
+    }
+
+    private func noteRefreshCompleted(for machineID: String) {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.lastRefreshCompletedAt = ContinuousClock().now
+        runtimes[machineID] = runtime
+    }
+
+    private func seedLastEventIDFromReady(_ event: HerdrEvent, for machineID: String) {
+        guard runtimes[machineID]?.lastEventID == nil,
+              case let .object(values)? = event.data,
+              case let .number(lastEventID)? = values["lastEventId"]
+        else { return }
+        recordLastEventID(Int(lastEventID), for: machineID)
+    }
+
+    private func shouldSkipSyntheticConnectRefresh(_ event: HerdrEvent, machineID: String) -> Bool {
+        guard event.event == "snapshot.updated",
+              case let .object(values)? = event.data,
+              case let .bool(true)? = values["synthetic"],
+              let completed = runtimes[machineID]?.lastRefreshCompletedAt
+        else { return false }
+        return completed.duration(to: ContinuousClock().now) < .seconds(2)
+    }
+
+    /// Exposed at internal visibility for deterministic tests.
+    func noteFleetRefreshNeeded(
+        machineID: String,
+        client: HerdrAPIClient,
+        expectedGeneration: Int
+    ) {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.pendingRefresh = true
+        guard runtime.deferredRefreshTask == nil else {
+            runtimes[machineID] = runtime
+            return
+        }
+        runtime.deferredRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.clearDeferredRefreshTask(machineID: machineID, expectedGeneration: expectedGeneration) }
+            let clock = ContinuousClock()
+            var retryBackoff = self.fleetRefreshRetryBase
+            while !Task.isCancelled, expectedGeneration == self.connectionGeneration {
+                if let completed = self.runtimes[machineID]?.lastRefreshCompletedAt {
+                    do { try await clock.sleep(until: completed.advanced(by: Self.fleetRefreshWindow)) }
+                    catch { return }
+                }
+                guard !Task.isCancelled, expectedGeneration == self.connectionGeneration else { return }
+                var current = self.runtimes[machineID] ?? MachineRuntime()
+                guard current.pendingRefresh else {
+                    current.deferredRefreshTask = nil
+                    self.runtimes[machineID] = current
+                    return
+                }
+                current.pendingRefresh = false
+                self.runtimes[machineID] = current
+                do {
+                    try await self.refresh(machineID: machineID, using: client, showSpinner: false, expectedGeneration: expectedGeneration)
+                    self.noteRefreshCompleted(for: machineID)
+                    self.setRuntimeState(.live, for: machineID)
+                    retryBackoff = self.fleetRefreshRetryBase
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self.handleRefreshFailure(error, machineID: machineID, expectedGeneration: expectedGeneration)
+                    var failed = self.runtimes[machineID] ?? MachineRuntime()
+                    failed.pendingRefresh = true
+                    self.runtimes[machineID] = failed
+                    do { try await clock.sleep(for: retryBackoff) } catch { return }
+                    retryBackoff = min(retryBackoff * 2, .seconds(15))
+                }
+            }
+        }
+        runtimes[machineID] = runtime
+    }
+
+    private func handleRefreshFailure(_ error: Error, machineID: String, expectedGeneration: Int) {
+        guard expectedGeneration == connectionGeneration else { return }
+        let failed = noteConnectionFailure(machineID: machineID, now: .now)
+        setRuntimeState(failed ? .failed : .connecting, for: machineID, error: error.localizedDescription)
+        if connectionState == .failed, lastPresentedConnectionError != error.localizedDescription {
+            lastPresentedConnectionError = error.localizedDescription
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func clearDeferredRefreshTask(machineID: String, expectedGeneration: Int) {
+        guard expectedGeneration == connectionGeneration else { return }
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.deferredRefreshTask = nil
+        runtimes[machineID] = runtime
+    }
+
+    private func cancelDeferredRefreshes() {
+        for runtime in runtimes.values { runtime.deferredRefreshTask?.cancel() }
     }
 
     private func setRuntimeState(_ state: ConnectionState, for machineID: String, error: String? = nil) {

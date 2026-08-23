@@ -1,9 +1,13 @@
 import base64
 import copy
+import inspect
 import json
 import os
+import sqlite3
 import stat
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -12,9 +16,10 @@ import herdr_harness
 from herdr_harness import attachments
 from herdr_harness.alerts import AlertStore
 from herdr_harness.client import HerdrClientError
+from herdr_harness.pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticJournal, PiSemanticManager
 from herdr_harness.service import HerdrService
 from herdr_harness.stars import StarStore
-from herdr_harness.terminal import TerminalObserverError
+from herdr_harness.terminal import TerminalObserver, TerminalObserverError
 
 
 def snapshot_with_status(status="working"):
@@ -215,6 +220,11 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(workspace["panes"][0]["future_pane_field"], [1, 2])
         self.assertEqual(workspace["agents"][0]["future_agent_field"], {"yes": 1})
         self.assertEqual(workspace["layouts"][0]["future_layout_field"], "kept")
+
+        single_workspace = service.workspace_response("w1")
+        self.assertIsNotNone(single_workspace)
+        self.assertEqual(single_workspace["workspace"]["tabs"][0]["future_tab_field"], 7)
+        self.assertEqual(single_workspace["workspace"]["panes"][0]["future_pane_field"], [1, 2])
 
     def test_alerts_emit_once_per_real_blocked_or_done_transition(self):
         client = FakeClient(
@@ -865,6 +875,244 @@ class HerdrServiceTests(unittest.TestCase):
         response = service.workspaces_response()
 
         self.assertEqual(response["starredPaneIds"], ["w1:p1"])
+
+    def test_snapshot_refresh_change_detection_and_force_publish(self):
+        first = snapshot_with_status()
+        volatile_only = copy.deepcopy(first)
+        volatile_only["generated_at"] = "later"
+        revised = copy.deepcopy(first)
+        revised["panes"][0]["revision"] = 11
+        service = HerdrService(FakeClient([first, volatile_only, revised, revised]), environ={})
+
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        service.refresh_snapshot(force=True)
+
+        updates = [item for item in service.broker.after(0) if item["event"] == "snapshot.updated"]
+        self.assertEqual(len(updates), 3)
+        self.assertEqual(updates[1]["data"]["paneRevisions"], {"w1:p1": 11})
+
+    def test_identical_snapshot_after_request_recovery_publishes_herd_pulse(self):
+        snapshot = snapshot_with_status()
+        push = FakePush()
+        client = FakeClient([snapshot, snapshot])
+        service = HerdrService(client, push=push, environ={})
+
+        service.refresh_snapshot()
+        client.fail = True
+        with self.assertRaises(HerdrClientError):
+            service.refresh_snapshot()
+        pulse_count_after_failure = len(push.pulses)
+        client.fail = False
+        service.refresh_snapshot()
+
+        self.assertEqual(len(push.pulses), pulse_count_after_failure + 1)
+
+    def test_identical_snapshot_without_recovery_does_not_publish_herd_pulse(self):
+        snapshot = snapshot_with_status()
+        push = FakePush()
+        service = HerdrService(FakeClient([snapshot, snapshot]), push=push, environ={})
+
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+
+        self.assertEqual(len(push.pulses), 1)
+
+    def test_mutation_with_an_identical_snapshot_does_not_duplicate_refresh_event(self):
+        snapshot = snapshot_with_status()
+        service = HerdrService(FakeClient([snapshot, snapshot]), environ={})
+
+        service.refresh_snapshot()
+        service.invoke("pane.focus", {"pane_id": "w1:p1"})
+
+        updates = [item for item in service.broker.after(0) if item["event"] == "snapshot.updated"]
+        self.assertEqual(len(updates), 1)
+
+    def test_refresh_loop_coalesces_a_burst_on_the_trailing_edge(self):
+        service = HerdrService(FakeClient([snapshot_with_status()]), environ={})
+        thread = threading.Thread(target=service._refresh_loop, daemon=True)
+        thread.start()
+        try:
+            for _ in range(20):
+                service._handle_event({"event": "pane.focused", "data": {"pane_id": "w1:p1"}})
+                time.sleep(0.004)
+            deadline = time.monotonic() + 1.2
+            while time.monotonic() < deadline:
+                updates = [item for item in service.broker.after(0) if item["event"] == "snapshot.updated"]
+                if updates:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(len(updates), 1)
+        finally:
+            service._stop_event.set()
+            service._refresh_event.set()
+            thread.join(timeout=1.0)
+
+    def test_global_pi_broker_filters_high_frequency_events(self):
+        service = HerdrService(FakeClient([snapshot_with_status()]), environ={})
+
+        service._publish_pi_event({"event": {"type": "message_update"}})
+        service._publish_pi_event({"event": {"type": "bridge.connection", "connected": True}})
+
+        events = service.broker.after(0)
+        self.assertEqual([item["event"] for item in events], ["pi.bridge.connection"])
+
+    def test_pi_capability_uses_scalar_journal_state_without_snapshot_load(self):
+        journal = PiSemanticJournal(":memory:")
+        manager = PiSemanticManager("/tmp/capability.sock", environ={}, journal=journal)
+        manager.sync_snapshot({"panes": [{"pane_id": "w1:p1", "agent": "pi"}], "agents": []})
+        journal.ingest(
+            "w1:p1",
+            {
+                "protocol": PI_SEMANTIC_PROTOCOL,
+                "pane_id": "w1:p1",
+                "kind": "snapshot",
+                "snapshot": {"session": {"id": "session-1"}, "entries": [{"id": "entry-1"}]},
+            },
+            namespace=manager.namespace,
+        )
+        with patch.object(journal, "snapshot", side_effect=AssertionError("capability must not load transcript")):
+            capability = manager.capability("w1:p1")
+        self.assertTrue(capability["available"])
+        self.assertEqual(capability["session_id"], "session-1")
+        self.assertEqual(capability["cursor"], 0)
+        self.assertEqual(capability["oldest_cursor"], 1)
+        manager.close()
+
+    def test_pi_capability_lazily_backfills_legacy_scalar_columns(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "legacy.sqlite3")
+            database = sqlite3.connect(path)
+            database.execute(
+                "CREATE TABLE pi_semantic_state (pane_id TEXT PRIMARY KEY, instance_id TEXT, "
+                "source_sequence INTEGER NOT NULL DEFAULT 0, session_id TEXT, snapshot_json TEXT, "
+                "snapshot_cursor INTEGER NOT NULL DEFAULT 0, connected INTEGER NOT NULL DEFAULT 0, "
+                "updated_at TEXT NOT NULL)"
+            )
+            database.commit()
+            database.close()
+            journal = PiSemanticJournal(path)
+            manager = PiSemanticManager("/tmp/legacy-capability.sock", environ={}, journal=journal)
+            manager.sync_snapshot({"panes": [{"pane_id": "w1:p1", "agent": "pi"}], "agents": []})
+            storage_pane_id = journal._storage_pane_id("w1:p1", manager.namespace)
+            with journal._database:
+                journal._database.execute(
+                    "INSERT INTO pi_semantic_state (pane_id, snapshot_json, updated_at) VALUES (?, ?, ?)",
+                    (storage_pane_id, json.dumps({"session": {"id": "legacy-session"}, "entries": [{"id": "entry-1"}]}), "now"),
+                )
+
+            capability = manager.capability("w1:p1")
+            backfilled = journal._database.execute(
+                "SELECT session_id, has_content FROM pi_semantic_state WHERE pane_id = ?",
+                (storage_pane_id,),
+            ).fetchone()
+            self.assertEqual(capability["session_id"], "legacy-session")
+            self.assertTrue(capability["available"])
+            self.assertEqual(backfilled["session_id"], "legacy-session")
+            self.assertEqual(backfilled["has_content"], 1)
+            manager.close()
+
+    def test_pi_capability_backfill_does_not_repeat_for_sessionless_pane(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "legacy.sqlite3")
+            database = sqlite3.connect(path)
+            database.execute(
+                "CREATE TABLE pi_semantic_state (pane_id TEXT PRIMARY KEY, instance_id TEXT, "
+                "source_sequence INTEGER NOT NULL DEFAULT 0, session_id TEXT, snapshot_json TEXT, "
+                "snapshot_cursor INTEGER NOT NULL DEFAULT 0, connected INTEGER NOT NULL DEFAULT 0, "
+                "updated_at TEXT NOT NULL)"
+            )
+            database.commit()
+            database.close()
+            journal = PiSemanticJournal(path)
+            manager = PiSemanticManager("/tmp/legacy-sessionless-capability.sock", environ={}, journal=journal)
+            manager.sync_snapshot({"panes": [{"pane_id": "w1:p1", "agent": "pi"}], "agents": []})
+            storage_pane_id = journal._storage_pane_id("w1:p1", manager.namespace)
+            with journal._database:
+                journal._database.execute(
+                    "INSERT INTO pi_semantic_state (pane_id, snapshot_json, updated_at) VALUES (?, ?, ?)",
+                    (storage_pane_id, json.dumps({"entries": [{"id": "entry-1"}]}), "now"),
+                )
+
+            first = manager.capability("w1:p1")
+            with patch("herdr_harness.pi_semantic.json.loads", side_effect=AssertionError("backfill repeated")):
+                second = manager.capability("w1:p1")
+
+            self.assertTrue(first["available"])
+            self.assertIsNone(first["session_id"])
+            self.assertTrue(second["available"])
+            self.assertIsNone(second["session_id"])
+            manager.close()
+
+    def test_pi_journal_retention_scans_only_when_needed(self):
+        journal = PiSemanticJournal(":memory:", maximum_events_per_pane=64)
+        for sequence in range(1, 115):
+            journal.ingest(
+                "w1:p1",
+                {
+                    "protocol": PI_SEMANTIC_PROTOCOL,
+                    "pane_id": "w1:p1",
+                    "kind": "event",
+                    "sequence": sequence,
+                    "instance_id": "test",
+                    "event": {"type": "message_update", "text": str(sequence)},
+                },
+            )
+        retained = journal.events_after("w1:p1", 0, limit=128)
+        self.assertLessEqual(len(retained), 64)
+        self.assertLess(journal._trim_scan_count, 114)
+        journal.close()
+
+    def test_terminal_observer_reassembles_large_frames_and_drains_stderr(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            observer_script = Path(temporary) / "observer.py"
+            observer_script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "sys.stderr.write('e' * 70000)\n"
+                "sys.stderr.flush()\n"
+                "sys.stdout.write(json.dumps({'event': 'terminal.frame', 'payload': 'x' * 200000}) + '\\n')\n"
+                "sys.stdout.flush()\n",
+                encoding="utf-8",
+            )
+            observer_script.chmod(0o700)
+            observer = TerminalObserver(
+                "w1:p1",
+                cols=80,
+                rows=24,
+                socket_path="/tmp/herdr.sock",
+                session="test",
+                environ={"HERDR_BIN_PATH": str(observer_script)},
+            )
+            frames = list(observer.frames())
+
+        records = [frame for frame in frames if frame["event"] == "terminal.frame"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(len(records[0]["data"]["payload"]), 200000)
+        self.assertEqual(
+            inspect.signature(TerminalObserver.frames).parameters["heartbeat_seconds"].default,
+            2.0,
+        )
+
+    def test_terminal_observer_surfaces_final_unterminated_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            observer_script = Path(temporary) / "observer.py"
+            observer_script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "sys.stdout.write(json.dumps({'event': 'terminal.frame', 'payload': 'last'}))\n"
+                "sys.stdout.flush()\n",
+                encoding="utf-8",
+            )
+            observer_script.chmod(0o700)
+            observer = TerminalObserver(
+                "w1:p1", cols=80, rows=24, socket_path="/tmp/herdr.sock", session="test",
+                environ={"HERDR_BIN_PATH": str(observer_script)},
+            )
+            frames = list(observer.frames())
+
+        self.assertTrue(any(frame["event"] == "terminal.frame" for frame in frames))
 
 
 if __name__ == "__main__":

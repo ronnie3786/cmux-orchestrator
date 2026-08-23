@@ -9,6 +9,7 @@ this module reads from or writes to the terminal PTY.
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -28,6 +29,14 @@ PI_SEMANTIC_PROTOCOL = {"name": "herdr.pi.semantic", "version": 1}
 PI_SEMANTIC_MAX_LINE_BYTES = 512 * 1024
 PI_SEMANTIC_MAX_COMMAND_BYTES = 256 * 1024
 PI_SEMANTIC_SOCKET_PATH_BYTES = 100
+
+
+@dataclass
+class _RetentionState:
+    event_count: int
+    payload_total: int
+    ingests: int
+    pinned_snapshot_cursor: Optional[int] = None
 
 
 class PiSemanticError(RuntimeError):
@@ -166,6 +175,10 @@ class PiSemanticJournal:
         self.maximum_bytes_per_pane = max(1024 * 1024, int(maximum_bytes_per_pane))
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
+        # Counts avoid an ordered full-journal scan for every token event.
+        # They are seeded lazily so existing journals need no data migration.
+        self._retention: dict[str, _RetentionState] = {}
+        self._trim_scan_count = 0
         if path != ":memory:":
             database_path = Path(os.path.abspath(os.path.expanduser(path)))
             parent = database_path.parent
@@ -234,10 +247,21 @@ class PiSemanticJournal:
                     snapshot_json TEXT,
                     snapshot_cursor INTEGER NOT NULL DEFAULT 0,
                     connected INTEGER NOT NULL DEFAULT 0,
+                    has_content INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in self._database.execute("PRAGMA table_info(pi_semantic_state)").fetchall()
+            }
+            # Older journals predate cheap capability metadata. Leave migrated
+            # values NULL so capability_state can backfill exact legacy values.
+            if "session_id" not in columns:
+                self._database.execute("ALTER TABLE pi_semantic_state ADD COLUMN session_id TEXT")
+            if "has_content" not in columns:
+                self._database.execute("ALTER TABLE pi_semantic_state ADD COLUMN has_content INTEGER")
         if path != ":memory:":
             for companion in (path, f"{path}-wal", f"{path}-shm"):
                 try:
@@ -407,7 +431,7 @@ class PiSemanticJournal:
                     SET instance_id = COALESCE(?, instance_id),
                         source_sequence = MAX(source_sequence, ?),
                         session_id = COALESCE(?, session_id), snapshot_json = ?,
-                        snapshot_cursor = ?, connected = 1, updated_at = ?
+                        snapshot_cursor = ?, connected = 1, has_content = ?, updated_at = ?
                     WHERE pane_id = ?
                     """,
                     (
@@ -416,10 +440,14 @@ class PiSemanticJournal:
                         snapshot_session,
                         snapshot_json,
                         latest,
+                        1 if snapshot_session or payload.get("entries") else 0,
                         utc_now(),
                         storage_pane_id,
                     ),
                 )
+                cached_retention = self._retention.get(storage_pane_id)
+                if cached_retention is not None:
+                    cached_retention.pinned_snapshot_cursor = None
                 self._trim_locked(storage_pane_id)
                 self._condition.notify_all()
                 return emitted
@@ -471,17 +499,21 @@ class PiSemanticJournal:
                     """
                     UPDATE pi_semantic_state
                     SET session_id = COALESCE(?, session_id), snapshot_json = ?,
-                        snapshot_cursor = ?, updated_at = ?
+                        snapshot_cursor = ?, has_content = ?, updated_at = ?
                     WHERE pane_id = ?
                     """,
                     (
                         recovery_session,
                         snapshot_json,
                         self._latest_cursor_locked(storage_pane_id),
+                        1 if recovery_session or recovery_snapshot.get("entries") else 0,
                         utc_now(),
                         storage_pane_id,
                     ),
                 )
+                cached_retention = self._retention.get(storage_pane_id)
+                if cached_retention is not None:
+                    cached_retention.pinned_snapshot_cursor = None
             self._trim_locked(storage_pane_id)
             self._condition.notify_all()
         return emitted
@@ -554,14 +586,42 @@ class PiSemanticJournal:
                 generated_at,
             ),
         )
+        retention = self._retention_state_locked(storage_pane_id)
+        retention.event_count += 1
+        retention.payload_total += payload_bytes
+        retention.ingests += 1
         return copy.deepcopy(envelope)
 
+    def _retention_state_locked(self, pane_id: str) -> _RetentionState:
+        """Return cached retention counters, seeding once from durable rows."""
+
+        cached = self._retention.get(pane_id)
+        if cached is not None:
+            return cached
+        row = self._database.execute(
+            "SELECT COUNT(*) AS event_count, COALESCE(SUM(payload_bytes), 0) AS payload_bytes FROM pi_semantic_events WHERE pane_id = ?",
+            (pane_id,),
+        ).fetchone()
+        cached = _RetentionState(int(row["event_count"] or 0), int(row["payload_bytes"] or 0), 0)
+        self._retention[pane_id] = cached
+        return cached
+
     def _trim_locked(self, pane_id: str) -> None:
+        retention = self._retention_state_locked(pane_id)
+        if (
+            retention.event_count <= self.maximum_events_per_pane
+            and retention.payload_total <= self.maximum_bytes_per_pane
+            and retention.ingests % 64 != 0
+        ):
+            return
         state = self._database.execute(
             "SELECT snapshot_cursor, snapshot_json FROM pi_semantic_state WHERE pane_id = ?",
             (pane_id,),
         ).fetchone()
         snapshot_cursor = int(state["snapshot_cursor"] or 0) if state is not None else 0
+        if retention.pinned_snapshot_cursor == snapshot_cursor and retention.ingests % 64 != 0:
+            return
+        self._trim_scan_count += 1
         rows = self._database.execute(
             """
             SELECT cursor, payload_bytes FROM pi_semantic_events
@@ -577,6 +637,7 @@ class PiSemanticJournal:
                 break
             keep.append(int(row["cursor"]))
             retained_bytes += size
+        clamped_to_checkpoint = False
         if state is not None and state["snapshot_json"] is not None and keep:
             cutoff = min(keep)
             # A snapshot checkpoint must remain replayable. Temporarily exceed
@@ -584,9 +645,21 @@ class PiSemanticJournal:
             # than expose a cursor older than the retained suffix. The next Pi
             # checkpoint lets normal trimming resume.
             required_cutoff = snapshot_cursor + 1
+            clamped_to_checkpoint = cutoff > required_cutoff
             cutoff = min(cutoff, required_cutoff)
         else:
             cutoff = min(keep) if keep else self._latest_cursor_locked(pane_id) + 1
+        retained = [row for row in rows if int(row["cursor"]) >= cutoff]
+        retention.event_count = len(retained)
+        retention.payload_total = sum(int(row["payload_bytes"]) for row in retained)
+        retention.pinned_snapshot_cursor = (
+            snapshot_cursor
+            if clamped_to_checkpoint and (
+                retention.event_count > self.maximum_events_per_pane
+                or retention.payload_total > self.maximum_bytes_per_pane
+            )
+            else None
+        )
         if not rows or cutoff <= int(rows[-1]["cursor"]):
             return
         self._database.execute(
@@ -607,6 +680,53 @@ class PiSemanticJournal:
             latest = int(row["latest"] or 0)
             oldest = int(row["oldest"] or (latest + 1))
             return oldest, latest
+
+    def capability_state(self, pane_id: str, *, namespace: str = "") -> dict:
+        """Read capability scalars without deserializing a large Pi snapshot."""
+
+        storage_pane_id = self._storage_pane_id(pane_id, namespace)
+        with self._lock, self._database:
+            row = self._database.execute(
+                "SELECT connected, snapshot_cursor, session_id, has_content FROM pi_semantic_state WHERE pane_id = ?",
+                (storage_pane_id,),
+            ).fetchone()
+            oldest, _latest = self.bounds(pane_id, namespace=namespace)
+            if row is None:
+                return {
+                    "connected": False,
+                    "session_id": None,
+                    "cursor": 0,
+                    "oldest_cursor": oldest,
+                    "has_content": False,
+                }
+            session_id = row["session_id"]
+            has_content = row["has_content"]
+            if has_content is None:
+                # One-time lazy migration keeps startup fast for journals
+                # written before these scalar columns existed. has_content is
+                # the migration marker because session_id may legitimately be NULL.
+                payload: dict = {}
+                legacy = self._database.execute(
+                    "SELECT snapshot_json FROM pi_semantic_state WHERE pane_id = ?",
+                    (storage_pane_id,),
+                ).fetchone()
+                if legacy is not None and legacy["snapshot_json"]:
+                    value = json.loads(legacy["snapshot_json"])
+                    if isinstance(value, dict):
+                        payload = value
+                session_id = _record_session_id(payload)
+                has_content = bool(session_id or payload.get("entries"))
+                self._database.execute(
+                    "UPDATE pi_semantic_state SET session_id = COALESCE(?, session_id), has_content = ? WHERE pane_id = ?",
+                    (session_id, 1 if has_content else 0, storage_pane_id),
+                )
+            return {
+                "connected": bool(row["connected"]),
+                "session_id": str(session_id) if session_id else None,
+                "cursor": int(row["snapshot_cursor"] or 0),
+                "oldest_cursor": oldest,
+                "has_content": bool(has_content),
+            }
 
     def events_after(
         self,
@@ -985,21 +1105,20 @@ class PiSemanticManager:
             capabilities = dict(default_capabilities)
         else:
             capabilities = {key: bool(observed.get(key, False)) for key in default_capabilities}
-        snapshot = self.journal.snapshot(pane_id, namespace=self.namespace)
-        available = bool(snapshot.get("entries")) or snapshot.get("session") is not None
+        state = self.journal.capability_state(pane_id, namespace=self.namespace)
+        available = bool(state["has_content"])
         try:
             self._verified_socket_path(pane_id)
             available = True
         except PiSemanticError:
             pass
-        session = snapshot.get("session") if isinstance(snapshot.get("session"), dict) else {}
         return {
             "available": available,
-            "connected": bool(snapshot.get("connected")),
+            "connected": bool(state["connected"]),
             "protocol_version": PI_SEMANTIC_PROTOCOL["version"],
-            "session_id": session.get("id") if isinstance(session, dict) else None,
-            "cursor": snapshot.get("cursor", 0),
-            "oldest_cursor": snapshot.get("oldest_cursor", 1),
+            "session_id": state["session_id"],
+            "cursor": state["cursor"],
+            "oldest_cursor": state["oldest_cursor"],
             "capabilities": capabilities,
             "generated_at": utc_now(),
         }

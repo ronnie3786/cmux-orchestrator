@@ -540,6 +540,41 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertIn("event: ready", payload)
         self.assertIn("retry: 1000", payload)
 
+    def test_sse_without_cursor_sends_one_synthetic_refresh_not_ring_replay(self):
+        self.service.broker.publish("pane.focused", {"pane_id": "old"})
+        self.service.broker.publish("snapshot.updated", {"paneRevisions": {"old": 1}})
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=2)
+        connection.request(
+            "GET",
+            "/api/v1/events?once=true",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        response = connection.getresponse()
+        payload = response.read().decode()
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("event: ready", payload)
+        self.assertEqual(payload.count("event: snapshot.updated"), 1)
+        self.assertIn('"synthetic":true', payload)
+        self.assertNotIn("event: pane.focused", payload)
+        ready = json.loads(next(line[6:] for line in payload.splitlines() if line.startswith("data: ")))
+        self.assertEqual(ready["resumeFrom"], 2)
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=2)
+        connection.request(
+            "GET",
+            "/api/v1/events?once=true&after=0",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        response = connection.getresponse()
+        replay = response.read().decode()
+        connection.close()
+        self.assertIn("event: pane.focused", replay)
+        self.assertEqual(replay.count("event: snapshot.updated"), 1)
+        self.assertNotIn('"synthetic":true', replay)
+
     def test_sse_high_resume_id_emits_restart_reset_instead_of_stalling(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=2)
         connection.request(

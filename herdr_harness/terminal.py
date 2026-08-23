@@ -7,6 +7,8 @@ import os
 import selectors
 import shutil
 import subprocess
+import threading
+from collections import deque
 from pathlib import Path
 from typing import Iterator, Mapping, Optional
 
@@ -49,6 +51,31 @@ class TerminalObserver:
             str(rows),
         ]
         self._process: Optional[subprocess.Popen] = None
+        self._stderr_lines: deque[str] = deque(maxlen=64)
+        self._stderr_lock = threading.Lock()
+        self._stderr_thread: Optional[threading.Thread] = None
+
+    def _drain_stderr(self, stream: object) -> None:
+        """Drain stderr continuously so a noisy observer cannot block itself."""
+
+        try:
+            fd = stream.fileno()  # type: ignore[union-attr]
+            buffer = bytearray()
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                while b"\n" in buffer:
+                    raw, _, remainder = buffer.partition(b"\n")
+                    buffer = bytearray(remainder)
+                    with self._stderr_lock:
+                        self._stderr_lines.append(raw.decode("utf-8", errors="replace")[-8192:])
+            if buffer:
+                with self._stderr_lock:
+                    self._stderr_lines.append(buffer.decode("utf-8", errors="replace")[-8192:])
+        except (AttributeError, OSError):
+            pass
 
     def start(self) -> "TerminalObserver":
         if self._process is not None:
@@ -59,18 +86,40 @@ class TerminalObserver:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=self._environment,
-                bufsize=0,
             )
         except OSError as exc:
             raise TerminalObserverError(f"Could not start Herdr terminal observer: {exc}") from exc
+        if self._process.stderr is not None:
+            self._stderr_thread = threading.Thread(
+                target=self._drain_stderr,
+                args=(self._process.stderr,),
+                name="herdr-terminal-stderr",
+                daemon=True,
+            )
+            self._stderr_thread.start()
         return self
 
-    def frames(self, *, heartbeat_seconds: float = 10.0) -> Iterator[dict]:
+    def frames(self, *, heartbeat_seconds: float = 2.0) -> Iterator[dict]:
         process = self.start()._process
         if process is None or process.stdout is None:
             return
         selector = selectors.DefaultSelector()
-        selector.register(process.stdout, selectors.EVENT_READ)
+        stdout_fd = process.stdout.fileno()
+        selector.register(stdout_fd, selectors.EVENT_READ)
+        buffer = bytearray()
+
+        def record_for(line: bytes) -> Optional[dict]:
+            try:
+                record = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return {
+                    "event": "terminal.error",
+                    "data": {"message": "Herdr emitted an invalid terminal frame"},
+                }
+            if not isinstance(record, dict):
+                return None
+            return {"event": str(record.get("event") or "terminal.frame"), "data": record}
+
         try:
             while True:
                 ready = selector.select(max(0.25, float(heartbeat_seconds)))
@@ -79,34 +128,38 @@ class TerminalObserver:
                         break
                     yield {"event": "heartbeat", "data": {}}
                     continue
-                line = process.stdout.readline()
-                if not line:
-                    break
                 try:
-                    record = json.loads(line.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    yield {
-                        "event": "terminal.error",
-                        "data": {"message": "Herdr emitted an invalid terminal frame"},
-                    }
-                    continue
-                if not isinstance(record, dict):
-                    continue
-                yield {"event": str(record.get("event") or "terminal.frame"), "data": record}
+                    chunk = os.read(stdout_fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                while b"\n" in buffer:
+                    line, _, remainder = buffer.partition(b"\n")
+                    buffer = bytearray(remainder)
+                    if record := record_for(line):
+                        yield record
         finally:
             selector.close()
+        if buffer and (record := record_for(bytes(buffer))):
+            yield record
         return_code = process.poll()
-        stderr = b""
-        if process.stderr is not None:
-            try:
-                stderr = process.stderr.read(8192)
-            except OSError:
-                stderr = b""
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=1.0)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
         if return_code not in {None, 0}:
+            with self._stderr_lock:
+                stderr_lines = list(self._stderr_lines)
             yield {
                 "event": "terminal.error",
                 "data": {
-                    "message": stderr.decode("utf-8", errors="replace").strip()
+                    "message": "\n".join(stderr_lines).strip()
                     or f"Herdr terminal observer exited with status {return_code}",
                     "returnCode": return_code,
                 },
@@ -124,6 +177,14 @@ class TerminalObserver:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=1.0)
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=1.0)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
     def __enter__(self) -> "TerminalObserver":
         return self.start()

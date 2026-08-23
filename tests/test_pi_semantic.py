@@ -437,6 +437,27 @@ class PiSemanticTests(unittest.TestCase):
         self.assertEqual(journal.snapshot("w1:p1")["cursor"], latest_after)
         journal.close()
 
+    def test_pinned_checkpoint_rechecks_retention_on_tick_not_every_ingest(self):
+        journal = PiSemanticJournal(":memory:", maximum_events_per_pane=64)
+        journal.ingest(
+            "w1:p1",
+            bridge_record(
+                "w1:p1", "snapshot", snapshot={"session": {"id": "session-1"}, "entries": []},
+            ),
+        )
+        total_ingests = 200
+        for sequence in range(1, total_ingests + 1):
+            journal.ingest(
+                "w1:p1",
+                bridge_record(
+                    "w1:p1", "event", sequence=sequence,
+                    event={"type": "message_update", "text": str(sequence)},
+                ),
+            )
+
+        self.assertLessEqual(journal._trim_scan_count, total_ingests // 64 + 2)
+        journal.close()
+
     def test_hello_does_not_skip_unread_replay_sequences(self):
         journal = PiSemanticJournal(":memory:")
         journal.ingest("w1:p1", bridge_record("w1:p1", "hello", sequence=100))

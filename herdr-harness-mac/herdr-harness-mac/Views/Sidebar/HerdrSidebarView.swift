@@ -19,8 +19,53 @@ struct HerdrSidebarView: View {
     @State private var closingPane: HerdrPane?
     @State private var cleanupPresenter = CleanupSheetPresenter()
 
+    @MainActor
+    private struct SidebarSnapshot {
+        let scopedWorkspaces: [HerdrWorkspace]
+        let tree: [SidebarTree.ProjectEntry]
+        let machineGroups: [SidebarTree.MachineGroup]
+        let starredGroups: [SidebarTree.StarredGroup]
+        let showsMachineChrome: Bool
+
+        init(model: HerdrAppModel, query: String) {
+            if case let .machine(id) = model.machineScope {
+                scopedWorkspaces = model.workspaces.filter { $0.machineID == id }
+            } else {
+                scopedWorkspaces = model.workspaces
+            }
+            showsMachineChrome = model.machineScope == .all && model.machines.count > 1
+            tree = SidebarTree.build(
+                workspaces: scopedWorkspaces,
+                query: query,
+                collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
+                starredIDs: model.starredChatIDs
+            )
+            machineGroups = SidebarTree.machineGroups(
+                machines: model.machines,
+                states: model.machineStates,
+                entries: tree,
+                query: query,
+                collapsedMachineIDs: model.collapsedSidebarMachineIDs
+            )
+            starredGroups = SidebarTree.starredGroups(
+                workspaces: scopedWorkspaces,
+                query: query,
+                starredIDs: model.starredChatIDs,
+                machines: model.machines
+            )
+        }
+
+        var starredCount: Int { starredGroups.reduce(0) { $0 + $1.chats.count } }
+        var paneCount: Int {
+            starredCount + HerdrSidebarView.paneCount(
+                in: showsMachineChrome ? machineGroups.flatMap(\.entries) : tree
+            )
+        }
+    }
+
     var body: some View {
         @Bindable var cleanupPresenter = cleanupPresenter
+        let snapshot = SidebarSnapshot(model: model, query: query)
         VStack(alignment: .leading, spacing: 12) {
             header
 
@@ -31,12 +76,12 @@ struct HerdrSidebarView: View {
             WorkspaceSearchField(text: $query, placeholder: "filter chats")
             creationControls
 
-            HerdrSectionLabel(title: "chats", detail: "\(paneCount) total shown")
+            HerdrSectionLabel(title: "chats", detail: "\(snapshot.paneCount) total shown")
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    starredSection
-                    workspaceContent
+                    starredSection(snapshot)
+                    workspaceContent(snapshot)
                 }
             }
             .scrollIndicators(.hidden)
@@ -206,12 +251,12 @@ struct HerdrSidebarView: View {
     }
 
     @ViewBuilder
-    private var starredSection: some View {
-        if !starredGroups.isEmpty {
-            HerdrSectionLabel(title: "starred", detail: "\(starredCount)")
+    private func starredSection(_ snapshot: SidebarSnapshot) -> some View {
+        if !snapshot.starredGroups.isEmpty {
+            HerdrSectionLabel(title: "starred", detail: "\(snapshot.starredCount)")
                 .padding(.top, 4)
-            ForEach(starredGroups) { group in
-                Text(starredGroupTitle(group))
+            ForEach(snapshot.starredGroups) { group in
+                Text(starredGroupTitle(group, showsMachineChrome: snapshot.showsMachineChrome))
                     .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(1)
@@ -224,9 +269,9 @@ struct HerdrSidebarView: View {
     }
 
     @ViewBuilder
-    private var workspaceContent: some View {
-        if showsMachineChrome {
-            ForEach(machineGroups) { group in
+    private func workspaceContent(_ snapshot: SidebarSnapshot) -> some View {
+        if snapshot.showsMachineChrome {
+            ForEach(snapshot.machineGroups) { group in
                 SidebarMachineRow(
                     machine: group.machine,
                     state: group.state,
@@ -248,12 +293,12 @@ struct HerdrSidebarView: View {
                 }
                 separator
             }
-        } else if tree.isEmpty {
+        } else if snapshot.tree.isEmpty {
             emptyState
                 .frame(maxWidth: .infinity)
                 .padding(.top, 42)
         } else {
-            entriesContent(tree)
+            entriesContent(snapshot.tree)
         }
     }
 
@@ -355,47 +400,6 @@ struct HerdrSidebarView: View {
             .fill(HerdrTheme.surface.opacity(0.65))
             .frame(height: 1)
             .padding(.vertical, 8)
-    }
-
-    private var scopedWorkspaces: [HerdrWorkspace] {
-        guard case let .machine(id) = model.machineScope else { return model.workspaces }
-        return model.workspaces.filter { $0.machineID == id }
-    }
-
-    private var tree: [SidebarTree.ProjectEntry] {
-        SidebarTree.build(
-            workspaces: scopedWorkspaces,
-            query: query,
-            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
-            starredIDs: model.starredChatIDs
-        )
-    }
-
-    private var machineGroups: [SidebarTree.MachineGroup] {
-        SidebarTree.machineGroups(
-            machines: model.machines,
-            states: model.machineStates,
-            workspaces: model.workspaces,
-            query: query,
-            collapsedMachineIDs: model.collapsedSidebarMachineIDs,
-            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
-            starredIDs: model.starredChatIDs
-        )
-    }
-
-    private var starredGroups: [SidebarTree.StarredGroup] {
-        SidebarTree.starredGroups(
-            workspaces: scopedWorkspaces,
-            query: query,
-            starredIDs: model.starredChatIDs,
-            machines: model.machines
-        )
-    }
-
-    private var starredCount: Int { starredGroups.reduce(0) { $0 + $1.chats.count } }
-
-    private var paneCount: Int {
-        starredCount + paneCount(in: showsMachineChrome ? machineGroups.flatMap(\.entries) : tree)
     }
 
     private var showsMachineChrome: Bool {
@@ -510,7 +514,7 @@ struct HerdrSidebarView: View {
         }
     }
 
-    private func starredGroupTitle(_ group: SidebarTree.StarredGroup) -> String {
+    private func starredGroupTitle(_ group: SidebarTree.StarredGroup, showsMachineChrome: Bool) -> String {
         guard showsMachineChrome,
               let machineID = MachineScopedID.split(group.workspace.id)?.machineID,
               let machine = model.machines.first(where: { $0.id == machineID })
@@ -518,7 +522,7 @@ struct HerdrSidebarView: View {
         return "\(machine.name.lowercased()) · \(group.workspace.label.lowercased())"
     }
 
-    private func paneCount(in entries: [SidebarTree.ProjectEntry]) -> Int {
+    private static func paneCount(in entries: [SidebarTree.ProjectEntry]) -> Int {
         entries.reduce(0) { count, entry in
             count + entry.looseChats.count + entry.sections.reduce(0) { $0 + $1.chats.count }
         }

@@ -114,6 +114,16 @@ permission, so they can't run from a headless shell.
 Troubleshooting: if `xcodebuild test` hangs for minutes with no output, a stale `testmanagerd`
 daemon is usually stuck — `pkill -9 testmanagerd` and rerun.
 
+## Diagnosing a freeze
+
+Before force-quitting a beach-balled app, run `Scripts/capture-hang.sh` from another terminal. It
+writes a sample, footprint, vmmap summary, heap summary, and system log to
+`~/Library/Logs/Herdr/hang-<timestamp>/`. The live diagnostics can also be inspected directly:
+
+```bash
+log show --last 15m --predicate 'subsystem == "dev.ronnierocha.herdr-harness" AND category == "perf"' --style compact
+```
+
 ## Relationship to the iOS app
 
 The two apps are partners: models, state, networking, the Pi chat pipeline, the terminal engine,

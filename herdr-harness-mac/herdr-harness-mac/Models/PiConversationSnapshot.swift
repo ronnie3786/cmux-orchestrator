@@ -11,6 +11,7 @@ struct PiConversationSnapshot: Decodable, Equatable, Sendable {
     let entries: [PiJSONValue]
     let pendingInteractions: [PiJSONValue]
     let cursor: String?
+    let latestCursor: String?
     let oldestCursor: String?
     let truncated: Bool
     let generatedAt: String?
@@ -36,6 +37,8 @@ struct PiConversationSnapshot: Decodable, Equatable, Sendable {
         case pendingInteractions
         case pendingInteractionsSnake = "pending_interactions"
         case cursor
+        case latestCursor
+        case latestCursorSnake = "latest_cursor"
         case oldestCursor
         case oldestCursorSnake = "oldest_cursor"
         case truncated
@@ -61,6 +64,7 @@ struct PiConversationSnapshot: Decodable, Equatable, Sendable {
             ?? container.decodeIfPresent([PiJSONValue].self, forKey: .pendingInteractionsSnake)
             ?? []
         cursor = try Self.decodeCursor(container, keys: [.cursor])
+        latestCursor = try Self.decodeCursor(container, keys: [.latestCursor, .latestCursorSnake])
         oldestCursor = try Self.decodeCursor(container, keys: [.oldestCursor, .oldestCursorSnake])
         truncated = try container.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
         generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt)

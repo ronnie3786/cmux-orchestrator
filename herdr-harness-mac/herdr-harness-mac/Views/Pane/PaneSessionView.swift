@@ -1,5 +1,20 @@
 import SwiftUI
 
+@MainActor
+private final class TerminalSessionScratch {
+    var lastActivityAt: Date?
+    var lastSnapshotText: String?
+    var lastSnapshotRevision = 0
+}
+
+@MainActor
+private final class PendingTerminalCommit {
+    var grid: TerminalGrid?
+    var sequence = 0
+    var coalescer = TerminalFrameCoalescer()
+    var flushTask: Task<Void, Never>?
+}
+
 /// One pane's session: header, mode content, and the terminal's dual-feed
 /// lifecycle (SSE frames + 850 ms snapshot poll arbitrated by
 /// `TerminalRefreshPolicy`).
@@ -27,8 +42,9 @@ struct PaneSessionView: View {
     @State private var snapshotRequestSequence = 0
     @State private var frameSequence = 0
     @State private var terminalGrid = TerminalGrid(columns: 100, rows: 32)
+    @State private var renderedOutput: AttributedString?
     @State private var terminalSource: TerminalSource = .connecting
-    @State private var lastStreamActivityAt: Date?
+    @State private var scratch = TerminalSessionScratch()
     @State private var isFollowing = true
     @State private var manualRefreshGeneration = 0
     @State private var manualRefreshPaneID: String?
@@ -68,7 +84,8 @@ struct PaneSessionView: View {
             await followOutput()
         }
         .task(id: manualRefreshTaskID) {
-            guard manualRefreshGeneration > 0,
+            guard selectedMode == .terminal,
+                  manualRefreshGeneration > 0,
                   manualRefreshPaneID == currentPane.id
             else { return }
             isManuallyRefreshing = true
@@ -100,6 +117,11 @@ struct PaneSessionView: View {
                 autoSelectChatIfNeeded()
             } else if selectedMode == .chat {
                 selectedMode = .terminal
+            }
+        }
+        .onChange(of: fontScale) { _, newScale in
+            if terminalSource == .stream {
+                renderedOutput = terminalGrid.attributedText(scale: newScale)
             }
         }
         .onChange(of: pane.id) { oldPaneID, newPaneID in
@@ -199,7 +221,7 @@ struct PaneSessionView: View {
             PaneTerminalView(
                 pane: currentPane,
                 output: output,
-                attributedOutput: terminalSource == .stream ? terminalGrid.attributedText(scale: fontScale) : nil,
+                attributedOutput: renderedOutput,
                 revision: terminalSource == .stream ? frameSequence : snapshotRevision,
                 dimensions: terminalSource == .stream ? "\(terminalGrid.columns)×\(terminalGrid.rows)" : nil,
                 source: terminalSource,
@@ -293,7 +315,7 @@ struct PaneSessionView: View {
     }
 
     private var followTaskID: String {
-        "\(pane.id):\(model.connectionGeneration)"
+        "\(pane.id):\(model.connectionGeneration):terminal=\(selectedMode == .terminal)"
     }
 
     private var manualRefreshTaskID: String {
@@ -304,7 +326,14 @@ struct PaneSessionView: View {
         "\(pane.id):pi-chat:\(model.connectionGeneration):\(selectedMode.rawValue)"
     }
 
+    private var isStreamHealthy: Bool {
+        terminalSource == .stream && !TerminalRefreshPolicy.isStreamStale(
+            lastStreamActivityAt: scratch.lastActivityAt
+        )
+    }
+
     private func followOutput() async {
+        guard selectedMode == .terminal else { return }
         resetTerminal()
         await refreshOutput(forceSnapshot: true)
         if model.isDemoMode { return }
@@ -317,39 +346,78 @@ struct PaneSessionView: View {
     }
 
     private func followFrames() async {
+        let clock = ContinuousClock()
         var retryDelay = 0.65
+        let pending = PendingTerminalCommit()
         while !Task.isCancelled {
             do {
                 guard let events = await model.terminalEvents(for: currentPane) else {
-                    terminalSource = .snapshot
+                    if terminalSource != .snapshot {
+                        displayCachedSnapshot()
+                        terminalSource = .snapshot
+                        if renderedOutput != nil { renderedOutput = nil }
+                    }
+                    retryDelay = min(retryDelay * 1.7, 5)
                     try await Task.sleep(for: .seconds(retryDelay))
                     continue
                 }
 
+                var working = terminalGrid
+                defer { pending.flushTask?.cancel() }
                 for try await event in events {
                     try Task.checkCancellation()
-                    lastStreamActivityAt = .now
-                    outputError = nil
+                    HerdrPerfDiagnostics.streamBacklog.noteConsumed(.terminal)
+                    scratch.lastActivityAt = .now
+                    if outputError != nil { outputError = nil }
                     switch event {
                     case .ready, .activity:
                         if terminalSource == .disconnected {
+                            displayCachedSnapshot()
                             terminalSource = .snapshot
+                            renderedOutput = nil
                         }
                     case let .frame(frame):
-                        var updatedGrid = terminalGrid
-                        guard updatedGrid.apply(frame) else { throw APIError.invalidResponse }
-                        terminalGrid = updatedGrid
-                        frameSequence = frame.sequence
-                        terminalSource = .stream
+                        HerdrPerfDiagnostics.checkpoint("terminal.frame")
+                        guard working.apply(frame) else { throw APIError.invalidResponse }
                         retryDelay = 0.65
+                        switch pending.coalescer.register(now: clock.now) {
+                        case .commitNow:
+                            pending.flushTask?.cancel()
+                            pending.flushTask = nil
+                            pending.grid = nil
+                            commitTerminal(working, sequence: frame.sequence)
+                        case let .defer(deadline):
+                            pending.grid = working
+                            pending.sequence = frame.sequence
+                            if pending.flushTask == nil {
+                                pending.flushTask = Task { @MainActor in
+                                    try? await clock.sleep(until: deadline)
+                                    guard !Task.isCancelled, let grid = pending.grid else { return }
+                                    pending.grid = nil
+                                    pending.coalescer.markCommitted(now: clock.now)
+                                    self.commitTerminal(grid, sequence: pending.sequence)
+                                    pending.flushTask = nil
+                                }
+                            }
+                        }
                     }
                 }
                 throw APIError.streamEnded
             } catch is CancellationError {
                 return
             } catch {
-                lastStreamActivityAt = nil
-                terminalSource = .snapshot
+                if let grid = pending.grid {
+                    pending.flushTask?.cancel()
+                    pending.flushTask = nil
+                    pending.grid = nil
+                    pending.coalescer.markCommitted(now: clock.now)
+                    terminalGrid = grid
+                    if frameSequence != pending.sequence { frameSequence = pending.sequence }
+                }
+                scratch.lastActivityAt = nil
+                displayCachedSnapshot()
+                if terminalSource != .snapshot { terminalSource = .snapshot }
+                if renderedOutput != nil { renderedOutput = nil }
                 await refreshOutput(forceSnapshot: true)
             }
 
@@ -365,7 +433,7 @@ struct PaneSessionView: View {
     private func pollSnapshots() async {
         while !Task.isCancelled {
             do {
-                try await Task.sleep(for: .milliseconds(850))
+                try await Task.sleep(for: isStreamHealthy ? .seconds(5) : .milliseconds(850))
             } catch {
                 return
             }
@@ -383,36 +451,45 @@ struct PaneSessionView: View {
             try Task.checkCancellation()
             guard requestSequence == snapshotRequestSequence,
                   response.paneID.isEmpty || response.paneID == requestedPaneID,
-                  response.revision == 0 || snapshotRevision == 0 || response.revision >= snapshotRevision
+                  response.revision == 0 || scratch.lastSnapshotRevision == 0 || response.revision >= scratch.lastSnapshotRevision
             else { return }
 
             let streamAdvancedDuringRequest = frameSequence != frameAtRequestStart
             let snapshotText = response.text.isEmpty ? "No terminal output yet." : response.text
+            let snapshotChanged = snapshotText != scratch.lastSnapshotText
+            scratch.lastSnapshotText = snapshotText
+            scratch.lastSnapshotRevision = response.revision
             let textChanged = snapshotText != output
             let framesSincePreviousSnapshot = frameAtRequestStart != snapshotFrameSequence
                 || streamAdvancedDuringRequest
             let shouldDisplaySnapshot = TerminalRefreshPolicy.shouldDisplaySnapshot(
                 force: forceSnapshot,
                 streamAdvancedDuringRequest: streamAdvancedDuringRequest,
-                snapshotChangedWithoutFrame: textChanged && !framesSincePreviousSnapshot,
-                lastStreamActivityAt: lastStreamActivityAt
+                snapshotChangedWithoutFrame: snapshotChanged && !framesSincePreviousSnapshot,
+                lastStreamActivityAt: scratch.lastActivityAt
             )
 
             if shouldDisplaySnapshot || terminalSource == .disconnected {
-                terminalSource = .snapshot
+                if terminalSource != .snapshot { terminalSource = .snapshot }
+                if renderedOutput != nil { renderedOutput = nil }
             }
-            outputError = nil
-            snapshotFrameSequence = frameSequence
-            if textChanged { output = snapshotText }
+            if outputError != nil { outputError = nil }
+            if snapshotFrameSequence != frameSequence { snapshotFrameSequence = frameSequence }
+            if (shouldDisplaySnapshot || terminalSource != .stream), textChanged { output = snapshotText }
             if snapshotRevision != response.revision { snapshotRevision = response.revision }
         } catch is CancellationError {
             return
         } catch {
             if terminalSource != .stream || TerminalRefreshPolicy.isStreamStale(
-                lastStreamActivityAt: lastStreamActivityAt
+                lastStreamActivityAt: scratch.lastActivityAt
             ) {
-                terminalSource = .disconnected
-                outputError = error.localizedDescription
+                if terminalSource != .disconnected {
+                    displayCachedSnapshot()
+                    terminalSource = .disconnected
+                    if renderedOutput != nil { renderedOutput = nil }
+                }
+                let message = error.localizedDescription
+                if outputError != message { outputError = message }
             }
         }
     }
@@ -424,13 +501,32 @@ struct PaneSessionView: View {
         snapshotFrameSequence = 0
         frameSequence = 0
         terminalGrid = TerminalGrid(columns: 100, rows: 32)
+        renderedOutput = nil
         terminalSource = .connecting
-        lastStreamActivityAt = nil
+        scratch.lastActivityAt = nil
+        scratch.lastSnapshotText = nil
+        scratch.lastSnapshotRevision = 0
         isFollowing = true
         manualRefreshGeneration = 0
         manualRefreshPaneID = nil
         isManuallyRefreshing = false
         outputError = nil
+    }
+
+    private func commitTerminal(_ grid: TerminalGrid, sequence: Int) {
+        HerdrPerfDiagnostics.checkpoint("terminal.commit")
+        terminalGrid = grid
+        if frameSequence != sequence { frameSequence = sequence }
+        if terminalSource != .stream { terminalSource = .stream }
+        renderedOutput = grid.attributedText(scale: fontScale)
+    }
+
+    private func displayCachedSnapshot() {
+        guard let text = scratch.lastSnapshotText, text != output else { return }
+        output = text
+        if snapshotRevision != scratch.lastSnapshotRevision {
+            snapshotRevision = scratch.lastSnapshotRevision
+        }
     }
 
     private func manualRefresh() {

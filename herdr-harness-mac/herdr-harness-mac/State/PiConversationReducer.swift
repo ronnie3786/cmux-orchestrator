@@ -26,6 +26,7 @@ struct PiConversationReducer: Sendable {
     private var cursorOrder: [String] = []
 
     mutating func replace(with snapshot: PiConversationSnapshot) {
+        HerdrPerfDiagnostics.checkpoint("pi.replace")
         turns.removeAll(keepingCapacity: true)
         pendingInteractions.removeAll(keepingCapacity: true)
         seenCursors.removeAll(keepingCapacity: true)

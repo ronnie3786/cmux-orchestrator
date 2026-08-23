@@ -101,6 +101,24 @@ enum SidebarTree {
         }
     }
 
+    static func machineGroups(
+        machines: [HerdrMachine],
+        states: [String: ConnectionState],
+        entries: [ProjectEntry],
+        query: String,
+        collapsedMachineIDs: Set<String>
+    ) -> [MachineGroup] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return machines.map { machine in
+            MachineGroup(
+                machine: machine,
+                state: states[machine.id] ?? .disconnected,
+                isExpanded: trimmedQuery.isEmpty ? !collapsedMachineIDs.contains(machine.id) : true,
+                entries: entries.filter { $0.workspace.machineID == machine.id }
+            )
+        }
+    }
+
     private static func buildEntry(
         for workspace: HerdrWorkspace,
         query: String,
@@ -109,14 +127,23 @@ enum SidebarTree {
     ) -> ProjectEntry? {
         let sortedTabs = workspace.tabs.sorted { $0.number < $1.number }
         let tabIDs = Set(sortedTabs.map(\.id))
-        let workspaceMatches = workspace.label.localizedStandardContains(query)
-            || workspace.displayPath.localizedStandardContains(query)
-        let matchingTabIDs = Set(sortedTabs.filter {
-            $0.label.localizedStandardContains(query)
-        }.map(\.id))
-        let matchingPaneIDs = Set(workspace.panes.filter {
-            matchesPaneQuery($0, query: query)
-        }.map(\.id))
+        let workspaceMatches: Bool
+        let matchingTabIDs: Set<String>
+        let matchingPaneIDs: Set<String>
+        if query.isEmpty {
+            workspaceMatches = false
+            matchingTabIDs = []
+            matchingPaneIDs = []
+        } else {
+            workspaceMatches = workspace.label.localizedStandardContains(query)
+                || workspace.displayPath.localizedStandardContains(query)
+            matchingTabIDs = Set(sortedTabs.filter {
+                $0.label.localizedStandardContains(query)
+            }.map(\.id))
+            matchingPaneIDs = Set(workspace.panes.filter {
+                matchesPaneQuery($0, query: query)
+            }.map(\.id))
+        }
 
         guard query.isEmpty || workspaceMatches || !matchingTabIDs.isEmpty || !matchingPaneIDs.isEmpty else {
             return nil

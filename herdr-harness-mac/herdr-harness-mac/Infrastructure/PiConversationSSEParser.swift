@@ -14,15 +14,18 @@ struct PiConversationSSEParser {
             return .activity
         }
         if line.hasPrefix("event:") {
+            if !dataLines.isEmpty { resetRecord() }
             eventName = fieldValue(in: line, prefixLength: 6)
             return nil
         }
         if line.hasPrefix("id:") {
+            if !dataLines.isEmpty { resetRecord() }
             eventID = fieldValue(in: line, prefixLength: 3)
             return nil
         }
         if line.hasPrefix("data:") {
             dataLines.append(fieldValue(in: line, prefixLength: 5))
+            try enforceBufferLimit()
             return try dispatchIfComplete(force: false)
         }
         guard line.isEmpty else { return nil }
@@ -76,6 +79,15 @@ struct PiConversationSSEParser {
         eventName = "message"
         eventID = nil
         dataLines.removeAll(keepingCapacity: true)
+    }
+
+    private mutating func enforceBufferLimit() throws {
+        guard dataLines.count <= 64,
+              dataLines.reduce(0, { $0 + $1.lengthOfBytes(using: .utf8) + 1 }) <= 4 * 1024 * 1024
+        else {
+            resetRecord()
+            throw APIError.invalidResponse
+        }
     }
 
     private func fieldValue(in line: String, prefixLength: Int) -> String {

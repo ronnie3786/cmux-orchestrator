@@ -297,9 +297,12 @@ actor HerdrAPIClient {
         return status.apns.configured
     }
 
-    func events() -> AsyncThrowingStream<HerdrEvent, any Error> {
+    func events(after lastEventID: Int? = nil) -> AsyncThrowingStream<HerdrEvent, any Error> {
         var request = makeRequest(path: "/api/v1/events", method: "GET")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let lastEventID {
+            request.setValue(String(lastEventID), forHTTPHeaderField: "Last-Event-ID")
+        }
         let eventRequest = request
         let session = self.session
 
@@ -347,10 +350,10 @@ actor HerdrAPIClient {
         let terminalRequest = request
         let session = self.session
 
-        // Terminal delta frames are order-dependent, so do not drop intermediate
-        // values. Activity records also keep quiet, healthy streams distinguishable
-        // from a stalled observer.
-        return AsyncThrowingStream { continuation in
+        // Terminal deltas are order-dependent. A bounded oldest-first buffer
+        // therefore aborts on overflow, forcing a full-frame resync instead of
+        // silently applying a corrupted suffix of the stream.
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(256)) { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: terminalRequest)
@@ -360,7 +363,12 @@ actor HerdrAPIClient {
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
                         if let event = try parser.consume(line: line) {
-                            continuation.yield(event)
+                            HerdrPerfDiagnostics.streamBacklog.noteYielded(.terminal)
+                            if case .dropped = continuation.yield(event) {
+                                HerdrPerfDiagnostics.streamBacklog.noteOverflow(.terminal)
+                                continuation.finish(throwing: APIError.streamBacklogOverflow)
+                                return
+                            }
                         }
                     }
                     throw APIError.streamEnded
@@ -402,9 +410,9 @@ actor HerdrAPIClient {
         let eventRequest = request
         let session = self.session
 
-        // Pi deltas and tool transitions are order-dependent. Preserve every
-        // event and let the reducer de-duplicate durable cursors.
-        return AsyncThrowingStream { continuation in
+        // Pi envelopes are order-dependent. A bounded oldest-first buffer
+        // resyncs from a snapshot on overflow rather than dropping a delta.
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(128)) { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: eventRequest)
@@ -415,7 +423,12 @@ actor HerdrAPIClient {
                         os_signpost(.event, log: piStreamLog, name: "sse.line")
                         try Task.checkCancellation()
                         if let event = try parser.consume(line: line) {
-                            continuation.yield(event)
+                            HerdrPerfDiagnostics.streamBacklog.noteYielded(.pi)
+                            if case .dropped = continuation.yield(event) {
+                                HerdrPerfDiagnostics.streamBacklog.noteOverflow(.pi)
+                                continuation.finish(throwing: APIError.streamBacklogOverflow)
+                                return
+                            }
                         }
                     }
                     throw APIError.streamEnded
@@ -553,6 +566,9 @@ actor HerdrAPIClient {
         if path == "/api/v1/quick-sessions/pi" {
             return 75
         }
+        if method != "GET", ["/send-text", "/send-keys", "/run"].contains(where: path.hasSuffix) {
+            return 5
+        }
         if method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream")) {
             return 24 * 60 * 60
         }
@@ -593,11 +609,13 @@ struct TerminalSSEParser {
             return .activity
         }
         if line.hasPrefix("event:") {
+            if !dataLines.isEmpty { resetRecord() }
             eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
             return nil
         }
         if line.hasPrefix("data:") {
             dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            try enforceBufferLimit()
             return try dispatchIfComplete(force: false)
         }
         guard line.isEmpty else { return nil }
@@ -642,21 +660,50 @@ struct TerminalSSEParser {
         eventName = "message"
         dataLines.removeAll(keepingCapacity: true)
     }
+
+    private mutating func enforceBufferLimit() throws {
+        guard dataLines.count <= 64,
+              dataLines.reduce(0, { $0 + $1.lengthOfBytes(using: .utf8) + 1 }) <= 4 * 1024 * 1024
+        else {
+            resetRecord()
+            throw APIError.invalidResponse
+        }
+    }
 }
 
+/// Parses Herdr's SSE records, which are either broker envelopes containing an
+/// inner event payload or hand-written records whose JSON payload is the event data.
 struct HerdrSSEParser {
+    static let decodedEventNames: Set<String> = [
+        "snapshot.updated", "alert.created", "alert.updated", "alerts.read_state_changed",
+        "stars.changed", "push.delivery", "ready", "stream.reset", "cleanup.run_updated",
+        "pi.bridge.connection", "pi.session_start", "pi.session_shutdown", "pi.session_info_changed",
+        "pi.session_tree", "pi.session_compact",
+    ]
+
     private var eventName = "message"
+    private var eventID: Int?
     private var dataLines: [String] = []
     private let decoder = JSONDecoder()
 
     mutating func consume(line: String) -> HerdrEvent? {
         if line.hasPrefix(":") { return nil }
         if line.hasPrefix("event:") {
+            if !dataLines.isEmpty { resetRecord() }
             eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            return nil
+        }
+        if line.hasPrefix("id:") {
+            if !dataLines.isEmpty { resetRecord() }
+            eventID = Int(String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces))
             return nil
         }
         if line.hasPrefix("data:") {
             dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            if dataLines.count > 64 || dataLines.reduce(0, { $0 + $1.lengthOfBytes(using: .utf8) + 1 }) > 4 * 1024 * 1024 {
+                resetRecord()
+                return nil
+            }
             return dispatchIfComplete(force: false)
         }
         guard line.isEmpty else { return nil }
@@ -664,18 +711,43 @@ struct HerdrSSEParser {
     }
 
     private mutating func dispatchIfComplete(force: Bool) -> HerdrEvent? {
-        guard !dataLines.isEmpty,
-              let data = dataLines.joined(separator: "\n").data(using: .utf8)
-        else {
+        guard !dataLines.isEmpty else {
             if force { resetRecord() }
             return nil
         }
-        if let event = try? decoder.decode(HerdrEvent.self, from: data) {
+
+        let name = eventName
+        let id = eventID
+        if name != "message", !Self.decodedEventNames.contains(name) {
             resetRecord()
-            return event
+            return HerdrEvent(id: id, event: name, data: .null)
+        }
+        guard let data = dataLines.joined(separator: "\n").data(using: .utf8) else {
+            if force { resetRecord() }
+            return nil
         }
         if let value = try? decoder.decode(JSONValue.self, from: data) {
-            let event = HerdrEvent(event: eventName, data: value)
+            let event: HerdrEvent
+            if case let .object(object) = value,
+               let innerData = object["data"],
+               case let .string(innerName)? = object["event"] {
+                let innerID: Int?
+                if case let .number(number)? = object["id"] {
+                    innerID = Int(number)
+                } else {
+                    innerID = nil
+                }
+                event = HerdrEvent(id: innerID ?? id, event: innerName, data: innerData)
+            } else {
+                let messageName: String?
+                if case let .object(object) = value,
+                   case let .string(innerName)? = object["event"] {
+                    messageName = innerName
+                } else {
+                    messageName = nil
+                }
+                event = HerdrEvent(id: id, event: name == "message" ? (messageName ?? "message") : name, data: value)
+            }
             resetRecord()
             return event
         }
@@ -685,6 +757,7 @@ struct HerdrSSEParser {
 
     private mutating func resetRecord() {
         eventName = "message"
+        eventID = nil
         dataLines.removeAll(keepingCapacity: true)
     }
 }

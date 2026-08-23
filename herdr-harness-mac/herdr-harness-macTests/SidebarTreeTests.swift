@@ -71,6 +71,26 @@ struct SidebarTreeTests {
         #expect(!tree[0].isExpanded)
     }
 
+    @Test("Empty-query fast path preserves the complete tree")
+    func emptyQueryFastPathPreservesTree() {
+        let fastPath = SidebarTree.build(
+            workspaces: workspaces,
+            query: "",
+            collapsedWorkspaceIDs: []
+        )
+        let slowPath = workspaces
+            .sorted { $0.number < $1.number }
+            .flatMap { workspace in
+                SidebarTree.build(
+                    workspaces: [workspace],
+                    query: workspace.label,
+                    collapsedWorkspaceIDs: []
+                )
+            }
+
+        #expect(fastPath == slowPath)
+    }
+
     @Test("Query is trimmed before matching")
     func queryIsTrimmedBeforeMatching() {
         let tree = SidebarTree.build(
