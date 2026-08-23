@@ -7,10 +7,9 @@ struct WorkspacePaneListView: View {
     @State private var isRenamingWorkspace = false
     @State private var isConfirmingWorkspaceClose = false
     @State private var workspaceName = ""
-    @State private var cleanupPresenter = CleanupSheetPresenter()
 
     var body: some View {
-        @Bindable var cleanupPresenter = cleanupPresenter
+        @Bindable var cleanupPresenter = model.cleanupPresenter
         ZStack {
             HerdrBackground()
 

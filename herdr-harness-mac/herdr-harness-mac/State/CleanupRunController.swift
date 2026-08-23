@@ -1,5 +1,11 @@
 import Foundation
 import Observation
+import os
+
+private let cleanupLog = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "herdr-harness-mac",
+    category: "cleanup"
+)
 
 @MainActor
 @Observable
@@ -16,6 +22,10 @@ final class CleanupRunController {
     var state: State = .idle
     private(set) var activeRunID: String?
     private(set) var lastEnvelope: CleanupRunEnvelope?
+    private(set) var consecutivePollFailures = 0
+    private(set) var lastPollFailureMessage: String?
+    private(set) var lastPollSucceededAt: Date?
+    static let maxConsecutivePollFailures = 8
 
     private let isDemoMode: Bool
     private let pollInterval: Duration
@@ -24,14 +34,15 @@ final class CleanupRunController {
     private let fetchRun: (String) async throws -> CleanupRunEnvelope
     private let applyRun: (String, [String], [String]) async throws -> CleanupApplyResponse
     private let cancel: (String) async throws -> Void
+    private let runContext: String
     @ObservationIgnored private var pollingTask: Task<Void, Never>?
-    @ObservationIgnored private var consecutivePollFailures = 0
-    private let maxConsecutivePollFailures = 3
+    @ObservationIgnored private var pollingGeneration = 0
 
     init(
         isDemoMode: Bool,
         pollInterval: Duration = .seconds(1),
         demoPhaseInterval: Duration = .seconds(1),
+        runContext: String = "",
         start: @escaping (CleanupStartRunRequest) async throws -> CleanupStartRunResponse,
         fetch: @escaping (String) async throws -> CleanupRunEnvelope,
         apply: @escaping (String, [String], [String]) async throws -> CleanupApplyResponse,
@@ -44,6 +55,7 @@ final class CleanupRunController {
         fetchRun = fetch
         applyRun = apply
         self.cancel = cancel
+        self.runContext = runContext
     }
 
     deinit { pollingTask?.cancel() }
@@ -52,12 +64,13 @@ final class CleanupRunController {
         stopPolling()
         activeRunID = nil
         lastEnvelope = nil
-        consecutivePollFailures = 0
+        resetPollFailureState()
+        lastPollSucceededAt = nil
         if isDemoMode {
             let envelope = Self.demoRunningSnapshot(phase: .collecting)
             activeRunID = envelope.run.runID
             lastEnvelope = envelope
-            state = .running(envelope)
+            transition(to: .running(envelope), runID: envelope.run.runID)
             pollingTask = Task { [weak self] in
                 await self?.advanceDemo()
             }
@@ -79,23 +92,26 @@ final class CleanupRunController {
             let envelope = Self.initialEnvelope(for: response, settings: settings)
             activeRunID = response.runID
             lastEnvelope = envelope
-            state = .running(envelope)
+            transition(to: .running(envelope), runID: response.runID)
+            cleanupLog.info("run started id=\(response.runID) \(self.runContext)")
             beginPolling(runID: response.runID)
         } catch {
-            state = .failure(error.localizedDescription)
+            transition(to: .failure(error.localizedDescription))
         }
     }
 
     func retry() async {
         guard let runID = activeRunID else {
+            cleanupLog.info("retry requested without an active run")
             await start()
             return
         }
 
+        cleanupLog.info("retry requested run=\(runID)")
         stopPolling()
-        consecutivePollFailures = 0
+        resetPollFailureState()
         if let lastEnvelope {
-            state = .running(lastEnvelope)
+            transition(to: .running(lastEnvelope), runID: runID)
         }
         await poll(runID: runID)
         guard case .running = state, activeRunID == runID else { return }
@@ -103,6 +119,7 @@ final class CleanupRunController {
     }
 
     func startOver() async {
+        cleanupLog.info("start over requested run=\(self.activeRunID ?? "none")")
         if let runID = activeRunID {
             stopPolling()
             do {
@@ -113,24 +130,28 @@ final class CleanupRunController {
         }
         activeRunID = nil
         lastEnvelope = nil
-        consecutivePollFailures = 0
-        state = .idle
+        resetPollFailureState()
+        lastPollSucceededAt = nil
+        transition(to: .idle)
         await start()
     }
 
     func apply(paneIDs: [String], workspaceIDs: [String]) async {
         guard case let .report(envelope) = state else { return }
-        state = .applying
+        let runID = envelope.run.runID
+        cleanupLog.info("apply requested run=\(runID)")
+        transition(to: .applying, runID: runID)
         do {
             let response = try await applyRun(envelope.run.runID, paneIDs, workspaceIDs)
-            state = .applied(response, envelope)
+            transition(to: .applied(response, envelope), runID: runID)
         } catch {
-            state = .failure(error.localizedDescription)
+            transition(to: .failure(error.localizedDescription), runID: runID)
         }
     }
 
     func cancelRun() async {
         guard let runID = activeRunID else { return }
+        cleanupLog.info("cancel requested run=\(runID)")
         stopPolling()
         do {
             try await cancel(runID)
@@ -139,28 +160,61 @@ final class CleanupRunController {
         }
         activeRunID = nil
         lastEnvelope = nil
-        consecutivePollFailures = 0
-        state = .idle
+        resetPollFailureState()
+        lastPollSucceededAt = nil
+        transition(to: .idle, runID: runID)
     }
 
     func stopPolling() {
+        pollingGeneration += 1
         pollingTask?.cancel()
         pollingTask = nil
     }
 
+    func resumeIfNeeded() {
+        guard case .running = state, let runID = activeRunID, pollingTask == nil else { return }
+        cleanupLog.info("reattaching polling run=\(runID)")
+        beginPolling(runID: runID)
+    }
+
     private func beginPolling(runID: String) {
         let pollInterval = self.pollInterval
-        pollingTask = Task { [weak self, pollInterval] in
+        pollingGeneration += 1
+        let generation = pollingGeneration
+        pollingTask = Task { [weak self, pollInterval, generation] in
+            var exitReason = "finished"
+            defer {
+                self?.clearPollingTask(generation: generation)
+                cleanupLog.info("polling exited run=\(runID): \(exitReason)")
+            }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: pollInterval)
                 } catch {
+                    exitReason = Task.isCancelled ? "cancelled" : "sleep interrupted"
                     return
                 }
-                guard !Task.isCancelled, let self, self.activeRunID == runID else { return }
+                guard !Task.isCancelled else {
+                    exitReason = "cancelled"
+                    return
+                }
+                guard let self else {
+                    exitReason = "controller released"
+                    return
+                }
+                guard self.activeRunID == runID else {
+                    exitReason = "active run changed"
+                    return
+                }
                 await self.poll(runID: runID)
-                guard case .running = self.state, self.activeRunID == runID else { return }
+                guard case .running = self.state, self.activeRunID == runID else {
+                    exitReason = self.consecutivePollFailures >= Self.maxConsecutivePollFailures
+                        ? "failure cap reached"
+                        : "state left running"
+                    return
+                }
             }
+            exitReason = "cancelled"
         }
     }
 
@@ -169,22 +223,30 @@ final class CleanupRunController {
         do {
             let envelope = try await fetchRun(runID)
             guard activeRunID == runID else { return }
-            consecutivePollFailures = 0
+            resetPollFailureState()
+            lastPollSucceededAt = .now
             lastEnvelope = envelope
             if envelope.run.status.isTerminal {
                 if envelope.workspaces != nil {
-                    state = .report(envelope)
+                    transition(to: .report(envelope), runID: runID)
                 } else {
-                    state = .failure(Self.failureMessage(for: envelope.run))
+                    transition(to: .failure(Self.failureMessage(for: envelope.run)), runID: runID)
                 }
             } else {
-                state = .running(envelope)
+                transition(to: .running(envelope), runID: runID)
             }
         } catch {
             guard activeRunID == runID else { return }
             consecutivePollFailures += 1
-            if consecutivePollFailures >= maxConsecutivePollFailures {
-                state = .failure(error.localizedDescription)
+            lastPollFailureMessage = error.localizedDescription
+            cleanupLog.error("poll failed run=\(runID) count=\(self.consecutivePollFailures): \(error.localizedDescription)")
+            if consecutivePollFailures >= Self.maxConsecutivePollFailures {
+                transition(
+                    to: .failure(
+                        "\(error.localizedDescription) (run \(runID), after \(Self.maxConsecutivePollFailures) failed polls)"
+                    ),
+                    runID: runID
+                )
             }
         }
     }
@@ -199,7 +261,7 @@ final class CleanupRunController {
             guard !Task.isCancelled else { return }
             let envelope = Self.demoRunningSnapshot(phase: phase)
             lastEnvelope = envelope
-            state = .running(envelope)
+            transition(to: .running(envelope), runID: envelope.run.runID)
         }
         do {
             try await Task.sleep(for: demoPhaseInterval)
@@ -209,7 +271,36 @@ final class CleanupRunController {
         guard !Task.isCancelled else { return }
         let envelope = Self.demoReport()
         lastEnvelope = envelope
-        state = .report(envelope)
+        transition(to: .report(envelope), runID: envelope.run.runID)
+    }
+
+    private func resetPollFailureState() {
+        consecutivePollFailures = 0
+        lastPollFailureMessage = nil
+    }
+
+    private func clearPollingTask(generation: Int) {
+        guard pollingGeneration == generation else { return }
+        pollingTask = nil
+    }
+
+    private func transition(to newState: State, runID: String? = nil) {
+        let oldLabel = Self.stateLabel(state)
+        state = newState
+        cleanupLog.info(
+            "state \(oldLabel) -> \(Self.stateLabel(newState)) run=\(runID ?? self.activeRunID ?? "none")"
+        )
+    }
+
+    private static func stateLabel(_ state: State) -> String {
+        switch state {
+        case .idle: "idle"
+        case .running: "running"
+        case .report: "report"
+        case let .failure(message): "failure: \(message)"
+        case .applying: "applying"
+        case .applied: "applied"
+        }
     }
 
     private static func initialEnvelope(

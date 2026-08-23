@@ -92,12 +92,13 @@ struct CleanupRunControllerTests {
             return
         }
         #expect(await starts.count() == 1)
+        #expect(controller.consecutivePollFailures == 0)
     }
 
     @Test("Retry resumes a known run after polling fails repeatedly")
     func retryResumesKnownRun() async throws {
         let starts = CleanupStartCounter()
-        let script = CleanupFetchScript(failuresBeforeSuccess: 3)
+        let script = CleanupFetchScript(failuresBeforeSuccess: 8)
         let controller = CleanupRunController(
             isDemoMode: false,
             pollInterval: .milliseconds(1),
@@ -112,6 +113,12 @@ struct CleanupRunControllerTests {
             Issue.record("Timed out waiting for the cleanup poll failure threshold")
             return
         }
+        guard case let .failure(message) = controller.state else {
+            Issue.record("Expected a cleanup poll failure")
+            return
+        }
+        #expect(message.contains("network blip"))
+        #expect(message.contains("clr_scripted"))
 
         await script.allowSuccess()
         await controller.retry()
@@ -120,6 +127,70 @@ struct CleanupRunControllerTests {
             return
         }
         #expect(await starts.count() == 1)
+    }
+
+    @Test("Resuming a running controller restarts a stopped polling loop")
+    func resumeIfNeededRestartsStoppedPolling() async throws {
+        let counter = CleanupCounter()
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            pollInterval: .milliseconds(1),
+            start: { _ in CleanupStartRunResponse(ok: true, runID: "clr_resume", status: .collecting) },
+            fetch: { _ in await counter.nextEnvelope() },
+            apply: { _, _, _ in CleanupApplyResponse(applied: CleanupAppliedItems(panes: [], workspaces: []), skipped: []) },
+            cancel: { _ in }
+        )
+
+        await controller.start()
+        controller.stopPolling()
+        controller.resumeIfNeeded()
+
+        guard try await waitForReport(from: controller) else {
+            Issue.record("Timed out waiting for resumed cleanup polling")
+            return
+        }
+        #expect(await counter.count() >= 2)
+    }
+
+    @Test("Resuming an idle controller is a no-op")
+    func resumeIfNeededIsNoOpWhileIdle() async throws {
+        let starts = CleanupStartCounter()
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            pollInterval: .milliseconds(1),
+            start: { _ in await starts.start() },
+            fetch: { _ in CleanupRunController.demoReport() },
+            apply: { _, _, _ in CleanupApplyResponse(applied: CleanupAppliedItems(panes: [], workspaces: []), skipped: []) },
+            cancel: { _ in }
+        )
+
+        controller.resumeIfNeeded()
+        try await Task.sleep(for: .milliseconds(10))
+
+        #expect(controller.state == .idle)
+        #expect(await starts.count() == 0)
+    }
+
+    @Test("Cleanup polling without a client reports the affected machine")
+    func fetchCleanupRunWithoutClientIsDescriptive() async throws {
+        let suiteName = "CleanupRunControllerTests.noClient"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = HerdrAppModel(arguments: [], userDefaults: defaults)
+
+        do {
+            _ = try await model.fetchCleanupRun(machineID: "work-mac", runID: "clr_no_client")
+            Issue.record("Expected a no-active-connection error")
+        } catch let error as APIError {
+            guard case let .noActiveConnection(machineID) = error else {
+                Issue.record("Expected a no-active-connection error")
+                return
+            }
+            #expect(machineID == "work-mac")
+            #expect(error.localizedDescription.contains("work-mac"))
+            #expect(error.localizedDescription.contains("active connection"))
+        }
     }
 
     @Test("A partial run with a workspace payload remains a report")
@@ -307,6 +378,12 @@ private actor CleanupFetchScript {
     }
 }
 
-private enum CleanupFetchScriptError: Error {
+private enum CleanupFetchScriptError: LocalizedError {
     case transient
+
+    var errorDescription: String? {
+        switch self {
+        case .transient: "network blip"
+        }
+    }
 }

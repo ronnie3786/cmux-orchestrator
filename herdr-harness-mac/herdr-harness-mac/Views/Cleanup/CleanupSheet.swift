@@ -18,6 +18,7 @@ struct CleanupSheet: View {
         content
             .frame(minWidth: 760, minHeight: 600)
             .background(HerdrTheme.ink)
+            .task { controller.resumeIfNeeded() }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Done") { dismiss() }
@@ -101,7 +102,14 @@ struct CleanupSheet: View {
             Text("Reviewing \(scopeDescription) on \(target.machineName)")
                 .herdrFont(.body)
                 .foregroundStyle(HerdrTheme.mist)
-            CleanupTimelineView(run: run, failureMessage: failureMessage)
+            CleanupTimelineView(
+                run: run,
+                failureMessage: failureMessage,
+                consecutivePollFailures: failureMessage == nil ? controller.consecutivePollFailures : 0,
+                lastPollFailureMessage: failureMessage == nil ? controller.lastPollFailureMessage : nil,
+                lastPollSucceededAt: failureMessage == nil ? controller.lastPollSucceededAt : nil,
+                maxConsecutivePollFailures: CleanupRunController.maxConsecutivePollFailures
+            )
             trustCaption
             if failureMessage != nil {
                 Button("Retry", systemImage: "arrow.clockwise") {

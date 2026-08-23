@@ -17,7 +17,6 @@ struct HerdrSidebarView: View {
     @State private var paneName = ""
     @State private var closingWorkspace: HerdrWorkspace?
     @State private var closingPane: HerdrPane?
-    @State private var cleanupPresenter = CleanupSheetPresenter()
 
     @MainActor
     private struct SidebarSnapshot {
@@ -64,7 +63,7 @@ struct HerdrSidebarView: View {
     }
 
     var body: some View {
-        @Bindable var cleanupPresenter = cleanupPresenter
+        @Bindable var cleanupPresenter = model.cleanupPresenter
         let snapshot = SidebarSnapshot(model: model, query: query)
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -360,7 +359,7 @@ struct HerdrSidebarView: View {
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
         Button("Smart Cleanup This Workspace…", systemImage: "sparkles") {
-            cleanupPresenter.present(CleanupSheetTarget(
+            model.cleanupPresenter.present(CleanupSheetTarget(
                 id: "\(workspace.machineID)|cleanup|\(workspace.workspaceID)",
                 machineID: workspace.machineID,
                 machineName: machineName(for: workspace.machineID),
@@ -379,7 +378,7 @@ struct HerdrSidebarView: View {
     @ViewBuilder
     private func machineMenu(_ machine: HerdrMachine) -> some View {
         Button("Smart Cleanup…", systemImage: "sparkles") {
-            cleanupPresenter.present(CleanupSheetTarget(
+            model.cleanupPresenter.present(CleanupSheetTarget(
                 id: "\(machine.id)|cleanup|all",
                 machineID: machine.id,
                 machineName: machine.name,

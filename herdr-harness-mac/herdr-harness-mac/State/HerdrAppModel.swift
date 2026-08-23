@@ -57,6 +57,7 @@ final class HerdrAppModel {
     var remotePushConfigured = false
     var remotePushDeliveryVerified = false
     var remotePushRegistrationError: String?
+    let cleanupPresenter = CleanupSheetPresenter()
 
     private let userDefaults: UserDefaults
     @ObservationIgnored private var runtimes: [String: MachineRuntime] = [:]
@@ -472,8 +473,9 @@ final class HerdrAppModel {
     }
 
     func fetchCleanupRun(machineID: String, runID: String) async throws -> CleanupRunEnvelope {
-        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
-            throw APIError.invalidResponse
+        guard let client = client(forMachine: machineID) else {
+            let machineName = machines.first(where: { $0.id == machineID })?.name ?? machineID
+            throw APIError.noActiveConnection(machineID: machineName)
         }
         return try await client.fetchCleanupRun(id: runID)
     }
@@ -537,6 +539,7 @@ final class HerdrAppModel {
     func makeCleanupController(for target: CleanupSheetTarget) -> CleanupRunController {
         CleanupRunController(
             isDemoMode: isDemoMode,
+            runContext: "machine \(target.machineID), workspace \(target.workspaceID ?? "all")",
             start: { _ in
                 try await self.startCleanup(
                     machineID: target.machineID,

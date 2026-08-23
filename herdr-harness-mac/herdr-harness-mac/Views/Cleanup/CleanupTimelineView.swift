@@ -4,12 +4,17 @@ import SwiftUI
 struct CleanupTimelineView: View {
     let run: CleanupRun
     let failureMessage: String?
+    let consecutivePollFailures: Int
+    let lastPollFailureMessage: String?
+    let lastPollSucceededAt: Date?
+    let maxConsecutivePollFailures: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(timelinePhases, id: \.self) { phase in
                 timelineRow(phase)
             }
+            pollStatus
         }
     }
 
@@ -46,6 +51,15 @@ struct CleanupTimelineView: View {
                     Text(run.phaseDetail ?? "Working…")
                         .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.mist)
+                    if let entry {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            if let elapsed = elapsedText(for: entry, at: context.date) {
+                                Text("\(elapsed) elapsed")
+                                    .herdrFont(.caption)
+                                    .foregroundStyle(HerdrTheme.mist)
+                            }
+                        }
+                    }
                 }
                 if failed, let failureMessage {
                     Text(failureMessage)
@@ -78,6 +92,48 @@ struct CleanupTimelineView: View {
               let start = Self.formatter.date(from: startedAt),
               let finish = Self.formatter.date(from: finishedAt) else { return nil }
         let seconds = max(0, Int(finish.timeIntervalSince(start).rounded()))
+        return Self.durationText(seconds: seconds)
+    }
+
+    private func elapsedText(for entry: CleanupPhaseHistoryEntry, at date: Date) -> String? {
+        guard let startedAt = entry.startedAt,
+              let start = Self.formatter.date(from: startedAt) else { return nil }
+        let seconds = max(0, Int(date.timeIntervalSince(start).rounded()))
+        return Self.durationText(seconds: seconds)
+    }
+
+    @ViewBuilder
+    private var pollStatus: some View {
+        if failureMessage == nil {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                VStack(alignment: .leading, spacing: 3) {
+                    if consecutivePollFailures > 0 {
+                        Text("connection hiccup · retrying (\(consecutivePollFailures) of \(maxConsecutivePollFailures))")
+                            .herdrFont(.caption)
+                            .foregroundStyle(HerdrTheme.alert)
+                        if let lastPollFailureMessage {
+                            Text(lastPollFailureMessage)
+                                .herdrFont(.caption)
+                                .foregroundStyle(HerdrTheme.alert)
+                                .lineLimit(2)
+                        }
+                    } else if let lastPollSucceededAt {
+                        Text("live · updated \(Self.durationText(seconds: max(0, Int(context.date.timeIntervalSince(lastPollSucceededAt).rounded())))) ago")
+                            .herdrFont(.caption)
+                            .foregroundStyle(HerdrTheme.mist)
+                    } else {
+                        Text("live")
+                            .herdrFont(.caption)
+                            .foregroundStyle(HerdrTheme.mist)
+                    }
+                }
+                .padding(.top, 4)
+                .accessibilityIdentifier("cleanup-poll-status")
+            }
+        }
+    }
+
+    private static func durationText(seconds: Int) -> String {
         if seconds < 60 { return "\(seconds)s" }
         return "\(seconds / 60)m \(seconds % 60)s"
     }
