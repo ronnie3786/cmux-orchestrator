@@ -231,10 +231,11 @@ class PiSemanticTests(unittest.TestCase):
                     "snapshot",
                     snapshot={
                         "session": {"id": "session-1"},
-                        "state": {"idle": False},
+                        "state": {"idle": False, "cost": {"totalUSD": 1.25, "totalTokens": 4200}},
                         "entries": [{"id": "entry-1", "parentId": None, "future": [1, 2]}],
                         "pending_interactions": [],
                         "futureSnapshot": {"kept": True},
+                        "usage": {"costUSD": 1.25, "totalTokens": 4200},
                     },
                 ),
             )
@@ -243,7 +244,12 @@ class PiSemanticTests(unittest.TestCase):
                 "event",
                 sequence=1,
                 session_id="session-1",
-                event={"type": "message_start", "message": {"role": "assistant"}, "future": 9},
+                event={
+                    "type": "message_start",
+                    "message": {"role": "assistant"},
+                    "future": 9,
+                    "cost": {"totalUSD": 1.25},
+                },
             )
             self.assertEqual(len(journal.ingest("w1:p1", event)), 1)
             self.assertEqual(journal.ingest("w1:p1", event), [])
@@ -255,7 +261,10 @@ class PiSemanticTests(unittest.TestCase):
             self.assertEqual(snapshot["entries"][0]["id"], "entry-1")
             self.assertEqual(snapshot["entries"][0]["parentId"], None)
             self.assertTrue(snapshot["futureSnapshot"]["kept"])
+            self.assertEqual(snapshot["state"]["cost"], {"totalUSD": 1.25, "totalTokens": 4200})
+            self.assertEqual(snapshot["usage"], {"costUSD": 1.25, "totalTokens": 4200})
             self.assertEqual(values[0]["event"]["future"], 9)
+            self.assertEqual(values[0]["event"]["cost"], {"totalUSD": 1.25})
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
             for suffix in ("-wal", "-shm"):
                 companion = f"{path}{suffix}"

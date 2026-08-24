@@ -187,7 +187,7 @@ function projectEvent(type: string, event: unknown, ctx: ExtensionContext): Json
 		case "agent_end":
 			return {};
 		case "turn_end":
-			return { turnIndex: value.turnIndex, timestamp: value.timestamp, context: contextUsage(ctx) };
+			return { turnIndex: value.turnIndex, context: contextUsage(ctx), cost: sessionCost(ctx) };
 		case "message_start":
 		case "message_end":
 			return { message: jsonSafe(value.message) };
@@ -248,6 +248,47 @@ function contextUsage(ctx: ExtensionContext): JsonObject {
 		};
 	} catch {
 		return { tokens: null, contextWindow: null, percent: null };
+	}
+}
+
+// Minimal structural view of pi-ai's Usage (kept local so the extension does
+// not depend on pi-ai's export surface across versions).
+type UsageLike = {
+	input?: number; output?: number; cacheRead?: number; cacheWrite?: number;
+	totalTokens?: number;
+	cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+};
+
+// Cumulative cost and token totals for the whole session, recomputed from the
+// full entry list so resume, fork, branch switches, and compaction are all
+// covered. `totalUSD` is null when no entry carries usage (e.g. a brand-new
+// session), letting clients distinguish unknown from $0.00.
+function sessionCost(ctx: ExtensionContext): JsonObject {
+	try {
+		let seen = false;
+		let totalUSD = 0, inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, totalTokens = 0, assistantTurns = 0;
+		for (const entry of ctx.sessionManager.getEntries() as Array<Record<string, unknown>>) {
+			let usage: UsageLike | undefined;
+			if (entry.type === "compaction" || entry.type === "branch_summary") {
+				usage = entry.usage as UsageLike | undefined;
+			} else if (entry.type === "message") {
+				const message = entry.message as { role?: string; usage?: UsageLike } | undefined;
+				if (message?.role === "assistant" && message.usage) { usage = message.usage; assistantTurns += 1; }
+				else if (message?.role === "toolResult" && message.usage) usage = message.usage;
+			}
+			if (!usage) continue;
+			seen = true;
+			totalUSD += usage.cost?.total ?? 0;
+			inputTokens += usage.input ?? 0;
+			outputTokens += usage.output ?? 0;
+			cacheReadTokens += usage.cacheRead ?? 0;
+			cacheWriteTokens += usage.cacheWrite ?? 0;
+			totalTokens += usage.totalTokens ?? 0;
+		}
+		if (!seen) return { totalUSD: null };
+		return { totalUSD, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, totalTokens, assistantTurns };
+	} catch {
+		return { totalUSD: null };
 	}
 }
 
@@ -407,6 +448,7 @@ class BridgeRuntime {
 
 	snapshot(ctx: ExtensionContext): WireRecord {
 		const projection = projectedEntries(ctx);
+		const cost = sessionCost(ctx);
 		return {
 			protocol: PROTOCOL,
 			pane_id: this.paneId,
@@ -426,11 +468,15 @@ class BridgeRuntime {
 					thinkingLevel: ctx.thinkingLevel,
 					mode: ctx.mode,
 					context: contextUsage(ctx),
+					cost,
 				},
 				entries: projection.entries,
 				pending_interactions: [],
 				truncated: projection.truncated,
 				generated_at: new Date().toISOString(),
+				...(typeof cost.totalUSD === "number"
+					? { usage: { costUSD: cost.totalUSD, totalTokens: cost.totalTokens ?? 0 } }
+					: {}),
 			},
 			generated_at: new Date().toISOString(),
 		};

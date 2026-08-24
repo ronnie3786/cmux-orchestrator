@@ -64,6 +64,45 @@ const entries = [
 		},
 	},
 ];
+let costEntriesShouldThrow = false;
+const costEntries = [
+	{
+		type: "message",
+		id: "cost-entry-assistant",
+		parentId: null,
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: "done" }],
+			usage: {
+				input: 100,
+				output: 50,
+				cacheRead: 10,
+				cacheWrite: 5,
+				totalTokens: 165,
+				cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+			},
+		},
+	},
+	{
+		type: "compaction",
+		id: "cost-entry-compaction",
+		parentId: "cost-entry-assistant",
+		usage: {
+			input: 20,
+			output: 10,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 30,
+			cost: { input: 0.003, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.005 },
+		},
+	},
+	{
+		type: "message",
+		id: "cost-entry-user",
+		parentId: "cost-entry-compaction",
+		message: { role: "user", content: "no usage here" },
+	},
+];
 const context = {
 	mode: "tui",
 	model: { provider: "test", id: "model" },
@@ -84,7 +123,10 @@ const context = {
 		getLeafId: () => "entry-1",
 		getSessionName: () => "Fixture",
 		getHeader: () => ({ type: "session", version: 3, id: "session-1" }),
-		getEntries: () => entries,
+		getEntries: () => {
+			if (costEntriesShouldThrow) throw new Error("boom");
+			return costEntries;
+		},
 		buildContextEntries: () => entries,
 	},
 };
@@ -160,6 +202,28 @@ try {
 	assert.equal(hello.capabilities.setModel, true);
 	assert.equal(hello.capabilities.setThinkingLevel, true);
 
+	assert.ok(Math.abs(snapshot.state.cost.totalUSD - 0.035) < 1e-9);
+	assert.equal(snapshot.state.cost.totalTokens, 195);
+	assert.ok(Math.abs(snapshot.usage.costUSD - 0.035) < 1e-9);
+	assert.equal(snapshot.usage.totalTokens, 195);
+
+	costEntriesShouldThrow = true;
+	const costFailure = await connect(socketPath);
+	const costFailureSnapshotPromise = readRecords(costFailure, (records) => records.some((item) => item.kind === "snapshot"));
+	costFailure.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "cost-failure-subscribe",
+		type: "subscribe",
+		pane_id: "w1:p1",
+		after: 0,
+	})}\n`);
+	const costFailureRecords = await costFailureSnapshotPromise;
+	const costFailureSnapshot = costFailureRecords.find((item) => item.kind === "snapshot").snapshot;
+	assert.deepEqual(costFailureSnapshot.state.cost, { totalUSD: null });
+	assert.equal(costFailureSnapshot.usage, undefined);
+	costFailure.destroy();
+	costEntriesShouldThrow = false;
+
 	const deltas = [];
 	const privateSentinel = "PRIVATE-SYSTEM-PROMPT-MUST-NOT-CROSS-WIRE";
 	handlers.get("before_agent_start")({
@@ -210,6 +274,7 @@ try {
 		turnEndRecords.find((item) => item.event?.type === "turn_end").event.context,
 		{ tokens: 12_345, contextWindow: 192_000, percent: 6.43 },
 	);
+	assert.ok(Math.abs(turnEndRecords.find((item) => item.event?.type === "turn_end").event.cost.totalUSD - 0.035) < 1e-9);
 
 	entries.push({
 		type: "message",
