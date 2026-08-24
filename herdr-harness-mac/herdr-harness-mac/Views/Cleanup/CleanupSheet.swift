@@ -13,15 +13,35 @@ struct CleanupSheet: View {
     @Bindable var controller: CleanupRunController
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openSettings) private var openSettings
+    @State private var isShowingProcessInfo = false
 
     var body: some View {
         content
             .frame(minWidth: 760, minHeight: 600)
             .background(HerdrTheme.ink)
             .task { controller.resumeIfNeeded() }
+            .interactiveDismissDisabled(isBusy)
             .toolbar {
+                ToolbarItem(placement: .secondaryAction) {
+                    if isReportVisible {
+                        Button("How cleanup works", systemImage: "info.circle") {
+                            isShowingProcessInfo = true
+                        }
+                        .accessibilityIdentifier("cleanup-process-info")
+                        .popover(isPresented: $isShowingProcessInfo) {
+                            ScrollView {
+                                CleanupRunPreviewView()
+                                    .padding(20)
+                            }
+                            .frame(width: 440, height: 360)
+                            .background(HerdrTheme.ink)
+                        }
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Done") { dismiss() }
+                        .disabled(isBusy)
+                        .help(doneHelp)
                         .accessibilityIdentifier("cleanup-done")
                 }
             }
@@ -38,15 +58,12 @@ struct CleanupSheet: View {
             CleanupReportView(envelope: envelope, controller: controller)
         case let .failure(message):
             runningContent(failedRun(message), failureMessage: message)
-        case .applying:
-            VStack(spacing: 12) {
-                ProgressView()
-                Text("Re-checking safety rails and closing your selection…")
-                    .herdrFont(.body)
-                    .foregroundStyle(HerdrTheme.mist)
-            }
-        case let .applied(response, _):
-            appliedContent(response)
+        case let .applying(envelope):
+            CleanupApplyingView(envelope: envelope)
+        case let .applyStatusUnknown(message):
+            applyStatusUnknownContent(message)
+        case let .applied(response, envelope):
+            CleanupAppliedView(response: response, envelope: envelope)
         }
     }
 
@@ -58,6 +75,7 @@ struct CleanupSheet: View {
                     .herdrFont(.body)
                     .foregroundStyle(HerdrTheme.mist)
                 configChips
+                CleanupRunPreviewView()
                 trustCaption
                 Button("Run Smart Cleanup", systemImage: "sparkles") {
                     Task { await controller.start() }
@@ -147,32 +165,71 @@ struct CleanupSheet: View {
         }
     }
 
-    private func appliedContent(_ response: CleanupApplyResponse) -> some View {
+    private func applyStatusUnknownContent(_ message: String) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Cleanup applied", systemImage: "checkmark.circle.fill")
+            VStack(alignment: .leading, spacing: 18) {
+                titleRow
+                Label("Cleanup status needs confirmation", systemImage: "wifi.exclamationmark")
                     .herdrFont(.title2, weight: .bold)
-                    .foregroundStyle(HerdrTheme.signal)
-                ForEach(response.applied.panes, id: \.self) { id in
-                    Label("Closed pane \(id)", systemImage: "checkmark")
+                    .foregroundStyle(HerdrTheme.alert)
+                Text("Herdr lost reliable contact while applying your selections. The server may still be ending Pi sessions or closing panes, so this window stays locked until status is confirmed.")
+                    .herdrFont(.body)
+                    .foregroundStyle(HerdrTheme.text)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Last connection error")
+                        .herdrFont(.headline, weight: .bold)
+                    Text(message)
                         .herdrFont(.body)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .textSelection(.enabled)
                 }
-                ForEach(response.applied.workspaces, id: \.self) { id in
-                    Label("Closed workspace \(id)", systemImage: "checkmark")
-                        .herdrFont(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(HerdrTheme.alert.opacity(0.09))
+                .clipShape(.rect(cornerRadius: 12))
+
+                if let envelope = controller.latestApplyEnvelope {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Last confirmed server update")
+                            .herdrFont(.headline, weight: .bold)
+                        Text(envelope.run.phaseDetail ?? envelope.run.phase?.label ?? "Cleanup was still in progress.")
+                            .herdrFont(.body)
+                            .foregroundStyle(HerdrTheme.text)
+                        if let progress = envelope.run.progress {
+                            Text("\(progress.done) of \(progress.total) apply steps confirmed")
+                                .herdrFont(.caption, monospaced: true)
+                                .foregroundStyle(HerdrTheme.mist)
+                        }
+                        if let result = envelope.applyResult {
+                            Text("\(result.applied.panes.count) panes and \(result.applied.workspaces.count) workspaces closed · \(result.skipped.count) kept open · \(result.piSessions?.ended ?? 0) sessions ended")
+                                .herdrFont(.caption, monospaced: true)
+                                .foregroundStyle(HerdrTheme.mist)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(HerdrTheme.graphite)
+                    .clipShape(.rect(cornerRadius: 12))
                 }
-                ForEach(response.skipped) { item in
-                    Label("Skipped \(item.id): \(item.reasonLabel)", systemImage: "exclamationmark.triangle")
-                        .herdrFont(.body)
-                        .foregroundStyle(HerdrTheme.alert)
+
+                Button("Retry Status", systemImage: "arrow.clockwise") {
+                    Task { await controller.retryApplyStatus() }
                 }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("cleanup-retry-apply-status")
+
+                Text("Retry Status safely reuses the same run and selections. It will not create duplicate cleanup work.")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
             }
             .padding(24)
         }
+        .accessibilityIdentifier("cleanup-apply-status-unknown")
     }
 
     private var trustCaption: some View {
-        Text("Content is captured to local temp files · the AI judge is read-only · nothing closes without your approval.")
+        Text("Evidence is stored locally; processing follows your configured Pi model and provider · the AI judge is read-only · active Pi sessions end before panes close · closure links are saved locally.")
             .herdrFont(.caption)
             .foregroundStyle(HerdrTheme.mist)
             .padding(12)
@@ -181,6 +238,31 @@ struct CleanupSheet: View {
     }
 
     private var scopeDescription: String { target.workspaceLabel ?? "all workspaces" }
+
+    private var isBusy: Bool {
+        switch controller.state {
+        case .running, .applying, .applyStatusUnknown:
+            true
+        case .idle, .report, .failure, .applied:
+            false
+        }
+    }
+
+    private var doneHelp: String {
+        switch controller.state {
+        case .applyStatusUnknown:
+            "Retry cleanup status before closing Smart Cleanup"
+        case .running, .applying:
+            "Wait for the cleanup operation to finish or cancel it first"
+        case .idle, .report, .failure, .applied:
+            "Close Smart Cleanup"
+        }
+    }
+
+    private var isReportVisible: Bool {
+        if case .report = controller.state { return true }
+        return false
+    }
 
     private func failedRun(_ message: String) -> CleanupRun {
         CleanupRun(runID: "failed", status: .failed, phase: .failed, phaseDetail: nil, progress: nil, phaseHistory: [], error: message)

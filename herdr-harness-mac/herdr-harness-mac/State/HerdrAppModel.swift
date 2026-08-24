@@ -489,14 +489,16 @@ final class HerdrAppModel {
         machineID: String,
         runID: String,
         paneIDs: [String],
-        workspaceIDs: [String]
+        workspaceIDs: [String],
+        onProgress: @Sendable (CleanupRunEnvelope) async -> Void = { _ in }
     ) async throws -> CleanupApplyResponse {
         if isDemoMode {
-            let response = CleanupApplyResponse(
-                applied: CleanupAppliedItems(panes: paneIDs, workspaces: workspaceIDs),
-                skipped: []
+            let response = Self.demoCleanupApplyResponse(
+                runID: runID,
+                paneIDs: paneIDs,
+                workspaceIDs: workspaceIDs
             )
-            toastMessage = "Closed \(paneIDs.count) panes"
+            toastMessage = Self.cleanupApplyToast(for: response)
             return response
         }
         guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
@@ -505,10 +507,174 @@ final class HerdrAppModel {
         let response = try await client.applyCleanupRun(
             id: runID,
             paneIDs: paneIDs,
-            workspaceIDs: workspaceIDs
+            workspaceIDs: workspaceIDs,
+            onProgress: onProgress
         )
-        toastMessage = "Closed \(response.applied.panes.count) panes"
+        toastMessage = Self.cleanupApplyToast(for: response)
         return response
+    }
+
+    private static func demoCleanupApplyResponse(
+        runID: String,
+        paneIDs: [String],
+        workspaceIDs: [String]
+    ) -> CleanupApplyResponse {
+        let workspacePaneIDs = [
+            "w3": ["w3:p1", "w3:p2", "w3:p3"],
+            "w9": ["w9:p1", "w9:p2"],
+        ]
+        let piSessionsByPaneID = [
+            "w3:p1": CleanupPiSession(
+                detected: true,
+                sessionID: "pi_login_retry_8421",
+                sessionFile: "~/.pi/agent/sessions/fix-login-flake/pi_login_retry_8421.jsonl",
+                sessionName: "login-retry-8421",
+                cwd: "/Users/demo/work/fix-login-flake",
+                connected: true,
+                active: true,
+                idle: true,
+                costUSD: 3.41,
+                totalTokens: 186_420
+            ),
+            "w9:p1": CleanupPiSession(
+                detected: true,
+                sessionID: "pi_release_check_556",
+                sessionFile: "~/.pi/agent/sessions/release-check/pi_release_check_556.jsonl",
+                sessionName: "release-check",
+                cwd: "/Users/demo/work/release-check",
+                connected: true,
+                active: true,
+                idle: true,
+                costUSD: 2.46,
+                totalTokens: 121_870
+            ),
+        ]
+        let paneTitles = [
+            "w3:p1": "pi · fix-login-flake",
+            "w9:p1": "pi · release-check",
+        ]
+        let workspaceTitles = [
+            "w3": "Fix Login Flake",
+            "w9": "Release Check",
+        ]
+
+        var affectedPiPaneIDs = paneIDs.filter { piSessionsByPaneID[$0] != nil }
+        for workspaceID in workspaceIDs {
+            for paneID in workspacePaneIDs[workspaceID] ?? [] where piSessionsByPaneID[paneID] != nil && !affectedPiPaneIDs.contains(paneID) {
+                affectedPiPaneIDs.append(paneID)
+            }
+        }
+
+        let piResults = affectedPiPaneIDs.compactMap { paneID -> CleanupPiSessionApplyResult? in
+            guard let session = piSessionsByPaneID[paneID] else { return nil }
+            return CleanupPiSessionApplyResult(
+                paneID: paneID,
+                sessionID: session.sessionID,
+                wasActive: session.active,
+                quitAttempted: session.active,
+                quitSucceeded: session.active,
+                closeOutcome: "closed",
+                reason: nil
+            )
+        }
+        let ledgerRecords = affectedPiPaneIDs.compactMap { paneID -> CleanupLedgerRecord? in
+            guard let session = piSessionsByPaneID[paneID] else { return nil }
+            let workspaceID = paneID.split(separator: ":", maxSplits: 1).first.map(String.init) ?? "demo"
+            let closedWithWorkspace = workspaceIDs.contains(workspaceID)
+            let endedSession = CleanupPiSession(
+                detected: session.detected,
+                sessionID: session.sessionID,
+                sessionFile: session.sessionFile,
+                sessionName: session.sessionName,
+                cwd: session.cwd,
+                connected: false,
+                active: false,
+                idle: session.idle,
+                costUSD: session.costUSD,
+                totalTokens: session.totalTokens
+            )
+            return CleanupLedgerRecord(
+                cleanupRunID: runID,
+                timestamp: "2026-08-21T20:06:12Z",
+                workspace: CleanupLedgerWorkspace(
+                    id: workspaceID,
+                    title: workspaceTitles[workspaceID] ?? workspaceID
+                ),
+                pane: CleanupLedgerPane(
+                    id: paneID,
+                    title: paneTitles[paneID] ?? paneID,
+                    tabID: "tab-\(workspaceID)",
+                    cwd: session.cwd
+                ),
+                piSession: endedSession,
+                quit: CleanupLedgerRecord.Quit(
+                    attempted: session.active,
+                    succeeded: session.active,
+                    outcome: session.active ? "ended" : "not_needed",
+                    error: nil
+                ),
+                close: CleanupLedgerRecord.Close(
+                    scope: closedWithWorkspace ? "workspace" : "pane",
+                    outcome: "closed",
+                    error: nil
+                )
+            )
+        }
+        let workspaceCoveredPaneIDs = Set(workspaceIDs.flatMap { workspacePaneIDs[$0] ?? [] })
+        let deduplicatedPaneIDs = paneIDs.filter { workspaceCoveredPaneIDs.contains($0) }
+        let appliedPaneIDs = paneIDs.filter { !workspaceCoveredPaneIDs.contains($0) }
+
+        return CleanupApplyResponse(
+            applied: CleanupAppliedItems(panes: appliedPaneIDs, workspaces: workspaceIDs),
+            skipped: [],
+            piSessions: CleanupPiSessionApplySummary(
+                ended: piResults.count(where: \.quitSucceeded),
+                failed: piResults.count(where: { $0.quitAttempted && !$0.quitSucceeded }),
+                results: piResults
+            ),
+            ledger: CleanupLedgerSummary(
+                path: "~/.config/herdr-harness/cleanup/pane-session-ledger.jsonl",
+                recordsAppended: ledgerRecords.count,
+                records: ledgerRecords
+            ),
+            deduplicatedPaneIDs: deduplicatedPaneIDs,
+            complete: true
+        )
+    }
+
+    private static func cleanupApplyToast(for response: CleanupApplyResponse) -> String {
+        let paneCount = response.applied.panes.count
+        let workspaceCount = response.applied.workspaces.count
+        let endedSessionCount = response.piSessions?.ended ?? 0
+        let recordedCount = response.ledger?.recordsAppended ?? 0
+        let skippedCount = response.skipped.count
+
+        var sentences: [String] = []
+        if let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+            sentences.append("Cleanup stopped early: \(error)")
+        }
+        if paneCount > 0 || workspaceCount > 0 {
+            var closedItems: [String] = []
+            if paneCount > 0 {
+                closedItems.append("\(paneCount) \(paneCount == 1 ? "pane" : "panes")")
+            }
+            if workspaceCount > 0 {
+                closedItems.append("\(workspaceCount) \(workspaceCount == 1 ? "workspace" : "workspaces")")
+            }
+            sentences.append("Closed \(closedItems.joined(separator: " and "))")
+        } else {
+            sentences.append("No panes or workspaces closed")
+        }
+        if endedSessionCount > 0 {
+            sentences.append("Ended \(endedSessionCount) Pi \(endedSessionCount == 1 ? "session" : "sessions")")
+        }
+        if recordedCount > 0 {
+            sentences.append("Saved \(recordedCount) pane-session \(recordedCount == 1 ? "record" : "records")")
+        }
+        if skippedCount > 0 {
+            sentences.append("Skipped \(skippedCount) \(skippedCount == 1 ? "item" : "items")")
+        }
+        return sentences.joined(separator: ". ") + "."
     }
 
     func cancelCleanupRun(machineID: String, runID: String) async throws {
@@ -554,12 +720,13 @@ final class HerdrAppModel {
             fetch: { runID in
                 try await self.fetchCleanupRun(machineID: target.machineID, runID: runID)
             },
-            apply: { runID, paneIDs, workspaceIDs in
+            applyWithProgress: { runID, paneIDs, workspaceIDs, onProgress in
                 try await self.applyCleanupRun(
                     machineID: target.machineID,
                     runID: runID,
                     paneIDs: paneIDs,
-                    workspaceIDs: workspaceIDs
+                    workspaceIDs: workspaceIDs,
+                    onProgress: onProgress
                 )
             },
             cancel: { runID in

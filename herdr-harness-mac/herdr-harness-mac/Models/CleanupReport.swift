@@ -5,6 +5,7 @@ enum CleanupRunStatus: String, Codable, Sendable, Equatable {
     case collecting
     case judging
     case gating
+    case applying
     case done
     case failed
     case applied
@@ -18,7 +19,7 @@ enum CleanupRunStatus: String, Codable, Sendable, Equatable {
     var isTerminal: Bool {
         switch self {
         case .done, .failed, .applied, .partial: true
-        case .collecting, .judging, .gating, .unknown: false
+        case .collecting, .judging, .gating, .applying, .unknown: false
         }
     }
 }
@@ -27,6 +28,7 @@ enum CleanupPhase: String, Codable, CaseIterable, Sendable, Hashable, Identifiab
     case collecting
     case judging
     case gating
+    case applying
     case done
     case failed
 
@@ -41,6 +43,7 @@ enum CleanupPhase: String, Codable, CaseIterable, Sendable, Hashable, Identifiab
         case .collecting: "Capture pane content"
         case .judging: "AI judge review"
         case .gating: "Safety checks"
+        case .applying: "End sessions and close"
         case .done: "Report"
         case .failed: "Cleanup stopped"
         }
@@ -52,16 +55,24 @@ struct CleanupRunEnvelope: Codable, Sendable, Equatable {
     let run: CleanupRun
     let workspaces: [CleanupWorkspaceReport]?
     let summary: CleanupSummary?
+    let applyResult: CleanupApplyResponse?
 
     enum CodingKeys: String, CodingKey {
-        case ok, run, workspaces, summary
+        case ok, run, workspaces, summary, applyResult
     }
 
-    init(ok: Bool, run: CleanupRun, workspaces: [CleanupWorkspaceReport]?, summary: CleanupSummary?) {
+    init(
+        ok: Bool,
+        run: CleanupRun,
+        workspaces: [CleanupWorkspaceReport]?,
+        summary: CleanupSummary?,
+        applyResult: CleanupApplyResponse? = nil
+    ) {
         self.ok = ok
         self.run = run
         self.workspaces = workspaces
         self.summary = summary
+        self.applyResult = applyResult
     }
 
     init(from decoder: Decoder) throws {
@@ -70,6 +81,7 @@ struct CleanupRunEnvelope: Codable, Sendable, Equatable {
         run = try CleanupRun(from: decoder)
         workspaces = try container.decodeIfPresent([CleanupWorkspaceReport].self, forKey: .workspaces)
         summary = try container.decodeIfPresent(CleanupSummary.self, forKey: .summary)
+        applyResult = try container.decodeIfPresent(CleanupApplyResponse.self, forKey: .applyResult)
     }
 }
 
@@ -235,6 +247,9 @@ struct CleanupJudgeSummary: Codable, Sendable, Equatable {
 struct CleanupWorkspaceReport: Codable, Sendable, Equatable, Identifiable {
     let workspaceID: String
     let label: String?
+    let title: String?
+    let workspaceReason: String?
+    let summary: String?
     let workspaceCloseRecommended: Bool
     let workspaceSafeToClose: Bool
     let workspaceBlockedBy: [String]
@@ -245,7 +260,32 @@ struct CleanupWorkspaceReport: Codable, Sendable, Equatable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case workspaceID = "workspaceId"
-        case label, workspaceCloseRecommended, workspaceSafeToClose, workspaceBlockedBy, git, panes
+        case label, title, workspaceReason, summary
+        case workspaceCloseRecommended, workspaceSafeToClose, workspaceBlockedBy, git, panes
+    }
+
+    init(
+        workspaceID: String,
+        label: String?,
+        workspaceCloseRecommended: Bool,
+        workspaceSafeToClose: Bool,
+        workspaceBlockedBy: [String],
+        git: CleanupGitStatus,
+        panes: [CleanupPaneReport],
+        title: String? = nil,
+        workspaceReason: String? = nil,
+        summary: String? = nil
+    ) {
+        self.workspaceID = workspaceID
+        self.label = label
+        self.title = title
+        self.workspaceReason = workspaceReason
+        self.summary = summary
+        self.workspaceCloseRecommended = workspaceCloseRecommended
+        self.workspaceSafeToClose = workspaceSafeToClose
+        self.workspaceBlockedBy = workspaceBlockedBy
+        self.git = git
+        self.panes = panes
     }
 }
 
@@ -264,6 +304,11 @@ struct CleanupPaneReport: Codable, Sendable, Equatable, Identifiable {
     let costSource: String?
     let costOverThreshold: Bool
     let signals: CleanupSignals?
+    let summary: String?
+    let activitySummary: String?
+    let usageSummary: String?
+    let evidenceCited: [String]
+    let piSession: CleanupPiSession?
 
     var id: String { paneID }
 
@@ -271,6 +316,7 @@ struct CleanupPaneReport: Codable, Sendable, Equatable, Identifiable {
         case paneID = "paneId"
         case title, agentKind, agentStatus, classification, confidence, reason, closeRecommended, safeToClose
         case blockedBy, costUSD, costSource, costOverThreshold, signals
+        case summary, activitySummary, usageSummary, evidenceCited, piSession
     }
 
     init(
@@ -287,7 +333,12 @@ struct CleanupPaneReport: Codable, Sendable, Equatable, Identifiable {
         costUSD: Double?,
         costSource: String?,
         costOverThreshold: Bool,
-        signals: CleanupSignals?
+        signals: CleanupSignals?,
+        summary: String? = nil,
+        activitySummary: String? = nil,
+        usageSummary: String? = nil,
+        evidenceCited: [String] = [],
+        piSession: CleanupPiSession? = nil
     ) {
         self.paneID = paneID
         self.title = title
@@ -303,6 +354,11 @@ struct CleanupPaneReport: Codable, Sendable, Equatable, Identifiable {
         self.costSource = costSource
         self.costOverThreshold = costOverThreshold
         self.signals = signals
+        self.summary = summary
+        self.activitySummary = activitySummary
+        self.usageSummary = usageSummary
+        self.evidenceCited = evidenceCited
+        self.piSession = piSession
     }
 
     init(from decoder: Decoder) throws {
@@ -321,6 +377,68 @@ struct CleanupPaneReport: Codable, Sendable, Equatable, Identifiable {
         costSource = try container.decodeIfPresent(String.self, forKey: .costSource)
         costOverThreshold = try container.decodeIfPresent(Bool.self, forKey: .costOverThreshold) ?? false
         signals = try container.decodeIfPresent(CleanupSignals.self, forKey: .signals)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        activitySummary = try container.decodeIfPresent(String.self, forKey: .activitySummary)
+        usageSummary = try container.decodeIfPresent(String.self, forKey: .usageSummary)
+        evidenceCited = try container.decodeIfPresent([String].self, forKey: .evidenceCited) ?? []
+        piSession = try container.decodeIfPresent(CleanupPiSession.self, forKey: .piSession)
+    }
+}
+
+struct CleanupPiSession: Codable, Sendable, Equatable {
+    let detected: Bool
+    let sessionID: String?
+    let sessionFile: String?
+    let sessionName: String?
+    let cwd: String?
+    let connected: Bool?
+    let active: Bool
+    let idle: Bool?
+    let costUSD: Double?
+    let totalTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case detected
+        case sessionID = "sessionId"
+        case sessionFile, sessionName, cwd, connected, active, idle, costUSD, totalTokens
+    }
+
+    init(
+        detected: Bool,
+        sessionID: String? = nil,
+        sessionFile: String? = nil,
+        sessionName: String? = nil,
+        cwd: String? = nil,
+        connected: Bool? = nil,
+        active: Bool = false,
+        idle: Bool? = nil,
+        costUSD: Double? = nil,
+        totalTokens: Int? = nil
+    ) {
+        self.detected = detected
+        self.sessionID = sessionID
+        self.sessionFile = sessionFile
+        self.sessionName = sessionName
+        self.cwd = cwd
+        self.connected = connected
+        self.active = active
+        self.idle = idle
+        self.costUSD = costUSD
+        self.totalTokens = totalTokens
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        detected = try container.decodeIfPresent(Bool.self, forKey: .detected) ?? false
+        sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+        sessionFile = try container.decodeIfPresent(String.self, forKey: .sessionFile)
+        sessionName = try container.decodeIfPresent(String.self, forKey: .sessionName)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+        connected = try container.decodeIfPresent(Bool.self, forKey: .connected)
+        active = try container.decodeIfPresent(Bool.self, forKey: .active) ?? false
+        idle = try container.decodeIfPresent(Bool.self, forKey: .idle)
+        costUSD = try container.decodeIfPresent(Double.self, forKey: .costUSD)
+        totalTokens = try container.decodeIfPresent(Int.self, forKey: .totalTokens)
     }
 }
 
@@ -403,6 +521,63 @@ struct CleanupSignals: Codable, Sendable, Equatable {
     let starred: Bool?
     let focused: Bool?
     let unreadAlerts: Int?
+    let agentStatus: AgentStatus?
+    let blockedAlertAgeSeconds: Double?
+    let piStateAgeSeconds: Double?
+    let piConnected: Bool?
+    let piActive: Bool?
+    let piWorking: Bool?
+    let endsAtShellPrompt: Bool?
+    let hasProcessExitedMarker: Bool?
+    let looksLikeIdleAgentTUI: Bool?
+    let tailIsEmpty: Bool?
+    let tailTruncated: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case doneAlertAgeSeconds, revisionChanged, sessionFileAgeSeconds, starred, focused, unreadAlerts
+        case agentStatus, blockedAlertAgeSeconds, piStateAgeSeconds, piConnected, piActive, piWorking
+        case endsAtShellPrompt, hasProcessExitedMarker
+        case looksLikeIdleAgentTUI = "looksLikeIdleAgentTui"
+        case tailIsEmpty, tailTruncated
+    }
+
+    init(
+        doneAlertAgeSeconds: Double?,
+        revisionChanged: Bool?,
+        sessionFileAgeSeconds: Double?,
+        starred: Bool?,
+        focused: Bool?,
+        unreadAlerts: Int?,
+        agentStatus: AgentStatus? = nil,
+        blockedAlertAgeSeconds: Double? = nil,
+        piStateAgeSeconds: Double? = nil,
+        piConnected: Bool? = nil,
+        piActive: Bool? = nil,
+        piWorking: Bool? = nil,
+        endsAtShellPrompt: Bool? = nil,
+        hasProcessExitedMarker: Bool? = nil,
+        looksLikeIdleAgentTUI: Bool? = nil,
+        tailIsEmpty: Bool? = nil,
+        tailTruncated: Bool? = nil
+    ) {
+        self.doneAlertAgeSeconds = doneAlertAgeSeconds
+        self.revisionChanged = revisionChanged
+        self.sessionFileAgeSeconds = sessionFileAgeSeconds
+        self.starred = starred
+        self.focused = focused
+        self.unreadAlerts = unreadAlerts
+        self.agentStatus = agentStatus
+        self.blockedAlertAgeSeconds = blockedAlertAgeSeconds
+        self.piStateAgeSeconds = piStateAgeSeconds
+        self.piConnected = piConnected
+        self.piActive = piActive
+        self.piWorking = piWorking
+        self.endsAtShellPrompt = endsAtShellPrompt
+        self.hasProcessExitedMarker = hasProcessExitedMarker
+        self.looksLikeIdleAgentTUI = looksLikeIdleAgentTUI
+        self.tailIsEmpty = tailIsEmpty
+        self.tailTruncated = tailTruncated
+    }
 }
 
 struct CleanupSummary: Codable, Sendable, Equatable {
@@ -412,6 +587,73 @@ struct CleanupSummary: Codable, Sendable, Equatable {
     let costFlags: [CleanupCostFlag]
     let totalKnownCostUSD: Double
     let unknownCostPanes: Int
+    let workspacesScanned: Int?
+    let workspaceCloseCandidates: Int?
+    let workspaceTitles: [String]?
+    let workspaceSummaries: [CleanupWorkspaceSummary]?
+    let classifications: [String: Int]?
+    let activePanes: Int?
+    let blockedPanes: Int?
+    let piPanes: Int?
+    let activePiSessions: Int?
+    let knownCostPanes: Int?
+
+    init(
+        panesScanned: Int,
+        closeCandidates: Int,
+        railBlocked: Int,
+        costFlags: [CleanupCostFlag],
+        totalKnownCostUSD: Double,
+        unknownCostPanes: Int,
+        workspacesScanned: Int? = nil,
+        workspaceCloseCandidates: Int? = nil,
+        workspaceTitles: [String]? = nil,
+        workspaceSummaries: [CleanupWorkspaceSummary]? = nil,
+        classifications: [String: Int]? = nil,
+        activePanes: Int? = nil,
+        blockedPanes: Int? = nil,
+        piPanes: Int? = nil,
+        activePiSessions: Int? = nil,
+        knownCostPanes: Int? = nil
+    ) {
+        self.panesScanned = panesScanned
+        self.closeCandidates = closeCandidates
+        self.railBlocked = railBlocked
+        self.costFlags = costFlags
+        self.totalKnownCostUSD = totalKnownCostUSD
+        self.unknownCostPanes = unknownCostPanes
+        self.workspacesScanned = workspacesScanned
+        self.workspaceCloseCandidates = workspaceCloseCandidates
+        self.workspaceTitles = workspaceTitles
+        self.workspaceSummaries = workspaceSummaries
+        self.classifications = classifications
+        self.activePanes = activePanes
+        self.blockedPanes = blockedPanes
+        self.piPanes = piPanes
+        self.activePiSessions = activePiSessions
+        self.knownCostPanes = knownCostPanes
+    }
+}
+
+struct CleanupWorkspaceSummary: Codable, Sendable, Equatable, Identifiable {
+    let workspaceID: String
+    let title: String
+    let summary: String
+    let workspaceReason: String
+    let paneCount: Int
+    let closeCandidates: Int
+    let railBlocked: Int
+    let activePanes: Int
+    let piPanes: Int
+    let activePiSessions: Int
+
+    var id: String { workspaceID }
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspaceId"
+        case title, summary, workspaceReason, paneCount, closeCandidates, railBlocked
+        case activePanes, piPanes, activePiSessions
+    }
 }
 
 struct CleanupCostFlag: Codable, Sendable, Equatable, Identifiable {
@@ -441,6 +683,10 @@ enum CleanupRail {
         "R6:pane_blocked": "a pane inside is not closable",
         "R7:low_confidence": "judge confidence too low",
         "R8:state_changed": "state changed since the report",
+        "not_safe_to_close": "not approved as safe to close",
+        "pi_quit_failed": "Pi session could not end cleanly",
+        "workspace_pi_quit_aborted": "not attempted after another Pi session failed",
+        "pi_still_active": "Pi session stayed active after quit",
     ]
 
     static func label(for code: String) -> String { labels[code] ?? code }
@@ -485,6 +731,112 @@ struct CleanupApplyRequest: Codable, Sendable, Equatable {
 struct CleanupApplyResponse: Codable, Sendable, Equatable {
     let applied: CleanupAppliedItems
     let skipped: [CleanupSkippedItem]
+    let piSessions: CleanupPiSessionApplySummary?
+    let ledger: CleanupLedgerSummary?
+    let deduplicatedPaneIDs: [String]?
+    let complete: Bool?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case applied, skipped, piSessions, ledger, complete, error
+        case deduplicatedPaneIDs = "deduplicatedPaneIds"
+    }
+
+    init(
+        applied: CleanupAppliedItems,
+        skipped: [CleanupSkippedItem],
+        piSessions: CleanupPiSessionApplySummary? = nil,
+        ledger: CleanupLedgerSummary? = nil,
+        deduplicatedPaneIDs: [String]? = nil,
+        complete: Bool? = nil,
+        error: String? = nil
+    ) {
+        self.applied = applied
+        self.skipped = skipped
+        self.piSessions = piSessions
+        self.ledger = ledger
+        self.deduplicatedPaneIDs = deduplicatedPaneIDs
+        self.complete = complete
+        self.error = error
+    }
+}
+
+struct CleanupPiSessionApplySummary: Codable, Sendable, Equatable {
+    let ended: Int
+    let failed: Int
+    let results: [CleanupPiSessionApplyResult]
+}
+
+struct CleanupPiSessionApplyResult: Codable, Sendable, Equatable, Identifiable {
+    let paneID: String
+    let sessionID: String?
+    let wasActive: Bool
+    let quitAttempted: Bool
+    let quitSucceeded: Bool
+    let closeOutcome: String
+    let reason: String?
+
+    var id: String { paneID }
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "paneId"
+        case sessionID = "sessionId"
+        case wasActive, quitAttempted, quitSucceeded, closeOutcome, reason
+    }
+}
+
+struct CleanupLedgerSummary: Codable, Sendable, Equatable {
+    let path: String
+    let recordsAppended: Int
+    let records: [CleanupLedgerRecord]
+}
+
+struct CleanupLedgerRecord: Codable, Sendable, Equatable, Identifiable {
+    struct Quit: Codable, Sendable, Equatable {
+        let attempted: Bool
+        let succeeded: Bool
+        let outcome: String
+        let error: String?
+    }
+
+    struct Close: Codable, Sendable, Equatable {
+        let scope: String
+        let outcome: String
+        let error: String?
+    }
+
+    let cleanupRunID: String
+    let timestamp: String
+    let workspace: CleanupLedgerWorkspace
+    let pane: CleanupLedgerPane
+    let piSession: CleanupPiSession
+    let quit: Quit
+    let close: Close
+
+    var id: String { "\(cleanupRunID):\(pane.id):\(timestamp)" }
+
+    enum CodingKeys: String, CodingKey {
+        case cleanupRunID = "cleanupRunId"
+        case timestamp, workspace, pane, piSession, quit, close
+    }
+}
+
+struct CleanupLedgerWorkspace: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let title: String
+}
+
+struct CleanupLedgerPane: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let title: String
+    let tabID: String?
+    let cwd: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title
+        case tabID = "tabId"
+        case cwd
+    }
 }
 
 struct CleanupAppliedItems: Codable, Sendable, Equatable {

@@ -96,13 +96,25 @@ sequenceDiagram
     H-->>Mac: {status: "done", report}
     Mac->>Mac: report sheet, user selects closures
     Mac->>H: POST /cleanup/runs/{id}/apply {paneIds, workspaceIds}
-    H->>H: re-validate rails against fresh snapshot
-    H->>Herdr: workspace.close / pane.close
-    H-->>Mac: {applied, skipped[{id, reason}]}
+    H-->>Mac: 202 {runId, status: "applying"}
+    Note over H: one single-flight background apply worker
+    par Apply worker
+        loop for each selected pane or workspace
+            H->>H: exact-topology + just-in-time safety re-validation
+            H->>Herdr: /quit when needed, then pane.close / workspace.close
+        end
+    and Client polling
+        loop until terminal status
+            Mac->>H: GET /cleanup/runs/{id} (poll ~1s)
+            H-->>Mac: {status: "applying" | "applied" | "failed", progress, applyResult?}
+        end
+    end
 ```
 
-Run states: `collecting → judging → gating → done | failed | applied`
-(plus `partial` when some judge batches failed — report carries what succeeded).
+Run states: `collecting → judging → gating → done | partial | failed`.
+After explicit approval, a report in `done` or `partial` transitions through
+`applying → applied | failed`. A `partial` judge run carries the batches that
+succeeded; a failed apply can carry partial mutation results.
 
 **Progress contract (drives the Mac app's detailed loading view).** `run.json`
 (and therefore `GET /cleanup/runs/{id}`) always carries:
@@ -121,9 +133,13 @@ Run states: `collecting → judging → gating → done | failed | applied`
 ```
 
 `phaseDetail` is a human sentence updated per unit of work (per pane while
-collecting, per batch while judging). The collector updates it for every pane
-capture; the judge runner for every batch start/finish. Writes are
-lock-guarded and flushed so polls always see fresh progress.
+collecting, per batch while judging, and per selected pane or workspace while
+applying). The collector updates it for every pane capture; the judge runner
+for every batch start/finish; the apply worker after each completed or skipped
+action. Writes are lock-guarded and flushed so polls always see fresh
+progress. During apply, the same GET envelope can also include an optional,
+incrementally persisted `applyResult`; it may be absent during the brief
+interval before the worker creates `apply.json`.
 
 ---
 
@@ -298,12 +314,14 @@ single fenced ```json block:
       "classification": "completed | stale | active | blocked | needs_human | unknown",
       "closeRecommended": true,
       "confidence": 0.0,
+      "summary": "what this pane was used for, its last meaningful outcome, and whether work remains",
       "reason": "one or two sentences citing concrete evidence",
       "evidenceCited": ["tail.txt:…", "signal:agentStatus=done"]
     }
   ],
   "workspaceCloseRecommended": false,
-  "workspaceReason": "…"
+  "workspaceReason": "…",
+  "summary": "workspace-level purpose, outcome, and current state"
 }
 ```
 
@@ -316,6 +334,12 @@ with an appended "your previous output failed validation because …" message;
 after that the batch is marked `judgeFailed` and its panes default to `keep`.
 **A judge failure can never produce a close recommendation.**
 
+Both pane `summary` / `evidenceCited` and workspace `workspaceReason` /
+`summary` are preserved in `report.json`. For workspaces split across more
+than eight panes, workspace close is recommended only when **every** batch
+recommended it. Batch reasons and summaries are deduplicated and combined,
+so the first batch cannot accidentally decide the whole workspace.
+
 ### 4.5 Phase C — deterministic gate (safety rails)
 
 The judge is advisory. `closeRecommended` survives only if **every** rail
@@ -324,14 +348,14 @@ override them, and they run again at apply time against a fresh snapshot.
 
 | # | Rail | Source |
 |---|---|---|
-| R1 | Pane/agent `agent_status` is not `working` and not `blocked` | snapshot (blocked = needs the human, not the trash) |
+| R1 | Pane/agent `agent_status` is not `working` and not `blocked`; a connected Pi semantic snapshot with `state.idle == false` is also treated as working | snapshot + Pi journal (blocked = needs the human, not the trash) |
 | R2 | Pane is not focused; its workspace is not the focused workspace | snapshot `focused` / `focused_workspace_id` |
 | R3 | Pane is not starred | `starredPaneIds` |
 | R4 | `revisionChanged == false` in the dwell sample | collector |
 | R5 | Pane has no unread alert | alert journal |
 | R6 | Workspace close additionally requires: every pane individually passed R1–R5, git status clean or unavailable-with-`allowGitUnknown=false` → block, and no unpushed branch when the workspace has a `worktree` | git proxy + snapshot |
 | R7 | Judge `confidence >= minConfidence` (default 0.6) | verdict |
-| R8 | Apply-time only: pane still exists and rails R1–R5 still hold on a **fresh** snapshot; otherwise skip with reason `state_changed` | apply |
+| R8 | Apply-time only: exact report-time topology and all applicable rails still hold on a **fresh** snapshot immediately before each action and the final workspace close; Pi capability and session identity are still trustworthy | apply |
 
 A pane that the judge wants closed but a rail blocks appears in the report as
 `safeToClose: false, blockedBy: ["R2:focused", …]` — visible, not silently
@@ -375,21 +399,33 @@ falls back to the raw code for unknown values):
   },
   "workspaces": [
     {
-      "workspaceId": "w3", "label": "fix-login-flake",
+      "workspaceId": "w3", "label": "fix-login-flake", "title": "fix-login-flake",
       "workspaceCloseRecommended": true, "workspaceSafeToClose": true,
       "workspaceBlockedBy": [],
+      "workspaceReason": "Every pane reports a completed outcome and activity stayed quiet.",
+      "summary": "The login-flake fix was implemented, tested, and merged.",
       "git": { "state": "clean" },
       "panes": [
         {
           "paneId": "w3:p1", "title": "pi · fix-login-flake",
           "agentKind": "pi", "agentStatus": "done",
           "classification": "completed", "confidence": 0.92,
+          "summary": "Implemented and merged the login-flake fix; no follow-up remains.",
           "reason": "Final turn reports merged PR; done alert 6h old; no output since.",
+          "evidenceCited": ["transcript.md: final result", "signal:revisionChanged=false"],
           "closeRecommended": true, "safeToClose": true, "blockedBy": [],
           "costUSD": 3.41, "costSource": "sessionFile", "costOverThreshold": true,
+          "activitySummary": "Agent status is done. Output stayed unchanged during the activity sample. A Pi session is connected and idle.",
+          "usageSummary": "Pi session abc123 is connected; $3.41, 482,100 tokens.",
+          "piSession": { "detected": true, "sessionId": "abc123",
+                         "sessionFile": "/Users/me/.pi/agent/sessions/…/abc123.jsonl",
+                         "sessionName": "fix login flake", "cwd": "/work/fix-login-flake",
+                         "connected": true, "active": true, "idle": true,
+                         "costUSD": 3.41, "totalTokens": 482100 },
           "signals": { "doneAlertAgeSeconds": 21600, "revisionChanged": false,
                        "sessionFileAgeSeconds": 22110, "starred": false,
-                       "focused": false, "unreadAlerts": 0 }
+                       "focused": false, "unreadAlerts": 0,
+                       "piConnected": true, "piActive": true, "piWorking": false }
         }
       ]
     }
@@ -397,10 +433,28 @@ falls back to the raw code for unknown values):
   "summary": {
     "panesScanned": 14, "closeCandidates": 6, "railBlocked": 2,
     "costFlags": [ { "paneId": "w3:p1", "costUSD": 3.41 } ],
-    "totalKnownCostUSD": 5.87, "unknownCostPanes": 3
+    "totalKnownCostUSD": 5.87, "unknownCostPanes": 3,
+    "workspacesScanned": 5, "workspaceCloseCandidates": 2,
+    "workspaceTitles": ["fix-login-flake", "release prep", "docs"],
+    "classifications": { "completed": 6, "stale": 2, "active": 3,
+                         "blocked": 1, "needs_human": 1, "unknown": 1 },
+    "activePanes": 3, "blockedPanes": 2, "piPanes": 9,
+    "activePiSessions": 4, "knownCostPanes": 11,
+    "workspaceSummaries": [
+      { "workspaceId": "w3", "title": "fix-login-flake",
+        "summary": "The login-flake fix was implemented, tested, and merged.",
+        "workspaceReason": "Every pane reports a completed outcome and activity stayed quiet.",
+        "paneCount": 2, "closeCandidates": 2, "railBlocked": 0,
+        "activePanes": 0, "piPanes": 2, "activePiSessions": 1 }
+    ]
   }
 }
 ```
+
+The pane title fallback is `title → label → terminal_title_stripped → paneId`.
+Existing report keys remain unchanged; every field above is additive. Hidden
+`_revisionAtReport` and `_sessionIdAtReport` values support apply-time R8
+checks and should not be presented as user-facing content.
 
 ### 4.7 New HTTP surface (all bearer-authed, added to `_route()` and `api_description()`)
 
@@ -408,21 +462,144 @@ falls back to the raw code for unknown values):
 |---|---|---|
 | `POST /api/v1/cleanup/runs` | `{model?, thinkingLevel?, costThresholdUSD?, tailLines?, keepEvidence?, workspaceIds?}` — all optional, server env defaults fill gaps; `workspaceIds` scopes a partial run | 202 `{ok, runId, status}`; 409 `cleanup_busy`; 400 on bad model/level strings (level validated against the 7-value union) |
 | `GET /api/v1/cleanup/runs` | `?limit=10` | run summaries, newest first |
-| `GET /api/v1/cleanup/runs/{id}` | — | `run.json` merged with `report.json` when done; 404 `not_found` |
-| `POST /api/v1/cleanup/runs/{id}/apply` | `{paneIds: [], workspaceIds: []}` | validates every id was `safeToClose` in the report, re-runs rails on a fresh snapshot (R8), then `pane.close` / `workspace.close` sequentially; returns `{applied: {panes, workspaces}, skipped: [{id, reason}]}`; sets run status `applied` |
-| `POST /api/v1/cleanup/runs/{id}/cancel` | — | best-effort: kills the active judge subprocess, marks `failed(cancelled)` |
+| `GET /api/v1/cleanup/runs/{id}` | — | `run.json` merged with `report.json` when available and optional incremental `applyResult` from `apply.json`; exposes `status` / `phase: "applying"`, `phaseDetail`, and action progress while the worker runs; 404 `not_found` |
+| `POST /api/v1/cleanup/runs/{id}/apply` | `{paneIds: [], workspaceIds: []}` | validates the report and IDs, starts one single-flight background apply worker, and immediately returns 202 `{ok, runId, status: "applying"}`. A repeated request for the same active run returns the same accepted state without starting a second worker; a repeat after terminal success or failure returns 202 with the persisted terminal status/result; any other active cleanup/apply returns 409 `cleanup_busy` |
+| `POST /api/v1/cleanup/runs/{id}/cancel` | — | best-effort: kills the active judge subprocess and marks `failed(cancelled)`; returns 409 `cleanup_apply_in_progress` once apply has started because mutations cannot be cancelled safely |
 | `GET /api/v1/cleanup/models` | — | judge-model catalog for the Settings picker: merge `~/.pi/agent/models.json` + `models-store.json` (honoring `PI_CODING_AGENT_DIR`), plus `defaults` from `~/.pi/agent/settings.json` → `{ok, models: [{provider, id, name, contextWindow?}], default: {provider, id, thinkingLevel}}`. File reads, not CLI table parsing. |
 
 SSE: publish `cleanup.run_updated {runId, status, phase, progress:{done,total}}`
 through the existing `EventBroker` and add it to `sseEvents` in
 `api_description()`. The Mac app can use it opportunistically but **polling is
-the primary contract** (1s while a run is active — matches existing patterns
-and avoids new stream plumbing).
+the primary contract**. After the fast 202 response, the Mac client polls GET
+about once per second until the run is `applied` or `failed` and an
+`applyResult` is present. Transient GET failures are retried. No HTTP request
+remains open while panes or workspaces close, so no client request timeout can
+expire merely because apply has many actions or several bounded Pi quit
+waits; the ordinary short per-request timeout remains sufficient.
 
-Timeouts: every cleanup endpoint returns fast (start is async, apply does at
-most N socket round-trips) — no new case needed in the Mac client's
-`timeoutInterval(path:method:)`; the default 15s covers it. Add one only if
-apply of many workspaces proves slow.
+**Apply ordering and just-in-time revalidation.** An explicit pane that is
+also inside a selected workspace is removed from the explicit pane list, so it
+is never handled twice. The worker forces and indexes a new topology snapshot
+immediately before each mutation. An explicit pane must still exist in the
+same report-time workspace. A selected workspace must contain exactly the
+same pane-ID set and cardinality as the report, with no added, removed, or
+moved panes, and every report pane must have been independently safe to close.
+Pane rails, focus, stars, unread alerts, Pi association, and workspace Git
+state are re-evaluated just in time rather than reused from one apply-start
+snapshot. A workspace is checked before each child Pi action and once more
+immediately before the final `workspace.close`. Any topology or safety change
+skips the pane or the whole workspace with `R8:state_changed`.
+
+Closing the final pane collapses its workspace in Herdr. Report gating treats
+that pane as an implicit workspace close and applies R6 Git protection, so it
+is not preselected when Git is dirty, unpushed, or unavailable. Apply repeats
+the exact child-set and Git checks immediately before a final-pane close,
+which also protects reports produced by an older server version.
+
+Before `pane.close`, or before `workspace.close` for every implicit child pane,
+an active detected Pi session receives one atomic
+`pane.send_input {text:"/quit", keys:["enter"]}`. Apply boundedly polls fresh
+state until Pi is disconnected or the pane has gone. Report-time active Pi is
+treated conservatively: a transient disconnect, missing capability, connected
+capability without a session identity, newly active session, or replacement
+session ID all fail closed. Only the expected identity disconnect observed
+after this worker sent `/quit` is accepted, and the session must remain
+inactive through the final pre-close check. A timeout, send failure,
+reconnection, or confirmation failure skips the close; a workspace close is
+skipped if any child Pi cannot be ended.
+
+Sending `/quit` can itself change a pane revision. After a successful quit,
+the worker confirms exact topology and captures that post-quit revision as a
+new baseline, then performs another just-in-time rail check. This ignores only
+the worker's own expected quit output while still catching focus, alerts,
+working state, replacement identity, topology, or additional revision changes
+that occur before close.
+
+The apply POST response is only the acceptance record:
+
+```json
+{ "ok": true, "runId": "clr_1a2b3c4d5e6f", "status": "applying" }
+```
+
+Subsequent GET responses expose progress and an optional additive
+`applyResult`. While work remains its `complete` value is false; the final
+successful value has `complete: true`:
+
+```json
+{
+  "ok": true,
+  "run": {
+    "runId": "clr_1a2b3c4d5e6f", "status": "applying",
+    "phase": "applying",
+    "phaseDetail": "Closed pane pi · fix-login-flake",
+    "progress": { "done": 1, "total": 3 }
+  },
+  "applyResult": {
+    "ok": true,
+    "complete": false,
+    "applied": { "panes": ["w3:p1"], "workspaces": [] },
+    "skipped": [{ "id": "w5:p1", "reason": "pi_quit_failed" }],
+    "piSessions": {
+      "ended": 1, "failed": 1,
+      "results": [{ "paneId": "w3:p1", "sessionId": "abc123",
+                    "wasActive": true, "quitAttempted": true,
+                    "quitSucceeded": true, "closeOutcome": "closed",
+                    "reason": null }]
+    },
+    "ledger": {
+      "path": "/Users/me/.config/herdr-harness/cleanup/pane-session-ledger.jsonl",
+      "recordsAppended": 2,
+      "eventsAppended": 4,
+      "records": [
+        { "recordId": "8c723c…", "recordType": "outcome" },
+        { "recordId": "c064f1…", "recordType": "outcome" }
+      ]
+    },
+    "deduplicatedPaneIds": ["w4:p1"]
+  }
+}
+```
+
+**Incremental outcome and audit contract.** `apply.json` is atomically
+persisted before work begins and after each association, outcome, skipped or
+completed action, and successful native close. If the worker raises
+unexpectedly, or the harness restarts while status is `applying`, the run is
+marked `failed` and GET continues to expose the last partial `applyResult`
+with `ok: false`, `complete: false`, and `error`. Already successful native
+closes stay listed under `applied`; completed and skipped actions are not
+discarded merely because a later action or audit write failed.
+
+`ledger.records` contains the final outcome object for each logical pane
+association, and `recordsAppended` is that logical outcome count.
+`eventsAppended` counts physical JSONL events reflected in `applyResult`.
+Each mutation is two-phase: an fsynced `association` event is appended
+**before** `/quit` or close, then an `outcome` event with the same `recordId`
+is appended after the result. Thus interruption can leave a durable `pending`
+association in the ledger even when no outcome event was reached, but cannot
+erase the old pane-to-Pi link. The ledger is independently durable, so it is
+the authoritative audit trail if interruption happens between its fsynced
+append and the next `apply.json` checkpoint. Each event is:
+
+```json
+{
+  "recordId": "8c723c…", "recordType": "outcome",
+  "cleanupRunId": "clr_1a2b3c4d5e6f", "timestamp": "2026-08-24T12:00:00Z",
+  "workspace": { "id": "w3", "title": "fix-login-flake" },
+  "pane": { "id": "w3:p1", "title": "pi · fix-login-flake",
+            "tabId": "w3:t1", "cwd": "/work/fix-login-flake" },
+  "piSession": { "detected": true, "sessionId": "abc123",
+                 "sessionFile": "/Users/me/.pi/agent/sessions/…/abc123.jsonl",
+                 "sessionName": "fix login flake", "cwd": "/work/fix-login-flake",
+                 "connected": false, "active": false, "idle": true,
+                 "costUSD": 3.41, "totalTokens": 482100 },
+  "quit": { "attempted": true, "succeeded": true,
+            "outcome": "ended", "error": null },
+  "close": { "scope": "pane", "outcome": "closed", "error": null }
+}
+```
+
+Quit outcomes are `not_needed | ended | failed`; close outcomes are `pending |
+closed | skipped | failed`, and close scope is `pane | workspace`.
 
 ### 4.8 Config (env, server-side defaults)
 
@@ -434,6 +611,9 @@ HERDR_HARNESS_CLEANUP_TAIL_LINES       # default: 400
 HERDR_HARNESS_CLEANUP_JUDGE_TIMEOUT    # default: 240 (per batch, seconds)
 HERDR_HARNESS_CLEANUP_MAX_RUNS         # default: 10
 HERDR_HARNESS_CLEANUP_PI_BIN           # default: resolve "pi" on PATH
+HERDR_HARNESS_CLEANUP_PI_QUIT_TIMEOUT  # default: 3 seconds, bounded 0…30
+HERDR_HARNESS_CLEANUP_PI_QUIT_POLL_SECONDS # default: 0.1 seconds
+HERDR_HARNESS_CLEANUP_LEDGER_PATH      # default: <cleanup-root>/pane-session-ledger.jsonl
 ```
 
 Per-run body values win over env; env wins over hardcoded defaults.
@@ -450,7 +630,9 @@ All computed by the collector; the judge cites them, never computes them.
 
 ### 5.2 Liveness
 `agentStatus`, `interactiveReady`, `revisionChanged` (dwell sample),
-`piConnected` (bridge socket live), `stateChangeSeq`
+`piDetected`, `piConnected` (bridge socket live), `piActive`, `piIdle`,
+`piWorking`, `stateChangeSeq`. `piWorking` is true when a connected semantic
+snapshot reports `state.idle == false`, even if the native agent status lags.
 
 ### 5.3 Recency (synthesized — Herdr has no native timestamps)
 - `doneAlertAgeSeconds` / `blockedAlertAgeSeconds` — newest matching alert
@@ -464,9 +646,18 @@ All computed by the collector; the judge cites them, never computes them.
 `tailIsEmpty`, `tailTruncated`
 
 ### 5.5 Cost
-`costUSD, costSource, costOverThreshold, totalTokens`
+`costUSD, costSource, costOverThreshold, totalTokens, sessionFile`. Bridge
+cost remains authoritative when present, but no longer discards the associated
+session file or its age.
 
-### 5.6 Workspace-level
+### 5.6 Pi association and readable insight
+`piSession` records `detected, sessionId, sessionFile, sessionName, cwd,
+connected, active, idle, costUSD, totalTokens`. `activitySummary` explains the
+deterministic liveness/output signals in plain language, while `usageSummary`
+explains Pi identity, connection state, known cost, and tokens without asking
+the UI to reconstruct prose from nullable fields.
+
+### 5.7 Workspace-level
 `gitState: clean|dirty|unpushed|unavailable`, `worktree` presence,
 `paneCount`, `focusedWorkspace`
 
@@ -527,7 +718,8 @@ State machine (extend the `MachineTestState` pattern):
 idle(config summary + Run button)
   → running(phase: collecting|judging|gating, progress)   // poll 1s
   → report(CleanupReport)                                  // or failure(String)
-  → applying → applied(summary)
+  → applying(safety explanation; API client polls GET)     // poll 1s
+  → applied(summary or partial/error result)
 ```
 
 **The running state is a first-class experience, not a spinner.** It renders a
@@ -574,8 +766,11 @@ Report view (pattern: `WorkspaceGitDiffView` sheet — three-state body,
   rail-blocked rows render the `blockedBy` reasons and are disabled.
 - Sticky footer: "N panes · M workspaces selected · frees ~X panes" +
   destructive **Close Selected** button → confirmation dialog → apply call →
-  per-item results (skipped items with reasons stay visible) → toast via
-  `model.toastMessage`.
+  safe-apply explanation while the client polls → per-item results (skipped
+  items and partial results with reasons stay visible) → toast via
+  `model.toastMessage`. The apply view explains that Pi sessions are ended
+  before panes close and that the audit ledger preserves their old pane
+  associations.
 - A small footer line reports the judge's own spend: "Judge: qwen3.8 · medium
   · $0.03 · 1m 23s".
 
@@ -583,8 +778,11 @@ Report view (pattern: `WorkspaceGitDiffView` sheet — three-state body,
 
 - `HerdrAPIClient`: `startCleanupRun(_:)`, `fetchCleanupRun(id:)`,
   `applyCleanupRun(id:paneIDs:workspaceIDs:)`, `cancelCleanupRun(id:)`,
-  `fetchCleanupModels()` — thin wrappers over the generic `request`/`mutation`
-  helpers.
+  `fetchCleanupModels()`. Apply first accepts the server's 202, then polls GET
+  until status is `applied` or `failed` and `applyResult` is present. Transient
+  poll failures retry, while task cancellation still stops the local wait.
+  Each HTTP request remains short; pane and workspace closes run only in the
+  server worker.
 - Decodables in `Models/CleanupReport.swift` mirroring §4.6 (forward-tolerant:
   unknown classification strings decode to `.unknown`, matching
   `AgentStatus`'s approach).
@@ -593,20 +791,20 @@ Report view (pattern: `WorkspaceGitDiffView` sheet — three-state body,
   hitting the wire (strip the `machineID|` prefix via `MachineScopedID`) and
   re-stamped on decode — same as every other endpoint.
 - Apply goes through the server's `/apply` (not client-side DELETE loops) so
-  R8 re-validation happens against a snapshot the server just took.
+  exact topology and R8 revalidation happen just in time before every server
+  mutation and the final workspace close.
 
 ---
 
 ## 7. Security & privacy
 
 - **Pane content is sensitive.** Tails and transcripts can contain tokens,
-  code, prompts. Evidence lives under mode-0700 dirs / 0600 files, is deleted
-  after judging by default, and **never leaves the machine**: the judge is a
-  local subprocess, and the report carries only short judge-written reasons +
-  numeric signals, not raw tails. (Work-Mac caveat: judge model choice decides
-  where evidence text goes — a cloud judge model uploads pane text to that
-  provider. The Settings footer must say this plainly. Defaulting to the local
-  `custom-lux-dspark` provider keeps everything on-box/tailnet.)
+  code, prompts. Evidence storage uses mode-0700 dirs / 0600 files and is
+  deleted after judging by default. The judge is a local subprocess, but
+  processing follows the configured Pi model/provider, so a cloud model can
+  receive evidence text. The report carries only short judge-written reasons
+  and numeric signals, not raw tails. The Settings footer must say this
+  plainly. A local provider keeps processing on-box/tailnet.
 - **The judge cannot act.** Read-only toolset; no write/exec/edit tools; env
   scrubbed of `HERDR_*` so it can't reach the control socket; all closes go
   through deterministic apply with re-validated rails.
@@ -622,8 +820,14 @@ Report view (pattern: `WorkspaceGitDiffView` sheet — three-state body,
   rail, and the human approves the final list. The charter also instructs the
   judge to treat file contents as data, never instructions.
 - **Auth:** all new endpoints sit behind the existing bearer check; nothing
-  new is exposed unauthenticated. Apply is idempotent-ish and scoped to IDs
-  present in a specific report.
+  new is exposed unauthenticated. Apply is scoped to IDs present in a specific
+  report and guarded by the harness-wide single-flight worker. Repeating apply
+  for the active run does not start a second worker.
+- **Pane/Pi association ledger:** apply appends mode-0600 JSONL under the
+  cleanup root, outside individually pruned run directories. It contains
+  topology, local cwd/session-file paths, usage totals, and quit/close
+  outcomes, but no pane transcript or terminal tail. The default path is
+  `~/.config/herdr-harness/cleanup/pane-session-ledger.jsonl`.
 
 ---
 
@@ -635,10 +839,12 @@ Report view (pattern: `WorkspaceGitDiffView` sheet — three-state body,
 | Judge emits garbage / truncates | One schema-guided retry per batch → `judgeFailed` → panes default to `keep`. Never blocks other batches. |
 | Judge hangs | Per-batch timeout → kill → `judgeFailed`. |
 | Model can't load (bad settings) | 400 at start when locally detectable; else batch failure surfaced with pi's stderr tail in `run.json.error`. |
-| Harness restarts mid-run | Runs are threads, not persisted jobs: `run.json` is flushed on every phase change; on boot, any run stuck in a non-terminal state is marked `failed(interrupted)`. |
-| Pane closes itself mid-run | Collector/gate tolerate missing panes; apply skips with `state_changed`. |
-| Git proxy (cmux server) down | `gitState: "unavailable"` → R6 blocks workspace-closes only; pane closes unaffected. |
-| Two Macs trigger simultaneously | Second gets `409 cleanup_busy`, surfaced as a toast. |
+| Harness restarts mid-run | Runs are threads, not persisted jobs: `run.json` is flushed on every phase change. On boot, an interrupted apply always gets a synthesized or preserved partial `applyResult`; a fully committed `complete:true` result is promoted to `applied` rather than corrupted. Partial outcomes, already recorded native closes, and fsynced two-phase ledger events remain available for inspection. |
+| Pane or topology changes mid-run | Collector/gate tolerate missing panes. Apply requires an explicit pane to remain in its report workspace and a workspace to keep the exact report pane set and cardinality. Any move, addition, removal, rail change, or final-check mismatch skips with `R8:state_changed`. |
+| Pi `/quit` send fails or Pi stays connected | The pane is kept. For a workspace target, the entire workspace close is skipped. The ledger records the failed quit and skipped close. |
+| Pi capability is missing/transient or session identity changes | R8 fails closed for a report-active Pi if capability becomes missing or transiently disconnected, identity is absent, a new Pi becomes active, the same session reconnects, or the session ID is replaced. Only a confirmed disconnect that remains inactive after this worker sent `/quit` is accepted. |
+| Git proxy (cmux server) down | `gitState: "unavailable"` → R6 blocks workspace closes and any final-pane close that would implicitly collapse a workspace. Other pane closes are unaffected. |
+| Two Macs trigger simultaneously | A repeat for the same active apply run returns its accepted state without creating another worker. Any different cleanup or apply gets `409 cleanup_busy`, surfaced as a toast. |
 
 ---
 
@@ -655,7 +861,23 @@ fixture style):**
   JSONL (valid verdict / malformed JSON / hang) exercising parse, retry,
   timeout-kill paths. `HERDR_HARNESS_CLEANUP_PI_BIN` points at the stub.
 - Gate: table-driven rail tests (every rail individually blocking).
-- HTTP: route auth, 409 busy, apply re-validation skipping a now-working pane.
+- Report: pane/workspace summaries and evidence survive parsing, workspace
+  titles and richer counts are emitted, pane title fallbacks work, and a
+  nine-pane workspace aggregates both judge batches conservatively.
+- Apply: atomic `/quit` precedes pane/workspace close; implicit workspace Pi
+  panes are handled; overlapping selections are deduplicated; exact pane sets,
+  cardinality, and report workspace membership are rechecked before actions;
+  failed or uncertain Pi capability and replacement identity fail closed;
+  post-quit revision baselines ignore only expected quit output; and the final
+  workspace check catches changes after child quits.
+- Durability: `apply.json` checkpoints incremental applied/skipped/Pi outcomes,
+  a worker exception or restart preserves partial results, successful native
+  closes are recorded before later audit work, and paired fsynced
+  `association`/`outcome` ledger events survive interruption and run pruning.
+- HTTP: route auth; apply returns 202; same-run start is single-flight; other
+  active work returns 409; GET exposes applying progress and optional
+  `applyResult`; the client polls through transient GET failures to a terminal
+  result without one long-running close request.
 
 **Swift (`herdr-harness-macTests`, swift-testing):**
 
@@ -713,6 +935,14 @@ above, discovered during the build:
 - **Herdr behavior**: closing a workspace's last pane collapses the workspace
   itself — apply results can therefore remove a workspace even when only
   paneIds were submitted.
+- **Asynchronous apply**: POST `/cleanup/runs/{id}/apply` returns 202 after
+  starting one harness-wide single-flight worker. GET exposes live action
+  progress and an optional incremental `applyResult`; the Mac client polls to
+  `applied` or `failed`, so close duration is not bounded by a request timeout.
+  The worker revalidates exact topology, rails, Git, and Pi identity immediately
+  before every action and the final workspace close. It uses post-quit revision
+  baselines and preserves partial checkpoints plus the two-phase ledger after
+  failure or restart.
 - **Test-suite invariant**: `wait_for_run` in `tests/test_cleanup.py` joins
   the `cleanup-<runId>` pipeline thread after seeing a terminal status —
   terminal status alone does not guarantee the evidence `finally` cleanup ran.

@@ -71,6 +71,30 @@ struct CleanupRunControllerTests {
         }
         #expect(report.workspaces?.count == 2)
         #expect(report.workspaces?.flatMap(\.panes).contains(where: { !$0.blockedBy.isEmpty }) == true)
+        #expect(report.summary?.workspaceTitles == ["Fix Login Flake", "Release Check"])
+        #expect(report.summary?.workspaceSummaries?.count == 2)
+        #expect(report.summary?.activePiSessions == 2)
+        #expect(report.workspaces?.flatMap(\.panes).contains(where: { $0.piSession?.active == true }) == true)
+    }
+
+    @Test("Demo cleanup apply reports workspace, Pi-session, and ledger counts")
+    func demoApplySummary() async throws {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+
+        let response = try await model.applyCleanupRun(
+            machineID: "demo1",
+            runID: "clr_demo",
+            paneIDs: ["w3:p1"],
+            workspaceIDs: ["w3"]
+        )
+
+        #expect(response.applied.panes == [])
+        #expect(response.applied.workspaces == ["w3"])
+        #expect(response.deduplicatedPaneIDs == ["w3:p1"])
+        #expect(response.piSessions?.ended == 1)
+        #expect(response.ledger?.recordsAppended == 1)
+        #expect(response.ledger?.records.first?.pane.id == "w3:p1")
+        #expect(model.toastMessage == "Closed 1 workspace. Ended 1 Pi session. Saved 1 pane-session record.")
     }
 
     @Test("A transient fetch failure does not abandon an active run")
@@ -93,6 +117,156 @@ struct CleanupRunControllerTests {
         }
         #expect(await starts.count() == 1)
         #expect(controller.consecutivePollFailures == 0)
+    }
+
+    @Test("Polling keeps a backend applying run active")
+    func pollingKeepsApplyingRunActive() async throws {
+        let envelope = CleanupRunController.demoRunningSnapshot(phase: .applying)
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            pollInterval: .milliseconds(1),
+            start: { _ in CleanupStartRunResponse(ok: true, runID: "clr_demo", status: .collecting) },
+            fetch: { _ in envelope },
+            apply: { _, _, _ in CleanupApplyResponse(applied: CleanupAppliedItems(panes: [], workspaces: []), skipped: []) },
+            cancel: { _ in }
+        )
+        defer { controller.stopPolling() }
+
+        await controller.start()
+        guard try await waitForApplyingRun(from: controller) else {
+            Issue.record("Timed out waiting for the backend applying state")
+            return
+        }
+        guard case let .running(current) = controller.state else {
+            Issue.record("Expected applying GET state to remain a running cleanup")
+            return
+        }
+
+        #expect(current.run.status == .applying)
+        #expect(current.run.phase == .applying)
+        #expect(current.run.status.isTerminal == false)
+    }
+
+    @Test("A failed async apply presents its confirmed partial result")
+    func failedAsyncApplyPresentsPartialResult() async {
+        let report = CleanupRunController.demoReport()
+        let partial = CleanupApplyResponse(
+            applied: CleanupAppliedItems(panes: ["w3:p1"], workspaces: []),
+            skipped: [CleanupSkippedItem(id: "w3:p2", reason: "R8:state_changed")],
+            complete: false,
+            error: "Fresh workspace snapshot failed"
+        )
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            start: { _ in CleanupStartRunResponse(ok: true, runID: "clr_demo", status: .collecting) },
+            fetch: { _ in report },
+            apply: { _, _, _ in partial },
+            cancel: { _ in }
+        )
+        controller.state = .report(report)
+
+        await controller.apply(paneIDs: ["w3:p1", "w3:p2"], workspaceIDs: [])
+
+        guard case let .applied(response, originalReport) = controller.state else {
+            Issue.record("Expected a partial apply response instead of a generic failure")
+            return
+        }
+        #expect(response.error == "Fresh workspace snapshot failed")
+        #expect(response.applied.panes == ["w3:p1"])
+        #expect(originalReport.run.runID == report.run.runID)
+    }
+
+    @Test("Unknown apply status keeps the selection and recovers through Retry Status")
+    func unknownApplyStatusRecoversWithOriginalSelection() async {
+        let report = CleanupRunController.demoReport()
+        let partial = CleanupApplyResponse(
+            applied: CleanupAppliedItems(panes: ["w3:p1"], workspaces: []),
+            skipped: [CleanupSkippedItem(id: "w3:p2", reason: "close_failed")],
+            complete: false,
+            error: "Pane w3:p2 could not be closed"
+        )
+        let script = CleanupApplyRecoveryScript(runID: report.run.runID, finalResponse: partial)
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            start: { _ in CleanupStartRunResponse(ok: true, runID: report.run.runID, status: .collecting) },
+            fetch: { _ in report },
+            applyWithProgress: { runID, paneIDs, workspaceIDs, onProgress in
+                try await script.apply(
+                    runID: runID,
+                    paneIDs: paneIDs,
+                    workspaceIDs: workspaceIDs,
+                    onProgress: onProgress
+                )
+            },
+            cancel: { _ in }
+        )
+        controller.state = .report(report)
+
+        await controller.apply(paneIDs: ["w3:p1", "w3:p2"], workspaceIDs: ["w3"])
+
+        guard case let .applyStatusUnknown(message) = controller.state else {
+            Issue.record("Expected a locked unknown apply status")
+            return
+        }
+        #expect(message.contains("may still be closing panes"))
+        #expect(controller.latestApplyEnvelope?.run.phaseDetail == "Ending Pi session before closing pane 1 of 2")
+        #expect(controller.latestApplyEnvelope?.applyResult?.piSessions?.ended == 1)
+
+        await controller.retryApplyStatus()
+
+        guard case let .applied(response, originalReport) = controller.state else {
+            Issue.record("Expected Retry Status to recover into the partial applied result")
+            return
+        }
+        #expect(response == partial)
+        #expect(originalReport.run.runID == report.run.runID)
+        #expect(await script.calls() == 2)
+        #expect(await script.selections().allSatisfy {
+            $0.paneIDs == ["w3:p1", "w3:p2"] && $0.workspaceIDs == ["w3"]
+        })
+    }
+
+    @Test("Polling prioritizes a failed applyResult over the stale report payload")
+    func pollingPrioritizesFailedApplyResult() async throws {
+        let report = CleanupRunController.demoReport()
+        let partial = CleanupApplyResponse(
+            applied: CleanupAppliedItems(panes: ["w3:p1"], workspaces: []),
+            skipped: [CleanupSkippedItem(id: "w3:p2", reason: "close_failed")],
+            complete: false,
+            error: "Close verification failed"
+        )
+        let finalEnvelope = CleanupRunEnvelope(
+            ok: true,
+            run: CleanupRun(
+                runID: "clr_apply_result",
+                status: .failed,
+                phase: .failed,
+                error: "Close verification failed"
+            ),
+            workspaces: report.workspaces,
+            summary: report.summary,
+            applyResult: partial
+        )
+        let controller = CleanupRunController(
+            isDemoMode: false,
+            pollInterval: .milliseconds(1),
+            start: { _ in CleanupStartRunResponse(ok: true, runID: "clr_apply_result", status: .collecting) },
+            fetch: { _ in finalEnvelope },
+            apply: { _, _, _ in partial },
+            cancel: { _ in }
+        )
+
+        await controller.start()
+        guard try await waitForApplied(from: controller) else {
+            Issue.record("Timed out waiting for the failed apply result")
+            return
+        }
+        guard case let .applied(response, envelope) = controller.state else {
+            Issue.record("Expected the confirmed partial outcome, not the stale judge report")
+            return
+        }
+        #expect(response.error == "Close verification failed")
+        #expect(envelope.run.runID == finalEnvelope.run.runID)
     }
 
     @Test("Retry resumes a known run after polling fails repeatedly")
@@ -323,6 +497,98 @@ struct CleanupRunControllerTests {
 
         return false
     }
+
+    private func waitForApplyingRun(from controller: CleanupRunController) async throws -> Bool {
+        for _ in 0..<200 {
+            if case let .running(envelope) = controller.state, envelope.run.status == .applying {
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        return false
+    }
+
+    private func waitForApplied(from controller: CleanupRunController) async throws -> Bool {
+        for _ in 0..<200 {
+            if case .applied = controller.state {
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        return false
+    }
+}
+
+private actor CleanupApplyRecoveryScript {
+    struct Selection: Sendable {
+        let paneIDs: [String]
+        let workspaceIDs: [String]
+    }
+
+    private let runID: String
+    private let finalResponse: CleanupApplyResponse
+    private var callCount = 0
+    private var recordedSelections: [Selection] = []
+
+    init(runID: String, finalResponse: CleanupApplyResponse) {
+        self.runID = runID
+        self.finalResponse = finalResponse
+    }
+
+    func apply(
+        runID: String,
+        paneIDs: [String],
+        workspaceIDs: [String],
+        onProgress: CleanupRunController.ApplyProgressHandler
+    ) async throws -> CleanupApplyResponse {
+        callCount += 1
+        recordedSelections.append(Selection(paneIDs: paneIDs, workspaceIDs: workspaceIDs))
+        if callCount == 1 {
+            await onProgress(
+                CleanupRunEnvelope(
+                    ok: true,
+                    run: CleanupRun(
+                        runID: self.runID,
+                        status: .applying,
+                        phase: .applying,
+                        phaseDetail: "Ending Pi session before closing pane 1 of 2",
+                        progress: CleanupProgress(done: 1, total: 2)
+                    ),
+                    workspaces: nil,
+                    summary: nil,
+                    applyResult: CleanupApplyResponse(
+                        applied: CleanupAppliedItems(panes: [], workspaces: []),
+                        skipped: [],
+                        piSessions: CleanupPiSessionApplySummary(ended: 1, failed: 0, results: [])
+                    )
+                )
+            )
+            throw APIError.cleanupApplyStatusUnknown(
+                message: "The server may still be closing panes."
+            )
+        }
+
+        await onProgress(
+            CleanupRunEnvelope(
+                ok: true,
+                run: CleanupRun(
+                    runID: self.runID,
+                    status: .failed,
+                    phase: .failed,
+                    error: finalResponse.error
+                ),
+                workspaces: nil,
+                summary: nil,
+                applyResult: finalResponse
+            )
+        )
+        return finalResponse
+    }
+
+    func calls() -> Int { callCount }
+    func selections() -> [Selection] { recordedSelections }
 }
 
 private actor CleanupCounter {

@@ -704,7 +704,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     raise HTTPValidationError("paneIds must be an array with at most 500 entries")
                 if not isinstance(workspace_values, list) or len(workspace_values) > 200:
                     raise HTTPValidationError("workspaceIds must be an array with at most 200 entries")
-                return service.cleanup.apply_run(_run_id(tail[2]), [_identifier(item, "pane ID") for item in pane_values], [_identifier(item, "workspace ID") for item in workspace_values])
+                return service.cleanup.start_apply(
+                    _run_id(tail[2]),
+                    [_identifier(item, "pane ID") for item in pane_values],
+                    [_identifier(item, "workspace ID") for item in workspace_values],
+                ), 202
             if method == "POST" and len(tail) == 4 and tail[:2] == ["cleanup", "runs"] and tail[3] == "cancel":
                 return service.cleanup.cancel_run(_run_id(tail[2]))
             if method == "GET" and tail == ["cleanup", "models"]:

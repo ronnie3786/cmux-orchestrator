@@ -6,12 +6,21 @@ private let piStreamLog = OSLog(subsystem: "dev.ronnierocha.herdr-harness", cate
 actor HerdrAPIClient {
     private let configuration: ServerConfiguration
     private let session: URLSession
+    private let cleanupApplyPollInterval: Duration
+    private let cleanupApplyConsecutiveFailureLimit: Int
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
-    init(configuration: ServerConfiguration, session: URLSession = .shared) {
+    init(
+        configuration: ServerConfiguration,
+        session: URLSession = .shared,
+        cleanupApplyPollInterval: Duration = .seconds(1),
+        cleanupApplyConsecutiveFailureLimit: Int = 8
+    ) {
         self.configuration = configuration
         self.session = session
+        self.cleanupApplyPollInterval = cleanupApplyPollInterval
+        self.cleanupApplyConsecutiveFailureLimit = max(1, cleanupApplyConsecutiveFailureLimit)
     }
 
     func fetchWorkspaces() async throws -> WorkspacesResponse {
@@ -58,12 +67,176 @@ actor HerdrAPIClient {
     func applyCleanupRun(
         id: String,
         paneIDs: [String],
-        workspaceIDs: [String]
+        workspaceIDs: [String],
+        onProgress: @Sendable (CleanupRunEnvelope) async -> Void = { _ in }
     ) async throws -> CleanupApplyResponse {
-        try await request(
-            path: "/api/v1/cleanup/runs/\(id)/apply",
-            method: "POST",
-            body: CleanupApplyRequest(paneIDs: paneIDs, workspaceIDs: workspaceIDs)
+        if let completed = try await startCleanupApply(
+            id: id,
+            paneIDs: paneIDs,
+            workspaceIDs: workspaceIDs,
+            onProgress: onProgress
+        ) {
+            return completed
+        }
+
+        var consecutiveFailures = 0
+        while true {
+            try Task.checkCancellation()
+            do {
+                let envelope = try await fetchCleanupRun(id: id)
+                await onProgress(envelope)
+                if envelope.run.status == .applied || envelope.run.status == .failed,
+                   let result = envelope.applyResult {
+                    return result
+                }
+                if envelope.run.status == .applied || envelope.run.status == .failed {
+                    consecutiveFailures += 1
+                    guard consecutiveFailures < cleanupApplyConsecutiveFailureLimit else {
+                        throw Self.cleanupApplyStatusUnknownError(
+                            stage: "reading the final cleanup result",
+                            lastError: APIError.invalidResponse
+                        )
+                    }
+                } else {
+                    consecutiveFailures = 0
+                }
+            } catch {
+                if let apiError = error as? APIError,
+                   case .cleanupApplyStatusUnknown = apiError {
+                    throw apiError
+                }
+                try Self.rethrowIfCancelled(error)
+                consecutiveFailures += 1
+                guard consecutiveFailures < cleanupApplyConsecutiveFailureLimit else {
+                    throw Self.cleanupApplyStatusUnknownError(
+                        stage: "checking cleanup status",
+                        lastError: error
+                    )
+                }
+            }
+            try await Task.sleep(for: cleanupApplyPollInterval)
+        }
+    }
+
+    private func startCleanupApply(
+        id: String,
+        paneIDs: [String],
+        workspaceIDs: [String],
+        onProgress: @Sendable (CleanupRunEnvelope) async -> Void
+    ) async throws -> CleanupApplyResponse? {
+        var consecutivePostFailures = 0
+        var consecutiveProbeFailures = 0
+        while true {
+            try Task.checkCancellation()
+
+            let envelope: CleanupRunEnvelope
+            do {
+                envelope = try await fetchCleanupRun(id: id)
+            } catch {
+                try Self.rethrowIfCancelled(error)
+                consecutiveProbeFailures += 1
+                guard consecutiveProbeFailures < cleanupApplyConsecutiveFailureLimit else {
+                    throw Self.cleanupApplyStatusUnknownError(
+                        stage: "checking cleanup status before retrying",
+                        lastError: error
+                    )
+                }
+                try await Task.sleep(for: cleanupApplyPollInterval)
+                continue
+            }
+
+            await onProgress(envelope)
+            if envelope.run.status == .applied || envelope.run.status == .failed {
+                if let result = envelope.applyResult { return result }
+                consecutiveProbeFailures += 1
+                guard consecutiveProbeFailures < cleanupApplyConsecutiveFailureLimit else {
+                    throw Self.cleanupApplyStatusUnknownError(
+                        stage: "reading the final cleanup result",
+                        lastError: APIError.invalidResponse
+                    )
+                }
+                try await Task.sleep(for: cleanupApplyPollInterval)
+                continue
+            }
+
+            guard envelope.run.status == .done
+                    || envelope.run.status == .partial
+                    || envelope.run.status == .applying
+            else {
+                consecutiveProbeFailures += 1
+                guard consecutiveProbeFailures < cleanupApplyConsecutiveFailureLimit else {
+                    throw Self.cleanupApplyStatusUnknownError(
+                        stage: "waiting for cleanup to become applicable",
+                        lastError: APIError.invalidResponse
+                    )
+                }
+                try await Task.sleep(for: cleanupApplyPollInterval)
+                continue
+            }
+            consecutiveProbeFailures = 0
+
+            do {
+                let response: CleanupStartRunResponse = try await request(
+                    path: "/api/v1/cleanup/runs/\(id)/apply",
+                    method: "POST",
+                    body: CleanupApplyRequest(paneIDs: paneIDs, workspaceIDs: workspaceIDs)
+                )
+                guard response.ok, response.runID == id else { throw APIError.invalidResponse }
+                return nil
+            } catch {
+                try Self.rethrowIfCancelled(error)
+                guard Self.isRetryableCleanupApplyStartError(error) else { throw error }
+                consecutivePostFailures += 1
+                guard consecutivePostFailures < cleanupApplyConsecutiveFailureLimit else {
+                    throw Self.cleanupApplyStatusUnknownError(
+                        stage: "starting cleanup",
+                        lastError: error
+                    )
+                }
+                try await Task.sleep(for: cleanupApplyPollInterval)
+            }
+        }
+    }
+
+    private static func isRetryableCleanupApplyStartError(_ error: Error) -> Bool {
+        if error is DecodingError { return true }
+        if let error = error as? APIError {
+            switch error {
+            case .invalidResponse:
+                return true
+            case let .server(status, _):
+                return status == 408 || status == 409 || status == 429 || (500...599).contains(status)
+            case .noActiveConnection, .cleanupApplyStatusUnknown, .streamEnded, .streamBacklogOverflow:
+                return false
+            }
+        }
+        guard let code = (error as? URLError)?.code else { return false }
+        switch code {
+        case .timedOut,
+             .cannotFindHost,
+             .cannotConnectToHost,
+             .networkConnectionLost,
+             .dnsLookupFailed,
+             .notConnectedToInternet,
+             .resourceUnavailable,
+             .cannotLoadFromNetwork,
+             .badServerResponse:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func rethrowIfCancelled(_ error: Error) throws {
+        if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+            throw CancellationError()
+        }
+    }
+
+    private static func cleanupApplyStatusUnknownError(stage: String, lastError: Error) -> APIError {
+        APIError.cleanupApplyStatusUnknown(
+            message: "Herdr could not confirm cleanup while \(stage) after repeated attempts. "
+                + "The server may still be ending sessions or closing panes. Last error: \(lastError.localizedDescription)"
         )
     }
 
