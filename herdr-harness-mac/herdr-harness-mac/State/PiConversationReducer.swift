@@ -17,6 +17,7 @@ struct PiConversationReducer: Sendable {
     private(set) var isTruncated = false
     private(set) var bridgeConnected = false
     private(set) var contextUsage: PiContextUsage?
+    private(set) var sessionCost: PiSessionCost?
     private(set) var currentModel: PiModelIdentity?
     private(set) var thinkingLevel: String?
 
@@ -38,6 +39,7 @@ struct PiConversationReducer: Sendable {
         isTruncated = snapshot.truncated
         bridgeConnected = snapshot.connected
         contextUsage = PiContextUsage(from: snapshot.state?["context"])
+        sessionCost = PiSessionCost(from: snapshot.state?["cost"])
         currentModel = PiModelIdentity(json: snapshot.state?["model"])
         thinkingLevel = snapshot.state?.string(for: "thinkingLevel", "thinking_level")
 
@@ -114,6 +116,7 @@ struct PiConversationReducer: Sendable {
             // Per-turn context reading lets the meter update live during a run.
             // Keep the last known value while Pi reports unknown (post-compaction).
             contextUsage = PiContextUsage(from: event["context"]) ?? contextUsage
+            sessionCost = PiSessionCost(from: event["cost"]) ?? sessionCost
             return .none
         case "agent_settled":
             let wasWorking = phase == .working

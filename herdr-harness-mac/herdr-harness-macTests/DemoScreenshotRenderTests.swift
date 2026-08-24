@@ -715,7 +715,7 @@ enum HerdrRenderFixtures {
             "args":{"path":"Views/Pane/PaneSessionView.swift","limit":120},
             "result":{"content":"408 lines · struct PaneSessionView: View"},"isError":false}
             """,
-            #"{"type":"turn_end","turnIndex":1,"context":{"tokens":48210,"contextWindow":192000,"percent":25.1}}"#,
+            #"{"type":"turn_end","turnIndex":1,"context":{"tokens":48210,"contextWindow":192000,"percent":25.1},"cost":{"totalUSD":1.87,"totalTokens":51631}}"#,
             """
             {"type":"message_start","message":{"role":"assistant","id":"a2","timestamp":1786536005000,"content":[]}}
             """,

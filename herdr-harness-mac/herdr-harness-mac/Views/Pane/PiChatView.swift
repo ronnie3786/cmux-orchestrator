@@ -18,7 +18,7 @@ struct PiChatView: View {
                 transport: store.transport
             )
 
-            PiContextMeterView(usage: store.contextUsage)
+            PiContextMeterView(usage: store.contextUsage, cost: store.sessionCost)
 
             PiChatTimelineView(
                 store: store,
