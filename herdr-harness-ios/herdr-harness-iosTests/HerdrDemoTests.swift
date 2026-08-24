@@ -71,6 +71,16 @@ struct HerdrDemoTests {
         #expect(model.toastMessage == "Sent to Claude")
     }
 
+    @Test("Demo end-pi-session action behaves without network access")
+    func endsPiSessionInDemoMode() async throws {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        let pane = try #require(model.pane(id: "demo1|w1:p2"))
+
+        await model.endPiSession(in: pane)
+
+        #expect(model.toastMessage == "ended the pi session")
+    }
+
     @Test("Reading one demo alert preserves the rest of the feed")
     func marksSingleAlertRead() async throws {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])

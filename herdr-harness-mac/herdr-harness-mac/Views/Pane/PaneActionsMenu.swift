@@ -43,6 +43,12 @@ struct PaneActionsMenu: View {
                 }
                 .accessibilityIdentifier("pane-action-new-pi-chat")
                 .disabled(!model.canControl)
+
+                Button("End Pi session", systemImage: "xmark.bubble", role: .destructive) {
+                    Task { await model.endPiSession(in: pane) }
+                }
+                .accessibilityIdentifier("pane-action-end-pi-session")
+                .disabled(!model.canControl)
             }
 
             Button("Rename pane", systemImage: "pencil") {

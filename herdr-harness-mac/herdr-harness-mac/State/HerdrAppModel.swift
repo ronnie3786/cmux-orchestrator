@@ -838,6 +838,22 @@ final class HerdrAppModel {
         }
     }
 
+    func endPiSession(in pane: HerdrPane) async {
+        if isDemoMode {
+            toastMessage = "ended the pi session"
+            return
+        }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return }
+        do {
+            try await client.sendText(toPane: pane.paneID, text: "/quit", submit: false)
+            try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
+            toastMessage = "ended the pi session"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func split(_ pane: HerdrPane, direction: String) async {
         await perform("Pane split", machineID: pane.machineID) { client in
             try await client.splitPane(id: pane.paneID, direction: direction)
