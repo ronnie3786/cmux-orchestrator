@@ -29,7 +29,7 @@ struct WorkspaceHeroView: View {
                 .background(.black.opacity(0.18), in: .rect(cornerRadius: 14))
 
             HStack(spacing: 14) {
-                Label("^[\(workspace.tabCount) tab](inflect: true)", systemImage: "square.on.square")
+                Label("^[\(workspace.tabCount) tab](inflect: true)", systemImage: "folder")
                 Label("^[\(workspace.paneCount) pane](inflect: true)", systemImage: "rectangle.split.3x1")
                 if let branch = workspace.tokens["branch"] {
                     Label(branch, systemImage: "arrow.triangle.branch")

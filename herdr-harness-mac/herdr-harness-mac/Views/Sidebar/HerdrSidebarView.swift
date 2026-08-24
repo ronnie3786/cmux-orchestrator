@@ -354,7 +354,7 @@ struct HerdrSidebarView: View {
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
         .accessibilityIdentifier("sidebar-workspace-cleanup-\(workspace.workspaceID)")
-        Button("New tab", systemImage: "plus.square.on.square") {
+        Button("New tab", systemImage: "folder.badge.plus") {
             Task { await model.createTab(in: workspace) }
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
@@ -543,7 +543,7 @@ struct HerdrSidebarView: View {
 
     private func firstPane(in tab: HerdrTab, workspace: HerdrWorkspace) -> HerdrPane? {
         workspace.panes
-            .filter { $0.tabID == tab.id }
+            .filter { $0.scopedTabID == tab.id }
             .sorted { $0.paneID < $1.paneID }
             .first
     }

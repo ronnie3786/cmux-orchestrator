@@ -14,7 +14,7 @@ struct HerdrDemoTests {
             #expect(workspace.panes.allSatisfy { $0.workspaceID == workspace.id })
 
             let tabIDs = Set(workspace.tabs.map(\.id))
-            #expect(workspace.panes.allSatisfy { tabIDs.contains($0.tabID) })
+            #expect(workspace.panes.allSatisfy { tabIDs.contains($0.scopedTabID) })
 
             let paneIDs = Set(workspace.panes.map(\.id))
             for layout in workspace.layouts {

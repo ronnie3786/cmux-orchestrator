@@ -49,7 +49,7 @@ struct WorkspacePaneListView: View {
                         workspaceName = workspace.label
                         isRenamingWorkspace = true
                     }
-                    Button("New tab", systemImage: "plus.square.on.square") {
+                    Button("New tab", systemImage: "folder.badge.plus") {
                         Task { await model.createTab(in: workspace) }
                     }
                     Button("Refresh", systemImage: "arrow.clockwise") {
@@ -108,10 +108,10 @@ struct WorkspacePaneListView: View {
     private static let contentWidth = 760.0
 
     private func tabSection(_ tab: HerdrTab) -> some View {
-        let panes = workspace.sortedPanes.filter { $0.tabID == tab.id }
+        let panes = workspace.sortedPanes.filter { $0.scopedTabID == tab.id }
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label(tab.label, systemImage: "square.on.square")
+                Label(tab.label, systemImage: "folder")
                     .herdrFont(.headline, weight: .bold)
                 Spacer()
                 Text("^[\(panes.count) pane](inflect: true)")
