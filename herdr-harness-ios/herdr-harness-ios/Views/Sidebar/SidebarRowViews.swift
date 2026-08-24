@@ -93,31 +93,37 @@ struct SidebarMachineRow: View {
 
 struct SidebarSectionRow: View {
     let tab: HerdrTab
+    let isExpanded: Bool
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
-                .font(.caption2)
-                .foregroundStyle(HerdrTheme.mist)
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: isExpanded ? "folder" : "folder.fill")
+                    .font(.caption2)
+                    .foregroundStyle(HerdrTheme.mist)
 
-            Text(tab.label)
-                .font(.caption.monospaced().bold())
-                .foregroundStyle(HerdrTheme.mist)
-                .lineLimit(1)
+                Text(tab.label)
+                    .font(.caption.monospaced().bold())
+                    .foregroundStyle(HerdrTheme.mist)
+                    .lineLimit(1)
 
-            Spacer()
+                Spacer()
 
-            Text("\(tab.paneCount)")
-                .font(.caption2.monospaced())
-                .foregroundStyle(HerdrTheme.muted)
+                Text("\(tab.paneCount)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(HerdrTheme.muted)
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 12)
+            .frame(minHeight: 44)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 12)
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-tab-\(tab.id)")
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(tab.label), \(tab.paneCount) panes")
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityHint("Collapses or expands this tab's chats")
     }
 }
 

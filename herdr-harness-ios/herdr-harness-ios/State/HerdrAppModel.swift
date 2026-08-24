@@ -23,6 +23,7 @@ final class HerdrAppModel {
     var isSidebarPresented = false
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
+    var collapsedSidebarTabIDs: Set<String>
     var starredChatIDs: Set<String>
     var searchText = ""
     var filter: WorkspaceFilter = .all
@@ -71,6 +72,7 @@ final class HerdrAppModel {
             ?? ""
         if arguments.contains("-HerdrResetSidebarState") {
             defaults.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
+            defaults.removeObject(forKey: "herdr.sidebar.collapsedTabs")
             defaults.removeObject(forKey: "herdr.sidebar.starredChats")
         }
         #else
@@ -103,6 +105,9 @@ final class HerdrAppModel {
         )
         collapsedSidebarMachineIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedMachines") ?? []
+        )
+        collapsedSidebarTabIDs = Set(
+            defaults.stringArray(forKey: "herdr.sidebar.collapsedTabs") ?? []
         )
         starredChatIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.starredChats") ?? [])
 
@@ -704,15 +709,55 @@ final class HerdrAppModel {
         }
     }
 
-    func split(_ pane: HerdrPane, direction: String) async {
+    @discardableResult
+    func split(_ pane: HerdrPane, direction: String) async -> String? {
+        var newPaneID: String?
         await perform("Pane split", machineID: pane.machineID) { client in
-            try await client.splitPane(id: pane.paneID, direction: direction)
+            newPaneID = try await client.splitPane(id: pane.paneID, direction: direction)
+        }
+        return newPaneID
+    }
+
+    func addPane(toTab tab: HerdrTab, in workspace: HerdrWorkspace, running command: String? = nil) async {
+        if isDemoMode {
+            toastMessage = command == nil ? "added a shell" : "started a new pi chat"
+            return
+        }
+        guard canControl(machineID: workspace.machineID),
+              let client = client(forMachine: workspace.machineID),
+              let source = workspace.panes
+                .filter({ $0.scopedTabID == tab.id })
+                .sorted(by: { $0.paneID < $1.paneID })
+                .last
+        else { return }
+        do {
+            let newPaneID = try await client.splitPane(id: source.paneID, direction: "right")
+            if let command, let newPaneID {
+                try await client.sendText(toPane: newPaneID, text: command, submit: true)
+            }
+            try await refresh(
+                machineID: workspace.machineID,
+                using: client,
+                showSpinner: false,
+                expectedGeneration: connectionGeneration
+            )
+            toastMessage = command == nil ? "added a shell" : "started a new pi chat"
+            if command != nil && newPaneID == nil { toastMessage = "pane added — start pi manually" }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
     func focus(_ pane: HerdrPane) async {
         await perform("Focused on Mac", machineID: pane.machineID) { client in
             try await client.focusPane(id: pane.paneID)
+        }
+    }
+
+    func focusAndZoom(_ pane: HerdrPane) async {
+        await perform("Focused + zoomed on Mac", machineID: pane.machineID) { client in
+            try await client.focusPane(id: pane.paneID)
+            try await client.zoomPane(id: pane.paneID, mode: "on")
         }
     }
 
@@ -910,6 +955,18 @@ final class HerdrAppModel {
         userDefaults.set(
             Array(collapsedSidebarWorkspaceIDs),
             forKey: "herdr.sidebar.collapsedWorkspaces"
+        )
+    }
+
+    func toggleSidebarTabSection(_ tabID: String) {
+        if collapsedSidebarTabIDs.contains(tabID) {
+            collapsedSidebarTabIDs.remove(tabID)
+        } else {
+            collapsedSidebarTabIDs.insert(tabID)
+        }
+        userDefaults.set(
+            Array(collapsedSidebarTabIDs),
+            forKey: "herdr.sidebar.collapsedTabs"
         )
     }
 
@@ -1178,6 +1235,7 @@ final class HerdrAppModel {
 
     private func repairNavigation(machineID: String, freshWorkspaces: [HerdrWorkspace]) {
         let validWorkspaceIDs = Set(freshWorkspaces.map(\.id))
+        let validTabIDs = Set(freshWorkspaces.flatMap(\.tabs).map(\.id))
         let validPaneIDs = Set(freshWorkspaces.flatMap(\.panes).map(\.id))
         workspacePath = workspacePath.filter { route in
             switch route {
@@ -1207,6 +1265,15 @@ final class HerdrAppModel {
         if prunedCollapsed != collapsedSidebarWorkspaceIDs {
             collapsedSidebarWorkspaceIDs = prunedCollapsed
             userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
+        }
+        let untouchedCollapsedTabs = collapsedSidebarTabIDs.filter {
+            MachineScopedID.split($0)?.machineID != machineID
+        }
+        let prunedCollapsedTabs = untouchedCollapsedTabs.union(collapsedSidebarTabIDs
+            .filter { MachineScopedID.split($0)?.machineID == machineID && validTabIDs.contains($0) })
+        if prunedCollapsedTabs != collapsedSidebarTabIDs {
+            collapsedSidebarTabIDs = prunedCollapsedTabs
+            userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         }
     }
 
@@ -1284,9 +1351,11 @@ final class HerdrAppModel {
         alerts.removeAll { $0.machineID == id }
         starredChatIDs = starredChatIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
+        collapsedSidebarTabIDs = collapsedSidebarTabIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarMachineIDs.remove(id)
         userDefaults.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
         userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
+        userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         userDefaults.set(Array(collapsedSidebarMachineIDs), forKey: "herdr.sidebar.collapsedMachines")
         if case let .machine(scopeID) = machineScope, scopeID == id {
             machineScope = .all

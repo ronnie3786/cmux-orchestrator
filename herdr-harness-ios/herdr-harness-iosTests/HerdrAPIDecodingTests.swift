@@ -185,6 +185,16 @@ struct HerdrAPIDecodingTests {
         #expect(flat.revision == 10)
     }
 
+    @Test("Split pane responses decode an optional pane ID")
+    func decodesSplitPaneResponse() throws {
+        let created = try decode(SplitPaneResponse.self, from: #"{ "ok": true, "paneId": "w1:p2" }"#)
+        let absent = try decode(SplitPaneResponse.self, from: #"{ "ok": true, "paneId": null }"#)
+
+        #expect(created.ok)
+        #expect(created.paneID == "w1:p2")
+        #expect(absent.paneID == nil)
+    }
+
     @Test("Alert aliases and synthetic identity remain backward compatible")
     func decodesAlertAliases() throws {
         let alert = try decode(

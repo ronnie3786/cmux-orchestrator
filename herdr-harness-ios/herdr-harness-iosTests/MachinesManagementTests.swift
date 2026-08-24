@@ -90,7 +90,7 @@ struct MachinesManagementTests {
         let keys = [
             "herdr.machines", "herdr.serverURL", "herdr.demoMode", "herdr.completedSetup",
             "herdr.machineScope", "herdr.sidebar.starredChats", "herdr.sidebar.collapsedWorkspaces",
-            "herdr.sidebar.collapsedMachines",
+            "herdr.sidebar.collapsedMachines", "herdr.sidebar.collapsedTabs",
         ]
         let saved = Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) })
         defer {
@@ -106,6 +106,7 @@ struct MachinesManagementTests {
         defaults.removeObject(forKey: "herdr.sidebar.starredChats")
         defaults.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
         defaults.removeObject(forKey: "herdr.sidebar.collapsedMachines")
+        defaults.removeObject(forKey: "herdr.sidebar.collapsedTabs")
         try body(HerdrAppModel(arguments: [], userDefaults: defaults), defaults)
     }
 }

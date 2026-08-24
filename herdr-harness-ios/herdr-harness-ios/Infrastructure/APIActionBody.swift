@@ -11,6 +11,7 @@ struct APIActionBody: Encodable, Sendable {
     var kind: String?
     var name: String?
     var command: String?
+    var mode: String?
 
     init(
         text: String? = nil,
@@ -22,7 +23,8 @@ struct APIActionBody: Encodable, Sendable {
         submit: Bool? = nil,
         kind: String? = nil,
         name: String? = nil,
-        command: String? = nil
+        command: String? = nil,
+        mode: String? = nil
     ) {
         self.text = text
         self.label = label
@@ -34,6 +36,7 @@ struct APIActionBody: Encodable, Sendable {
         self.kind = kind
         self.name = name
         self.command = command
+        self.mode = mode
     }
 }
 

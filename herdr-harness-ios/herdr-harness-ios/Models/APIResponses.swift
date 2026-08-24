@@ -156,6 +156,16 @@ struct MutationResponse: Decodable, Sendable {
     let ok: Bool
 }
 
+struct SplitPaneResponse: Decodable, Sendable {
+    let ok: Bool
+    let paneID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case paneID = "paneId"
+    }
+}
+
 struct PushStatusResponse: Decodable, Sendable {
     struct APNsStatus: Decodable, Sendable {
         let configured: Bool

@@ -73,12 +73,18 @@ struct HerdrModelTests {
     @Test("Sidebar navigation persists collapsed sections and opens workspaces")
     func sidebarNavigation() {
         UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
+        UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedTabs")
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
 
         model.toggleSidebarSection("demo1|w1")
         #expect(model.collapsedSidebarWorkspaceIDs.contains("demo1|w1"))
         model.toggleSidebarSection("demo1|w1")
         #expect(!model.collapsedSidebarWorkspaceIDs.contains("demo1|w1"))
+
+        model.toggleSidebarTabSection("demo1|w1:t1")
+        #expect(model.collapsedSidebarTabIDs.contains("demo1|w1:t1"))
+        model.toggleSidebarTabSection("demo1|w1:t1")
+        #expect(!model.collapsedSidebarTabIDs.contains("demo1|w1:t1"))
 
         model.openWorkspace(id: "demo1|w1")
         let selectedWorkspaceID = model.selectedWorkspaceID

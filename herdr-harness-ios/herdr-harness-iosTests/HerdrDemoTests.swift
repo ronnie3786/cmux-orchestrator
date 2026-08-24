@@ -81,6 +81,28 @@ struct HerdrDemoTests {
         #expect(model.toastMessage == "ended the pi session")
     }
 
+    @Test("Demo adds a shell to a tab without network access")
+    func addsShellToTabInDemoMode() async throws {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        let workspace = try #require(model.workspaces.first)
+        let tab = try #require(workspace.tabs.first)
+
+        await model.addPane(toTab: tab, in: workspace)
+
+        #expect(model.toastMessage == "added a shell")
+    }
+
+    @Test("Demo starts pi in a tab without network access")
+    func startsPiInTabInDemoMode() async throws {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        let workspace = try #require(model.workspaces.first)
+        let tab = try #require(workspace.tabs.first)
+
+        await model.addPane(toTab: tab, in: workspace, running: "pi")
+
+        #expect(model.toastMessage == "started a new pi chat")
+    }
+
     @Test("Reading one demo alert preserves the rest of the feed")
     func marksSingleAlertRead() async throws {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])

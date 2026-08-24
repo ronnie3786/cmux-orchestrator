@@ -32,6 +32,11 @@ struct PaneActionsMenu: View {
             }
             .disabled(!model.canControl)
 
+            Button("Focus on Mac + Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
+                Task { await model.focusAndZoom(pane) }
+            }
+            .disabled(!model.canControl)
+
             Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
                 Task { await model.sendKeys(["ctrl+c"], to: pane) }
             }
