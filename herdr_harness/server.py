@@ -21,7 +21,7 @@ from .client import HerdrAPIError, HerdrClientError
 from .cleanup import CleanupError
 from .network import public_base_url
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError
-from .service import HerdrService
+from .service import HerdrService, _find_pane_id
 from .terminal import TerminalObserverError
 from .workspace_tools import WorkspaceToolError
 
@@ -267,7 +267,7 @@ def api_description() -> dict:
             "PATCH|DELETE /api/v1/tabs/{tabId}",
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
-            "POST /api/v1/panes/{paneId}/focus|split|send-text|send-keys|run|prompt|start-agent",
+            "POST /api/v1/panes/{paneId}/focus|zoom|split|send-text|send-keys|run|prompt|start-agent",
             "POST /api/v1/panes/{paneId}/star",
             "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort|model|thinking-level",
             "POST /api/v1/panes/{paneId}/pi/interactions/{interactionId}/respond",
@@ -805,13 +805,20 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     label = body.get("label")
                     if label is not None:
                         label = _string(label, "label", maximum=120, allow_empty=True) or None
-                    return service.invoke("pane.rename", {"pane_id": pane_id, "label": label})
+                    result = service.invoke("pane.rename", {"pane_id": pane_id, "label": label})
+                    result["tabRenamed"] = self._fan_out_pane_rename(pane_id, label, result)
+                    return result
                 if method == "DELETE" and len(tail) == 2:
                     return service.invoke("pane.close", {"pane_id": pane_id})
                 if method == "POST" and len(tail) == 3:
                     action = tail[2]
                     if action == "focus":
                         return service.invoke("pane.focus", {"pane_id": pane_id})
+                    if action == "zoom":
+                        mode = body.get("mode", "toggle")
+                        if mode not in {"toggle", "on", "off"}:
+                            raise HTTPValidationError("mode must be toggle, on, or off")
+                        return service.invoke("pane.zoom", {"pane_id": pane_id, "mode": mode})
                     if action == "split":
                         direction = body.get("direction", "right")
                         if direction not in {"right", "down"}:
@@ -830,7 +837,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             if not isinstance(ratio, (int, float)) or isinstance(ratio, bool) or not 0.05 <= float(ratio) <= 0.95:
                                 raise HTTPValidationError("ratio must be between 0.05 and 0.95")
                             params["ratio"] = float(ratio)
-                        return service.invoke("pane.split", params)
+                        response = service.invoke("pane.split", params)
+                        response["paneId"] = _find_pane_id(response.get("result"))
+                        return response
                     if action == "send-text":
                         text = _string(body.get("text"), "text", maximum=131072, allow_empty=True)
                         return service.invoke("pane.send_text", {"pane_id": pane_id, "text": text})
@@ -998,6 +1007,39 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             elif "until" in body or "timeoutMs" in body:
                 raise HTTPValidationError("until and timeoutMs require wait=true")
             return service.invoke("agent.prompt", params)
+
+        def _fan_out_pane_rename(self, pane_id: str, label: Optional[str], result: dict) -> bool:
+            try:
+                tab_id = None
+                native_result = result.get("result") if isinstance(result, dict) else None
+                pane = native_result.get("pane") if isinstance(native_result, dict) else None
+                if isinstance(pane, dict):
+                    tab_id = pane.get("tab_id")
+                snapshot_response = service.snapshot_response()
+                snapshot = snapshot_response.get("snapshot", {}) if isinstance(snapshot_response, dict) else {}
+                panes = snapshot.get("panes", []) if isinstance(snapshot, dict) else []
+                if not isinstance(panes, list):
+                    panes = []
+                if not tab_id:
+                    for pane in panes:
+                        if isinstance(pane, dict) and str(pane.get("pane_id")) == str(pane_id):
+                            tab_id = pane.get("tab_id")
+                            break
+                if not tab_id:
+                    return False
+                if sum(
+                    1
+                    for pane in panes
+                    if isinstance(pane, dict) and str(pane.get("tab_id")) == str(tab_id)
+                ) != 1:
+                    return False
+                try:
+                    service.invoke("tab.rename", {"tab_id": tab_id, "label": label})
+                except HerdrClientError:
+                    return False
+                return True
+            except Exception:
+                return False
 
         def _start_agent(self, pane_id: str, body: dict) -> dict:
             name = _string(body.get("name"), "name", maximum=32)

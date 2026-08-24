@@ -26,6 +26,7 @@ class FakeHTTPService:
         self.pi_semantic = FakePiSemantic()
         self.pi_command_error = None
         self.pi_extension_args_calls = 0
+        self.split_result = None
         self.calls = []
         self.snapshot = {
             "version": "0.8.0",
@@ -115,6 +116,21 @@ class FakeHTTPService:
 
     def invoke(self, method, params):
         self.calls.append((method, params))
+        if method == "pane.split" and self.split_result is not None:
+            return {"ok": True, "result": self.split_result}
+        if method == "pane.rename":
+            tab_id = None
+            for pane in self.snapshot.get("panes", []):
+                if pane.get("pane_id") == params.get("pane_id"):
+                    tab_id = pane.get("tab_id")
+                    break
+            return {
+                "ok": True,
+                "result": {
+                    "type": "pane_info",
+                    "pane": {"pane_id": params.get("pane_id"), "tab_id": tab_id, "label": params.get("label")},
+                },
+            }
         return {"ok": True, "result": {"type": "ok", "method": method}}
 
     def pi_extension_args(self):
@@ -436,6 +452,8 @@ class HerdrHTTPTests(unittest.TestCase):
                 {"name": "reviewer", "kind": "codex", "args": []},
                 "agent.start",
             ),
+            ("/api/v1/panes/w1:p1/zoom", {"mode": "on"}, "pane.zoom"),
+            ("/api/v1/panes/w1:p1/zoom", {}, "pane.zoom"),
         ]
         for path, payload, expected_method in cases:
             with self.subTest(path=path):
@@ -449,6 +467,70 @@ class HerdrHTTPTests(unittest.TestCase):
         )
         self.assertEqual(self.service.calls[1][1]["target"], "w1:p1")
         self.assertEqual(self.service.calls[1][1]["wait"]["timeout_ms"], 120000)
+        self.assertEqual(self.service.calls[3][1], {"pane_id": "w1:p1", "mode": "on"})
+        self.assertEqual(self.service.calls[4][1], {"pane_id": "w1:p1", "mode": "toggle"})
+
+    def test_invalid_zoom_mode_is_rejected(self):
+        status, _, body = self.request(
+            "/api/v1/panes/w1:p1/zoom", method="POST", payload={"mode": "sideways"}
+        )
+
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "invalid_request")
+        self.assertEqual(self.service.calls, [])
+
+    def test_split_response_includes_pane_id_when_available(self):
+        self.service.split_result = {"pane": {"pane_id": "w1:p9"}}
+
+        status, _, body = self.request(
+            "/api/v1/panes/w1:p1/split", method="POST", payload={"direction": "right"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["paneId"], "w1:p9")
+        self.assertEqual(body["result"], {"pane": {"pane_id": "w1:p9"}})
+
+    def test_split_response_includes_null_pane_id_when_unavailable(self):
+        status, _, body = self.request("/api/v1/panes/w1:p1/split", method="POST", payload={})
+
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["paneId"])
+
+    def test_pane_rename_fans_out_to_tab_when_tab_has_a_single_pane(self):
+        self.service.snapshot["tabs"] = [{"tab_id": "t1", "workspace_id": "w1"}]
+        self.service.snapshot["panes"] = [{"pane_id": "w1:p1", "tab_id": "t1", "workspace_id": "w1"}]
+
+        status, _, body = self.request(
+            "/api/v1/panes/w1:p1", method="PATCH", payload={"label": "renamed"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["tabRenamed"])
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("pane.rename", {"pane_id": "w1:p1", "label": "renamed"}),
+                ("tab.rename", {"tab_id": "t1", "label": "renamed"}),
+            ],
+        )
+
+    def test_pane_rename_does_not_fan_out_when_tab_has_multiple_panes(self):
+        self.service.snapshot["tabs"] = [{"tab_id": "t1", "workspace_id": "w1"}]
+        self.service.snapshot["panes"] = [
+            {"pane_id": "w1:p1", "tab_id": "t1", "workspace_id": "w1"},
+            {"pane_id": "w1:p2", "tab_id": "t1", "workspace_id": "w1"},
+        ]
+
+        status, _, body = self.request(
+            "/api/v1/panes/w1:p1", method="PATCH", payload={"label": "renamed"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(body["tabRenamed"])
+        self.assertEqual(
+            self.service.calls,
+            [("pane.rename", {"pane_id": "w1:p1", "label": "renamed"})],
+        )
 
     def test_output_route_normalizes_recent_unwrapped_source(self):
         status, _, body = self.request(
