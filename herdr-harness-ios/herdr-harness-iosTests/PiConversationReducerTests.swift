@@ -358,6 +358,36 @@ struct PiConversationReducerTests {
         #expect(reducer.contextUsage == nil)
     }
 
+    @Test("Session cost projects from snapshots and preserves the last turn value")
+    func sessionCostProjectsFromSnapshotAndTurnEnd() throws {
+        var reducer = PiConversationReducer()
+
+        let snapshot = try decodeSnapshot(
+            entries: "[]",
+            state: "{\"isStreaming\":false,\"cost\":{\"totalUSD\":1.25,\"totalTokens\":4200}}"
+        )
+        reducer.replace(with: snapshot)
+        #expect(reducer.sessionCost?.totalUSD == 1.25)
+        #expect(reducer.sessionCost?.totalTokens == 4_200)
+
+        let turnEnd = try envelope(
+            1,
+            "{\"type\":\"turn_end\",\"turnIndex\":1,\"cost\":{\"totalUSD\":1.75,\"totalTokens\":6000}}"
+        )
+        _ = reducer.apply(turnEnd)
+        #expect(reducer.sessionCost?.totalUSD == 1.75)
+        #expect(reducer.sessionCost?.totalTokens == 6_000)
+
+        let turnEndWithoutCost = try envelope(2, "{\"type\":\"turn_end\",\"turnIndex\":2}")
+        _ = reducer.apply(turnEndWithoutCost)
+        #expect(reducer.sessionCost?.totalUSD == 1.75)
+        #expect(reducer.sessionCost?.totalTokens == 6_000)
+
+        let snapshotWithoutCost = try decodeSnapshot(entries: "[]")
+        reducer.replace(with: snapshotWithoutCost)
+        #expect(reducer.sessionCost == nil)
+    }
+
     @Test("Older snapshots without context reporting leave usage unknown")
     func missingContextStaysUnknown() throws {
         var reducer = PiConversationReducer()

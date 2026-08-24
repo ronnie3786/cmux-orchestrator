@@ -20,6 +20,7 @@ final class PiConversationStore {
     private(set) var isTruncated = false
     private(set) var bridgeConnected = false
     private(set) var contextUsage: PiContextUsage?
+    private(set) var sessionCost: PiSessionCost?
     private(set) var currentModel: PiModelIdentity?
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var isLoadingModels = false
@@ -298,6 +299,7 @@ final class PiConversationStore {
         isTruncated = false
         bridgeConnected = false
         contextUsage = nil
+        sessionCost = nil
         currentModel = nil
         availableModels = []
         isLoadingModels = false
@@ -398,6 +400,7 @@ final class PiConversationStore {
         isTruncated = reducer.isTruncated
         bridgeConnected = reducer.bridgeConnected
         contextUsage = reducer.contextUsage
+        sessionCost = reducer.sessionCost
         currentModel = reducer.currentModel
         thinkingLevel = reducer.thinkingLevel
         revision &+= 1
