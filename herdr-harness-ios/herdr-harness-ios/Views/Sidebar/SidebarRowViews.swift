@@ -96,7 +96,7 @@ struct SidebarSectionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "square.on.square")
+            Image(systemName: "folder")
                 .font(.caption2)
                 .foregroundStyle(HerdrTheme.mist)
 

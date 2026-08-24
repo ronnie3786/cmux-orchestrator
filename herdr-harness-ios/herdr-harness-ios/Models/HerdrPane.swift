@@ -26,6 +26,12 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         machineID.isEmpty ? paneID : MachineScopedID.compose(machineID: machineID, rawID: paneID)
     }
 
+    /// The pane's parent tab id in the same machine-scoped form as `HerdrTab.id`,
+    /// so pane→tab matching keeps working once entities are stamped.
+    var scopedTabID: String {
+        machineID.isEmpty ? tabID : MachineScopedID.compose(machineID: machineID, rawID: tabID)
+    }
+
     func stamped(machineID: String) -> HerdrPane {
         var copy = self
         copy.machineID = machineID

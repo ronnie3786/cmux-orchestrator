@@ -291,7 +291,7 @@ struct HerdrSidebarView: View {
             renamingWorkspace = workspace
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
-        Button("New tab", systemImage: "plus.square.on.square") { Task { await model.createTab(in: workspace) } }
+        Button("New tab", systemImage: "folder.badge.plus") { Task { await model.createTab(in: workspace) } }
             .disabled(!model.canControl(machineID: workspace.machineID))
         Divider()
         Button("Close workspace", systemImage: "xmark.rectangle", role: .destructive) {
@@ -452,7 +452,7 @@ struct HerdrSidebarView: View {
     }
 
     private func firstPane(in tab: HerdrTab, workspace: HerdrWorkspace) -> HerdrPane? {
-        workspace.panes.filter { $0.tabID == tab.id }.sorted { $0.paneID < $1.paneID }.first
+        workspace.panes.filter { $0.scopedTabID == tab.id }.sorted { $0.paneID < $1.paneID }.first
     }
 
     private func presentCreateWorkspace(for machineID: String?) {

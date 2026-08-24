@@ -128,19 +128,19 @@ enum SidebarTree {
         } else {
             filteredPanes = workspace.panes.filter {
                 !starredIDs.contains($0.id)
-                    && (matchingPaneIDs.contains($0.id) || matchingTabIDs.contains($0.tabID))
+                    && (matchingPaneIDs.contains($0.id) || matchingTabIDs.contains($0.scopedTabID))
             }
         }
 
         let sections = sortedTabs.compactMap { tab -> SectionEntry? in
             let chats = filteredPanes
-                .filter { $0.tabID == tab.id }
+                .filter { $0.scopedTabID == tab.id }
                 .sorted { $0.paneID < $1.paneID }
             guard query.isEmpty || !chats.isEmpty || matchingTabIDs.contains(tab.id) else { return nil }
             return SectionEntry(tab: tab, chats: chats)
         }
         let looseChats = filteredPanes
-            .filter { !tabIDs.contains($0.tabID) }
+            .filter { !tabIDs.contains($0.scopedTabID) }
             .sorted { $0.paneID < $1.paneID }
 
         return ProjectEntry(

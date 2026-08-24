@@ -303,6 +303,59 @@ struct SidebarTreeTests {
         #expect(groups.count == 1)
     }
 
+    @Test("Stamped workspaces keep panes under their tabs")
+    func stampedWorkspaceKeepsPanesUnderTheirTabs() {
+        let stamped = workspaceOne.stamped(machineID: "m1")
+        let tree = SidebarTree.build(
+            workspaces: [stamped],
+            query: "",
+            collapsedWorkspaceIDs: []
+        )
+
+        #expect(tree[0].sections.map(\.id) == ["m1|w1:t1", "m1|w1:t2"])
+        #expect(tree[0].sections[0].chats.map(\.id) == ["m1|w1:p1", "m1|w1:p2"])
+        #expect(tree[0].sections[1].chats.map(\.id) == ["m1|w1:p3"])
+        #expect(tree[0].looseChats.isEmpty)
+    }
+
+    @Test("Stamped workspaces still collect panes without matching tabs")
+    func stampedWorkspaceStillCollectsLoosePanes() {
+        let tabs = [tab(id: "loose:t1", workspaceID: "loose", number: 1, label: "Primary", paneCount: 1)]
+        let panes = [
+            pane(id: "loose:p1", workspaceID: "loose", tabID: "loose:t1", title: "Assigned"),
+            pane(id: "loose:p2", workspaceID: "loose", tabID: "missing", title: "Loose"),
+        ]
+        let stamped = workspace(
+            id: "loose",
+            number: 1,
+            label: "Loose",
+            tabs: tabs,
+            panes: panes
+        )
+        .stamped(machineID: "m1")
+
+        let tree = SidebarTree.build(
+            workspaces: [stamped],
+            query: "",
+            collapsedWorkspaceIDs: []
+        )
+
+        #expect(tree[0].sections[0].chats.map(\.id) == ["m1|loose:p1"])
+        #expect(tree[0].looseChats.map(\.id) == ["m1|loose:p2"])
+    }
+
+    @Test("Stamped tab label searches retain the tab's chats")
+    func stampedTabLabelSearchRetainsTabChats() {
+        let tree = SidebarTree.build(
+            workspaces: [workspaceOne.stamped(machineID: "m1")],
+            query: "Tests",
+            collapsedWorkspaceIDs: []
+        )
+
+        #expect(tree[0].sections.map(\.id) == ["m1|w1:t2"])
+        #expect(tree[0].sections[0].chats.map(\.id) == ["m1|w1:p3"])
+    }
+
     private var workspaces: [HerdrWorkspace] {
         [workspaceThree, workspaceOne, workspaceTwo]
     }
