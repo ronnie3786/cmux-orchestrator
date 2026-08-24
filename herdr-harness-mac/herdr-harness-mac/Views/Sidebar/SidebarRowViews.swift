@@ -165,32 +165,42 @@ struct SidebarMachineRow: View {
 
 struct SidebarSectionRow: View {
     let tab: HerdrTab
+    let isExpanded: Bool
+    let action: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
-                .herdrFont(.caption2)
-                .foregroundStyle(HerdrTheme.mist)
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: isExpanded ? "folder" : "folder.fill")
+                    .herdrFont(.caption2)
+                    .foregroundStyle(HerdrTheme.mist)
 
-            Text(tab.label)
-                .herdrFont(.caption, monospaced: true, weight: .bold)
-                .foregroundStyle(HerdrTheme.mist)
-                .lineLimit(1)
+                Text(tab.label)
+                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .lineLimit(1)
 
-            Spacer()
+                Spacer()
 
-            Text("\(tab.paneCount)")
-                .herdrFont(.caption2, monospaced: true)
-                .foregroundStyle(HerdrTheme.muted)
-                .fixedSize()
+                Text("\(tab.paneCount)")
+                    .herdrFont(.caption2, monospaced: true)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .fixedSize()
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 12)
+            .frame(minHeight: 26)
+            .contentShape(Rectangle())
+            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 12)
-        .frame(minHeight: 26)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
         .accessibilityIdentifier("sidebar-tab-\(tab.id)")
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(tab.label), \(tab.paneCount) panes")
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityHint("Collapses or expands this tab's chats")
     }
 }
 

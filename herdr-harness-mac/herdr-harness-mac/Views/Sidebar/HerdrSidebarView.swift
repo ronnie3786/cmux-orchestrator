@@ -37,6 +37,7 @@ struct HerdrSidebarView: View {
                 workspaces: scopedWorkspaces,
                 query: query,
                 collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
+                collapsedTabIDs: model.collapsedSidebarTabIDs,
                 starredIDs: model.starredChatIDs
             )
             machineGroups = SidebarTree.machineGroups(
@@ -314,15 +315,25 @@ struct HerdrSidebarView: View {
             if entry.isExpanded {
                 ForEach(entry.sections) { section in
                     let firstPane = firstPane(in: section.tab, workspace: entry.workspace)
-                    SidebarSectionRow(tab: section.tab)
+                    SidebarSectionRow(tab: section.tab, isExpanded: section.isExpanded, action: { toggle(section.tab) })
                         .contextMenu {
                             Button("Focus on Mac", systemImage: "scope") {
                                 guard let firstPane else { return }
                                 Task { await model.focus(firstPane) }
                             }
                             .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
+                            Button("New Pi Chat", systemImage: "plus.bubble") {
+                                Task { await model.addPane(toTab: section.tab, in: entry.workspace, running: "pi") }
+                            }
+                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
+                            Button("New Shell", systemImage: "terminal") {
+                                Task { await model.addPane(toTab: section.tab, in: entry.workspace) }
+                            }
+                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
                         }
-                    ForEach(section.chats) { chatRow($0) }
+                    if section.isExpanded {
+                        ForEach(section.chats) { chatRow($0) }
+                    }
                 }
 
                 ForEach(entry.looseChats) { chatRow($0) }
@@ -479,6 +490,10 @@ struct HerdrSidebarView: View {
                 Task { await model.focus(pane) }
             }
             .disabled(!model.canControl(machineID: pane.machineID))
+            Button("Focus on Mac + Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
+                Task { await model.focusAndZoom(pane) }
+            }
+            .disabled(!model.canControl(machineID: pane.machineID))
             Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
                 Task { await model.sendKeys(["ctrl+c"], to: pane) }
             }
@@ -557,6 +572,13 @@ struct HerdrSidebarView: View {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         withAnimation(.snappy) {
             model.toggleSidebarSection(workspace.id)
+        }
+    }
+
+    private func toggle(_ tab: HerdrTab) {
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        withAnimation(.snappy) {
+            model.toggleSidebarTabSection(tab.id)
         }
     }
 

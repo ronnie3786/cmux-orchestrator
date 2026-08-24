@@ -215,8 +215,13 @@ actor HerdrAPIClient {
         )
     }
 
-    func splitPane(id: String, direction: String) async throws {
-        try await mutation(path: "/api/v1/panes/\(id)/split", body: APIActionBody(direction: direction, ratio: 0.5))
+    func splitPane(id: String, direction: String) async throws -> String? {
+        let response: SplitPaneResponse = try await request(
+            path: "/api/v1/panes/\(id)/split",
+            method: "POST",
+            body: APIActionBody(direction: direction, ratio: 0.5)
+        )
+        return response.paneID
     }
 
     func renamePane(id: String, label: String) async throws {
@@ -229,6 +234,10 @@ actor HerdrAPIClient {
 
     func focusPane(id: String) async throws {
         try await mutation(path: "/api/v1/panes/\(id)/focus", body: APIActionBody())
+    }
+
+    func zoomPane(id: String, mode: String = "on") async throws {
+        try await mutation(path: "/api/v1/panes/\(id)/zoom", body: APIActionBody(mode: mode))
     }
 
     func setPaneStar(id: String, starred: Bool) async throws {

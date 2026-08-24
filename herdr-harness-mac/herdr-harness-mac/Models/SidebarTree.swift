@@ -12,6 +12,7 @@ enum SidebarTree {
 
     struct SectionEntry: Identifiable, Equatable {
         let tab: HerdrTab
+        let isExpanded: Bool
         let chats: [HerdrPane]
 
         var id: String { tab.id }
@@ -37,6 +38,7 @@ enum SidebarTree {
         workspaces: [HerdrWorkspace],
         query: String,
         collapsedWorkspaceIDs: Set<String>,
+        collapsedTabIDs: Set<String> = [],
         starredIDs: Set<String> = []
     ) -> [ProjectEntry] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -45,6 +47,7 @@ enum SidebarTree {
                 for: workspace,
                 query: trimmedQuery,
                 collapsedWorkspaceIDs: collapsedWorkspaceIDs,
+                collapsedTabIDs: collapsedTabIDs,
                 starredIDs: starredIDs
             )
         }
@@ -83,6 +86,7 @@ enum SidebarTree {
         query: String,
         collapsedMachineIDs: Set<String>,
         collapsedWorkspaceIDs: Set<String>,
+        collapsedTabIDs: Set<String> = [],
         starredIDs: Set<String> = []
     ) -> [MachineGroup] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -95,6 +99,7 @@ enum SidebarTree {
                     workspaces: workspaces.filter { $0.machineID == machine.id },
                     query: query,
                     collapsedWorkspaceIDs: collapsedWorkspaceIDs,
+                    collapsedTabIDs: collapsedTabIDs,
                     starredIDs: starredIDs
                 )
             )
@@ -123,6 +128,7 @@ enum SidebarTree {
         for workspace: HerdrWorkspace,
         query: String,
         collapsedWorkspaceIDs: Set<String>,
+        collapsedTabIDs: Set<String> = [],
         starredIDs: Set<String>
     ) -> ProjectEntry? {
         let sortedTabs = workspace.tabs.sorted { $0.number < $1.number }
@@ -164,7 +170,11 @@ enum SidebarTree {
                 .filter { $0.scopedTabID == tab.id }
                 .sorted { $0.paneID < $1.paneID }
             guard query.isEmpty || !chats.isEmpty || matchingTabIDs.contains(tab.id) else { return nil }
-            return SectionEntry(tab: tab, chats: chats)
+            return SectionEntry(
+                tab: tab,
+                isExpanded: query.isEmpty ? !collapsedTabIDs.contains(tab.id) : true,
+                chats: chats
+            )
         }
         let looseChats = filteredPanes
             .filter { !tabIDs.contains($0.scopedTabID) }

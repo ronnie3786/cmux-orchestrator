@@ -33,6 +33,31 @@ struct SidebarTreeTests {
         #expect(tree[2].isExpanded)
     }
 
+    @Test("Keeps collapsed tab sections collapsed outside search")
+    func honorsCollapsedTabs() {
+        let tree = SidebarTree.build(
+            workspaces: workspaces,
+            query: "",
+            collapsedWorkspaceIDs: [],
+            collapsedTabIDs: ["w1:t1"]
+        )
+
+        #expect(!tree[0].sections[0].isExpanded)
+        #expect(tree[0].sections[1].isExpanded)
+    }
+
+    @Test("Searching force-expands collapsed tab sections")
+    func tabSearchForcesExpansion() {
+        let tree = SidebarTree.build(
+            workspaces: workspaces,
+            query: "Auth",
+            collapsedWorkspaceIDs: [],
+            collapsedTabIDs: ["w1:t1"]
+        )
+
+        #expect(tree[0].sections[0].isExpanded)
+    }
+
     @Test("Filters chats by pane title and expands matching projects")
     func filtersByPaneTitle() {
         let tree = SidebarTree.build(
