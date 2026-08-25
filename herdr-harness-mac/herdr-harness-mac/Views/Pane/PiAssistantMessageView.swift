@@ -5,7 +5,7 @@ struct PiAssistantMessageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            PiMarkdownMessageView(source: block.text, isStreaming: block.status == .streaming)
+            PiMarkdownMessageView(source: block.text, isStreaming: block.status == .streaming, id: block.id)
 
             if case let .failed(message) = block.status {
                 Label(message ?? "Response stopped with an error", systemImage: "exclamationmark.triangle.fill")
@@ -15,6 +15,6 @@ struct PiAssistantMessageView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Pi: \(block.text)")
+        .accessibilityLabel(block.status == .streaming ? "Pi is responding" : "Pi: \(block.text)")
     }
 }

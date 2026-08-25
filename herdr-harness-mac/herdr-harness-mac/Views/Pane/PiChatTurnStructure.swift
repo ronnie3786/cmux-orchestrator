@@ -1,11 +1,9 @@
 struct PiChatTurnStructure: Equatable {
-    let userID: String?
-    let itemIDs: [String]
+    let itemsRevision: Int
     let showsStartingIndicator: Bool
 
     init(turn: PiConversationTurn) {
-        userID = turn.user?.id
-        itemIDs = turn.items.map(\.id)
+        itemsRevision = turn.itemsRevision
         showsStartingIndicator = turn.isActive && turn.items.isEmpty
     }
 }

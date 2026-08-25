@@ -14,11 +14,15 @@ final class HerdrAppModel {
         var lastRefreshCompletedAt: ContinuousClock.Instant?
         var pendingRefresh = false
         var deferredRefreshTask: Task<Void, Never>?
+        var consecutiveBoringRefreshes = 0
+        var lastRelevantEventAt: ContinuousClock.Instant?
         var lastEventID: Int?
         var didSweepDelivered = false
     }
 
-    var workspaces: [HerdrWorkspace] = []
+    var workspaces: [HerdrWorkspace] = [] {
+        didSet { rebuildPaneIndex() }
+    }
     var alerts: [HerdrAlert] = []
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
@@ -38,6 +42,9 @@ final class HerdrAppModel {
     var isShowingError = false
     var toastMessage: String?
     var lastUpdated: Date?
+    var lastSyncedAt: Date?
+    var fleetRevision = 0
+    var refreshTick = 0
     var isRefreshing = false
     var isSending = false
     var connectionGeneration = 0 {
@@ -67,13 +74,22 @@ final class HerdrAppModel {
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
+    @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
     /// Internal test seam for deterministic URLProtocol-backed clients.
     @ObservationIgnored var clientFactory: (ServerConfiguration) -> HerdrAPIClient = {
         HerdrAPIClient(configuration: $0)
     }
     @ObservationIgnored var fleetRefreshRetryBase: Duration = .seconds(2)
+    @ObservationIgnored var fleetRefreshBaseWindow = Duration.milliseconds(200)
+    @ObservationIgnored var fleetRefreshBackoffWindow = Duration.seconds(1)
+    @ObservationIgnored var fleetRefreshBoringCycleThreshold = 5
+    @ObservationIgnored var fleetRefreshQuietWindow = Duration.seconds(2)
     private static let connectionFailureGrace: TimeInterval = 10
-    private static let fleetRefreshWindow = Duration.milliseconds(200)
+
+    private struct PaneLocation {
+        let workspaceIndex: Int
+        let paneIndex: Int
+    }
 
     init(
         arguments: [String] = ProcessInfo.processInfo.arguments,
@@ -209,8 +225,12 @@ final class HerdrAppModel {
     }
 
     func pane(id: String?) -> HerdrPane? {
-        guard let id else { return nil }
-        return workspaces.lazy.flatMap(\.panes).first { $0.id == id }
+        guard let id,
+              let location = paneIndex[id],
+              workspaces.indices.contains(location.workspaceIndex),
+              workspaces[location.workspaceIndex].panes.indices.contains(location.paneIndex)
+        else { return nil }
+        return workspaces[location.workspaceIndex].panes[location.paneIndex]
     }
 
     func workspace(containing pane: HerdrPane) -> HerdrWorkspace? {
@@ -369,6 +389,7 @@ final class HerdrAppModel {
     }
 
     func refresh() async {
+        noteUserInteraction()
         if isDemoMode {
             loadDemo()
             return
@@ -877,6 +898,7 @@ final class HerdrAppModel {
         disposition: PiPromptDisposition,
         to pane: HerdrPane
     ) async throws {
+        noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty,
               !isDemoMode,
@@ -888,6 +910,7 @@ final class HerdrAppModel {
     }
 
     func abortPiConversation(for pane: HerdrPane) async throws {
+        noteUserInteraction(machineID: pane.machineID)
         guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
@@ -900,6 +923,7 @@ final class HerdrAppModel {
         response: PiInteractionResponseBody,
         in pane: HerdrPane
     ) async throws {
+        noteUserInteraction(machineID: pane.machineID)
         guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
@@ -936,6 +960,7 @@ final class HerdrAppModel {
     }
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
+        noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return false }
         if isDemoMode {
@@ -962,6 +987,7 @@ final class HerdrAppModel {
 
     @discardableResult
     func sendKeys(_ keys: [String], to pane: HerdrPane) async -> Bool {
+        noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {
             toastMessage = keys.joined(separator: " + ").uppercased()
             return true
@@ -979,6 +1005,7 @@ final class HerdrAppModel {
 
     @discardableResult
     func sendText(_ text: String, to pane: HerdrPane) async -> Bool {
+        noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {
             toastMessage = "Sent to \(pane.displayAgentName)"
             return true
@@ -995,6 +1022,7 @@ final class HerdrAppModel {
     }
 
     func startNewPiChat(in pane: HerdrPane) async {
+        noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {
             toastMessage = "started a new pi chat"
             return
@@ -1011,6 +1039,7 @@ final class HerdrAppModel {
     }
 
     func endPiSession(in pane: HerdrPane) async {
+        noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {
             toastMessage = "ended the pi session"
             return
@@ -1036,6 +1065,7 @@ final class HerdrAppModel {
     }
 
     func addPane(toTab tab: HerdrTab, in workspace: HerdrWorkspace, running command: String? = nil) async {
+        noteUserInteraction(machineID: workspace.machineID)
         if isDemoMode {
             toastMessage = command == nil ? "added a shell" : "started a new pi chat"
             return
@@ -1254,6 +1284,7 @@ final class HerdrAppModel {
     }
 
     func openPane(id paneID: String) {
+        noteUserInteraction()
         guard !paneID.isEmpty else { return }
         guard let pane = pane(id: paneID) ?? resolveRawPane(id: paneID) else {
             pendingPaneID = paneID
@@ -1314,6 +1345,7 @@ final class HerdrAppModel {
     }
 
     func openWorkspace(id: String) {
+        noteUserInteraction()
         guard let workspace = workspace(id: id) else { return }
         isSidebarPresented = false
         selectedTab = .workspaces
@@ -1370,18 +1402,60 @@ final class HerdrAppModel {
         }
         let response = try await client.fetchWorkspaces()
         guard expectedGeneration == connectionGeneration else { throw CancellationError() }
-        let previousAlerts = alerts.filter { $0.machineID == machineID }
-        let previousAlertIDs = Set(previousAlerts.map(\.id))
-        let previousReadAlertIDs = Set(previousAlerts.filter(\.isRead).map(\.id))
-        let freshWorkspaces = response.workspaces.map { $0.stamped(machineID: machineID) }
-        let freshAlerts = response.alerts.map { $0.stamped(machineID: machineID) }
-        let mergedWorkspaces = workspaces.filter { $0.machineID != machineID } + freshWorkspaces
-        let mergedAlerts = alerts.filter { $0.machineID != machineID } + freshAlerts
-        if mergedWorkspaces != workspaces { workspaces = mergedWorkspaces }
-        if mergedAlerts != alerts { alerts = mergedAlerts }
-        reconcileStarredChats(machineID: machineID, serverStarredRawIDs: response.starredPaneIDs)
-        let currentAlertIDs = Set(freshAlerts.map(\.id))
-        let readAlertIDs = Set(freshAlerts.filter(\.isRead).map(\.id))
+        var previousAlertIDs: Set<String> = []
+        var previousReadAlertIDs: Set<String> = []
+        for alert in alerts where alert.machineID == machineID {
+            previousAlertIDs.insert(alert.id)
+            if alert.isRead { previousReadAlertIDs.insert(alert.id) }
+        }
+        var freshWorkspaces: [HerdrWorkspace] = []
+        for workspace in response.workspaces {
+            freshWorkspaces.append(workspace.stamped(machineID: machineID))
+        }
+        var freshAlerts: [HerdrAlert] = []
+        for alert in response.alerts {
+            freshAlerts.append(alert.stamped(machineID: machineID))
+        }
+        let previousWorkspaces = workspaces
+        let mergedWorkspaces = mergeWorkspaces(
+            current: previousWorkspaces,
+            fresh: freshWorkspaces,
+            machineID: machineID
+        )
+        let mergedAlerts = mergeAlerts(current: alerts, fresh: freshAlerts, machineID: machineID)
+        let workspacesChanged = mergedWorkspaces != workspaces
+        let alertsChanged = mergedAlerts != alerts
+        let contentChanged = workspacesChanged || alertsChanged
+        let wasBoring = isBoringRefresh(
+            previousWorkspaces: previousWorkspaces,
+            freshWorkspaces: freshWorkspaces,
+            machineID: machineID,
+            contentChanged: contentChanged,
+            alertsChanged: alertsChanged
+        )
+        if workspacesChanged { workspaces = mergedWorkspaces }
+        if alertsChanged { alerts = mergedAlerts }
+        if contentChanged {
+            lastUpdated = .now
+            if !wasBoring { fleetRevision &+= 1 }
+        }
+        lastSyncedAt = .now
+        if errorMessage != nil { errorMessage = nil }
+        if lastPresentedConnectionError != nil { lastPresentedConnectionError = nil }
+        if contentChanged || starredChatsWouldChange(
+            machineID: machineID,
+            serverStarredRawIDs: response.starredPaneIDs
+        ) {
+            reconcileStarredChats(machineID: machineID, serverStarredRawIDs: response.starredPaneIDs)
+        }
+        recordRefreshResult(machineID: machineID, wasBoring: wasBoring)
+        refreshTick &+= 1
+        var currentAlertIDs: Set<String> = []
+        var readAlertIDs: Set<String> = []
+        for alert in freshAlerts {
+            currentAlertIDs.insert(alert.id)
+            if alert.isRead { readAlertIDs.insert(alert.id) }
+        }
         let removedAlertIDs = previousAlertIDs.subtracting(currentAlertIDs)
         let staleAlertIDs = readAlertIDs.subtracting(previousReadAlertIDs).union(removedAlertIDs)
         let shouldSweepDelivered = !(runtimes[machineID]?.didSweepDelivered ?? false)
@@ -1396,10 +1470,6 @@ final class HerdrAppModel {
         if !deliveredAlertIDs.isEmpty {
             Task { await NotificationManager.removeDelivered(alertIDs: deliveredAlertIDs) }
         }
-        lastUpdated = .now
-        if errorMessage != nil { errorMessage = nil }
-        if lastPresentedConnectionError != nil { lastPresentedConnectionError = nil }
-
         repairNavigation(machineID: machineID, freshWorkspaces: freshWorkspaces)
         resolvePendingPaneRoute()
 
@@ -1413,6 +1483,143 @@ final class HerdrAppModel {
             pendingLocalAlertIDs.remove(alert.id)
         }
         updateBadgeIfNeeded()
+    }
+
+    func noteUserInteraction(machineID: String? = nil) {
+        if let machineID {
+            resetFleetRefreshBackoff(for: machineID)
+            return
+        }
+        var machineIDs: [String] = []
+        for machine in machines { machineIDs.append(machine.id) }
+        for machineID in runtimes.keys where !machineIDs.contains(machineID) {
+            machineIDs.append(machineID)
+        }
+        for machineID in machineIDs {
+            resetFleetRefreshBackoff(for: machineID)
+        }
+    }
+
+    func currentFleetRefreshWindow(forMachine machineID: String) -> Duration {
+        let boringCycles = runtimes[machineID]?.consecutiveBoringRefreshes ?? 0
+        return boringCycles >= fleetRefreshBoringCycleThreshold
+            ? fleetRefreshBackoffWindow
+            : fleetRefreshBaseWindow
+    }
+
+    private func mergeWorkspaces(
+        current: [HerdrWorkspace],
+        fresh: [HerdrWorkspace],
+        machineID: String
+    ) -> [HerdrWorkspace] {
+        var merged: [HerdrWorkspace] = []
+        merged.reserveCapacity(current.count + fresh.count)
+        var didInsertMachineSlice = false
+        for workspace in current {
+            guard workspace.machineID == machineID else {
+                merged.append(workspace)
+                continue
+            }
+            guard !didInsertMachineSlice else { continue }
+            didInsertMachineSlice = true
+            merged.append(contentsOf: fresh)
+        }
+        if !didInsertMachineSlice {
+            merged.append(contentsOf: fresh)
+        }
+        return merged
+    }
+
+    private func mergeAlerts(
+        current: [HerdrAlert],
+        fresh: [HerdrAlert],
+        machineID: String
+    ) -> [HerdrAlert] {
+        var merged: [HerdrAlert] = []
+        merged.reserveCapacity(current.count + fresh.count)
+        var didInsertMachineSlice = false
+        for alert in current {
+            guard alert.machineID == machineID else {
+                merged.append(alert)
+                continue
+            }
+            guard !didInsertMachineSlice else { continue }
+            didInsertMachineSlice = true
+            merged.append(contentsOf: fresh)
+        }
+        if !didInsertMachineSlice {
+            merged.append(contentsOf: fresh)
+        }
+        return merged
+    }
+
+    private func isBoringRefresh(
+        previousWorkspaces: [HerdrWorkspace],
+        freshWorkspaces: [HerdrWorkspace],
+        machineID: String,
+        contentChanged: Bool,
+        alertsChanged: Bool
+    ) -> Bool {
+        guard contentChanged else { return true }
+        guard !alertsChanged else { return false }
+
+        var previousByWorkspaceID: [String: HerdrWorkspace] = [:]
+        var previousCount = 0
+        for workspace in previousWorkspaces where workspace.machineID == machineID {
+            previousByWorkspaceID[workspace.workspaceID] = workspace
+            previousCount += 1
+        }
+        guard previousCount == freshWorkspaces.count else { return false }
+        for workspace in freshWorkspaces {
+            guard let previous = previousByWorkspaceID[workspace.workspaceID],
+                  previous.isEqualIgnoringPaneRevisions(to: workspace)
+            else { return false }
+        }
+        return true
+    }
+
+    private func starredChatsWouldChange(machineID: String, serverStarredRawIDs: [String]?) -> Bool {
+        guard let serverStarredRawIDs else { return false }
+        var merged: Set<String> = []
+        for paneID in starredChatIDs {
+            if MachineScopedID.split(paneID)?.machineID != machineID {
+                merged.insert(paneID)
+            }
+        }
+        for rawID in serverStarredRawIDs {
+            merged.insert(MachineScopedID.compose(machineID: machineID, rawID: rawID))
+        }
+        return merged != starredChatIDs
+    }
+
+    private func recordRefreshResult(machineID: String, wasBoring: Bool) {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        if wasBoring {
+            runtime.consecutiveBoringRefreshes += 1
+        } else {
+            runtime.consecutiveBoringRefreshes = 0
+        }
+        runtimes[machineID] = runtime
+    }
+
+    private func resetFleetRefreshBackoff(for machineID: String) {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.consecutiveBoringRefreshes = 0
+        runtimes[machineID] = runtime
+    }
+
+    private func rebuildPaneIndex() {
+        var rebuilt: [String: PaneLocation] = [:]
+        for workspaceIndex in workspaces.indices {
+            let panes = workspaces[workspaceIndex].panes
+            for paneIndex in panes.indices {
+                rebuilt[panes[paneIndex].id] = PaneLocation(
+                    workspaceIndex: workspaceIndex,
+                    paneIndex: paneIndex
+                )
+            }
+        }
+        paneIndex = rebuilt
     }
 
     private func updateBadgeIfNeeded() {
@@ -1463,6 +1670,7 @@ final class HerdrAppModel {
         machineID: String?,
         operation: (HerdrAPIClient) async throws -> Void
     ) async {
+        noteUserInteraction(machineID: machineID)
         if isDemoMode {
             toastMessage = successMessage
             return
@@ -1534,6 +1742,7 @@ final class HerdrAppModel {
         workspaces = DemoData.workspaces.map { $0.stamped(machineID: "demo1") }
             + DemoData.workspacesForWorkMBP.map { $0.stamped(machineID: "demo2") }
         alerts = DemoData.alerts.map { $0.stamped(machineID: "demo1") }
+        fleetRevision &+= 1
         runtimes = Dictionary(uniqueKeysWithValues: machines.map {
             ($0.id, MachineRuntime(state: .demo))
         })
@@ -1557,13 +1766,16 @@ final class HerdrAppModel {
         machineStates = [:]
         activeServerConnection = nil
         connectionState = .disconnected
+        let hadFleetContent = !workspaces.isEmpty || !alerts.isEmpty
         workspaces = []
         alerts = []
+        if hadFleetContent { fleetRevision &+= 1 }
         selectedWorkspaceID = nil
         selectedPaneID = nil
         workspacePath = []
         isSidebarPresented = false
         lastUpdated = nil
+        lastSyncedAt = nil
         isRefreshing = false
         isSending = false
         remotePushConfigured = false
@@ -1689,8 +1901,13 @@ final class HerdrAppModel {
         }
         runtimes[id] = nil
         machineStates[id] = nil
+        let workspaceCount = workspaces.count
+        let alertCount = alerts.count
         workspaces.removeAll { $0.machineID == id }
         alerts.removeAll { $0.machineID == id }
+        if workspaces.count != workspaceCount || alerts.count != alertCount {
+            fleetRevision &+= 1
+        }
         starredChatIDs = starredChatIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarTabIDs = collapsedSidebarTabIDs.filter { MachineScopedID.split($0)?.machineID != id }
@@ -1818,12 +2035,25 @@ final class HerdrAppModel {
     }
 
     /// Exposed at internal visibility for deterministic tests.
+    func setLastRelevantEventAt(_ instant: ContinuousClock.Instant?, for machineID: String) {
+        var runtime = runtimes[machineID] ?? MachineRuntime()
+        runtime.lastRelevantEventAt = instant
+        runtimes[machineID] = runtime
+    }
+
+    /// Exposed at internal visibility for deterministic tests.
     func noteFleetRefreshNeeded(
         machineID: String,
         client: HerdrAPIClient,
         expectedGeneration: Int
     ) {
         var runtime = runtimes[machineID] ?? MachineRuntime()
+        let now = ContinuousClock().now
+        if let lastRelevantEventAt = runtime.lastRelevantEventAt,
+           lastRelevantEventAt.duration(to: now) > fleetRefreshQuietWindow {
+            runtime.consecutiveBoringRefreshes = 0
+        }
+        runtime.lastRelevantEventAt = now
         runtime.pendingRefresh = true
         guard runtime.deferredRefreshTask == nil else {
             runtimes[machineID] = runtime
@@ -1836,7 +2066,8 @@ final class HerdrAppModel {
             var retryBackoff = self.fleetRefreshRetryBase
             while !Task.isCancelled, expectedGeneration == self.connectionGeneration {
                 if let completed = self.runtimes[machineID]?.lastRefreshCompletedAt {
-                    do { try await clock.sleep(until: completed.advanced(by: Self.fleetRefreshWindow)) }
+                    let window = self.currentFleetRefreshWindow(forMachine: machineID)
+                    do { try await clock.sleep(until: completed.advanced(by: window)) }
                     catch { return }
                 }
                 guard !Task.isCancelled, expectedGeneration == self.connectionGeneration else { return }

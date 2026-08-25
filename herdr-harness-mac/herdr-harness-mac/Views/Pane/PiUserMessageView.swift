@@ -3,8 +3,10 @@ import SwiftUI
 struct PiUserMessageView: View {
     let message: PiUserMessage
     @Environment(\.herdrFontScale) private var fontScale
+    @State private var labelCache = PiUserMessageLabelCache()
 
     var body: some View {
+        let accessibilityLabel = labelCache.accessibilityLabel(for: message)
         HStack {
             Spacer(minLength: 42)
             PiMarkdownText(message.text, font: HerdrTheme.scaled(.body, scale: fontScale))
@@ -17,6 +19,23 @@ struct PiUserMessageView: View {
                 }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("You: \(message.text)")
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private final class PiUserMessageLabelCache {
+    private var id: String?
+    private var source: String?
+    private var label: String?
+
+    func accessibilityLabel(for message: PiUserMessage) -> String {
+        if id == message.id, source == message.text, let label {
+            return label
+        }
+        let label = "You: \(message.text)"
+        id = message.id
+        source = message.text
+        self.label = label
+        return label
     }
 }

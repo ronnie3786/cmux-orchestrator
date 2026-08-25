@@ -14,4 +14,12 @@ enum PiConversationItem: Identifiable, Equatable, Sendable {
         case let .notice(value): value.id
         }
     }
+
+    var diffingTextLength: Int {
+        switch self {
+        case let .assistant(value): value.text.count
+        case let .thinking(value): value.text.count
+        case .tool, .notice: 0
+        }
+    }
 }

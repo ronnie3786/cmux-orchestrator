@@ -48,9 +48,9 @@ struct SettingsView: View {
                 "Machines",
                 value: "\(model.machines.count) \(model.machines.count == 1 ? "machine" : "machines") · \(liveMachineCount) live"
             )
-            if let lastUpdated = model.lastUpdated {
+            if let lastSyncedAt = model.lastSyncedAt {
                 LabeledContent("Last update") {
-                    Text(lastUpdated, style: .relative)
+                    Text(lastSyncedAt, style: .relative)
                 }
             }
         } header: {

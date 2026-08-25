@@ -18,6 +18,8 @@ final class PiConversationStore {
     private(set) var phase: PiConversationPhase = .idle
     private(set) var connection: PiConversationConnection = .loading
     private(set) var revision = 0
+    private(set) var structureRevision = 0
+    private(set) var lastUserMessage: PiUserMessage?
     private(set) var isTruncated = false
     private(set) var bridgeConnected = false
     private(set) var contextUsage: PiContextUsage?
@@ -39,6 +41,7 @@ final class PiConversationStore {
     @ObservationIgnored private var reducer = PiConversationReducer()
     @ObservationIgnored private var coalescer = PiStreamCoalescer()
     @ObservationIgnored private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var streamingBlockIDs: Set<String> = []
     @ObservationIgnored private var lastReloadCursor: String?
     @ObservationIgnored private var lastReloadAt: ContinuousClock.Instant?
     @ObservationIgnored private(set) var noProgressReloads = 0
@@ -62,9 +65,15 @@ final class PiConversationStore {
         lastError = nil
         var retryDelay = 0.65
         var retryAttempt = 0
+        var resumeAfterOverflow = false
 
         followLoop: while !Task.isCancelled {
             do {
+                if resumeAfterOverflow {
+                    resumeAfterOverflow = false
+                    try await Task.sleep(for: .milliseconds(250))
+                    await Task.yield()
+                }
                 let snapshot = try await fetchSnapshot(model: model, pane: pane)
                 try Task.checkCancellation()
                 guard snapshot.protocolInfo.name == "herdr.pi.semantic",
@@ -91,6 +100,7 @@ final class PiConversationStore {
                 // readable and automatically upgrades when a new bridge is
                 // available.
                 if !snapshot.reportsContextUsage || !snapshot.connected {
+                    resumeAfterOverflow = false
                     if await followSnapshotPolling(
                         model: model,
                         pane: pane,
@@ -159,6 +169,9 @@ final class PiConversationStore {
                 throw APIError.streamEnded
             } catch is CancellationError {
                 return
+            } catch APIError.streamBacklogOverflow {
+                resumeAfterOverflow = true
+                continue followLoop
             } catch {
                 retryAttempt += 1
                 connection = .reconnecting(attempt: retryAttempt)
@@ -302,6 +315,7 @@ final class PiConversationStore {
     func consume(
         _ events: AsyncThrowingStream<PiConversationStreamEvent, any Error>
     ) async throws -> Bool {
+        defer { HerdrPerfDiagnostics.streamBacklog.reset(.pi) }
         for try await streamEvent in events {
             try Task.checkCancellation()
             HerdrPerfDiagnostics.streamBacklog.noteConsumed(.pi)
@@ -343,6 +357,11 @@ final class PiConversationStore {
     func reset() {
         flushTask?.cancel()
         flushTask = nil
+        for id in streamingBlockIDs {
+            PiMarkdownDocumentCache.shared.evictStreaming(id: id)
+            PiMarkdownInlineCache.shared.evictStreaming(id: id)
+        }
+        streamingBlockIDs = []
         coalescer = PiStreamCoalescer()
         reducer = PiConversationReducer()
         turns = []
@@ -350,6 +369,8 @@ final class PiConversationStore {
         phase = .idle
         connection = .loading
         revision &+= 1
+        structureRevision = 0
+        lastUserMessage = nil
         isTruncated = false
         bridgeConnected = false
         contextUsage = nil
@@ -472,9 +493,16 @@ final class PiConversationStore {
     }
 
     private func publishReducerState() {
+        HerdrPerfDiagnostics.checkpoint("pi.publish")
         os_signpost(.event, log: piStreamLog, name: "publish")
+        let previousStructureRevision = structureRevision
+        reconcileStreamingCaches(with: reducer.turns)
         turns = reducer.turns
         pendingInteractions = reducer.pendingInteractions
+        structureRevision = reducer.structureRevision
+        if structureRevision != previousStructureRevision {
+            lastUserMessage = PiLastPrompt.lastUserMessage(in: turns)
+        }
         phase = reducer.phase
         isTruncated = reducer.isTruncated
         bridgeConnected = reducer.bridgeConnected
@@ -483,6 +511,27 @@ final class PiConversationStore {
         currentModel = reducer.currentModel
         thinkingLevel = reducer.thinkingLevel
         revision &+= 1
+    }
+
+    private func reconcileStreamingCaches(with newTurns: [PiConversationTurn]) {
+        var newlyStreamingIDs: Set<String> = []
+        for turn in newTurns {
+            for item in turn.items {
+                switch item {
+                case let .assistant(block):
+                    if case .streaming = block.status { newlyStreamingIDs.insert(block.id) }
+                case let .thinking(block):
+                    if block.isStreaming { newlyStreamingIDs.insert(block.id) }
+                case .tool, .notice:
+                    break
+                }
+            }
+        }
+        for id in streamingBlockIDs where !newlyStreamingIDs.contains(id) {
+            PiMarkdownDocumentCache.shared.evictStreaming(id: id)
+            PiMarkdownInlineCache.shared.evictStreaming(id: id)
+        }
+        streamingBlockIDs = newlyStreamingIDs
     }
 
     private func trigger(

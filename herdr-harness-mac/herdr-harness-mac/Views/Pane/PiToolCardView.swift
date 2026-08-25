@@ -73,12 +73,12 @@ struct PiToolCardView: View {
     @ViewBuilder
     private var detail: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let arguments = tool.arguments {
-                toolSection("Input", value: arguments)
+            if let argumentsDisplayString = tool.argumentsDisplayString {
+                toolSection("Input", text: argumentsDisplayString)
                     .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
             }
-            if let result = tool.result {
-                toolSection(tool.status == .failed ? "Error" : "Result", value: result)
+            if let resultDisplayString = tool.resultDisplayString {
+                toolSection(tool.status == .failed ? "Error" : "Result", text: resultDisplayString)
                     .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
             }
             if tool.arguments == nil, tool.result == nil {
@@ -95,12 +95,12 @@ struct PiToolCardView: View {
         )
     }
 
-    private func toolSection(_ label: String, value: PiJSONValue) -> some View {
+    private func toolSection(_ label: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label.uppercased())
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.muted)
-            Text(value.displayString)
+            Text(text)
                 .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.mist)
                 .textSelection(.enabled)

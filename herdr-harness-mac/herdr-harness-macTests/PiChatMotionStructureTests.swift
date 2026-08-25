@@ -31,9 +31,9 @@ struct PiChatMotionStructureTests {
                 )
             )
         )
+        withTool.itemsRevision += 1
 
         #expect(PiChatTurnStructure(turn: initial) != PiChatTurnStructure(turn: withTool))
-        #expect(timelineStructure(turns: [initial]) != timelineStructure(turns: [withTool]))
     }
 
     @Test("Tool output deltas keep timeline structure stable")
@@ -67,7 +67,7 @@ struct PiChatMotionStructureTests {
             )
         )
 
-        #expect(timelineStructure(turns: [initial]) == timelineStructure(turns: [streamed]))
+        #expect(PiChatTurnStructure(turn: initial) == PiChatTurnStructure(turn: streamed))
     }
 
     private func turn(text: String, status: PiAssistantBlock.Status) -> PiConversationTurn {
@@ -86,15 +86,6 @@ struct PiChatMotionStructureTests {
             ],
             startedAt: nil,
             isActive: status == .streaming
-        )
-    }
-
-    private func timelineStructure(turns: [PiConversationTurn]) -> PiChatTimelineStructure {
-        PiChatTimelineStructure(
-            turns: turns,
-            pendingInteractions: [],
-            hasContent: true,
-            isTruncated: false
         )
     }
 }

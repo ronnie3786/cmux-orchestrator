@@ -1,4 +1,7 @@
+import AppKit
+import os
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Scene identifiers. `HerdPulseMenuBarCard` needs the main window's id so
 /// "Open Herdr" can *re*-open it after the user closed it — the case the button
@@ -147,6 +150,16 @@ struct HerdrMacCommands: Commands {
             }
             .keyboardShortcut("[", modifiers: [.command, .shift])
         }
+
+        CommandGroup(after: .help) {
+            Button("Reveal Diagnostics Folder") {
+                revealDiagnosticsFolder()
+            }
+
+            Button("Export Diagnostics…") {
+                Task { await exportDiagnostics() }
+            }
+        }
     }
 
     private func focusPane(mode: PaneDetailMode) {
@@ -175,5 +188,78 @@ struct HerdrMacCommands: Commands {
         }
         shell.detailScope = .session
         model.openPane(id: panes[target].id)
+    }
+
+    private func revealDiagnosticsFolder() {
+        let directory = diagnosticsDirectory
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            NSWorkspace.shared.activateFileViewerSelecting([directory])
+        } catch {
+            Self.logger.error("unable to create diagnostics directory: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func exportDiagnostics() async {
+        let directory = diagnosticsDirectory
+        let fileManager = FileManager.default
+        guard (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))?.isEmpty == false else {
+            Self.logger.notice("diagnostics export requested with no diagnostics available")
+            return
+        }
+
+        let temporaryURL = fileManager.temporaryDirectory
+            .appendingPathComponent("herdr-diagnostics-\(UUID().uuidString).zip")
+        defer { try? fileManager.removeItem(at: temporaryURL) }
+        let sourceDirectory = directory.deletingLastPathComponent()
+
+        let zipFailureMessage = await Task.detached(priority: .utility) { () -> String? in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+            process.arguments = ["-r", temporaryURL.path, "Herdr"]
+            process.currentDirectoryURL = sourceDirectory
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                return "diagnostics zip failed to launch: \(error.localizedDescription)"
+            }
+            guard process.terminationStatus == 0 else {
+                return "diagnostics zip exited with status \(process.terminationStatus)"
+            }
+            return nil
+        }.value
+
+        if let zipFailureMessage {
+            Self.logger.error("\(zipFailureMessage, privacy: .public)")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.zip]
+        panel.nameFieldStringValue = "herdr-diagnostics-\(Self.exportTimestamp()).zip"
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            try? fileManager.removeItem(at: destination)
+            try fileManager.copyItem(at: temporaryURL, to: destination)
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+        } catch {
+            Self.logger.error("diagnostics export failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private var diagnosticsDirectory: URL {
+        HerdrHangReporter.defaultHangsDirectory().deletingLastPathComponent()
+    }
+
+    private static let logger = Logger(subsystem: "dev.ronnierocha.herdr-harness", category: "diagnostics")
+
+    private static func exportTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: Date())
     }
 }

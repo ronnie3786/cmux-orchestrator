@@ -239,11 +239,14 @@ struct DemoScreenshotRenderTests {
             PiChatView(
                 model: model,
                 store: store,
-                pane: pane,
+                paneID: pane.id,
+                interactionResponseAvailable: pane.piSemantic?.capabilities.interactionResponse ?? false,
+                composerPane: pane,
                 workspace: workspace,
                 draft: .constant(""),
                 attachments: .constant([]),
-                focusRequest: 0
+                focusRequest: 0,
+                interactionResponder: PiInteractionResponder()
             )
         }
 

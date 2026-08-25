@@ -21,21 +21,38 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     let piSemantic: PiSemanticCapability?
 
     var machineID: String = ""
-
-    var id: String {
-        machineID.isEmpty ? paneID : MachineScopedID.compose(machineID: machineID, rawID: paneID)
-    }
-
-    /// The pane's parent tab id in the same machine-scoped form as `HerdrTab.id`,
-    /// so pane→tab matching keeps working once entities are stamped.
-    var scopedTabID: String {
-        machineID.isEmpty ? tabID : MachineScopedID.compose(machineID: machineID, rawID: tabID)
-    }
+    private(set) var id: String
+    private(set) var scopedTabID: String
 
     func stamped(machineID: String) -> HerdrPane {
         var copy = self
         copy.machineID = machineID
+        copy.id = MachineScopedID.compose(machineID: machineID, rawID: paneID)
+        copy.scopedTabID = MachineScopedID.compose(machineID: machineID, rawID: tabID)
         return copy
+    }
+
+    func isEqualIgnoringRevision(to other: HerdrPane) -> Bool {
+        paneID == other.paneID
+            && terminalID == other.terminalID
+            && workspaceID == other.workspaceID
+            && tabID == other.tabID
+            && focused == other.focused
+            && agentStatus == other.agentStatus
+            && cwd == other.cwd
+            && foregroundCWD == other.foregroundCWD
+            && label == other.label
+            && title == other.title
+            && agent == other.agent
+            && displayAgent == other.displayAgent
+            && terminalTitle == other.terminalTitle
+            && terminalTitleStripped == other.terminalTitleStripped
+            && stateLabels == other.stateLabels
+            && tokens == other.tokens
+            && piSemantic == other.piSemantic
+            && machineID == other.machineID
+            && id == other.id
+            && scopedTabID == other.scopedTabID
     }
 
     var displayTitle: String {
@@ -101,6 +118,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         stateLabels = try container.decodeIfPresent([String: String].self, forKey: .stateLabels) ?? [:]
         tokens = try container.decodeIfPresent([String: String].self, forKey: .tokens) ?? [:]
         piSemantic = try container.decodeIfPresent(PiSemanticCapability.self, forKey: .piSemantic)
+        id = paneID
+        scopedTabID = tabID
     }
 
     init(
@@ -141,5 +160,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.stateLabels = stateLabels
         self.tokens = tokens
         self.piSemantic = piSemantic
+        self.id = paneID
+        self.scopedTabID = tabID
     }
 }

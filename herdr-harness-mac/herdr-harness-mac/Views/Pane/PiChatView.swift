@@ -3,11 +3,14 @@ import SwiftUI
 struct PiChatView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var store: PiConversationStore
-    let pane: HerdrPane
+    let paneID: String
+    let interactionResponseAvailable: Bool
+    let composerPane: HerdrPane
     let workspace: HerdrWorkspace
     @Binding var draft: String
     @Binding var attachments: [TerminalAttachment]
     let focusRequest: Int
+    let interactionResponder: PiInteractionResponder
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
@@ -23,11 +26,17 @@ struct PiChatView: View {
             PiChatTimelineView(
                 store: store,
                 isConnected: store.canSendCommands
-                    && (pane.piSemantic?.capabilities.interactionResponse ?? false)
+                    && interactionResponseAvailable
             ) { interaction, response in
-                await store.respond(to: interaction, response: response, model: model, pane: pane)
+                await interactionResponder.respond(
+                    to: interaction,
+                    response: response,
+                    store: store,
+                    model: model,
+                    pane: composerPane
+                )
             }
-            .id(pane.id)
+            .id(paneID)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let notice = store.commandNotice {
@@ -45,14 +54,15 @@ struct PiChatView: View {
 
             PromptComposerView(
                 model: model,
-                pane: pane,
+                pane: composerPane,
                 workspace: workspace,
                 draft: $draft,
                 attachments: $attachments,
                 focusRequest: focusRequest,
                 piConfiguration: composerConfiguration
             )
-            .id(pane.id)
+            .equatable()
+            .id(paneID)
             .padding(.horizontal, 12)
             .padding(.top, 8)
             .padding(.bottom, 10)
@@ -76,7 +86,7 @@ struct PiChatView: View {
 
     private var composerConfiguration: PiPromptComposerConfiguration {
         PiPromptComposerConfiguration(
-            capabilities: pane.piSemantic?.capabilities ?? .unavailable,
+            capabilities: composerPane.piSemantic?.capabilities ?? .unavailable,
             phase: store.phase,
             isConnected: store.canSendCommands,
             isSubmitting: store.isSubmitting,
@@ -92,27 +102,42 @@ struct PiChatView: View {
                     text: text,
                     disposition: disposition,
                     model: model,
-                    pane: pane
+                    pane: composerPane
                 )
             },
             abort: {
-                await store.abort(model: model, pane: pane)
+                await store.abort(model: model, pane: composerPane)
             },
             selectModel: { candidate in
-                let succeeded = await store.setModel(candidate, model: model, pane: pane)
+                let succeeded = await store.setModel(candidate, model: model, pane: composerPane)
                 if succeeded { hapticPulse.fire(.selection) }
                 return succeeded
             },
             retryLoadModels: {
-                await store.retryLoadModels(model: model, pane: pane)
+                await store.retryLoadModels(model: model, pane: composerPane)
             },
             thinkingLevel: store.thinkingLevel,
             isSettingThinkingLevel: store.isSettingThinkingLevel,
             selectThinkingLevel: { level in
-                let succeeded = await store.setThinkingLevel(level, model: model, pane: pane)
+                let succeeded = await store.setThinkingLevel(level, model: model, pane: composerPane)
                 if succeeded { hapticPulse.fire(.selection) }
                 return succeeded
             }
         )
+    }
+}
+
+extension PiChatView: Equatable {
+    static func == (lhs: PiChatView, rhs: PiChatView) -> Bool {
+        lhs.model === rhs.model
+            && lhs.store === rhs.store
+            && lhs.paneID == rhs.paneID
+            && lhs.interactionResponseAvailable == rhs.interactionResponseAvailable
+            && lhs.composerPane.isEqualIgnoringRevision(to: rhs.composerPane)
+            && lhs.workspace.isEqualIgnoringPaneRevisions(to: rhs.workspace)
+            && lhs.draft == rhs.draft
+            && lhs.attachments == rhs.attachments
+            && lhs.focusRequest == rhs.focusRequest
+            && lhs.interactionResponder === rhs.interactionResponder
     }
 }

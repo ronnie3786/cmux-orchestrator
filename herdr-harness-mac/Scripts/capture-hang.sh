@@ -1,15 +1,22 @@
 #!/bin/zsh
 set -u
 
-pid="$(pgrep -f 'herdr-harness-mac.app/Contents/MacOS' | head -1)"
-if [[ -z "$pid" ]]; then
-  print -u2 'Herdr Mac is not running. Launch herdr-harness-mac, then rerun this script before force-quitting.'
-  exit 1
-fi
-
 timestamp="$(date +%Y%m%d-%H%M%S)"
 folder="$HOME/Library/Logs/Herdr/hang-$timestamp"
 mkdir -p "$folder"
+
+pid="$(pgrep -f 'herdr-harness-mac.app/Contents/MacOS' | head -1)"
+if [[ "${1:-}" == "--post-mortem" || -z "$pid" ]]; then
+  diagnostics_dir="$HOME/Library/Containers/dev.ronnierocha.herdr-harness.herdr-harness-mac/Data/Library/Logs/Herdr"
+  if [[ -d "$diagnostics_dir" ]]; then
+    cp -R "$diagnostics_dir" "$folder/container-logs" || print 'Container diagnostics copy failed (non-fatal).' >> "$folder/container-logs-copy.txt"
+  else
+    print 'No container diagnostics directory found (non-fatal).' > "$folder/container-logs-copy.txt"
+  fi
+  log show --last 30m --predicate 'subsystem == "dev.ronnierocha.herdr-harness"' --style compact > "$folder/perf-log-30m.txt" 2>&1 || print 'Log capture failed (non-fatal).' >> "$folder/perf-log-30m.txt"
+  print "Post-mortem hang capture written to: $folder"
+  exit 0
+fi
 
 sample "$pid" 10 -file "$folder/sample.txt"
 footprint "$pid" > "$folder/footprint.txt" 2>&1

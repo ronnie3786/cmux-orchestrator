@@ -85,4 +85,5 @@ struct PiChatRevealState: Equatable {
 struct PiChatScrollMetrics: Equatable {
     let contentHeight: CGFloat
     let containerHeight: CGFloat
+    let visibleRectMaxY: CGFloat
 }

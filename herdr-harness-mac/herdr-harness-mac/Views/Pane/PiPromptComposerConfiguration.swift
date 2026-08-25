@@ -74,3 +74,21 @@ struct PiPromptComposerConfiguration {
         }
     }
 }
+
+extension PiPromptComposerConfiguration: Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.capabilities == rhs.capabilities
+            && lhs.phase == rhs.phase
+            && lhs.isConnected == rhs.isConnected
+            && lhs.isSubmitting == rhs.isSubmitting
+            && lhs.isAborting == rhs.isAborting
+            && lhs.currentModel == rhs.currentModel
+            && lhs.availableModels == rhs.availableModels
+            && lhs.isLoadingModels == rhs.isLoadingModels
+            && lhs.isSettingModel == rhs.isSettingModel
+            && lhs.modelCatalogError == rhs.modelCatalogError
+            && lhs.isModelSwitchingUnsupported == rhs.isModelSwitchingUnsupported
+            && lhs.thinkingLevel == rhs.thinkingLevel
+            && lhs.isSettingThinkingLevel == rhs.isSettingThinkingLevel
+    }
+}

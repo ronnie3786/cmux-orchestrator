@@ -7,9 +7,10 @@ struct PiChatTimelineView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @State private var isNearBottom = true
-    @State private var lastAutoScrollStructure: PiChatTimelineStructure?
+    @State private var lastStructureRevision: Int?
+    @State private var trackedHasContent = false
     @State private var revealState = PiChatRevealState()
-    @State private var settleGeneration = 0
+    @State private var settleDebouncer = PiChatSettleDebouncer()
 
     init(
         store: PiConversationStore,
@@ -22,13 +23,6 @@ struct PiChatTimelineView: View {
     }
 
     var body: some View {
-        let structure = PiChatTimelineStructure(
-            turns: store.turns,
-            pendingInteractions: store.pendingInteractions,
-            hasContent: store.hasContent,
-            isTruncated: store.isTruncated
-        )
-
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: HerdrProse.turnSpacing) {
@@ -37,7 +31,8 @@ struct PiChatTimelineView: View {
 
                     if store.hasContent {
                         ForEach(store.turns) { turn in
-                            PiConversationTurnView(turn: turn)
+                            PiConversationTurnRow(turn: turn)
+                                .equatable()
                                 .transition(PiChatMotion.turnTransition(reduceMotion: reduceMotion))
                         }
                     } else if store.connection == .connected {
@@ -52,13 +47,6 @@ struct PiChatTimelineView: View {
                         .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
                     }
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id("pi-chat-bottom")
-                        .onScrollVisibilityChange(threshold: 0.1) { isVisible in
-                            isNearBottom = isVisible
-                        }
-                        .accessibilityHidden(true)
                 }
                 .scrollTargetLayout()
                 .padding(.horizontal, 16)
@@ -68,7 +56,7 @@ struct PiChatTimelineView: View {
                     revealState.phase == .revealed
                         ? PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)
                         : nil,
-                    value: structure
+                    value: store.structureRevision
                 )
             }
             .scrollPosition($scrollPosition)
@@ -78,15 +66,16 @@ struct PiChatTimelineView: View {
                 of: {
                     PiChatScrollMetrics(
                         contentHeight: $0.contentSize.height,
-                        containerHeight: $0.containerSize.height
+                        containerHeight: $0.containerSize.height,
+                        visibleRectMaxY: $0.visibleRect.maxY
                     )
                 }
             ) { _, metrics in
-                settleGeneration &+= 1
-                let generation = settleGeneration
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(60))
-                    guard generation == settleGeneration else { return }
+                let nearBottom = (metrics.contentHeight - metrics.visibleRectMaxY) < 80
+                if nearBottom != isNearBottom {
+                    isNearBottom = nearBottom
+                }
+                settleDebouncer.schedule {
                     apply(revealState.settledHeightDidChange(
                         contentHeight: metrics.contentHeight,
                         containerHeight: metrics.containerHeight
@@ -96,22 +85,22 @@ struct PiChatTimelineView: View {
             .opacity(revealState.phase == .revealed ? 1 : 0)
             .animation(nil, value: revealState.phase)
             .onAppear {
-                lastAutoScrollStructure = structure
+                lastStructureRevision = store.structureRevision
                 revealState.structureDidChange(
                     hadContent: false,
-                    hasContent: structure.identifiers.contains("transcript:content"),
+                    hasContent: store.hasContent,
                     structureChanged: true,
                     isNearBottom: true,
                     reduceMotion: reduceMotion
                 )
+                trackedHasContent = store.hasContent
             }
             .onChange(of: store.revision) { _, _ in
-                let previousStructure = lastAutoScrollStructure
-                let structureChanged = previousStructure != structure
-                lastAutoScrollStructure = structure
-
-                let hadContent = previousStructure?.identifiers.contains("transcript:content") ?? false
-                let hasContentNow = structure.identifiers.contains("transcript:content")
+                let structureChanged = lastStructureRevision != store.structureRevision
+                lastStructureRevision = store.structureRevision
+                let hadContent = trackedHasContent
+                let hasContentNow = store.hasContent
+                trackedHasContent = hasContentNow
 
                 revealState.structureDidChange(
                     hadContent: hadContent,
@@ -122,25 +111,26 @@ struct PiChatTimelineView: View {
                 )
             }
 
-            if !isNearBottom {
-                Button("Jump to latest", systemImage: "arrow.down") {
-                    scrollPosition.scrollTo(edge: .bottom)
+            Group {
+                if !isNearBottom {
+                    Button("Jump to latest", systemImage: "arrow.down") {
+                        withAnimation(PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)) {
+                            scrollPosition.scrollTo(edge: .bottom)
+                        }
+                    }
+                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.text, emphasis: .text))
+                    .herdrFont(.caption, weight: .semibold)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: PiChatChrome.controlHeight)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay { Capsule().stroke(HerdrTheme.accent.opacity(0.25), lineWidth: 1) }
+                    .padding(14)
+                    .transition(PiChatMotion.jumpToLatestTransition(reduceMotion: reduceMotion))
+                    .accessibilityIdentifier("pi-chat-jump-latest")
                 }
-                .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.text, emphasis: .text))
-                .herdrFont(.caption, weight: .semibold)
-                .padding(.horizontal, 12)
-                .frame(minHeight: PiChatChrome.controlHeight)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay { Capsule().stroke(HerdrTheme.accent.opacity(0.25), lineWidth: 1) }
-                .padding(14)
-                .transition(PiChatMotion.jumpToLatestTransition(reduceMotion: reduceMotion))
-                .accessibilityIdentifier("pi-chat-jump-latest")
             }
+            .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: isNearBottom)
         }
-        .animation(
-            PiChatMotion.stateAnimation(reduceMotion: reduceMotion),
-            value: isNearBottom
-        )
     }
 
     @ViewBuilder
@@ -175,7 +165,8 @@ struct PiChatTimelineView: View {
             scrollPosition.scrollTo(edge: .bottom)
         case let .scrollToBottom(animated):
             guard isNearBottom else { return }
-            if animated {
+            let shouldAnimate = animated && store.phase != .working
+            if shouldAnimate {
                 withAnimation(PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)) {
                     scrollPosition.scrollTo(edge: .bottom)
                 }
@@ -183,5 +174,62 @@ struct PiChatTimelineView: View {
                 scrollPosition.scrollTo(edge: .bottom)
             }
         }
+    }
+}
+
+private struct PiConversationTurnRow: View, Equatable {
+    let turn: PiConversationTurn
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.turn.id == rhs.turn.id
+            && lhs.turn.itemsRevision == rhs.turn.itemsRevision
+            && lhs.turn.isActive == rhs.turn.isActive
+            && lhs.turn.items.last?.diffingTextLength == rhs.turn.items.last?.diffingTextLength
+    }
+
+    var body: some View {
+        PiConversationTurnView(turn: turn)
+    }
+}
+
+@MainActor
+private final class PiChatSettleDebouncer {
+    private var deadline: ContinuousClock.Instant?
+    private var pendingAction: (() -> Void)?
+    private var task: Task<Void, Never>?
+
+    func schedule(delay: Duration = .milliseconds(60), _ action: @escaping () -> Void) {
+        deadline = ContinuousClock.now.advanced(by: delay)
+        pendingAction = action
+        guard task == nil else { return }
+
+        task = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                guard let deadline else { return }
+                do {
+                    try await ContinuousClock().sleep(until: deadline)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                guard self.deadline == deadline else { continue }
+
+                let action = self.pendingAction
+                self.task = nil
+                self.deadline = nil
+                self.pendingAction = nil
+                action?()
+                return
+            }
+        }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+        deadline = nil
+        pendingAction = nil
     }
 }

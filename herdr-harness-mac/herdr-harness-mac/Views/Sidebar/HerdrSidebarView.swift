@@ -17,6 +17,7 @@ struct HerdrSidebarView: View {
     @State private var paneName = ""
     @State private var closingWorkspace: HerdrWorkspace?
     @State private var closingPane: HerdrPane?
+    @State private var snapshotCache = SidebarSnapshotCache()
 
     @MainActor
     private struct SidebarSnapshot {
@@ -63,9 +64,38 @@ struct HerdrSidebarView: View {
         }
     }
 
+    private struct SidebarSnapshotFingerprint: Equatable {
+        let fleetRevision: Int
+        let query: String
+        let machineScope: MachineScope
+        let machines: [HerdrMachine]
+        let collapsedWorkspaceIDs: Set<String>
+        let collapsedMachineIDs: Set<String>
+        let collapsedTabIDs: Set<String>
+        let starredChatIDs: Set<String>
+        let machineStates: [String: ConnectionState]
+    }
+
+    @MainActor
+    private final class SidebarSnapshotCache {
+        var fingerprint: SidebarSnapshotFingerprint?
+        var snapshot: SidebarSnapshot?
+    }
+
     var body: some View {
         @Bindable var cleanupPresenter = model.cleanupPresenter
-        let snapshot = SidebarSnapshot(model: model, query: query)
+        let fingerprint = SidebarSnapshotFingerprint(
+            fleetRevision: model.fleetRevision,
+            query: query,
+            machineScope: model.machineScope,
+            machines: model.machines,
+            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
+            collapsedMachineIDs: model.collapsedSidebarMachineIDs,
+            collapsedTabIDs: model.collapsedSidebarTabIDs,
+            starredChatIDs: model.starredChatIDs,
+            machineStates: model.machineStates
+        )
+        let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 12) {
             header
 
@@ -160,6 +190,17 @@ struct HerdrSidebarView: View {
         } message: {
             Text("This stops the process running in \(closingPane?.displayTitle ?? "this pane").")
         }
+    }
+
+    @MainActor
+    private func resolvedSnapshot(fingerprint: SidebarSnapshotFingerprint) -> SidebarSnapshot {
+        if snapshotCache.fingerprint == fingerprint, let cached = snapshotCache.snapshot {
+            return cached
+        }
+        let rebuilt = SidebarSnapshot(model: model, query: query)
+        snapshotCache.fingerprint = fingerprint
+        snapshotCache.snapshot = rebuilt
+        return rebuilt
     }
 
     private var header: some View {

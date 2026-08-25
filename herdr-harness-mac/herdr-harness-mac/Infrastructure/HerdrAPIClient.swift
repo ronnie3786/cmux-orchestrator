@@ -594,7 +594,7 @@ actor HerdrAPIClient {
 
         // Pi envelopes are order-dependent. A bounded oldest-first buffer
         // resyncs from a snapshot on overflow rather than dropping a delta.
-        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(128)) { continuation in
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(512)) { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: eventRequest)

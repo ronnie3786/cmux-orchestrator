@@ -396,6 +396,229 @@ struct PiConversationReducerTests {
         #expect(reducer.contextUsage == nil)
     }
 
+    @Test("A text delta creates its missing block")
+    func textDeltaCreatesMissingBlock() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]", state: "{\"isStreaming\":true}"))
+
+        _ = reducer.apply(try envelope(1, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
+        """))
+
+        guard case let .assistant(block)? = reducer.turns.first?.items.first else {
+            Issue.record("Expected the delta to create an assistant block")
+            return
+        }
+        #expect(block.text == "Hello")
+        #expect(block.status == .streaming)
+    }
+
+    @Test("Replacing a snapshot rebuilds block indexes")
+    func replaceRebuildsBlockIndexes() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(
+            entries: """
+            [{"type":"message","id":"old","message":{"role":"assistant","content":[{"type":"text","text":"old"}]}}]
+            """,
+            state: "{\"isStreaming\":true}"
+        ))
+        reducer.replace(with: try decodeSnapshot(
+            entries: """
+            [{"type":"message","id":"fresh","message":{"role":"assistant","content":[{"type":"text","text":"fresh"}]}}]
+            """,
+            state: "{\"isStreaming\":true}"
+        ))
+
+        _ = reducer.apply(try envelope(1, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" text"}}
+        """))
+
+        #expect(reducer.turns.count == 1)
+        guard case let .assistant(block)? = reducer.turns[0].items.first else {
+            Issue.record("Expected the fresh snapshot block")
+            return
+        }
+        #expect(block.id == "fresh:text:0")
+        #expect(block.text == "fresh text")
+    }
+
+    @Test("Pending tool replacement renumbers following block indexes")
+    func pendingToolReplacementRenumbersIndexes() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]", state: "{\"isStreaming\":true}"))
+
+        _ = reducer.apply(try envelope(1, """
+        {"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0}}
+        """))
+        _ = reducer.apply(try envelope(2, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":1}}
+        """))
+        _ = reducer.apply(try envelope(3, """
+        {"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":2}}
+        """))
+        _ = reducer.apply(try envelope(4, """
+        {"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":0,"toolCall":{"id":"call-1","name":"read","arguments":{"path":"a"}}}}
+        """))
+        _ = reducer.apply(try envelope(5, """
+        {"type":"tool_execution_update","toolCallId":"call-1","toolName":"read","partialResult":"ready"}
+        """))
+        _ = reducer.apply(try envelope(6, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"after"}}
+        """))
+
+        let items = reducer.turns[0].items
+        guard case let .assistant(textBlock) = items[0],
+              case let .thinking(thinkingBlock) = items[1],
+              case let .tool(tool) = items[2]
+        else {
+            Issue.record("Expected blocks after the pending tool to retain their positions")
+            return
+        }
+        #expect(textBlock.text == "after")
+        #expect(thinkingBlock.id.hasSuffix(":thinking:2"))
+        #expect(tool.callID == "call-1")
+        #expect(tool.result?.stringValue == "ready")
+    }
+
+    @Test("Interleaved turn updates retain their indexed item ownership")
+    func interleavedTurnUpdatesUseCorrectIndexes() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(
+            entries: """
+            [
+              {"type":"message","id":"u1","message":{"role":"user","content":"first"}},
+              {"type":"message","id":"a1","message":{"role":"assistant","content":[
+                {"type":"text","text":"one"},
+                {"type":"thinking","thinking":"think one"},
+                {"type":"toolCall","id":"call-1","name":"read","arguments":{}}
+              ]}},
+              {"type":"message","id":"u2","message":{"role":"user","content":"second"}},
+              {"type":"message","id":"a2","message":{"role":"assistant","content":[
+                {"type":"text","text":"two"},
+                {"type":"thinking","thinking":"think two"},
+                {"type":"toolCall","id":"call-2","name":"write","arguments":{}}
+              ]}}
+            ]
+            """,
+            state: "{\"isStreaming\":true}"
+        ))
+
+        _ = reducer.apply(try envelope(1, """
+        {"type":"message_start","message":{"role":"assistant","id":"a1","content":[]}}
+        """))
+        _ = reducer.apply(try envelope(2, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"-updated"}}
+        """))
+        _ = reducer.apply(try envelope(3, """
+        {"type":"tool_execution_update","toolCallId":"call-1","partialResult":"first result"}
+        """))
+        _ = reducer.apply(try envelope(4, """
+        {"type":"message_start","message":{"role":"assistant","id":"a2","content":[]}}
+        """))
+        _ = reducer.apply(try envelope(5, """
+        {"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":1,"delta":"-updated"}}
+        """))
+        _ = reducer.apply(try envelope(6, """
+        {"type":"tool_execution_update","toolCallId":"call-2","partialResult":"second result"}
+        """))
+
+        #expect(reducer.turns.count == 2)
+        let firstItems = reducer.turns[0].items
+        let secondItems = reducer.turns[1].items
+        guard case let .assistant(firstText) = firstItems[0],
+              case let .thinking(firstThinking) = firstItems[1],
+              case let .tool(firstTool) = firstItems[2],
+              case let .assistant(secondText) = secondItems[0],
+              case let .thinking(secondThinking) = secondItems[1],
+              case let .tool(secondTool) = secondItems[2]
+        else {
+            Issue.record("Expected both turns to retain all indexed item types")
+            return
+        }
+        #expect(firstText.text == "one-updated")
+        #expect(firstThinking.text == "think one")
+        #expect(firstTool.result?.stringValue == "first result")
+        #expect(secondText.text == "two")
+        #expect(secondThinking.text == "think two-updated")
+        #expect(secondTool.result?.stringValue == "second result")
+    }
+
+    @Test("In-place tool execution updates advance the turn items revision")
+    func toolExecutionUpdatesAdvanceItemsRevision() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]", state: "{\"isStreaming\":true}"))
+
+        _ = reducer.apply(try envelope(1, """
+        {"type":"message_start","message":{"role":"assistant","id":"a1","content":[]}}
+        """))
+        _ = reducer.apply(try envelope(2, """
+        {"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0}}
+        """))
+        _ = reducer.apply(try envelope(3, """
+        {"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":0,"toolCall":{"id":"call-1","name":"read","arguments":{}}}}
+        """))
+        let revisionBeforeUpdate = reducer.turns[0].itemsRevision
+
+        _ = reducer.apply(try envelope(4, """
+        {"type":"tool_execution_update","toolCallId":"call-1","toolName":"read","partialResult":"partial result"}
+        """))
+
+        #expect(reducer.turns[0].itemsRevision > revisionBeforeUpdate)
+    }
+
+    @Test("Text deltas advance the turn items revision")
+    func textDeltasAdvanceItemsRevision() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]", state: "{\"isStreaming\":true}"))
+
+        _ = reducer.apply(try envelope(1, """
+        {"type":"message_start","message":{"role":"assistant","id":"a1","content":[]}}
+        """))
+        _ = reducer.apply(try envelope(2, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+        """))
+        let revisionBeforeDelta = reducer.turns[0].itemsRevision
+
+        _ = reducer.apply(try envelope(3, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
+        """))
+
+        #expect(reducer.turns[0].itemsRevision > revisionBeforeDelta)
+    }
+
+    @Test("Snapshot replay advances items revisions beyond live projection")
+    func snapshotReplayAdvancesItemsRevisions() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]", state: "{\"isStreaming\":true}"))
+
+        _ = reducer.apply(try envelope(1, """
+        {"type":"message_start","message":{"role":"user","id":"u1","content":"Prompt"}}
+        """))
+        _ = reducer.apply(try envelope(2, """
+        {"type":"message_start","message":{"role":"assistant","id":"a1","content":[]}}
+        """))
+        _ = reducer.apply(try envelope(3, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+        """))
+        _ = reducer.apply(try envelope(4, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Answer"}}
+        """))
+        let revisionBeforeReplace = reducer.turns[0].itemsRevision
+
+        reducer.replace(with: try decodeSnapshot(
+            entries: """
+            [
+              {"type":"message","id":"u1","message":{"role":"user","content":"Prompt"}},
+              {"type":"message","id":"a1","message":{"role":"assistant","content":[{"type":"text","text":"Answer"}]}}
+            ]
+            """,
+            state: "{\"isStreaming\":true}"
+        ))
+
+        #expect(reducer.turns[0].id == "turn:u1")
+        #expect(reducer.turns[0].itemsRevision > revisionBeforeReplace)
+    }
+
     private func decodeSnapshot(
         entries: String,
         state: String = "{\"isStreaming\":false}"

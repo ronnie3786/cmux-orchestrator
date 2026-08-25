@@ -11,6 +11,7 @@ struct PiConversationReducer: Sendable {
 
     private(set) var turns: [PiConversationTurn] = []
     private(set) var pendingInteractions: [PiPendingInteraction] = []
+    private(set) var structureRevision: Int = 0
     private(set) var phase: PiConversationPhase = .idle
     private(set) var cursor: String?
     private(set) var sessionID: String?
@@ -23,13 +24,22 @@ struct PiConversationReducer: Sendable {
 
     private var activeTurnID: String?
     private var activeMessageID: String?
+    private var turnIndexByID: [String: Int] = [:]
+    private var blockIndexByID: [String: (turn: Int, item: Int)] = [:]
+    private var toolIndexByCallID: [String: (turn: Int, item: Int)] = [:]
+    private var itemsRevisionCounter = 0
+    private var isReplacingSnapshot = false
     private var seenCursors: Set<String> = []
     private var cursorOrder: [String] = []
 
     mutating func replace(with snapshot: PiConversationSnapshot) {
         HerdrPerfDiagnostics.checkpoint("pi.replace")
+        isReplacingSnapshot = true
         turns.removeAll(keepingCapacity: true)
         pendingInteractions.removeAll(keepingCapacity: true)
+        turnIndexByID.removeAll(keepingCapacity: true)
+        blockIndexByID.removeAll(keepingCapacity: true)
+        toolIndexByCallID.removeAll(keepingCapacity: true)
         seenCursors.removeAll(keepingCapacity: true)
         cursorOrder.removeAll(keepingCapacity: true)
         activeTurnID = nil
@@ -55,6 +65,8 @@ struct PiConversationReducer: Sendable {
             turns[turns.count - 1] = last
             activeTurnID = last.id
         }
+        isReplacingSnapshot = false
+        structureRevision += 1
     }
 
     mutating func apply(_ envelope: PiConversationEnvelope) -> Effect {
@@ -155,7 +167,7 @@ struct PiConversationReducer: Sendable {
             return .none
         case "extension_ui_response", "interaction_response", "interaction_cancelled":
             if let id = event.string(for: "id", "interactionId", "interaction_id") {
-                pendingInteractions.removeAll { $0.id == id }
+                removeInteraction(id: id)
             }
             return .none
         case "error":
@@ -173,7 +185,11 @@ struct PiConversationReducer: Sendable {
     }
 
     mutating func removeInteraction(id: String) {
+        let originalCount = pendingInteractions.count
         pendingInteractions.removeAll { $0.id == id }
+        if pendingInteractions.count != originalCount {
+            bumpStructureRevision()
+        }
     }
 
     private mutating func projectSessionEntry(_ entry: PiJSONValue) {
@@ -315,15 +331,7 @@ struct PiConversationReducer: Sendable {
             )
         case "text_delta":
             let id = "\(messageID):text:\(contentIndex)"
-            let existing = assistantBlock(id: id)
-            upsertAssistant(
-                PiAssistantBlock(
-                    id: id,
-                    text: (existing?.text ?? "") + (assistantEvent?.string(for: "delta") ?? ""),
-                    status: .streaming,
-                    timestamp: existing?.timestamp ?? .now
-                )
-            )
+            appendAssistantDelta(id: id, delta: assistantEvent?.string(for: "delta") ?? "")
         case "text_end":
             let id = "\(messageID):text:\(contentIndex)"
             let existing = assistantBlock(id: id)
@@ -349,16 +357,7 @@ struct PiConversationReducer: Sendable {
             )
         case "thinking_delta":
             let id = "\(messageID):thinking:\(contentIndex)"
-            let existing = thinkingBlock(id: id)
-            upsertThinking(
-                PiThinkingBlock(
-                    id: id,
-                    text: (existing?.text ?? "") + (assistantEvent?.string(for: "delta") ?? ""),
-                    isStreaming: true,
-                    isRedacted: existing?.isRedacted ?? false,
-                    startedAt: existing?.startedAt ?? .now
-                )
-            )
+            appendThinkingDelta(id: id, delta: assistantEvent?.string(for: "delta") ?? "")
         case "thinking_end":
             let id = "\(messageID):thinking:\(contentIndex)"
             let existing = thinkingBlock(id: id)
@@ -551,89 +550,214 @@ struct PiConversationReducer: Sendable {
                 isActive: phase == .working
             )
         )
+        turnIndexByID[id] = turns.count - 1
+        bumpStructureRevision()
         activeTurnID = id
         activeMessageID = nil
     }
 
     private mutating func ensureActiveTurn(seed: String?) {
-        if let activeTurnID, turns.contains(where: { $0.id == activeTurnID }) { return }
+        if let activeTurnID, turnIndexByID[activeTurnID] != nil { return }
         if let last = turns.last {
             activeTurnID = last.id
             return
         }
         let id = "turn:orphan:\(seed ?? "initial")"
         turns.append(PiConversationTurn(id: id, user: nil, items: [], startedAt: .now, isActive: true))
+        turnIndexByID[id] = turns.count - 1
+        bumpStructureRevision()
         activeTurnID = id
     }
 
     private mutating func append(_ item: PiConversationItem) {
         ensureActiveTurn(seed: item.id)
-        guard let index = turns.firstIndex(where: { $0.id == activeTurnID }) else { return }
+        guard let activeTurnID, let index = turnIndexByID[activeTurnID] else { return }
         if let itemIndex = turns[index].items.firstIndex(where: { $0.id == item.id }) {
             turns[index].items[itemIndex] = item
+            turns[index].itemsRevision = nextItemsRevision()
         } else {
             turns[index].items.append(item)
+            turns[index].itemsRevision = nextItemsRevision()
+            recordIndex(for: item, turn: index, item: turns[index].items.count - 1)
+            bumpStructureRevision()
         }
     }
 
     private mutating func upsertAssistant(_ block: PiAssistantBlock) {
-        append(.assistant(block))
+        if let position = blockIndexByID[block.id],
+           position.turn < turns.count,
+           position.item < turns[position.turn].items.count,
+           case let .assistant(existing) = turns[position.turn].items[position.item],
+           existing.id == block.id {
+            turns[position.turn].items[position.item] = .assistant(block)
+            turns[position.turn].itemsRevision = nextItemsRevision()
+            return
+        }
+        blockIndexByID.removeValue(forKey: block.id)
+        appendBlock(.assistant(block), id: block.id)
     }
 
     private mutating func upsertThinking(_ block: PiThinkingBlock) {
-        append(.thinking(block))
+        if let position = blockIndexByID[block.id],
+           position.turn < turns.count,
+           position.item < turns[position.turn].items.count,
+           case let .thinking(existing) = turns[position.turn].items[position.item],
+           existing.id == block.id {
+            turns[position.turn].items[position.item] = .thinking(block)
+            turns[position.turn].itemsRevision = nextItemsRevision()
+            return
+        }
+        blockIndexByID.removeValue(forKey: block.id)
+        appendBlock(.thinking(block), id: block.id)
     }
 
     private func assistantBlock(id: String) -> PiAssistantBlock? {
-        for turn in turns {
-            for item in turn.items {
-                guard case let .assistant(block) = item, block.id == id else { continue }
-                return block
-            }
-        }
-        return nil
+        guard let position = blockIndexByID[id],
+              position.turn < turns.count,
+              position.item < turns[position.turn].items.count,
+              case let .assistant(block) = turns[position.turn].items[position.item],
+              block.id == id
+        else { return nil }
+        return block
     }
 
     private func thinkingBlock(id: String) -> PiThinkingBlock? {
-        for turn in turns {
-            for item in turn.items {
-                guard case let .thinking(block) = item, block.id == id else { continue }
-                return block
-            }
-        }
-        return nil
+        guard let position = blockIndexByID[id],
+              position.turn < turns.count,
+              position.item < turns[position.turn].items.count,
+              case let .thinking(block) = turns[position.turn].items[position.item],
+              block.id == id
+        else { return nil }
+        return block
     }
 
     private mutating func upsertTool(_ invocation: PiToolInvocation) {
-        for turnIndex in turns.indices {
-            if let itemIndex = turns[turnIndex].items.firstIndex(where: {
-                guard case let .tool(tool) = $0 else { return false }
-                return tool.callID == invocation.callID
-            }) {
-                turns[turnIndex].items[itemIndex] = .tool(invocation)
-                return
-            }
+        if let position = toolIndexByCallID[invocation.callID],
+           position.turn < turns.count,
+           position.item < turns[position.turn].items.count,
+           case let .tool(existing) = turns[position.turn].items[position.item],
+           existing.callID == invocation.callID {
+            turns[position.turn].items[position.item] = .tool(invocation)
+            turns[position.turn].itemsRevision = nextItemsRevision()
+            return
         }
-        append(.tool(invocation))
+        toolIndexByCallID.removeValue(forKey: invocation.callID)
+        ensureActiveTurn(seed: invocation.id)
+        guard let activeTurnID, let turnIndex = turnIndexByID[activeTurnID] else { return }
+        turns[turnIndex].items.append(.tool(invocation))
+        turns[turnIndex].itemsRevision = nextItemsRevision()
+        toolIndexByCallID[invocation.callID] = (turn: turnIndex, item: turns[turnIndex].items.count - 1)
+        bumpStructureRevision()
     }
 
     private func tool(callID: String) -> PiToolInvocation? {
-        for turn in turns {
-            for item in turn.items {
-                guard case let .tool(tool) = item, tool.callID == callID else { continue }
-                return tool
-            }
-        }
-        return nil
+        guard let position = toolIndexByCallID[callID],
+              position.turn < turns.count,
+              position.item < turns[position.turn].items.count,
+              case let .tool(tool) = turns[position.turn].items[position.item],
+              tool.callID == callID
+        else { return nil }
+        return tool
     }
 
     private mutating func removeTool(callID: String) {
-        for turnIndex in turns.indices {
-            turns[turnIndex].items.removeAll {
-                guard case let .tool(tool) = $0 else { return false }
-                return tool.callID == callID
-            }
+        guard let position = toolIndexByCallID[callID],
+              position.turn < turns.count,
+              position.item < turns[position.turn].items.count,
+              case let .tool(tool) = turns[position.turn].items[position.item],
+              tool.callID == callID
+        else {
+            toolIndexByCallID.removeValue(forKey: callID)
+            return
         }
+        turns[position.turn].items.remove(at: position.item)
+        turns[position.turn].itemsRevision = nextItemsRevision()
+        toolIndexByCallID.removeValue(forKey: callID)
+        renumberIndexes(afterRemovingItemAt: position)
+        bumpStructureRevision()
+    }
+
+    private mutating func appendAssistantDelta(id: String, delta: String) {
+        if let position = blockIndexByID[id],
+           position.turn < turns.count,
+           position.item < turns[position.turn].items.count,
+           case var .assistant(block) = turns[position.turn].items[position.item],
+           block.id == id {
+            block.text += delta
+            block.status = .streaming
+            turns[position.turn].items[position.item] = .assistant(block)
+            turns[position.turn].itemsRevision = nextItemsRevision()
+            return
+        }
+        blockIndexByID.removeValue(forKey: id)
+        upsertAssistant(PiAssistantBlock(id: id, text: delta, status: .streaming, timestamp: .now))
+    }
+
+    private mutating func appendThinkingDelta(id: String, delta: String) {
+        if let position = blockIndexByID[id],
+           position.turn < turns.count,
+           position.item < turns[position.turn].items.count,
+           case var .thinking(block) = turns[position.turn].items[position.item],
+           block.id == id {
+            block.text += delta
+            block.isStreaming = true
+            turns[position.turn].items[position.item] = .thinking(block)
+            turns[position.turn].itemsRevision = nextItemsRevision()
+            return
+        }
+        blockIndexByID.removeValue(forKey: id)
+        upsertThinking(PiThinkingBlock(id: id, text: delta, isStreaming: true, isRedacted: false, startedAt: .now))
+    }
+
+    private mutating func appendBlock(_ item: PiConversationItem, id: String) {
+        ensureActiveTurn(seed: id)
+        guard let activeTurnID, let turnIndex = turnIndexByID[activeTurnID] else { return }
+        turns[turnIndex].items.append(item)
+        turns[turnIndex].itemsRevision = nextItemsRevision()
+        blockIndexByID[id] = (turn: turnIndex, item: turns[turnIndex].items.count - 1)
+        bumpStructureRevision()
+    }
+
+    private mutating func recordIndex(for item: PiConversationItem, turn: Int, item itemIndex: Int) {
+        switch item {
+        case let .assistant(block):
+            blockIndexByID[block.id] = (turn: turn, item: itemIndex)
+        case let .thinking(block):
+            blockIndexByID[block.id] = (turn: turn, item: itemIndex)
+        case let .tool(tool):
+            toolIndexByCallID[tool.callID] = (turn: turn, item: itemIndex)
+        case .notice:
+            break
+        }
+    }
+
+    private mutating func renumberIndexes(afterRemovingItemAt position: (turn: Int, item: Int)) {
+        let shiftedBlockIDs = blockIndexByID.compactMap { id, indexedPosition in
+            indexedPosition.turn == position.turn && indexedPosition.item > position.item ? id : nil
+        }
+        for id in shiftedBlockIDs {
+            guard var indexedPosition = blockIndexByID[id] else { continue }
+            indexedPosition.item -= 1
+            blockIndexByID[id] = indexedPosition
+        }
+        let shiftedToolCallIDs = toolIndexByCallID.compactMap { callID, indexedPosition in
+            indexedPosition.turn == position.turn && indexedPosition.item > position.item ? callID : nil
+        }
+        for callID in shiftedToolCallIDs {
+            guard var indexedPosition = toolIndexByCallID[callID] else { continue }
+            indexedPosition.item -= 1
+            toolIndexByCallID[callID] = indexedPosition
+        }
+    }
+
+    private mutating func bumpStructureRevision() {
+        guard !isReplacingSnapshot else { return }
+        structureRevision += 1
+    }
+
+    private mutating func nextItemsRevision() -> Int {
+        itemsRevisionCounter += 1
+        return itemsRevisionCounter
     }
 
     private mutating func appendNotice(
@@ -662,6 +786,7 @@ struct PiConversationReducer: Sendable {
             pendingInteractions[index] = interaction
         } else {
             pendingInteractions.append(interaction)
+            bumpStructureRevision()
         }
     }
 
@@ -673,9 +798,11 @@ struct PiConversationReducer: Sendable {
                 case var .assistant(block):
                     if case .streaming = block.status { block.status = .complete }
                     turns[index].items[itemIndex] = .assistant(block)
+                    turns[index].itemsRevision = nextItemsRevision()
                 case var .thinking(block):
                     block.isStreaming = false
                     turns[index].items[itemIndex] = .thinking(block)
+                    turns[index].itemsRevision = nextItemsRevision()
                 case .tool, .notice:
                     break
                 }

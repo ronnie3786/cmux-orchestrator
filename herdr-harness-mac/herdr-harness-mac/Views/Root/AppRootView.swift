@@ -134,7 +134,7 @@ struct AppRootView: View {
                 statuses: agentStatuses
             )
         }
-        .onChange(of: model.lastUpdated) {
+        .onChange(of: model.refreshTick) {
             statusHapticTracker.recordRefresh(statuses: agentStatuses)
         }
         .herdrHaptic(trigger: hapticPulse)

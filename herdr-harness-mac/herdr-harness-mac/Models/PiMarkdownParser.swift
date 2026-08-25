@@ -1,6 +1,11 @@
 import Foundation
 
 enum PiMarkdownParser {
+    struct StreamingSplit: Equatable {
+        let prefix: String
+        let tail: String
+    }
+
     static func parse(_ source: String) -> [PiMarkdownBlock] {
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var blocks: [PiMarkdownBlock] = []
@@ -89,6 +94,54 @@ enum PiMarkdownParser {
         }
 
         return blocks
+    }
+
+    static func splitStreamingTail(_ source: String) -> StreamingSplit {
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var openFence: Fence?
+        var hasContentBeforeBlankRun = false
+        var lastBoundary: (start: Int, end: Int)?
+        var index = 0
+
+        while index < lines.count {
+            if let fence = openFence {
+                if isFenceClosing(lines[index], matching: fence) {
+                    openFence = nil
+                }
+                index += 1
+                continue
+            }
+
+            if let fence = fenceOpening(in: lines[index]) {
+                openFence = fence
+                hasContentBeforeBlankRun = true
+                index += 1
+                continue
+            }
+
+            if isBlank(lines[index]) {
+                let start = index
+                while index < lines.count, isBlank(lines[index]) {
+                    index += 1
+                }
+                if hasContentBeforeBlankRun, index < lines.count {
+                    lastBoundary = (start, index)
+                }
+                continue
+            }
+
+            hasContentBeforeBlankRun = true
+            index += 1
+        }
+
+        guard let lastBoundary else {
+            return StreamingSplit(prefix: "", tail: source)
+        }
+
+        return StreamingSplit(
+            prefix: lines[..<lastBoundary.start].joined(separator: "\n"),
+            tail: lines[lastBoundary.end...].joined(separator: "\n")
+        )
     }
 
     private struct Fence {

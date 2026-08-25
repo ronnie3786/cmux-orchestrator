@@ -15,6 +15,19 @@ private final class PendingTerminalCommit {
     var flushTask: Task<Void, Never>?
 }
 
+@MainActor
+final class PiInteractionResponder {
+    func respond(
+        to interaction: PiPendingInteraction,
+        response: PiInteractionResponseBody,
+        store: PiConversationStore,
+        model: HerdrAppModel,
+        pane: HerdrPane
+    ) async -> Bool {
+        await store.respond(to: interaction, response: response, model: model, pane: pane)
+    }
+}
+
 /// One pane's session: header, mode content, and the terminal's dual-feed
 /// lifecycle (SSE frames + 850 ms snapshot poll arbitrated by
 /// `TerminalRefreshPolicy`).
@@ -52,6 +65,7 @@ struct PaneSessionView: View {
     @State private var outputError: String?
     @State private var selectedMode: PaneDetailMode = .terminal
     @State private var piConversationStore = PiConversationStore()
+    @State private var piInteractionResponder = PiInteractionResponder()
     @State private var didAutoSelectChat = false
     @State private var composerDraft = ""
     @State private var composerAttachments: [TerminalAttachment] = []
@@ -175,12 +189,16 @@ struct PaneSessionView: View {
                 PiChatView(
                     model: model,
                     store: piConversationStore,
-                    pane: currentPane,
+                    paneID: currentPane.id,
+                    interactionResponseAvailable: currentPane.piSemantic?.capabilities.interactionResponse ?? false,
+                    composerPane: currentPane,
                     workspace: workspace,
                     draft: $composerDraft,
                     attachments: $composerAttachments,
-                    focusRequest: composerFocusRequest
+                    focusRequest: composerFocusRequest,
+                    interactionResponder: piInteractionResponder
                 )
+                    .equatable()
                     .transition(.opacity)
             } else {
                 unavailableMode("Chat", systemImage: "bubble.left.and.bubble.right")
@@ -248,6 +266,7 @@ struct PaneSessionView: View {
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest
                 )
+                .equatable()
                 .id(currentPane.id)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
@@ -364,6 +383,7 @@ struct PaneSessionView: View {
 
                 var working = terminalGrid
                 defer { pending.flushTask?.cancel() }
+                defer { HerdrPerfDiagnostics.streamBacklog.reset(.terminal) }
                 for try await event in events {
                     try Task.checkCancellation()
                     HerdrPerfDiagnostics.streamBacklog.noteConsumed(.terminal)

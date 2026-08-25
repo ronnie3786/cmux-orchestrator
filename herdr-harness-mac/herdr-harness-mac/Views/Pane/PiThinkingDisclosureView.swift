@@ -9,9 +9,7 @@ struct PiThinkingDisclosureView: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
-            PiMarkdownText(visibleText, font: HerdrTheme.scaled(.callout, scale: fontScale))
-                .foregroundStyle(HerdrTheme.mist)
-                .padding(.top, 10)
+            markdownContent()
         } label: {
             HStack(spacing: 9) {
                 ZStack {
@@ -54,11 +52,31 @@ struct PiThinkingDisclosureView: View {
         .onChange(of: isExpanded) { _, expanded in
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }
+        .onChange(of: block.isStreaming) { wasStreaming, isStreaming in
+            guard wasStreaming, !isStreaming else { return }
+            PiMarkdownInlineCache.shared.evictStreaming(id: block.id)
+        }
         .herdrHaptic(trigger: hapticPulse)
         .contentShape(Rectangle())
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-thinking-\(block.id)")
         .opacity(HerdrProse.subOutputOpacity)
+    }
+
+    private func markdownContent() -> some View {
+        let text = visibleText
+        let isLiveBlockText = block.isStreaming && !block.isRedacted && !block.text.isEmpty
+        if isLiveBlockText {
+            PiMarkdownInlineCache.shared.markStreamingEntry(id: block.id, length: text.utf8.count)
+        }
+        return PiMarkdownText(
+            text,
+            font: HerdrTheme.scaled(.callout, scale: fontScale),
+            id: isLiveBlockText ? block.id : nil,
+            cacheKeyLength: isLiveBlockText ? text.utf8.count : nil
+        )
+        .foregroundStyle(HerdrTheme.mist)
+        .padding(.top, 10)
     }
 
     private var visibleText: String {

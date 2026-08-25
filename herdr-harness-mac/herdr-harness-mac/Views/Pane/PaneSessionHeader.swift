@@ -33,7 +33,7 @@ struct PaneSessionHeader: View {
 
             Spacer(minLength: 8)
 
-            LastPromptPeekButton(message: PiLastPrompt.lastUserMessage(in: store.turns))
+            LastPromptPeekButton(message: store.lastUserMessage)
 
             Button("Focus on Mac", systemImage: pane.focused ? "scope" : "macwindow") {
                 Task { await model.focus(pane) }

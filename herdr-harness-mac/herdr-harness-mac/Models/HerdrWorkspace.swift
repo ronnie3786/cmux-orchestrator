@@ -17,17 +17,42 @@ struct HerdrWorkspace: Codable, Equatable, Hashable, Identifiable, Sendable {
     let layouts: [HerdrLayout]
 
     var machineID: String = ""
-
-    var id: String {
-        machineID.isEmpty ? workspaceID : MachineScopedID.compose(machineID: machineID, rawID: workspaceID)
-    }
+    private(set) var id: String
 
     func stamped(machineID: String) -> HerdrWorkspace {
         var copy = self
         copy.machineID = machineID
+        copy.id = MachineScopedID.compose(machineID: machineID, rawID: workspaceID)
         copy.tabs = tabs.map { $0.stamped(machineID: machineID) }
         copy.panes = panes.map { $0.stamped(machineID: machineID) }
         return copy
+    }
+
+    func isEqualIgnoringPaneRevisions(to other: HerdrWorkspace) -> Bool {
+        guard workspaceID == other.workspaceID,
+              number == other.number,
+              label == other.label,
+              focused == other.focused,
+              paneCount == other.paneCount,
+              tabCount == other.tabCount,
+              activeTabID == other.activeTabID,
+              agentStatus == other.agentStatus,
+              tokens == other.tokens,
+              worktree == other.worktree,
+              tabs == other.tabs,
+              agents == other.agents,
+              layouts == other.layouts,
+              machineID == other.machineID,
+              id == other.id,
+              panes.count == other.panes.count
+        else { return false }
+
+        for index in panes.indices {
+            if !panes[index].isEqualIgnoringRevision(to: other.panes[index]) {
+                return false
+            }
+        }
+        return true
     }
 
     var displayPath: String {
@@ -81,6 +106,7 @@ struct HerdrWorkspace: Codable, Equatable, Hashable, Identifiable, Sendable {
         panes = try container.decodeIfPresent([HerdrPane].self, forKey: .panes) ?? []
         agents = try container.decodeIfPresent([HerdrAgent].self, forKey: .agents) ?? []
         layouts = try container.decodeIfPresent([HerdrLayout].self, forKey: .layouts) ?? []
+        id = workspaceID
     }
 
     init(
@@ -113,5 +139,6 @@ struct HerdrWorkspace: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.panes = panes
         self.agents = agents
         self.layouts = layouts
+        self.id = workspaceID
     }
 }
