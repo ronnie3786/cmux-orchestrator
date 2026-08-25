@@ -21,11 +21,29 @@ SSH works non-interactively: `ssh -o BatchMode=yes ronniesitym4mbp '<cmd>'`.
 ## Deploy (one SSH command, verified pattern)
 
 ```bash
-ssh -o BatchMode=yes ronniesitym4mbp 'cd ~/Documents/Development/cmux-harness && git pull --ff-only 2>&1 | tail -1 && cd herdr-harness-mac && xcodebuild -project herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -configuration Release -destination "platform=macOS" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build 2>&1 | grep -E " error:|BUILD (SUCCEEDED|FAILED)" && pkill -f "Herdr.app/Contents/MacOS"; sleep 1; REL=$(ls -dt ~/Library/Developer/Xcode/DerivedData/herdr-harness-mac-*/Build/Products/Release/herdr-harness-mac.app | head -1) && rm -rf /Applications/Herdr.app && cp -R "$REL" /Applications/Herdr.app && open -n /Applications/Herdr.app && sleep 4 && pgrep -f "Herdr.app/Contents/MacOS" | wc -l | tr -d " "'
+ssh -o BatchMode=yes ronniesitym4mbp 'cd ~/Documents/Development/cmux-harness && git pull --ff-only 2>&1 | tail -1 && cd herdr-harness-mac && xcodebuild -project herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -configuration Release -destination "platform=macOS" -derivedDataPath ~/herdr-deploy-dd CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build 2>&1 | grep -E " error:|BUILD (SUCCEEDED|FAILED)" && pkill -f "Herdr.app/Contents/MacOS"; sleep 1; APP=~/herdr-deploy-dd/Build/Products/Release/herdr-harness-mac.app && rm -rf /Applications/Herdr.app && cp -R "$APP" /Applications/Herdr.app && open -n /Applications/Herdr.app && sleep 4 && pgrep -f "Herdr.app/Contents/MacOS" | wc -l | tr -d " "'
 ```
 
 Success = `BUILD SUCCEEDED` and a final `1` (one running process). Report the deployed
 commit: `ssh ... 'git -C ~/Documents/Development/cmux-harness log --oneline -1'`.
+
+**Never select the app via `ls -dt DerivedData/herdr-harness-mac-*`** — on 2026-08-25 that
+pattern silently installed a day-old binary from a stale sibling DerivedData dir (its dir
+mtime sorted first, and `cp -R` re-stamps mtimes so the installed binary *looked* fresh).
+Always build with the explicit `-derivedDataPath ~/herdr-deploy-dd` and install from there.
+To confirm the right build shipped, grep a symbol you know is new:
+`strings /Applications/Herdr.app/Contents/MacOS/herdr-harness-mac | grep -c <NewTypeName>`.
+
+## Post-deploy verification
+
+The app writes diagnostics (since commit 431d0897) to the sandbox container:
+`~/Library/Containers/dev.ronnierocha.herdr-harness.herdr-harness-mac/Data/Library/Logs/Herdr/`
+— `vitals.log` gets a `event=periodic` line every 30s (footprint, main CPU, run-state,
+backlogs, last checkpoint) and `hangs/` collects per-incident hang reports with symbolicated
+main-thread backtraces. After deploying, wait ~40s and `tail` vitals.log over SSH: a healthy
+launch shows `mainCPU` in low single digits and `terminalBacklog=0 piBacklog=0`. If the old
+process was frozen, its final hang report (status INPROGRESS, finalized on next launch) is
+the first thing to read.
 
 ## Notes / gotchas
 
