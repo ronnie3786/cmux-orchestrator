@@ -1,13 +1,16 @@
 import SwiftUI
 
-/// Mac-only divergence from iOS: the navigator drops per-status hues.
+/// Mac-only divergence from iOS: the navigator reserves status hues for
+/// sessions that need attention.
 ///
 /// On the phone the sidebar was a drawer you glanced at; on the Mac it is on
 /// screen for the whole session, and five status hues repeated down every row
 /// turned the column into a rainbow that fought the detail pane for attention.
-/// So the sidebar spends exactly one tone on everything status-derived — dots,
-/// status words, and the attention count. Differentiation comes from the
-/// terminal glyph (`●` / `○` / `·`), the status word itself, and the count.
+/// Calm states spend exactly one tone on status-derived dots and words, while
+/// blocked and completed sessions light up in their real status color. That
+/// keeps the column quiet while still making the items that need attention
+/// easy to scan without opening the Attention deck. Differentiation for calm
+/// states comes from the terminal glyph (`●` / `○` / `·`) and status word.
 ///
 /// `mist` (Catppuccin Subtext0) is the tone: it is the theme's designated
 /// secondary-information color, already used by the tab rows here, and reads at
@@ -16,29 +19,29 @@ import SwiftUI
 /// (the new-workspace buttons, the selection rail, the focused-workspace
 /// marker), and spending it on status would erase that meaning.
 ///
-/// Deliberately scoped to the sidebar: `AgentStatus.color` and every other
-/// surface (pane headers, status rails, the Attention deck) keep full status
-/// color. Do not "fix" this by changing the shared type.
+/// Deliberately scoped to the sidebar: this selective override belongs here,
+/// not on the shared `AgentStatus` type.
 enum SidebarTone {
-    /// The single hue for every status-derived element in these rows.
+    /// The single hue for calm status-derived elements in these rows.
     static let status = HerdrTheme.mist
 
-    /// The attention count stays the loudest thing in a row — it is one of the
-    /// two signals left after the hues went away — so it is a solid chip in the
-    /// same tone rather than a second color.
-    static let badgeFill = status
+    static let badgeFill = HerdrTheme.alert
     static let badgeLabel = HerdrTheme.ink
+
+    static func statusColor(for status: AgentStatus) -> Color {
+        status.needsAttention ? status.color : Self.status
+    }
 }
 
 /// Sidebar-local twin of `HerdrStatusDot`: same glyph and accessibility label,
-/// single tone instead of `status.color`. The shared component is untouched.
+/// calm states use one tone while attention states use `status.color`.
 private struct SidebarStatusDot: View {
     let status: AgentStatus
 
     var body: some View {
         Text(status.terminalGlyph)
             .herdrFont(.body, monospaced: true, weight: .bold)
-            .foregroundStyle(SidebarTone.status)
+            .foregroundStyle(SidebarTone.statusColor(for: status))
             .accessibilityLabel(status.title)
     }
 }
@@ -231,7 +234,7 @@ struct SidebarChatRow: View {
 
                 Text(pane.agentStatus.compactTitle.lowercased())
                     .herdrFont(.caption, monospaced: true)
-                    .foregroundStyle(SidebarTone.status)
+                    .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
             }
             .padding(.leading, 34)

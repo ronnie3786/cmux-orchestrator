@@ -242,6 +242,7 @@ def api_description() -> dict:
             "paneOutput": "/api/v1/panes/{paneId}/output",
             "paneStream": "/api/v1/panes/{paneId}/stream",
             "paneStar": "/api/v1/panes/{paneId}/star",
+            "paneAlertsRead": "/api/v1/panes/{paneId}/alerts/read",
             "piSnapshot": "/api/v1/panes/{paneId}/pi/snapshot",
             "piEvents": "/api/v1/panes/{paneId}/pi/events",
             "piModels": "/api/v1/panes/{paneId}/pi/models",
@@ -269,6 +270,7 @@ def api_description() -> dict:
             "PATCH|DELETE /api/v1/panes/{paneId}",
             "POST /api/v1/panes/{paneId}/focus|zoom|split|send-text|send-keys|run|prompt|start-agent",
             "POST /api/v1/panes/{paneId}/star",
+            "POST /api/v1/panes/{paneId}/alerts/read",
             "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort|model|thinking-level",
             "POST /api/v1/panes/{paneId}/pi/interactions/{interactionId}/respond",
             "POST /api/v1/alerts/{alertId}/read",
@@ -923,6 +925,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             "interaction_response",
                             {"interactionId": interaction_id, **body},
                         )
+                if method == "POST" and tail[2:] == ["alerts", "read"]:
+                    result = service.mark_pane_alerts_read(pane_id)
+                    if result is None:
+                        raise HTTPValidationError("Pane not found", code="pane_not_found", status=404)
+                    return result
             if method == "POST" and len(tail) == 3 and tail[0] == "agents" and tail[2] == "prompt":
                 return self._prompt(_identifier(tail[1], "agent target"), body)
             if method == "POST" and tail == ["quick-sessions", "pi"]:

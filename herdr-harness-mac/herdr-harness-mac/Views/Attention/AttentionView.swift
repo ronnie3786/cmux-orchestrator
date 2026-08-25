@@ -29,17 +29,12 @@ struct AttentionView: View {
                                 .foregroundStyle(.secondary)
                         }
                         ForEach(model.alerts.filter { !$0.isRead }) { alert in
-                            if let pane = model.pane(id: alert.paneID) {
-                                Button {
-                                    selectPane(pane, alert)
-                                } label: {
-                                    AlertCardView(alert: alert, pane: pane)
-                                }
-                                .buttonStyle(.plain)
-                            } else {
-                                AlertCardView(alert: alert, pane: nil)
-                                    .opacity(0.78)
-                            }
+                            AttentionAlertRow(
+                                model: model,
+                                alert: alert,
+                                pane: model.pane(id: alert.scopedPaneID),
+                                selectPane: selectPane
+                            )
                         }
                     }
 

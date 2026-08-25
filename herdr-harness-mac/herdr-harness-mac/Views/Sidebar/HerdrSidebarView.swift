@@ -332,7 +332,7 @@ struct HerdrSidebarView: View {
                         entriesContent(group.entries)
                     }
                 }
-                separator
+                machineSeparator
             }
         } else if snapshot.tree.isEmpty {
             emptyState
@@ -451,6 +451,13 @@ struct HerdrSidebarView: View {
             .fill(HerdrTheme.surface.opacity(0.65))
             .frame(height: 1)
             .padding(.vertical, 8)
+    }
+
+    private var machineSeparator: some View {
+        Rectangle()
+            .fill(HerdrTheme.surface.opacity(0.65))
+            .frame(height: 2)
+            .padding(.vertical, 16)
     }
 
     private var showsMachineChrome: Bool {

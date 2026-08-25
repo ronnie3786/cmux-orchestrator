@@ -314,6 +314,47 @@ class HerdrServiceTests(unittest.TestCase):
         )
         self.assertFalse(any(item["event"] == "alert.updated" for item in events))
 
+    def test_mark_pane_alerts_read_marks_only_that_panes_alerts_and_is_idempotent(self):
+        client = FakeClient(
+            [
+                snapshot_with_statuses("working", "working"),
+                snapshot_with_statuses("blocked", "blocked"),
+            ]
+        )
+        service = HerdrService(client, environ={})
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        before = service.broker.latest_id
+
+        result = service.mark_pane_alerts_read("w1:p1")
+
+        alerts = service.list_alerts(unread_only=False, status=None, limit=10)["alerts"]
+        by_pane = {alert["paneId"]: alert for alert in alerts}
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["paneId"], "w1:p1")
+        self.assertEqual(len(result["alerts"]), 1)
+        self.assertEqual(result["unreadCount"], service.alerts.unread_count())
+        self.assertTrue(result["alerts"][0]["isRead"])
+        self.assertTrue(by_pane["w1:p1"]["isRead"])
+        self.assertFalse(by_pane["w1:p2"]["isRead"])
+
+        second_result = service.mark_pane_alerts_read("w1:p1")
+
+        self.assertEqual(second_result["alerts"], [])
+        self.assertEqual(second_result["unreadCount"], service.alerts.unread_count())
+        events = service.broker.after(before)
+        self.assertEqual(
+            sum(item["event"] == "alerts.read_state_changed" for item in events),
+            1,
+        )
+        self.assertFalse(any(item["event"] == "alert.updated" for item in events))
+
+    def test_mark_pane_alerts_read_returns_none_for_unknown_pane(self):
+        service = HerdrService(FakeClient([snapshot_with_status("working")]), environ={})
+        service.refresh_snapshot()
+
+        self.assertIsNone(service.mark_pane_alerts_read("nonexistent-pane"))
+
     def test_mark_alert_read_publishes_per_alert_and_aggregate_events(self):
         client = FakeClient([snapshot_with_status("working"), snapshot_with_status("blocked")])
         service = HerdrService(client, environ={})

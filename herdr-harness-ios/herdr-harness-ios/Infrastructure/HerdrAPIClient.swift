@@ -248,6 +248,10 @@ actor HerdrAPIClient {
         try await mutation(path: "/api/v1/alerts/read-all", body: APIActionBody())
     }
 
+    func markPaneAlertsRead(paneID: String) async throws {
+        try await mutation(path: "/api/v1/panes/\(paneID)/alerts/read", body: APIActionBody())
+    }
+
     func registerPushDevice(
         token: String,
         bundleID: String,

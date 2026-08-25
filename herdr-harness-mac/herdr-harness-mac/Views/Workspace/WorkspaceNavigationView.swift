@@ -53,11 +53,8 @@ struct WorkspaceNavigationView: View {
                 )
             }
         case .attention:
-            AttentionView(model: model) { pane, alert in
+            AttentionView(model: model) { pane, _ in
                 openSession(pane)
-                if let alert {
-                    Task { await model.markAlertRead(alert) }
-                }
             }
         }
     }
@@ -74,15 +71,28 @@ struct WorkspaceNavigationView: View {
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            Picker("Detail", selection: scopeSelection) {
-                ForEach(HerdrDetailScope.allCases) { scope in
-                    Label(scope.label, systemImage: scope.symbol)
-                        .tag(scope)
+            ZStack(alignment: .topTrailing) {
+                Picker("Detail", selection: scopeSelection) {
+                    ForEach(HerdrDetailScope.allCases) { scope in
+                        Label(scope.label, systemImage: scope.symbol)
+                            .tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelStyle(.iconOnly)
+                .accessibilityIdentifier("detail-scope-picker")
+
+                if model.unreadAlertCount > 0 {
+                    Text("\(model.unreadAlertCount)")
+                        .herdrFont(.caption2, weight: .bold)
+                        .foregroundStyle(HerdrTheme.ink)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(HerdrTheme.alert, in: Capsule())
+                        .offset(x: 7, y: -7)
+                        .allowsHitTesting(false)
                 }
             }
-            .pickerStyle(.segmented)
-            .labelStyle(.iconOnly)
-            .accessibilityIdentifier("detail-scope-picker")
         }
 
         ToolbarItem(placement: .primaryAction) {

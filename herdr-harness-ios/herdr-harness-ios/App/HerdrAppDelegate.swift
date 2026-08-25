@@ -10,6 +10,16 @@ final class HerdrAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         return pendingPaneID
     }
 
+    static func resolvedPaneID(fromUserInfo userInfo: [AnyHashable: Any]) -> String? {
+        guard let paneID = (userInfo["pane_id"] as? String) ?? (userInfo["paneId"] as? String) else {
+            return nil
+        }
+        if let machineID = userInfo["machine_id"] as? String, !machineID.isEmpty {
+            return MachineScopedID.compose(machineID: machineID, rawID: paneID)
+        }
+        return paneID
+    }
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -42,9 +52,7 @@ final class HerdrAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         didReceive response: UNNotificationResponse
     ) async {
         let userInfo = response.notification.request.content.userInfo
-        guard let paneID = (userInfo["pane_id"] as? String) ?? (userInfo["paneId"] as? String) else {
-            return
-        }
+        guard let paneID = Self.resolvedPaneID(fromUserInfo: userInfo) else { return }
         Self.pendingPaneID = paneID
         NotificationCenter.default.post(name: .herdrOpenPane, object: paneID)
     }

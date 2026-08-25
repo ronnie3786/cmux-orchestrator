@@ -998,6 +998,19 @@ class HerdrService:
             self._publish_read_state_changed()
         return {"ok": True, "alerts": changed, "unreadCount": self.alerts.unread_count()}
 
+    def mark_pane_alerts_read(self, pane_id: str) -> Optional[dict]:
+        if self._lookup_pane(pane_id) is None:
+            return None
+        changed = self.alerts.mark_read_for_pane(pane_id)
+        if changed:
+            self._publish_read_state_changed()
+        return {
+            "ok": True,
+            "paneId": pane_id,
+            "alerts": changed,
+            "unreadCount": self.alerts.unread_count(),
+        }
+
     def _publish_read_state_changed(self) -> None:
         self.broker.publish(
             "alerts.read_state_changed",

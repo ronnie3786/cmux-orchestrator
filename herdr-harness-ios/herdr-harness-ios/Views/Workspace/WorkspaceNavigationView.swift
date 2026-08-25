@@ -21,9 +21,7 @@ struct WorkspaceNavigationView: View {
                     model.workspacePath.append(.workspace(workspace.id))
                 },
                 selectPane: { pane in
-                    model.selectedWorkspaceID = pane.workspaceID
-                    model.selectedPaneID = pane.id
-                    model.workspacePath = [.workspace(pane.workspaceID), .pane(pane.id)]
+                    model.openPane(id: pane.id)
                 }
             )
             .navigationDestination(for: WorkspaceRoute.self) { route in
@@ -31,8 +29,7 @@ struct WorkspaceNavigationView: View {
                 case let .workspace(id):
                     if let workspace = model.workspace(id: id) {
                         WorkspacePaneListView(model: model, workspace: workspace) { pane in
-                            model.selectedPaneID = pane.id
-                            model.workspacePath.append(.pane(pane.id))
+                            model.openPane(id: pane.id)
                         }
                     }
                 case let .pane(id):
@@ -54,15 +51,14 @@ struct WorkspaceNavigationView: View {
                     model.selectedPaneID = workspace.sortedPanes.first?.id
                 },
                 selectPane: { pane in
-                    model.selectedWorkspaceID = pane.workspaceID
-                    model.selectedPaneID = pane.id
+                    model.openPane(id: pane.id)
                 }
             )
             .navigationSplitViewColumnWidth(min: 330, ideal: 390, max: 460)
         } content: {
             if let workspace = model.workspace(id: model.selectedWorkspaceID) {
                 WorkspacePaneListView(model: model, workspace: workspace) { pane in
-                    model.selectedPaneID = pane.id
+                    model.openPane(id: pane.id)
                 }
                 .navigationSplitViewColumnWidth(min: 320, ideal: 390, max: 480)
             } else {

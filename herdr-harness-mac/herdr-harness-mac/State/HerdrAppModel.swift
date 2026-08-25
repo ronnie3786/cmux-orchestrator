@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
@@ -85,6 +86,7 @@ final class HerdrAppModel {
     @ObservationIgnored var fleetRefreshBoringCycleThreshold = 5
     @ObservationIgnored var fleetRefreshQuietWindow = Duration.seconds(2)
     private static let connectionFailureGrace: TimeInterval = 10
+    private static let alertsLogger = Logger(subsystem: "dev.ronnierocha.herdr-harness", category: "alerts")
 
     private struct PaneLocation {
         let workspaceIndex: Int
@@ -1842,6 +1844,49 @@ final class HerdrAppModel {
         selectedWorkspaceID = workspace(containing: pane)?.id
         selectedPaneID = pane.id
         workspacePath = selectedWorkspaceID.map { [.workspace($0), .pane(pane.id)] } ?? [.pane(pane.id)]
+
+        var hasUnreadAlerts = false
+        for alert in alerts where alert.scopedPaneID == pane.id && !alert.isRead {
+            hasUnreadAlerts = true
+            break
+        }
+        guard hasUnreadAlerts else { return }
+
+        var updatedAlerts: [HerdrAlert] = []
+        updatedAlerts.reserveCapacity(alerts.count)
+        for alert in alerts {
+            if alert.scopedPaneID == pane.id && !alert.isRead {
+                updatedAlerts.append(
+                    HerdrAlert(
+                        id: alert.rawID,
+                        workspaceID: alert.workspaceID,
+                        paneID: alert.paneID,
+                        status: alert.status,
+                        title: alert.title,
+                        message: alert.message,
+                        createdAt: alert.createdAt,
+                        isRead: true
+                    ).stamped(machineID: alert.machineID)
+                )
+            } else {
+                updatedAlerts.append(alert)
+            }
+        }
+        alerts = updatedAlerts
+        updateBadgeIfNeeded()
+
+        guard !isDemoMode else { return }
+
+        guard let client = client(forMachine: pane.machineID) else { return }
+        Task {
+            do {
+                try await client.markPaneAlertsRead(paneID: pane.paneID)
+            } catch {
+                Self.alertsLogger.error(
+                    "failed to mark pane \(pane.paneID, privacy: .public) alerts read: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
     }
 
     private func handlePushDelivery(_ event: HerdrEvent, machineID: String) async {

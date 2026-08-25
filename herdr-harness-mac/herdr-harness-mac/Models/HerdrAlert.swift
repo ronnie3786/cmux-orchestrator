@@ -16,6 +16,10 @@ struct HerdrAlert: Decodable, Equatable, Hashable, Identifiable, Sendable {
         machineID.isEmpty ? rawID : MachineScopedID.compose(machineID: machineID, rawID: rawID)
     }
 
+    var scopedPaneID: String {
+        MachineScopedID.compose(machineID: machineID, rawID: paneID)
+    }
+
     func stamped(machineID: String) -> HerdrAlert {
         var copy = self
         copy.machineID = machineID

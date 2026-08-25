@@ -236,7 +236,7 @@ struct HerdrSidebarView: View {
                         entriesContent(group.entries)
                     }
                 }
-                separator
+                machineSeparator
             }
         } else if tree.isEmpty {
             emptyState
@@ -315,6 +315,13 @@ struct HerdrSidebarView: View {
             .fill(HerdrTheme.surface.opacity(0.65))
             .frame(height: 1)
             .padding(.vertical, 10)
+    }
+
+    private var machineSeparator: some View {
+        Rectangle()
+            .fill(HerdrTheme.surface.opacity(0.65))
+            .frame(height: 2)
+            .padding(.vertical, 16)
     }
 
     private var scopedWorkspaces: [HerdrWorkspace] {

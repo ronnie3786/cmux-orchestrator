@@ -6,13 +6,11 @@ struct AttentionNavigationView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            AttentionView(model: model) { pane, alert in
-                model.selectedWorkspaceID = pane.workspaceID
+            AttentionView(model: model) { pane, _ in
+                model.selectedWorkspaceID = model.workspace(containing: pane)?.id
                 model.selectedPaneID = pane.id
+                model.clearAlertsForPaneOnOpen(pane)
                 path.append(.pane(pane.id))
-                if let alert {
-                    Task { await model.markAlertRead(alert) }
-                }
             }
             .navigationDestination(for: WorkspaceRoute.self) { route in
                 if case let .pane(id) = route, let pane = model.pane(id: id) {

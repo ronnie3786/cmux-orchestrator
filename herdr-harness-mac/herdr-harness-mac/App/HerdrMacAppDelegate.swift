@@ -15,6 +15,16 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         return pendingPaneID
     }
 
+    nonisolated static func resolvedPaneID(fromUserInfo userInfo: [AnyHashable: Any]) -> String? {
+        guard let paneID = (userInfo["pane_id"] as? String) ?? (userInfo["paneId"] as? String) else {
+            return nil
+        }
+        if let machineID = userInfo["machine_id"] as? String, !machineID.isEmpty {
+            return MachineScopedID.compose(machineID: machineID, rawID: paneID)
+        }
+        return paneID
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         HerdrPerfDiagnostics.start()
         VoiceRecordingPolicy.removeStaleTemporaryRecordings()
@@ -39,9 +49,7 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         didReceive response: UNNotificationResponse
     ) async {
         let userInfo = response.notification.request.content.userInfo
-        guard let paneID = (userInfo["pane_id"] as? String) ?? (userInfo["paneId"] as? String) else {
-            return
-        }
+        guard let paneID = Self.resolvedPaneID(fromUserInfo: userInfo) else { return }
         await MainActor.run {
             Self.pendingPaneID = paneID
             NotificationCenter.default.post(name: .herdrOpenPane, object: paneID)

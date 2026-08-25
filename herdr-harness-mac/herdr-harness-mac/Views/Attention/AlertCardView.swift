@@ -22,6 +22,7 @@ struct AlertCardView: View {
                                 .background(HerdrTheme.accent, in: Capsule())
                         }
                     }
+                    .padding(.trailing, pane == nil ? 24 : 0)
                     Text(alert.title)
                         .herdrFont(.headline, weight: .bold)
                         .foregroundStyle(.primary)

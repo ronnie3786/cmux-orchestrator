@@ -114,4 +114,16 @@ struct HerdrDemoTests {
         #expect(model.alerts.first(where: { $0.id == alert.id })?.isRead == true)
         #expect(model.unreadAlertCount == 1)
     }
+
+    @Test("Opening a demo pane clears only its alerts")
+    func openingPaneClearsItsAlerts() throws {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        #expect(model.unreadAlertCount == 2)
+
+        model.openPane(id: "demo1|w1:p2")
+
+        #expect(model.alerts.first(where: { $0.rawID == "demo-blocked" })?.isRead == true)
+        #expect(model.alerts.first(where: { $0.rawID == "demo-done" })?.isRead == false)
+        #expect(model.unreadAlertCount == 1)
+    }
 }

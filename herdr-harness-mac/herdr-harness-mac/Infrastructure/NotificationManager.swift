@@ -12,17 +12,22 @@ enum NotificationManager {
         }
     }
 
+    static func userInfo(for alert: HerdrAlert) -> [String: String] {
+        [
+            "workspace_id": alert.workspaceID,
+            "pane_id": alert.paneID,
+            "alert_id": alert.id,
+            "machine_id": alert.machineID,
+        ]
+    }
+
     static func post(_ alert: HerdrAlert) async {
         let content = UNMutableNotificationContent()
         content.title = alert.title
         content.body = alert.message
         content.sound = .default
         content.interruptionLevel = alert.status == .blocked ? .timeSensitive : .active
-        content.userInfo = [
-            "workspace_id": alert.workspaceID,
-            "pane_id": alert.paneID,
-            "alert_id": alert.id,
-        ]
+        content.userInfo = userInfo(for: alert)
         let request = UNNotificationRequest(identifier: alert.id, content: content, trigger: nil)
         try? await UNUserNotificationCenter.current().add(request)
     }

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
@@ -57,6 +58,7 @@ final class HerdrAppModel {
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
     private static let connectionFailureGrace: TimeInterval = 10
+    private static let alertsLogger = Logger(subsystem: "dev.ronnierocha.herdr-harness", category: "alerts")
 
     init(
         arguments: [String] = ProcessInfo.processInfo.arguments,
@@ -901,6 +903,41 @@ final class HerdrAppModel {
         }
     }
 
+    func clearAlertsForPaneOnOpen(_ pane: HerdrPane) {
+        let hasUnreadAlerts = alerts.contains { alert in
+            alert.scopedPaneID == pane.id && !alert.isRead
+        }
+        guard hasUnreadAlerts else { return }
+
+        alerts = alerts.map { alert in
+            guard alert.scopedPaneID == pane.id, !alert.isRead else { return alert }
+            return HerdrAlert(
+                id: alert.rawID,
+                workspaceID: alert.workspaceID,
+                paneID: alert.paneID,
+                status: alert.status,
+                title: alert.title,
+                message: alert.message,
+                createdAt: alert.createdAt,
+                isRead: true
+            ).stamped(machineID: alert.machineID)
+        }
+        Task { await NotificationManager.setBadge(unreadAlertCount) }
+
+        guard !isDemoMode else { return }
+
+        guard let client = client(forMachine: pane.machineID) else { return }
+        Task {
+            do {
+                try await client.markPaneAlertsRead(paneID: pane.paneID)
+            } catch {
+                Self.alertsLogger.error(
+                    "failed to mark pane \(pane.paneID, privacy: .public) alerts read: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
     func clearError() { errorMessage = nil }
     func clearToast() { toastMessage = nil }
 
@@ -1289,6 +1326,7 @@ final class HerdrAppModel {
         selectedWorkspaceID = workspace(containing: pane)?.id
         selectedPaneID = pane.id
         workspacePath = selectedWorkspaceID.map { [.workspace($0), .pane(pane.id)] } ?? [.pane(pane.id)]
+        clearAlertsForPaneOnOpen(pane)
     }
 
     private func handlePushDelivery(_ event: HerdrEvent, machineID: String) async {
@@ -1400,7 +1438,7 @@ final class HerdrAppModel {
                     try Task.checkCancellation()
                     guard expectedGeneration == connectionGeneration else { return }
                     if event.event == "snapshot.updated" || event.event == "alert.created" ||
-                        event.event == "alerts.read_state_changed" || event.event == "stars.changed" ||
+                        event.event == "alert.updated" || event.event == "alerts.read_state_changed" || event.event == "stars.changed" ||
                         Self.piCapabilityEvents.contains(event.event) {
                         try await refresh(machineID: machine.id, using: client, showSpinner: false, expectedGeneration: expectedGeneration)
                     } else if event.event == "push.delivery" {

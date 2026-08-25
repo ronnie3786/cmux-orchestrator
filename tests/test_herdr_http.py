@@ -186,6 +186,12 @@ class FakeHTTPService:
     def mark_all_alerts_read(self):
         return {"ok": True, "alerts": [], "unreadCount": 0}
 
+    def mark_pane_alerts_read(self, pane_id):
+        self.calls.append(("pane.alerts.read", {"pane_id": pane_id}))
+        if pane_id != "w1:p1":
+            return None
+        return {"ok": True, "paneId": pane_id, "alerts": [], "unreadCount": 0}
+
     def set_pane_star(self, pane_id, starred):
         self.calls.append(("pane.star", {"pane_id": pane_id, "starred": starred}))
         return {
@@ -324,6 +330,30 @@ class HerdrHTTPTests(unittest.TestCase):
         )
         self.assertEqual(bad_type_status, 400)
         self.assertEqual(bad_type_body["error"]["code"], "invalid_request")
+
+    def test_pane_alerts_read_route_forwards_and_returns_pane_response(self):
+        status, _, body = self.request(
+            "/api/v1/panes/w1:p1/alerts/read",
+            method="POST",
+            payload={},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body,
+            {"ok": True, "paneId": "w1:p1", "alerts": [], "unreadCount": 0},
+        )
+        self.assertEqual(self.service.calls[-1], ("pane.alerts.read", {"pane_id": "w1:p1"}))
+
+    def test_pane_alerts_read_route_returns_not_found_for_unknown_pane(self):
+        status, _, body = self.request(
+            "/api/v1/panes/does-not-exist/alerts/read",
+            method="POST",
+            payload={},
+        )
+
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "pane_not_found")
 
     def test_workspace_create_validates_and_forwards_native_params(self):
         status, _, body = self.request(
