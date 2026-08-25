@@ -450,6 +450,26 @@ final class HerdrAppModel {
         return try await client.fetchGitStatus(workspaceID: workspace.workspaceID)
     }
 
+    func fetchGitStatus(for pane: HerdrPane) async throws -> WorkspaceGitStatus {
+        if isDemoMode, let workspace = workspace(containing: pane) {
+            return DemoData.gitStatus(for: workspace)
+        }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
+            throw APIError.invalidResponse
+        }
+        return try await client.fetchGitStatus(paneID: pane.paneID)
+    }
+
+    func serverConfiguration(for pane: HerdrPane) -> ServerConfiguration? {
+        guard !isDemoMode,
+              self.pane(id: pane.id) != nil,
+              let connection = runtimes[pane.machineID]?.connection,
+              connection.generation == connectionGeneration
+        else { return nil }
+        return connection.configuration
+    }
+
     func fetchGitDiff(
         for workspace: HerdrWorkspace,
         file: String,

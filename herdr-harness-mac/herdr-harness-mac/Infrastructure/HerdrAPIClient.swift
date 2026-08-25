@@ -49,6 +49,10 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/workspaces/\(workspaceID)/git")
     }
 
+    func fetchGitStatus(paneID: String) async throws -> WorkspaceGitStatus {
+        try await request(path: "/api/v1/panes/\(paneID)/git")
+    }
+
     func startCleanupRun(_ request: CleanupStartRunRequest) async throws -> CleanupStartRunResponse {
         try await self.request(path: "/api/v1/cleanup/runs", method: "POST", body: request)
     }
@@ -826,6 +830,7 @@ actor HerdrAPIClient {
             return 120
         }
         if path.hasPrefix("/api/v1/jira/") ||
+            (path.hasPrefix("/api/v1/panes/") && path.contains("/git")) ||
             (path.hasPrefix("/api/v1/workspaces/") &&
                 (path.contains("/git") || path.hasSuffix("/skills") || path.hasSuffix("/files"))) {
             // cmux permits Git and Jira operations to run for up to 10 and 15

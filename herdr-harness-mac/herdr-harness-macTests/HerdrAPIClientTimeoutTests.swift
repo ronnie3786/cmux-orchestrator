@@ -6,6 +6,9 @@ struct HerdrAPIClientTimeoutTests {
     @Test func proxiedToolRequestsOutliveCmuxOperations() {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/git", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/git/stage", method: "POST") == 30)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/git", method: "GET") == 30)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/git/commit-diff", method: "GET") == 30)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/git/stage", method: "POST") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/skills", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/files", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/jira/assigned", method: "GET") == 30)

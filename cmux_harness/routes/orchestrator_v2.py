@@ -1477,19 +1477,21 @@ def read_git_diff(engine, cwd: str, file: str, section: str) -> str:
     if not file:
         raise OrchestratorV2RouteError("file required", 400)
     full_path = os.path.join(cwd, file)
+    if section == "untracked" and os.path.islink(full_path) and os.path.isdir(full_path):
+        raise OrchestratorV2RouteError("untracked directory symlinks cannot be diffed", 400)
     if section == "untracked" and os.path.isdir(full_path):
         parts = []
         for root, _dirs, files in os.walk(full_path):
             for fname in sorted(files):
                 fpath = os.path.relpath(os.path.join(root, fname), cwd)
-                part = engine._run_git_command(cwd, ["diff", "--no-index", "/dev/null", fpath], max_bytes=100 * 1024)
+                part = engine._run_git_command(cwd, ["diff", "--no-index", "--", "/dev/null", fpath], max_bytes=100 * 1024)
                 if not part.startswith("[error]"):
                     parts.append(part)
         return "\n".join(parts) if parts else "(empty directory)"
     if section == "staged":
         args = ["diff", "--cached", "--", file]
     elif section == "untracked":
-        args = ["diff", "--no-index", "/dev/null", file]
+        args = ["diff", "--no-index", "--", "/dev/null", file]
     else:
         args = ["diff", "--", file]
     result = engine._run_git_command(cwd, args, max_bytes=100 * 1024)
@@ -1507,22 +1509,22 @@ def read_git_commit_files(engine, cwd: str, commit_hash: str) -> list[dict[str, 
         ]
     if not cwd or not os.path.isdir(cwd):
         raise OrchestratorV2RouteError("path required", 400)
-    result = engine._run_git_command(cwd, ["diff-tree", "--no-commit-id", "--name-status", "-r", commit_hash])
+    result = engine._run_git_command(
+        cwd,
+        [
+            "diff-tree",
+            "--diff-merges=first-parent",
+            "--root",
+            "--no-commit-id",
+            "--name-status",
+            "-r",
+            "-z",
+            commit_hash,
+        ],
+    )
     if result.startswith("[error]"):
         raise OrchestratorV2RouteError(result, 500)
-    files = []
-    for line in result.splitlines():
-        parts = line.split("	")
-        if len(parts) < 2:
-            continue
-        status = parts[0]
-        file = parts[-1]
-        if status and file:
-            item = {"status": status, "file": file}
-            if len(parts) > 2:
-                item["previousFile"] = parts[1]
-            files.append(item)
-    return files
+    return engine._parse_git_name_status_z(result)
 
 
 def read_git_commit_diff(engine, cwd: str, commit_hash: str, file: str) -> str:
@@ -1543,7 +1545,8 @@ def update_git_index(engine, data: dict[str, Any], *, stage: bool) -> dict[str, 
     file = str(data.get("file") or "").strip()
     if not file:
         raise OrchestratorV2RouteError("file required", 400)
-    args = ["add", "--", file] if stage else ["reset", "HEAD", "--", file]
+    files = engine._git_action_paths(target, file, stage=stage)
+    args = ["add", "--", *files] if stage else ["reset", "--", *files]
     result = engine._run_git_command(target, args)
     if result.startswith("[error]"):
         raise OrchestratorV2RouteError(result, 500)

@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import herdr_harness
-from herdr_harness import attachments
+from herdr_harness import attachments, workspace_tools
 from herdr_harness.alerts import AlertStore
 from herdr_harness.client import HerdrClientError
 from herdr_harness.pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticJournal, PiSemanticManager
@@ -945,6 +945,140 @@ class HerdrServiceTests(unittest.TestCase):
             tools.git_status.assert_called_once_with(checkout.resolve())
             self.assertEqual(payload["workspace_id"], "w1")
             self.assertEqual(payload["branch"], "feature")
+
+    def test_pane_git_tools_use_cached_foreground_cwd_for_every_operation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            foreground_cwd = Path(temp_dir) / "foreground" / "Sources"
+            terminal_cwd = Path(temp_dir) / "terminal"
+            foreground_cwd.mkdir(parents=True)
+            terminal_cwd.mkdir()
+            raw = snapshot_with_status()
+            raw["panes"][0]["foreground_cwd"] = str(foreground_cwd)
+            raw["panes"][0]["cwd"] = str(terminal_cwd)
+            tools = Mock()
+            tools.git_status.return_value = {
+                "ok": True,
+                "cwd": str(Path(temp_dir) / "foreground"),
+                "branch": "feature/git-view",
+                "staged": [],
+                "unstaged": [{"status": "M", "file": "Sources/Pane.swift"}],
+                "untracked": [],
+                "commits": [{"hash": "a1b2c3d", "message": "Pane Git"}],
+            }
+            tools.git_diff.return_value = {
+                "ok": True,
+                "file": "Sources/Pane.swift",
+                "section": "unstaged",
+                "diff": "+change",
+            }
+            tools.git_stage.return_value = {"ok": True, "file": "Sources/Pane.swift"}
+            tools.git_unstage.return_value = {"ok": True, "file": "Sources/Pane.swift"}
+            tools.git_commit_files.return_value = {
+                "ok": True,
+                "hash": "a1b2c3d",
+                "files": [{"status": "M", "file": "Sources/Pane.swift"}],
+            }
+            tools.git_commit_diff.return_value = {
+                "ok": True,
+                "hash": "a1b2c3d",
+                "file": "Sources/Pane.swift",
+                "diff": "+historical",
+            }
+            service = HerdrService(FakeClient([raw]), environ={}, tools=tools)
+            service.refresh_snapshot()
+
+            status = service.pane_git_status("w1:p1")
+            diff = service.pane_git_diff(
+                "w1:p1",
+                file="Sources/Pane.swift",
+                section="unstaged",
+                expected_root=str((Path(temp_dir) / "foreground").resolve()),
+            )
+            expected_root = str((Path(temp_dir) / "foreground").resolve())
+            service.pane_git_stage(
+                "w1:p1",
+                file="Sources/Pane.swift",
+                expected_root=expected_root,
+            )
+            service.pane_git_unstage(
+                "w1:p1",
+                file="Sources/Pane.swift",
+                expected_root=expected_root,
+            )
+            files = service.pane_git_commit_files(
+                "w1:p1",
+                commit_hash="a1b2c3d",
+                expected_root=expected_root,
+            )
+            historical = service.pane_git_commit_diff(
+                "w1:p1",
+                commit_hash="a1b2c3d",
+                file="Sources/Pane.swift",
+                expected_root=expected_root,
+            )
+
+            root = foreground_cwd.resolve()
+            tools.git_status.assert_called_once_with(root)
+            tools.git_diff.assert_called_once_with(
+                root,
+                "Sources/Pane.swift",
+                "unstaged",
+                expected_root=expected_root,
+            )
+            tools.git_stage.assert_called_once_with(
+                root,
+                "Sources/Pane.swift",
+                expected_root=expected_root,
+            )
+            tools.git_unstage.assert_called_once_with(
+                root,
+                "Sources/Pane.swift",
+                expected_root=expected_root,
+            )
+            tools.git_commit_files.assert_called_once_with(
+                root,
+                "a1b2c3d",
+                expected_root=expected_root,
+            )
+            tools.git_commit_diff.assert_called_once_with(
+                root,
+                "a1b2c3d",
+                "Sources/Pane.swift",
+                expected_root=expected_root,
+            )
+            self.assertEqual(status["pane_id"], "w1:p1")
+            self.assertEqual(status["branch"], "feature/git-view")
+            self.assertEqual(diff["diff"], "+change")
+            self.assertEqual(files["files"][0]["status"], "M")
+            self.assertEqual(historical["diff"], "+historical")
+
+    def test_pane_git_context_falls_back_to_cwd_and_rejects_unknown_panes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            terminal_cwd = Path(temp_dir) / "terminal"
+            terminal_cwd.mkdir()
+            raw = snapshot_with_status()
+            raw["panes"][0]["foreground_cwd"] = str(Path(temp_dir) / "missing")
+            raw["panes"][0]["cwd"] = str(terminal_cwd)
+            tools = Mock()
+            tools.git_status.return_value = {
+                "ok": True,
+                "cwd": str(terminal_cwd),
+                "branch": "main",
+                "staged": [],
+                "unstaged": [],
+                "untracked": [],
+                "commits": [],
+            }
+            service = HerdrService(FakeClient([raw]), environ={}, tools=tools)
+            service.refresh_snapshot()
+
+            service.pane_git_status("w1:p1")
+
+            tools.git_status.assert_called_once_with(terminal_cwd.resolve())
+            with self.assertRaises(workspace_tools.WorkspaceToolError) as context:
+                service.pane_git_status("w1:missing")
+            self.assertEqual(context.exception.code, "pane_not_found")
+            self.assertEqual(context.exception.status, 404)
 
     def test_attachment_base64_and_decoded_size_validation_remains_bounded(self):
         with self.assertRaises(attachments.AttachmentError):

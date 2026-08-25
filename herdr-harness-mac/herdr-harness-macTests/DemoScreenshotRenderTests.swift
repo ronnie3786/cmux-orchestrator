@@ -174,7 +174,12 @@ struct DemoScreenshotRenderTests {
                 HerdrBackground()
 
                 VStack(spacing: 0) {
-                    PaneSessionHeader(model: model, pane: pane, store: PiConversationStore())
+                    PaneSessionHeader(
+                        model: model,
+                        pane: pane,
+                        store: PiConversationStore(),
+                        gitIsAvailable: true
+                    )
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
 

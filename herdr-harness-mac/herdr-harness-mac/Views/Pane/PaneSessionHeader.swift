@@ -9,6 +9,10 @@ struct PaneSessionHeader: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     let store: PiConversationStore
+    var gitIsAvailable = false
+    var selectedMode: PaneDetailMode = .terminal
+    var showGit: () -> Void = { }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 11) {
@@ -35,6 +39,28 @@ struct PaneSessionHeader: View {
 
             LastPromptPeekButton(message: store.lastUserMessage)
 
+            if gitIsAvailable {
+                Button("Git changes", systemImage: PaneDetailMode.git.symbol, action: showGit)
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(selectedMode == .git ? HerdrTheme.accent : HerdrTheme.mist)
+                    .frame(width: 30, height: 28)
+                    .contentShape(.rect)
+                    .background(HerdrTheme.graphite)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                            .strokeBorder(
+                                selectedMode == .git ? HerdrTheme.accent : HerdrTheme.surface,
+                                lineWidth: 1
+                            )
+                    }
+                    .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+                    .buttonStyle(.plain)
+                    .help(selectedMode == .git ? "Showing Git changes" : "Show Git changes for this pane")
+                    .accessibilityIdentifier("pane-git-button")
+                    .accessibilityHint("Shows modified files, diffs, and recent commits")
+                    .transition(.opacity.combined(with: .scale(scale: 0.86)))
+            }
+
             Button("Focus on Mac", systemImage: pane.focused ? "scope" : "macwindow") {
                 Task { await model.focus(pane) }
             }
@@ -53,6 +79,7 @@ struct PaneSessionHeader: View {
             .help(pane.focused ? "This pane is focused in Herdr" : "Focus this pane in Herdr")
             .accessibilityHint(pane.focused ? "This pane is focused on your Mac" : "Focuses this pane on your Mac")
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: gitIsAvailable)
         .accessibilityElement(children: .contain)
     }
 

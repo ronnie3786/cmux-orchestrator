@@ -243,6 +243,7 @@ def api_description() -> dict:
             "workspaces": "/api/v1/workspaces",
             "workspace": "/api/v1/workspaces/{workspaceId}",
             "workspaceGit": "/api/v1/workspaces/{workspaceId}/git",
+            "paneGit": "/api/v1/panes/{paneId}/git",
             "workspaceSkills": "/api/v1/workspaces/{workspaceId}/skills",
             "workspaceFiles": "/api/v1/workspaces/{workspaceId}/files",
             "jiraAssigned": "/api/v1/jira/assigned",
@@ -279,6 +280,7 @@ def api_description() -> dict:
             "PATCH|DELETE /api/v1/tabs/{tabId}",
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
+            "POST /api/v1/panes/{paneId}/git/stage|git/unstage",
             "POST /api/v1/panes/{paneId}/focus|zoom|split|send-text|send-keys|run|prompt|start-agent",
             "POST /api/v1/panes/{paneId}/star",
             "POST /api/v1/panes/{paneId}/alerts/read",
@@ -542,6 +544,19 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
 
         def _serve_herdr_web_static(self, path: str) -> bool:
             if path == "/herdr-web":
+                raw_path = urllib.parse.urlparse(self.path).path
+                if not raw_path.endswith("/"):
+                    # Keep the redirect relative so a reverse-proxy prefix is
+                    # preserved by the browser (for example /base/herdr-web/).
+                    try:
+                        self.send_response(308)
+                        self.send_header("Location", "herdr-web/")
+                        self.send_header("Content-Length", "0")
+                        self._common_headers()
+                        self.end_headers()
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        pass
+                    return True
                 target = os.path.join(_HERDR_WEB_STATIC, "index.html")
             elif path.startswith("/herdr-web/"):
                 relative = path[len("/herdr-web/"):].strip("/")
@@ -647,6 +662,79 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         content_type=content_type,
                         data_base64=data_base64,
                     )
+            if len(tail) >= 3 and tail[0] == "panes" and tail[2] == "git":
+                pane_id = _identifier(tail[1], "pane ID")
+                if method == "GET" and len(tail) == 3:
+                    return service.pane_git_status(pane_id)
+                if method == "GET" and len(tail) == 4:
+                    action = tail[3]
+                    if action == "diff":
+                        file = _string((query.get("file") or [""])[0], "file", maximum=4096)
+                        section = str((query.get("section") or ["unstaged"])[0])
+                        expected_root = _string(
+                            (query.get("expected_root") or [""])[0],
+                            "expected_root",
+                            maximum=4096,
+                        )
+                        return service.pane_git_diff(
+                            pane_id,
+                            file=file,
+                            section=section,
+                            expected_root=expected_root,
+                        )
+                    if action == "commit-files":
+                        commit_hash = _string(
+                            (query.get("hash") or [""])[0],
+                            "hash",
+                            maximum=40,
+                        )
+                        expected_root = _string(
+                            (query.get("expected_root") or [""])[0],
+                            "expected_root",
+                            maximum=4096,
+                        )
+                        return service.pane_git_commit_files(
+                            pane_id,
+                            commit_hash=commit_hash,
+                            expected_root=expected_root,
+                        )
+                    if action == "commit-diff":
+                        commit_hash = _string(
+                            (query.get("hash") or [""])[0],
+                            "hash",
+                            maximum=40,
+                        )
+                        file = _string((query.get("file") or [""])[0], "file", maximum=4096)
+                        expected_root = _string(
+                            (query.get("expected_root") or [""])[0],
+                            "expected_root",
+                            maximum=4096,
+                        )
+                        return service.pane_git_commit_diff(
+                            pane_id,
+                            commit_hash=commit_hash,
+                            file=file,
+                            expected_root=expected_root,
+                        )
+                if method == "POST" and len(tail) == 4:
+                    file = _string(body.get("file"), "file", maximum=4096)
+                    expected_root = _string(
+                        body.get("expected_root"),
+                        "expected_root",
+                        maximum=4096,
+                    )
+                    if tail[3] == "stage":
+                        return service.pane_git_stage(
+                            pane_id,
+                            file=file,
+                            expected_root=expected_root,
+                        )
+                    if tail[3] == "unstage":
+                        return service.pane_git_unstage(
+                            pane_id,
+                            file=file,
+                            expected_root=expected_root,
+                        )
             if method == "GET" and tail == ["jira", "assigned"]:
                 project = str((query.get("project") or [""])[0]).strip()
                 limit = _query_int(query, "limit", 50, minimum=1, maximum=100)

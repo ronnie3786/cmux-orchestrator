@@ -3,6 +3,7 @@ import json
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from herdr_harness.events import EventBroker
@@ -95,6 +96,100 @@ class FakeHTTPService:
     def workspace_git_unstage(self, workspace_id, *, file):
         self.calls.append(("workspace.git.unstage", {"workspace_id": workspace_id, "file": file}))
         return {"ok": True, "workspace_id": workspace_id, "file": file}
+
+    def pane_git_status(self, pane_id):
+        self.calls.append(("pane.git", {"pane_id": pane_id}))
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "workspace_id": "w1",
+            "root_path": "/server/resolved/pane-repo",
+            "branch": "feature/pane-git",
+            "staged": [],
+            "unstaged": [{"status": "M", "file": "Sources/Pane.swift"}],
+            "untracked": ["Sources/NewPane.swift"],
+            "commits": [{"hash": "a1b2c3d", "message": "Pane Git"}],
+        }
+
+    def pane_git_diff(self, pane_id, *, file, section, expected_root):
+        if file.startswith("/") or ".." in file.split("/"):
+            raise WorkspaceToolError(
+                "file must stay inside the repository",
+                code="invalid_git_path",
+                status=400,
+            )
+        self.calls.append(
+            (
+                "pane.git.diff",
+                {
+                    "pane_id": pane_id,
+                    "file": file,
+                    "section": section,
+                    "expected_root": expected_root,
+                },
+            )
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "file": file,
+            "section": section,
+            "diff": "+change",
+            "truncated": False,
+        }
+
+    def pane_git_stage(self, pane_id, *, file, expected_root):
+        self.calls.append((
+            "pane.git.stage",
+            {"pane_id": pane_id, "file": file, "expected_root": expected_root},
+        ))
+        return {"ok": True, "pane_id": pane_id, "file": file}
+
+    def pane_git_unstage(self, pane_id, *, file, expected_root):
+        self.calls.append((
+            "pane.git.unstage",
+            {"pane_id": pane_id, "file": file, "expected_root": expected_root},
+        ))
+        return {"ok": True, "pane_id": pane_id, "file": file}
+
+    def pane_git_commit_files(self, pane_id, *, commit_hash, expected_root):
+        self.calls.append(
+            (
+                "pane.git.commit-files",
+                {
+                    "pane_id": pane_id,
+                    "hash": commit_hash,
+                    "expected_root": expected_root,
+                },
+            )
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "hash": commit_hash,
+            "files": [{"status": "M", "file": "Sources/Pane.swift"}],
+        }
+
+    def pane_git_commit_diff(self, pane_id, *, commit_hash, file, expected_root):
+        self.calls.append(
+            (
+                "pane.git.commit-diff",
+                {
+                    "pane_id": pane_id,
+                    "hash": commit_hash,
+                    "file": file,
+                    "expected_root": expected_root,
+                },
+            )
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "hash": commit_hash,
+            "file": file,
+            "diff": "+historical",
+            "truncated": False,
+        }
 
     def workspace_skills(self, workspace_id):
         self.calls.append(("workspace.skills", {"workspace_id": workspace_id}))
@@ -348,6 +443,28 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(headers["WWW-Authenticate"], 'Bearer realm="Herdr Harness"')
         self.assertEqual(body["error"]["code"], "unauthorized")
+
+    def test_herdr_web_redirect_preserves_reverse_proxy_prefixes(self):
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.server.server_address[1],
+            timeout=2,
+        )
+        self.addCleanup(connection.close)
+
+        connection.request("GET", "/herdr-web")
+        response = connection.getresponse()
+        response.read()
+
+        self.assertEqual(response.status, 308)
+        self.assertEqual(response.getheader("Location"), "herdr-web/")
+        self.assertEqual(
+            urllib.parse.urljoin(
+                "https://herdr.example.test/base/herdr-web",
+                response.getheader("Location"),
+            ),
+            "https://herdr.example.test/base/herdr-web/",
+        )
 
     def test_api_prefix_requires_exact_version_segment(self):
         for path in ("/api/v10/workspaces", "/api/v1evil/workspaces"):
@@ -822,6 +939,123 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(auth_body["error"]["code"], "unauthorized")
         self.assertEqual(invalid, 400)
         self.assertEqual(invalid_body["error"]["code"], "invalid_git_path")
+
+    def test_pane_git_routes_are_authenticated_and_forward_no_client_root(self):
+        status_code, _, status = self.request(
+            "/api/v1/panes/w1:p1/git?path=/client/cannot/choose"
+        )
+        diff_code, _, diff = self.request(
+            "/api/v1/panes/w1:p1/git/diff?file=Sources%2FPane.swift&section=unstaged"
+            "&expected_root=%2Fserver%2Fresolved%2Fpane-repo"
+        )
+        stage_code, _, _ = self.request(
+            "/api/v1/panes/w1:p1/git/stage",
+            method="POST",
+            payload={
+                "file": "Sources/Pane.swift",
+                "expected_root": "/server/resolved/pane-repo",
+                "path": "/client/cannot/choose",
+            },
+        )
+        unstage_code, _, _ = self.request(
+            "/api/v1/panes/w1:p1/git/unstage",
+            method="POST",
+            payload={
+                "file": "Sources/Pane.swift",
+                "expected_root": "/server/resolved/pane-repo",
+            },
+        )
+        files_code, _, files = self.request(
+            "/api/v1/panes/w1:p1/git/commit-files?hash=a1b2c3d"
+            "&expected_root=%2Fserver%2Fresolved%2Fpane-repo"
+        )
+        historical_code, _, historical = self.request(
+            "/api/v1/panes/w1:p1/git/commit-diff?hash=a1b2c3d&file=Sources%2FPane.swift"
+            "&expected_root=%2Fserver%2Fresolved%2Fpane-repo"
+        )
+        unauthorized, _, auth_body = self.request(
+            "/api/v1/panes/w1:p1/git",
+            token=None,
+        )
+
+        self.assertEqual(
+            [
+                status_code,
+                diff_code,
+                stage_code,
+                unstage_code,
+                files_code,
+                historical_code,
+            ],
+            [200, 200, 200, 200, 200, 200],
+        )
+        self.assertEqual(status["root_path"], "/server/resolved/pane-repo")
+        self.assertEqual(diff["diff"], "+change")
+        self.assertEqual(files["files"], [{"status": "M", "file": "Sources/Pane.swift"}])
+        self.assertEqual(historical["diff"], "+historical")
+        self.assertEqual(unauthorized, 401)
+        self.assertEqual(auth_body["error"]["code"], "unauthorized")
+        self.assertIn(("pane.git", {"pane_id": "w1:p1"}), self.service.calls)
+        self.assertIn(
+            (
+                "pane.git.commit-diff",
+                {
+                    "pane_id": "w1:p1",
+                    "hash": "a1b2c3d",
+                    "file": "Sources/Pane.swift",
+                    "expected_root": "/server/resolved/pane-repo",
+                },
+            ),
+            self.service.calls,
+        )
+        self.assertNotIn("/client/cannot/choose", repr(self.service.calls))
+
+    def test_pane_git_routes_validate_required_query_and_body_values(self):
+        missing_file, _, missing_file_body = self.request(
+            "/api/v1/panes/w1:p1/git/diff?section=unstaged"
+        )
+        missing_hash, _, missing_hash_body = self.request(
+            "/api/v1/panes/w1:p1/git/commit-files"
+        )
+        missing_stage_file, _, missing_stage_file_body = self.request(
+            "/api/v1/panes/w1:p1/git/stage",
+            method="POST",
+            payload={},
+        )
+        missing_expected_root, _, missing_expected_root_body = self.request(
+            "/api/v1/panes/w1:p1/git/stage",
+            method="POST",
+            payload={"file": "Sources/Pane.swift"},
+        )
+        missing_diff_root, _, missing_diff_root_body = self.request(
+            "/api/v1/panes/w1:p1/git/diff?file=Sources%2FPane.swift&section=unstaged"
+        )
+        missing_files_root, _, missing_files_root_body = self.request(
+            "/api/v1/panes/w1:p1/git/commit-files?hash=a1b2c3d"
+        )
+        missing_commit_diff_root, _, missing_commit_diff_root_body = self.request(
+            "/api/v1/panes/w1:p1/git/commit-diff?hash=a1b2c3d&file=Sources%2FPane.swift"
+        )
+
+        self.assertEqual(
+            [
+                missing_file,
+                missing_hash,
+                missing_stage_file,
+                missing_expected_root,
+                missing_diff_root,
+                missing_files_root,
+                missing_commit_diff_root,
+            ],
+            [400, 400, 400, 400, 400, 400, 400],
+        )
+        self.assertEqual(missing_file_body["error"]["code"], "invalid_request")
+        self.assertEqual(missing_hash_body["error"]["code"], "invalid_request")
+        self.assertEqual(missing_stage_file_body["error"]["code"], "invalid_request")
+        self.assertEqual(missing_expected_root_body["error"]["code"], "invalid_request")
+        self.assertEqual(missing_diff_root_body["error"]["code"], "invalid_request")
+        self.assertEqual(missing_files_root_body["error"]["code"], "invalid_request")
+        self.assertEqual(missing_commit_diff_root_body["error"]["code"], "invalid_request")
 
     def test_jira_routes_validate_and_forward_queries(self):
         assigned_status, _, _ = self.request("/api/v1/jira/assigned?project=HERD&limit=9")

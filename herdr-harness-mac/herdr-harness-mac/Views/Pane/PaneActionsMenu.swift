@@ -4,6 +4,7 @@ struct PaneActionsMenu: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     @Binding var selectedMode: PaneDetailMode
+    var gitIsAvailable = false
     @State private var isConfirmingClose = false
     @State private var isConfirmingEndPiAndClose = false
     @State private var isRenaming = false
@@ -133,6 +134,9 @@ struct PaneActionsMenu: View {
     }
 
     private var availableModes: [PaneDetailMode] {
-        PaneDetailMode.allCases.filter { $0 != .chat || pane.supportsPiSemanticChat }
+        PaneDetailMode.allCases.filter { mode in
+            (mode != .chat || pane.supportsPiSemanticChat)
+                && (mode != .git || gitIsAvailable)
+        }
     }
 }

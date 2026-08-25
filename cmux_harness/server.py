@@ -1556,7 +1556,8 @@ def make_handler(engine, web_token=""):
                 if not cwd:
                     self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
                     return
-                result = engine._run_git_command(cwd, ["add", "--", file])
+                files = engine._git_action_paths(cwd, file, stage=True)
+                result = engine._run_git_command(cwd, ["add", "--", *files])
                 if result.startswith("[error]"):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
@@ -1567,7 +1568,8 @@ def make_handler(engine, web_token=""):
                 if not cwd or not file:
                     self._json_response({"ok": False, "error": "path and file required"}, 400)
                     return
-                result = engine._run_git_command(cwd, ["add", "--", file])
+                files = engine._git_action_paths(cwd, file, stage=True)
+                result = engine._run_git_command(cwd, ["add", "--", *files])
                 if result.startswith("[error]"):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
@@ -1582,7 +1584,8 @@ def make_handler(engine, web_token=""):
                 if not cwd:
                     self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
                     return
-                result = engine._run_git_command(cwd, ["reset", "HEAD", "--", file])
+                files = engine._git_action_paths(cwd, file, stage=False)
+                result = engine._run_git_command(cwd, ["reset", "--", *files])
                 if result.startswith("[error]"):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
@@ -1593,7 +1596,8 @@ def make_handler(engine, web_token=""):
                 if not cwd or not file:
                     self._json_response({"ok": False, "error": "path and file required"}, 400)
                     return
-                result = engine._run_git_command(cwd, ["reset", "HEAD", "--", file])
+                files = engine._git_action_paths(cwd, file, stage=False)
+                result = engine._run_git_command(cwd, ["reset", "--", *files])
                 if result.startswith("[error]"):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
@@ -1653,12 +1657,15 @@ def make_handler(engine, web_token=""):
                     self._json_response({"ok": False, "error": "workspace cwd not found"}, 404)
                     return
                 full_path = os.path.join(cwd, file)
+                if section == "untracked" and os.path.islink(full_path) and os.path.isdir(full_path):
+                    self._json_response({"ok": False, "error": "untracked directory symlinks cannot be diffed"}, 400)
+                    return
                 if section == "untracked" and os.path.isdir(full_path):
                     parts = []
                     for root, _dirs, files in os.walk(full_path):
                         for fname in sorted(files):
                             fpath = os.path.relpath(os.path.join(root, fname), cwd)
-                            part = engine._run_git_command(cwd, ["diff", "--no-index", "/dev/null", fpath], max_bytes=50 * 1024)
+                            part = engine._run_git_command(cwd, ["diff", "--no-index", "--", "/dev/null", fpath], max_bytes=50 * 1024)
                             if not part.startswith("[error]"):
                                 parts.append(part)
                     result = "\n".join(parts) if parts else "(empty directory)"
@@ -1666,7 +1673,7 @@ def make_handler(engine, web_token=""):
                     if section == "staged":
                         diff_args = ["diff", "--cached", "--", file]
                     elif section == "untracked":
-                        diff_args = ["diff", "--no-index", "/dev/null", file]
+                        diff_args = ["diff", "--no-index", "--", "/dev/null", file]
                     else:
                         diff_args = ["diff", "--", file]
                     result = engine._run_git_command(cwd, diff_args, max_bytes=50 * 1024)
@@ -1682,12 +1689,15 @@ def make_handler(engine, web_token=""):
                     self._json_response({"ok": False, "error": "path and file required"}, 400)
                     return
                 full_path = os.path.join(cwd, file)
+                if section == "untracked" and os.path.islink(full_path) and os.path.isdir(full_path):
+                    self._json_response({"ok": False, "error": "untracked directory symlinks cannot be diffed"}, 400)
+                    return
                 if section == "untracked" and os.path.isdir(full_path):
                     parts = []
                     for root, _dirs, files in os.walk(full_path):
                         for fname in sorted(files):
                             fpath = os.path.relpath(os.path.join(root, fname), cwd)
-                            part = engine._run_git_command(cwd, ["diff", "--no-index", "/dev/null", fpath], max_bytes=50 * 1024)
+                            part = engine._run_git_command(cwd, ["diff", "--no-index", "--", "/dev/null", fpath], max_bytes=50 * 1024)
                             if not part.startswith("[error]"):
                                 parts.append(part)
                     result = "\n".join(parts) if parts else "(empty directory)"
@@ -1695,7 +1705,7 @@ def make_handler(engine, web_token=""):
                     if section == "staged":
                         diff_args = ["diff", "--cached", "--", file]
                     elif section == "untracked":
-                        diff_args = ["diff", "--no-index", "/dev/null", file]
+                        diff_args = ["diff", "--no-index", "--", "/dev/null", file]
                     else:
                         diff_args = ["diff", "--", file]
                     result = engine._run_git_command(cwd, diff_args, max_bytes=50 * 1024)
@@ -1743,19 +1753,21 @@ def make_handler(engine, web_token=""):
                     return
                 result = engine._run_git_command(
                     cwd,
-                    ["diff-tree", "--no-commit-id", "--name-status", "-r", commit_hash],
+                    [
+                        "diff-tree",
+                        "--diff-merges=first-parent",
+                        "--root",
+                        "--no-commit-id",
+                        "--name-status",
+                        "-r",
+                        "-z",
+                        commit_hash,
+                    ],
                 )
                 if result.startswith("[error]"):
                     self._json_response({"ok": False, "error": result}, 500)
                     return
-                files = []
-                for line in result.splitlines():
-                    parts = line.split("\t", 1)
-                    if len(parts) != 2:
-                        continue
-                    status, file = parts
-                    if status and file:
-                        files.append({"status": status, "file": file})
+                files = engine._parse_git_name_status_z(result)
                 self._json_response({"ok": True, "files": files})
             elif self.path == "/api/git-commit-diff":
                 cwd = self._resolve_git_path(data.get("path"))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseHash, serializeHash, workspaceFromPaneId } from "./hashRoute";
+import { embeddedGitRoute, parseHash, serializeHash, workspaceFromPaneId } from "./hashRoute";
 
 const EMPTY = { workspaceId: null, paneId: null, params: {} };
 
@@ -106,5 +106,20 @@ describe("serializeHash", () => {
   it("round-trips", () => {
     const route = { workspaceId: "wG", paneId: "wG:p1", params: { deck: "1" } };
     expect(parseHash(serializeHash(route))).toEqual(route);
+  });
+});
+
+describe("embeddedGitRoute", () => {
+  it("recognizes the native pane Git route", () => {
+    expect(embeddedGitRoute("#ws=w1&pane=w1%3Ap2&view=git&embed=1")).toEqual({
+      workspaceId: "w1",
+      paneId: "w1:p2",
+    });
+  });
+
+  it("requires the Git view, embed flag, and pane id", () => {
+    expect(embeddedGitRoute("#ws=w1&pane=w1:p2&view=git")).toBe(null);
+    expect(embeddedGitRoute("#ws=w1&pane=w1:p2&view=terminal&embed=1")).toBe(null);
+    expect(embeddedGitRoute("#ws=w1&view=git&embed=1")).toBe(null);
   });
 });

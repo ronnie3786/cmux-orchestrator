@@ -570,6 +570,33 @@ class HerdrService:
             )
         return workspace, root
 
+    def _pane_tool_context(self, pane_id: str) -> tuple[dict, Path]:
+        snapshot, _ = self._cached_snapshot()
+        pane = pane_index(snapshot).get(pane_id)
+        if pane is None:
+            raise workspace_tools.WorkspaceToolError(
+                "Pane not found",
+                code="pane_not_found",
+                status=404,
+            )
+        for key in ("foreground_cwd", "cwd"):
+            value = pane.get(key)
+            if not isinstance(value, str) or not value or "\x00" in value:
+                continue
+            try:
+                root = Path(value).expanduser()
+                if root.is_absolute():
+                    root = root.resolve()
+                    if root.is_dir():
+                        return pane, root
+            except (OSError, RuntimeError):
+                continue
+        raise workspace_tools.WorkspaceToolError(
+            "Pane has no available foreground or terminal directory",
+            code="pane_root_not_found",
+            status=404,
+        )
+
     @staticmethod
     def _tool_call(
         operation: Callable[..., _ToolResult],
@@ -730,6 +757,130 @@ class HerdrService:
             "ok": True,
             "workspace_id": workspace_id,
             "file": payload.get("file", file),
+        }
+
+    def pane_git_status(self, pane_id: str) -> dict:
+        pane, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(self.cmux_tools.git_status, root)
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "workspace_id": pane.get("workspace_id"),
+            "root_path": (
+                payload.get("cwd")
+                or payload.get("rootPath")
+                or payload.get("root_path")
+                or str(root)
+            ),
+            "branch": payload.get("branch"),
+            "staged": payload.get("staged") if isinstance(payload.get("staged"), list) else [],
+            "unstaged": (
+                payload.get("unstaged") if isinstance(payload.get("unstaged"), list) else []
+            ),
+            "untracked": (
+                payload.get("untracked") if isinstance(payload.get("untracked"), list) else []
+            ),
+            "commits": payload.get("commits") if isinstance(payload.get("commits"), list) else [],
+            "generated_at": utc_now(),
+        }
+
+    def pane_git_diff(
+        self,
+        pane_id: str,
+        *,
+        file: str,
+        section: str,
+        expected_root: str,
+    ) -> dict:
+        _, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(
+            self.cmux_tools.git_diff,
+            root,
+            file,
+            section,
+            expected_root=expected_root,
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "file": payload.get("file", file),
+            "section": payload.get("section", section),
+            "diff": payload.get("diff", ""),
+            "truncated": payload.get("truncated", False),
+        }
+
+    def pane_git_stage(self, pane_id: str, *, file: str, expected_root: str) -> dict:
+        _, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(
+            self.cmux_tools.git_stage,
+            root,
+            file,
+            expected_root=expected_root,
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "file": payload.get("file", file),
+        }
+
+    def pane_git_unstage(self, pane_id: str, *, file: str, expected_root: str) -> dict:
+        _, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(
+            self.cmux_tools.git_unstage,
+            root,
+            file,
+            expected_root=expected_root,
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "file": payload.get("file", file),
+        }
+
+    def pane_git_commit_files(
+        self,
+        pane_id: str,
+        *,
+        commit_hash: str,
+        expected_root: str,
+    ) -> dict:
+        _, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(
+            self.cmux_tools.git_commit_files,
+            root,
+            commit_hash,
+            expected_root=expected_root,
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "hash": payload.get("hash", commit_hash),
+            "files": payload.get("files") if isinstance(payload.get("files"), list) else [],
+        }
+
+    def pane_git_commit_diff(
+        self,
+        pane_id: str,
+        *,
+        commit_hash: str,
+        file: str,
+        expected_root: str,
+    ) -> dict:
+        _, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(
+            self.cmux_tools.git_commit_diff,
+            root,
+            commit_hash,
+            file,
+            expected_root=expected_root,
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "hash": payload.get("hash", commit_hash),
+            "file": payload.get("file", file),
+            "diff": payload.get("diff", ""),
+            "truncated": payload.get("truncated", False),
         }
 
     def workspace_skills(self, workspace_id: str) -> dict:

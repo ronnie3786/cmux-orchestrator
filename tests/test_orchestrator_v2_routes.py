@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, Mock, patch
 from cmux_harness import orchestrator_v2_runtime
 from cmux_harness import orchestrator_v2_storage as v2
 from cmux_harness import orchestrator_v2_voice
+from cmux_harness.engine import HarnessEngine
 from cmux_harness.routes import orchestrator_v2
 from cmux_harness.server import make_handler
 
@@ -94,6 +95,7 @@ class TestOrchestratorV2Routes(unittest.TestCase):
             "commits": [],
         }
         engine._run_git_command.return_value = "diff --git a/app.py b/app.py"
+        engine._git_action_paths.side_effect = lambda _cwd, file, *, stage: [file]
         return engine
 
     def test_create_task_route_creates_cmux_session_and_goal_document(self):
@@ -206,7 +208,43 @@ class TestOrchestratorV2Routes(unittest.TestCase):
 
         self.assertTrue(body["ok"])
         self.assertEqual(body["action"], "unstage")
-        engine._run_git_command.assert_called_once_with(str(self.workspace.resolve()), ["reset", "HEAD", "--", "src/app.py"])
+        engine._run_git_command.assert_called_once_with(str(self.workspace.resolve()), ["reset", "--", "src/app.py"])
+
+    def test_git_stage_route_expands_unstaged_rename_paths(self):
+        engine = self._engine()
+        engine._run_git_command.return_value = ""
+        engine._git_action_paths.side_effect = None
+        engine._git_action_paths.return_value = ["src/old.py", "src/new.py"]
+
+        handler = self._post_json("/api/orchestrator-v2/git/stage", {
+            "path": str(self.workspace),
+            "file": "src/new.py",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        engine._run_git_command.assert_called_once_with(
+            str(self.workspace.resolve()),
+            ["add", "--", "src/old.py", "src/new.py"],
+        )
+
+    def test_git_unstage_route_expands_staged_rename_paths(self):
+        engine = self._engine()
+        engine._run_git_command.return_value = ""
+        engine._git_action_paths.side_effect = None
+        engine._git_action_paths.return_value = ["src/old.py", "src/new.py"]
+
+        handler = self._post_json("/api/orchestrator-v2/git/unstage", {
+            "path": str(self.workspace),
+            "file": "src/new.py",
+        }, engine=engine)
+        body = self._json_body(handler)
+
+        self.assertTrue(body["ok"])
+        engine._run_git_command.assert_called_once_with(
+            str(self.workspace.resolve()),
+            ["reset", "--", "src/old.py", "src/new.py"],
+        )
 
     def test_git_diff_route_expands_untracked_directory(self):
         untracked_dir = self.workspace / "notes"
@@ -224,12 +262,15 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         body = self._json_body(handler)
 
         self.assertEqual(body["diff"], "diff a\ndiff b")
-        self.assertEqual(engine._run_git_command.call_args_list[0].args[1], ["diff", "--no-index", "/dev/null", "notes/a.txt"])
-        self.assertEqual(engine._run_git_command.call_args_list[1].args[1], ["diff", "--no-index", "/dev/null", "notes/b.txt"])
+        self.assertEqual(engine._run_git_command.call_args_list[0].args[1], ["diff", "--no-index", "--", "/dev/null", "notes/a.txt"])
+        self.assertEqual(engine._run_git_command.call_args_list[1].args[1], ["diff", "--no-index", "--", "/dev/null", "notes/b.txt"])
 
     def test_git_commit_files_route_returns_changed_files(self):
         engine = self._engine()
-        engine._run_git_command.return_value = "M\tsrc/app.py\nA\ttests/test_app.py\nR100\told.py\tnew.py"
+        engine._run_git_command.return_value = (
+            "M\0src/app.py\0A\0tests/test_app.py\0R100\0old.py\0new.py\0"
+        )
+        engine._parse_git_name_status_z.side_effect = HarnessEngine._parse_git_name_status_z
 
         handler = self._post_json("/api/orchestrator-v2/git/commit-files", {
             "path": str(self.workspace),
@@ -245,7 +286,16 @@ class TestOrchestratorV2Routes(unittest.TestCase):
         ])
         engine._run_git_command.assert_called_once_with(
             str(self.workspace.resolve()),
-            ["diff-tree", "--no-commit-id", "--name-status", "-r", "abc1234"],
+            [
+                "diff-tree",
+                "--diff-merges=first-parent",
+                "--root",
+                "--no-commit-id",
+                "--name-status",
+                "-r",
+                "-z",
+                "abc1234",
+            ],
         )
 
     def test_git_commit_files_route_rejects_invalid_hash(self):

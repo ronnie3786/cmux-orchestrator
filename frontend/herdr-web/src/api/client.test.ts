@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiRequest, configureClient, getToken, setToken } from "./client";
+import {
+  ApiError,
+  apiRequest,
+  configureClient,
+  getServerUrl,
+  getToken,
+  setToken,
+} from "./client";
 
 const BASE_URL = "http://127.0.0.1:9092/api/v1";
 
@@ -57,6 +64,27 @@ describe("apiRequest", () => {
     expect(url).toBe(`${BASE_URL}/health`);
     const headers = init?.headers as Headers;
     expect(headers.get("Authorization")).toBe("Bearer sekret");
+  });
+
+  it("prefers memory-only native configuration over persisted settings", async () => {
+    setToken("stored-token");
+    localStorage.setItem("herdr.web.serverUrl", "https://stored.example");
+    vi.stubGlobal("window", {
+      __HERDR_NATIVE_CONFIG__: {
+        token: "native-token",
+        serverUrl: "https://native.example/",
+      },
+    });
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+
+    expect(getToken()).toBe("native-token");
+    expect(getServerUrl()).toBe("https://native.example");
+    await apiRequest("/health");
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer native-token");
+    expect(localStorage.getItem("herdr.web.token")).toBe("stored-token");
+    expect(localStorage.getItem("herdr.web.serverUrl")).toBe("https://stored.example");
   });
 
   it("passes through the ok envelope unchanged", async () => {

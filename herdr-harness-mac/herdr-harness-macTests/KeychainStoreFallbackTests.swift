@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Keychain store fallback")
 struct KeychainStoreFallbackTests {
-    @Test("Persists token values to the UserDefaults fallback")
+    @Test("Uses UserDefaults only when the Data Protection Keychain is unavailable")
     func persistsAndClearsFallbackValue() {
         let account = "test-token"
         let fallbackKey = "herdr.keychainFallback.\(account)"
@@ -21,9 +21,13 @@ struct KeychainStoreFallbackTests {
             SecItemDelete(query as CFDictionary)
         }
 
-        KeychainStore.set("some-value", for: account)
+        let status = KeychainStore.set("some-value", for: account)
 
-        #expect(UserDefaults.standard.string(forKey: fallbackKey) == "some-value")
+        if status == errSecSuccess {
+            #expect(UserDefaults.standard.object(forKey: fallbackKey) == nil)
+        } else {
+            #expect(UserDefaults.standard.string(forKey: fallbackKey) == "some-value")
+        }
         #expect(KeychainStore.value(for: account) == "some-value")
 
         KeychainStore.set("", for: account)

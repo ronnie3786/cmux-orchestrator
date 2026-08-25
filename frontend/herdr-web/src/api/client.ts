@@ -4,6 +4,35 @@ export const DEFAULT_SERVER_URL = "http://127.0.0.1:9092";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
+ * Supplied by the native Herdr wrapper at document start. The native bridge is
+ * intentionally read-only from the web client's perspective: these values are
+ * never copied into localStorage.
+ */
+export interface HerdrNativeConfig {
+  token: string;
+  serverUrl: string;
+}
+
+declare global {
+  interface Window {
+    __HERDR_NATIVE_CONFIG__?: HerdrNativeConfig;
+  }
+}
+
+function nativeConfig(): HerdrNativeConfig | null {
+  if (typeof window === "undefined") return null;
+  const config = window.__HERDR_NATIVE_CONFIG__;
+  if (
+    config === undefined ||
+    typeof config.token !== "string" ||
+    typeof config.serverUrl !== "string"
+  ) {
+    return null;
+  }
+  return config;
+}
+
+/**
  * Error thrown for any non-2xx response (or timeout/abort). Carries the
  * envelope's `error.code` when the server sent `{ok:false,error:{code,message}}`.
  */
@@ -51,6 +80,8 @@ export function setDemoRequestHandler(handler: DemoRequestHandler | null): void 
 }
 
 export function getToken(): string {
+  const injected = nativeConfig();
+  if (injected !== null) return injected.token;
   try {
     return localStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
   } catch {
@@ -103,6 +134,10 @@ export function getStoredServerUrl(): string | null {
  * onboarding "Save and reconnect") or the loopback default.
  */
 export function getServerUrl(): string {
+  const injected = nativeConfig();
+  if (injected !== null) {
+    return injected.serverUrl.trim().replace(/\/+$/, "") || DEFAULT_SERVER_URL;
+  }
   return getStoredServerUrl() ?? DEFAULT_SERVER_URL;
 }
 
@@ -142,8 +177,9 @@ function resolveUrl(path: string): string {
 
 /**
  * Fetch wrapper for the herdr harness server.
- * Injects `Authorization: Bearer <token>` from localStorage on every request
- * and enforces a 15 s timeout via AbortController. Throws `ApiError` with the
+ * Injects `Authorization: Bearer <token>` from the native bridge or
+ * localStorage on every request and enforces a 15 s timeout via
+ * AbortController. Throws `ApiError` with the
  * envelope's `{code, message}` on non-2xx responses, and invokes the
  * configured `onUnauthorized` callback on 401.
  *

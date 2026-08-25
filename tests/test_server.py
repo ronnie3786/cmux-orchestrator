@@ -15,6 +15,7 @@ from cmux_harness import auto_policy
 from cmux_harness import objectives
 from cmux_harness.orchestrator import Orchestrator
 from cmux_harness import workspaces
+from cmux_harness.engine import HarnessEngine
 from cmux_harness import server as server_module
 from cmux_harness.server import load_or_create_web_token, make_handler
 from dashboard import DashboardHTTPServer
@@ -563,7 +564,7 @@ class TestServerResponses(unittest.TestCase):
             if not os.path.isdir(cwd):
                 return f"[error] cwd not found: {cwd}"
             result = REAL_SUBPROCESS_RUN(
-                ["git"] + args,
+                ["git", "--literal-pathspecs"] + args,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
@@ -575,10 +576,15 @@ class TestServerResponses(unittest.TestCase):
             return f"[error] git {' '.join(args)} failed: {exc}"
 
         output = result.stdout or ""
-        if result.returncode != 0:
+        diff_no_index = len(args) >= 2 and args[:2] == ["diff", "--no-index"]
+        successful_return_codes = {0, 1} if diff_no_index else {0}
+        if result.returncode not in successful_return_codes:
             err = (result.stderr or "").strip()
             if err:
                 output = err if not output.strip() else f"{output.rstrip()}\n{err}"
+            detail = output.strip() or f"git {' '.join(args)} exited with status {result.returncode}"
+            if not detail.startswith("[error]"):
+                output = f"[error] {detail}"
         if max_bytes is not None:
             raw = output.encode("utf-8", errors="replace")
             if len(raw) > max_bytes:
@@ -589,6 +595,11 @@ class TestServerResponses(unittest.TestCase):
     def _make_git_engine(self):
         engine = Mock()
         engine._run_git_command.side_effect = self._run_git_command
+        engine._parse_git_name_status_z.side_effect = HarnessEngine._parse_git_name_status_z
+        engine._parse_git_status_z.side_effect = HarnessEngine._parse_git_status_z
+        engine._git_action_paths.side_effect = lambda cwd, file, *, stage: (
+            HarnessEngine._git_action_paths(engine, cwd, file, stage=stage)
+        )
         return engine
 
     def _git(self, cwd, *args):
@@ -616,6 +627,66 @@ class TestServerResponses(unittest.TestCase):
         self._git(repo_path, "commit", "-m", "update app")
         second_hash = self._git(repo_path, "rev-parse", "HEAD").stdout.strip()
         return repo_path, first_hash, second_hash
+
+    def test_run_git_command_marks_nonzero_exit_as_error(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=128,
+            stdout="",
+            stderr="fatal: pathspec did not match",
+        )
+        with patch("cmux_harness.engine.subprocess.run", return_value=completed):
+            output = HarnessEngine._run_git_command(
+                Mock(),
+                self.tmpdir.name,
+                ["add", "--", "missing.txt"],
+            )
+
+        self.assertEqual(output, "[error] fatal: pathspec did not match")
+
+    def test_run_git_command_allows_diff_no_index_exit_one(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="diff --git a/dev/null b/new.txt",
+            stderr="",
+        )
+        with patch("cmux_harness.engine.subprocess.run", return_value=completed):
+            output = HarnessEngine._run_git_command(
+                Mock(),
+                self.tmpdir.name,
+                ["diff", "--no-index", "/dev/null", "new.txt"],
+            )
+
+        self.assertEqual(output, "diff --git a/dev/null b/new.txt")
+
+    def test_git_action_paths_does_not_expand_copy_source(self):
+        engine = Mock()
+        engine._parse_git_status_z.side_effect = HarnessEngine._parse_git_status_z
+        cases = (
+            (True, " C copied.txt\0source.txt\0"),
+            (False, "C  copied.txt\0source.txt\0"),
+        )
+
+        for stage, stdout in cases:
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=stdout,
+                stderr="",
+            )
+            with self.subTest(stage=stage), patch(
+                "cmux_harness.engine.subprocess.run",
+                return_value=completed,
+            ):
+                paths = HarnessEngine._git_action_paths(
+                    engine,
+                    self.tmpdir.name,
+                    "copied.txt",
+                    stage=stage,
+                )
+
+            self.assertEqual(paths, ["copied.txt"])
 
     def test_get_objective_debug_endpoint_returns_filtered_entries(self):
         objective = objectives.create_objective("Ship feature", "/tmp/project")
@@ -1358,6 +1429,76 @@ class TestServerResponses(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(body, {"ok": True, "files": [{"status": "M", "file": "src/app.py"}]})
 
+    def test_git_commit_files_returns_root_commit_files(self):
+        repo_path, first_hash, _second_hash = self._create_git_repo_with_history(
+            "repo-root-commit-files"
+        )
+
+        handler = self._post_json(
+            "/api/git-commit-files",
+            {"path": str(repo_path), "hash": first_hash},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "files": [{"status": "A", "file": "src/app.py"}]})
+
+    def test_git_commit_files_returns_first_parent_changes_for_merge_commit(self):
+        repo_path = Path(self.tmpdir.name) / "repo-merge-commit-files"
+        repo_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        self._git(repo_path, "config", "user.name", "Test User")
+        self._git(repo_path, "config", "user.email", "test@example.com")
+        (repo_path / "base.txt").write_text("base\n", encoding="utf-8")
+        self._git(repo_path, "add", "base.txt")
+        self._git(repo_path, "commit", "-m", "base")
+        main_branch = self._git(repo_path, "branch", "--show-current").stdout.strip()
+
+        self._git(repo_path, "checkout", "-b", "feature")
+        (repo_path / "feature.txt").write_text("feature\n", encoding="utf-8")
+        self._git(repo_path, "add", "feature.txt")
+        self._git(repo_path, "commit", "-m", "feature")
+
+        self._git(repo_path, "checkout", main_branch)
+        (repo_path / "main.txt").write_text("main\n", encoding="utf-8")
+        self._git(repo_path, "add", "main.txt")
+        self._git(repo_path, "commit", "-m", "main")
+        self._git(repo_path, "merge", "--no-ff", "feature", "-m", "merge feature")
+        merge_hash = self._git(repo_path, "rev-parse", "HEAD").stdout.strip()
+
+        handler = self._post_json(
+            "/api/git-commit-files",
+            {"path": str(repo_path), "hash": merge_hash},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(
+            body,
+            {"ok": True, "files": [{"status": "A", "file": "feature.txt"}]},
+        )
+
+    def test_git_commit_files_preserves_unicode_pathnames(self):
+        repo_path = Path(self.tmpdir.name) / "repo-unicode-commit-files"
+        repo_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        self._git(repo_path, "config", "user.name", "Test User")
+        self._git(repo_path, "config", "user.email", "test@example.com")
+        file = "café notes.txt"
+        (repo_path / file).write_text("first\n", encoding="utf-8")
+        self._git(repo_path, "add", file)
+        self._git(repo_path, "commit", "-m", "unicode path")
+        commit_hash = self._git(repo_path, "rev-parse", "HEAD").stdout.strip()
+
+        handler = self._post_json(
+            "/api/git-commit-files",
+            {"path": str(repo_path), "hash": commit_hash},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True, "files": [{"status": "A", "file": file}]})
+
     def test_git_commit_files_rejects_invalid_hash(self):
         repo_path = Path(self.tmpdir.name) / "repo-invalid-hash"
         repo_path.mkdir(parents=True)
@@ -1386,6 +1527,188 @@ class TestServerResponses(unittest.TestCase):
         self.assertIn("diff --git a/src/app.py b/src/app.py", body["diff"])
         self.assertIn("-print('one')", body["diff"])
         self.assertIn("+print('two')", body["diff"])
+
+    def test_git_commit_diff_returns_diff_for_root_commit(self):
+        repo_path, first_hash, _second_hash = self._create_git_repo_with_history(
+            "repo-root-commit-diff"
+        )
+
+        handler = self._post_json(
+            "/api/git-commit-diff",
+            {"path": str(repo_path), "hash": first_hash, "file": "src/app.py"},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body["ok"], True)
+        self.assertIn("diff --git a/src/app.py b/src/app.py", body["diff"])
+        self.assertIn("+print('one')", body["diff"])
+
+    def test_git_stage_path_reports_missing_file_failure(self):
+        repo_path, _first_hash, _second_hash = self._create_git_repo_with_history(
+            "repo-stage-missing"
+        )
+
+        handler = self._post_json(
+            "/api/git-stage-path",
+            {"path": str(repo_path), "file": "missing.txt"},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(500)
+        self.assertFalse(body["ok"])
+        self.assertTrue(body["error"].startswith("[error]"))
+
+    def test_git_stage_path_treats_pathspec_magic_as_a_literal_filename(self):
+        repo_path = Path(self.tmpdir.name) / "repo-literal-pathspec"
+        repo_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        magic_file = ":(glob)*"
+        (repo_path / magic_file).write_text("magic\n", encoding="utf-8")
+        (repo_path / "innocent.txt").write_text("innocent\n", encoding="utf-8")
+
+        handler = self._post_json(
+            "/api/git-stage-path",
+            {"path": str(repo_path), "file": magic_file},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+        self.assertEqual(
+            self._git(repo_path, "diff", "--cached", "--name-only", "-z").stdout,
+            magic_file + "\0",
+        )
+        self.assertEqual(
+            self._git(repo_path, "ls-files", "--others", "--exclude-standard").stdout,
+            "innocent.txt\n",
+        )
+
+    def test_git_diff_path_rejects_untracked_directory_symlink(self):
+        repo_path = Path(self.tmpdir.name) / "repo-symlink-diff"
+        outside_path = Path(self.tmpdir.name) / "outside-symlink-diff"
+        repo_path.mkdir()
+        outside_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        (outside_path / "secret.txt").write_text("outside secret\n", encoding="utf-8")
+        (repo_path / "linked-directory").symlink_to(outside_path, target_is_directory=True)
+
+        handler = self._post_json(
+            "/api/git-diff-path",
+            {"path": str(repo_path), "file": "linked-directory", "section": "untracked"},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        handler.send_response.assert_called_once_with(400)
+        self.assertFalse(body["ok"])
+        self.assertNotIn("outside secret", json.dumps(body))
+
+    def test_git_diff_path_accepts_option_shaped_untracked_filename(self):
+        repo_path = Path(self.tmpdir.name) / "repo-option-filename-diff"
+        repo_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        (repo_path / "--stat").write_text("literal option-shaped file\n", encoding="utf-8")
+
+        handler = self._post_json(
+            "/api/git-diff-path",
+            {"path": str(repo_path), "file": "--stat", "section": "untracked"},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(body["ok"])
+        self.assertIn("+literal option-shaped file", body["diff"])
+
+    def test_git_unstage_path_works_before_initial_commit(self):
+        repo_path = Path(self.tmpdir.name) / "repo-unborn-unstage"
+        repo_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        target = repo_path / "first.txt"
+        target.write_text("first\n", encoding="utf-8")
+        self._git(repo_path, "add", "first.txt")
+
+        handler = self._post_json(
+            "/api/git-unstage-path",
+            {"path": str(repo_path), "file": "first.txt"},
+            engine=self._make_git_engine(),
+        )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+        self.assertEqual(self._git(repo_path, "status", "--short").stdout, "?? first.txt\n")
+
+    def test_git_unstage_path_handles_staged_rename(self):
+        repo_path = Path(self.tmpdir.name) / "repo-staged-rename"
+        repo_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        self._git(repo_path, "config", "user.name", "Test User")
+        self._git(repo_path, "config", "user.email", "test@example.com")
+        (repo_path / "old.txt").write_text("same contents\n", encoding="utf-8")
+        self._git(repo_path, "add", "old.txt")
+        self._git(repo_path, "commit", "-m", "initial")
+        (repo_path / "old.txt").rename(repo_path / "new.txt")
+        self._git(repo_path, "add", "--all")
+
+        with patch("cmux_harness.engine.subprocess.run", side_effect=REAL_SUBPROCESS_RUN):
+            handler = self._post_json(
+                "/api/git-unstage-path",
+                {"path": str(repo_path), "file": "new.txt"},
+                engine=self._make_git_engine(),
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+        self.assertEqual(
+            self._git(repo_path, "status", "--short").stdout,
+            " D old.txt\n?? new.txt\n",
+        )
+
+    def test_git_stage_path_handles_unstaged_rename(self):
+        repo_path = Path(self.tmpdir.name) / "repo-unstaged-rename"
+        repo_path.mkdir()
+        self._git(repo_path.parent, "init", repo_path.name)
+        self._git(repo_path, "config", "user.name", "Test User")
+        self._git(repo_path, "config", "user.email", "test@example.com")
+        (repo_path / "old.txt").write_text("same contents\n", encoding="utf-8")
+        self._git(repo_path, "add", "old.txt")
+        self._git(repo_path, "commit", "-m", "initial")
+        (repo_path / "old.txt").rename(repo_path / "new.txt")
+        # Intent-to-add lets porcelain report the worktree change as one
+        # destination-first rename record without staging either pathname.
+        self._git(repo_path, "add", "--intent-to-add", "new.txt")
+
+        with patch("cmux_harness.engine.subprocess.run", side_effect=REAL_SUBPROCESS_RUN):
+            handler = self._post_json(
+                "/api/git-stage-path",
+                {"path": str(repo_path), "file": "new.txt"},
+                engine=self._make_git_engine(),
+            )
+
+        body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(body, {"ok": True})
+        self.assertEqual(
+            self._git(repo_path, "status", "--short").stdout,
+            "R  old.txt -> new.txt\n",
+        )
+
+    def test_git_status_preserves_unicode_pathnames(self):
+        repo_path, _first_hash, _second_hash = self._create_git_repo_with_history(
+            "repo-unicode-status"
+        )
+        file = "café notes.txt"
+        (repo_path / file).write_text("untracked\n", encoding="utf-8")
+        engine = Mock()
+        engine._run_git_command.side_effect = lambda cwd, args, max_bytes=None: (
+            HarnessEngine._run_git_command(engine, cwd, args, max_bytes=max_bytes)
+        )
+        engine._parse_git_status_z.side_effect = HarnessEngine._parse_git_status_z
+
+        with patch("cmux_harness.engine.subprocess.run", side_effect=REAL_SUBPROCESS_RUN):
+            status = HarnessEngine._get_git_status_payload(engine, str(repo_path))
+
+        self.assertIn(file, status["untracked"])
 
     def test_open_worktree_route_opens_active_worktree_in_vscode(self):
         worktree_path = Path(self.tmpdir.name) / "objective-worktree"

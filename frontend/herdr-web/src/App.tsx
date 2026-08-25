@@ -10,7 +10,13 @@ import {
 import { useConnectionStore } from "./store/connectionStore";
 import { useEventStreamStore } from "./store/eventStream";
 import { useWorkspacesStore } from "./store/workspacesStore";
-import { getHashRoute, parseHash, setHashRoute, subscribeHash } from "./lib/hashRoute";
+import {
+  embeddedGitRoute,
+  getHashRoute,
+  parseHash,
+  setHashRoute,
+  subscribeHash,
+} from "./lib/hashRoute";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { WorkspaceListView } from "./components/Workspace/WorkspaceListView";
 import { DetailPlaceholder } from "./components/Detail/DetailPlaceholder";
@@ -43,6 +49,19 @@ import "./styles/app.css";
  * Attention Deck (P3-run-B).
  */
 export default function App() {
+  const embeddedGit = embeddedGitRoute(window.location.hash);
+  if (embeddedGit !== null) {
+    return (
+      <>
+        <GitStatusView paneId={embeddedGit.paneId} embedded />
+        <Toast />
+      </>
+    );
+  }
+  return <HerdrShell />;
+}
+
+function HerdrShell() {
   const [token, setStoredToken] = useState<string>(() => getToken());
   const [probed, setProbed] = useState(false);
   // Responsive drawers: the "chats" navigator rail becomes a drawer below
@@ -243,7 +262,7 @@ export default function App() {
         showPiChat ? (
           <PiChatPane />
         ) : effectiveView === "git" ? (
-          <GitStatusView />
+          <GitStatusView paneId={selectedPaneId} />
         ) : effectiveView === "skills" ? (
           <SkillsView />
         ) : (

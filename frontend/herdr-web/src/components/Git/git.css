@@ -1,123 +1,324 @@
-/* Git pane view + diff sheet (P11-run-A). Layout reuses .hz-detail-col. */
+/* Pane-scoped Git workbench. It inherits Herdr's dark, low-chrome palette. */
 
 .hz-git-col {
+  position: relative;
   display: flex;
   flex-direction: column;
 }
 
-.hz-git-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 14px;
+.hz-git-col-embedded {
+  width: 100%;
+  height: 100vh;
+  min-height: 100vh;
 }
 
-/* --- repository header ------------------------------------------------ */
+.hz-git-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 28px;
+}
+
+.hz-git-workbench {
+  width: min(920px, 100%);
+  margin: 0 auto;
+}
+
+/* Repository header */
 
 .hz-git-header {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
-  padding: 10px 12px;
-  margin-bottom: 14px;
+  overflow: hidden;
+  margin-bottom: 16px;
 }
 
-.hz-git-header-row {
+.hz-git-header-main {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+}
+
+.hz-git-repo-mark {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid rgba(47, 129, 247, 0.28);
+  border-radius: 10px;
+  background: rgba(47, 129, 247, 0.1);
+  color: var(--accent);
+}
+
+.hz-git-repo-copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.hz-git-eyebrow,
+.hz-diff-eyebrow {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hz-git-identity {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.hz-git-branch {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
+.hz-git-repo-name {
+  max-width: 42%;
   overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 50%;
+}
+
+.hz-git-branch {
+  max-width: 45%;
+  overflow: hidden;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hz-git-detached {
+  flex: none;
+  color: var(--orange);
   font-size: 10.5px;
-  padding: 2px 7px;
-  border-radius: 8px;
-  background: var(--panel-strong);
-  color: var(--muted);
-  flex-shrink: 0;
 }
 
-.hz-git-refresh {
-  margin-left: auto;
-  padding: 4px 10px;
+.hz-git-refresh,
+.hz-diff-done {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
+  min-height: 30px;
+  padding: 0 10px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 8px;
   background: var(--panel);
   color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-  flex-shrink: 0;
+  font-size: 11.5px;
 }
 
-.hz-git-refresh:hover {
+.hz-git-refresh:hover,
+.hz-diff-done:hover {
   border-color: var(--line-strong);
+  background: var(--panel-strong);
   color: var(--text);
 }
 
+.hz-git-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 31px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.12);
+}
+
 .hz-git-changed {
-  font-size: 12px;
-  color: var(--muted);
-  flex-shrink: 0;
+  flex: none;
+  padding-left: 10px;
+  position: relative;
+  color: var(--orange);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.hz-git-changed::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateY(-50%);
+}
+
+.hz-git-changed-clean {
+  color: var(--green);
 }
 
 .hz-git-path {
-  font-size: 11.5px;
-  color: var(--muted-dim);
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
+  color: var(--muted-dim);
+  font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* --- empty / loading states ------------------------------------------- */
+/* Loading, error, and clean states */
 
 .hz-git-state {
+  min-height: 220px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 24px 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 28px 12px;
+  color: var(--muted-dim);
   text-align: center;
 }
 
 .hz-git-state-title {
-  font-size: 13px;
-  font-weight: 600;
+  display: block;
   color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .hz-git-state-sub {
-  font-size: 12px;
+  display: block;
+  margin-top: 3px;
   color: var(--muted);
+  font-size: 11.5px;
 }
 
-/* --- file sections ------------------------------------------------------ */
+.hz-git-state-spinner,
+.hz-git-refresh-spinning {
+  animation: hz-git-spin 0.9s linear infinite;
+}
+
+.hz-git-clean-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 1px solid rgba(48, 209, 88, 0.16);
+  border-radius: var(--radius);
+  background: rgba(48, 209, 88, 0.035);
+}
+
+.hz-git-clean-pulse {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 5px rgba(48, 209, 88, 0.1);
+}
+
+.hz-git-refresh-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 14px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 159, 10, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 159, 10, 0.05);
+  color: var(--orange);
+  font-size: 11.5px;
+}
+
+.hz-git-refresh-warning span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-git-refresh-warning button,
+.hz-git-commit-error button,
+.hz-diff-sidebar-retry {
+  border: 0;
+  background: transparent;
+  color: currentColor;
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Change groups and the colored change rail */
+
+.hz-git-change-stack {
+  display: grid;
+  gap: 14px;
+}
 
 .hz-git-section {
-  margin-bottom: 14px;
+  min-width: 0;
 }
 
-.hz-git-section-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+.hz-git-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 7px;
+}
+
+.hz-git-section-heading h2,
+.hz-git-history-heading h2 {
+  margin: 0;
   color: var(--muted);
-  margin: 0 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.hz-git-section-heading span {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-align: center;
+}
+
+.hz-git-file-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
 }
 
 .hz-git-row {
+  position: relative;
+  min-height: 38px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
+  gap: 4px;
+  padding: 0 8px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.hz-git-row:last-child {
+  border-bottom: 0;
 }
 
 .hz-git-row-diffable {
@@ -128,153 +329,455 @@
   background: var(--panel);
 }
 
-.hz-git-badge {
-  width: 16px;
-  text-align: center;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-
-.hz-git-badge-green {
-  color: var(--green);
-}
-
-.hz-git-badge-orange {
-  color: var(--orange);
-}
-
-.hz-git-badge-muted {
-  color: var(--muted-dim);
-}
-
-.hz-git-file {
-  font-size: 12.5px;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.hz-git-row-open {
+  align-self: stretch;
   flex: 1;
   min-width: 0;
-}
-
-.hz-git-row-action {
-  padding: 3px 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  color: var(--muted);
-  font-size: 11.5px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.hz-git-row-action:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
-}
-
-/* --- recent commits ------------------------------------------------------ */
-
-.hz-git-commit-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  padding: 5px 0 5px 11px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
 }
 
-.hz-git-commit-message {
-  font-size: 12.5px;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.hz-git-row-open:focus-visible {
+  background: var(--panel);
+}
+
+.hz-git-change-rail {
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--muted);
+}
+
+.hz-git-section-staged .hz-git-change-rail,
+.hz-git-section-staged .hz-git-badge {
+  background: var(--green);
+  color: var(--green);
+}
+
+.hz-git-section-unstaged .hz-git-change-rail,
+.hz-git-section-unstaged .hz-git-badge {
+  background: var(--orange);
+  color: var(--orange);
+}
+
+.hz-git-section-untracked .hz-git-change-rail,
+.hz-git-section-untracked .hz-git-badge {
+  background: var(--muted);
+  color: var(--muted);
+}
+
+.hz-git-badge {
+  width: 18px;
+  flex: none;
+  background: transparent !important;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.hz-git-file {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-git-row-action {
+  min-height: 25px;
+  padding: 0 8px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-dim);
+  font-size: 10.5px;
+}
+
+.hz-git-row:hover .hz-git-row-action,
+.hz-git-row-action:focus-visible {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--text);
+}
+
+/* Commit history */
+
+.hz-git-history {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.hz-git-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  padding: 0 7px;
+}
+
+.hz-git-history-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.hz-git-history-heading > span {
+  color: var(--muted-dim);
+  font-size: 10.5px;
+}
+
+.hz-git-commits {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.hz-git-commit {
+  border-bottom: 1px solid var(--line);
+}
+
+.hz-git-commit:last-child {
+  border-bottom: 0;
+}
+
+.hz-git-commit-row {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+
+.hz-git-commit-row:hover,
+.hz-git-commit-expanded > .hz-git-commit-row {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .hz-git-commit-hash {
-  font-size: 11px;
-  color: var(--muted-dim);
-  flex-shrink: 0;
+  flex: none;
+  color: var(--accent);
+  font-size: 10.5px;
 }
 
-/* --- diff sheet ----------------------------------------------------------- */
+.hz-git-commit-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-git-commit-files {
+  padding: 3px 8px 7px 31px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.hz-git-commit-file {
+  width: 100%;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+
+.hz-git-commit-file:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.hz-git-commit-file > span:nth-child(2) {
+  overflow: hidden;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-git-commit-file-status {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.hz-git-commit-state {
+  margin: 0;
+  padding: 8px 14px 10px 39px;
+  background: rgba(0, 0, 0, 0.12);
+  color: var(--muted-dim);
+  font-size: 10.5px;
+}
+
+.hz-git-commit-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--red);
+}
+
+/* Native-feeling context menu */
+
+.hz-git-context-menu {
+  position: fixed;
+  z-index: 90;
+  width: 194px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: rgba(14, 17, 22, 0.98);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.48);
+}
+
+.hz-git-context-menu button {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.hz-git-context-menu button:hover,
+.hz-git-context-menu button:focus-visible {
+  background: rgba(47, 129, 247, 0.2);
+}
+
+.hz-git-context-menu svg {
+  color: var(--muted);
+}
+
+.hz-git-context-rule {
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--line);
+}
+
+/* Diff inspector */
 
 .hz-diff-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.68);
 }
 
 .hz-diff-sheet {
+  width: min(1120px, 100%);
+  height: min(760px, 100%);
   display: flex;
   flex-direction: column;
-  width: min(860px, calc(100vw - 48px));
-  height: min(640px, calc(100vh - 96px));
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: #0b0e13;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
   overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: #0b0e13;
+  box-shadow: 0 26px 86px rgba(0, 0, 0, 0.62);
 }
 
 .hz-diff-header {
+  min-height: 54px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
   border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.hz-diff-heading {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
 }
 
 .hz-diff-title {
-  font-size: 12.5px;
-  color: var(--text);
   overflow: hidden;
+  color: var(--text);
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hz-diff-layout {
   flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+}
+
+.hz-diff-sidebar {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.012);
 }
 
-.hz-diff-section {
-  font-size: 11px;
-  color: var(--muted);
-  flex-shrink: 0;
+.hz-diff-sidebar-header {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--accent);
 }
 
-.hz-diff-done {
-  padding: 4px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
+.hz-diff-sidebar-header > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.hz-diff-sidebar-header span {
+  overflow: hidden;
   color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.hz-diff-done:hover {
-  border-color: var(--line-strong);
-  background: var(--panel-strong);
+.hz-diff-sidebar-header small {
+  overflow: hidden;
+  color: var(--muted-dim);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-diff-sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 7px 18px;
+}
+
+.hz-diff-sidebar-section {
+  margin-bottom: 10px;
+}
+
+.hz-diff-sidebar-section h3 {
+  margin: 0;
+  padding: 6px 7px 4px;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hz-diff-sidebar-section > button,
+.hz-diff-sidebar-commit > button,
+.hz-diff-sidebar-commit-files > button:not(.hz-diff-sidebar-retry) {
+  width: 100%;
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+
+.hz-diff-sidebar-section > button > span:last-child,
+.hz-diff-sidebar-commit-files > button > span:last-child {
+  overflow: hidden;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-diff-sidebar-section > button:hover,
+.hz-diff-sidebar-commit > button:hover,
+.hz-diff-sidebar-commit-files > button:hover,
+.hz-diff-sidebar-file-active {
+  background: var(--panel-strong) !important;
+  color: var(--text) !important;
+}
+
+.hz-diff-sidebar-commit > button {
+  grid-template-columns: 14px 58px minmax(0, 1fr);
+}
+
+.hz-diff-sidebar-commit > button span:nth-child(2) {
+  color: var(--accent);
+  font-size: 9.5px;
+}
+
+.hz-diff-sidebar-commit > button span:last-child {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-diff-sidebar-commit-files {
+  padding: 1px 0 3px 14px;
+}
+
+.hz-diff-sidebar-commit-files small {
+  display: block;
+  padding: 5px 7px;
+  color: var(--muted-dim);
+  font-size: 9.5px;
 }
 
 .hz-diff-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 9px 0 20px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
 .hz-diff-state {
-  padding: 24px 16px;
+  padding: 34px 16px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 11.5px;
   text-align: center;
 }
 
@@ -285,68 +788,68 @@
 .hz-diff-error {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   align-items: center;
+  gap: 7px;
+}
+
+.hz-diff-error small {
+  max-width: 480px;
+  color: var(--muted);
 }
 
 .hz-diff-error button {
-  padding: 4px 12px;
+  min-height: 28px;
+  padding: 0 10px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 7px;
   background: var(--panel);
   color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
+  font-size: 10.5px;
 }
 
 .hz-diff-row {
-  display: flex;
+  width: max-content;
+  min-width: 100%;
+  min-height: 16px;
+  display: grid;
+  grid-template-columns: 42px 42px 14px minmax(max-content, 1fr);
   align-items: baseline;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 16px;
 }
 
 .hz-diff-gutter {
-  width: 40px;
-  text-align: right;
-  padding-right: 8px;
+  padding-right: 7px;
   color: var(--muted-dim);
-  flex-shrink: 0;
+  text-align: right;
   user-select: none;
 }
 
 .hz-diff-marker {
-  width: 14px;
   color: var(--muted-dim);
-  flex-shrink: 0;
   user-select: none;
 }
 
 .hz-diff-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  padding-right: 16px;
   color: var(--text);
+  white-space: pre;
 }
 
-/* Line colors: add green / minus red / hunk blue. */
 .hz-diff-row-addition {
-  background: rgba(48, 209, 88, 0.12);
+  background: rgba(48, 209, 88, 0.1);
 }
 
-.hz-diff-row-addition .hz-diff-marker {
-  color: var(--green);
-}
-
+.hz-diff-row-addition .hz-diff-marker,
 .hz-diff-row-addition .hz-diff-text {
   color: var(--green);
 }
 
 .hz-diff-row-deletion {
-  background: rgba(255, 69, 58, 0.12);
+  background: rgba(255, 69, 58, 0.1);
 }
 
-.hz-diff-row-deletion .hz-diff-marker {
-  color: var(--red);
-}
-
+.hz-diff-row-deletion .hz-diff-marker,
 .hz-diff-row-deletion .hz-diff-text {
   color: var(--red);
 }
@@ -361,4 +864,44 @@
 
 .hz-diff-row-metadata .hz-diff-text {
   color: var(--muted);
+}
+
+@keyframes hz-git-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .hz-git-scroll {
+    padding: 12px;
+  }
+
+  .hz-git-repo-name {
+    max-width: 55%;
+  }
+
+  .hz-git-refresh span,
+  .hz-git-history-heading > span {
+    display: none;
+  }
+
+  .hz-diff-backdrop {
+    padding: 8px;
+  }
+
+  .hz-diff-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .hz-diff-sidebar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hz-git-state-spinner,
+  .hz-git-refresh-spinning {
+    animation: none;
+  }
 }

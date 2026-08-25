@@ -685,7 +685,7 @@ class HarnessEngine(threading.Thread):
             if not os.path.isdir(cwd):
                 return f"[error] cwd not found: {cwd}"
             result = subprocess.run(
-                ["git"] + args,
+                ["git", "--literal-pathspecs"] + args,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
@@ -697,16 +697,125 @@ class HarnessEngine(threading.Thread):
             return f"[error] git {' '.join(args)} failed: {e}"
 
         output = result.stdout or ""
-        if result.returncode != 0:
+        diff_no_index = len(args) >= 2 and args[:2] == ["diff", "--no-index"]
+        successful_return_codes = {0, 1} if diff_no_index else {0}
+        if result.returncode not in successful_return_codes:
             err = (result.stderr or "").strip()
             if err:
                 output = err if not output.strip() else f"{output.rstrip()}\n{err}"
+            detail = output.strip() or f"git {' '.join(args)} exited with status {result.returncode}"
+            if not detail.startswith("[error]"):
+                output = f"[error] {detail}"
         if max_bytes is not None:
             raw = output.encode("utf-8", errors="replace")
             if len(raw) > max_bytes:
                 marker = b"\n...[truncated]..."
                 output = (raw[: max_bytes - len(marker)] + marker).decode("utf-8", errors="replace")
         return output.strip()
+
+    @staticmethod
+    def _parse_git_name_status_z(output):
+        """Parse NUL-delimited name-status output without pathname munging."""
+
+        tokens = output.split("\0")
+        files = []
+        index = 0
+        while index < len(tokens):
+            status = tokens[index]
+            index += 1
+            if not status:
+                continue
+            if status[0] in {"R", "C"}:
+                if index + 1 >= len(tokens):
+                    break
+                previous_file = tokens[index]
+                file = tokens[index + 1]
+                index += 2
+                if file:
+                    files.append(
+                        {
+                            "status": status,
+                            "file": file,
+                            "previousFile": previous_file,
+                        }
+                    )
+                continue
+            if index >= len(tokens):
+                break
+            file = tokens[index]
+            index += 1
+            if file:
+                files.append({"status": status, "file": file})
+        return files
+
+    @staticmethod
+    def _parse_git_status_z(output):
+        """Parse porcelain v1 -z output into the existing Git status shape."""
+
+        staged, unstaged, untracked = [], [], []
+        records = output.split("\0")
+        index = 0
+        while index < len(records):
+            record = records[index]
+            index += 1
+            if len(record) < 3:
+                continue
+            x, y, file = record[0], record[1], record[3:]
+            previous_file = None
+            if x in {"R", "C"} or y in {"R", "C"}:
+                if index >= len(records):
+                    break
+                previous_file = records[index]
+                index += 1
+            if x == "?" and y == "?":
+                if file:
+                    untracked.append(file)
+                continue
+            if x not in (" ", "?"):
+                item = {"status": x, "file": file}
+                if previous_file:
+                    item["previousFile"] = previous_file
+                staged.append(item)
+            if y not in (" ", "?"):
+                item = {"status": y, "file": file}
+                if previous_file:
+                    item["previousFile"] = previous_file
+                unstaged.append(item)
+        return staged, unstaged, untracked
+
+    def _git_action_paths(self, cwd, file, *, stage):
+        """Expand a displayed rename row to both repository pathnames."""
+
+        # Do not route this through _run_git_command: its final strip() is
+        # appropriate for human-readable output, but destroys the leading
+        # index column in an unstaged porcelain record (" R ...").
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return [file]
+        if result.returncode != 0:
+            return [file]
+        raw = result.stdout or ""
+        staged, unstaged, _untracked = self._parse_git_status_z(raw)
+        candidates = unstaged if stage else staged
+        for item in candidates:
+            previous_file = item.get("previousFile")
+            # Copies also carry two names in porcelain output, but their source
+            # remains in place. Including it would stage or unstage unrelated
+            # source changes, so only rename rows need pathname expansion.
+            if (
+                item.get("status") == "R"
+                and previous_file
+                and file in {item.get("file"), previous_file}
+            ):
+                return [previous_file, item["file"]]
+        return [file]
 
     def _get_workspace_cwd(self, ws_index):
         """Resolve the working directory for a workspace index."""
@@ -763,32 +872,21 @@ class HarnessEngine(threading.Thread):
             branch = self._run_git_command(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
             if branch.startswith("[error]"):
                 branch = ""
-        # Run git status directly — _run_git_command's strip() destroys
-        # the leading whitespace that porcelain format depends on.
+        # Run git status directly because its leading status columns are
+        # significant. NUL delimiters keep Unicode, whitespace, and rename
+        # pathnames unquoted and unambiguous.
         try:
-            _gs = subprocess.run(["git", "status", "--porcelain=v1"], cwd=cwd, capture_output=True, text=True, timeout=10)
+            _gs = subprocess.run(
+                ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
             raw = _gs.stdout or ""
         except (subprocess.TimeoutExpired, OSError):
             raw = ""
-        staged, unstaged, untracked = [], [], []
-        for line in raw.splitlines():
-            if len(line) < 3:
-                continue
-            x, y, fpath = line[0], line[1], line[3:]
-            if x == "?" and y == "?":
-                # Expand untracked directories into individual files
-                full = os.path.join(cwd, fpath)
-                if fpath.endswith("/") or os.path.isdir(full):
-                    for root, _dirs, fnames in os.walk(full):
-                        for fn in sorted(fnames):
-                            untracked.append(os.path.relpath(os.path.join(root, fn), cwd))
-                else:
-                    untracked.append(fpath)
-            else:
-                if x not in (" ", "?"):
-                    staged.append({"status": x, "file": fpath})
-                if y not in (" ", "?"):
-                    unstaged.append({"status": y, "file": fpath})
+        staged, unstaged, untracked = self._parse_git_status_z(raw)
         log_raw = self._run_git_command(cwd, ["log", "--oneline", "-10"])
         commits = []
         for line in log_raw.splitlines():

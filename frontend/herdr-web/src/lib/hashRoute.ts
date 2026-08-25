@@ -17,6 +17,11 @@ export interface HashRoute {
   params: Record<string, string>;
 }
 
+export interface EmbeddedGitRoute {
+  workspaceId: string | null;
+  paneId: string;
+}
+
 function decodeSafe(raw: string): string | null {
   try {
     return decodeURIComponent(raw);
@@ -59,6 +64,19 @@ export function serializeHash(route: HashRoute): string {
     pairs.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
   }
   return pairs.length > 0 ? `#${pairs.join("&")}` : "";
+}
+
+/**
+ * Native Herdr opens this focused surface with
+ * `#ws=<id>&pane=<id>&view=git&embed=1`. It deliberately bypasses the web
+ * shell, workspace polling, and onboarding.
+ */
+export function embeddedGitRoute(hash: string): EmbeddedGitRoute | null {
+  const route = parseHash(hash);
+  if (route.params.embed !== "1" || route.params.view !== "git" || route.paneId === null) {
+    return null;
+  }
+  return { workspaceId: route.workspaceId, paneId: route.paneId };
 }
 
 /**

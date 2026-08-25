@@ -18,6 +18,7 @@ enum KeychainStore {
            let data = result as? Data,
            let value = String(data: data, encoding: .utf8),
            !value.isEmpty {
+            UserDefaults.standard.removeObject(forKey: fallbackKey(for: account))
             return value
         }
 
@@ -25,11 +26,14 @@ enum KeychainStore {
               !fallbackValue.isEmpty
         else { return "" }
 
-        _ = writeToKeychain(fallbackValue, for: account)
+        if writeToKeychain(fallbackValue, for: account) == errSecSuccess {
+            UserDefaults.standard.removeObject(forKey: fallbackKey(for: account))
+        }
         return fallbackValue
     }
 
-    static func set(_ value: String, for account: String) {
+    @discardableResult
+    static func set(_ value: String, for account: String) -> OSStatus {
         let status = writeToKeychain(value, for: account)
         #if DEBUG
         if status != errSecSuccess {
@@ -37,11 +41,12 @@ enum KeychainStore {
         }
         #endif
 
-        if value.isEmpty {
+        if value.isEmpty || status == errSecSuccess {
             UserDefaults.standard.removeObject(forKey: fallbackKey(for: account))
         } else {
             UserDefaults.standard.set(value, forKey: fallbackKey(for: account))
         }
+        return status
     }
 
     static func removeValue(for account: String) {

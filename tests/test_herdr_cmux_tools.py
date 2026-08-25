@@ -92,6 +92,13 @@ class CmuxToolsContractTests(unittest.TestCase):
 
     def _open(self, request, timeout):
         self.requests.append((request, timeout))
+        if urllib.parse.urlsplit(request.full_url).path.endswith("/api/git-commit-files"):
+            return _json_response(
+                {
+                    "ok": True,
+                    "files": [{"status": "M", "file": "Sources/Pane Detail.swift"}],
+                }
+            )
         return _json_response(
             {
                 "ok": True,
@@ -139,18 +146,42 @@ class CmuxToolsContractTests(unittest.TestCase):
             timeout=7.5,
         )
         file = "Sources/Pane Detail.swift"
+        root = str(self.root.resolve())
 
         with patch("herdr_harness.cmux_tools._open_no_redirect", side_effect=self._open):
             client.git_status(self.root)
-            client.git_diff(self.root, file, "staged")
-            staged = client.git_stage(self.root, file)
-            unstaged = client.git_unstage(self.root, file)
+            client.git_diff(
+                self.root,
+                file,
+                "staged",
+                expected_root=root,
+            )
+            staged = client.git_stage(
+                self.root,
+                file,
+                expected_root=root,
+            )
+            unstaged = client.git_unstage(
+                self.root,
+                file,
+                expected_root=root,
+            )
+            commit_files = client.git_commit_files(
+                self.root,
+                "A1B2C3D",
+                expected_root=root,
+            )
+            commit_diff = client.git_commit_diff(
+                self.root,
+                "A1B2C3D",
+                file,
+                expected_root=root,
+            )
             client.skills(self.root)
             client.search_files(self.root, "Pane Detail", limit=37)
             client.jira_assigned(project="iosdox", limit=12)
             client.jira_issue("  IOSDOX-42  ")
 
-        root = str(self.root.resolve())
         expected = [
             ("GET", "/api/git-status-path", {"path": [root]}, None),
             (
@@ -161,6 +192,18 @@ class CmuxToolsContractTests(unittest.TestCase):
             ),
             ("POST", "/api/git-stage-path", {}, {"path": root, "file": file}),
             ("POST", "/api/git-unstage-path", {}, {"path": root, "file": file}),
+            (
+                "POST",
+                "/api/git-commit-files",
+                {},
+                {"path": root, "hash": "a1b2c3d"},
+            ),
+            (
+                "POST",
+                "/api/git-commit-diff",
+                {},
+                {"path": root, "hash": "a1b2c3d", "file": file},
+            ),
             ("GET", "/api/skills", {"path": [root]}, None),
             (
                 "GET",
@@ -178,7 +221,7 @@ class CmuxToolsContractTests(unittest.TestCase):
         ]
 
         self.assertEqual(len(self.requests), len(expected))
-        expected_timeouts = [10.0] * 4 + [15.0] * 4
+        expected_timeouts = [10.0] * 6 + [15.0] * 4
         for (request, timeout), (method, path, query, body), expected_timeout in zip(
             self.requests,
             expected,
@@ -202,6 +245,10 @@ class CmuxToolsContractTests(unittest.TestCase):
 
         self.assertTrue(staged["ok"])
         self.assertTrue(unstaged["ok"])
+        self.assertEqual(commit_files["hash"], "a1b2c3d")
+        self.assertEqual(commit_files["files"][0]["file"], file)
+        self.assertEqual(commit_diff["hash"], "a1b2c3d")
+        self.assertEqual(commit_diff["file"], file)
 
     def test_nested_pane_cwd_uses_git_root_only_for_git_operations(self):
         nested = self.root / "Sources" / "Features"
@@ -258,6 +305,70 @@ class CmuxToolsContractTests(unittest.TestCase):
         self.assertEqual(error.exception.status, 404)
         opened.assert_not_called()
 
+    def test_git_mutation_rejects_a_stale_repository_precondition(self):
+        client = cmux_tools.CmuxToolsClient()
+        stale_root = str((Path(self.temporary.name) / "previous-repository").resolve())
+
+        with patch("herdr_harness.cmux_tools._open_no_redirect") as opened:
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_stage(
+                    self.root,
+                    "Pane.swift",
+                    expected_root=stale_root,
+                )
+
+        self.assertEqual(error.exception.code, "git_repository_changed")
+        self.assertEqual(error.exception.status, 409)
+        opened.assert_not_called()
+
+    def test_git_follow_up_reads_reject_a_stale_repository_precondition(self):
+        client = cmux_tools.CmuxToolsClient()
+        stale_root = str((Path(self.temporary.name) / "previous-repository").resolve())
+        operations = (
+            lambda: client.git_diff(
+                self.root,
+                "Pane.swift",
+                "unstaged",
+                expected_root=stale_root,
+            ),
+            lambda: client.git_commit_files(
+                self.root,
+                "a1b2c3d",
+                expected_root=stale_root,
+            ),
+            lambda: client.git_commit_diff(
+                self.root,
+                "a1b2c3d",
+                "Pane.swift",
+                expected_root=stale_root,
+            ),
+        )
+
+        with patch("herdr_harness.cmux_tools._open_no_redirect") as opened:
+            for operation in operations:
+                with self.subTest(operation=operation):
+                    with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                        operation()
+                    self.assertEqual(error.exception.code, "git_repository_changed")
+                    self.assertEqual(error.exception.status, 409)
+
+        opened.assert_not_called()
+
+    def test_git_mutation_rejects_an_invalid_repository_precondition(self):
+        client = cmux_tools.CmuxToolsClient()
+
+        with patch("herdr_harness.cmux_tools._open_no_redirect") as opened:
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_unstage(
+                    self.root,
+                    "Pane.swift",
+                    expected_root="relative/repository",
+                )
+
+        self.assertEqual(error.exception.code, "invalid_git_root_precondition")
+        self.assertEqual(error.exception.status, 400)
+        opened.assert_not_called()
+
     def test_optional_base_path_is_preserved_when_harness_suffix_is_removed(self):
         client = cmux_tools.CmuxToolsClient(
             base_url="http://cmux.example:9091/gateway/harness"
@@ -298,6 +409,19 @@ class CmuxToolsContractTests(unittest.TestCase):
                 client.git_diff(self.root, "Sources/Pane.swift", "working-tree")
             self.assertEqual(error.exception.code, "invalid_git_section")
             self.assertEqual(error.exception.status, 400)
+
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_commit_diff(self.root, "a1b2c3d", "../secret.txt")
+            self.assertEqual(error.exception.code, "invalid_git_path")
+            self.assertEqual(error.exception.status, 400)
+
+            for commit_hash in ("", "HEAD", "abc", "a" * 41, "abcd;touch"):
+                with self.subTest(commit_hash=commit_hash), self.assertRaises(
+                    cmux_tools.CmuxToolsError
+                ) as error:
+                    client.git_commit_files(self.root, commit_hash)
+                self.assertEqual(error.exception.code, "invalid_git_hash")
+                self.assertEqual(error.exception.status, 400)
             opened.assert_not_called()
 
     def test_git_file_validation_allows_final_symlink_pathname(self):
@@ -378,6 +502,16 @@ class CmuxToolsContractTests(unittest.TestCase):
                 "git-unstage",
                 lambda: client.git_unstage(self.root, "Pane.swift"),
                 {"ok": "true"},
+            ),
+            (
+                "git-commit-files",
+                lambda: client.git_commit_files(self.root, "a1b2c3d"),
+                {"ok": True, "files": [{"status": "M", "file": "../secret"}]},
+            ),
+            (
+                "git-commit-diff",
+                lambda: client.git_commit_diff(self.root, "a1b2c3d", "Pane.swift"),
+                {"ok": True, "diff": 42},
             ),
             (
                 "skills",

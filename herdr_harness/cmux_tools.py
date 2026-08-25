@@ -38,6 +38,7 @@ MAX_GIT_ROOT_BYTES = 4 * 1024
 _PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _JIRA_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9_]+-\d+\b", re.IGNORECASE)
 _VOICE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.wav$", re.IGNORECASE)
+_GIT_COMMIT_RE = re.compile(r"^[0-9A-Fa-f]{4,40}$")
 
 
 class CmuxToolsError(RuntimeError):
@@ -112,6 +113,19 @@ def _valid_git_commit(value: Any) -> bool:
     )
 
 
+def _valid_git_commit_file(value: Any) -> bool:
+    if not _valid_git_file(value):
+        return False
+    file = value["file"]
+    path = Path(file)
+    return (
+        len(file) <= 4096
+        and "\x00" not in file
+        and not path.is_absolute()
+        and all(part not in {"", ".", ".."} for part in path.parts)
+    )
+
+
 def _valid_skill(value: Any) -> bool:
     return (
         isinstance(value, dict)
@@ -163,6 +177,17 @@ def _validate_git_status(payload: dict) -> dict:
 
 def _validate_git_diff(payload: dict) -> dict:
     if payload.get("ok") is not True or not _is_string(payload.get("diff")):
+        _invalid_response()
+    return payload
+
+
+def _validate_git_commit_files(payload: dict) -> dict:
+    files = payload.get("files")
+    if not (
+        payload.get("ok") is True
+        and isinstance(files, list)
+        and all(_valid_git_commit_file(item) for item in files)
+    ):
         _invalid_response()
     return payload
 
@@ -464,6 +489,40 @@ def _relative_git_path(root: str, file: Any) -> str:
     return candidate_path.as_posix()
 
 
+def _git_commit_hash(value: Any) -> str:
+    if not isinstance(value, str) or not _GIT_COMMIT_RE.fullmatch(value):
+        raise CmuxToolsError(
+            "hash must be a 4 to 40 character hexadecimal Git commit ID",
+            code="invalid_git_hash",
+            status=400,
+        )
+    return value.lower()
+
+
+def _require_expected_git_root(current_root: str, expected_root: Any) -> None:
+    """Compare a client snapshot root without ever using it as a selector."""
+
+    if (
+        not isinstance(expected_root, str)
+        or not expected_root
+        or "\x00" in expected_root
+        or len(expected_root) > 4096
+        or not Path(expected_root).is_absolute()
+    ):
+        raise CmuxToolsError(
+            "expected_root must be the absolute repository path from Git status",
+            code="invalid_git_root_precondition",
+            status=400,
+        )
+    normalized_expected = os.path.normpath(expected_root)
+    if normalized_expected != current_root:
+        raise CmuxToolsError(
+            "This pane moved to a different Git repository. Refresh Git status before continuing.",
+            code="git_repository_changed",
+            status=409,
+        )
+
+
 class CmuxToolsClient:
     """Call the cmux harness using server-resolved roots and bounded I/O."""
 
@@ -626,16 +685,29 @@ class CmuxToolsClient:
 
     def git_status(self, root: Path | str) -> dict:
         path = _git_root_path(root)
-        return _validate_git_status(
+        payload = _validate_git_status(
             self._request(
                 "/api/git-status-path",
                 query={"path": path},
                 timeout=self._operation_timeout(GIT_TIMEOUT_SECONDS),
             )
         )
+        # The local discovery result is the canonical root used for all later
+        # operations. Do not trust an upstream response to redefine it.
+        payload["cwd"] = path
+        return payload
 
-    def git_diff(self, root: Path | str, file: Any, section: str) -> dict:
+    def git_diff(
+        self,
+        root: Path | str,
+        file: Any,
+        section: str,
+        *,
+        expected_root: Any = None,
+    ) -> dict:
         path = _git_root_path(root)
+        if expected_root is not None:
+            _require_expected_git_root(path, expected_root)
         relative = _relative_git_path(path, file)
         if section not in {"staged", "unstaged", "untracked"}:
             raise CmuxToolsError(
@@ -651,8 +723,16 @@ class CmuxToolsClient:
             )
         )
 
-    def git_stage(self, root: Path | str, file: Any) -> dict:
+    def git_stage(
+        self,
+        root: Path | str,
+        file: Any,
+        *,
+        expected_root: Any = None,
+    ) -> dict:
         path = _git_root_path(root)
+        if expected_root is not None:
+            _require_expected_git_root(path, expected_root)
         relative = _relative_git_path(path, file)
         payload = _validate_ack(
             self._request(
@@ -664,8 +744,16 @@ class CmuxToolsClient:
         payload.setdefault("file", relative)
         return payload
 
-    def git_unstage(self, root: Path | str, file: Any) -> dict:
+    def git_unstage(
+        self,
+        root: Path | str,
+        file: Any,
+        *,
+        expected_root: Any = None,
+    ) -> dict:
         path = _git_root_path(root)
+        if expected_root is not None:
+            _require_expected_git_root(path, expected_root)
         relative = _relative_git_path(path, file)
         payload = _validate_ack(
             self._request(
@@ -675,6 +763,51 @@ class CmuxToolsClient:
             )
         )
         payload.setdefault("file", relative)
+        return payload
+
+    def git_commit_files(
+        self,
+        root: Path | str,
+        commit_hash: Any,
+        *,
+        expected_root: Any = None,
+    ) -> dict:
+        path = _git_root_path(root)
+        if expected_root is not None:
+            _require_expected_git_root(path, expected_root)
+        normalized_hash = _git_commit_hash(commit_hash)
+        payload = _validate_git_commit_files(
+            self._request(
+                "/api/git-commit-files",
+                body={"path": path, "hash": normalized_hash},
+                timeout=self._operation_timeout(GIT_TIMEOUT_SECONDS),
+            )
+        )
+        payload["hash"] = normalized_hash
+        return payload
+
+    def git_commit_diff(
+        self,
+        root: Path | str,
+        commit_hash: Any,
+        file: Any,
+        *,
+        expected_root: Any = None,
+    ) -> dict:
+        path = _git_root_path(root)
+        if expected_root is not None:
+            _require_expected_git_root(path, expected_root)
+        normalized_hash = _git_commit_hash(commit_hash)
+        relative = _relative_git_path(path, file)
+        payload = _validate_git_diff(
+            self._request(
+                "/api/git-commit-diff",
+                body={"path": path, "hash": normalized_hash, "file": relative},
+                timeout=self._operation_timeout(GIT_TIMEOUT_SECONDS),
+            )
+        )
+        payload["hash"] = normalized_hash
+        payload["file"] = relative
         return payload
 
     def skills(self, root: Path | str) -> dict:

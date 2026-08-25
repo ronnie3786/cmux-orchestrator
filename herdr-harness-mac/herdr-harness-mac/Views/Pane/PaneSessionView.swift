@@ -70,13 +70,21 @@ struct PaneSessionView: View {
     @State private var composerDraft = ""
     @State private var composerAttachments: [TerminalAttachment] = []
     @State private var composerFocusRequest = 0
+    @State private var gitAvailability: PaneGitAvailability = .checking
 
     var body: some View {
         ZStack {
             HerdrBackground()
 
             VStack(spacing: 0) {
-                PaneSessionHeader(model: model, pane: currentPane, store: piConversationStore)
+                PaneSessionHeader(
+                    model: model,
+                    pane: currentPane,
+                    store: piConversationStore,
+                    gitIsAvailable: gitIsAvailable,
+                    selectedMode: selectedMode,
+                    showGit: { selectedMode = .git }
+                )
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
 
@@ -91,7 +99,12 @@ struct PaneSessionView: View {
         .navigationTitle(currentPane.displayTitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                PaneActionsMenu(model: model, pane: currentPane, selectedMode: modeSelection)
+                PaneActionsMenu(
+                    model: model,
+                    pane: currentPane,
+                    selectedMode: modeSelection,
+                    gitIsAvailable: gitIsAvailable
+                )
             }
         }
         .task(id: followTaskID) {
@@ -123,6 +136,9 @@ struct PaneSessionView: View {
             else { return }
             await piConversationStore.follow(model: model, pane: currentPane)
         }
+        .task(id: gitProbeTaskID) {
+            await refreshGitAvailability()
+        }
         .onAppear {
             autoSelectChatIfNeeded()
         }
@@ -130,6 +146,11 @@ struct PaneSessionView: View {
             if supportsChat {
                 autoSelectChatIfNeeded()
             } else if selectedMode == .chat {
+                selectedMode = .terminal
+            }
+        }
+        .onChange(of: gitAvailability) { _, availability in
+            if availability == .unavailable, selectedMode == .git {
                 selectedMode = .terminal
             }
         }
@@ -143,6 +164,7 @@ struct PaneSessionView: View {
             discardComposerState()
             piConversationStore.reset()
             didAutoSelectChat = false
+            gitAvailability = .checking
             if currentPane.supportsPiSemanticChat {
                 autoSelectChatIfNeeded()
             } else {
@@ -206,7 +228,7 @@ struct PaneSessionView: View {
         case .terminal:
             terminalContent
         case .git:
-            if let workspace {
+            if model.isDemoMode, let workspace {
                 WorkspaceGitView(
                     workspace: workspace,
                     loadStatus: { try await model.fetchGitStatus(for: workspace) },
@@ -217,8 +239,32 @@ struct PaneSessionView: View {
                     unstageFile: { file in try await model.unstageGitFile(file, in: workspace) }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if gitIsAvailable,
+                      let configuration = model.serverConfiguration(for: currentPane) {
+                PaneGitWebView(
+                    configuration: configuration,
+                    workspaceID: currentPane.workspaceID,
+                    paneID: currentPane.paneID
+                )
+                .id("\(currentPane.id)|\(currentPane.displayPath)")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if gitAvailability == .checking {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Checking this pane for Git…")
+                        .herdrFont(.caption, monospaced: true, weight: .medium)
+                        .foregroundStyle(HerdrTheme.mist)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                unavailableMode("Git", systemImage: "point.3.connected.trianglepath.dotted")
+                ContentUnavailableView(
+                    "Git unavailable",
+                    systemImage: PaneDetailMode.git.symbol,
+                    description: Text("This pane is not currently inside a Git repository.")
+                )
+                .foregroundStyle(HerdrTheme.text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         case .skills:
             if let workspace {
@@ -312,6 +358,9 @@ struct PaneSessionView: View {
             didAutoSelectChat = true
             selectedMode = .terminal
             isTerminalFocused = true
+        case .git:
+            guard gitIsAvailable else { return }
+            selectedMode = .git
         default:
             selectedMode = mode
         }
@@ -343,6 +392,54 @@ struct PaneSessionView: View {
 
     private var piChatTaskID: String {
         "\(pane.id):pi-chat:\(model.connectionGeneration):\(selectedMode.rawValue)"
+    }
+
+    private var gitProbeTaskID: String {
+        let connection = model.connectionState(forMachine: currentPane.machineID).title
+        return "\(currentPane.id):\(currentPane.displayPath):\(model.connectionGeneration):\(connection)"
+    }
+
+    private var gitIsAvailable: Bool {
+        model.isDemoMode || gitAvailability == .available
+    }
+
+    private func refreshGitAvailability() async {
+        if model.isDemoMode {
+            gitAvailability = .available
+            return
+        }
+
+        gitAvailability = .checking
+        while !Task.isCancelled {
+            do {
+                let status = try await model.fetchGitStatus(for: currentPane)
+                try Task.checkCancellation()
+                gitAvailability = PaneGitProbePolicy.availability(
+                    after: .status(ok: status.ok, rootPath: status.cwd),
+                    preserving: gitAvailability
+                )
+            } catch APIError.server(let status, _) where status == 404 {
+                guard !Task.isCancelled else { return }
+                gitAvailability = PaneGitProbePolicy.availability(
+                    after: .notFound,
+                    preserving: gitAvailability
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                gitAvailability = PaneGitProbePolicy.availability(
+                    after: .transientFailure,
+                    preserving: gitAvailability
+                )
+            }
+
+            do {
+                try await Task.sleep(for: PaneGitProbePolicy.refreshInterval)
+            } catch {
+                return
+            }
+        }
     }
 
     private var isStreamHealthy: Bool {
