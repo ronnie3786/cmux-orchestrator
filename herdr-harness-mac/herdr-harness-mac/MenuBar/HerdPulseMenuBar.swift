@@ -7,27 +7,34 @@ import SwiftUI
 /// ```swift
 /// var body: some Scene {
 ///     WindowGroup { ... }
-///     HerdPulseMenuBar.scene(pulse: herdPulse)
+///     HerdPulseMenuBar.scene(pulse: herdPulse, model: model, shell: shell)
 /// }
 /// ```
 ///
-/// PRIVACY INVARIANT: everything this file renders is aggregate-only — counts,
-/// phase, and connection. Never workspace labels, pane titles, cwds, or session
-/// IDs. The menu bar is visible in screen shares, recordings, and screenshots.
-/// `HerdPulseMenuBarPrivacyTests` pins it.
+/// PRIVACY INVARIANT: `HerdPulseContentState` and
+/// `HerdPulseMenuBarPresentation` remain counts-only, which
+/// `HerdPulseMenuBarPrivacyTests` pins. The session list intentionally shows
+/// real titles by default, and redacts to ordinal labels when the user disables
+/// `herdr.herdPulse.showSessionTitles` in Settings.
 enum HerdPulseMenuBar {
-    static func scene(pulse: HerdPulseCoordinator) -> some Scene {
-        HerdPulseMenuBarScene(pulse: pulse)
+    static func scene(
+        pulse: HerdPulseCoordinator,
+        model: HerdrAppModel,
+        shell: HerdrShellState
+    ) -> some Scene {
+        HerdPulseMenuBarScene(pulse: pulse, model: model, shell: shell)
     }
 }
 
 struct HerdPulseMenuBarScene: Scene {
     let pulse: HerdPulseCoordinator
+    let model: HerdrAppModel
+    let shell: HerdrShellState
 
     var body: some Scene {
         @Bindable var pulse = pulse
         MenuBarExtra(isInserted: $pulse.isMenuBarInserted) {
-            HerdPulseMenuBarCard(pulse: pulse)
+            HerdPulseMenuBarCard(pulse: pulse, model: model, shell: shell)
         } label: {
             HerdPulseMenuBarLabel(state: pulse.contentState)
         }
@@ -60,17 +67,24 @@ struct HerdPulseMenuBarLabel: View {
 
 struct HerdPulseMenuBarCard: View {
     let pulse: HerdPulseCoordinator
+    let model: HerdrAppModel
+    let shell: HerdrShellState
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        let attentionRows = attention
         VStack(alignment: .leading, spacing: 12) {
             header
             titleBlock
             separator
             metrics
+            if !attentionRows.rows.isEmpty {
+                separator
+                sessionsSection(attentionRows)
+            }
             separator
             footer
             actions
@@ -83,6 +97,14 @@ struct HerdPulseMenuBarCard: View {
     }
 
     private var state: HerdPulseContentState? { pulse.contentState }
+
+    private var attention: (rows: [HerdPulseAttentionRows.Row], overflow: Int) {
+        HerdPulseAttentionRows.attentionRows(
+            panes: model.attentionPanes,
+            alerts: model.alerts,
+            revealTitles: model.showSessionTitles
+        )
+    }
 
     /// Staleness is a statement about the *feed*, not about how long the fleet
     /// has been quiet. `updatedAt` only moves when the aggregate changes, so an
@@ -147,6 +169,53 @@ struct HerdPulseMenuBarCard: View {
             metric("ready", value: state?.readyCount ?? 0, color: HerdPulseTheme.signal)
             Spacer(minLength: 8)
             metric("working", value: state?.workingCount ?? 0, color: HerdPulseTheme.working)
+        }
+    }
+
+    private func sessionsSection(
+        _ attention: (rows: [HerdPulseAttentionRows.Row], overflow: Int)
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("SESSIONS")
+                .herdrFont(.caption, monospaced: true, weight: .bold)
+                .foregroundStyle(HerdPulseTheme.mist)
+
+            ForEach(attention.rows) { row in
+                Button {
+                    openAttentionRow(row)
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(row.status.color)
+                            .frame(width: 7, height: 7)
+                            .accessibilityHidden(true)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title)
+                                .herdrFont(.subheadline, monospaced: true, weight: .semibold)
+                                .foregroundStyle(HerdPulseTheme.text)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+
+                            Text(row.subtitle)
+                                .herdrFont(.caption, monospaced: true)
+                                .foregroundStyle(HerdPulseTheme.mist)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                }
+                .buttonStyle(HerdPulseAttentionRowButtonStyle())
+                .accessibilityIdentifier("herd-pulse-attention-row-\(row.id)")
+            }
+
+            if attention.overflow > 0 {
+                Text("+\(attention.overflow) more")
+                    .herdrFont(.caption, monospaced: true)
+                    .foregroundStyle(HerdPulseTheme.mist)
+            }
         }
     }
 
@@ -232,6 +301,14 @@ struct HerdPulseMenuBarCard: View {
         // matters — there would be nothing left to bring forward.
         openWindow(id: HerdrWindowID.main)
     }
+
+    private func openAttentionRow(_ row: HerdPulseAttentionRows.Row) {
+        dismiss()
+        NSApp.activate()
+        openWindow(id: HerdrWindowID.main)
+        shell.showSession()
+        model.openPane(id: row.id)
+    }
 }
 
 // MARK: - Button style
@@ -259,6 +336,17 @@ private struct HerdPulseMenuBarButtonStyle: ButtonStyle {
             }
             .clipShape(.rect(cornerRadius: 10))
             .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
+    }
+}
+
+private struct HerdPulseAttentionRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(HerdPulseTheme.elevated.opacity(configuration.isPressed ? 0.7 : 1))
+            .clipShape(.rect(cornerRadius: 8))
     }
 }
 

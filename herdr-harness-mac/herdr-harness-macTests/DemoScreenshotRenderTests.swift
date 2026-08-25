@@ -292,15 +292,16 @@ struct DemoScreenshotRenderTests {
     @Test("Herd Pulse menu bar card renders aggregate-only counts")
     func rendersHerdPulseCard() async throws {
         let model = HerdrRenderFixtures.demoModel()
+        let shell = HerdrShellState()
         let pulse = await HerdrRenderFixtures.runningPulse(for: model)
 
         #expect(pulse.contentState != nil)
 
         let result = try await HerdrRenderHarness.render(
             "08-pulse.png",
-            size: CGSize(width: 360, height: 420)
+            size: CGSize(width: 360, height: 560)
         ) {
-            HerdPulseMenuBarCard(pulse: pulse)
+            HerdPulseMenuBarCard(pulse: pulse, model: model, shell: shell)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
 

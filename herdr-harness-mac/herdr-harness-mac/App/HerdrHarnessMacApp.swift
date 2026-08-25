@@ -59,7 +59,7 @@ struct HerdrHarnessMacApp: App {
         }
 
         // Herd Pulse: the menu-bar replacement for the iOS Live Activity.
-        HerdPulseMenuBar.scene(pulse: herdPulse)
+        HerdPulseMenuBar.scene(pulse: herdPulse, model: model, shell: shell)
             .environment(\.herdrFontScale, fontScale.scale)
     }
 }

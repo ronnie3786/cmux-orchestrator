@@ -270,10 +270,24 @@ struct SettingsView: View {
     }
 
     private var privacySection: some View {
-        Section("Private by design") {
+        Section {
             Label("The raw Herdr socket never leaves your Mac", systemImage: "lock.shield")
             Label("Terminal control requires your pairing token", systemImage: "key.horizontal")
             Label("Tailscale keeps the server inside your tailnet", systemImage: "network.badge.shield.half.filled")
+
+            Toggle(
+                "Show session titles in menu bar",
+                systemImage: "eye",
+                isOn: $model.showSessionTitles
+            )
+            .onChange(of: model.showSessionTitles) { oldValue, newValue in
+                guard oldValue != newValue else { return }
+                model.setShowSessionTitles(newValue)
+            }
+        } header: {
+            Text("Private by design")
+        } footer: {
+            Text("The menu bar is visible in screen shares, recordings, and screenshots.")
         }
         .herdrFont(.subheadline)
     }

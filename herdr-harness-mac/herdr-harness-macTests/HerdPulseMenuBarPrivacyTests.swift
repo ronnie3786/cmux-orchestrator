@@ -3,8 +3,8 @@ import Testing
 @testable import herdr_harness_mac
 
 /// The menu bar is visible in screen shares, recordings, and screenshots — the
-/// Mac equivalent of the iOS lock screen. Herd Pulse may export counts and
-/// phases, never workspace labels, pane titles, cwds, or session IDs.
+/// Mac equivalent of the iOS lock screen. Its aggregate payload remains
+/// counts-only, and its session list must fully redact when titles are hidden.
 @Suite("Herd Pulse menu bar exports aggregates only")
 struct HerdPulseMenuBarPrivacyTests {
     @Test("Aggregate counts every state without exporting session identity")
@@ -86,6 +86,107 @@ struct HerdPulseMenuBarPrivacyTests {
         #expect(HerdPulseAggregate(workspaces: [done], connectionState: .failed).phase == .offline)
     }
 
+    @Test("Redacted attention rows expose only ordinal labels and status words")
+    func redactedAttentionRowsExcludeSessionIdentity() {
+        let rows = HerdPulseAttentionRows.attentionRows(
+            panes: secretAttentionPanes,
+            alerts: [],
+            revealTitles: false,
+            limit: 5
+        ).rows
+
+        for row in rows {
+            // `row.id` intentionally remains routable pane identity. This
+            // fixture embeds a secret in that ID, so assert the rendered text.
+            let rendered = "\(row.title)\n\(row.subtitle)"
+            for secret in Self.secrets {
+                #expect(!rendered.localizedCaseInsensitiveContains(secret), "\(rendered) leaked \(secret)")
+            }
+        }
+    }
+
+    @Test("Revealed attention rows surface session titles and agent names")
+    func revealedAttentionRowsSurfaceSessionIdentity() {
+        let rows = HerdPulseAttentionRows.attentionRows(
+            panes: secretAttentionPanes,
+            alerts: [],
+            revealTitles: true,
+            limit: 5
+        ).rows
+
+        var includesTitle = false
+        var includesAgent = false
+        for row in rows {
+            if row.title.contains("Secret pane") {
+                includesTitle = true
+            }
+            if row.subtitle.localizedCaseInsensitiveContains("codex") {
+                includesAgent = true
+            }
+        }
+        #expect(includesTitle)
+        #expect(includesAgent)
+    }
+
+    @Test("Attention rows prioritize status, newest alert, missing alerts, and revision")
+    func attentionRowsSortDeterministically() {
+        let blockedNewest = attentionPane(id: "blocked-newest", status: .blocked, revision: 1)
+        let blockedOlder = attentionPane(id: "blocked-older", status: .blocked, revision: 99)
+        let blockedNoAlertHighRevision = attentionPane(id: "blocked-none-high", status: .blocked, revision: 7)
+        let blockedNoAlertLowRevision = attentionPane(id: "blocked-none-low", status: .blocked, revision: 3)
+        let doneWithAlert = attentionPane(id: "done-alert", status: .done, revision: 1)
+        let doneNoAlert = attentionPane(id: "done-none", status: .done, revision: 20)
+
+        let result = HerdPulseAttentionRows.attentionRows(
+            panes: [
+                doneNoAlert,
+                blockedNoAlertLowRevision,
+                blockedOlder,
+                doneWithAlert,
+                blockedNoAlertHighRevision,
+                blockedNewest,
+            ],
+            alerts: [
+                alert(paneID: "blocked-older", createdAt: "2026-08-25T11:00:00Z"),
+                alert(paneID: "done-alert", createdAt: "2026-08-25T13:00:00Z"),
+                alert(
+                    paneID: "blocked-newest",
+                    createdAt: "2026-08-25T12:00:00Z",
+                    isRead: true
+                ),
+            ],
+            revealTitles: false,
+            limit: 10
+        )
+
+        #expect(result.rows.map(\.id) == [
+            blockedNewest.id,
+            blockedOlder.id,
+            blockedNoAlertHighRevision.id,
+            blockedNoAlertLowRevision.id,
+            doneWithAlert.id,
+            doneNoAlert.id,
+        ])
+    }
+
+    @Test("Attention rows report entries beyond their display limit")
+    func attentionRowsReportOverflow() {
+        var panes: [HerdrPane] = []
+        for ordinal in 1...6 {
+            panes.append(attentionPane(id: "overflow-\(ordinal)", status: .blocked, revision: ordinal))
+        }
+
+        let result = HerdPulseAttentionRows.attentionRows(
+            panes: panes,
+            alerts: [],
+            revealTitles: false,
+            limit: 3
+        )
+
+        #expect(result.rows.count == 3)
+        #expect(result.overflow == 3)
+    }
+
     // MARK: - Fixtures
 
     private static let secrets = [
@@ -108,6 +209,14 @@ struct HerdPulseMenuBarPrivacyTests {
                 pane(id: "secret-work:p5", status: .idle),
             ]
         )
+    }
+
+    private var secretAttentionPanes: [HerdrPane] {
+        var panes: [HerdrPane] = []
+        for pane in secretWorkspace.panes where pane.agentStatus.needsAttention {
+            panes.append(pane)
+        }
+        return panes
     }
 
     private func state(attention: Int, ready: Int, working: Int) -> HerdPulseContentState {
@@ -155,5 +264,40 @@ struct HerdPulseMenuBarPrivacyTests {
             terminalTitle: "Confidential terminal",
             terminalTitleStripped: "Confidential terminal"
         )
+    }
+
+    private func attentionPane(id: String, status: AgentStatus, revision: Int) -> HerdrPane {
+        HerdrPane(
+            paneID: id,
+            terminalID: id,
+            workspaceID: "test-workspace",
+            tabID: "test-workspace:t1",
+            focused: false,
+            agentStatus: status,
+            revision: revision,
+            cwd: nil,
+            foregroundCWD: nil,
+            label: nil,
+            title: nil,
+            agent: nil,
+            displayAgent: nil,
+            terminalTitle: nil,
+            terminalTitleStripped: nil
+        )
+        .stamped(machineID: "test-machine")
+    }
+
+    private func alert(paneID: String, createdAt: String, isRead: Bool = false) -> HerdrAlert {
+        HerdrAlert(
+            id: "alert-\(paneID)-\(createdAt)",
+            workspaceID: "test-workspace",
+            paneID: paneID,
+            status: .blocked,
+            title: "",
+            message: "",
+            createdAt: createdAt,
+            isRead: isRead
+        )
+        .stamped(machineID: "test-machine")
     }
 }

@@ -38,10 +38,12 @@ Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party depen
   server; local notifications deep-link straight into the pane (`herdr://pane/{id}` works too).
 - **Workspace overview** — fleet summary, pane topology radar built from Herdr's real split
   geometry, git status/diffs, skills, project file search, Jira tickets, attachments.
-- **Herd Pulse in the menu bar** — the iOS Live Activity becomes a menu-bar extra with the same
-  privacy-safe aggregate (counts only, never names). Start it from the toolbar's pulse button or
-  View ▸ Start Herd Pulse (⇧⌘P); the extra is only inserted while Pulse is on. The event stream
-  and the pulse feed outlive the window, so closing it keeps alerts and the menu bar live.
+- **Herd Pulse in the menu bar** — the iOS Live Activity becomes a menu-bar extra whose top-level
+  aggregate remains privacy-safe (counts only, never names), plus a clickable list of sessions
+  needing attention. Session titles show by default and can be redacted in Settings for screen
+  shares. Start it from the toolbar's pulse button or View ▸ Start Herd Pulse (⇧⌘P); the extra is
+  only inserted while Pulse is on. The event stream and the pulse feed outlive the window, so
+  closing it keeps alerts and the menu bar live.
 
 ## Requirements
 

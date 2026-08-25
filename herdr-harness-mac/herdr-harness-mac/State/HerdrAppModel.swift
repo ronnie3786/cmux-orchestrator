@@ -64,6 +64,7 @@ final class HerdrAppModel {
     var hasCompletedSetup: Bool
     var smartAlertsEnabled: Bool
     var preferPrivateTranscription: Bool
+    var showSessionTitles: Bool
     var remotePushConfigured = false
     var remotePushDeliveryVerified = false
     var remotePushRegistrationError: String?
@@ -136,6 +137,7 @@ final class HerdrAppModel {
         hasCompletedSetup = forcedDemo || uiTestServerURL != nil || defaults.bool(forKey: "herdr.completedSetup")
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
+        showSessionTitles = defaults.object(forKey: "herdr.herdPulse.showSessionTitles") as? Bool ?? true
         collapsedSidebarWorkspaceIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedWorkspaces") ?? []
         )
@@ -833,6 +835,11 @@ final class HerdrAppModel {
     func setPreferPrivateTranscription(_ enabled: Bool) {
         preferPrivateTranscription = enabled
         UserDefaults.standard.set(enabled, forKey: "herdr.preferPrivateTranscription")
+    }
+
+    func setShowSessionTitles(_ enabled: Bool) {
+        showSessionTitles = enabled
+        UserDefaults.standard.set(enabled, forKey: "herdr.herdPulse.showSessionTitles")
     }
 
     func transcribeVoiceNote(at fileURL: URL) async throws -> VoiceTranscription {
