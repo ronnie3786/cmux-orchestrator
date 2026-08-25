@@ -50,6 +50,9 @@ struct HerdrAPIDecodingTests {
                       "focused": true,
                       "agent_status": "blocked",
                       "revision": 91,
+                      "first_seen_at": "2026-08-11T17:00:00Z",
+                      "last_activity_at": "2026-08-11T18:41:30.125Z",
+                      "working_since": "2026-08-11T18:00:00Z",
                       "cwd": "/work/herdr-ios",
                       "foreground_cwd": "/work/herdr-ios/App",
                       "title": "Waiting for approval",
@@ -117,6 +120,9 @@ struct HerdrAPIDecodingTests {
         #expect(workspace.tokens["branch"] == "codex/herdr-harness")
         #expect(workspace.tabs.map(\.id) == ["w7:t1"])
         #expect(workspace.panes.map(\.id) == ["w7:p1"])
+        #expect(workspace.panes.first?.firstSeenAt == HerdrTimestamp.date(from: "2026-08-11T17:00:00Z"))
+        #expect(workspace.panes.first?.lastActivityAt == HerdrTimestamp.date(from: "2026-08-11T18:41:30.125Z"))
+        #expect(workspace.panes.first?.workingSince == HerdrTimestamp.date(from: "2026-08-11T18:00:00Z"))
         #expect(workspace.agents.first?.interactiveReady == true)
         #expect(workspace.layouts.first?.area.width == 120)
         #expect(response.alerts.first?.status == .blocked)

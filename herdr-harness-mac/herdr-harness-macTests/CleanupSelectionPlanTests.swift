@@ -64,6 +64,32 @@ struct CleanupSelectionPlanTests {
         }
     }
 
+    @Test("Preferred pane seed keeps only IDs still safe to close")
+    func preferredSeedIntersectsSafePanes() throws {
+        let workspace = try #require(CleanupRunController.demoReport().workspaces?.first)
+        let safePane = try #require(workspace.panes.first(where: { $0.safeToClose }))
+        let unsafePane = try #require(workspace.panes.first(where: { !$0.safeToClose }))
+        var plan = CleanupSelectionPlan()
+
+        plan.seed(
+            with: [workspace],
+            preferredPaneIDs: [safePane.paneID, unsafePane.paneID, "disappeared:pane"]
+        )
+
+        #expect(plan.paneIDs == [safePane.paneID])
+        #expect(plan.workspaceIDs.isEmpty)
+    }
+
+    @Test("An empty preferred seed does not fall back to unrelated panes")
+    func emptyPreferredSeedStaysEmpty() throws {
+        let workspace = try #require(CleanupRunController.demoReport().workspaces?.first)
+        var plan = CleanupSelectionPlan()
+
+        plan.seed(with: [workspace], preferredPaneIDs: [])
+
+        #expect(plan.isEmpty)
+    }
+
     private func closableCopy(of workspace: CleanupWorkspaceReport) -> CleanupWorkspaceReport {
         CleanupWorkspaceReport(
             workspaceID: workspace.workspaceID,

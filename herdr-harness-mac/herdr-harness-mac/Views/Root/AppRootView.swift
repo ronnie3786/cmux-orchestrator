@@ -7,6 +7,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case session
     case workspace
     case attention
+    case activity
 
     var id: String { rawValue }
 
@@ -15,6 +16,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "Session"
         case .workspace: "Workspace"
         case .attention: "Attention"
+        case .activity: "Activity"
         }
     }
 
@@ -23,6 +25,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "bubble.left.and.bubble.right"
         case .workspace: "rectangle.3.group"
         case .attention: "bell.badge"
+        case .activity: "clock.arrow.circlepath"
         }
     }
 }
@@ -35,6 +38,20 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
     var isCreatingWorkspace = false
+    var isAgentPresented = false
+    var isCommandPalettePresented = false
+    private(set) var commandPaletteFocusRequest = 0
+
+    /// Present the global pane navigator. Incrementing the request also lets a
+    /// repeated ⌘K put keyboard focus back in its search field.
+    func presentCommandPalette() {
+        isCommandPalettePresented = true
+        commandPaletteFocusRequest &+= 1
+    }
+
+    func dismissCommandPalette() {
+        isCommandPalettePresented = false
+    }
 
     /// Bring the selected pane's session to the front.
     ///
@@ -71,6 +88,8 @@ final class HerdrShellState {
             return model.workspace(id: model.selectedWorkspaceID) != nil ? .workspace : .attention
         case .attention:
             return .attention
+        case .activity:
+            return .activity
         }
     }
 }
@@ -86,6 +105,14 @@ struct AppRootView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
+        rootContent
+            .overlay {
+                commandPaletteOverlay
+            }
+            .animation(.snappy, value: shell.isCommandPalettePresented)
+    }
+
+    private var rootContent: some View {
         Group {
             if model.hasCompletedSetup {
                 WorkspaceNavigationView(model: model, shell: shell)
@@ -161,6 +188,11 @@ struct AppRootView: View {
             }
             .frame(minWidth: 460, minHeight: 340)
         }
+        .sheet(isPresented: $shell.isAgentPresented) {
+            HeadlessAgentView(model: model) { pane in
+                openPane(id: pane.id)
+            }
+        }
         .overlay(alignment: .top) {
             if let message = model.toastMessage {
                 ToastView(message: message, dismiss: model.clearToast)
@@ -189,6 +221,33 @@ struct AppRootView: View {
     private func openURL(_ url: URL) {
         guard let paneID = HerdrAppModel.paneID(from: url) else { return }
         openPane(id: paneID)
+    }
+
+    private func openCommandPaletteEntry(_ entry: CommandPaletteEntry) {
+        shell.dismissCommandPalette()
+        openPane(id: entry.paneID)
+    }
+
+    @ViewBuilder
+    private var commandPaletteOverlay: some View {
+        if shell.isCommandPalettePresented, model.hasCompletedSetup {
+            CommandPaletteView(
+                entries: CommandPaletteIndex.entries(
+                    workspaces: model.workspaces,
+                    machines: model.machines
+                ),
+                focusRequest: shell.commandPaletteFocusRequest,
+                dismiss: shell.dismissCommandPalette,
+                select: openCommandPaletteEntry
+            )
+            .transition(commandPaletteTransition)
+        }
+    }
+
+    private var commandPaletteTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .scale(scale: 0.97, anchor: .top).combined(with: .opacity)
     }
 
     private var agentStatuses: [String: AgentStatus] {

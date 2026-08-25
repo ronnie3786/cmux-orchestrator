@@ -139,8 +139,13 @@ class FakeHTTPService:
         self.pi_extension_args_calls += 1
         return ["--extension", "/fake/bridge"]
 
-    def quick_pi_session(self, label):
-        self.calls.append(("quick_pi_session", {"label": label}))
+    def quick_pi_session(self, label, *, workspace_id=None, cwd=None):
+        self.calls.append(
+            (
+                "quick_pi_session",
+                {"label": label, "workspace_id": workspace_id, "cwd": cwd},
+            )
+        )
         return {
             "ok": True,
             "workspace_id": "w1",
@@ -148,6 +153,66 @@ class FakeHTTPService:
             "created_workspace": True,
             "pi_extension_attached": True,
         }
+
+    @staticmethod
+    def _agent_run(status="completed"):
+        return {
+            "ok": True,
+            "run": {
+                "id": "agr_0123456789ab",
+                "status": status,
+                "prompt": "What changed?",
+                "response": "An answer" if status in {"completed", "promoted"} else None,
+                "error": None,
+                "createdAt": "2026-08-25T00:00:00Z",
+                "startedAt": "2026-08-25T00:00:01Z",
+                "finishedAt": "2026-08-25T00:00:02Z",
+                "sessionId": "session-1",
+                "sessionFile": "/private/run/session.jsonl",
+                "costUSD": 0.01,
+                "promotedWorkspaceId": "w1" if status == "promoted" else None,
+                "promotedPaneId": "w1:p1" if status == "promoted" else None,
+            },
+        }
+
+    def start_agent_run(self, *, prompt, label=None):
+        self.calls.append(("agent_run.start", {"prompt": prompt, "label": label}))
+        result = self._agent_run("queued")
+        result["run"]["prompt"] = prompt
+        return result
+
+    def get_agent_run(self, run_id):
+        self.calls.append(("agent_run.get", {"run_id": run_id}))
+        return self._agent_run()
+
+    def cancel_agent_run(self, run_id):
+        self.calls.append(("agent_run.cancel", {"run_id": run_id}))
+        return self._agent_run("cancelled")
+
+    def promote_agent_run(
+        self,
+        run_id,
+        *,
+        workspace_id=None,
+        cwd=None,
+        workspace_label=None,
+    ):
+        self.calls.append(
+            (
+                "agent_run.promote",
+                {
+                    "run_id": run_id,
+                    "workspace_id": workspace_id,
+                    "cwd": cwd,
+                    "workspace_label": workspace_label,
+                },
+            )
+        )
+        return self._agent_run("promoted")
+
+    def delete_agent_run(self, run_id):
+        self.calls.append(("agent_run.delete", {"run_id": run_id}))
+        return self._agent_run("cancelled")
 
     def read_pane(self, pane_id, **options):
         self.calls.append(("pane.read", {"pane_id": pane_id, **options}))
@@ -431,7 +496,14 @@ class HerdrHTTPTests(unittest.TestCase):
         )
         self.assertEqual(
             self.service.calls[-1],
-            ("quick_pi_session", {"label": "aug 18, 2:34 pm"}),
+            (
+                "quick_pi_session",
+                {
+                    "label": "aug 18, 2:34 pm",
+                    "workspace_id": None,
+                    "cwd": None,
+                },
+            ),
         )
 
         for label in ("", "   ", "x" * 121):
@@ -443,6 +515,104 @@ class HerdrHTTPTests(unittest.TestCase):
                 )
                 self.assertEqual(invalid_status, 400)
                 self.assertEqual(invalid_body["error"]["code"], "invalid_request")
+
+    def test_quick_pi_session_forwards_optional_workspace_and_cwd(self):
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "Project question", "workspaceId": "w1", "cwd": "/tmp"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "quick_pi_session",
+                {"label": "Project question", "workspace_id": "w1", "cwd": "/tmp"},
+            ),
+        )
+
+    def test_agent_run_routes_use_async_start_and_stable_envelope(self):
+        status, _, body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "What changed?"},
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(body["run"]["status"], "queued")
+        self.assertEqual(
+            set(body["run"]),
+            {
+                "id",
+                "status",
+                "prompt",
+                "response",
+                "error",
+                "createdAt",
+                "startedAt",
+                "finishedAt",
+                "sessionId",
+                "sessionFile",
+                "costUSD",
+                "promotedWorkspaceId",
+                "promotedPaneId",
+            },
+        )
+        self.assertEqual(
+            self.service.calls[-1],
+            ("agent_run.start", {"prompt": "What changed?", "label": None}),
+        )
+
+        get_status, _, get_body = self.request("/api/v1/agent-runs/agr_0123456789ab")
+        self.assertEqual(get_status, 200)
+        self.assertEqual(get_body["run"]["status"], "completed")
+
+        cancel_status, _, cancel_body = self.request(
+            "/api/v1/agent-runs/agr_0123456789ab/cancel",
+            method="POST",
+            payload={},
+        )
+        self.assertEqual(cancel_status, 200)
+        self.assertEqual(cancel_body["run"]["status"], "cancelled")
+
+    def test_agent_run_promote_and_delete_forward_validated_options(self):
+        status, _, body = self.request(
+            "/api/v1/agent-runs/agr_0123456789ab/promote",
+            method="POST",
+            payload={
+                "workspaceId": "w1",
+                "cwd": "/tmp",
+                "workspaceLabel": "Agent chats",
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["run"]["status"], "promoted")
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "agent_run.promote",
+                {
+                    "run_id": "agr_0123456789ab",
+                    "workspace_id": "w1",
+                    "cwd": "/tmp",
+                    "workspace_label": "Agent chats",
+                },
+            ),
+        )
+
+        delete_status, _, delete_body = self.request(
+            "/api/v1/agent-runs/agr_0123456789ab",
+            method="DELETE",
+            payload={},
+        )
+        self.assertEqual(delete_status, 200)
+        self.assertEqual(delete_body["run"]["status"], "cancelled")
+        self.assertEqual(
+            self.service.calls[-1],
+            ("agent_run.delete", {"run_id": "agr_0123456789ab"}),
+        )
 
     def test_start_agent_injects_pi_extension_only_when_args_are_empty(self):
         path = "/api/v1/panes/w1:p1/start-agent"

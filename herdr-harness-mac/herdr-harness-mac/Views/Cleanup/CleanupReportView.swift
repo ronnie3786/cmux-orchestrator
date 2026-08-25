@@ -3,6 +3,7 @@ import SwiftUI
 struct CleanupReportView: View {
     let envelope: CleanupRunEnvelope
     @Bindable var controller: CleanupRunController
+    let preferredPaneIDs: Set<String>?
     @State private var selection = CleanupSelectionPlan()
     @State private var filter = CleanupReportFilter.all
     @State private var isConfirmingClose = false
@@ -40,7 +41,7 @@ struct CleanupReportView: View {
             }
             footer
         }
-        .onAppear { selection.seed(with: workspaces) }
+        .onAppear { selection.seed(with: workspaces, preferredPaneIDs: preferredPaneIDs) }
     }
 
     private var partialRunWarning: some View {

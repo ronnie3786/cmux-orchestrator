@@ -20,25 +20,26 @@ struct SidebarTreeTests {
         #expect(tree[0].looseChats.isEmpty)
     }
 
-    @Test("Recent-only filtering keeps only panes first seen today")
-    func recentOnlyFiltersPanesByFirstSeenDay() {
+    @Test("Today filtering uses last activity, then falls back to first seen")
+    func todayFiltersPanesByActivityDay() {
         let now = Date(timeIntervalSince1970: 1_735_732_800)
         let tabs = [tab(id: "recent:t1", workspaceID: "recent", number: 1, label: "Today", paneCount: 3)]
         let panes = [
-            pane(id: "recent:p1", workspaceID: "recent", tabID: "recent:t1", title: "Today", firstSeenAt: now),
-            pane(id: "recent:p2", workspaceID: "recent", tabID: "recent:t1", title: "Old", firstSeenAt: now.addingTimeInterval(-3 * 86_400)),
+            pane(id: "recent:p1", workspaceID: "recent", tabID: "recent:t1", title: "Active today", firstSeenAt: now.addingTimeInterval(-3 * 86_400), lastActivityAt: now),
+            pane(id: "recent:p2", workspaceID: "recent", tabID: "recent:t1", title: "Old activity", firstSeenAt: now, lastActivityAt: now.addingTimeInterval(-3 * 86_400)),
             pane(id: "recent:p3", workspaceID: "recent", tabID: "recent:t1", title: "Unknown"),
+            pane(id: "recent:p4", workspaceID: "recent", tabID: "recent:t1", title: "First-seen fallback", firstSeenAt: now),
         ]
 
         let tree = SidebarTree.build(
             workspaces: [workspace(id: "recent", number: 1, label: "Recent", tabs: tabs, panes: panes)],
             query: "",
             collapsedWorkspaceIDs: [],
-            recentOnly: true,
+            recency: .today,
             now: now
         )
 
-        #expect(tree[0].sections[0].chats.map(\.id) == ["recent:p1"])
+        #expect(tree[0].sections[0].chats.map(\.id) == ["recent:p1", "recent:p4"])
     }
 
     @Test("Recent-only filtering applies to starred groups")
@@ -53,7 +54,7 @@ struct SidebarTreeTests {
             workspaces: [workspace(id: "starred", number: 1, label: "Starred", tabs: tabs, panes: panes)],
             query: "",
             starredIDs: ["starred:p1", "starred:p2"],
-            recentOnly: true,
+            recency: .today,
             now: now
         )
 
@@ -83,7 +84,7 @@ struct SidebarTreeTests {
             ],
             query: "",
             collapsedWorkspaceIDs: [],
-            recentOnly: true,
+            recency: .today,
             now: now
         )
 
@@ -104,11 +105,86 @@ struct SidebarTreeTests {
             workspaces: [workspace(id: "all", number: 1, label: "All", tabs: tabs, panes: panes)],
             query: "",
             collapsedWorkspaceIDs: [],
-            recentOnly: false,
+            recency: .all,
             now: now
         )
 
         #expect(tree[0].sections[0].chats.map(\.id) == ["all:p1", "all:p2", "all:p3"])
+    }
+
+    @Test("This-week filtering respects the calendar week boundary")
+    func thisWeekUsesCalendarBoundary() throws {
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let now = try #require(calendar.date(from: DateComponents(
+            calendar: calendar,
+            year: 2026,
+            month: 8,
+            day: 20,
+            hour: 12
+        )))
+        let monday = try #require(calendar.date(byAdding: .day, value: -3, to: now))
+        let priorSunday = try #require(calendar.date(byAdding: .day, value: -4, to: now))
+        let tabs = [tab(id: "week:t1", workspaceID: "week", number: 1, label: "Week", paneCount: 2)]
+        let panes = [
+            pane(id: "week:p1", workspaceID: "week", tabID: "week:t1", title: "Monday", firstSeenAt: priorSunday, lastActivityAt: monday),
+            pane(id: "week:p2", workspaceID: "week", tabID: "week:t1", title: "Sunday", firstSeenAt: now, lastActivityAt: priorSunday),
+        ]
+
+        let tree = SidebarTree.build(
+            workspaces: [workspace(id: "week", number: 1, label: "Week", tabs: tabs, panes: panes)],
+            query: "",
+            collapsedWorkspaceIDs: [],
+            recency: .thisWeek,
+            now: now,
+            calendar: calendar
+        )
+
+        #expect(tree[0].sections[0].chats.map(\.id) == ["week:p1"])
+    }
+
+    @Test("Stale groups require both old timestamps and exclude active states")
+    func staleGroupsApplySafetyRules() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let eightDaysAgo = try #require(calendar.date(byAdding: .day, value: -8, to: now))
+        let sevenDaysAgo = try #require(calendar.date(byAdding: .day, value: -7, to: now))
+        let oneDayAgo = try #require(calendar.date(byAdding: .day, value: -1, to: now))
+        let tabs = [tab(id: "stale:t1", workspaceID: "stale", number: 1, label: "Chats", paneCount: 7)]
+        let panes = [
+            pane(id: "stale:p1", workspaceID: "stale", tabID: "stale:t1", title: "Idle stale", status: .idle, firstSeenAt: eightDaysAgo, lastActivityAt: sevenDaysAgo),
+            pane(id: "stale:p2", workspaceID: "stale", tabID: "stale:t1", title: "Done stale", status: .done, firstSeenAt: eightDaysAgo, lastActivityAt: eightDaysAgo),
+            pane(id: "stale:p3", workspaceID: "stale", tabID: "stale:t1", title: "Working", status: .working, firstSeenAt: eightDaysAgo, lastActivityAt: eightDaysAgo),
+            pane(id: "stale:p4", workspaceID: "stale", tabID: "stale:t1", title: "Blocked", status: .blocked, firstSeenAt: eightDaysAgo, lastActivityAt: eightDaysAgo),
+            pane(id: "stale:p5", workspaceID: "stale", tabID: "stale:t1", title: "Recent activity", firstSeenAt: eightDaysAgo, lastActivityAt: oneDayAgo),
+            pane(id: "stale:p6", workspaceID: "stale", tabID: "stale:t1", title: "Recent first seen", firstSeenAt: oneDayAgo, lastActivityAt: eightDaysAgo),
+            pane(id: "stale:p7", workspaceID: "stale", tabID: "stale:t1", title: "Missing activity", firstSeenAt: eightDaysAgo),
+        ]
+        let machine = HerdrMachine(id: "m1", name: "Mac", urlString: "https://mac.example.com")
+        let stamped = workspace(id: "stale", number: 1, label: "Stale", tabs: tabs, panes: panes).stamped(machineID: machine.id)
+
+        let groups = SidebarTree.staleGroups(
+            machines: [machine],
+            workspaces: [stamped],
+            query: "",
+            now: now,
+            calendar: calendar
+        )
+
+        #expect(groups.count == 1)
+        #expect(groups[0].chats.map(\.paneID) == ["stale:p2", "stale:p1"])
+        #expect(groups[0].workspaceIDs == ["stale"])
+
+        let tree = SidebarTree.build(
+            workspaces: [stamped],
+            query: "",
+            collapsedWorkspaceIDs: [],
+            excludedPaneIDs: Set(groups[0].chats.map(\.id)),
+            now: now,
+            calendar: calendar
+        )
+        #expect(Set(tree[0].sections[0].chats.map(\.paneID)) == Set(["stale:p3", "stale:p4", "stale:p5", "stale:p6", "stale:p7"]))
     }
 
     @Test("Keeps collapsed workspaces collapsed outside search")
@@ -588,7 +664,9 @@ struct SidebarTreeTests {
         workspaceID: String,
         tabID: String,
         title: String,
-        firstSeenAt: Date? = nil
+        status: AgentStatus = .idle,
+        firstSeenAt: Date? = nil,
+        lastActivityAt: Date? = nil
     ) -> HerdrPane {
         HerdrPane(
             paneID: id,
@@ -596,7 +674,7 @@ struct SidebarTreeTests {
             workspaceID: workspaceID,
             tabID: tabID,
             focused: false,
-            agentStatus: .idle,
+            agentStatus: status,
             revision: 0,
             cwd: nil,
             foregroundCWD: nil,
@@ -606,7 +684,8 @@ struct SidebarTreeTests {
             displayAgent: nil,
             terminalTitle: nil,
             terminalTitleStripped: nil,
-            firstSeenAt: firstSeenAt
+            firstSeenAt: firstSeenAt,
+            lastActivityAt: lastActivityAt
         )
     }
 }

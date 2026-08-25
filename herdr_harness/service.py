@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 import os
+import socket
 import threading
 import time
 import uuid
@@ -16,6 +17,7 @@ from typing import Any, Callable, Mapping, Optional, TypeVar
 
 from .alerts import AlertStore, utc_now
 from . import attachments, cmux_tools, voice, workspace_tools
+from .agent_runs import AgentRunError, AgentRunManager
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import CleanupManager
 from .events import EventBroker
@@ -96,6 +98,7 @@ class HerdrService:
         tools: Optional[cmux_tools.CmuxToolsClient] = None,
         pi_semantic: Optional[PiSemanticManager] = None,
         cleanup: Optional[CleanupManager] = None,
+        agent_runs: Optional[AgentRunManager] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -121,8 +124,13 @@ class HerdrService:
             on_event=self._publish_pi_event,
         )
         self.cleanup = cleanup or CleanupManager(self, environ=self.environ)
+        # Agent runs are initialized lazily. Most harness requests do not need
+        # a subprocess manager, and delaying creation avoids touching its
+        # private persistence directory until the feature is actually used.
+        self._agent_runs = agent_runs
         self._lock = threading.RLock()
         self._quick_session_lock = threading.Lock()
+        self._agent_promotion_lock = threading.Lock()
         self._snapshot: Optional[dict] = None
         self._snapshot_fingerprint: Optional[str] = None
         self._generated_at: Optional[str] = None
@@ -260,6 +268,21 @@ class HerdrService:
         close_pi = getattr(self.pi_semantic, "close", None)
         if callable(close_pi):
             close_pi()
+        if self._agent_runs is not None:
+            stop_agent_runs = getattr(self._agent_runs, "stop", None)
+            if callable(stop_agent_runs):
+                stop_agent_runs()
+
+    @property
+    def agent_runs(self) -> AgentRunManager:
+        with self._lock:
+            if self._agent_runs is None:
+                self._agent_runs = AgentRunManager(
+                    environ=self.environ,
+                    herdr_socket_path=self.client.socket_path,
+                    herdr_session=self.client.session,
+                )
+            return self._agent_runs
 
     def _publish_pi_event(self, envelope: dict) -> None:
         event = envelope.get("event") if isinstance(envelope, dict) else None
@@ -318,7 +341,7 @@ class HerdrService:
             self._publish_alert(alert)
         if resolved:
             self._publish_read_state_changed()
-        self.panes_seen.record_first_seen(current_pane_ids)
+        self.panes_seen.observe(snapshot.get("panes", []))
         if self.stars.prune(current_pane_ids):
             self.broker.publish(
                 "stars.changed",
@@ -448,7 +471,7 @@ class HerdrService:
         # Herdr's native terminal UI keeps ``done`` until focus. This read-model
         # projection is for HTTP-facing apps only and never changes the cache.
         acked_done_panes = self.alerts.acked_done_panes()
-        first_seen_by_pane = self.panes_seen.first_seen_map()
+        lifecycle_by_pane = self.panes_seen.lifecycle_map()
         for workspace in workspaces:
             panes = workspace.get("panes")
             if not isinstance(panes, list):
@@ -459,9 +482,13 @@ class HerdrService:
                 pane_id = str(pane.get("pane_id"))
                 if pane.get("agent_status") == "done" and pane_id in acked_done_panes:
                     pane["agent_status"] = "idle"
-                first_seen_at = first_seen_by_pane.get(pane_id)
-                if first_seen_at is not None:
-                    pane["first_seen_at"] = first_seen_at
+                lifecycle = lifecycle_by_pane.get(pane_id)
+                if lifecycle is not None:
+                    pane["first_seen_at"] = lifecycle.get("firstSeenAt")
+                    pane["last_activity_at"] = lifecycle.get("lastActivityAt")
+                    working_since = lifecycle.get("workingSince")
+                    if working_since is not None:
+                        pane["working_since"] = working_since
 
             for tab in workspace.get("tabs", []):
                 if not isinstance(tab, dict) or tab.get("agent_status") != "done":
@@ -946,22 +973,158 @@ class HerdrService:
         )
         return ["--extension", str(path)] if path.exists() else []
 
-    def quick_pi_session(self, label: str) -> dict:
+    def _server_home(self) -> Path:
+        raw_home = self.environ.get("HOME")
+        candidate = Path(raw_home) if raw_home else Path.home()
+        try:
+            resolved = candidate.expanduser().resolve()
+        except (OSError, RuntimeError) as exc:
+            raise HerdrClientError(
+                "The harness home directory could not be resolved",
+                code="invalid_cwd",
+            ) from exc
+        if not resolved.is_dir():
+            raise HerdrClientError(
+                "The harness home directory is unavailable",
+                code="invalid_cwd",
+            )
+        return resolved
+
+    @staticmethod
+    def _canonical_directory(value: object) -> Optional[Path]:
+        if not isinstance(value, str) or not value.strip() or "\x00" in value:
+            return None
+        try:
+            candidate = Path(value).expanduser().resolve()
+        except (OSError, RuntimeError):
+            return None
+        return candidate if candidate.is_dir() else None
+
+    @classmethod
+    def _workspace_cwd(cls, snapshot: dict, workspace: dict) -> Optional[Path]:
+        """Resolve a workspace's canonical directory from authoritative state."""
+
+        candidates: list[object] = [workspace.get("cwd")]
+        worktree = workspace.get("worktree")
+        if isinstance(worktree, dict):
+            candidates.extend((worktree.get("checkout_path"), worktree.get("cwd")))
+        workspace_id = str(workspace.get("workspace_id") or "")
+        panes = [
+            pane
+            for pane in snapshot.get("panes", [])
+            if isinstance(pane, dict) and str(pane.get("workspace_id") or "") == workspace_id
+        ]
+        panes.sort(key=lambda pane: not bool(pane.get("focused")))
+        for pane in panes:
+            candidates.extend((pane.get("foreground_cwd"), pane.get("cwd")))
+        for candidate in candidates:
+            resolved = cls._canonical_directory(candidate)
+            if resolved is not None:
+                return resolved
+        return None
+
+    @staticmethod
+    def _nested_identifier(value: object, key: str) -> Optional[str]:
+        if isinstance(value, dict):
+            item = value.get(key)
+            if isinstance(item, (str, int)) and str(item):
+                return str(item)
+            for child in value.values():
+                found = HerdrService._nested_identifier(child, key)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = HerdrService._nested_identifier(child, key)
+                if found:
+                    return found
+        return None
+
+    def quick_pi_session(
+        self,
+        label: str,
+        *,
+        workspace_id: Optional[str] = None,
+        cwd: Optional[str] = None,
+        session_file: Optional[str] = None,
+        workspace_label: Optional[str] = None,
+    ) -> dict:
+        """Create an interactive Pi pane, optionally resuming an exact session."""
+
         with self._quick_session_lock:
             snapshot = self.refresh_snapshot()
-            existing_workspace = next(
-                (
-                    item
-                    for item in snapshot.get("workspaces", [])
-                    if isinstance(item, dict)
-                    and str(item.get("label") or "").strip().casefold() == "random tasks"
-                ),
-                None,
-            )
+            requested_cwd = self._canonical_directory(cwd) if cwd is not None else None
+            if cwd is not None and requested_cwd is None:
+                raise HerdrClientError(
+                    "cwd must be an existing directory",
+                    code="invalid_cwd",
+                )
+            extension_args = self.pi_extension_args()
+            pi_extension_attached = bool(extension_args)
+            agent_args = list(extension_args)
+            if session_file is not None:
+                try:
+                    session_path = Path(session_file).expanduser().resolve()
+                except (OSError, RuntimeError) as exc:
+                    raise HerdrClientError(
+                        "Pi session file is unavailable",
+                        code="agent_run_session_missing",
+                    ) from exc
+                if not session_path.is_file():
+                    raise HerdrClientError(
+                        "Pi session file is unavailable",
+                        code="agent_run_session_missing",
+                    )
+                agent_args = ["--session", str(session_path), *extension_args]
+
+            workspaces = [
+                item for item in snapshot.get("workspaces", []) if isinstance(item, dict)
+            ]
+            existing_workspace: Optional[dict] = None
+            if workspace_id is not None:
+                existing_workspace = next(
+                    (
+                        item
+                        for item in workspaces
+                        if str(item.get("workspace_id") or "") == workspace_id
+                    ),
+                    None,
+                )
+                if existing_workspace is None:
+                    raise HerdrClientError(
+                        "Workspace not found",
+                        code="workspace_not_found",
+                    )
+                target_cwd = (
+                    requested_cwd
+                    or self._workspace_cwd(snapshot, existing_workspace)
+                    or self._server_home()
+                )
+            else:
+                home = self._server_home() if requested_cwd is None else None
+                target_cwd = requested_cwd or home
+                assert target_cwd is not None
+                desired_workspace_label = workspace_label or "random tasks"
+                # Automatic reuse is intentionally conservative. A similarly
+                # named project workspace must never receive a home-level chat.
+                if home is not None and target_cwd == home:
+                    existing_workspace = next(
+                        (
+                            item
+                            for item in workspaces
+                            if str(item.get("label") or "").strip().casefold()
+                            == desired_workspace_label.strip().casefold()
+                            and self._workspace_cwd(snapshot, item) == home
+                        ),
+                        None,
+                    )
+
+            created_tab_id: Optional[str] = None
             if existing_workspace is None:
+                desired_workspace_label = workspace_label or "random tasks"
                 result = self.invoke(
                     "workspace.create",
-                    {"label": "random tasks", "cwd": os.path.expanduser("~"), "focus": True},
+                    {"label": desired_workspace_label, "cwd": str(target_cwd), "focus": True},
                 )
                 raw = result["result"]
                 workspace = raw.get("workspace")
@@ -976,8 +1139,12 @@ class HerdrService:
                 created_workspace = True
             else:
                 workspace_id = str(existing_workspace["workspace_id"])
-                result = self.invoke("tab.create", {"workspace_id": workspace_id, "focus": True})
+                result = self.invoke(
+                    "tab.create",
+                    {"workspace_id": workspace_id, "cwd": str(target_cwd), "focus": True},
+                )
                 raw = result["result"]
+                created_tab_id = self._nested_identifier(raw, "tab_id")
                 pane = raw.get("pane") or raw.get("root_pane")
                 pane_id = pane.get("pane_id") if isinstance(pane, dict) else None
                 if not pane_id:
@@ -989,19 +1156,30 @@ class HerdrService:
                     )
                 created_workspace = False
 
-            extension_args = self.pi_extension_args()
-            pi_extension_attached = bool(extension_args)
             name = "quick-pi-" + uuid.uuid4().hex[:8]
-            self.invoke(
-                "agent.start",
-                {
-                    "pane_id": pane_id,
-                    "name": name,
-                    "kind": "pi",
-                    "args": extension_args,
-                    "timeout_ms": 30000,
-                },
-            )
+            try:
+                self.invoke(
+                    "agent.start",
+                    {
+                        "pane_id": pane_id,
+                        "name": name,
+                        "kind": "pi",
+                        "args": agent_args,
+                        "timeout_ms": 30000,
+                    },
+                )
+            except HerdrClientError:
+                # Avoid leaving an empty shell behind when Pi could not start.
+                try:
+                    if created_workspace:
+                        self.invoke("workspace.close", {"workspace_id": workspace_id})
+                    elif created_tab_id:
+                        self.invoke("tab.close", {"tab_id": created_tab_id})
+                    else:
+                        self.invoke("pane.close", {"pane_id": pane_id})
+                except HerdrClientError:
+                    pass
+                raise
             try:
                 self.invoke("pane.rename", {"pane_id": pane_id, "label": label})
             except HerdrClientError:
@@ -1013,6 +1191,140 @@ class HerdrService:
                 "created_workspace": created_workspace,
                 "pi_extension_attached": pi_extension_attached,
             }
+
+    def _agent_topology(self) -> dict:
+        snapshot, generated_at = self._cached_snapshot()
+        lifecycle_by_pane = self.panes_seen.lifecycle_map()
+        workspace_values = [
+            item for item in snapshot.get("workspaces", []) if isinstance(item, dict)
+        ][:40]
+        pane_values = [item for item in snapshot.get("panes", []) if isinstance(item, dict)][:200]
+        agent_by_pane = {
+            str(item.get("pane_id")): item
+            for item in snapshot.get("agents", [])
+            if isinstance(item, dict) and item.get("pane_id")
+        }
+        topology = {
+            "generatedAt": generated_at,
+            "machine": {
+                "hostname": socket.gethostname(),
+                "herdrSession": self.client.session,
+            },
+            "focusedWorkspaceId": snapshot.get("focused_workspace_id"),
+            "focusedPaneId": snapshot.get("focused_pane_id"),
+            "workspaces": [
+                {
+                    "id": item.get("workspace_id"),
+                    "label": str(item.get("label") or "")[:240],
+                    "status": item.get("agent_status"),
+                    "cwd": str(self._workspace_cwd(snapshot, item) or "")[:4096],
+                }
+                for item in workspace_values
+            ],
+            "panes": [
+                {
+                    "id": item.get("pane_id"),
+                    "workspaceId": item.get("workspace_id"),
+                    "tabId": item.get("tab_id"),
+                    "title": str(
+                        item.get("label")
+                        or item.get("title")
+                        or item.get("terminal_title_stripped")
+                        or ""
+                    )[:500],
+                    "status": item.get("agent_status"),
+                    "agent": str(
+                        item.get("agent")
+                        or agent_by_pane.get(str(item.get("pane_id")), {}).get("agent")
+                        or ""
+                    )[:120],
+                    "cwd": str(item.get("foreground_cwd") or item.get("cwd") or "")[:4096],
+                    "revision": item.get("revision"),
+                    "firstSeenAt": lifecycle_by_pane.get(
+                        str(item.get("pane_id")), {}
+                    ).get("firstSeenAt"),
+                    "lastActivityAt": lifecycle_by_pane.get(
+                        str(item.get("pane_id")), {}
+                    ).get("lastActivityAt"),
+                    "workingSince": lifecycle_by_pane.get(
+                        str(item.get("pane_id")), {}
+                    ).get("workingSince"),
+                }
+                for item in pane_values
+            ],
+            "truncated": {
+                "workspaces": len(snapshot.get("workspaces", [])) > len(workspace_values),
+                "panes": len(snapshot.get("panes", [])) > len(pane_values),
+            },
+        }
+        # Keep the private context file bounded even if native fields contain
+        # unusually long or non-string values.
+        while len(json.dumps(topology, default=str).encode("utf-8")) > 64 * 1024:
+            if topology["panes"]:
+                topology["panes"].pop()
+                topology["truncated"]["panes"] = True
+            elif topology["workspaces"]:
+                topology["workspaces"].pop()
+                topology["truncated"]["workspaces"] = True
+            else:
+                break
+        return topology
+
+    def start_agent_run(self, *, prompt: str, label: Optional[str] = None) -> dict:
+        display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
+        try:
+            self.refresh_snapshot()
+        except HerdrClientError:
+            # A recent cached fleet summary is still useful during a brief
+            # Herdr reconnect. _agent_topology will retry if no cache exists.
+            pass
+        return self.agent_runs.start(
+            prompt=prompt,
+            label=display_label,
+            cwd=str(self._server_home()),
+            topology=self._agent_topology(),
+        )
+
+    def get_agent_run(self, run_id: str) -> dict:
+        return self.agent_runs.get(run_id)
+
+    def cancel_agent_run(self, run_id: str) -> dict:
+        return self.agent_runs.cancel(run_id)
+
+    def promote_agent_run(
+        self,
+        run_id: str,
+        *,
+        workspace_id: Optional[str] = None,
+        cwd: Optional[str] = None,
+        workspace_label: Optional[str] = None,
+    ) -> dict:
+        with self._agent_promotion_lock:
+            run, session_file = self.agent_runs.promotable(run_id)
+            if run.get("status") == "promoted":
+                return self.agent_runs.get(run_id)
+            try:
+                result = self.quick_pi_session(
+                    str(run.get("label") or "Agent chat")[:120],
+                    workspace_id=workspace_id,
+                    cwd=cwd,
+                    session_file=session_file,
+                    workspace_label=workspace_label or "Agent chats",
+                )
+            except Exception:
+                try:
+                    self.agent_runs.release_promotion(run_id)
+                except (AgentRunError, OSError):
+                    pass
+                raise
+            return self.agent_runs.mark_promoted(
+                run_id,
+                workspace_id=str(result["workspace_id"]),
+                pane_id=str(result["pane_id"]),
+            )
+
+    def delete_agent_run(self, run_id: str) -> dict:
+        return self.agent_runs.delete(run_id)
 
     def read_pane(
         self,

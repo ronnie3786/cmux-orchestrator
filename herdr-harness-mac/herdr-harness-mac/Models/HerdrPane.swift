@@ -20,6 +20,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     let tokens: [String: String]
     let piSemantic: PiSemanticCapability?
     let firstSeenAt: Date?
+    let lastActivityAt: Date?
+    let workingSince: Date?
 
     var machineID: String = ""
     private(set) var id: String
@@ -52,6 +54,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
             && tokens == other.tokens
             && piSemantic == other.piSemantic
             && firstSeenAt == other.firstSeenAt
+            && lastActivityAt == other.lastActivityAt
+            && workingSince == other.workingSince
             && machineID == other.machineID
             && id == other.id
             && scopedTabID == other.scopedTabID
@@ -99,21 +103,9 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         case tokens
         case piSemantic = "pi_semantic"
         case firstSeenAt = "first_seen_at"
+        case lastActivityAt = "last_activity_at"
+        case workingSince = "working_since"
     }
-
-    // ISO8601DateFormatter is documented as thread-safe. These immutable
-    // formatters avoid allocating one for every pane decoded from a snapshot.
-    // TODO: Revisit if Foundation changes that thread-safety guarantee.
-    nonisolated(unsafe) private static let withFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-    nonisolated(unsafe) private static let withoutFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -135,9 +127,9 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         stateLabels = try container.decodeIfPresent([String: String].self, forKey: .stateLabels) ?? [:]
         tokens = try container.decodeIfPresent([String: String].self, forKey: .tokens) ?? [:]
         piSemantic = try container.decodeIfPresent(PiSemanticCapability.self, forKey: .piSemantic)
-        firstSeenAt = try container.decodeIfPresent(String.self, forKey: .firstSeenAt).flatMap {
-            Self.withFractional.date(from: $0) ?? Self.withoutFractional.date(from: $0)
-        }
+        firstSeenAt = try container.decodeIfPresent(String.self, forKey: .firstSeenAt).flatMap(HerdrTimestamp.date)
+        lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt).flatMap(HerdrTimestamp.date)
+        workingSince = try container.decodeIfPresent(String.self, forKey: .workingSince).flatMap(HerdrTimestamp.date)
         id = paneID
         scopedTabID = tabID
     }
@@ -162,7 +154,9 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encode(stateLabels, forKey: .stateLabels)
         try container.encode(tokens, forKey: .tokens)
         try container.encodeIfPresent(piSemantic, forKey: .piSemantic)
-        try container.encodeIfPresent(firstSeenAt.map { Self.withoutFractional.string(from: $0) }, forKey: .firstSeenAt)
+        try container.encodeIfPresent(firstSeenAt.map(HerdrTimestamp.string), forKey: .firstSeenAt)
+        try container.encodeIfPresent(lastActivityAt.map(HerdrTimestamp.string), forKey: .lastActivityAt)
+        try container.encodeIfPresent(workingSince.map(HerdrTimestamp.string), forKey: .workingSince)
     }
 
     init(
@@ -184,7 +178,9 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         stateLabels: [String: String] = [:],
         tokens: [String: String] = [:],
         piSemantic: PiSemanticCapability? = nil,
-        firstSeenAt: Date? = nil
+        firstSeenAt: Date? = nil,
+        lastActivityAt: Date? = nil,
+        workingSince: Date? = nil
     ) {
         self.paneID = paneID
         self.terminalID = terminalID
@@ -205,6 +201,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.tokens = tokens
         self.piSemantic = piSemantic
         self.firstSeenAt = firstSeenAt
+        self.lastActivityAt = lastActivityAt
+        self.workingSince = workingSince
         self.id = paneID
         self.scopedTabID = tabID
     }

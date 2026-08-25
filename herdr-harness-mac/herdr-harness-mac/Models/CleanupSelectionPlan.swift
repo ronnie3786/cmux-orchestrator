@@ -4,8 +4,17 @@ struct CleanupSelectionPlan: Equatable {
     private(set) var paneIDs: Set<String> = []
     private(set) var workspaceIDs: Set<String> = []
 
-    mutating func seed(with workspaces: [CleanupWorkspaceReport]) {
+    mutating func seed(
+        with workspaces: [CleanupWorkspaceReport],
+        preferredPaneIDs: Set<String>? = nil
+    ) {
         guard paneIDs.isEmpty, workspaceIDs.isEmpty else { return }
+        if let preferredPaneIDs {
+            paneIDs = Set(workspaces.flatMap(\.panes).filter {
+                $0.safeToClose && preferredPaneIDs.contains($0.paneID)
+            }.map(\.paneID))
+            return
+        }
         paneIDs = Set(workspaces.flatMap { workspace in
             var panes = workspace.panes.filter(\.safeToClose)
             // Selecting every pane would implicitly collapse the workspace.

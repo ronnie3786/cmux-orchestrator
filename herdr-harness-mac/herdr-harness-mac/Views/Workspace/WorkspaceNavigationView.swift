@@ -56,6 +56,8 @@ struct WorkspaceNavigationView: View {
             AttentionView(model: model) { pane, _ in
                 openSession(pane)
             }
+        case .activity:
+            ActivityFeedView(model: model, selectPane: openSession)
         }
     }
 
@@ -93,6 +95,16 @@ struct WorkspaceNavigationView: View {
                         .allowsHitTesting(false)
                 }
             }
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button("Agent", systemImage: "sparkles") {
+                shell.isAgentPresented = true
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.canControl)
+            .help("Ask a one-off question without creating a chat")
+            .accessibilityIdentifier("open-headless-agent")
         }
 
         ToolbarItem(placement: .primaryAction) {

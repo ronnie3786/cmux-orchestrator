@@ -211,6 +211,7 @@ struct SidebarChatRow: View {
     let pane: HerdrPane
     let isSelected: Bool
     var isStarred: Bool = false
+    var statusSince: Date?
     let action: () -> Void
     @State private var isHovering = false
 
@@ -232,7 +233,7 @@ struct SidebarChatRow: View {
                         .foregroundStyle(SidebarTone.status)
                 }
 
-                Text(pane.agentStatus.compactTitle.lowercased())
+                SidebarStatusAgeLabel(status: pane.agentStatus, since: statusSince)
                     .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
@@ -253,7 +254,14 @@ struct SidebarChatRow: View {
         .help(pane.displayTitle)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)")
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        guard let statusSince else {
+            return "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
+        }
+        return "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title), \(HerdrTimestamp.spokenAge(since: statusSince))"
     }
 
     private var rowBackground: Color {

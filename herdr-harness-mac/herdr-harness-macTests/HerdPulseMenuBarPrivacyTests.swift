@@ -148,7 +148,7 @@ struct HerdPulseMenuBarPrivacyTests {
             ],
             alerts: [
                 alert(paneID: "blocked-older", createdAt: "2026-08-25T11:00:00Z"),
-                alert(paneID: "done-alert", createdAt: "2026-08-25T13:00:00Z"),
+                alert(paneID: "done-alert", status: .done, createdAt: "2026-08-25T13:00:00Z"),
                 alert(
                     paneID: "blocked-newest",
                     createdAt: "2026-08-25T12:00:00Z",
@@ -185,6 +185,55 @@ struct HerdPulseMenuBarPrivacyTests {
 
         #expect(result.rows.count == 3)
         #expect(result.overflow == 3)
+    }
+
+    @Test("Attention age follows the current transition, not an older status")
+    func attentionAgeMatchesCurrentStatus() throws {
+        let pane = attentionPane(id: "transition", status: .blocked, revision: 1)
+        let result = HerdPulseAttentionRows.attentionRows(
+            panes: [pane],
+            alerts: [
+                alert(paneID: "transition", status: .done, createdAt: "2026-08-25T13:00:00Z"),
+                alert(paneID: "transition", status: .blocked, createdAt: "2026-08-25T12:00:00Z"),
+            ],
+            revealTitles: true
+        )
+
+        let row = try #require(result.rows.first)
+        #expect(row.since == HerdrTimestamp.date(from: "2026-08-25T12:00:00Z"))
+    }
+
+    @Test("Working rows put the longest running agents first")
+    func workingRowsSortByElapsedTime() {
+        let oldest = Date(timeIntervalSince1970: 100)
+        let newer = Date(timeIntervalSince1970: 200)
+        let result = HerdPulseWorkingRows.workingRows(
+            panes: [
+                pane(id: "secret-work:idle", status: .idle),
+                pane(id: "secret-work:newer", status: .working, workingSince: newer),
+                pane(id: "secret-work:oldest", status: .working, workingSince: oldest),
+            ],
+            revealTitles: true
+        )
+
+        #expect(result.rows.map(\.id) == ["secret-work:oldest", "secret-work:newer"])
+        #expect(result.rows.map(\.since) == [oldest, newer])
+    }
+
+    @Test("Redacted working rows preserve duration without exposing identity")
+    func redactedWorkingRowsExcludeSessionIdentity() {
+        let result = HerdPulseWorkingRows.workingRows(
+            panes: [pane(id: "secret-work:p1", status: .working, workingSince: .now)],
+            revealTitles: false
+        )
+
+        for row in result.rows {
+            let rendered = "\(row.title)\n\(row.subtitle)"
+            for secret in Self.secrets {
+                #expect(!rendered.localizedCaseInsensitiveContains(secret), "\(rendered) leaked \(secret)")
+            }
+            #expect(row.since != nil)
+        }
     }
 
     // MARK: - Fixtures
@@ -246,7 +295,11 @@ struct HerdPulseMenuBarPrivacyTests {
         )
     }
 
-    private func pane(id: String, status: AgentStatus) -> HerdrPane {
+    private func pane(
+        id: String,
+        status: AgentStatus,
+        workingSince: Date? = nil
+    ) -> HerdrPane {
         HerdrPane(
             paneID: id,
             terminalID: id,
@@ -262,7 +315,8 @@ struct HerdPulseMenuBarPrivacyTests {
             agent: "codex",
             displayAgent: "Codex",
             terminalTitle: "Confidential terminal",
-            terminalTitleStripped: "Confidential terminal"
+            terminalTitleStripped: "Confidential terminal",
+            workingSince: workingSince
         )
     }
 
@@ -287,12 +341,17 @@ struct HerdPulseMenuBarPrivacyTests {
         .stamped(machineID: "test-machine")
     }
 
-    private func alert(paneID: String, createdAt: String, isRead: Bool = false) -> HerdrAlert {
+    private func alert(
+        paneID: String,
+        status: AgentStatus = .blocked,
+        createdAt: String,
+        isRead: Bool = false
+    ) -> HerdrAlert {
         HerdrAlert(
             id: "alert-\(paneID)-\(createdAt)",
             workspaceID: "test-workspace",
             paneID: paneID,
-            status: .blocked,
+            status: status,
             title: "",
             message: "",
             createdAt: createdAt,

@@ -25,13 +25,16 @@ final class HerdrAppModel {
         didSet { rebuildPaneIndex() }
     }
     var alerts: [HerdrAlert] = []
+    private(set) var activityHistoryAlerts: [HerdrAlert] = []
+    var isRefreshingActivity = false
+    var activityFeedError: String?
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
     var selectedWorkspaceID: String?
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
-    var sidebarRecentOnly = false
+    var sidebarRecency: SidebarRecency = .all
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
@@ -93,6 +96,12 @@ final class HerdrAppModel {
     private struct PaneLocation {
         let workspaceIndex: Int
         let paneIndex: Int
+    }
+
+    private struct ActivityFetchResult: Sendable {
+        let machineID: String
+        let alerts: [HerdrAlert]?
+        let errorMessage: String?
     }
 
     init(
@@ -196,6 +205,9 @@ final class HerdrAppModel {
     var workingCount: Int { workspaces.flatMap(\.panes).count(where: { $0.agentStatus == .working }) }
     var paneCount: Int { workspaces.reduce(0) { $0 + $1.paneCount } }
     var canControl: Bool { isDemoMode || connectionState == .live }
+    var activityFeedAlerts: [HerdrAlert] {
+        ActivityFeed.merged(current: alerts, history: activityHistoryAlerts)
+    }
 
     func canControl(machineID: String) -> Bool {
         isDemoMode || connectionState(forMachine: machineID) == .live
@@ -736,11 +748,11 @@ final class HerdrAppModel {
     func makeCleanupController(for target: CleanupSheetTarget) -> CleanupRunController {
         CleanupRunController(
             isDemoMode: isDemoMode,
-            runContext: "machine \(target.machineID), workspace \(target.workspaceID ?? "all")",
+            runContext: "machine \(target.machineID), workspaces \(target.requestedWorkspaceIDs.isEmpty ? "all" : target.requestedWorkspaceIDs.joined(separator: ","))",
             start: { _ in
                 try await self.startCleanup(
                     machineID: target.machineID,
-                    workspaceIDs: target.workspaceID.map { [$0] } ?? []
+                    workspaceIDs: target.requestedWorkspaceIDs
                 )
             },
             fetch: { runID in
@@ -1218,20 +1230,203 @@ final class HerdrAppModel {
         return succeeded
     }
 
-    func createQuickPiSession(machineID: String? = nil) async {
+    func createQuickPiSession(machineID: String? = nil, workspaceID: String? = nil) async {
         if isDemoMode {
             toastMessage = "quick pi sessions need a live connection"
             return
         }
+        let targetMachineID = machineID ?? machines.first?.id
         let label = Date.now.formatted(.dateTime.month(.abbreviated).day().hour().minute()).lowercased()
         var spawnedPaneID: String?
-        await perform("pi session spawning", machineID: machineID ?? machines.first?.id) { client in
-            let response = try await client.createQuickPiSession(label: label)
+        await perform("pi session spawning", machineID: targetMachineID) { client in
+            let response = try await client.createQuickPiSession(label: label, workspaceID: workspaceID)
             spawnedPaneID = response.paneID
         }
-        if let spawnedPaneID {
-            openPane(id: spawnedPaneID)
+        if let targetMachineID, let spawnedPaneID {
+            openPane(id: MachineScopedID.compose(machineID: targetMachineID, rawID: spawnedPaneID))
         }
+    }
+
+    func refreshActivityFeed() async {
+        guard !isRefreshingActivity else { return }
+        isRefreshingActivity = true
+        activityFeedError = nil
+        defer { isRefreshingActivity = false }
+
+        if isDemoMode {
+            activityHistoryAlerts = alerts
+            return
+        }
+
+        let targets = machines.compactMap { machine -> (HerdrMachine, HerdrAPIClient)? in
+            guard let client = client(forMachine: machine.id) else { return nil }
+            return (machine, client)
+        }
+        var results = await withTaskGroup(of: ActivityFetchResult.self) { group in
+            for (machine, client) in targets {
+                group.addTask {
+                    do {
+                        let response = try await client.fetchAlerts(limit: 500)
+                        return ActivityFetchResult(
+                            machineID: machine.id,
+                            alerts: response.alerts.map { $0.stamped(machineID: machine.id) },
+                            errorMessage: nil
+                        )
+                    } catch {
+                        return ActivityFetchResult(
+                            machineID: machine.id,
+                            alerts: nil,
+                            errorMessage: error.localizedDescription
+                        )
+                    }
+                }
+            }
+
+            var fetched: [ActivityFetchResult] = []
+            for await result in group { fetched.append(result) }
+            return fetched
+        }
+
+        let targetMachineIDs = Set(targets.map { $0.0.id })
+        for machine in machines where !targetMachineIDs.contains(machine.id) {
+            results.append(ActivityFetchResult(
+                machineID: machine.id,
+                alerts: nil,
+                errorMessage: "No active connection"
+            ))
+        }
+
+        let refreshedMachineIDs = Set(results.compactMap { $0.alerts == nil ? nil : $0.machineID })
+        var merged = activityHistoryAlerts.filter { !refreshedMachineIDs.contains($0.machineID) }
+        for result in results {
+            if let fresh = result.alerts { merged.append(contentsOf: fresh) }
+        }
+        activityHistoryAlerts = ActivityFeed.merged(current: [], history: merged)
+
+        let failures = results.compactMap { result -> String? in
+            guard let message = result.errorMessage else { return nil }
+            let name = machines.first(where: { $0.id == result.machineID })?.name ?? result.machineID
+            return "\(name): \(message)"
+        }
+        activityFeedError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
+    func startHeadlessAgent(prompt: String, machineID: String) async throws -> HeadlessAgentRun {
+        if isDemoMode {
+            let now = HerdrTimestamp.string(from: .now)
+            return HeadlessAgentRun(
+                id: "demo-agent-\(UUID().uuidString)",
+                status: .completed,
+                prompt: prompt,
+                response: "This is a demo Agent response. On a live machine, Pi answers from your home folder with a read-only snapshot of the current Herdr fleet.",
+                error: nil,
+                createdAt: now,
+                startedAt: now,
+                finishedAt: now,
+                sessionID: "demo-session",
+                sessionFile: "demo-session.jsonl",
+                costUSD: 0,
+                promotedWorkspaceID: nil,
+                promotedPaneID: nil
+            )
+        }
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        return try await client.startHeadlessAgent(prompt: prompt).run
+    }
+
+    func fetchHeadlessAgent(runID: String, machineID: String) async throws -> HeadlessAgentRun {
+        guard let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        return try await client.fetchHeadlessAgent(id: runID).run
+    }
+
+    func cancelHeadlessAgent(runID: String, machineID: String) async throws -> HeadlessAgentRun {
+        guard let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        return try await client.cancelHeadlessAgent(id: runID).run
+    }
+
+    func deleteHeadlessAgent(runID: String, machineID: String) async throws {
+        if isDemoMode { return }
+        guard let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        _ = try await client.deleteHeadlessAgent(id: runID)
+    }
+
+    func promoteHeadlessAgent(
+        runID: String,
+        machineID: String,
+        workspaceID: String?
+    ) async throws -> HeadlessAgentPromotionResult {
+        if isDemoMode {
+            guard let workspace = workspaces.first(where: {
+                $0.machineID == machineID && (workspaceID == nil || $0.workspaceID == workspaceID)
+            }), let pane = workspace.panes.first else {
+                throw APIError.invalidResponse
+            }
+            let now = HerdrTimestamp.string(from: .now)
+            return HeadlessAgentPromotionResult(
+                run: HeadlessAgentRun(
+                    id: runID,
+                    status: .promoted,
+                    prompt: "Demo prompt",
+                    response: "Demo response",
+                    error: nil,
+                    createdAt: now,
+                    startedAt: now,
+                    finishedAt: now,
+                    sessionID: "demo-session",
+                    sessionFile: "demo-session.jsonl",
+                    costUSD: 0,
+                    promotedWorkspaceID: workspace.workspaceID,
+                    promotedPaneID: pane.paneID
+                ),
+                pane: pane
+            )
+        }
+
+        guard canControl(machineID: machineID),
+              workspaceID == nil || workspaces.contains(where: {
+                  $0.machineID == machineID && $0.workspaceID == workspaceID
+              }),
+              let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        let envelope = try await client.promoteHeadlessAgent(id: runID, workspaceID: workspaceID)
+        guard let rawPaneID = envelope.run.promotedPaneID?.nonEmpty else {
+            throw APIError.invalidResponse
+        }
+        let scopedPaneID = MachineScopedID.compose(machineID: machineID, rawID: rawPaneID)
+        let generation = connectionGeneration
+        for attempt in 0..<4 {
+            try await refresh(
+                machineID: machineID,
+                using: client,
+                showSpinner: false,
+                expectedGeneration: generation
+            )
+            if let pane = pane(id: scopedPaneID) {
+                toastMessage = "Agent continued as a chat"
+                return HeadlessAgentPromotionResult(run: envelope.run, pane: pane)
+            }
+            if attempt < 3 { try await Task.sleep(for: .milliseconds(200)) }
+        }
+        throw APIError.invalidResponse
     }
 
     func createTab(in workspace: HerdrWorkspace) async {
@@ -1797,6 +1992,8 @@ final class HerdrAppModel {
         workspaces = DemoData.workspaces.map { $0.stamped(machineID: "demo1") }
             + DemoData.workspacesForWorkMBP.map { $0.stamped(machineID: "demo2") }
         alerts = DemoData.alerts.map { $0.stamped(machineID: "demo1") }
+        activityHistoryAlerts = alerts
+        activityFeedError = nil
         fleetRevision &+= 1
         runtimes = Dictionary(uniqueKeysWithValues: machines.map {
             ($0.id, MachineRuntime(state: .demo))
@@ -1824,6 +2021,9 @@ final class HerdrAppModel {
         let hadFleetContent = !workspaces.isEmpty || !alerts.isEmpty
         workspaces = []
         alerts = []
+        activityHistoryAlerts = []
+        activityFeedError = nil
+        isRefreshingActivity = false
         if hadFleetContent { fleetRevision &+= 1 }
         selectedWorkspaceID = nil
         selectedPaneID = nil
@@ -2003,6 +2203,7 @@ final class HerdrAppModel {
         let alertCount = alerts.count
         workspaces.removeAll { $0.machineID == id }
         alerts.removeAll { $0.machineID == id }
+        activityHistoryAlerts.removeAll { $0.machineID == id }
         if workspaces.count != workspaceCount || alerts.count != alertCount {
             fleetRevision &+= 1
         }
@@ -2126,7 +2327,7 @@ final class HerdrAppModel {
     private func shouldSkipSyntheticConnectRefresh(_ event: HerdrEvent, machineID: String) -> Bool {
         guard event.event == "snapshot.updated",
               case let .object(values)? = event.data,
-              case let .bool(true)? = values["synthetic"],
+              case .bool(true)? = values["synthetic"],
               let completed = runtimes[machineID]?.lastRefreshCompletedAt
         else { return false }
         return completed.duration(to: ContinuousClock().now) < .seconds(2)

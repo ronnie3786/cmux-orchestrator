@@ -9,12 +9,13 @@ enum HerdPulseAttentionRows {
         let title: String
         let subtitle: String
         let status: AgentStatus
+        let since: Date?
     }
 
     private struct Candidate {
         let pane: HerdrPane
         let attentionRank: Int
-        let alertCreatedAt: String?
+        let alertCreatedAt: Date?
         let revision: Int
     }
 
@@ -24,16 +25,14 @@ enum HerdPulseAttentionRows {
         revealTitles: Bool,
         limit: Int = 5
     ) -> (rows: [Row], overflow: Int) {
-        var newestAlertDates: [String: String] = [:]
+        var newestAlertDates: [String: Date] = [:]
         for alert in alerts {
             let paneID = alert.scopedPaneID
-            if let existing = newestAlertDates[paneID] {
-                if alert.createdAt > existing {
-                    newestAlertDates[paneID] = alert.createdAt
-                }
-            } else {
-                newestAlertDates[paneID] = alert.createdAt
+            guard let createdDate = alert.createdDate else { continue }
+            guard let pane = panes.first(where: { $0.id == paneID }), alert.status == pane.agentStatus else {
+                continue
             }
+            newestAlertDates[paneID] = max(newestAlertDates[paneID] ?? .distantPast, createdDate)
         }
 
         var candidates: [Candidate] = []
@@ -75,7 +74,8 @@ enum HerdPulseAttentionRows {
                         id: candidate.pane.id,
                         title: candidate.pane.displayTitle,
                         subtitle: "\(candidate.pane.displayAgentName) · \(statusWord)",
-                        status: candidate.pane.agentStatus
+                        status: candidate.pane.agentStatus,
+                        since: candidate.alertCreatedAt
                     )
                 )
             } else {
@@ -84,7 +84,8 @@ enum HerdPulseAttentionRows {
                         id: candidate.pane.id,
                         title: "session \(index + 1)",
                         subtitle: statusWord,
-                        status: candidate.pane.agentStatus
+                        status: candidate.pane.agentStatus,
+                        since: candidate.alertCreatedAt
                     )
                 )
             }

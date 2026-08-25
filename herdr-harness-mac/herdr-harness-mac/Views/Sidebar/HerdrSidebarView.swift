@@ -25,6 +25,7 @@ struct HerdrSidebarView: View {
         let tree: [SidebarTree.ProjectEntry]
         let machineGroups: [SidebarTree.MachineGroup]
         let starredGroups: [SidebarTree.StarredGroup]
+        let staleGroups: [SidebarTree.StaleGroup]
         let showsMachineChrome: Bool
 
         init(model: HerdrAppModel, query: String) {
@@ -34,13 +35,25 @@ struct HerdrSidebarView: View {
                 scopedWorkspaces = model.workspaces
             }
             showsMachineChrome = model.machineScope == .all && model.machines.count > 1
+            let now = Date()
+            staleGroups = model.sidebarRecency == .all
+                ? SidebarTree.staleGroups(
+                    machines: model.machines,
+                    workspaces: scopedWorkspaces,
+                    query: query,
+                    now: now
+                )
+                : []
+            let stalePaneIDs = Set(staleGroups.flatMap(\.chats).map(\.id))
             tree = SidebarTree.build(
                 workspaces: scopedWorkspaces,
                 query: query,
                 collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
                 collapsedTabIDs: model.collapsedSidebarTabIDs,
                 starredIDs: model.starredChatIDs,
-                recentOnly: model.sidebarRecentOnly
+                recency: model.sidebarRecency,
+                excludedPaneIDs: stalePaneIDs,
+                now: now
             )
             machineGroups = SidebarTree.machineGroups(
                 machines: model.machines,
@@ -54,13 +67,16 @@ struct HerdrSidebarView: View {
                 query: query,
                 starredIDs: model.starredChatIDs,
                 machines: model.machines,
-                recentOnly: model.sidebarRecentOnly
+                recency: model.sidebarRecency,
+                excludedPaneIDs: stalePaneIDs,
+                now: now
             )
         }
 
         var starredCount: Int { starredGroups.reduce(0) { $0 + $1.chats.count } }
+        var staleCount: Int { staleGroups.reduce(0) { $0 + $1.chats.count } }
         var paneCount: Int {
-            starredCount + HerdrSidebarView.paneCount(
+            starredCount + staleCount + HerdrSidebarView.paneCount(
                 in: showsMachineChrome ? machineGroups.flatMap(\.entries) : tree
             )
         }
@@ -76,7 +92,7 @@ struct HerdrSidebarView: View {
         let collapsedTabIDs: Set<String>
         let starredChatIDs: Set<String>
         let machineStates: [String: ConnectionState]
-        let recentOnly: Bool
+        let recency: SidebarRecency
     }
 
     @MainActor
@@ -97,7 +113,7 @@ struct HerdrSidebarView: View {
             collapsedTabIDs: model.collapsedSidebarTabIDs,
             starredChatIDs: model.starredChatIDs,
             machineStates: model.machineStates,
-            recentOnly: model.sidebarRecentOnly
+            recency: model.sidebarRecency
         )
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 12) {
@@ -112,12 +128,13 @@ struct HerdrSidebarView: View {
 
             HerdrSectionLabel(
                 title: "chats",
-                detail: model.sidebarRecentOnly ? "\(snapshot.paneCount) today" : "\(snapshot.paneCount) total shown"
+                detail: sidebarCountDetail(snapshot.paneCount)
             )
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     starredSection(snapshot)
+                    staleSection(snapshot)
                     workspaceContent(snapshot)
                 }
             }
@@ -217,18 +234,27 @@ struct HerdrSidebarView: View {
                 .herdrFont(.headline, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
             Spacer()
-            Button {
-                model.sidebarRecentOnly.toggle()
+            Menu {
+                ForEach(SidebarRecency.allCases) { recency in
+                    Button {
+                        model.sidebarRecency = recency
+                    } label: {
+                        Label(
+                            recency.title,
+                            systemImage: recency == model.sidebarRecency ? "checkmark" : recency.symbolName
+                        )
+                    }
+                }
             } label: {
-                Image(systemName: model.sidebarRecentOnly ? "clock.fill" : "clock")
+                Image(systemName: model.sidebarRecency.symbolName)
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
-            .foregroundStyle(model.sidebarRecentOnly ? HerdrTheme.accent : HerdrTheme.mist)
+            .foregroundStyle(model.sidebarRecency == .all ? HerdrTheme.mist : HerdrTheme.accent)
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-recent-filter")
-            .accessibilityLabel("Today's chats")
-            .help("Today's chats")
+            .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
+            .help("Show chats from \(model.sidebarRecency.title.lowercased())")
         }
     }
 
@@ -283,8 +309,8 @@ struct HerdrSidebarView: View {
 
             Menu {
                 ForEach(model.machines) { machine in
-                    Button(machine.name) {
-                        Task { await model.createQuickPiSession(machineID: machine.id) }
+                    Menu(machine.name) {
+                        quickPiDestinations(for: machine)
                     }
                 }
             } label: {
@@ -301,12 +327,43 @@ struct HerdrSidebarView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-new-workspace")
 
-            Button("new pi session", systemImage: "bolt") {
-                Task { await model.createQuickPiSession(machineID: scopedMachineID) }
+            Menu {
+                if let machine = model.machines.first(where: { $0.id == scopedMachineID }) {
+                    quickPiDestinations(for: machine)
+                }
+            } label: {
+                Label("new pi session", systemImage: "bolt")
+                    .sidebarActionStyle()
             }
-            .sidebarActionStyle()
             .buttonStyle(.plain)
+            .disabled(scopedMachineID == nil)
             .accessibilityIdentifier("sidebar-new-pi-session")
+        }
+    }
+
+    @ViewBuilder
+    private func quickPiDestinations(for machine: HerdrMachine) -> some View {
+        Button("quick chats (~)", systemImage: "house") {
+            Task { await model.createQuickPiSession(machineID: machine.id) }
+        }
+
+        let destinations = model.workspaces
+            .filter { $0.machineID == machine.id }
+            .sorted { $0.number < $1.number }
+        if !destinations.isEmpty {
+            Divider()
+            Section("existing workspace") {
+                ForEach(destinations) { workspace in
+                    Button(workspace.label, systemImage: "rectangle.3.group") {
+                        Task {
+                            await model.createQuickPiSession(
+                                machineID: machine.id,
+                                workspaceID: workspace.workspaceID
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -322,6 +379,50 @@ struct HerdrSidebarView: View {
                     .lineLimit(1)
                     .padding(.leading, 34)
                     .padding(.top, 6)
+                ForEach(group.chats) { chatRow($0) }
+            }
+            separator
+        }
+    }
+
+    @ViewBuilder
+    private func staleSection(_ snapshot: SidebarSnapshot) -> some View {
+        if !snapshot.staleGroups.isEmpty {
+            ForEach(snapshot.staleGroups) { group in
+                HStack(spacing: 7) {
+                    Label(
+                        snapshot.showsMachineChrome
+                            ? "\(group.machine.name.lowercased()) stale"
+                            : "stale chats",
+                        systemImage: "archivebox"
+                    )
+                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                    .foregroundStyle(HerdrTheme.mist)
+
+                    Text("\(group.chats.count)")
+                        .herdrFont(.caption2, monospaced: true, weight: .bold)
+                        .foregroundStyle(HerdrTheme.ink)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(HerdrTheme.mist)
+                        .clipShape(.capsule)
+
+                    Spacer()
+
+                    Button("review stale") {
+                        presentStaleCleanup(group)
+                    }
+                    .buttonStyle(.plain)
+                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                    .foregroundStyle(HerdrTheme.accent)
+                    .disabled(!model.canControl(machineID: group.machine.id))
+                    .accessibilityIdentifier("sidebar-review-stale-\(group.machine.id)")
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+                .frame(minHeight: 28)
+                .accessibilityElement(children: .contain)
+
                 ForEach(group.chats) { chatRow($0) }
             }
             separator
@@ -354,15 +455,15 @@ struct HerdrSidebarView: View {
                 machineSeparator
             }
         } else if snapshot.tree.isEmpty {
-            if model.sidebarRecentOnly {
+            if model.sidebarRecency != .all {
                 if snapshot.starredGroups.isEmpty {
-                    Text("no chats started today")
+                    Text("no chats from \(model.sidebarRecency.title.lowercased())")
                         .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(HerdrTheme.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 42)
                 }
-            } else {
+            } else if snapshot.staleGroups.isEmpty && snapshot.starredGroups.isEmpty {
                 emptyState
                     .frame(maxWidth: .infinity)
                     .padding(.top, 42)
@@ -475,6 +576,43 @@ struct HerdrSidebarView: View {
         model.machines.first(where: { $0.id == machineID })?.name ?? "this machine"
     }
 
+    private func sidebarCountDetail(_ count: Int) -> String {
+        switch model.sidebarRecency {
+        case .today: "\(count) today"
+        case .thisWeek: "\(count) this week"
+        case .all: "\(count) total shown"
+        }
+    }
+
+    private func presentStaleCleanup(_ group: SidebarTree.StaleGroup) {
+        let paneIDs = Set(group.chats.map(\.paneID))
+        let targetID = ([group.machine.id, "cleanup", "stale"] + paneIDs.sorted()).joined(separator: "|")
+        model.cleanupPresenter.present(CleanupSheetTarget(
+            id: targetID,
+            machineID: group.machine.id,
+            machineName: group.machine.name,
+            workspaceID: nil,
+            workspaceLabel: "stale chats",
+            workspaceIDs: group.workspaceIDs,
+            preferredPaneIDs: paneIDs
+        ), using: model)
+    }
+
+    private func statusSince(for pane: HerdrPane) -> Date? {
+        let newestMatchingAlert = model.alerts.lazy
+            .filter {
+                $0.machineID == pane.machineID
+                    && $0.paneID == pane.paneID
+                    && $0.status == pane.agentStatus
+            }
+            .compactMap(\.createdDate)
+            .max()
+        if pane.agentStatus == .working {
+            return pane.workingSince ?? newestMatchingAlert
+        }
+        return newestMatchingAlert
+    }
+
     private var separator: some View {
         Rectangle()
             .fill(HerdrTheme.surface.opacity(0.65))
@@ -554,6 +692,7 @@ struct HerdrSidebarView: View {
             pane: pane,
             isSelected: pane.id == model.selectedPaneID,
             isStarred: model.starredChatIDs.contains(pane.id),
+            statusSince: statusSince(for: pane),
             action: { open(pane) }
         )
         .contextMenu {

@@ -12,6 +12,16 @@ struct AlertCardView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         AgentStatusBadge(status: alert.status, compact: true)
+                        if let createdDate = alert.createdDate {
+                            TimelineView(.periodic(from: .now, by: 60)) { context in
+                                Text(HerdrTimestamp.compactAge(since: createdDate, now: context.date))
+                                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                                    .foregroundStyle(alert.status.color)
+                                    .accessibilityLabel(
+                                        HerdrTimestamp.spokenAge(since: createdDate, now: context.date)
+                                    )
+                            }
+                        }
                         Spacer()
                         if !alert.isRead {
                             Text("NEW")
@@ -55,7 +65,13 @@ struct AlertCardView: View {
     }
 
     private var accessibilitySummary: String {
-        [alert.title, alert.status.title, alert.message, agentLabel]
+        [
+            alert.title,
+            alert.status.title,
+            alert.createdDate.map { HerdrTimestamp.spokenAge(since: $0) } ?? "",
+            alert.message,
+            agentLabel,
+        ]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
     }

@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
 from . import attachments, voice
+from .agent_runs import AgentRunError
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
 from .cleanup import CleanupError
@@ -29,6 +30,7 @@ from .workspace_tools import WorkspaceToolError
 MAX_BODY_BYTES = 1024 * 1024
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
 _RUN_ID_RE = re.compile(r"^clr_[0-9a-f]{12}$")
+_AGENT_RUN_ID_RE = re.compile(r"^agr_[0-9a-f]{12}$")
 _AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _KEY_RE = re.compile(r"^[A-Za-z0-9+_-]{1,32}$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -119,6 +121,13 @@ def _run_id(value: Any) -> str:
     text = str(value or "")
     if not _RUN_ID_RE.fullmatch(text):
         raise HTTPValidationError("Run not found", code="not_found", status=404)
+    return text
+
+
+def _agent_run_id(value: Any) -> str:
+    text = str(value or "")
+    if not _AGENT_RUN_ID_RE.fullmatch(text):
+        raise HTTPValidationError("Agent run not found", code="agent_run_not_found", status=404)
     return text
 
 
@@ -254,6 +263,8 @@ def api_description() -> dict:
             "cleanupRuns": "/api/v1/cleanup/runs",
             "cleanupRun": "/api/v1/cleanup/runs/{runId}",
             "cleanupModels": "/api/v1/cleanup/models",
+            "agentRuns": "/api/v1/agent-runs",
+            "agentRun": "/api/v1/agent-runs/{runId}",
         },
         "universalLinks": {
             "appSiteAssociation": "/.well-known/apple-app-site-association",
@@ -279,6 +290,9 @@ def api_description() -> dict:
             "POST /api/v1/live-activities|unregister",
             "POST /api/v1/voice/transcriptions",
             "POST /api/v1/quick-sessions/pi",
+            "POST /api/v1/agent-runs",
+            "POST /api/v1/agent-runs/{runId}/cancel|promote",
+            "DELETE /api/v1/agent-runs/{runId}",
             "POST /api/v1/cleanup/runs",
             "POST /api/v1/cleanup/runs/{runId}/apply",
             "POST /api/v1/cleanup/runs/{runId}/cancel",
@@ -510,6 +524,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except PiSemanticError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except CleanupError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except AgentRunError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except WorkspaceToolError as exc:
                 self._error(exc.status, exc.code, str(exc))
@@ -933,8 +949,61 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if method == "POST" and len(tail) == 3 and tail[0] == "agents" and tail[2] == "prompt":
                 return self._prompt(_identifier(tail[1], "agent target"), body)
             if method == "POST" and tail == ["quick-sessions", "pi"]:
+                if any(key not in {"label", "workspaceId", "cwd"} for key in body):
+                    raise HTTPValidationError("Quick session request contains an unsupported field")
                 label = _string(body.get("label"), "label", maximum=120)
-                return service.quick_pi_session(label)
+                workspace_id = None
+                if body.get("workspaceId") is not None:
+                    workspace_id = _identifier(body.get("workspaceId"), "workspace ID")
+                return service.quick_pi_session(
+                    label,
+                    workspace_id=workspace_id,
+                    cwd=_optional_cwd(body),
+                )
+            if method == "POST" and tail == ["agent-runs"]:
+                if any(key not in {"prompt", "label"} for key in body):
+                    raise HTTPValidationError("Agent run request contains an unsupported field")
+                prompt = _string(body.get("prompt"), "prompt", maximum=131072)
+                if not prompt.strip():
+                    raise HTTPValidationError("prompt is required")
+                label = None
+                if body.get("label") is not None:
+                    label = _string(body.get("label"), "label", maximum=120)
+                return service.start_agent_run(prompt=prompt, label=label), 202
+            if len(tail) >= 2 and tail[0] == "agent-runs":
+                run_id = _agent_run_id(tail[1])
+                if method == "GET" and len(tail) == 2:
+                    return service.get_agent_run(run_id)
+                if method == "DELETE" and len(tail) == 2:
+                    if body:
+                        raise HTTPValidationError("Delete Agent run request must be empty")
+                    return service.delete_agent_run(run_id)
+                if method == "POST" and len(tail) == 3 and tail[2] == "cancel":
+                    if body:
+                        raise HTTPValidationError("Cancel Agent run request must be empty")
+                    return service.cancel_agent_run(run_id)
+                if method == "POST" and len(tail) == 3 and tail[2] == "promote":
+                    if any(
+                        key not in {"workspaceId", "cwd", "workspaceLabel"}
+                        for key in body
+                    ):
+                        raise HTTPValidationError("Promote Agent run request contains an unsupported field")
+                    workspace_id = None
+                    if body.get("workspaceId") is not None:
+                        workspace_id = _identifier(body.get("workspaceId"), "workspace ID")
+                    workspace_label = None
+                    if body.get("workspaceLabel") is not None:
+                        workspace_label = _string(
+                            body.get("workspaceLabel"),
+                            "workspaceLabel",
+                            maximum=120,
+                        )
+                    return service.promote_agent_run(
+                        run_id,
+                        workspace_id=workspace_id,
+                        cwd=_optional_cwd(body),
+                        workspace_label=workspace_label,
+                    )
             if method == "POST" and tail == ["alerts", "read-all"]:
                 return service.mark_all_alerts_read()
             if method == "POST" and len(tail) == 3 and tail[0] == "alerts" and tail[2] == "read":

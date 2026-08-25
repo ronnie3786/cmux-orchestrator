@@ -52,7 +52,11 @@ struct AttentionView: View {
                             Button {
                                 selectPane(pane, nil)
                             } label: {
-                                AttentionPaneCard(model: model, pane: pane)
+                                AttentionPaneCard(
+                                    model: model,
+                                    pane: pane,
+                                    since: statusSince(for: pane)
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -119,5 +123,12 @@ struct AttentionView: View {
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func statusSince(for pane: HerdrPane) -> Date? {
+        model.alerts.lazy
+            .filter { $0.scopedPaneID == pane.id && $0.status == pane.agentStatus }
+            .compactMap(\.createdDate)
+            .max()
     }
 }

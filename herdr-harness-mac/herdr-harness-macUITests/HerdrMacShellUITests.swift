@@ -80,6 +80,44 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     }
 
     @MainActor
+    func testCommandKSearchesAndOpensAChat() throws {
+        let app = launchDemoApp()
+        XCTAssertTrue(app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10))
+
+        app.typeKey("k", modifierFlags: .command)
+
+        let palette = app.control(identifier: "command-palette")
+        XCTAssertTrue(palette.waitForExistence(timeout: 5), "⌘K should present the global chat palette")
+        let search = app.control(identifier: "command-palette-search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.typeText("pagination")
+
+        let result = app.control(identifier: "command-palette-row-demo1|w2:p1")
+        XCTAssertTrue(result.waitForExistence(timeout: 3), "Pane-title search should find the matching chat")
+        result.click()
+
+        XCTAssertTrue(
+            app.control(identifier: "terminal-demo1|w2:p1").waitForExistence(timeout: 5),
+            "Opening a palette result should route through the normal pane session"
+        )
+        XCTAssertTrue(palette.waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testCommandPaletteEscapeDismissesWithoutRouting() throws {
+        let app = launchDemoApp()
+        XCTAssertTrue(app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10))
+
+        app.typeKey("k", modifierFlags: .command)
+        let palette = app.control(identifier: "command-palette")
+        XCTAssertTrue(palette.waitForExistence(timeout: 5))
+
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+
+        XCTAssertTrue(palette.waitForNonExistence(timeout: 3), "Escape should close the palette")
+    }
+
+    @MainActor
     func testFileMenuOffersNewWorkspaceInDemoMode() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))

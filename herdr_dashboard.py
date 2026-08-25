@@ -76,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
         "HERDR_HARNESS_CLEANUP_RUNS_ROOT",
         os.path.expanduser("~/.config/herdr-harness/cleanup/runs"),
     )
+    service_environ.setdefault(
+        "HERDR_HARNESS_AGENT_RUNS_ROOT",
+        os.path.expanduser("~/.config/herdr-harness/agent-runs"),
+    )
     service = HerdrService(client, environ=service_environ)
     service.start()
     server = make_server(service, host=args.host, port=args.port)

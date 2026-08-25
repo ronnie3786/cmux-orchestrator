@@ -6,6 +6,30 @@ struct CleanupSheetTarget: Identifiable {
     let machineName: String
     let workspaceID: String?
     let workspaceLabel: String?
+    let workspaceIDs: [String]
+    let preferredPaneIDs: Set<String>?
+
+    init(
+        id: String,
+        machineID: String,
+        machineName: String,
+        workspaceID: String?,
+        workspaceLabel: String?,
+        workspaceIDs: [String] = [],
+        preferredPaneIDs: Set<String>? = nil
+    ) {
+        self.id = id
+        self.machineID = machineID
+        self.machineName = machineName
+        self.workspaceID = workspaceID
+        self.workspaceLabel = workspaceLabel
+        self.workspaceIDs = workspaceIDs
+        self.preferredPaneIDs = preferredPaneIDs
+    }
+
+    var requestedWorkspaceIDs: [String] {
+        workspaceIDs.isEmpty ? workspaceID.map { [$0] } ?? [] : workspaceIDs
+    }
 }
 
 struct CleanupSheet: View {
@@ -55,7 +79,11 @@ struct CleanupSheet: View {
         case let .running(envelope):
             runningContent(envelope.run, failureMessage: nil)
         case let .report(envelope):
-            CleanupReportView(envelope: envelope, controller: controller)
+            CleanupReportView(
+                envelope: envelope,
+                controller: controller,
+                preferredPaneIDs: target.preferredPaneIDs
+            )
         case let .failure(message):
             runningContent(failedRun(message), failureMessage: message)
         case let .applying(envelope):

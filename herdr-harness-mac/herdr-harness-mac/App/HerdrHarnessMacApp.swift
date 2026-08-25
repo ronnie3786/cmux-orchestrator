@@ -79,6 +79,12 @@ struct HerdrMacCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(!model.canControl)
+
+            Button("Ask Agent…") {
+                shell.isAgentPresented = true
+            }
+            .keyboardShortcut("a", modifiers: [.command, .option])
+            .disabled(!model.canControl)
         }
 
         // View menu, after the system's own "Toggle Sidebar" item.
@@ -104,6 +110,11 @@ struct HerdrMacCommands: Commands {
                 shell.detailScope = .workspace
             }
             .keyboardShortcut("4", modifiers: .command)
+
+            Button("Activity Feed") {
+                shell.detailScope = .activity
+            }
+            .keyboardShortcut("5", modifiers: .command)
 
             Divider()
 
@@ -140,6 +151,14 @@ struct HerdrMacCommands: Commands {
         }
 
         CommandMenu("Navigate") {
+            Button("Open Chat…") {
+                shell.presentCommandPalette()
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            .disabled(!model.hasCompletedSetup)
+
+            Divider()
+
             Button("Next Pane") {
                 stepPane(by: 1)
             }

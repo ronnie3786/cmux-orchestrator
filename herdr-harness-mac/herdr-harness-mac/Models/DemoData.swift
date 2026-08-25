@@ -8,9 +8,9 @@ enum DemoData {
             label: "iOS Doximity",
             path: "/Users/ronnie/Work/iOS-Doximity",
             panes: [
-                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Refine member profile", agent: "Codex", revision: 184, firstSeenAt: Date()),
-                pane(id: "w1:p2", tabID: "w1:t1", status: .blocked, title: "Auth reducer review", agent: "Claude", revision: 97),
-                pane(id: "w1:p3", tabID: "w1:t2", status: .unknown, title: "Unit tests", agent: nil, revision: 52, firstSeenAt: Date().addingTimeInterval(-3 * 86400)),
+                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Refine member profile", agent: "Codex", revision: 184, firstSeenAt: Date().addingTimeInterval(-3_600), lastActivityAt: Date(), workingSince: Date().addingTimeInterval(-47 * 60)),
+                pane(id: "w1:p2", tabID: "w1:t1", status: .blocked, title: "Auth reducer review", agent: "Claude", revision: 97, firstSeenAt: Date().addingTimeInterval(-7_200), lastActivityAt: Date().addingTimeInterval(-22 * 60)),
+                pane(id: "w1:p3", tabID: "w1:t2", status: .unknown, title: "Unit tests", agent: nil, revision: 52, firstSeenAt: Date().addingTimeInterval(-3 * 86_400), lastActivityAt: Date().addingTimeInterval(-2 * 86_400)),
             ],
             layouts: [layout(workspaceID: "w1", tabID: "w1:t1", paneIDs: ["w1:p1", "w1:p2"])]
         ),
@@ -20,8 +20,8 @@ enum DemoData {
             label: "Member API",
             path: "/Users/ronnie/Work/member-api",
             panes: [
-                pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Pagination contract", agent: "Codex", revision: 311, firstSeenAt: Date()),
-                pane(id: "w2:p2", tabID: "w2:t1", status: .working, title: "GraphQL smoke test", agent: "Claude", revision: 118),
+                pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Pagination contract", agent: "Codex", revision: 311, firstSeenAt: Date(), lastActivityAt: Date()),
+                pane(id: "w2:p2", tabID: "w2:t1", status: .working, title: "GraphQL smoke test", agent: "Claude", revision: 118, firstSeenAt: Date().addingTimeInterval(-5_400), lastActivityAt: Date(), workingSince: Date().addingTimeInterval(-35 * 60)),
             ],
             layouts: [layout(workspaceID: "w2", tabID: "w2:t1", paneIDs: ["w2:p1", "w2:p2"])]
         ),
@@ -31,7 +31,7 @@ enum DemoData {
             label: "Release Train",
             path: "/Users/ronnie/Work/release",
             panes: [
-                pane(id: "w3:p1", tabID: "w3:t1", status: .idle, title: "Release notes", agent: "Codex", revision: 44, firstSeenAt: Date().addingTimeInterval(-3 * 86400)),
+                pane(id: "w3:p1", tabID: "w3:t1", status: .idle, title: "Release notes", agent: "Codex", revision: 44, firstSeenAt: Date().addingTimeInterval(-10 * 86_400), lastActivityAt: Date().addingTimeInterval(-8 * 86_400)),
             ],
             layouts: [layout(workspaceID: "w3", tabID: "w3:t1", paneIDs: ["w3:p1"])]
         ),
@@ -329,7 +329,9 @@ enum DemoData {
         title: String,
         agent: String?,
         revision: Int,
-        firstSeenAt: Date? = nil
+        firstSeenAt: Date? = nil,
+        lastActivityAt: Date? = nil,
+        workingSince: Date? = nil
     ) -> HerdrPane {
         HerdrPane(
             paneID: id,
@@ -347,7 +349,9 @@ enum DemoData {
             displayAgent: agent,
             terminalTitle: title,
             terminalTitleStripped: title,
-            firstSeenAt: firstSeenAt
+            firstSeenAt: firstSeenAt,
+            lastActivityAt: lastActivityAt,
+            workingSince: workingSince
         )
     }
 

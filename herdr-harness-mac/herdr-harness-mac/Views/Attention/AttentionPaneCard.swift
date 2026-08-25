@@ -3,6 +3,7 @@ import SwiftUI
 struct AttentionPaneCard: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
+    let since: Date?
 
     var body: some View {
         GlassCard(radius: 18) {
@@ -24,7 +25,19 @@ struct AttentionPaneCard: View {
                 }
 
                 Spacer()
-                AgentStatusBadge(status: pane.agentStatus, compact: true)
+                VStack(alignment: .trailing, spacing: 5) {
+                    AgentStatusBadge(status: pane.agentStatus, compact: true)
+                    if let since {
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            Text(HerdrTimestamp.compactAge(since: since, now: context.date))
+                                .herdrFont(.caption, monospaced: true, weight: .bold)
+                                .foregroundStyle(pane.agentStatus.color)
+                                .accessibilityLabel(
+                                    HerdrTimestamp.spokenAge(since: since, now: context.date)
+                                )
+                        }
+                    }
+                }
             }
             .padding(15)
         }

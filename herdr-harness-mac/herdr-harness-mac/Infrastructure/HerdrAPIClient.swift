@@ -380,11 +380,67 @@ actor HerdrAPIClient {
         try await mutation(path: "/api/v1/workspaces/\(workspaceID)/tabs", body: APIActionBody(label: label))
     }
 
-    func createQuickPiSession(label: String) async throws -> QuickPiSessionResponse {
+    func createQuickPiSession(
+        label: String,
+        workspaceID: String? = nil,
+        cwd: String? = nil
+    ) async throws -> QuickPiSessionResponse {
         try await request(
             path: "/api/v1/quick-sessions/pi",
             method: "POST",
-            body: APIActionBody(label: label)
+            body: QuickPiSessionRequest(label: label, workspaceID: workspaceID, cwd: cwd)
+        )
+    }
+
+    func fetchAlerts(limit: Int = 500) async throws -> AlertsResponse {
+        try await request(
+            path: "/api/v1/alerts",
+            query: [URLQueryItem(name: "limit", value: String(min(max(limit, 1), 500)))]
+        )
+    }
+
+    func startHeadlessAgent(prompt: String) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs",
+            method: "POST",
+            body: HeadlessAgentStartRequest(prompt: prompt)
+        )
+    }
+
+    func fetchHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
+        try await request(path: "/api/v1/agent-runs/\(id)")
+    }
+
+    func cancelHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs/\(id)/cancel",
+            method: "POST",
+            body: APIActionBody()
+        )
+    }
+
+    func deleteHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs/\(id)",
+            method: "DELETE",
+            body: APIActionBody()
+        )
+    }
+
+    func promoteHeadlessAgent(
+        id: String,
+        workspaceID: String?,
+        cwd: String? = nil,
+        workspaceLabel: String? = nil
+    ) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs/\(id)/promote",
+            method: "POST",
+            body: HeadlessAgentPromotionRequest(
+                workspaceID: workspaceID,
+                cwd: cwd,
+                workspaceLabel: workspaceLabel
+            )
         )
     }
 
@@ -751,6 +807,9 @@ actor HerdrAPIClient {
         }
         if path == "/api/v1/quick-sessions/pi" {
             return 75
+        }
+        if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") {
+            return 30
         }
         if method != "GET", ["/send-text", "/send-keys", "/run"].contains(where: path.hasSuffix) {
             return 5

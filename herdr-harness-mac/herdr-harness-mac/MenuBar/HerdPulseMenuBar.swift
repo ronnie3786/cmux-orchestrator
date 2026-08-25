@@ -76,14 +76,15 @@ struct HerdPulseMenuBarCard: View {
 
     var body: some View {
         let attentionRows = attention
+        let workingRows = working
         VStack(alignment: .leading, spacing: 12) {
             header
             titleBlock
             separator
             metrics
-            if !attentionRows.rows.isEmpty {
+            if !attentionRows.rows.isEmpty || !workingRows.rows.isEmpty {
                 separator
-                sessionsSection(attentionRows)
+                sessionsSection(attentionRows, workingRows)
             }
             separator
             footer
@@ -102,7 +103,16 @@ struct HerdPulseMenuBarCard: View {
         HerdPulseAttentionRows.attentionRows(
             panes: model.attentionPanes,
             alerts: model.alerts,
-            revealTitles: model.showSessionTitles
+            revealTitles: model.showSessionTitles,
+            limit: 3
+        )
+    }
+
+    private var working: (rows: [HerdPulseWorkingRows.Row], overflow: Int) {
+        HerdPulseWorkingRows.workingRows(
+            panes: model.workspaces.flatMap(\.panes),
+            revealTitles: model.showSessionTitles,
+            limit: 3
         )
     }
 
@@ -173,49 +183,114 @@ struct HerdPulseMenuBarCard: View {
     }
 
     private func sessionsSection(
-        _ attention: (rows: [HerdPulseAttentionRows.Row], overflow: Int)
+        _ attention: (rows: [HerdPulseAttentionRows.Row], overflow: Int),
+        _ working: (rows: [HerdPulseWorkingRows.Row], overflow: Int)
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("SESSIONS")
-                .herdrFont(.caption, monospaced: true, weight: .bold)
-                .foregroundStyle(HerdPulseTheme.mist)
+        VStack(alignment: .leading, spacing: 10) {
+            if !attention.rows.isEmpty {
+                sessionHeading("NEEDS YOU")
 
-            ForEach(attention.rows) { row in
-                Button {
-                    openAttentionRow(row)
-                } label: {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(row.status.color)
-                            .frame(width: 7, height: 7)
-                            .accessibilityHidden(true)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.title)
-                                .herdrFont(.subheadline, monospaced: true, weight: .semibold)
-                                .foregroundStyle(HerdPulseTheme.text)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-
-                            Text(row.subtitle)
-                                .herdrFont(.caption, monospaced: true)
-                                .foregroundStyle(HerdPulseTheme.mist)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-
-                        Spacer(minLength: 0)
+                ForEach(attention.rows) { row in
+                    Button {
+                        openPane(row.id)
+                    } label: {
+                        sessionRow(
+                            title: row.title,
+                            subtitle: row.subtitle,
+                            since: row.since,
+                            color: row.status.color
+                        )
                     }
+                    .buttonStyle(HerdPulseAttentionRowButtonStyle())
+                    .accessibilityIdentifier("herd-pulse-attention-row-\(row.id)")
                 }
-                .buttonStyle(HerdPulseAttentionRowButtonStyle())
-                .accessibilityIdentifier("herd-pulse-attention-row-\(row.id)")
+
+                overflowLabel(attention.overflow)
             }
 
-            if attention.overflow > 0 {
-                Text("+\(attention.overflow) more")
+            if !attention.rows.isEmpty, !working.rows.isEmpty {
+                Rectangle()
+                    .fill(HerdPulseTheme.elevated)
+                    .frame(height: 1)
+                    .padding(.vertical, 1)
+                    .accessibilityHidden(true)
+            }
+
+            if !working.rows.isEmpty {
+                sessionHeading("WORKING")
+
+                ForEach(working.rows) { row in
+                    Button {
+                        openPane(row.id)
+                    } label: {
+                        sessionRow(
+                            title: row.title,
+                            subtitle: row.subtitle,
+                            since: row.since,
+                            color: HerdPulseTheme.working
+                        )
+                    }
+                    .buttonStyle(HerdPulseAttentionRowButtonStyle())
+                    .accessibilityIdentifier("herd-pulse-working-row-\(row.id)")
+                }
+
+                overflowLabel(working.overflow)
+            }
+        }
+    }
+
+    private func sessionHeading(_ title: String) -> some View {
+        Text(title)
+            .herdrFont(.caption, monospaced: true, weight: .bold)
+            .foregroundStyle(HerdPulseTheme.mist)
+    }
+
+    private func sessionRow(
+        title: String,
+        subtitle: String,
+        since: Date?,
+        color: Color
+    ) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .herdrFont(.subheadline, monospaced: true, weight: .semibold)
+                    .foregroundStyle(HerdPulseTheme.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Text(subtitle)
                     .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(HerdPulseTheme.mist)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
+
+            Spacer(minLength: 4)
+
+            if let since {
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Text(HerdrTimestamp.compactAge(since: since, now: context.date))
+                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                        .foregroundStyle(color)
+                        .accessibilityLabel(HerdrTimestamp.spokenAge(since: since, now: context.date))
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func overflowLabel(_ count: Int) -> some View {
+        if count > 0 {
+            Text("+\(count) more")
+                .herdrFont(.caption, monospaced: true)
+                .foregroundStyle(HerdPulseTheme.mist)
         }
     }
 
@@ -302,12 +377,12 @@ struct HerdPulseMenuBarCard: View {
         openWindow(id: HerdrWindowID.main)
     }
 
-    private func openAttentionRow(_ row: HerdPulseAttentionRows.Row) {
+    private func openPane(_ paneID: String) {
         dismiss()
         NSApp.activate()
         openWindow(id: HerdrWindowID.main)
         shell.showSession()
-        model.openPane(id: row.id)
+        model.openPane(id: paneID)
     }
 }
 

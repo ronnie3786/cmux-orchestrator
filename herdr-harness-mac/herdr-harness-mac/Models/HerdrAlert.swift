@@ -20,6 +20,10 @@ struct HerdrAlert: Decodable, Equatable, Hashable, Identifiable, Sendable {
         MachineScopedID.compose(machineID: machineID, rawID: paneID)
     }
 
+    var createdDate: Date? {
+        HerdrTimestamp.date(from: createdAt)
+    }
+
     func stamped(machineID: String) -> HerdrAlert {
         var copy = self
         copy.machineID = machineID

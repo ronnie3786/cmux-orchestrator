@@ -308,6 +308,8 @@ class HerdrServiceTests(unittest.TestCase):
 
         pane = service.workspaces_response()["workspaces"][0]["panes"][0]
         self.assertIsInstance(pane["first_seen_at"], str)
+        self.assertEqual(pane["last_activity_at"], pane["first_seen_at"])
+        self.assertEqual(pane["working_since"], pane["first_seen_at"])
 
     def test_pane_first_seen_store_persists_across_service_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -710,7 +712,18 @@ class HerdrServiceTests(unittest.TestCase):
 
     def test_quick_pi_session_reuses_case_insensitive_random_tasks_workspace(self):
         client = FakeQuickSessionClient(
-            {"workspaces": [{"workspace_id": "w-existing", "label": "  Random Tasks  "}]},
+            {
+                "workspaces": [
+                    {"workspace_id": "w-existing", "label": "  Random Tasks  "}
+                ],
+                "panes": [
+                    {
+                        "pane_id": "w-existing:p1",
+                        "workspace_id": "w-existing",
+                        "foreground_cwd": os.path.expanduser("~"),
+                    }
+                ],
+            },
             {"tab.create": {"tab": {"root_pane": {"pane_id": "w-existing:p2"}}}},
         )
         service = HerdrService(
@@ -721,7 +734,17 @@ class HerdrServiceTests(unittest.TestCase):
         result = service.quick_pi_session("new session")
 
         self.assertNotIn("workspace.create", [method for method, _ in client.requests])
-        self.assertEqual(client.requests[0], ("tab.create", {"workspace_id": "w-existing", "focus": True}))
+        self.assertEqual(
+            client.requests[0],
+            (
+                "tab.create",
+                {
+                    "workspace_id": "w-existing",
+                    "cwd": str(Path.home().resolve()),
+                    "focus": True,
+                },
+            ),
+        )
         self.assertEqual(result["workspace_id"], "w-existing")
         self.assertEqual(result["pane_id"], "w-existing:p2")
         self.assertFalse(result["created_workspace"])
@@ -736,7 +759,16 @@ class HerdrServiceTests(unittest.TestCase):
             environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
         )
         service.refresh_snapshot()
-        client._snapshot = {"workspaces": [{"workspace_id": "w-existing", "label": "random tasks"}]}
+        client._snapshot = {
+            "workspaces": [{"workspace_id": "w-existing", "label": "random tasks"}],
+            "panes": [
+                {
+                    "pane_id": "w-existing:p1",
+                    "workspace_id": "w-existing",
+                    "cwd": str(Path.home().resolve()),
+                }
+            ],
+        }
 
         with patch.object(service, "refresh_snapshot", wraps=service.refresh_snapshot) as refresh_snapshot:
             result = service.quick_pi_session("new session")
@@ -745,6 +777,103 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertNotIn("workspace.create", [method for method, _ in client.requests])
         self.assertEqual(result["workspace_id"], "w-existing")
         self.assertFalse(result["created_workspace"])
+
+    def test_quick_pi_session_targets_an_explicit_workspace_and_cwd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            target = Path(directory) / "project"
+            home.mkdir()
+            target.mkdir()
+            client = FakeQuickSessionClient(
+                {"workspaces": [{"workspace_id": "w-target", "label": "Project"}]},
+                {"tab.create": {"tab": {"root_pane": {"pane_id": "w-target:p2"}}}},
+            )
+            service = HerdrService(
+                client,
+                environ={
+                    "HOME": str(home),
+                    "HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge",
+                },
+            )
+
+            result = service.quick_pi_session(
+                "new session",
+                workspace_id="w-target",
+                cwd=str(target),
+            )
+
+        self.assertEqual(
+            client.requests[0],
+            (
+                "tab.create",
+                {
+                    "workspace_id": "w-target",
+                    "cwd": str(target.resolve()),
+                    "focus": True,
+                },
+            ),
+        )
+        self.assertFalse(result["created_workspace"])
+
+    def test_quick_pi_session_does_not_reuse_a_mismatched_random_tasks_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            project = Path(directory) / "project"
+            home.mkdir()
+            project.mkdir()
+            client = FakeQuickSessionClient(
+                {
+                    "workspaces": [
+                        {"workspace_id": "w-project", "label": "random tasks"}
+                    ],
+                    "panes": [
+                        {
+                            "pane_id": "w-project:p1",
+                            "workspace_id": "w-project",
+                            "cwd": str(project),
+                        }
+                    ],
+                },
+                {
+                    "workspace.create": {
+                        "workspace": {"workspace_id": "w-home"},
+                        "pane": {"pane_id": "w-home:p1"},
+                    }
+                },
+            )
+            service = HerdrService(
+                client,
+                environ={
+                    "HOME": str(home),
+                    "HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge",
+                },
+            )
+
+            result = service.quick_pi_session("new session")
+
+        self.assertEqual(
+            client.requests[0],
+            (
+                "workspace.create",
+                {
+                    "label": "random tasks",
+                    "cwd": str(home.resolve()),
+                    "focus": True,
+                },
+            ),
+        )
+        self.assertTrue(result["created_workspace"])
+
+    def test_quick_pi_session_rejects_an_explicit_missing_workspace(self):
+        service = HerdrService(
+            FakeQuickSessionClient({"workspaces": []}, {}),
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+        )
+
+        with self.assertRaises(HerdrClientError) as context:
+            service.quick_pi_session("new session", workspace_id="w-missing")
+
+        self.assertEqual(context.exception.code, "workspace_not_found")
 
     def test_quick_pi_session_ignores_pane_rename_failure(self):
         client = FakeQuickSessionClient(
