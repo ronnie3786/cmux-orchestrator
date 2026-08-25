@@ -24,7 +24,10 @@ struct HerdrSidebarView: View {
             WorkspaceSearchField(text: $query, placeholder: "filter chats")
             creationControls
 
-            HerdrSectionLabel(title: "chats", detail: "\(paneCount) total shown")
+            HerdrSectionLabel(
+                title: "chats",
+                detail: model.sidebarRecentOnly ? "\(paneCount) today" : "\(paneCount) total shown"
+            )
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) {
@@ -103,6 +106,17 @@ struct HerdrSidebarView: View {
                 .font(.headline.monospaced().bold())
                 .foregroundStyle(HerdrTheme.text)
             Spacer()
+            Button {
+                model.sidebarRecentOnly.toggle()
+            } label: {
+                Image(systemName: model.sidebarRecentOnly ? "clock.fill" : "clock")
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .foregroundStyle(model.sidebarRecentOnly ? HerdrTheme.accent : HerdrTheme.mist)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("sidebar-recent-filter")
+            .accessibilityLabel("Today's chats")
             Button(action: dismiss) {
                 Image(systemName: "xmark")
                     .frame(width: 44, height: 44)
@@ -239,9 +253,19 @@ struct HerdrSidebarView: View {
                 machineSeparator
             }
         } else if tree.isEmpty {
-            emptyState
-                .frame(maxWidth: .infinity)
-                .padding(.top, 42)
+            if model.sidebarRecentOnly {
+                if starredGroups.isEmpty {
+                    Text("no chats started today")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(HerdrTheme.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 42)
+                }
+            } else {
+                emptyState
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 42)
+            }
         } else {
             entriesContent(tree)
         }
@@ -335,7 +359,8 @@ struct HerdrSidebarView: View {
             query: query,
             collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
             collapsedTabIDs: model.collapsedSidebarTabIDs,
-            starredIDs: model.starredChatIDs
+            starredIDs: model.starredChatIDs,
+            recentOnly: model.sidebarRecentOnly
         )
     }
 
@@ -348,7 +373,8 @@ struct HerdrSidebarView: View {
             collapsedMachineIDs: model.collapsedSidebarMachineIDs,
             collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
             collapsedTabIDs: model.collapsedSidebarTabIDs,
-            starredIDs: model.starredChatIDs
+            starredIDs: model.starredChatIDs,
+            recentOnly: model.sidebarRecentOnly
         )
     }
 
@@ -357,7 +383,8 @@ struct HerdrSidebarView: View {
             workspaces: scopedWorkspaces,
             query: query,
             starredIDs: model.starredChatIDs,
-            machines: model.machines
+            machines: model.machines,
+            recentOnly: model.sidebarRecentOnly
         )
     }
 

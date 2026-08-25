@@ -8,9 +8,9 @@ enum DemoData {
             label: "iOS Doximity",
             path: "/Users/ronnie/Work/iOS-Doximity",
             panes: [
-                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Refine member profile", agent: "Codex", revision: 184),
+                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Refine member profile", agent: "Codex", revision: 184, firstSeenAt: Date()),
                 pane(id: "w1:p2", tabID: "w1:t1", status: .blocked, title: "Auth reducer review", agent: "Claude", revision: 97),
-                pane(id: "w1:p3", tabID: "w1:t2", status: .unknown, title: "Unit tests", agent: nil, revision: 52),
+                pane(id: "w1:p3", tabID: "w1:t2", status: .unknown, title: "Unit tests", agent: nil, revision: 52, firstSeenAt: Date().addingTimeInterval(-3 * 86400)),
             ],
             layouts: [layout(workspaceID: "w1", tabID: "w1:t1", paneIDs: ["w1:p1", "w1:p2"])]
         ),
@@ -20,7 +20,7 @@ enum DemoData {
             label: "Member API",
             path: "/Users/ronnie/Work/member-api",
             panes: [
-                pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Pagination contract", agent: "Codex", revision: 311),
+                pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Pagination contract", agent: "Codex", revision: 311, firstSeenAt: Date()),
                 pane(id: "w2:p2", tabID: "w2:t1", status: .working, title: "GraphQL smoke test", agent: "Claude", revision: 118),
             ],
             layouts: [layout(workspaceID: "w2", tabID: "w2:t1", paneIDs: ["w2:p1", "w2:p2"])]
@@ -31,7 +31,7 @@ enum DemoData {
             label: "Release Train",
             path: "/Users/ronnie/Work/release",
             panes: [
-                pane(id: "w3:p1", tabID: "w3:t1", status: .idle, title: "Release notes", agent: "Codex", revision: 44),
+                pane(id: "w3:p1", tabID: "w3:t1", status: .idle, title: "Release notes", agent: "Codex", revision: 44, firstSeenAt: Date().addingTimeInterval(-3 * 86400)),
             ],
             layouts: [layout(workspaceID: "w3", tabID: "w3:t1", paneIDs: ["w3:p1"])]
         ),
@@ -328,7 +328,8 @@ enum DemoData {
         status: AgentStatus,
         title: String,
         agent: String?,
-        revision: Int
+        revision: Int,
+        firstSeenAt: Date? = nil
     ) -> HerdrPane {
         HerdrPane(
             paneID: id,
@@ -345,7 +346,8 @@ enum DemoData {
             agent: agent?.lowercased(),
             displayAgent: agent,
             terminalTitle: title,
-            terminalTitleStripped: title
+            terminalTitleStripped: title,
+            firstSeenAt: firstSeenAt
         )
     }
 

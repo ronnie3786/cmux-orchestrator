@@ -38,6 +38,7 @@ class AlertStore:
         self._lock = threading.RLock()
         self._alerts: list[dict] = []
         self._status_by_pane: dict[str, str] = {}
+        self._acked_done_panes: set[str] = set()
         self._dirty = False
         self._load()
 
@@ -248,6 +249,7 @@ class AlertStore:
             previous = self._status_by_pane.get(pane_id)
             if previous != current:
                 self._status_by_pane[pane_id] = current
+                self._acked_done_panes.discard(pane_id)
                 self._mark_dirty_locked()
                 if (
                     previous is not None
@@ -298,6 +300,7 @@ class AlertStore:
             for pane_id in list(self._status_by_pane):
                 if pane_id not in live_ids:
                     del self._status_by_pane[pane_id]
+                    self._acked_done_panes.discard(pane_id)
                     self._mark_dirty_locked()
                     resolved_alerts = self._mark_pane_alerts_read_locked(pane_id)
                     if resolved_alerts:
@@ -372,11 +375,17 @@ class AlertStore:
 
     def mark_read_for_pane(self, pane_id: str, now: Optional[str] = None) -> list[dict]:
         with self._lock:
+            if self._status_by_pane.get(pane_id) == "done":
+                self._acked_done_panes.add(pane_id)
             changed = self._mark_pane_alerts_read_locked(pane_id, read_at=now)
             if changed:
                 self._mark_dirty_locked()
                 self._persist_locked()
             return changed
+
+    def acked_done_panes(self) -> frozenset[str]:
+        with self._lock:
+            return frozenset(self._acked_done_panes)
 
     def mark_all_read(self) -> list[dict]:
         changed: list[dict] = []

@@ -31,6 +31,7 @@ final class HerdrAppModel {
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
+    var sidebarRecentOnly = false
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
@@ -1057,6 +1058,51 @@ final class HerdrAppModel {
         }
     }
 
+    func endPiSessionAndClosePane(in pane: HerdrPane) async {
+        noteUserInteraction(machineID: pane.machineID)
+        if isDemoMode {
+            toastMessage = "ended pi and closed the pane"
+            return
+        }
+        guard canControl(machineID: pane.machineID),
+              let currentPane = self.pane(id: pane.id),
+              let client = client(forMachine: pane.machineID) else { return }
+
+        guard currentPane.piSemantic?.connected == true else {
+            await close(currentPane)
+            return
+        }
+        do {
+            try await client.sendText(toPane: pane.paneID, text: "/quit", submit: true)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        for _ in 0..<12 {
+            do {
+                try await refresh(
+                    machineID: pane.machineID,
+                    using: client,
+                    showSpinner: false,
+                    expectedGeneration: connectionGeneration
+                )
+            } catch {
+                break
+            }
+            guard let refreshedPane = self.pane(id: pane.id) else {
+                toastMessage = "ended pi and closed the pane"
+                return
+            }
+            if refreshedPane.piSemantic?.connected != true {
+                await close(refreshedPane)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        toastMessage = "pi didn't quit — pane left open"
+    }
+
     @discardableResult
     func split(_ pane: HerdrPane, direction: String) async -> String? {
         var newPaneID: String?
@@ -1850,30 +1896,30 @@ final class HerdrAppModel {
             hasUnreadAlerts = true
             break
         }
-        guard hasUnreadAlerts else { return }
-
-        var updatedAlerts: [HerdrAlert] = []
-        updatedAlerts.reserveCapacity(alerts.count)
-        for alert in alerts {
-            if alert.scopedPaneID == pane.id && !alert.isRead {
-                updatedAlerts.append(
-                    HerdrAlert(
-                        id: alert.rawID,
-                        workspaceID: alert.workspaceID,
-                        paneID: alert.paneID,
-                        status: alert.status,
-                        title: alert.title,
-                        message: alert.message,
-                        createdAt: alert.createdAt,
-                        isRead: true
-                    ).stamped(machineID: alert.machineID)
-                )
-            } else {
-                updatedAlerts.append(alert)
+        if hasUnreadAlerts {
+            var updatedAlerts: [HerdrAlert] = []
+            updatedAlerts.reserveCapacity(alerts.count)
+            for alert in alerts {
+                if alert.scopedPaneID == pane.id && !alert.isRead {
+                    updatedAlerts.append(
+                        HerdrAlert(
+                            id: alert.rawID,
+                            workspaceID: alert.workspaceID,
+                            paneID: alert.paneID,
+                            status: alert.status,
+                            title: alert.title,
+                            message: alert.message,
+                            createdAt: alert.createdAt,
+                            isRead: true
+                        ).stamped(machineID: alert.machineID)
+                    )
+                } else {
+                    updatedAlerts.append(alert)
+                }
             }
+            alerts = updatedAlerts
+            updateBadgeIfNeeded()
         }
-        alerts = updatedAlerts
-        updateBadgeIfNeeded()
 
         guard !isDemoMode else { return }
 

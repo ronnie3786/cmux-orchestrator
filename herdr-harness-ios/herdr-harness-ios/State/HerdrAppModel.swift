@@ -22,6 +22,7 @@ final class HerdrAppModel {
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
+    var sidebarRecentOnly = false
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
@@ -57,6 +58,10 @@ final class HerdrAppModel {
     @ObservationIgnored private var pendingPaneID: String?
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
+    /// Internal test seam for deterministic URLProtocol-backed clients.
+    @ObservationIgnored var clientFactory: (ServerConfiguration) -> HerdrAPIClient = {
+        HerdrAPIClient(configuration: $0)
+    }
     private static let connectionFailureGrace: TimeInterval = 10
     private static let alertsLogger = Logger(subsystem: "dev.ronnierocha.herdr-harness", category: "alerts")
 
@@ -123,7 +128,7 @@ final class HerdrAppModel {
                 guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { continue }
                 let connection = ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
                 runtimes[machine.id] = MachineRuntime(
-                    client: HerdrAPIClient(configuration: configuration),
+                    client: clientFactory(configuration),
                     connection: connection
                 )
                 machineStates[machine.id] = .disconnected
@@ -230,7 +235,7 @@ final class HerdrAppModel {
         resetConnectionState()
         connectionGeneration += 1
         runtimes[machine.id] = MachineRuntime(
-            client: HerdrAPIClient(configuration: configuration),
+            client: clientFactory(configuration),
             connection: ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
         )
         machineStates[machine.id] = .disconnected
@@ -711,6 +716,50 @@ final class HerdrAppModel {
         }
     }
 
+    func endPiSessionAndClosePane(in pane: HerdrPane) async {
+        if isDemoMode {
+            toastMessage = "ended pi and closed the pane"
+            return
+        }
+        guard canControl(machineID: pane.machineID),
+              let currentPane = self.pane(id: pane.id),
+              let client = client(forMachine: pane.machineID) else { return }
+
+        guard currentPane.piSemantic?.connected == true else {
+            await close(currentPane)
+            return
+        }
+        do {
+            try await client.sendText(toPane: pane.paneID, text: "/quit", submit: true)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        for _ in 0..<12 {
+            do {
+                try await refresh(
+                    machineID: pane.machineID,
+                    using: client,
+                    showSpinner: false,
+                    expectedGeneration: connectionGeneration
+                )
+            } catch {
+                break
+            }
+            guard let refreshedPane = self.pane(id: pane.id) else {
+                toastMessage = "ended pi and closed the pane"
+                return
+            }
+            if refreshedPane.piSemantic?.connected != true {
+                await close(refreshedPane)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        toastMessage = "pi didn't quit — pane left open"
+    }
+
     @discardableResult
     func split(_ pane: HerdrPane, direction: String) async -> String? {
         var newPaneID: String?
@@ -907,22 +956,22 @@ final class HerdrAppModel {
         let hasUnreadAlerts = alerts.contains { alert in
             alert.scopedPaneID == pane.id && !alert.isRead
         }
-        guard hasUnreadAlerts else { return }
-
-        alerts = alerts.map { alert in
-            guard alert.scopedPaneID == pane.id, !alert.isRead else { return alert }
-            return HerdrAlert(
-                id: alert.rawID,
-                workspaceID: alert.workspaceID,
-                paneID: alert.paneID,
-                status: alert.status,
-                title: alert.title,
-                message: alert.message,
-                createdAt: alert.createdAt,
-                isRead: true
-            ).stamped(machineID: alert.machineID)
+        if hasUnreadAlerts {
+            alerts = alerts.map { alert in
+                guard alert.scopedPaneID == pane.id, !alert.isRead else { return alert }
+                return HerdrAlert(
+                    id: alert.rawID,
+                    workspaceID: alert.workspaceID,
+                    paneID: alert.paneID,
+                    status: alert.status,
+                    title: alert.title,
+                    message: alert.message,
+                    createdAt: alert.createdAt,
+                    isRead: true
+                ).stamped(machineID: alert.machineID)
+            }
+            Task { await NotificationManager.setBadge(unreadAlertCount) }
         }
-        Task { await NotificationManager.setBadge(unreadAlertCount) }
 
         guard !isDemoMode else { return }
 
@@ -1412,11 +1461,11 @@ final class HerdrAppModel {
         runtimes[id]?.client
     }
 
-    private func prepareRuntime(for machine: HerdrMachine, generation: Int) {
+    func prepareRuntime(for machine: HerdrMachine, generation: Int) {
         let token = KeychainStore.value(for: "api-token.\(machine.id)")
         guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { return }
         runtimes[machine.id] = MachineRuntime(
-            client: HerdrAPIClient(configuration: configuration),
+            client: clientFactory(configuration),
             connection: ActiveServerConnection(configuration: configuration, generation: generation),
             state: .connecting
         )

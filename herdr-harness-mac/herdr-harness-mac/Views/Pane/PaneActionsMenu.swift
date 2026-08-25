@@ -5,6 +5,7 @@ struct PaneActionsMenu: View {
     let pane: HerdrPane
     @Binding var selectedMode: PaneDetailMode
     @State private var isConfirmingClose = false
+    @State private var isConfirmingEndPiAndClose = false
     @State private var isRenaming = false
     @State private var renameText = ""
 
@@ -54,6 +55,12 @@ struct PaneActionsMenu: View {
                 }
                 .accessibilityIdentifier("pane-action-end-pi-session")
                 .disabled(!model.canControl)
+
+                Button("End Pi & close pane", systemImage: "xmark.rectangle", role: .destructive) {
+                    isConfirmingEndPiAndClose = true
+                }
+                .accessibilityIdentifier("pane-action-end-pi-and-close-pane")
+                .disabled(!model.canControl)
             }
 
             Button("Rename pane", systemImage: "pencil") {
@@ -99,6 +106,18 @@ struct PaneActionsMenu: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This stops the process running in \(pane.displayTitle).")
+        }
+        .confirmationDialog(
+            "End Pi and close this pane?",
+            isPresented: $isConfirmingEndPiAndClose,
+            titleVisibility: .visible
+        ) {
+            Button("End Pi & close pane", role: .destructive) {
+                Task { await model.endPiSessionAndClosePane(in: pane) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Sends /quit to the Pi session, waits for it to exit, then closes \(pane.displayTitle).")
         }
         .alert("Rename pane", isPresented: $isRenaming) {
             TextField("Pane name", text: $renameText)

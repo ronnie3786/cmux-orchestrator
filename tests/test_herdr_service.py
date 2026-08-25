@@ -17,6 +17,7 @@ from herdr_harness import attachments
 from herdr_harness.alerts import AlertStore
 from herdr_harness.client import HerdrClientError
 from herdr_harness.pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticJournal, PiSemanticManager
+from herdr_harness.panes_seen import PaneFirstSeenStore
 from herdr_harness.service import HerdrService
 from herdr_harness.stars import StarStore
 from herdr_harness.terminal import TerminalObserver, TerminalObserverError
@@ -225,6 +226,126 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertIsNotNone(single_workspace)
         self.assertEqual(single_workspace["workspace"]["tabs"][0]["future_tab_field"], 7)
         self.assertEqual(single_workspace["workspace"]["panes"][0]["future_pane_field"], [1, 2])
+
+    def test_acknowledging_done_pane_projects_it_as_idle_in_workspaces_response(self):
+        service = HerdrService(FakeClient([snapshot_with_status("done")]), environ={})
+        service.refresh_snapshot()
+
+        service.mark_pane_alerts_read("w1:p1")
+
+        pane = service.workspaces_response()["workspaces"][0]["panes"][0]
+        self.assertEqual(pane["agent_status"], "idle")
+
+    def test_acked_done_pane_rederives_done_workspace_and_tab_statuses(self):
+        service = HerdrService(
+            FakeClient([snapshot_with_statuses("done", "working")]),
+            environ={},
+        )
+        service.refresh_snapshot()
+
+        service.mark_pane_alerts_read("w1:p1")
+
+        workspace = service.workspaces_response()["workspaces"][0]
+        self.assertEqual(workspace["agent_status"], "working")
+        self.assertEqual(workspace["tabs"][0]["agent_status"], "working")
+
+    def test_blocked_panes_are_not_projected_by_alert_acknowledgement(self):
+        service = HerdrService(FakeClient([snapshot_with_status("blocked")]), environ={})
+        service.refresh_snapshot()
+
+        service.mark_pane_alerts_read("w1:p1")
+
+        self.assertNotIn("w1:p1", service.alerts.acked_done_panes())
+        pane = service.workspaces_response()["workspaces"][0]["panes"][0]
+        self.assertEqual(pane["agent_status"], "blocked")
+
+    def test_done_acknowledgement_rearms_after_an_intervening_status_change(self):
+        service = HerdrService(
+            FakeClient(
+                [
+                    snapshot_with_status("working"),
+                    snapshot_with_status("done"),
+                    snapshot_with_status("working"),
+                    snapshot_with_status("done"),
+                ]
+            ),
+            environ={},
+        )
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        service.mark_pane_alerts_read("w1:p1")
+        self.assertEqual(
+            service.workspaces_response()["workspaces"][0]["panes"][0]["agent_status"],
+            "idle",
+        )
+
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+
+        self.assertEqual(
+            service.workspaces_response()["workspaces"][0]["panes"][0]["agent_status"],
+            "done",
+        )
+
+    def test_herd_pulse_ready_count_excludes_acknowledged_done_panes(self):
+        push = FakePush()
+        service = HerdrService(
+            FakeClient([snapshot_with_status("done")]),
+            push=push,
+            environ={},
+        )
+        service.refresh_snapshot()
+        self.assertEqual(push.pulses[-1][0]["readyCount"], 1)
+
+        service.mark_pane_alerts_read("w1:p1")
+        service._publish_herd_pulse(force=True)
+
+        self.assertEqual(push.pulses[-1][0]["readyCount"], 0)
+
+    def test_workspaces_response_includes_first_seen_at_for_refreshed_panes(self):
+        service = HerdrService(FakeClient([snapshot_with_status("working")]), environ={})
+        service.refresh_snapshot()
+
+        pane = service.workspaces_response()["workspaces"][0]["panes"][0]
+        self.assertIsInstance(pane["first_seen_at"], str)
+
+    def test_pane_first_seen_store_persists_across_service_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "pane-first-seen.json"
+            first_service = HerdrService(
+                FakeClient([snapshot_with_status("working")]),
+                panes_seen=PaneFirstSeenStore(store_path=store_path),
+                environ={},
+            )
+            first_service.refresh_snapshot()
+            first_seen_at = first_service.panes_seen.first_seen_map()["w1:p1"]
+
+            self.assertEqual(stat.S_IMODE(store_path.stat().st_mode), 0o600)
+
+            second_service = HerdrService(
+                FakeClient([snapshot_with_status("working")]),
+                panes_seen=PaneFirstSeenStore(store_path=store_path),
+                environ={},
+            )
+
+            self.assertEqual(second_service.panes_seen.first_seen_map()["w1:p1"], first_seen_at)
+
+    def test_refresh_snapshot_prunes_first_seen_timestamp_for_disappeared_pane(self):
+        missing_pane = snapshot_with_status("working")
+        missing_pane["panes"] = []
+        missing_pane["agents"] = []
+        missing_pane["workspaces"][0]["pane_count"] = 0
+        missing_pane["tabs"][0]["pane_count"] = 0
+        service = HerdrService(
+            FakeClient([snapshot_with_status("working"), missing_pane]),
+            environ={},
+        )
+        service.refresh_snapshot()
+        self.assertIn("w1:p1", service.panes_seen.first_seen_map())
+
+        service.refresh_snapshot()
+
+        self.assertNotIn("w1:p1", service.panes_seen.first_seen_map())
 
     def test_alerts_emit_once_per_real_blocked_or_done_transition(self):
         client = FakeClient(

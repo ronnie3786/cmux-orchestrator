@@ -20,6 +20,97 @@ struct SidebarTreeTests {
         #expect(tree[0].looseChats.isEmpty)
     }
 
+    @Test("Recent-only filtering keeps only panes first seen today")
+    func recentOnlyFiltersPanesByFirstSeenDay() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let tabs = [tab(id: "recent:t1", workspaceID: "recent", number: 1, label: "Today", paneCount: 3)]
+        let panes = [
+            pane(id: "recent:p1", workspaceID: "recent", tabID: "recent:t1", title: "Today", firstSeenAt: now),
+            pane(id: "recent:p2", workspaceID: "recent", tabID: "recent:t1", title: "Old", firstSeenAt: now.addingTimeInterval(-3 * 86_400)),
+            pane(id: "recent:p3", workspaceID: "recent", tabID: "recent:t1", title: "Unknown"),
+        ]
+
+        let tree = SidebarTree.build(
+            workspaces: [workspace(id: "recent", number: 1, label: "Recent", tabs: tabs, panes: panes)],
+            query: "",
+            collapsedWorkspaceIDs: [],
+            recentOnly: true,
+            now: now
+        )
+
+        #expect(tree[0].sections[0].chats.map(\.id) == ["recent:p1"])
+    }
+
+    @Test("Recent-only filtering applies to starred groups")
+    func recentOnlyFiltersStarredGroups() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let tabs = [tab(id: "starred:t1", workspaceID: "starred", number: 1, label: "Today", paneCount: 2)]
+        let panes = [
+            pane(id: "starred:p1", workspaceID: "starred", tabID: "starred:t1", title: "Today", firstSeenAt: now),
+            pane(id: "starred:p2", workspaceID: "starred", tabID: "starred:t1", title: "Old", firstSeenAt: now.addingTimeInterval(-3 * 86_400)),
+        ]
+        let groups = SidebarTree.starredGroups(
+            workspaces: [workspace(id: "starred", number: 1, label: "Starred", tabs: tabs, panes: panes)],
+            query: "",
+            starredIDs: ["starred:p1", "starred:p2"],
+            recentOnly: true,
+            now: now
+        )
+
+        #expect(groups[0].chats.map(\.id) == ["starred:p1"])
+    }
+
+    @Test("Recent-only filtering drops empty tabs and workspaces")
+    func recentOnlyDropsEmptyTabsAndWorkspaces() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let mixedTabs = [
+            tab(id: "mixed:t1", workspaceID: "mixed", number: 1, label: "Old", paneCount: 1),
+            tab(id: "mixed:t2", workspaceID: "mixed", number: 2, label: "Today", paneCount: 1),
+        ]
+        let mixedPanes = [
+            pane(id: "mixed:p1", workspaceID: "mixed", tabID: "mixed:t1", title: "Old", firstSeenAt: now.addingTimeInterval(-3 * 86_400)),
+            pane(id: "mixed:p2", workspaceID: "mixed", tabID: "mixed:t2", title: "Today", firstSeenAt: now),
+        ]
+        let oldTabs = [tab(id: "old:t1", workspaceID: "old", number: 1, label: "Old", paneCount: 1)]
+        let oldPanes = [
+            pane(id: "old:p1", workspaceID: "old", tabID: "old:t1", title: "Old", firstSeenAt: now.addingTimeInterval(-3 * 86_400)),
+        ]
+
+        let tree = SidebarTree.build(
+            workspaces: [
+                workspace(id: "mixed", number: 1, label: "Mixed", tabs: mixedTabs, panes: mixedPanes),
+                workspace(id: "old", number: 2, label: "Old", tabs: oldTabs, panes: oldPanes),
+            ],
+            query: "",
+            collapsedWorkspaceIDs: [],
+            recentOnly: true,
+            now: now
+        )
+
+        #expect(tree.map(\.id) == ["mixed"])
+        #expect(tree[0].sections.map(\.id) == ["mixed:t2"])
+    }
+
+    @Test("Disabling recent-only filtering preserves dated panes")
+    func disabledRecentOnlyKeepsAllPanes() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let tabs = [tab(id: "all:t1", workspaceID: "all", number: 1, label: "All", paneCount: 3)]
+        let panes = [
+            pane(id: "all:p1", workspaceID: "all", tabID: "all:t1", title: "Today", firstSeenAt: now),
+            pane(id: "all:p2", workspaceID: "all", tabID: "all:t1", title: "Old", firstSeenAt: now.addingTimeInterval(-3 * 86_400)),
+            pane(id: "all:p3", workspaceID: "all", tabID: "all:t1", title: "Unknown"),
+        ]
+        let tree = SidebarTree.build(
+            workspaces: [workspace(id: "all", number: 1, label: "All", tabs: tabs, panes: panes)],
+            query: "",
+            collapsedWorkspaceIDs: [],
+            recentOnly: false,
+            now: now
+        )
+
+        #expect(tree[0].sections[0].chats.map(\.id) == ["all:p1", "all:p2", "all:p3"])
+    }
+
     @Test("Keeps collapsed workspaces collapsed outside search")
     func honorsCollapsedWorkspaces() {
         let tree = SidebarTree.build(
@@ -496,7 +587,8 @@ struct SidebarTreeTests {
         id: String,
         workspaceID: String,
         tabID: String,
-        title: String
+        title: String,
+        firstSeenAt: Date? = nil
     ) -> HerdrPane {
         HerdrPane(
             paneID: id,
@@ -513,7 +605,8 @@ struct SidebarTreeTests {
             agent: nil,
             displayAgent: nil,
             terminalTitle: nil,
-            terminalTitleStripped: nil
+            terminalTitleStripped: nil,
+            firstSeenAt: firstSeenAt
         )
     }
 }

@@ -22,6 +22,7 @@ from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
 from .pi_semantic import PiSemanticManager
+from .panes_seen import PaneFirstSeenStore
 from .push_notifications import APNsManager
 from .stars import StarStore
 from .terminal import TerminalObserver, TerminalObserverError
@@ -44,6 +45,7 @@ GLOBAL_PI_EVENT_TYPES = frozenset(
     }
 )
 _VOLATILE_SNAPSHOT_KEYS = frozenset({"generated_at", "generatedAt", "updated_at", "updatedAt"})
+_STATUS_ROLLUP_PRECEDENCE = ("blocked", "done", "working", "idle", "unknown")
 
 
 def _find_pane_id(value: Any) -> Optional[str]:
@@ -87,6 +89,7 @@ class HerdrService:
         *,
         alerts: Optional[AlertStore] = None,
         stars: Optional[StarStore] = None,
+        panes_seen: Optional[PaneFirstSeenStore] = None,
         broker: Optional[EventBroker] = None,
         push: Optional[APNsManager] = None,
         environ: Optional[Mapping[str, str]] = None,
@@ -102,6 +105,14 @@ class HerdrService:
         self.alerts = alerts or AlertStore(store_path=alert_store_path)
         star_store_path = self.environ.get("HERDR_HARNESS_STAR_STORE_PATH") or None
         self.stars = stars or StarStore(store_path=star_store_path)
+        pane_seen_store_path = self.environ.get("HERDR_HARNESS_PANE_SEEN_STORE_PATH") or None
+        if pane_seen_store_path is None:
+            home = self.environ.get("HOME")
+            if home:
+                pane_seen_store_path = str(
+                    Path(home) / ".config" / "herdr-harness" / "pane-first-seen.json"
+                )
+        self.panes_seen = panes_seen or PaneFirstSeenStore(store_path=pane_seen_store_path)
         self.broker = broker or EventBroker()
         self.push = push or APNsManager(environ=self.environ)
         self.pi_semantic = pi_semantic or PiSemanticManager(
@@ -148,12 +159,21 @@ class HerdrService:
         self._terminal_slots = threading.BoundedSemaphore(self._terminal_limit)
 
     @staticmethod
-    def _herd_pulse_state(snapshot: dict, *, connected: bool) -> dict:
+    def _herd_pulse_state(
+        snapshot: dict,
+        *,
+        connected: bool,
+        acked_done_panes: frozenset[str] = frozenset(),
+    ) -> dict:
         workspaces = [item for item in snapshot.get("workspaces", []) if isinstance(item, dict)]
         panes = [item for item in snapshot.get("panes", []) if isinstance(item, dict)]
         working = sum(item.get("agent_status") == "working" for item in panes)
         attention = sum(item.get("agent_status") == "blocked" for item in panes)
-        ready = sum(item.get("agent_status") == "done" for item in panes)
+        ready = sum(
+            item.get("agent_status") == "done"
+            and str(item.get("pane_id")) not in acked_done_panes
+            for item in panes
+        )
         if not connected:
             phase = "offline"
             connection = "offline"
@@ -184,7 +204,11 @@ class HerdrService:
         with self._lock:
             snapshot = copy.deepcopy(self._snapshot or {})
             connected = self._request_connected and self._events_connected
-        content_state = self._herd_pulse_state(snapshot, connected=connected)
+        content_state = self._herd_pulse_state(
+            snapshot,
+            connected=connected,
+            acked_done_panes=self.alerts.acked_done_panes(),
+        )
         return self.push.notify_herd_pulse_async(
             content_state,
             force=force,
@@ -294,11 +318,13 @@ class HerdrService:
             self._publish_alert(alert)
         if resolved:
             self._publish_read_state_changed()
+        self.panes_seen.record_first_seen(current_pane_ids)
         if self.stars.prune(current_pane_ids):
             self.broker.publish(
                 "stars.changed",
                 {"paneId": None, "starred": False, "starredPaneIds": self.stars.list()},
             )
+        self.panes_seen.prune(current_pane_ids)
         if changed:
             self.broker.publish(
                 "snapshot.updated",
@@ -416,13 +442,52 @@ class HerdrService:
             "generatedAt": generated_at,
         }
 
+    def _project_acked_statuses(self, workspaces: list[dict]) -> list[dict]:
+        """Apply HTTP-only pane state enrichments to composite workspace copies."""
+
+        # Herdr's native terminal UI keeps ``done`` until focus. This read-model
+        # projection is for HTTP-facing apps only and never changes the cache.
+        acked_done_panes = self.alerts.acked_done_panes()
+        first_seen_by_pane = self.panes_seen.first_seen_map()
+        for workspace in workspaces:
+            panes = workspace.get("panes")
+            if not isinstance(panes, list):
+                continue
+            for pane in panes:
+                if not isinstance(pane, dict):
+                    continue
+                pane_id = str(pane.get("pane_id"))
+                if pane.get("agent_status") == "done" and pane_id in acked_done_panes:
+                    pane["agent_status"] = "idle"
+                first_seen_at = first_seen_by_pane.get(pane_id)
+                if first_seen_at is not None:
+                    pane["first_seen_at"] = first_seen_at
+
+            for tab in workspace.get("tabs", []):
+                if not isinstance(tab, dict) or tab.get("agent_status") != "done":
+                    continue
+                tab_id = tab.get("tab_id")
+                tab_panes = [pane for pane in panes if pane.get("tab_id") == tab_id]
+                for status in _STATUS_ROLLUP_PRECEDENCE:
+                    if any(pane.get("agent_status") == status for pane in tab_panes):
+                        tab["agent_status"] = status
+                        break
+
+            if workspace.get("agent_status") == "done":
+                for status in _STATUS_ROLLUP_PRECEDENCE:
+                    if any(pane.get("agent_status") == status for pane in panes):
+                        workspace["agent_status"] = status
+                        break
+        return workspaces
+
     def workspaces_response(self) -> dict:
         snapshot, generated_at = self._cached_snapshot()
+        workspaces = self._project_acked_statuses(composite_workspaces(snapshot))
         return {
             "ok": True,
             "workspaces": self.pi_semantic.enrich_workspaces(
                 snapshot,
-                composite_workspaces(snapshot),
+                workspaces,
             ),
             "alerts": self.alerts.list(limit=100),
             "starredPaneIds": self.stars.list(),
@@ -447,7 +512,7 @@ class HerdrService:
         if workspace_record is None:
             return None
         filtered_snapshot = {**snapshot, "workspaces": [workspace_record]}
-        workspace = composite_workspaces(filtered_snapshot)[0]
+        workspace = self._project_acked_statuses(composite_workspaces(filtered_snapshot))[0]
         workspace = self.pi_semantic.enrich_workspaces(snapshot, [workspace])[0]
         return {
             "ok": True,
@@ -1001,8 +1066,10 @@ class HerdrService:
     def mark_pane_alerts_read(self, pane_id: str) -> Optional[dict]:
         if self._lookup_pane(pane_id) is None:
             return None
+        was_acked = pane_id in self.alerts.acked_done_panes()
         changed = self.alerts.mark_read_for_pane(pane_id)
-        if changed:
+        is_acked = pane_id in self.alerts.acked_done_panes()
+        if changed or (not was_acked and is_acked):
             self._publish_read_state_changed()
         return {
             "ok": True,

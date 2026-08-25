@@ -39,7 +39,8 @@ struct HerdrSidebarView: View {
                 query: query,
                 collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
                 collapsedTabIDs: model.collapsedSidebarTabIDs,
-                starredIDs: model.starredChatIDs
+                starredIDs: model.starredChatIDs,
+                recentOnly: model.sidebarRecentOnly
             )
             machineGroups = SidebarTree.machineGroups(
                 machines: model.machines,
@@ -52,7 +53,8 @@ struct HerdrSidebarView: View {
                 workspaces: scopedWorkspaces,
                 query: query,
                 starredIDs: model.starredChatIDs,
-                machines: model.machines
+                machines: model.machines,
+                recentOnly: model.sidebarRecentOnly
             )
         }
 
@@ -74,6 +76,7 @@ struct HerdrSidebarView: View {
         let collapsedTabIDs: Set<String>
         let starredChatIDs: Set<String>
         let machineStates: [String: ConnectionState]
+        let recentOnly: Bool
     }
 
     @MainActor
@@ -93,7 +96,8 @@ struct HerdrSidebarView: View {
             collapsedMachineIDs: model.collapsedSidebarMachineIDs,
             collapsedTabIDs: model.collapsedSidebarTabIDs,
             starredChatIDs: model.starredChatIDs,
-            machineStates: model.machineStates
+            machineStates: model.machineStates,
+            recentOnly: model.sidebarRecentOnly
         )
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 12) {
@@ -106,7 +110,10 @@ struct HerdrSidebarView: View {
             WorkspaceSearchField(text: $query, placeholder: "filter chats")
             creationControls
 
-            HerdrSectionLabel(title: "chats", detail: "\(snapshot.paneCount) total shown")
+            HerdrSectionLabel(
+                title: "chats",
+                detail: model.sidebarRecentOnly ? "\(snapshot.paneCount) today" : "\(snapshot.paneCount) total shown"
+            )
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
@@ -210,6 +217,18 @@ struct HerdrSidebarView: View {
                 .herdrFont(.headline, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
             Spacer()
+            Button {
+                model.sidebarRecentOnly.toggle()
+            } label: {
+                Image(systemName: model.sidebarRecentOnly ? "clock.fill" : "clock")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .foregroundStyle(model.sidebarRecentOnly ? HerdrTheme.accent : HerdrTheme.mist)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("sidebar-recent-filter")
+            .accessibilityLabel("Today's chats")
+            .help("Today's chats")
         }
     }
 
@@ -335,9 +354,19 @@ struct HerdrSidebarView: View {
                 machineSeparator
             }
         } else if snapshot.tree.isEmpty {
-            emptyState
-                .frame(maxWidth: .infinity)
-                .padding(.top, 42)
+            if model.sidebarRecentOnly {
+                if snapshot.starredGroups.isEmpty {
+                    Text("no chats started today")
+                        .herdrFont(.caption, monospaced: true)
+                        .foregroundStyle(HerdrTheme.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 42)
+                }
+            } else {
+                emptyState
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 42)
+            }
         } else {
             entriesContent(snapshot.tree)
         }

@@ -8,7 +8,9 @@ import urllib.request
 from herdr_harness.events import EventBroker
 from herdr_harness.pi_semantic import PiSemanticError
 from herdr_harness.server import make_server
+from herdr_harness.service import HerdrService
 from herdr_harness.workspace_tools import WorkspaceToolError
+from tests.test_herdr_service import FakeClient, snapshot_with_status
 
 
 class FakePiSemantic:
@@ -344,6 +346,43 @@ class HerdrHTTPTests(unittest.TestCase):
             {"ok": True, "paneId": "w1:p1", "alerts": [], "unreadCount": 0},
         )
         self.assertEqual(self.service.calls[-1], ("pane.alerts.read", {"pane_id": "w1:p1"}))
+
+    def test_pane_alerts_read_route_projects_done_pane_as_idle_with_no_unread_alerts(self):
+        service = HerdrService(FakeClient([snapshot_with_status("done")]), environ={})
+        service.refresh_snapshot()
+        service.alerts.mark_all_read()
+        server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            request = urllib.request.Request(
+                base + "/api/v1/panes/w1:p1/alerts/read",
+                method="POST",
+                data=b"{}",
+                headers={
+                    "Authorization": "Bearer test-secret",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                status = response.status
+                read_response = json.loads(response.read())
+            workspace_request = urllib.request.Request(
+                base + "/api/v1/workspaces",
+                headers={"Authorization": "Bearer test-secret"},
+            )
+            with urllib.request.urlopen(workspace_request, timeout=2) as response:
+                workspaces = json.loads(response.read())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(read_response["ok"])
+        self.assertEqual(read_response["alerts"], [])
+        self.assertEqual(workspaces["workspaces"][0]["panes"][0]["agent_status"], "idle")
 
     def test_pane_alerts_read_route_returns_not_found_for_unknown_pane(self):
         status, _, body = self.request(

@@ -39,7 +39,9 @@ enum SidebarTree {
         query: String,
         collapsedWorkspaceIDs: Set<String>,
         collapsedTabIDs: Set<String> = [],
-        starredIDs: Set<String> = []
+        starredIDs: Set<String> = [],
+        recentOnly: Bool = false,
+        now: Date = Date()
     ) -> [ProjectEntry] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return workspaces.sorted { $0.number < $1.number }.compactMap { workspace in
@@ -48,7 +50,9 @@ enum SidebarTree {
                 query: trimmedQuery,
                 collapsedWorkspaceIDs: collapsedWorkspaceIDs,
                 collapsedTabIDs: collapsedTabIDs,
-                starredIDs: starredIDs
+                starredIDs: starredIDs,
+                recentOnly: recentOnly,
+                now: now
             )
         }
     }
@@ -57,7 +61,9 @@ enum SidebarTree {
         workspaces: [HerdrWorkspace],
         query: String,
         starredIDs: Set<String>,
-        machines: [HerdrMachine] = []
+        machines: [HerdrMachine] = [],
+        recentOnly: Bool = false,
+        now: Date = Date()
     ) -> [StarredGroup] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let machineOrder = Dictionary(uniqueKeysWithValues: machines.enumerated().map { ($0.element.id, $0.offset) })
@@ -72,7 +78,11 @@ enum SidebarTree {
             }
             .compactMap { workspace in
                 let chats = workspace.panes
-                    .filter { starredIDs.contains($0.id) && matchesPaneQuery($0, query: trimmedQuery) }
+                    .filter {
+                        starredIDs.contains($0.id)
+                            && matchesPaneQuery($0, query: trimmedQuery)
+                            && matchesRecent($0, recentOnly: recentOnly, now: now)
+                    }
                     .sorted { $0.paneID < $1.paneID }
                 guard !chats.isEmpty else { return nil }
                 return StarredGroup(workspace: workspace, chats: chats)
@@ -87,7 +97,9 @@ enum SidebarTree {
         collapsedMachineIDs: Set<String>,
         collapsedWorkspaceIDs: Set<String>,
         collapsedTabIDs: Set<String> = [],
-        starredIDs: Set<String> = []
+        starredIDs: Set<String> = [],
+        recentOnly: Bool = false,
+        now: Date = Date()
     ) -> [MachineGroup] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return machines.map { machine in
@@ -100,7 +112,9 @@ enum SidebarTree {
                     query: query,
                     collapsedWorkspaceIDs: collapsedWorkspaceIDs,
                     collapsedTabIDs: collapsedTabIDs,
-                    starredIDs: starredIDs
+                    starredIDs: starredIDs,
+                    recentOnly: recentOnly,
+                    now: now
                 )
             )
         }
@@ -129,7 +143,9 @@ enum SidebarTree {
         query: String,
         collapsedWorkspaceIDs: Set<String>,
         collapsedTabIDs: Set<String> = [],
-        starredIDs: Set<String>
+        starredIDs: Set<String>,
+        recentOnly: Bool = false,
+        now: Date = Date()
     ) -> ProjectEntry? {
         let sortedTabs = workspace.tabs.sorted { $0.number < $1.number }
         let tabIDs = Set(sortedTabs.map(\.id))
@@ -148,6 +164,7 @@ enum SidebarTree {
             }.map(\.id))
             matchingPaneIDs = Set(workspace.panes.filter {
                 matchesPaneQuery($0, query: query)
+                    && matchesRecent($0, recentOnly: recentOnly, now: now)
             }.map(\.id))
         }
 
@@ -157,11 +174,15 @@ enum SidebarTree {
 
         let filteredPanes: [HerdrPane]
         if query.isEmpty || workspaceMatches {
-            filteredPanes = workspace.panes.filter { !starredIDs.contains($0.id) }
+            filteredPanes = workspace.panes.filter {
+                !starredIDs.contains($0.id)
+                    && matchesRecent($0, recentOnly: recentOnly, now: now)
+            }
         } else {
             filteredPanes = workspace.panes.filter {
                 !starredIDs.contains($0.id)
                     && (matchingPaneIDs.contains($0.id) || matchingTabIDs.contains($0.scopedTabID))
+                    && matchesRecent($0, recentOnly: recentOnly, now: now)
             }
         }
 
@@ -169,7 +190,7 @@ enum SidebarTree {
             let chats = filteredPanes
                 .filter { $0.scopedTabID == tab.id }
                 .sorted { $0.paneID < $1.paneID }
-            guard query.isEmpty || !chats.isEmpty || matchingTabIDs.contains(tab.id) else { return nil }
+            guard (query.isEmpty && !recentOnly) || !chats.isEmpty || (!recentOnly && matchingTabIDs.contains(tab.id)) else { return nil }
             return SectionEntry(
                 tab: tab,
                 isExpanded: query.isEmpty ? !collapsedTabIDs.contains(tab.id) : true,
@@ -179,6 +200,8 @@ enum SidebarTree {
         let looseChats = filteredPanes
             .filter { !tabIDs.contains($0.scopedTabID) }
             .sorted { $0.paneID < $1.paneID }
+
+        guard !recentOnly || !sections.isEmpty || !looseChats.isEmpty else { return nil }
 
         return ProjectEntry(
             workspace: workspace,
@@ -190,5 +213,9 @@ enum SidebarTree {
 
     private static func matchesPaneQuery(_ pane: HerdrPane, query: String) -> Bool {
         query.isEmpty || pane.displayTitle.localizedStandardContains(query)
+    }
+
+    private static func matchesRecent(_ pane: HerdrPane, recentOnly: Bool, now: Date) -> Bool {
+        !recentOnly || (pane.firstSeenAt.map { Calendar.autoupdatingCurrent.isDate($0, inSameDayAs: now) } ?? false)
     }
 }

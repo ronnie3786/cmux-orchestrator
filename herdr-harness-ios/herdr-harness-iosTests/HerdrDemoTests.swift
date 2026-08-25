@@ -81,6 +81,16 @@ struct HerdrDemoTests {
         #expect(model.toastMessage == "ended the pi session")
     }
 
+    @Test("Demo end-pi-and-close action behaves without network access")
+    func endsPiSessionAndClosesPaneInDemoMode() async throws {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        let pane = try #require(model.pane(id: "demo1|w1:p2"))
+
+        await model.endPiSessionAndClosePane(in: pane)
+
+        #expect(model.toastMessage == "ended pi and closed the pane")
+    }
+
     @Test("Demo adds a shell to a tab without network access")
     func addsShellToTabInDemoMode() async throws {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])

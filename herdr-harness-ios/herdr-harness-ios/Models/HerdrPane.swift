@@ -19,6 +19,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     let stateLabels: [String: String]
     let tokens: [String: String]
     let piSemantic: PiSemanticCapability?
+    let firstSeenAt: Date?
 
     var machineID: String = ""
 
@@ -79,7 +80,22 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         case stateLabels = "state_labels"
         case tokens
         case piSemantic = "pi_semantic"
+        case firstSeenAt = "first_seen_at"
     }
+
+    // ISO8601DateFormatter is documented as thread-safe. These immutable
+    // formatters avoid allocating one for every pane decoded from a snapshot.
+    // TODO: Revisit if Foundation changes that thread-safety guarantee.
+    nonisolated(unsafe) private static let withFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    nonisolated(unsafe) private static let withoutFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -101,6 +117,32 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         stateLabels = try container.decodeIfPresent([String: String].self, forKey: .stateLabels) ?? [:]
         tokens = try container.decodeIfPresent([String: String].self, forKey: .tokens) ?? [:]
         piSemantic = try container.decodeIfPresent(PiSemanticCapability.self, forKey: .piSemantic)
+        firstSeenAt = try container.decodeIfPresent(String.self, forKey: .firstSeenAt).flatMap {
+            Self.withFractional.date(from: $0) ?? Self.withoutFractional.date(from: $0)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(paneID, forKey: .paneID)
+        try container.encode(terminalID, forKey: .terminalID)
+        try container.encode(workspaceID, forKey: .workspaceID)
+        try container.encode(tabID, forKey: .tabID)
+        try container.encode(focused, forKey: .focused)
+        try container.encode(agentStatus, forKey: .agentStatus)
+        try container.encode(revision, forKey: .revision)
+        try container.encodeIfPresent(cwd, forKey: .cwd)
+        try container.encodeIfPresent(foregroundCWD, forKey: .foregroundCWD)
+        try container.encodeIfPresent(label, forKey: .label)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(agent, forKey: .agent)
+        try container.encodeIfPresent(displayAgent, forKey: .displayAgent)
+        try container.encodeIfPresent(terminalTitle, forKey: .terminalTitle)
+        try container.encodeIfPresent(terminalTitleStripped, forKey: .terminalTitleStripped)
+        try container.encode(stateLabels, forKey: .stateLabels)
+        try container.encode(tokens, forKey: .tokens)
+        try container.encodeIfPresent(piSemantic, forKey: .piSemantic)
+        try container.encodeIfPresent(firstSeenAt.map { Self.withoutFractional.string(from: $0) }, forKey: .firstSeenAt)
     }
 
     init(
@@ -121,7 +163,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         terminalTitleStripped: String?,
         stateLabels: [String: String] = [:],
         tokens: [String: String] = [:],
-        piSemantic: PiSemanticCapability? = nil
+        piSemantic: PiSemanticCapability? = nil,
+        firstSeenAt: Date? = nil
     ) {
         self.paneID = paneID
         self.terminalID = terminalID
@@ -141,5 +184,6 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.stateLabels = stateLabels
         self.tokens = tokens
         self.piSemantic = piSemantic
+        self.firstSeenAt = firstSeenAt
     }
 }
