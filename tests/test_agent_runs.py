@@ -98,7 +98,7 @@ class AgentRunManagerTests(unittest.TestCase):
             herdr_session="test-machine",
         )
 
-    def test_success_uses_private_read_only_pi_and_stable_public_shape(self):
+    def test_success_uses_private_cli_capable_pi_and_stable_public_shape(self):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)
             capture_path = directory / "capture.json"
@@ -139,7 +139,10 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertEqual(capture["cwd"], str((directory / "home").resolve()))
             self.assertIsNone(capture["herdrPaneId"])
             self.assertEqual(capture["argv"][0:3], ["-p", "--mode", "json"])
-            self.assertIn("read,grep,find,ls", capture["argv"])
+            self.assertIn("read,bash,grep,find,ls", capture["argv"])
+            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertIn("use CLI commands", charter)
+            self.assertIn("investigative only", charter)
             self.assertIn("--no-context-files", capture["argv"])
             self.assertIn("--no-extensions", capture["argv"])
             manager.stop()

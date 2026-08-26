@@ -103,7 +103,7 @@ struct HeadlessAgentView: View {
             .onSubmit(submit)
 
             HStack {
-                Text("Runs read-only from ~ with a current Herdr fleet summary.")
+                Text("Runs from ~ with investigative CLI access and a current Herdr fleet summary.")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.muted)
                 Spacer()
