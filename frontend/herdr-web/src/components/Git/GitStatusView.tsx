@@ -19,12 +19,13 @@ import {
   EMPTY_GIT_ENTRY,
   useGitStore,
   type CommitFilesEntry,
+  type DiffSheetState,
   type GitEntry,
   type GitSnapshot,
 } from "../../store/gitStore";
 import { ToolErrorCard } from "../Shared/ToolErrorCard";
 import { CommandLensDock } from "../Pane/CommandLensDock";
-import { DiffSheet } from "./DiffSheet";
+import { DiffInspector } from "./DiffSheet";
 import { GitContextMenu, type GitContextTarget } from "./GitContextMenu";
 import "./git.css";
 
@@ -114,7 +115,6 @@ export function GitStatusView({ paneId, embedded = false }: GitStatusViewProps) 
     >
       <div className="hz-git-scroll">{body}</div>
       {pane !== null ? <CommandLensDock pane={pane} /> : null}
-      <DiffSheet />
     </main>
   );
 }
@@ -130,15 +130,29 @@ function GitBody({
 }) {
   const [contextTarget, setContextTarget] = useState<GitContextTarget | null>(null);
   const closeContextMenu = useCallback(() => setContextTarget(null), []);
+  const selectedDiff = useGitStore((state) =>
+    state.diffSheet?.paneId === paneId ? state.diffSheet : null,
+  );
   const changedCount = snapshot.staged.length + snapshot.unstaged.length + snapshot.untracked.length;
   const isClean = changedCount === 0;
   const branch = snapshot.branch || "HEAD";
   const repositoryPathParts = snapshot.rootPath.split(/[\\/]/).filter(Boolean);
   const repositoryName = repositoryPathParts[repositoryPathParts.length - 1] ?? "repository";
 
+  useEffect(() => {
+    if (selectedDiff !== null && snapshotContainsDiff(snapshot, selectedDiff)) return;
+    const first = firstChangedFile(snapshot);
+    if (first !== null) {
+      useGitStore.getState().diff(paneId, first.file, first.section);
+    } else if (selectedDiff !== null) {
+      useGitStore.getState().closeDiff();
+    }
+  }, [paneId, selectedDiff, snapshot]);
+
   return (
     <div className="hz-git-workbench">
-      <section className="hz-git-header" aria-label="Repository status">
+      <aside className="hz-git-navigator" aria-label="Repository changes and history">
+        <section className="hz-git-header" aria-label="Repository status">
         <div className="hz-git-header-main">
           <div className="hz-git-repo-mark" aria-hidden>
             <GitBranch size={17} />
@@ -173,9 +187,10 @@ function GitBody({
             {snapshot.rootPath}
           </span>
         </div>
-      </section>
+        </section>
 
-      {entry.error !== null ? (
+        <div className="hz-git-navigator-scroll">
+        {entry.error !== null ? (
         <div className="hz-git-refresh-warning" role="status">
           <span>Couldn't refresh: {entry.error}</span>
           <button
@@ -202,6 +217,7 @@ function GitBody({
             title="Staged"
             section="staged"
             files={snapshot.staged}
+            selectedDiff={selectedDiff}
             onContextMenu={setContextTarget}
           />
           <GitFileSection
@@ -209,6 +225,7 @@ function GitBody({
             title="Unstaged"
             section="unstaged"
             files={snapshot.unstaged}
+            selectedDiff={selectedDiff}
             onContextMenu={setContextTarget}
           />
           <GitFileSection
@@ -216,14 +233,19 @@ function GitBody({
             title="Untracked"
             section="untracked"
             files={snapshot.untracked.map((file) => ({ status: "?", file }))}
+            selectedDiff={selectedDiff}
             onContextMenu={setContextTarget}
           />
         </div>
       )}
 
-      {snapshot.commits.length > 0 ? (
-        <CommitHistory paneId={paneId} snapshot={snapshot} entry={entry} />
-      ) : null}
+        {snapshot.commits.length > 0 ? (
+          <CommitHistory paneId={paneId} snapshot={snapshot} entry={entry} />
+        ) : null}
+        </div>
+      </aside>
+
+      <DiffInspector paneId={paneId} />
 
       {contextTarget !== null ? (
         <GitContextMenu paneId={paneId} target={contextTarget} onClose={closeContextMenu} />
@@ -232,15 +254,43 @@ function GitBody({
   );
 }
 
+function firstChangedFile(
+  snapshot: GitSnapshot,
+): { file: string; section: GitSection } | null {
+  const staged = snapshot.staged[0];
+  if (staged !== undefined) return { file: staged.file, section: "staged" };
+  const unstaged = snapshot.unstaged[0];
+  if (unstaged !== undefined) return { file: unstaged.file, section: "unstaged" };
+  const untracked = snapshot.untracked[0];
+  return untracked === undefined ? null : { file: untracked, section: "untracked" };
+}
+
+function snapshotContainsDiff(snapshot: GitSnapshot, diff: DiffSheetState): boolean {
+  if (diff.section === "commit") {
+    return diff.commitHash !== null && snapshot.commits.some((commit) => commit.hash === diff.commitHash);
+  }
+  if (diff.section === "staged") return snapshot.staged.some((file) => file.file === diff.file);
+  if (diff.section === "unstaged") return snapshot.unstaged.some((file) => file.file === diff.file);
+  return snapshot.untracked.includes(diff.file);
+}
+
 interface GitFileSectionProps {
   paneId: string;
   title: string;
   section: GitSection;
   files: Array<{ status: string; file: string }>;
+  selectedDiff: ReturnType<typeof useGitStore.getState>["diffSheet"];
   onContextMenu: (target: GitContextTarget) => void;
 }
 
-function GitFileSection({ paneId, title, section, files, onContextMenu }: GitFileSectionProps) {
+function GitFileSection({
+  paneId,
+  title,
+  section,
+  files,
+  selectedDiff,
+  onContextMenu,
+}: GitFileSectionProps) {
   if (files.length === 0) return null;
   return (
     <section className={`hz-git-section hz-git-section-${section}`}>
@@ -256,6 +306,11 @@ function GitFileSection({ paneId, title, section, files, onContextMenu }: GitFil
             path={file.file}
             status={file.status}
             section={section}
+            selected={
+              selectedDiff?.section === section &&
+              selectedDiff.commitHash === null &&
+              selectedDiff.file === file.file
+            }
             onContextMenu={onContextMenu}
           />
         ))}
@@ -269,10 +324,11 @@ interface GitFileRowProps {
   path: string;
   status: string;
   section: GitSection;
+  selected: boolean;
   onContextMenu: (target: GitContextTarget) => void;
 }
 
-function GitFileRow({ paneId, path, status, section, onContextMenu }: GitFileRowProps) {
+function GitFileRow({ paneId, path, status, section, selected, onContextMenu }: GitFileRowProps) {
   const showContextMenu = (x: number, y: number) => onContextMenu({ x, y, path, section });
   const contextPoint = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -290,7 +346,7 @@ function GitFileRow({ paneId, path, status, section, onContextMenu }: GitFileRow
 
   return (
     <div
-      className="hz-git-row hz-git-row-diffable"
+      className={`hz-git-row hz-git-row-diffable${selected ? " hz-git-row-selected" : ""}`}
       onContextMenu={contextPoint}
     >
       <button

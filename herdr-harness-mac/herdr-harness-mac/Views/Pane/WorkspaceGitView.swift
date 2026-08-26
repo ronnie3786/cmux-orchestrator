@@ -15,34 +15,42 @@ struct WorkspaceGitView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 repositoryHeader
 
-                if isLoading, status == nil {
-                    loadingCard
-                } else if let errorMessage, status == nil {
-                    errorCard(errorMessage)
-                } else if let status {
-                    gitContent(status)
-                } else {
-                    emptyCard(
-                        title: "No Git data",
-                        detail: "This workspace does not have a Git repository yet.",
-                        symbol: "point.3.connected.trianglepath.dotted"
-                    )
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if isLoading, status == nil {
+                            loadingCard
+                        } else if let errorMessage, status == nil {
+                            errorCard(errorMessage)
+                        } else if let status {
+                            gitContent(status)
+                        } else {
+                            emptyCard(
+                                title: "No Git data",
+                                detail: "This workspace does not have a Git repository yet.",
+                                symbol: "point.3.connected.trianglepath.dotted"
+                            )
+                        }
+                    }
+                    .padding(12)
+                    .padding(.bottom, 16)
                 }
+                .scrollIndicators(.visible)
             }
-            .padding(.horizontal, HerdrTheme.pagePadding)
-            .padding(.top, 14)
-            .padding(.bottom, 28)
+            .frame(minWidth: 270, idealWidth: 320, maxWidth: 380, maxHeight: .infinity)
+            .background(HerdrTheme.graphite.opacity(0.45))
+
+            Rectangle()
+                .fill(HerdrTheme.surface)
+                .frame(width: 1)
+
+            WorkspaceGitDiffView(target: selectedDiff, loadDiff: loadDiff)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .scrollIndicators(.hidden)
         .task(id: workspace.id) { await refresh() }
-        .sheet(item: $selectedDiff) { target in
-            WorkspaceGitDiffView(target: target, loadDiff: loadDiff)
-                .presentationBackground(HerdrTheme.ink)
-        }
         .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("workspace-git")
     }
@@ -86,11 +94,8 @@ struct WorkspaceGitView: View {
         .padding(.leading, 14)
         .padding(.trailing, 6)
         .padding(.vertical, 8)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-        }
+        .background(HerdrTheme.graphite)
+        .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.surface).frame(height: 1) }
         .accessibilityElement(children: .combine)
     }
 
@@ -115,6 +120,7 @@ struct WorkspaceGitView: View {
                 files: git.staged,
                 section: .staged,
                 pendingFiles: pendingFiles,
+                selectedDiff: selectedDiff,
                 selectDiff: selectDiff,
                 mutate: mutate
             )
@@ -127,6 +133,7 @@ struct WorkspaceGitView: View {
                 files: git.unstaged,
                 section: .unstaged,
                 pendingFiles: pendingFiles,
+                selectedDiff: selectedDiff,
                 selectDiff: selectDiff,
                 mutate: mutate
             )
@@ -139,6 +146,7 @@ struct WorkspaceGitView: View {
                 files: git.untracked.map { WorkspaceGitFile(status: "?", file: $0) },
                 section: .untracked,
                 pendingFiles: pendingFiles,
+                selectedDiff: selectedDiff,
                 selectDiff: selectDiff,
                 mutate: mutate
             )
@@ -255,13 +263,23 @@ struct WorkspaceGitView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            status = try await loadStatus()
-            errorMessage = status?.error
+            let refreshedStatus = try await loadStatus()
+            status = refreshedStatus
+            errorMessage = refreshedStatus.error
+            reconcileSelection(with: refreshedStatus)
         } catch is CancellationError {
             return
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func reconcileSelection(with status: WorkspaceGitStatus) {
+        let targets = status.staged.map { WorkspaceGitDiffTarget(file: $0.file, section: .staged) }
+            + status.unstaged.map { WorkspaceGitDiffTarget(file: $0.file, section: .unstaged) }
+            + status.untracked.map { WorkspaceGitDiffTarget(file: $0, section: .untracked) }
+        if let selectedDiff, targets.contains(where: { $0.id == selectedDiff.id }) { return }
+        selectedDiff = targets.first
     }
 }
 
@@ -271,6 +289,7 @@ private struct GitFileSectionView: View {
     let files: [WorkspaceGitFile]
     let section: GitFileSection
     let pendingFiles: Set<String>
+    let selectedDiff: WorkspaceGitDiffTarget?
     let selectDiff: (String, GitFileSection) -> Void
     let mutate: (String, GitFileSection) -> Void
 
@@ -283,6 +302,7 @@ private struct GitFileSectionView: View {
                     file: file,
                     section: section,
                     isPending: pendingFiles.contains(file.file),
+                    isSelected: selectedDiff?.id == WorkspaceGitDiffTarget(file: file.file, section: section).id,
                     selectDiff: selectDiff,
                     mutate: mutate
                 )
@@ -327,6 +347,7 @@ private struct GitFileRow: View {
     let file: WorkspaceGitFile
     let section: GitFileSection
     let isPending: Bool
+    let isSelected: Bool
     let selectDiff: (String, GitFileSection) -> Void
     let mutate: (String, GitFileSection) -> Void
 
@@ -368,6 +389,12 @@ private struct GitFileRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
+        .background(isSelected ? HerdrTheme.accent.opacity(0.12) : .clear)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(isSelected ? HerdrTheme.accent : .clear)
+                .frame(width: 3)
+        }
     }
 }
 
@@ -403,18 +430,42 @@ private struct WorkspaceGitDiffTarget: Identifiable {
 }
 
 private struct WorkspaceGitDiffView: View {
-    let target: WorkspaceGitDiffTarget
+    let target: WorkspaceGitDiffTarget?
     let loadDiff: (String, GitFileSection) async throws -> WorkspaceGitDiffResponse
-    @Environment(\.dismiss) private var dismiss
     @State private var diff: String?
     @State private var errorMessage: String?
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(target?.section.label.lowercased() ?? "code changes")
+                        .herdrFont(.caption2, monospaced: true, weight: .bold)
+                        .foregroundStyle(HerdrTheme.mist)
+                    Text(target?.file ?? "Select a changed file")
+                        .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                        .foregroundStyle(HerdrTheme.text)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 56)
+            .background(HerdrTheme.graphite)
+            .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.surface).frame(height: 1) }
+
             ZStack {
                 HerdrBackground()
 
-                if let errorMessage {
+                if target == nil {
+                    ContentUnavailableView(
+                        "Select a changed file",
+                        systemImage: "doc.text.magnifyingglass",
+                        description: Text("Its diff will stay open here while you browse the repository.")
+                    )
+                    .foregroundStyle(HerdrTheme.text)
+                } else if let errorMessage {
                     ContentUnavailableView(
                         "Diff unavailable",
                         systemImage: "exclamationmark.triangle.fill",
@@ -452,17 +503,11 @@ private struct WorkspaceGitDiffView: View {
                         .foregroundStyle(HerdrTheme.mist)
                 }
             }
-            .navigationTitle(target.file)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(HerdrTheme.accent)
-                        .keyboardShortcut(.cancelAction)
-                }
-            }
         }
-        .frame(minWidth: 760, minHeight: 600)
-        .task(id: target.id) {
+        .task(id: target?.id) {
+            diff = nil
+            errorMessage = nil
+            guard let target else { return }
             do {
                 let response = try await loadDiff(target.file, target.section)
                 if let responseError = response.error {

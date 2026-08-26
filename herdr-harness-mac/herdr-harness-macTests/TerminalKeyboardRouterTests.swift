@@ -35,11 +35,12 @@ struct TerminalKeyboardRouterTests {
         #expect(pane.id == "m1|w1:p1")
         let router = TerminalKeyboardRouter()
         router.enqueueText("hello", to: pane, model: model)
-        for _ in 0..<10 {
-            if !(await KeyboardRequestRecorder.shared.paths()).isEmpty { break }
-            await Task.yield()
+        var recordedPaths = await KeyboardRequestRecorder.shared.paths()
+        for _ in 0..<200 where recordedPaths.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+            recordedPaths = await KeyboardRequestRecorder.shared.paths()
         }
-        #expect(await KeyboardRequestRecorder.shared.paths() == ["/api/v1/panes/w1:p1/send-text"])
+        #expect(recordedPaths == ["/api/v1/panes/w1:p1/send-text"])
     }
 
     @Test("A failed send invalidates only the already queued chain")

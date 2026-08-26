@@ -77,6 +77,10 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
             "The Git mode should replace the terminal in the detail column"
         )
         XCTAssertTrue(
+            app.control(identifier: "git-diff").waitForExistence(timeout: 5),
+            "The expanded diff inspector should be mounted beside the file navigator"
+        )
+        XCTAssertTrue(
             app.control(labelContaining: "staged").waitForExistence(timeout: 5),
             "Demo Git status carries staged and unstaged sections"
         )
@@ -86,15 +90,10 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
         XCTAssertTrue(diffButton.waitForExistence(timeout: 3))
         diffButton.click()
         XCTAssertTrue(
-            app.control(identifier: "git-diff").waitForExistence(timeout: 5),
-            "A file row should open the diff — a sheet on the Mac, a cover on iOS"
-        )
-        XCTAssertTrue(
             app.control(labelContaining: "diff --git").waitForExistence(timeout: 5),
-            "The diff sheet should render the demo patch"
+            "The persistent diff inspector should render the demo patch"
         )
         saveScreenshot("04-git-diff", app: app, directory: screenshotDirectory)
-        app.buttons["Done"].click()
 
         try selectPaneMode(.skills, in: app)
         XCTAssertTrue(

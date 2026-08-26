@@ -11,7 +11,7 @@ struct PaneSessionHeader: View {
     let store: PiConversationStore
     var gitIsAvailable = false
     var selectedMode: PaneDetailMode = .terminal
-    var showGit: () -> Void = { }
+    var toggleGit: () -> Void = { }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -40,7 +40,11 @@ struct PaneSessionHeader: View {
             LastPromptPeekButton(message: store.lastUserMessage)
 
             if gitIsAvailable {
-                Button("Git changes", systemImage: PaneDetailMode.git.symbol, action: showGit)
+                Button(
+                    selectedMode == .git ? gitReturnTitle : "Git changes",
+                    systemImage: PaneDetailMode.git.symbol,
+                    action: toggleGit
+                )
                     .labelStyle(.iconOnly)
                     .foregroundStyle(selectedMode == .git ? HerdrTheme.accent : HerdrTheme.mist)
                     .frame(width: 30, height: 28)
@@ -55,9 +59,13 @@ struct PaneSessionHeader: View {
                     }
                     .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
                     .buttonStyle(.plain)
-                    .help(selectedMode == .git ? "Showing Git changes" : "Show Git changes for this pane")
+                    .help(selectedMode == .git ? gitReturnTitle : "Show Git changes for this pane")
                     .accessibilityIdentifier("pane-git-button")
-                    .accessibilityHint("Shows modified files, diffs, and recent commits")
+                    .accessibilityHint(
+                        selectedMode == .git
+                            ? "Returns to this pane's primary view"
+                            : "Shows modified files, diffs, and recent commits"
+                    )
                     .transition(.opacity.combined(with: .scale(scale: 0.86)))
             }
 
@@ -87,5 +95,9 @@ struct PaneSessionHeader: View {
         let workspace = model.workspace(containing: pane)?.label ?? pane.workspaceID
         guard !pane.displayPath.isEmpty else { return workspace }
         return "\(workspace) · \(pane.displayPath)"
+    }
+
+    private var gitReturnTitle: String {
+        pane.supportsPiSemanticChat ? "Back to chat" : "Back to terminal"
     }
 }

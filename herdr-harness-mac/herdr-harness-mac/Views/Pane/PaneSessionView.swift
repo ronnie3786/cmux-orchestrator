@@ -83,7 +83,7 @@ struct PaneSessionView: View {
                     store: piConversationStore,
                     gitIsAvailable: gitIsAvailable,
                     selectedMode: selectedMode,
-                    showGit: { selectedMode = .git }
+                    toggleGit: toggleGit
                 )
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -363,6 +363,17 @@ struct PaneSessionView: View {
             selectedMode = .git
         default:
             selectedMode = mode
+        }
+    }
+
+    /// The Git control is deliberately a state button, not a one-way route.
+    /// Clicking the selected control returns to the pane's primary working
+    /// surface, semantic chat when available, otherwise the terminal.
+    private func toggleGit() {
+        if selectedMode == .git {
+            selectedMode = currentPane.supportsPiSemanticChat ? .chat : .terminal
+        } else {
+            selectedMode = .git
         }
     }
 

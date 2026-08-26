@@ -127,11 +127,11 @@ struct SidebarMachineRow: View {
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
 
-                Circle()
-                    .fill(SidebarTone.status.opacity(statusOpacity))
-                    .frame(width: 8, height: 8)
+                Image(systemName: "desktopcomputer")
+                    .herdrFont(.caption, weight: .semibold)
+                    .foregroundStyle(SidebarTone.status.opacity(statusOpacity))
 
-                Text(machine.name.lowercased())
+                Text(machine.name.uppercased())
                     .herdrFont(.subheadline, monospaced: true, weight: .bold)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
@@ -144,9 +144,19 @@ struct SidebarMachineRow: View {
                     .fixedSize()
             }
             .padding(.horizontal, 12)
-            .frame(minHeight: 30)
+            .frame(minHeight: 38)
             .contentShape(Rectangle())
-            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
+            .background(isHovering ? HerdrTheme.elevated : HerdrTheme.graphite)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(SidebarTone.status.opacity(statusOpacity))
+                    .frame(width: 3)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                    .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+            }
+            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
@@ -169,19 +179,20 @@ struct SidebarMachineRow: View {
 struct SidebarSectionRow: View {
     let tab: HerdrTab
     let isExpanded: Bool
+    var attentionStatus: AgentStatus?
     let action: () -> Void
     @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: isExpanded ? "folder" : "folder.fill")
+                Image(systemName: attentionStatus != nil ? "folder.fill" : (isExpanded ? "folder" : "folder.fill"))
                     .herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .foregroundStyle(folderColor)
 
                 Text(tab.label)
                     .herdrFont(.caption, monospaced: true, weight: .bold)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .foregroundStyle(attentionStatus != nil ? HerdrTheme.text : HerdrTheme.mist)
                     .lineLimit(1)
 
                 Spacer()
@@ -201,9 +212,18 @@ struct SidebarSectionRow: View {
         .onHover { isHovering = $0 }
         .accessibilityIdentifier("sidebar-tab-\(tab.id)")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(tab.label), \(tab.paneCount) panes")
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(isExpanded ? "expanded" : "collapsed")
         .accessibilityHint("Collapses or expands this tab's chats")
+    }
+
+    private var folderColor: Color {
+        attentionStatus?.color ?? HerdrTheme.mist
+    }
+
+    private var accessibilityLabel: String {
+        let attention = attentionStatus.map { ", \($0.title)" } ?? ""
+        return "\(tab.label), \(tab.paneCount) panes\(attention)"
     }
 }
 

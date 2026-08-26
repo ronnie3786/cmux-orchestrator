@@ -486,7 +486,12 @@ struct HerdrSidebarView: View {
             if entry.isExpanded {
                 ForEach(entry.sections) { section in
                     let firstPane = firstPane(in: section.tab, workspace: entry.workspace)
-                    SidebarSectionRow(tab: section.tab, isExpanded: section.isExpanded, action: { toggle(section.tab) })
+                    SidebarSectionRow(
+                        tab: section.tab,
+                        isExpanded: section.isExpanded,
+                        attentionStatus: tabAttentionStatus(section.tab, in: entry.workspace),
+                        action: { toggle(section.tab) }
+                    )
                         .contextMenu {
                             Button("Focus on Mac", systemImage: "scope") {
                                 guard let firstPane else { return }
@@ -576,6 +581,15 @@ struct HerdrSidebarView: View {
         model.machines.first(where: { $0.id == machineID })?.name ?? "this machine"
     }
 
+    private func tabAttentionStatus(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> AgentStatus? {
+        let statuses = workspace.panes
+            .filter { $0.scopedTabID == tab.id }
+            .map(\.agentStatus)
+        if statuses.contains(.blocked) { return .blocked }
+        if statuses.contains(.done) { return .done }
+        return nil
+    }
+
     private func sidebarCountDetail(_ count: Int) -> String {
         switch model.sidebarRecency {
         case .today: "\(count) today"
@@ -622,9 +636,10 @@ struct HerdrSidebarView: View {
 
     private var machineSeparator: some View {
         Rectangle()
-            .fill(HerdrTheme.surface.opacity(0.65))
-            .frame(height: 2)
-            .padding(.vertical, 16)
+            .fill(HerdrTheme.surface)
+            .frame(height: 1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 18)
     }
 
     private var showsMachineChrome: Bool {
