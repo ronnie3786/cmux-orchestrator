@@ -657,7 +657,8 @@ actor HerdrAPIClient {
         let session = self.session
 
         // Pi envelopes are order-dependent. A bounded oldest-first buffer
-        // resyncs from a snapshot on overflow rather than dropping a delta.
+        // preserves a contiguous prefix on overflow so the store can resume
+        // from its last applied cursor without dropping or double-applying a delta.
         return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(512)) { continuation in
             let task = Task {
                 do {

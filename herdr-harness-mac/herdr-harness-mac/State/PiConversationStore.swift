@@ -49,6 +49,7 @@ final class PiConversationStore {
     @ObservationIgnored var reloadBackoffBase: Duration = .milliseconds(250)
     @ObservationIgnored var reloadDecayWindow: Duration = .seconds(60)
     @ObservationIgnored var stuckCursorPollingHold: Duration = .seconds(60)
+    @ObservationIgnored var overflowRetryDelay: Duration = .milliseconds(250)
     @ObservationIgnored var snapshotProvider: (@MainActor (HerdrPane) async throws -> PiConversationSnapshot)?
     @ObservationIgnored var eventsProvider: (@MainActor (HerdrPane, String?) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>?)?
 
@@ -65,15 +66,9 @@ final class PiConversationStore {
         lastError = nil
         var retryDelay = 0.65
         var retryAttempt = 0
-        var resumeAfterOverflow = false
 
         followLoop: while !Task.isCancelled {
             do {
-                if resumeAfterOverflow {
-                    resumeAfterOverflow = false
-                    try await Task.sleep(for: .milliseconds(250))
-                    await Task.yield()
-                }
                 let snapshot = try await fetchSnapshot(model: model, pane: pane)
                 try Task.checkCancellation()
                 guard snapshot.protocolInfo.name == "herdr.pi.semantic",
@@ -100,7 +95,6 @@ final class PiConversationStore {
                 // readable and automatically upgrades when a new bridge is
                 // available.
                 if !snapshot.reportsContextUsage || !snapshot.connected {
-                    resumeAfterOverflow = false
                     if await followSnapshotPolling(
                         model: model,
                         pane: pane,
@@ -117,11 +111,7 @@ final class PiConversationStore {
                     Task { await loadModels(model: model, pane: pane) }
                 }
 
-                transport = .liveStream
-                guard let events = await fetchEvents(model: model, pane: pane, after: reducer.cursor) else {
-                    throw APIError.streamEnded
-                }
-                if try await consume(events) {
+                if try await consumeLiveStreamResumingAfterOverflow(model: model, pane: pane) {
                     let cursor = reducer.cursor
                     let now = ContinuousClock().now
                     if let lastReloadAt, lastReloadAt.duration(to: now) > reloadDecayWindow {
@@ -169,9 +159,6 @@ final class PiConversationStore {
                 throw APIError.streamEnded
             } catch is CancellationError {
                 return
-            } catch APIError.streamBacklogOverflow {
-                resumeAfterOverflow = true
-                continue followLoop
             } catch {
                 retryAttempt += 1
                 connection = .reconnecting(attempt: retryAttempt)
@@ -352,6 +339,37 @@ final class PiConversationStore {
             }
         }
         return false
+    }
+
+    /// A bounded oldest-first stream buffer preserves a contiguous prefix when
+    /// it overflows. The reducer cursor therefore identifies an exact replay
+    /// boundary in the durable journal. Resume from that cursor instead of
+    /// replacing the live transcript with an older active-turn checkpoint.
+    private func consumeLiveStreamResumingAfterOverflow(
+        model: HerdrAppModel,
+        pane: HerdrPane
+    ) async throws -> Bool {
+        var isRetryingOverflow = false
+
+        while !Task.isCancelled {
+            if isRetryingOverflow {
+                try await Task.sleep(for: overflowRetryDelay)
+                await Task.yield()
+            }
+
+            transport = .liveStream
+            guard let events = await fetchEvents(model: model, pane: pane, after: reducer.cursor) else {
+                throw APIError.streamEnded
+            }
+
+            do {
+                return try await consume(events)
+            } catch APIError.streamBacklogOverflow {
+                isRetryingOverflow = true
+            }
+        }
+
+        throw CancellationError()
     }
 
     func reset() {
