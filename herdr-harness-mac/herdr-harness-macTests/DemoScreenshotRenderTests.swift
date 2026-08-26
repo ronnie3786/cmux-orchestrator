@@ -265,6 +265,14 @@ struct DemoScreenshotRenderTests {
         let model = HerdrRenderFixtures.demoModel()
         let pane = try HerdrRenderFixtures.piCapablePane()
         let workspace = try #require(model.workspace(id: "demo1|w1"))
+        let responseAudioPlayer = ResponseAudioPlayer.preview(
+            capabilities: ResponseAudioCapabilities(
+                ok: true,
+                available: true,
+                listen: true,
+                tldr: true
+            )
+        )
 
         let result = try await HerdrRenderHarness.render(
             "07-composer.png",
@@ -284,6 +292,8 @@ struct DemoScreenshotRenderTests {
                 attachments: .constant([]),
                 focusRequest: 0,
                 piConfiguration: HerdrRenderFixtures.composerConfiguration(),
+                responseAudioPlayer: responseAudioPlayer,
+                activateResponseAudio: { _ in },
                 toolRowFit: .pinnedWidest
             )
             .padding(12)

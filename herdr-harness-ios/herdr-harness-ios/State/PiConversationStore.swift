@@ -43,6 +43,19 @@ final class PiConversationStore {
         turns.contains(where: \.hasVisibleContent)
     }
 
+    var latestCompletedAssistantResponse: String? {
+        for turn in turns.reversed() {
+            for item in turn.items.reversed() {
+                guard case let .assistant(block) = item,
+                      block.status == .complete
+                else { continue }
+                let text = block.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { return text }
+            }
+        }
+        return nil
+    }
+
     var canSendCommands: Bool {
         bridgeConnected && connection.isConnected
     }

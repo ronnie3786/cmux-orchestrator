@@ -15,7 +15,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
-from . import attachments, voice
+from . import attachments, response_audio, voice
 from .agent_runs import AgentRunError
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
@@ -248,6 +248,9 @@ def api_description() -> dict:
             "workspaceFiles": "/api/v1/workspaces/{workspaceId}/files",
             "jiraAssigned": "/api/v1/jira/assigned",
             "voiceTranscriptions": "/api/v1/voice/transcriptions",
+            "responseAudioCapabilities": "/api/v1/response-audio/capabilities",
+            "responseAudioPrepare": "/api/v1/response-audio/prepare",
+            "responseAudioSpeech": "/api/v1/response-audio/speech",
             "events": "/api/v1/events",
             "paneOutput": "/api/v1/panes/{paneId}/output",
             "paneStream": "/api/v1/panes/{paneId}/stream",
@@ -291,6 +294,7 @@ def api_description() -> dict:
             "POST /api/v1/push/devices|unregister",
             "POST /api/v1/live-activities|unregister",
             "POST /api/v1/voice/transcriptions",
+            "POST /api/v1/response-audio/prepare|speech",
             "POST /api/v1/quick-sessions/pi",
             "POST /api/v1/agent-runs",
             "POST /api/v1/agent-runs/{runId}/cancel|promote",
@@ -535,6 +539,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(exc.status, exc.code, str(exc))
             except voice.VoiceError as exc:
                 self._error(exc.status, exc.code, str(exc))
+            except response_audio.ResponseAudioError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
             except Exception:
@@ -603,6 +609,27 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return api_description()
             if method == "GET" and tail == ["health"]:
                 return service.health_response()
+            if method == "GET" and tail == ["response-audio", "capabilities"]:
+                return service.response_audio_capabilities()
+            if method == "POST" and tail == ["response-audio", "prepare"]:
+                if any(key not in {"action", "text"} for key in body):
+                    raise HTTPValidationError("Response audio request contains an unsupported field")
+                action = _string(body.get("action"), "action", maximum=16)
+                text = _string(
+                    body.get("text"),
+                    "text",
+                    maximum=response_audio.MAX_SOURCE_CHARACTERS,
+                )
+                return service.prepare_response_audio(action=action, text=text)
+            if method == "POST" and tail == ["response-audio", "speech"]:
+                if any(key != "text" for key in body):
+                    raise HTTPValidationError("Speech request contains an unsupported field")
+                text = _string(
+                    body.get("text"),
+                    "text",
+                    maximum=response_audio.MAX_CHUNK_CHARACTERS,
+                )
+                return service.synthesize_response_audio(text=text)
             if method == "GET" and tail == ["network"]:
                 port = int(self.server.server_address[1])
                 return service.network_response(port, host_header=self.headers.get("Host", ""))

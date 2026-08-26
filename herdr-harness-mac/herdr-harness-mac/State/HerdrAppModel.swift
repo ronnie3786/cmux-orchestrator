@@ -926,6 +926,37 @@ final class HerdrAppModel {
         return try await client.fetchPiConversationSnapshot(paneID: pane.paneID)
     }
 
+    func fetchResponseAudioCapabilities(for pane: HerdrPane) async throws -> ResponseAudioCapabilities {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
+            return .unavailable
+        }
+        return try await client.fetchResponseAudioCapabilities()
+    }
+
+    func prepareResponseAudio(
+        action: ResponseAudioAction,
+        text: String,
+        for pane: HerdrPane
+    ) async throws -> ResponseAudioPrepareResponse {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
+            throw APIError.invalidResponse
+        }
+        return try await client.prepareResponseAudio(action: action, text: text)
+    }
+
+    func synthesizeResponseAudio(
+        text: String,
+        for pane: HerdrPane
+    ) async throws -> ResponseAudioSpeechResponse {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else {
+            throw APIError.invalidResponse
+        }
+        return try await client.synthesizeResponseAudio(text: text)
+    }
+
     func piConversationEvents(
         for pane: HerdrPane,
         after cursor: String?

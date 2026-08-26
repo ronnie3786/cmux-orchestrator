@@ -10,6 +10,7 @@ struct PiChatView: View {
     let focusRequest: Int
     @State private var dismissFocusRequest = 0
     @State private var hapticPulse = HerdrHapticPulse()
+    @State private var responseAudioPlayer = ResponseAudioPlayer()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,7 +54,9 @@ struct PiChatView: View {
                 attachments: $attachments,
                 focusRequest: focusRequest,
                 dismissFocusRequest: dismissFocusRequest,
-                piConfiguration: composerConfiguration
+                piConfiguration: composerConfiguration,
+                responseAudioPlayer: responseAudioPlayer,
+                activateResponseAudio: activateResponseAudio
             )
             .id(pane.id)
             .padding(.horizontal, 12)
@@ -72,6 +75,27 @@ struct PiChatView: View {
             } else if newPhase == .failed {
                 hapticPulse.fire(.failed)
             }
+            responseAudioPlayer.responseDidChange(
+                hasResponse: newPhase != .working
+                    && store.latestCompletedAssistantResponse != nil
+            )
+        }
+        .onChange(of: store.latestCompletedAssistantResponse) { _, response in
+            responseAudioPlayer.responseDidChange(
+                hasResponse: store.phase != .working && response != nil
+            )
+        }
+        .task(id: pane.id) {
+            responseAudioPlayer.responseDidChange(
+                hasResponse: store.phase != .working
+                    && store.latestCompletedAssistantResponse != nil
+            )
+            await responseAudioPlayer.loadCapabilities {
+                try await model.fetchResponseAudioCapabilities(for: pane)
+            }
+        }
+        .onDisappear {
+            responseAudioPlayer.stop()
         }
         .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("pi-chat-view")
@@ -121,5 +145,22 @@ struct PiChatView: View {
 
     private func dismissKeyboard() {
         dismissFocusRequest &+= 1
+    }
+
+    private func activateResponseAudio(_ action: ResponseAudioAction) {
+        guard let response = store.latestCompletedAssistantResponse else { return }
+        responseAudioPlayer.activate(
+            action,
+            text: response,
+            prepare: { action, text in
+                try await model.prepareResponseAudio(action: action, text: text, for: pane)
+            },
+            synthesize: { text in
+                try await model.synthesizeResponseAudio(text: text, for: pane)
+            },
+            failure: { message in
+                model.errorMessage = message
+            }
+        )
     }
 }

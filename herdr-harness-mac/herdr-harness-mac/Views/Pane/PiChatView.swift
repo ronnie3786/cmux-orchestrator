@@ -12,6 +12,7 @@ struct PiChatView: View {
     let focusRequest: Int
     let interactionResponder: PiInteractionResponder
     @State private var hapticPulse = HerdrHapticPulse()
+    @State private var responseAudioPlayer = ResponseAudioPlayer()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,7 +60,9 @@ struct PiChatView: View {
                 draft: $draft,
                 attachments: $attachments,
                 focusRequest: focusRequest,
-                piConfiguration: composerConfiguration
+                piConfiguration: composerConfiguration,
+                responseAudioPlayer: responseAudioPlayer,
+                activateResponseAudio: activateResponseAudio
             )
             .equatable()
             .id(paneID)
@@ -79,6 +82,27 @@ struct PiChatView: View {
             } else if newPhase == .failed {
                 hapticPulse.fire(.failed)
             }
+            responseAudioPlayer.responseDidChange(
+                hasResponse: newPhase != .working
+                    && store.latestCompletedAssistantResponse != nil
+            )
+        }
+        .onChange(of: store.latestCompletedAssistantResponse) { _, response in
+            responseAudioPlayer.responseDidChange(
+                hasResponse: store.phase != .working && response != nil
+            )
+        }
+        .task(id: paneID) {
+            responseAudioPlayer.responseDidChange(
+                hasResponse: store.phase != .working
+                    && store.latestCompletedAssistantResponse != nil
+            )
+            await responseAudioPlayer.loadCapabilities {
+                try await model.fetchResponseAudioCapabilities(for: composerPane)
+            }
+        }
+        .onDisappear {
+            responseAudioPlayer.stop()
         }
         .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("pi-chat-view")
@@ -122,6 +146,27 @@ struct PiChatView: View {
                 let succeeded = await store.setThinkingLevel(level, model: model, pane: composerPane)
                 if succeeded { hapticPulse.fire(.selection) }
                 return succeeded
+            }
+        )
+    }
+
+    private func activateResponseAudio(_ action: ResponseAudioAction) {
+        guard let response = store.latestCompletedAssistantResponse else { return }
+        responseAudioPlayer.activate(
+            action,
+            text: response,
+            prepare: { action, text in
+                try await model.prepareResponseAudio(
+                    action: action,
+                    text: text,
+                    for: composerPane
+                )
+            },
+            synthesize: { text in
+                try await model.synthesizeResponseAudio(text: text, for: composerPane)
+            },
+            failure: { message in
+                model.errorMessage = message
             }
         )
     }

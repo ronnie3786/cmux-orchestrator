@@ -35,6 +35,29 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/network")
     }
 
+    func fetchResponseAudioCapabilities() async throws -> ResponseAudioCapabilities {
+        try await request(path: "/api/v1/response-audio/capabilities")
+    }
+
+    func prepareResponseAudio(
+        action: ResponseAudioAction,
+        text: String
+    ) async throws -> ResponseAudioPrepareResponse {
+        try await request(
+            path: "/api/v1/response-audio/prepare",
+            method: "POST",
+            body: ResponseAudioPrepareBody(action: action, text: text)
+        )
+    }
+
+    func synthesizeResponseAudio(text: String) async throws -> ResponseAudioSpeechResponse {
+        try await request(
+            path: "/api/v1/response-audio/speech",
+            method: "POST",
+            body: ResponseAudioSpeechBody(text: text)
+        )
+    }
+
     func fetchPaneOutput(paneID: String, lines: Int = 160) async throws -> PaneOutputResponse {
         try await request(
             path: "/api/v1/panes/\(paneID)/output",
@@ -810,6 +833,12 @@ actor HerdrAPIClient {
         if path == "/api/v1/health" || path == "/api/v1/network" {
             return 8
         }
+        if path == "/api/v1/response-audio/capabilities" {
+            return 8
+        }
+        if path.hasPrefix("/api/v1/response-audio/") {
+            return 150
+        }
         if path == "/api/v1/quick-sessions/pi" {
             return 75
         }
@@ -1024,4 +1053,13 @@ private struct ServerErrorEnvelope: Decodable {
 
 private struct StarBody: Encodable, Sendable {
     let starred: Bool
+}
+
+private struct ResponseAudioPrepareBody: Encodable, Sendable {
+    let action: ResponseAudioAction
+    let text: String
+}
+
+private struct ResponseAudioSpeechBody: Encodable, Sendable {
+    let text: String
 }

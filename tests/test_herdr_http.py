@@ -51,6 +51,18 @@ class FakeHTTPService:
     def network_response(self, port, host_header=""):
         return {"ok": True, "port": port, "requested": host_header}
 
+    def response_audio_capabilities(self):
+        self.calls.append(("response_audio.capabilities", {}))
+        return {"ok": True, "available": True, "listen": True, "tldr": True}
+
+    def prepare_response_audio(self, *, action, text):
+        self.calls.append(("response_audio.prepare", {"action": action, "text": text}))
+        return {"ok": True, "action": action, "chunks": ["Prepared response"]}
+
+    def synthesize_response_audio(self, *, text):
+        self.calls.append(("response_audio.speech", {"text": text}))
+        return {"ok": True, "audioBase64": "SUQz", "contentType": "audio/mpeg"}
+
     def snapshot_response(self):
         return {"ok": True, "snapshot": self.snapshot, "generatedAt": "2026-08-11T00:00:00Z"}
 
@@ -442,6 +454,51 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertNotIn("localStorage", html)
         self.assertEqual(status, 401)
         self.assertEqual(headers["WWW-Authenticate"], 'Bearer realm="Herdr Harness"')
+        self.assertEqual(body["error"]["code"], "unauthorized")
+
+    def test_response_audio_routes_are_authenticated_and_delegate_bounded_payloads(self):
+        status, _, capabilities = self.request("/api/v1/response-audio/capabilities")
+        self.assertEqual(status, 200)
+        self.assertTrue(capabilities["listen"])
+        self.assertTrue(capabilities["tldr"])
+
+        status, _, prepared = self.request(
+            "/api/v1/response-audio/prepare",
+            method="POST",
+            payload={"action": "tldr", "text": "A detailed completed response."},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(prepared["chunks"], ["Prepared response"])
+
+        status, _, speech = self.request(
+            "/api/v1/response-audio/speech",
+            method="POST",
+            payload={"text": prepared["chunks"][0]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(speech["contentType"], "audio/mpeg")
+        self.assertEqual(
+            self.service.calls[-3:],
+            [
+                ("response_audio.capabilities", {}),
+                (
+                    "response_audio.prepare",
+                    {"action": "tldr", "text": "A detailed completed response."},
+                ),
+                ("response_audio.speech", {"text": "Prepared response"}),
+            ],
+        )
+
+        status, _, body = self.request(
+            "/api/v1/response-audio/prepare",
+            method="POST",
+            payload={"action": "listen", "text": "Hello", "unexpected": True},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "invalid_request")
+
+        status, _, body = self.request("/api/v1/response-audio/capabilities", token=None)
+        self.assertEqual(status, 401)
         self.assertEqual(body["error"]["code"], "unauthorized")
 
     def test_herdr_web_redirect_preserves_reverse_proxy_prefixes(self):

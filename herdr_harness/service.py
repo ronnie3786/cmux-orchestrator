@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, TypeVar
 
 from .alerts import AlertStore, utc_now
-from . import attachments, cmux_tools, voice, workspace_tools
+from . import attachments, cmux_tools, response_audio, voice, workspace_tools
 from .agent_runs import AgentRunError, AgentRunManager
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import CleanupManager
@@ -97,6 +97,7 @@ class HerdrService:
         environ: Optional[Mapping[str, str]] = None,
         tools: Optional[cmux_tools.CmuxToolsClient] = None,
         pi_semantic: Optional[PiSemanticManager] = None,
+        response_audio_service: Optional[response_audio.ResponseAudioService] = None,
         cleanup: Optional[CleanupManager] = None,
         agent_runs: Optional[AgentRunManager] = None,
     ) -> None:
@@ -123,6 +124,7 @@ class HerdrService:
             environ=None if production_environment else self.environ,
             on_event=self._publish_pi_event,
         )
+        self.response_audio = response_audio_service or response_audio.ResponseAudioService(self.environ)
         self.cleanup = cleanup or CleanupManager(self, environ=self.environ)
         # Agent runs are initialized lazily. Most harness requests do not need
         # a subprocess manager, and delaying creation avoids touching its
@@ -526,6 +528,15 @@ class HerdrService:
 
     def pi_command(self, pane_id: str, command: str, payload: Optional[dict] = None) -> dict:
         return self.pi_semantic.command(pane_id, command, payload)
+
+    def response_audio_capabilities(self) -> dict:
+        return self.response_audio.capabilities()
+
+    def prepare_response_audio(self, *, action: str, text: str) -> dict:
+        return self.response_audio.prepare(action=action, text=text)
+
+    def synthesize_response_audio(self, *, text: str) -> dict:
+        return self.response_audio.synthesize(text=text)
 
     def workspace_response(self, workspace_id: str) -> Optional[dict]:
         snapshot, generated_at = self._cached_snapshot()

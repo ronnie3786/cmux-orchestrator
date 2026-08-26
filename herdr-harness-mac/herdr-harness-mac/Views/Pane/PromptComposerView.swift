@@ -41,6 +41,8 @@ struct PromptComposerView: View {
     let focusRequest: Int
     let dismissFocusRequest: Int
     let piConfiguration: PiPromptComposerConfiguration?
+    let responseAudioPlayer: ResponseAudioPlayer?
+    let activateResponseAudio: ((ResponseAudioAction) -> Void)?
     let toolRowFit: ComposerToolRowFit
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -70,6 +72,8 @@ struct PromptComposerView: View {
         focusRequest: Int,
         dismissFocusRequest: Int = 0,
         piConfiguration: PiPromptComposerConfiguration? = nil,
+        responseAudioPlayer: ResponseAudioPlayer? = nil,
+        activateResponseAudio: ((ResponseAudioAction) -> Void)? = nil,
         toolRowFit: ComposerToolRowFit = .automatic
     ) {
         self.model = model
@@ -80,6 +84,8 @@ struct PromptComposerView: View {
         self.focusRequest = focusRequest
         self.dismissFocusRequest = dismissFocusRequest
         self.piConfiguration = piConfiguration
+        self.responseAudioPlayer = responseAudioPlayer
+        self.activateResponseAudio = activateResponseAudio
         self.toolRowFit = toolRowFit
         _disposition = State(initialValue: piConfiguration?.preferredDisposition ?? .prompt)
     }
@@ -106,38 +112,12 @@ struct PromptComposerView: View {
                     .transition(semanticControlTransition)
             }
 
-            if let piConfiguration,
-               piConfiguration.currentModel != nil
-               || piConfiguration.capabilities.listModels
-               || piConfiguration.thinkingLevel != nil
-               || piConfiguration.capabilities.setThinkingLevel {
-                HStack {
-                    PiModelPickerChip(
-                        currentModel: piConfiguration.currentModel,
-                        availableModels: piConfiguration.availableModels,
-                        isLoading: piConfiguration.isLoadingModels,
-                        isSetting: piConfiguration.isSettingModel,
-                        isEnabled: piConfiguration.canSelectModel,
-                        isInteractive: piConfiguration.supportsModelMenu,
-                        errorMessage: piConfiguration.modelCatalogError,
-                        selectModel: { candidate in
-                            Task { _ = await piConfiguration.selectModel(candidate) }
-                        },
-                        retry: {
-                            Task { await piConfiguration.retryLoadModels() }
-                        }
-                    )
-                    PiThinkingLevelChip(
-                        currentLevel: piConfiguration.thinkingLevel,
-                        isSetting: piConfiguration.isSettingThinkingLevel,
-                        isEnabled: piConfiguration.canSelectThinkingLevel,
-                        isInteractive: piConfiguration.supportsThinkingMenu,
-                        selectLevel: { level in
-                            Task { _ = await piConfiguration.selectThinkingLevel(level) }
-                        }
-                    )
-                    Spacer()
-                }
+            if let piConfiguration, showsPiOptionsBar {
+                PiComposerOptionsBar(
+                    configuration: piConfiguration,
+                    responseAudioPlayer: responseAudioPlayer,
+                    activateResponseAudio: activateResponseAudio
+                )
             }
 
             if quickVoiceCapture.phase == .locked {
@@ -294,6 +274,15 @@ struct PromptComposerView: View {
             )
             .frame(minWidth: 640, minHeight: 560)
         }
+    }
+
+    private var showsPiOptionsBar: Bool {
+        guard let piConfiguration else { return false }
+        return piConfiguration.currentModel != nil
+            || piConfiguration.capabilities.listModels
+            || piConfiguration.thinkingLevel != nil
+            || piConfiguration.capabilities.setThinkingLevel
+            || responseAudioPlayer?.isVisible == true
     }
 
     private var semanticControlTransition: AnyTransition {

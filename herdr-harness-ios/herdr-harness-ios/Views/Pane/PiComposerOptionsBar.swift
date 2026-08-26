@@ -1,0 +1,68 @@
+import SwiftUI
+
+struct PiComposerOptionsBar: View {
+    let configuration: PiPromptComposerConfiguration
+    let responseAudioPlayer: ResponseAudioPlayer?
+    let activateResponseAudio: ((ResponseAudioAction) -> Void)?
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            PiComposerOptionsRow(
+                configuration: configuration,
+                responseAudioPlayer: responseAudioPlayer,
+                showsAudioTitles: true,
+                activateResponseAudio: activateResponseAudio
+            )
+            PiComposerOptionsRow(
+                configuration: configuration,
+                responseAudioPlayer: responseAudioPlayer,
+                showsAudioTitles: false,
+                activateResponseAudio: activateResponseAudio
+            )
+        }
+    }
+}
+
+private struct PiComposerOptionsRow: View {
+    let configuration: PiPromptComposerConfiguration
+    let responseAudioPlayer: ResponseAudioPlayer?
+    let showsAudioTitles: Bool
+    let activateResponseAudio: ((ResponseAudioAction) -> Void)?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PiModelPickerChip(
+                currentModel: configuration.currentModel,
+                availableModels: configuration.availableModels,
+                isLoading: configuration.isLoadingModels,
+                isSetting: configuration.isSettingModel,
+                isEnabled: configuration.canSelectModel,
+                isInteractive: configuration.supportsModelMenu,
+                errorMessage: configuration.modelCatalogError,
+                selectModel: { candidate in
+                    Task { _ = await configuration.selectModel(candidate) }
+                },
+                retry: {
+                    Task { await configuration.retryLoadModels() }
+                }
+            )
+            PiThinkingLevelChip(
+                currentLevel: configuration.thinkingLevel,
+                isSetting: configuration.isSettingThinkingLevel,
+                isEnabled: configuration.canSelectThinkingLevel,
+                isInteractive: configuration.supportsThinkingMenu,
+                selectLevel: { level in
+                    Task { _ = await configuration.selectThinkingLevel(level) }
+                }
+            )
+            Spacer(minLength: 4)
+            if let responseAudioPlayer, let activateResponseAudio {
+                ResponseAudioControlsView(
+                    player: responseAudioPlayer,
+                    showsTitles: showsAudioTitles,
+                    activate: activateResponseAudio
+                )
+            }
+        }
+    }
+}

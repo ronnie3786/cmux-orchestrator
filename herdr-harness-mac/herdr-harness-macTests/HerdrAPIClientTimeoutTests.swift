@@ -17,6 +17,9 @@ struct HerdrAPIClientTimeoutTests {
     @Test func uploadsAndStreamsKeepTheirLongerBudgets() {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/attachments", method: "POST") == 90)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/voice/transcriptions", method: "POST") == 120)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/response-audio/capabilities", method: "GET") == 8)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/response-audio/prepare", method: "POST") == 150)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/response-audio/speech", method: "POST") == 150)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/cleanup/runs/clr_1/apply", method: "POST") == 15)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/stream", method: "GET") == 24 * 60 * 60)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/events", method: "GET") == 24 * 60 * 60)

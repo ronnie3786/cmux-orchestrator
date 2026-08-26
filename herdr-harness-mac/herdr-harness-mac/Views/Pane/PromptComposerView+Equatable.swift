@@ -10,6 +10,7 @@ extension PromptComposerView: Equatable {
             && lhs.focusRequest == rhs.focusRequest
             && lhs.dismissFocusRequest == rhs.dismissFocusRequest
             && lhs.piConfiguration == rhs.piConfiguration
+            && lhs.responseAudioPlayer === rhs.responseAudioPlayer
             && lhs.toolRowFit == rhs.toolRowFit
     }
 }
