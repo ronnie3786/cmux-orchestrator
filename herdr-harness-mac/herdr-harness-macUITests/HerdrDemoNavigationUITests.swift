@@ -81,7 +81,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
             "The expanded diff inspector should be mounted beside the file navigator"
         )
         XCTAssertTrue(
-            app.control(labelContaining: "staged").waitForExistence(timeout: 5),
+            app.text(containing: "staged").waitForExistence(timeout: 5),
             "Demo Git status carries staged and unstaged sections"
         )
         saveScreenshot("03-git-status", app: app, directory: screenshotDirectory)
@@ -90,7 +90,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
         XCTAssertTrue(diffButton.waitForExistence(timeout: 3))
         diffButton.click()
         XCTAssertTrue(
-            app.control(labelContaining: "diff --git").waitForExistence(timeout: 5),
+            app.text(containing: "diff --git").waitForExistence(timeout: 5),
             "The persistent diff inspector should render the demo patch"
         )
         saveScreenshot("04-git-diff", app: app, directory: screenshotDirectory)
@@ -128,7 +128,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
             "Demo file search should offer the matching project files"
         )
         saveScreenshot("06-file-search", app: app, directory: screenshotDirectory)
-        app.buttons["Done"].click()
+        app.typeKey(.escape, modifierFlags: [])
 
         let jiraTool = app.buttons["Insert Jira ticket context"]
         XCTAssertTrue(jiraTool.waitForExistence(timeout: 5))
@@ -140,7 +140,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
             return XCTFail("The Jira sheet should list the demo ticket")
         }
         saveScreenshot("07-jira-context", app: app, directory: screenshotDirectory)
-        app.buttons["Done"].click()
+        app.typeKey(.escape, modifierFlags: [])
 
         // The voice control is a gesture surface, not a `Button` — a click opens
         // the recorder, a press-and-hold dictates — so it is matched by label

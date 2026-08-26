@@ -152,11 +152,6 @@ struct SidebarMachineRow: View {
                     .fill(SidebarTone.status.opacity(statusOpacity))
                     .frame(width: 3)
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-            }
-            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }

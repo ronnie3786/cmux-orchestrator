@@ -78,6 +78,20 @@ extension XCUIApplication {
             .firstMatch
     }
 
+    /// Visible SwiftUI text. AppKit usually publishes `Text` through AXValue,
+    /// while combined controls publish the same copy through AXLabel.
+    func text(containing fragment: String) -> XCUIElement {
+        staticTexts
+            .matching(
+                NSPredicate(
+                    format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+                    fragment,
+                    fragment
+                )
+            )
+            .firstMatch
+    }
+
     /// The shell window. `MenuBarExtra` content only becomes a window while its
     /// popover is open, so the first match is the document window.
     var shellWindow: XCUIElement {

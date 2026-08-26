@@ -49,6 +49,8 @@ export interface DiffSheetState {
   section: DiffSection;
   commitHash: string | null;
   diff: string;
+  /** The server capped this patch, so the visible diff is incomplete. */
+  truncated: boolean;
   isLoading: boolean;
   error: string | null;
 }
@@ -291,6 +293,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
         section,
         commitHash: null,
         diff: "",
+        truncated: false,
         isLoading: true,
         error: null,
       },
@@ -303,6 +306,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
           diffSheet: {
             ...sheet,
             diff: response.diff ?? "",
+            truncated: response.truncated === true,
             isLoading: false,
             error: null,
           },
@@ -425,6 +429,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
         section: "commit",
         commitHash: hash,
         diff: "",
+        truncated: false,
         isLoading: true,
         error: null,
       },
@@ -437,6 +442,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
           diffSheet: {
             ...sheet,
             diff: response.diff ?? "",
+            truncated: response.truncated === true,
             isLoading: false,
             error: null,
           },

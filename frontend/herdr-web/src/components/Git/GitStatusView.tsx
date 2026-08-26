@@ -329,6 +329,7 @@ interface GitFileRowProps {
 }
 
 function GitFileRow({ paneId, path, status, section, selected, onContextMenu }: GitFileRowProps) {
+  const { directory, name } = splitFilePath(path);
   const showContextMenu = (x: number, y: number) => onContextMenu({ x, y, path, section });
   const contextPoint = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -360,8 +361,11 @@ function GitFileRow({ paneId, path, status, section, selected, onContextMenu }: 
         <span className="hz-git-badge mono" aria-hidden>
           {status}
         </span>
-        <span className="hz-git-file mono" title={path}>
-          {path}
+        <span className="hz-git-file" title={path}>
+          <span className="hz-git-file-name mono">{name}</span>
+          {directory !== "" ? (
+            <span className="hz-git-file-directory mono">{directory}</span>
+          ) : null}
         </span>
       </button>
       <button
@@ -380,6 +384,15 @@ function GitFileRow({ paneId, path, status, section, selected, onContextMenu }: 
       </button>
     </div>
   );
+}
+
+function splitFilePath(path: string): { directory: string; name: string } {
+  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (separator < 0) return { directory: "", name: path };
+  return {
+    directory: path.slice(0, separator + 1),
+    name: path.slice(separator + 1),
+  };
 }
 
 function CommitHistory({

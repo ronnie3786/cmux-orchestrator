@@ -232,6 +232,7 @@ describe("gitStore.diff", () => {
         file: "src/c.py",
         section: "untracked",
         diff: "@@ -0,0 +1 @@\n+new\n",
+        truncated: true,
       }),
     });
 
@@ -246,6 +247,7 @@ describe("gitStore.diff", () => {
     await vi.waitFor(() => expect(useGitStore.getState().diffSheet?.isLoading).toBe(false));
     expect(useGitStore.getState().diffSheet).toMatchObject({
       diff: "@@ -0,0 +1 @@\n+new\n",
+      truncated: true,
       error: null,
     });
   });
@@ -329,6 +331,7 @@ describe("gitStore commit history", () => {
         hash: "c10e3c23",
         file: "src/old.py",
         diff: "@@ -1 +1 @@\n-old\n+new\n",
+        truncated: true,
       }),
     });
 
@@ -340,6 +343,7 @@ describe("gitStore commit history", () => {
       section: "commit",
       commitHash: "c10e3c23",
       diff: "@@ -1 +1 @@\n-old\n+new\n",
+      truncated: true,
     });
   });
 

@@ -52,7 +52,6 @@ struct WorkspaceGitView: View {
         }
         .task(id: workspace.id) { await refresh() }
         .herdrHaptic(trigger: hapticPulse)
-        .accessibilityIdentifier("workspace-git")
     }
 
     private var repositoryHeader: some View {
@@ -97,6 +96,7 @@ struct WorkspaceGitView: View {
         .background(HerdrTheme.graphite)
         .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.surface).frame(height: 1) }
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace-git")
     }
 
     @ViewBuilder
@@ -521,6 +521,7 @@ private struct WorkspaceGitDiffView: View {
                 errorMessage = error.localizedDescription
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("git-diff")
     }
 

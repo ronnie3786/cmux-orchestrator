@@ -50,23 +50,27 @@ final class HerdrSidebarUITests: HerdrUITestCase {
     @MainActor
     func testSidebarProjectRowCollapsesAndExpands() throws {
         let app = launchDemoApp()
+        let workspace = app.buttons["sidebar-workspace-demo1|w1"]
+        let workspaceTab = app.buttons["sidebar-tab-demo1|w1:t1"]
 
         XCTAssertTrue(
-            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10),
+            workspaceTab.waitForExistence(timeout: 10),
             "-HerdrResetSidebarState should leave every workspace expanded"
         )
 
-        app.buttons["sidebar-workspace-demo1|w1"].click()
+        workspace.click()
         XCTAssertTrue(
-            app.buttons["sidebar-pane-demo1|w1:p1"].waitForNonExistence(timeout: 3),
-            "Clicking the workspace row should collapse its chats"
+            workspaceTab.waitForNonExistence(timeout: 3),
+            "Clicking the workspace row should collapse its nested tabs and chats"
         )
+        XCTAssertEqual(workspace.value as? String, "collapsed")
 
-        app.buttons["sidebar-workspace-demo1|w1"].click()
+        workspace.click()
         XCTAssertTrue(
-            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 3),
+            workspaceTab.waitForExistence(timeout: 3),
             "Clicking it again should restore them"
         )
+        XCTAssertEqual(workspace.value as? String, "expanded")
     }
 
     /// Mac-only: the phone had no room for a persistent filter field, so this
