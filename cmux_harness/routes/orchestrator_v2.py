@@ -745,7 +745,23 @@ def list_my_draft_prs() -> dict[str, Any]:
 
 
 def list_prs_waiting_for_review() -> dict[str, Any]:
-    return {"ok": True, "items": _run_gh_pr_list(["search", "prs", "--review-requested", "@me", "--state", "open"])}
+    return {
+        "ok": True,
+        "items": _run_gh_pr_list(
+            [
+                "search",
+                "prs",
+                "--review-requested",
+                "@me",
+                "--state",
+                "open",
+                "--sort",
+                "updated",
+                "--limit",
+                "100",
+            ]
+        ),
+    }
 
 
 def list_pr_review_requests(args: dict[str, Any] | None = None) -> dict[str, Any]:

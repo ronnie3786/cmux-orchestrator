@@ -817,6 +817,14 @@ final class HerdrAppModel {
         return try await client.fetchAssignedJiraTickets().tickets
     }
 
+    func fetchWorkInbox() async throws -> WorkInboxResponse {
+        if isDemoMode { return DemoData.workInbox }
+        guard let client = primaryClient else {
+            throw APIError.noActiveConnection(machineID: machines.first?.name ?? "primary")
+        }
+        return try await client.fetchWorkInbox()
+    }
+
     func fetchJiraTicket(query: String) async throws -> JiraTicket {
         if isDemoMode {
             if let ticket = DemoData.jiraTickets.tickets.first(where: {

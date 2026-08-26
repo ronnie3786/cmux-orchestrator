@@ -92,6 +92,27 @@ class CmuxToolsContractTests(unittest.TestCase):
 
     def _open(self, request, timeout):
         self.requests.append((request, timeout))
+        if urllib.parse.urlsplit(request.full_url).path.endswith("/api/orchestrator-v2/left-rail/review-requests"):
+            return _json_response(
+                {
+                    "ok": True,
+                    "pullRequests": {
+                        "ok": True,
+                        "items": [
+                            {
+                                "number": 11856,
+                                "title": "Add calculator drawer",
+                                "url": "https://github.com/doximity/iOS-Doximity/pull/11856",
+                                "isDraft": False,
+                                "state": "open",
+                                "owner": "doximity",
+                                "repo": "iOS-Doximity",
+                                "author": "Chandlerdea",
+                            }
+                        ],
+                    },
+                }
+            )
         if urllib.parse.urlsplit(request.full_url).path.endswith("/api/git-commit-files"):
             return _json_response(
                 {
@@ -249,6 +270,21 @@ class CmuxToolsContractTests(unittest.TestCase):
         self.assertEqual(commit_files["files"][0]["file"], file)
         self.assertEqual(commit_diff["hash"], "a1b2c3d")
         self.assertEqual(commit_diff["file"], file)
+
+    def test_github_review_requests_use_bounded_left_rail_contract(self):
+        client = cmux_tools.CmuxToolsClient(timeout=7.5)
+
+        with patch("herdr_harness.cmux_tools._open_no_redirect", side_effect=self._open):
+            payload = client.github_review_requests()
+
+        request, timeout = self.requests[0]
+        self.assertEqual(
+            urllib.parse.urlsplit(request.full_url).path,
+            "/api/orchestrator-v2/left-rail/review-requests",
+        )
+        self.assertEqual(timeout, 30.0)
+        self.assertEqual(payload["items"][0]["number"], 11856)
+        self.assertEqual(payload["items"][0]["repo"], "iOS-Doximity")
 
     def test_nested_pane_cwd_uses_git_root_only_for_git_operations(self):
         nested = self.root / "Sources" / "Features"
@@ -534,6 +570,17 @@ class CmuxToolsContractTests(unittest.TestCase):
                 {
                     "ok": True,
                     "ticket": {key: value for key, value in ticket.items() if key != "issueType"},
+                },
+            ),
+            (
+                "github-review-requests",
+                lambda: client.github_review_requests(),
+                {
+                    "ok": True,
+                    "pullRequests": {
+                        "ok": True,
+                        "items": [{"number": "not-an-integer"}],
+                    },
                 },
             ),
             (

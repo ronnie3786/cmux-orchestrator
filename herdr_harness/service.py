@@ -664,6 +664,25 @@ class HerdrService:
         }
 
     @staticmethod
+    def _github_review_request(value: Any) -> Optional[dict]:
+        if not isinstance(value, dict):
+            return None
+        owner = value.get("owner")
+        repo = value.get("repo")
+        repository = "/".join(
+            part for part in (owner, repo) if isinstance(part, str) and part
+        )
+        return {
+            "number": value.get("number"),
+            "title": value.get("title", ""),
+            "url": value.get("url", ""),
+            "is_draft": bool(value.get("isDraft", value.get("is_draft", False))),
+            "state": value.get("state", ""),
+            "author": value.get("author", ""),
+            "repository": repository,
+        }
+
+    @staticmethod
     def _decode_attachment(data_base64: str) -> bytes:
         if not isinstance(data_base64, str) or not data_base64:
             raise attachments.AttachmentError("data_base64 is required")
@@ -1027,6 +1046,47 @@ class HerdrService:
             "projects": payload.get("projects", []),
             "site": payload.get("site"),
             "tickets": tickets,
+        }
+
+    def work_inbox(self) -> dict:
+        try:
+            review_payload = self.cmux_tools.github_review_requests()
+            raw_requests = review_payload.get("items")
+            review_requests = [
+                request
+                for request in (
+                    self._github_review_request(item)
+                    for item in (raw_requests if isinstance(raw_requests, list) else [])
+                )
+                if request is not None
+            ]
+            review_section = {
+                "ok": review_payload.get("ok") is True,
+                "items": review_requests,
+                "error": review_payload.get("error"),
+            }
+        except cmux_tools.CmuxToolsError as exc:
+            review_section = {"ok": False, "items": [], "error": str(exc)}
+
+        try:
+            jira_payload = self.cmux_tools.jira_assigned(limit=100)
+            raw_tickets = jira_payload.get("tickets")
+            jira_tickets = [
+                ticket
+                for ticket in (
+                    self._jira_ticket(item)
+                    for item in (raw_tickets if isinstance(raw_tickets, list) else [])
+                )
+                if ticket is not None
+            ]
+            jira_section = {"ok": True, "items": jira_tickets, "error": None}
+        except cmux_tools.CmuxToolsError as exc:
+            jira_section = {"ok": False, "items": [], "error": str(exc)}
+
+        return {
+            "ok": True,
+            "review_requests": review_section,
+            "jira_tickets": jira_section,
         }
 
     def jira_issue(self, *, query: str) -> dict:

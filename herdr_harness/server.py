@@ -247,6 +247,7 @@ def api_description() -> dict:
             "workspaceSkills": "/api/v1/workspaces/{workspaceId}/skills",
             "workspaceFiles": "/api/v1/workspaces/{workspaceId}/files",
             "jiraAssigned": "/api/v1/jira/assigned",
+            "workInbox": "/api/v1/work-inbox",
             "voiceTranscriptions": "/api/v1/voice/transcriptions",
             "responseAudioCapabilities": "/api/v1/response-audio/capabilities",
             "responseAudioPrepare": "/api/v1/response-audio/prepare",
@@ -762,6 +763,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             file=file,
                             expected_root=expected_root,
                         )
+            if method == "GET" and tail == ["work-inbox"]:
+                return service.work_inbox()
             if method == "GET" and tail == ["jira", "assigned"]:
                 project = str((query.get("project") or [""])[0]).strip()
                 limit = _query_int(query, "limit", 50, minimum=1, maximum=100)

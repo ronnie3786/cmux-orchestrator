@@ -17,6 +17,9 @@ Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party depen
 - **Sidebar navigator** — workspaces at the top level, panes grouped by tab beneath them, click a
   chat row to make it the main view. Collapse state persists across launches. Rows are styled in
   a single calm tone (no per-status hues) — the status word and unread count carry the signal.
+- **My Work watchlist** — the top of the sidebar tracks GitHub pull requests requesting your
+  review and every non-Done Jira ticket assigned to you. Each provider has an independent count,
+  error state, and collapsible list; data refreshes on launch, manually, and every five minutes.
 - **Native Pi chat** — the rich chat timeline (streaming turns, collapsed thinking, tool cards,
   interaction/permission cards, markdown with tables and code blocks, context meter, model +
   thinking-level switching) with the terminal always one toggle away.

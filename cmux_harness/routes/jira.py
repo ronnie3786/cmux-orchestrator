@@ -207,7 +207,7 @@ def build_assigned_jql(project: str = "") -> str:
     return (
         "assignee = currentUser()"
         f"{project_clause}"
-        ' AND (statusCategory = "In Progress" OR status = "Selected for Development")'
+        " AND statusCategory != Done"
         " ORDER BY updated DESC"
     )
 

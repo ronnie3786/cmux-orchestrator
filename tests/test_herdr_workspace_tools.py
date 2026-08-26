@@ -198,6 +198,7 @@ class WorkspaceToolsTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:4], ["acli", "jira", "workitem", "search"])
         self.assertIn("project = HERD", command[command.index("--jql") + 1])
+        self.assertIn("statusCategory != Done", command[command.index("--jql") + 1])
         self.assertEqual(payload["tickets"][0]["project_key"], "HERD")
         self.assertEqual(payload["tickets"][0]["issue_type"], "Story")
         self.assertEqual(payload["tickets"][0]["url"], "https://jira.example.test/browse/HERD-42")

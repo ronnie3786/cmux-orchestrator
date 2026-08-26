@@ -280,6 +280,49 @@ enum DemoData {
         error: nil
     )
 
+    static let workInbox = WorkInboxResponse(
+        ok: true,
+        reviewRequests: WorkInboxProviderSection(
+            ok: true,
+            items: [
+                GitHubReviewRequest(
+                    number: 11856,
+                    title: "Add calculator access to the drawer",
+                    url: "https://github.com/doximity/iOS-Doximity/pull/11856",
+                    isDraft: false,
+                    state: "open",
+                    author: "Chandlerdea",
+                    repository: "doximity/iOS-Doximity"
+                ),
+                GitHubReviewRequest(
+                    number: 520,
+                    title: "Register managed MCP runtime with standalone clients",
+                    url: "https://github.com/doximity/agentic-dev/pull/520",
+                    isDraft: false,
+                    state: "open",
+                    author: "TheMetalCode",
+                    repository: "doximity/agentic-dev"
+                ),
+            ],
+            error: nil
+        ),
+        jiraTickets: WorkInboxProviderSection(
+            ok: true,
+            items: jiraTickets.tickets + [
+                JiraTicket(
+                    key: "IOS-901",
+                    projectKey: "IOS",
+                    title: "Review remote build distribution",
+                    status: "In Code Review",
+                    priority: "Medium",
+                    issueType: "Story",
+                    url: "https://example.atlassian.net/browse/IOS-901"
+                )
+            ],
+            error: nil
+        )
+    )
+
     private static func workspace(
         id: String,
         number: Int,

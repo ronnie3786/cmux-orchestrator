@@ -615,7 +615,7 @@ def jira_assigned(
     jql = (
         "assignee = currentUser()"
         f"{clause}"
-        ' AND (statusCategory = "In Progress" OR status = "Selected for Development")'
+        " AND statusCategory != Done"
         " ORDER BY updated DESC"
     )
     env = os.environ if environ is None else environ

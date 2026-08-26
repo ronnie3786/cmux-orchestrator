@@ -331,6 +331,7 @@ is intentionally public and contains no session data.
 
 - `GET /api/v1/health`, `/network`, `/snapshot`, and `/workspaces`
 - `GET /api/v1/events` for replayable topology and lifecycle SSE
+- `GET /api/v1/work-inbox` for GitHub review requests and assigned non-Done Jira tickets
 - `GET /api/v1/panes/{id}/output` for text or ANSI snapshots
 - `GET /api/v1/panes/{id}/stream` for live terminal-frame SSE
 - `GET /api/v1/panes/{id}/pi/snapshot` for authoritative Pi conversation state

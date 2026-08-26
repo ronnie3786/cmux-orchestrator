@@ -12,13 +12,13 @@ class TestJiraRoute(unittest.TestCase):
     def test_build_assigned_jql_defaults_to_all_assigned_active_work(self):
         self.assertEqual(
             jira.build_assigned_jql(),
-            'assignee = currentUser() AND (statusCategory = "In Progress" OR status = "Selected for Development") ORDER BY updated DESC',
+            "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
         )
 
     def test_build_assigned_jql_can_filter_to_project(self):
         self.assertEqual(
             jira.build_assigned_jql("APP"),
-            'assignee = currentUser() AND project = APP AND (statusCategory = "In Progress" OR status = "Selected for Development") ORDER BY updated DESC',
+            "assignee = currentUser() AND project = APP AND statusCategory != Done ORDER BY updated DESC",
         )
 
     def test_build_assigned_jql_rejects_invalid_project(self):
@@ -132,7 +132,7 @@ class TestJiraRoute(unittest.TestCase):
         args = mock_run.call_args.args[0]
         command_text = " ".join(args)
         self.assertEqual(args[:4], ["acli", "jira", "workitem", "search"])
-        self.assertIn('assignee = currentUser() AND (statusCategory = "In Progress"', command_text)
+        self.assertIn("assignee = currentUser() AND statusCategory != Done", command_text)
         self.assertNotIn("project = APP", command_text)
         self.assertIn("--json", args)
         self.assertIn("--limit", args)

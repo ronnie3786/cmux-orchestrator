@@ -12,6 +12,7 @@ struct HerdrAPIClientTimeoutTests {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/skills", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/files", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/jira/assigned", method: "GET") == 30)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/work-inbox", method: "GET") == 30)
     }
 
     @Test func uploadsAndStreamsKeepTheirLongerBudgets() {

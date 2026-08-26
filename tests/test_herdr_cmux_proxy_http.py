@@ -178,6 +178,25 @@ class _RecordingCmuxHandler(BaseHTTPRequestHandler):
                     "url": "https://jira.example.test/browse/IOSDOX-42",
                 },
             }
+        if path == "/api/orchestrator-v2/left-rail/review-requests":
+            return {
+                "ok": True,
+                "pullRequests": {
+                    "ok": True,
+                    "items": [
+                        {
+                            "number": 11856,
+                            "title": "Add calculator drawer",
+                            "url": "https://github.com/doximity/iOS-Doximity/pull/11856",
+                            "isDraft": False,
+                            "state": "open",
+                            "owner": "doximity",
+                            "repo": "iOS-Doximity",
+                            "author": "Chandlerdea",
+                        }
+                    ],
+                },
+            }
         if path == "/api/attachments":
             return {
                 "ok": True,
@@ -409,6 +428,54 @@ class HerdrCmuxProxyHTTPTests(unittest.TestCase):
         })
         self.assertEqual(assigned_request["query"], {"project": ["IOSDOX"], "limit": ["7"]})
         self.assertEqual(issue_request["query"], {"q": ["IOSDOX-42"]})
+
+    def test_work_inbox_combines_github_and_jira_with_snake_case_contract(self):
+        with self._fail_if_local_tools_run():
+            code, body = self.request("/api/v1/work-inbox")
+
+        self.assertEqual(code, 200)
+        self.assertTrue(body["review_requests"]["ok"])
+        self.assertEqual(body["review_requests"]["items"][0], {
+            "number": 11856,
+            "title": "Add calculator drawer",
+            "url": "https://github.com/doximity/iOS-Doximity/pull/11856",
+            "is_draft": False,
+            "state": "open",
+            "author": "Chandlerdea",
+            "repository": "doximity/iOS-Doximity",
+        })
+        self.assertTrue(body["jira_tickets"]["ok"])
+        self.assertEqual(body["jira_tickets"]["items"][0]["key"], "IOSDOX-42")
+        self.assertEqual(
+            [(item["method"], item["path"]) for item in self.cmux.requests],
+            [
+                ("GET", "/api/orchestrator-v2/left-rail/review-requests"),
+                ("GET", "/api/jira/assigned"),
+            ],
+        )
+        self.assertEqual(self.cmux.requests[1]["query"], {"limit": ["100"]})
+
+    def test_work_inbox_keeps_jira_available_when_github_auth_fails(self):
+        self.cmux.overrides[("GET", "/api/orchestrator-v2/left-rail/review-requests")] = (
+            200,
+            "application/json",
+            {
+                "ok": True,
+                "pullRequests": {
+                    "ok": False,
+                    "items": [],
+                    "error": "Run gh auth login.",
+                },
+            },
+        )
+
+        code, body = self.request("/api/v1/work-inbox")
+
+        self.assertEqual(code, 200)
+        self.assertFalse(body["review_requests"]["ok"])
+        self.assertEqual(body["review_requests"]["error"], "Run gh auth login.")
+        self.assertTrue(body["jira_tickets"]["ok"])
+        self.assertEqual(body["jira_tickets"]["items"][0]["key"], "IOSDOX-42")
 
     def test_attachment_converts_base64_json_to_raw_cmux_upload_without_token(self):
         payload = b"binary\x00attachment\xff"

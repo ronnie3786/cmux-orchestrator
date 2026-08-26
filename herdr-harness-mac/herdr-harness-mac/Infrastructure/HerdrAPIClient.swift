@@ -334,6 +334,10 @@ actor HerdrAPIClient {
         )
     }
 
+    func fetchWorkInbox() async throws -> WorkInboxResponse {
+        try await request(path: "/api/v1/work-inbox")
+    }
+
     func fetchJiraTicket(query: String) async throws -> JiraTicketResponse {
         try await request(
             path: "/api/v1/jira/issue",
@@ -859,7 +863,8 @@ actor HerdrAPIClient {
         if path == "/api/v1/voice/transcriptions" {
             return 120
         }
-        if path.hasPrefix("/api/v1/jira/") ||
+        if path == "/api/v1/work-inbox" ||
+            path.hasPrefix("/api/v1/jira/") ||
             (path.hasPrefix("/api/v1/panes/") && path.contains("/git")) ||
             (path.hasPrefix("/api/v1/workspaces/") &&
                 (path.contains("/git") || path.hasSuffix("/skills") || path.hasSuffix("/files"))) {

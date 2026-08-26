@@ -151,6 +151,21 @@ def _valid_jira_ticket(value: Any) -> bool:
     )
 
 
+def _valid_github_review_request(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and _is_integer(value.get("number"))
+        and value["number"] > 0
+        and _is_string(value.get("title"), allow_empty=False)
+        and _is_string(value.get("url"), allow_empty=False)
+        and isinstance(value.get("isDraft"), bool)
+        and all(
+            _is_string(value.get(field))
+            for field in ("state", "owner", "repo", "author")
+        )
+    )
+
+
 def _validate_ack(payload: dict) -> dict:
     if payload.get("ok") is not True:
         _invalid_response()
@@ -264,6 +279,20 @@ def _validate_jira_issue(payload: dict) -> dict:
     ):
         _invalid_response()
     return payload
+
+
+def _validate_github_review_requests(payload: dict) -> dict:
+    section = payload.get("pullRequests")
+    if not (
+        payload.get("ok") is True
+        and isinstance(section, dict)
+        and isinstance(section.get("ok"), bool)
+        and isinstance(section.get("items"), list)
+        and all(_valid_github_review_request(item) for item in section["items"])
+        and _is_optional_string(section, "error")
+    ):
+        _invalid_response()
+    return section
 
 
 def _validate_attachment(payload: dict) -> dict:
@@ -876,6 +905,14 @@ class CmuxToolsClient:
                 "/api/jira/issue",
                 query={"q": match.group(0).upper()},
                 timeout=self._operation_timeout(JIRA_TIMEOUT_SECONDS),
+            )
+        )
+
+    def github_review_requests(self) -> dict:
+        return _validate_github_review_requests(
+            self._request(
+                "/api/orchestrator-v2/left-rail/review-requests",
+                timeout=self._operation_timeout(30.0),
             )
         )
 

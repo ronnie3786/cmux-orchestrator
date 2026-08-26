@@ -18,6 +18,7 @@ struct HerdrSidebarView: View {
     @State private var closingWorkspace: HerdrWorkspace?
     @State private var closingPane: HerdrPane?
     @State private var snapshotCache = SidebarSnapshotCache()
+    @State private var workInboxStore = WorkInboxStore()
 
     @MainActor
     private struct SidebarSnapshot {
@@ -118,6 +119,12 @@ struct HerdrSidebarView: View {
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 12) {
             header
+
+            SidebarWorkInboxView(
+                store: workInboxStore,
+                refreshID: model.connectionGeneration,
+                refresh: refreshWorkInbox
+            )
 
             if model.machines.count > 1 {
                 machinePicker
@@ -255,6 +262,12 @@ struct HerdrSidebarView: View {
             .accessibilityIdentifier("sidebar-recent-filter")
             .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
             .help("Show chats from \(model.sidebarRecency.title.lowercased())")
+        }
+    }
+
+    private func refreshWorkInbox() async {
+        await workInboxStore.refresh {
+            try await model.fetchWorkInbox()
         }
     }
 
