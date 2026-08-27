@@ -5,6 +5,33 @@ import Testing
 @Suite("Machine management", .serialized)
 @MainActor
 struct MachinesManagementTests {
+    @Test("UI-test reconnect preserves its launch token")
+    func uiTestReconnectPreservesLaunchToken() throws {
+        let suiteName = "MachinesManagementTests.uiTestToken.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let model = HerdrAppModel(
+            arguments: [
+                "HerdrTests",
+                "-HerdrUITestServerURL", "http://localhost:19092",
+                "-HerdrUITestAPIToken", "launch-token",
+            ],
+            userDefaults: defaults
+        )
+        let machine = try #require(model.machines.first)
+        var rebuiltConfiguration: ServerConfiguration?
+        model.clientFactory = { configuration in
+            rebuiltConfiguration = configuration
+            return HerdrAPIClient(configuration: configuration)
+        }
+
+        model.prepareRuntime(for: machine, generation: model.connectionGeneration)
+
+        #expect(rebuiltConfiguration?.token == "launch-token")
+    }
+
     @Test("Adding a valid machine persists its configuration and token")
     func addMachinePersists() throws {
         try withCleanMachineDefaults { model, defaults in

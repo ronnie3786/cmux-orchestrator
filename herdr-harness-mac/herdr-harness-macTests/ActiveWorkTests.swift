@@ -54,6 +54,7 @@ struct ActiveWorkTests {
         #expect(item.stages.first?.piSessions.first?.paneID == "pane-7")
         #expect(item.stages.first?.threads.first?.browserURL?.scheme == "buzz")
         #expect(item.activity.first?.message == "Implementation needs review")
+        #expect(item.continuityArtifacts == ["state.json", "handoff.md", "review-log.md"])
 
         let readyItem = try #require(response.items.first(where: { $0.id == "work-2" }))
         #expect(readyItem.readiness == .ready)
@@ -275,6 +276,9 @@ struct ActiveWorkTests {
               "needs_attention": true,
               "attention_reason": "Human review required",
               "setup_state": "board_created",
+              "metadata": {
+                "continuity": ["state.json", "handoff.md", "review-log.md"]
+              },
               "updated_at": "2026-08-26T18:00:00.000Z",
               "jira": {
                 "key": "IOS-101",

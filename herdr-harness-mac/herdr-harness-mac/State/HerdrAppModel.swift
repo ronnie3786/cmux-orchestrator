@@ -2411,7 +2411,14 @@ final class HerdrAppModel {
     /// Internal setup seam used by deterministic URLProtocol-backed tests.
     func prepareRuntime(for machine: HerdrMachine, generation: Int) {
         runtimes[machine.id]?.deferredRefreshTask?.cancel()
-        let token = KeychainStore.value(for: "api-token.\(machine.id)")
+        // The synthetic UI-test machine is intentionally ephemeral and never
+        // writes its launch token to Keychain. Preserve the configuration that
+        // init created from -HerdrUITestAPIToken when the connection driver
+        // rebuilds its runtime. Real machines continue to read the latest
+        // credential from Keychain after edits or reconnects.
+        let token = machine.id == "ui-test"
+            ? runtimes[machine.id]?.connection?.configuration.token ?? ""
+            : KeychainStore.value(for: "api-token.\(machine.id)")
         guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { return }
         runtimes[machine.id] = MachineRuntime(
             client: clientFactory(configuration),

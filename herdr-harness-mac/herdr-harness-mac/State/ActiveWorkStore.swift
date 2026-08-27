@@ -9,7 +9,7 @@ enum ActiveWorkViewMode: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .board: "Board"
+        case .board: "Journey rows"
         case .focusRoute: "Focus Route"
         }
     }

@@ -169,6 +169,7 @@ struct ActiveWorkItem: Decodable, Equatable, Identifiable, Sendable {
     var createdAt: String?
     var updatedAt: String?
     var archivedAt: String?
+    var metadata: JSONValue?
     var jiraLinks: [ActiveWorkJiraLink]
     var buzzChannels: [ActiveWorkBuzzChannel]
     var stages: [ActiveWorkStageState]
@@ -180,6 +181,15 @@ struct ActiveWorkItem: Decodable, Equatable, Identifiable, Sendable {
     var jira: ActiveWorkJiraLink? { jiraLinks.first }
     var buzzChannel: ActiveWorkBuzzChannel? { buzzChannels.first }
     var updatedDate: Date? { updatedAt.flatMap(HerdrTimestamp.date(from:)) }
+    var continuityArtifacts: [String] {
+        guard case let .object(values)? = metadata,
+              case let .array(artifacts)? = values["continuity"] else { return [] }
+        return artifacts.compactMap { value in
+            guard case let .string(artifact) = value else { return nil }
+            let trimmed = artifact.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -196,6 +206,7 @@ struct ActiveWorkItem: Decodable, Equatable, Identifiable, Sendable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case archivedAt = "archived_at"
+        case metadata
         case jira
         case jiraLinks = "jira_links"
         case buzzChannel = "buzz_channel"
@@ -224,6 +235,7 @@ struct ActiveWorkItem: Decodable, Equatable, Identifiable, Sendable {
         createdAt = container.flexibleString(forKey: .createdAt)
         updatedAt = container.flexibleString(forKey: .updatedAt)
         archivedAt = container.flexibleString(forKey: .archivedAt)
+        metadata = try? container.decode(JSONValue.self, forKey: .metadata)
 
         jiraLinks = (try? container.decode([ActiveWorkJiraLink].self, forKey: .jiraLinks)) ?? []
         if let singular = try? container.decode(ActiveWorkJiraLink.self, forKey: .jira),

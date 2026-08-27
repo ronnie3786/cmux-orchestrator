@@ -12,13 +12,13 @@ struct ActiveWorkAgentAvatar: View {
                 .background(avatarColor.opacity(0.22), in: Circle())
                 .clipShape(Circle())
                 .overlay {
-                    Circle().strokeBorder(avatarColor.opacity(isFuture ? 0.48 : 0.9), lineWidth: 1.5)
+                    Circle().strokeBorder(HerdrTheme.ink, lineWidth: 2)
                 }
 
             Circle()
                 .fill(agent.status.color)
                 .frame(width: max(7, size * 0.27), height: max(7, size * 0.27))
-                .overlay { Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 1.5) }
+                .overlay { Circle().strokeBorder(HerdrTheme.ink, lineWidth: 1.5) }
         }
         .opacity(isFuture ? 0.58 : 1)
         .help("\(agent.displayName) · \(agent.roleLabel ?? agent.linkRole ?? agent.kind ?? "agent") · \(agent.status.title)")
@@ -64,8 +64,8 @@ struct ActiveWorkAvatarStack: View {
     var limit = 4
 
     var body: some View {
-        HStack(spacing: -7) {
-            ForEach(Array(agents.prefix(limit))) { agent in
+        HStack(spacing: -6) {
+            ForEach(agents.prefix(limit)) { agent in
                 ActiveWorkAgentAvatar(agent: agent, size: size, isFuture: isFuture)
             }
             if agents.count > limit {
@@ -74,7 +74,7 @@ struct ActiveWorkAvatarStack: View {
                     .foregroundStyle(HerdrTheme.mist)
                     .frame(width: size, height: size)
                     .background(HerdrTheme.elevated, in: Circle())
-                    .overlay { Circle().strokeBorder(HerdrTheme.surface, lineWidth: 1) }
+                    .overlay { Circle().strokeBorder(HerdrTheme.ink, lineWidth: 2) }
             }
         }
         .accessibilityElement(children: .contain)
@@ -87,22 +87,21 @@ struct ActiveWorkPipelineRail: View {
     let pipeline: ActiveWorkPipeline
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 0) {
-                    ForEach(Array(stages.enumerated()), id: \.element.id) { index, stage in
-                        stageNode(
-                            stage,
-                            index: index,
-                            width: max(88, (geometry.size.width - 4) / CGFloat(max(stages.count, 1)))
-                        )
-                    }
+        Group {
+            if item.currentStageKey == nil {
+                ideaPreflight
+            } else if stages.isEmpty {
+                Text("Pipeline stages unavailable")
+                    .herdrFont(size: 10, monospaced: true, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                GeometryReader { geometry in
+                    stageRail(width: geometry.size.width)
                 }
-                .padding(.horizontal, 2)
             }
-            .scrollIndicators(.hidden)
         }
-        .frame(height: 80)
+        .frame(height: item.currentStageKey == nil ? 58 : 63)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(pipeline.title) route")
     }
@@ -111,53 +110,160 @@ struct ActiveWorkPipelineRail: View {
         ActiveWorkProjection.orderedStages(in: pipeline)
     }
 
+    private func stageRail(width: CGFloat) -> some View {
+        let gap: CGFloat = 5
+        let totalGap = gap * CGFloat(max(stages.count - 1, 0))
+        let stageWidth = max(0, (width - totalGap) / CGFloat(max(stages.count, 1)))
+
+        return ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(HerdrTheme.surface)
+                .frame(height: 1)
+                .padding(.horizontal, width * 0.05)
+                .offset(y: 38)
+
+            HStack(alignment: .top, spacing: gap) {
+                ForEach(stages.enumerated(), id: \.element.id) { index, stage in
+                    stageNode(stage, index: index, width: stageWidth)
+                }
+            }
+        }
+    }
+
     private func stageNode(_ stage: ActiveWorkPipelineStage, index: Int, width: CGFloat) -> some View {
         let progress = ActiveWorkProjection.progress(for: stage, item: item, pipeline: pipeline)
         let isCurrent = stage.key == item.currentStageKey
-        let isNext = ActiveWorkProjection.nextStage(for: item, pipeline: pipeline)?.key == stage.key
-        let travelers = (isCurrent || isNext)
-            ? ActiveWorkProjection.agents(for: item, stage: stage, pipeline: pipeline)
-            : []
+        let currentSequence = stages.first(where: { $0.key == item.currentStageKey })?.sequence
+        let isFuture = currentSequence.map { stage.sequence > $0 } ?? false
+        let travelers = ActiveWorkProjection.agents(for: item, stage: stage, pipeline: pipeline)
 
-        return VStack(spacing: 6) {
+        return VStack(spacing: 0) {
             Group {
                 if travelers.isEmpty {
-                    Color.clear.frame(height: 25)
+                    Color.clear
                 } else {
-                    ActiveWorkAvatarStack(agents: travelers, size: 24, isFuture: isNext, limit: 3)
+                    ActiveWorkAvatarStack(agents: travelers, size: 25, isFuture: isFuture, limit: 3)
                 }
             }
-            .frame(height: 25)
+            .frame(height: 31)
 
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(index == 0 ? Color.clear : connectorColor(before: index))
-                    .frame(height: 2)
-                Image(systemName: progress.symbol)
-                    .herdrFont(size: 11, weight: .bold, relativeTo: .caption)
-                    .foregroundStyle(progress.foregroundColor)
-                    .frame(width: 24, height: 24)
-                    .background(progress.color.opacity(progress == .pending ? 0.08 : 0.16), in: Circle())
-                    .overlay { Circle().strokeBorder(progress.color.opacity(0.7), lineWidth: 1) }
-                Rectangle()
-                    .fill(index == stages.count - 1 ? Color.clear : progress.color.opacity(progress == .pending ? 0.22 : 0.62))
-                    .frame(height: 2)
+            Text(progress == .complete ? "✓" : "\(index + 1)")
+                .herdrFont(size: 8, monospaced: true, weight: .bold, relativeTo: .caption)
+                .foregroundStyle(nodeForeground(progress: progress, isCurrent: isCurrent))
+                .frame(width: isCurrent ? 19 : 15, height: isCurrent ? 19 : 15)
+                .background(
+                    nodeBackground(progress: progress, isCurrent: isCurrent),
+                    in: RoundedRectangle(cornerRadius: 5)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(
+                            nodeBorder(progress: progress, isCurrent: isCurrent),
+                            lineWidth: isCurrent ? 1.5 : 1
+                        )
+                }
+                .offset(y: isCurrent ? -2 : 0)
+                .frame(height: 19, alignment: .top)
+
+            HStack(spacing: 2) {
+                Text(stageDisplayName(stage))
+                    .foregroundStyle(stageNameColor(progress: progress, isCurrent: isCurrent))
+                if isCheckpoint(stage) {
+                    Text("★")
+                        .foregroundStyle(HerdrTheme.alert)
+                }
             }
-
-            Text(stage.shortTitle)
-                .herdrFont(.caption, monospaced: true, weight: isCurrent ? .bold : .regular)
-                .foregroundStyle(isCurrent ? HerdrTheme.text : HerdrTheme.mist)
+                .herdrFont(size: 8, monospaced: true, weight: .semibold, relativeTo: .caption)
                 .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 2)
         }
         .frame(width: width)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(stage.title), \(progress.title)\(isNext ? ", next" : "")")
+        .accessibilityLabel("\(stage.title), \(progress.title)\(isCheckpoint(stage) ? ", human checkpoint" : "")")
     }
 
-    private func connectorColor(before index: Int) -> Color {
-        guard stages.indices.contains(index - 1) else { return .clear }
-        let previous = ActiveWorkProjection.progress(for: stages[index - 1], item: item, pipeline: pipeline)
-        return previous.color.opacity(previous == .pending ? 0.22 : 0.62)
+    private var ideaPreflight: some View {
+        HStack(spacing: 9) {
+            ActiveWorkAvatarStack(
+                agents: ActiveWorkProjection.allAgents(for: item).filter { $0.detachedAt == nil },
+                size: 28,
+                limit: 4
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Idea intake, before the ticket pipeline")
+                    .herdrFont(size: 11, weight: .bold, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.mauve)
+                    .lineLimit(1)
+                Text("Explore first. No worktree until a prototype decision is approved.")
+                    .herdrFont(size: 10, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .background(HerdrTheme.mauve.opacity(0.045))
+        .clipShape(.rect(cornerRadius: 11))
+        .overlay {
+            RoundedRectangle(cornerRadius: 11)
+                .strokeBorder(
+                    HerdrTheme.mauve.opacity(0.35),
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                )
+        }
+    }
+
+    private func stageDisplayName(_ stage: ActiveWorkPipelineStage) -> String {
+        switch stage.key {
+        case "start-ticket": "Start"
+        case "plan": "Plan"
+        case "implement": "Implement"
+        case "architect-code-review": "Agent review"
+        case "proof": "Proof"
+        case "code-review-pre-pr": "Pre-PR"
+        case "pr": "PR"
+        case "pr-triage": "Triage"
+        default: stage.shortTitle
+        }
+    }
+
+    private func isCheckpoint(_ stage: ActiveWorkPipelineStage) -> Bool {
+        guard let checkpoint = stage.checkpoint?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() else { return false }
+        return !checkpoint.isEmpty && !["none", "false", "no"].contains(checkpoint)
+    }
+
+    private func nodeForeground(progress: ActiveWorkStageProgress, isCurrent: Bool) -> Color {
+        if isCurrent { return HerdrTheme.text }
+        if progress == .complete { return HerdrTheme.ink }
+        return HerdrTheme.muted
+    }
+
+    private func nodeBackground(progress: ActiveWorkStageProgress, isCurrent: Bool) -> Color {
+        if isCurrent {
+            return (item.needsAttention ? HerdrTheme.alert : HerdrTheme.accent).opacity(
+                item.needsAttention ? 0.18 : 0.22
+            )
+        }
+        if progress == .complete { return HerdrTheme.signal }
+        return HerdrTheme.crust
+    }
+
+    private func nodeBorder(progress: ActiveWorkStageProgress, isCurrent: Bool) -> Color {
+        if isCurrent { return item.needsAttention ? HerdrTheme.alert : HerdrTheme.accent }
+        if progress == .complete { return HerdrTheme.signal }
+        return HerdrTheme.mist.opacity(0.38)
+    }
+
+    private func stageNameColor(progress: ActiveWorkStageProgress, isCurrent: Bool) -> Color {
+        if isCurrent { return HerdrTheme.text }
+        if progress == .complete { return HerdrTheme.mist }
+        return HerdrTheme.muted
     }
 }
 

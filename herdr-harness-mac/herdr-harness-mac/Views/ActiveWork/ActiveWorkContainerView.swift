@@ -46,7 +46,7 @@ struct ActiveWorkContainerView: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottomTrailing) {
             HerdrBackground()
 
             VStack(spacing: 0) {
@@ -86,6 +86,12 @@ struct ActiveWorkContainerView: View {
 
                 content
             }
+
+            if store.hasLoaded, !store.isEmpty {
+                voiceButton
+                    .padding(20)
+            }
+
         }
         .navigationTitle("Active Work")
         .accessibilityIdentifier("active-work-container")
@@ -114,113 +120,188 @@ struct ActiveWorkContainerView: View {
     }
 
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 14) {
-                headerTitle
-                Spacer(minLength: 12)
+        VStack(spacing: 0) {
+            ZStack {
                 modePicker
-                headerActions
-            }
 
-            VStack(alignment: .leading, spacing: 12) {
-                headerTitle
-                HStack(spacing: 12) {
-                    modePicker
-                    Spacer(minLength: 4)
+                HStack(spacing: 8) {
+                    Spacer()
+                    topVoiceButton
+                    moreMenu
+                }
+            }
+            .padding(.horizontal, HerdrTheme.pagePadding)
+            .padding(.vertical, 9)
+
+            Rectangle()
+                .fill(HerdrTheme.surface.opacity(0.42))
+                .frame(height: 1)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    headerTitle
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    headerActions
+                        .fixedSize()
+                        .layoutPriority(1)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    headerTitle
                     headerActions
                 }
             }
+            .frame(maxWidth: 1120, alignment: .leading)
+            .padding(.horizontal, HerdrTheme.pagePadding)
+            .padding(.top, 20)
+            .padding(.bottom, 14)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, HerdrTheme.pagePadding)
-        .padding(.vertical, 14)
-        .background(HerdrTheme.graphite.opacity(0.82))
+        .background(HerdrTheme.ink.opacity(0.94))
     }
 
     private var headerTitle: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Label("Active Work", systemImage: "rectangle.3.group")
-                .herdrFont(.title, weight: .bold)
+            Text(store.viewMode == .board ? "Active work" : "Focus route")
+                .herdrFont(size: 30, weight: .bold, relativeTo: .largeTitle)
                 .fontDesign(.rounded)
                 .foregroundStyle(HerdrTheme.text)
-            HStack(spacing: 7) {
-                Text(store.pipeline.title)
-                if store.pipeline.version > 0 {
-                    Text("·")
-                    Text("v\(store.pipeline.version)")
-                }
-                if let lastUpdated = store.lastUpdated {
-                    Text("·")
-                    Text("updated \(HerdrTimestamp.compactAge(since: lastUpdated))")
-                }
-            }
-            .herdrFont(.caption, monospaced: true)
-            .foregroundStyle(HerdrTheme.muted)
+            Text(
+                store.viewMode == .board
+                    ? "Each item carries its agents through the full Buzz pipeline."
+                    : "One item in depth, with its stage history and complete traveling cast."
+            )
+            .herdrFont(.subheadline)
+            .foregroundStyle(HerdrTheme.mist)
         }
     }
 
     private var modePicker: some View {
         Picker("View", selection: modeBinding) {
             ForEach(ActiveWorkViewMode.allCases) { mode in
-                Label(mode.title, systemImage: mode.symbol).tag(mode)
+                Text(mode.title).tag(mode)
             }
         }
         .pickerStyle(.segmented)
-        .frame(width: 248)
+        .frame(width: 272)
         .accessibilityIdentifier("active-work-mode-picker")
     }
 
     private var headerActions: some View {
-        HStack(spacing: 12) {
-            Button("New work", systemImage: "plus") {
-                isShowingCreateWork = true
+        HStack(spacing: 8) {
+            if store.viewMode == .board {
+                refreshButton
+            } else {
+                Button("Open handoff") {
+                    openSelectedHandoff()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!canOpenSelectedHandoff)
+                .help(canOpenSelectedHandoff ? "Open the selected work's live handoff" : "No live handoff is attached")
+                .accessibilityIdentifier("active-work-open-handoff")
             }
-            .buttonStyle(.bordered)
-            .tint(HerdrTheme.accent)
-            .disabled(!isControlEnabled)
-            .help(isControlEnabled ? "Create a feature, task, or idea" : "Control access is required to create work")
-            .accessibilityIdentifier("active-work-new-item")
 
             Button("Ask board", systemImage: "sparkles") {
                 askBoard(nil)
             }
-            .buttonStyle(.bordered)
-            .tint(HerdrTheme.mauve)
-            .labelStyle(.iconOnly)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(HerdrTheme.accent)
             .disabled(!isControlEnabled)
             .help(isControlEnabled ? "Open an agent grounded in this board" : "Control access is required to launch an agent")
             .accessibilityIdentifier("active-work-ask-board")
+        }
+    }
 
-            Button {
-                isShowingVoiceRecorder = true
-            } label: {
-                Image(systemName: "mic.fill")
-                    .frame(width: 30, height: 30)
+    private var refreshButton: some View {
+        Button {
+            Task { await refresh() }
+        } label: {
+            if store.isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(minWidth: 58)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(HerdrTheme.accent)
-            .disabled(!isControlEnabled)
-            .help(isControlEnabled ? "Record a voice question about this board" : "Control access is required for board voice prompts")
-            .accessibilityLabel("Ask this board by voice")
-            .accessibilityIdentifier("active-work-voice-prompt")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(store.isRefreshing)
+        .help("Refresh Active Work")
+        .accessibilityIdentifier("active-work-refresh")
+    }
 
-            Button {
-                Task { await refresh() }
-            } label: {
-                Group {
-                    if store.isRefreshing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
+    private var topVoiceButton: some View {
+        Button {
+            isShowingVoiceRecorder = true
+        } label: {
+            Image(systemName: "mic.fill")
                 .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .tint(HerdrTheme.accent)
+        .disabled(!isControlEnabled)
+        .help(isControlEnabled ? "Ask this board by voice" : "Control access is required for board voice prompts")
+        .accessibilityLabel("Ask this board by voice")
+        .accessibilityIdentifier("active-work-voice-prompt-header")
+    }
+
+    private var voiceButton: some View {
+        Button {
+            isShowingVoiceRecorder = true
+        } label: {
+            Image(systemName: "mic.fill")
+                .herdrFont(.title3, weight: .bold)
+                .frame(width: 46, height: 46)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(HerdrTheme.ink)
+        .background(HerdrTheme.accent, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .shadow(color: .black.opacity(0.32), radius: 14, y: 8)
+        .disabled(!isControlEnabled)
+        .help(isControlEnabled ? "Ask this board by voice" : "Control access is required for board voice prompts")
+        .accessibilityLabel("Ask this board by voice")
+        .accessibilityIdentifier("active-work-voice-prompt")
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("New work", systemImage: "plus") {
+                isShowingCreateWork = true
             }
-            .buttonStyle(.bordered)
-            .tint(HerdrTheme.mist)
+            .disabled(!isControlEnabled)
+            .accessibilityIdentifier("active-work-new-item")
+
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                Task { await refresh() }
+            }
             .disabled(store.isRefreshing)
-            .help("Refresh Active Work")
-            .accessibilityLabel("Refresh Active Work")
-            .accessibilityIdentifier("active-work-refresh")
+
+        } label: {
+            Image(systemName: "ellipsis")
+                .frame(width: 28, height: 28)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("More Active Work actions")
+        .accessibilityLabel("More Active Work actions")
+    }
+
+    private var canOpenSelectedHandoff: Bool {
+        guard let item = store.selectedItem else { return false }
+        return item.piSessions.contains(where: { $0.paneID?.isEmpty == false })
+            || item.threads.contains(where: { $0.browserURL != nil })
+    }
+
+    private func openSelectedHandoff() {
+        guard let item = store.selectedItem else { return }
+        if let session = item.piSessions.first(where: { $0.paneID?.isEmpty == false }) {
+            openSession(session)
+        } else if let url = item.threads.compactMap(\.browserURL).first {
+            openURL(url)
         }
     }
 

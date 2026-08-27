@@ -8,6 +8,9 @@ struct ActiveWorkFocusRouteView: View {
     let transition: (ActiveWorkItem, ActiveWorkPipelineStage) async throws -> Void
     let setLifecycle: (ActiveWorkItem, String) async throws -> Void
 
+    @State private var isRouteBriefExpanded = false
+    @State private var isRouteDetailsExpanded = true
+
     var body: some View {
         Group {
             if store.items.isEmpty {
@@ -20,21 +23,22 @@ struct ActiveWorkFocusRouteView: View {
             } else {
                 GeometryReader { geometry in
                     if geometry.size.width >= 820 {
-                        HStack(spacing: 0) {
+                        HStack(alignment: .top, spacing: 14) {
                             itemList
-                                .frame(width: min(286, max(238, geometry.size.width * 0.25)))
-                            Rectangle()
-                                .fill(HerdrTheme.surface.opacity(0.72))
-                                .frame(width: 1)
-                            detail
+                                .frame(width: 255)
+                            detail(horizontalPadding: 0)
                         }
+                        .padding(.horizontal, HerdrTheme.pagePadding)
+                        .padding(.vertical, 18)
+                        .frame(maxWidth: 1_156, maxHeight: .infinity, alignment: .top)
+                        .frame(maxWidth: .infinity)
                     } else {
                         VStack(spacing: 0) {
                             compactItemPicker
                             Rectangle()
                                 .fill(HerdrTheme.surface.opacity(0.72))
                                 .frame(height: 1)
-                            detail
+                            detail(horizontalPadding: HerdrTheme.pagePadding)
                         }
                     }
                 }
@@ -45,16 +49,13 @@ struct ActiveWorkFocusRouteView: View {
 
     private var itemList: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8) {
-                HerdrSectionLabel(title: "ACTIVE WORK", detail: "\(store.items.count)")
-                    .padding(.bottom, 4)
+            LazyVStack(alignment: .leading, spacing: 6) {
                 ForEach(store.items) { item in
                     focusItemButton(item, compact: false)
                 }
             }
-            .padding(14)
+            .padding(.bottom, 18)
         }
-        .background(HerdrTheme.graphite.opacity(0.52))
         .scrollIndicators(.hidden)
     }
 
@@ -63,7 +64,7 @@ struct ActiveWorkFocusRouteView: View {
             HStack(spacing: 8) {
                 ForEach(store.items) { item in
                     focusItemButton(item, compact: true)
-                        .frame(width: 210)
+                        .frame(width: 230)
                 }
             }
             .padding(.horizontal, HerdrTheme.pagePadding)
@@ -76,58 +77,52 @@ struct ActiveWorkFocusRouteView: View {
     private func focusItemButton(_ item: ActiveWorkItem, compact: Bool) -> some View {
         let isSelected = store.selectedItem?.id == item.id
         let status = ActiveWorkProjection.status(for: item)
-        let stage = store.pipeline.stages.first(where: { $0.key == item.currentStageKey })
+        let agents = ActiveWorkProjection.allAgents(for: item)
 
         return Button {
             store.select(item.id)
         } label: {
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(status.color)
-                    .frame(width: 3, height: compact ? 42 : 52)
-
+            HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(item.title)
-                        .herdrFont(.subheadline, weight: .bold)
+                    Text(focusTitle(for: item))
+                        .herdrFont(size: 11, weight: .bold, relativeTo: .caption)
                         .foregroundStyle(HerdrTheme.text)
                         .lineLimit(compact ? 1 : 2)
                         .multilineTextAlignment(.leading)
                     HStack(spacing: 5) {
-                        if let jira = item.jira {
-                            Text(jira.issueKey)
-                        }
-                        if let stage {
-                            Text(stage.shortTitle.lowercased())
-                        }
+                        Circle()
+                            .fill(status.color)
+                            .frame(width: 5, height: 5)
+                        Text(status.title.lowercased())
                     }
-                    .herdrFont(.caption, monospaced: true)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: 9, monospaced: true, weight: .medium, relativeTo: .caption)
+                    .foregroundStyle(isSelected ? HerdrTheme.mist : HerdrTheme.muted)
                     .lineLimit(1)
-
-                    if !compact {
-                        ActiveWorkAvatarStack(
-                            agents: ActiveWorkProjection.allAgents(for: item),
-                            size: 21,
-                            limit: 4
-                        )
-                    }
                 }
 
                 Spacer(minLength: 3)
-                if isSelected {
-                    Image(systemName: "chevron.right")
-                        .herdrFont(.caption, weight: .bold)
-                        .foregroundStyle(HerdrTheme.accent)
-                        .padding(.top, 3)
+                if !agents.isEmpty {
+                    ActiveWorkAvatarStack(agents: agents, size: 24, limit: 2)
                 }
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? HerdrTheme.elevated : HerdrTheme.ink.opacity(0.36))
-            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+            .padding(11)
+            .frame(maxWidth: .infinity, minHeight: 59, alignment: .leading)
+            .background {
+                ZStack {
+                    HerdrTheme.graphite
+                    if isSelected {
+                        LinearGradient(
+                            colors: [HerdrTheme.accent.opacity(0.11), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    }
+                }
+            }
+            .clipShape(.rect(cornerRadius: 11))
             .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(isSelected ? HerdrTheme.accent.opacity(0.62) : HerdrTheme.surface.opacity(0.62), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 11)
+                    .strokeBorder(isSelected ? HerdrTheme.accent.opacity(0.52) : .clear, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -138,11 +133,15 @@ struct ActiveWorkFocusRouteView: View {
     }
 
     @ViewBuilder
-    private var detail: some View {
+    private func detail(horizontalPadding: CGFloat) -> some View {
         if let item = store.selectedItem {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 15) {
-                    detailHeader(item)
+                VStack(alignment: .leading, spacing: 14) {
+                    ActiveWorkFocusHero(
+                        item: item,
+                        pipeline: store.pipeline,
+                        stages: store.stages
+                    )
 
                     let currentStage = store.pipeline.stages.first { $0.key == item.currentStageKey }
                     if item.lifecycle.lowercased() == "done" {
@@ -172,65 +171,23 @@ struct ActiveWorkFocusRouteView: View {
                             .id("\(item.id)-complete-\(item.revision)")
                     }
 
-                    HerdrSectionLabel(title: "FOCUS ROUTE", detail: "\(store.stages.count) stages")
-
-                    ForEach(Array(store.stages.enumerated()), id: \.element.id) { index, stage in
-                        ActiveWorkRouteStageView(
-                            item: item,
-                            pipeline: store.pipeline,
-                            stage: stage,
-                            isLast: index == store.stages.count - 1,
-                            openSession: openSession,
-                            openURL: openURL
-                        )
-                        .id("\(item.id)-\(stage.id)")
-                    }
+                    routeBrief(item)
 
                     let unscopedThreads = item.threads.filter { $0.stageID == nil && $0.stageKey == nil }
-                    if !unscopedThreads.isEmpty {
-                        ActiveWorkDiscussionSection(threads: unscopedThreads, openURL: openURL)
-                    }
-
-                    if !item.activity.isEmpty {
-                        ActiveWorkActivitySection(item: item)
-                    }
+                    routeDetails(item, unscopedThreads: unscopedThreads)
                 }
-                .frame(maxWidth: 840, alignment: .leading)
-                .padding(.horizontal, HerdrTheme.pagePadding)
-                .padding(.vertical, 18)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 900, alignment: .leading)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, horizontalPadding == 0 ? 0 : 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
         }
     }
 
-    private func detailHeader(_ item: ActiveWorkItem) -> some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 7) {
-                            if let jira = item.jira {
-                                Text(jira.issueKey)
-                                    .foregroundStyle(HerdrTheme.mauve)
-                            }
-                            Text("REV \(item.revision)")
-                                .foregroundStyle(HerdrTheme.muted)
-                        }
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
-
-                        Text(item.title)
-                            .herdrFont(.title2, weight: .bold)
-                            .fontDesign(.rounded)
-                            .foregroundStyle(HerdrTheme.text)
-                    }
-                    Spacer(minLength: 8)
-                    VStack(alignment: .trailing, spacing: 7) {
-                        AgentStatusBadge(status: ActiveWorkProjection.status(for: item))
-                        ActiveWorkReadinessBadge(readiness: item.readiness)
-                    }
-                }
-
+    private func routeBrief(_ item: ActiveWorkItem) -> some View {
+        DisclosureGroup(isExpanded: $isRouteBriefExpanded) {
+            VStack(alignment: .leading, spacing: 11) {
                 if !item.summary.isEmpty {
                     Text(item.summary)
                         .herdrFont(.body)
@@ -275,11 +232,6 @@ struct ActiveWorkFocusRouteView: View {
                 }
 
                 HStack(spacing: 10) {
-                    ActiveWorkAvatarStack(agents: ActiveWorkProjection.allAgents(for: item), size: 28, limit: 6)
-                    Text("agents travel with this work")
-                        .herdrFont(.caption, monospaced: true)
-                        .foregroundStyle(HerdrTheme.muted)
-                    Spacer()
                     if let updatedAt = item.updatedAt {
                         HStack(spacing: 4) {
                             Text("updated")
@@ -288,10 +240,79 @@ struct ActiveWorkFocusRouteView: View {
                         .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(HerdrTheme.muted)
                     }
+                    Spacer()
+                    Text("revision \(item.revision)")
+                        .herdrFont(.caption, monospaced: true)
+                        .foregroundStyle(HerdrTheme.muted)
                 }
             }
-            .padding(HerdrTheme.cardPadding)
+            .padding(.top, 12)
+        } label: {
+            HStack(spacing: 8) {
+                Text("Route brief")
+                    .herdrFont(.subheadline, weight: .bold)
+                    .foregroundStyle(HerdrTheme.text)
+                Spacer()
+                ActiveWorkReadinessBadge(readiness: item.readiness)
+            }
         }
+        .tint(HerdrTheme.accent)
+        .padding(14)
+        .background(HerdrTheme.graphite, in: .rect(cornerRadius: 13))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13)
+                .strokeBorder(HerdrTheme.surface.opacity(0.52), lineWidth: 1)
+        }
+    }
+
+    private func routeDetails(
+        _ item: ActiveWorkItem,
+        unscopedThreads: [ActiveWorkThread]
+    ) -> some View {
+        DisclosureGroup(isExpanded: $isRouteDetailsExpanded) {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(store.stages.enumerated(), id: \.element.id) { index, stage in
+                    ActiveWorkRouteStageView(
+                        item: item,
+                        pipeline: store.pipeline,
+                        stage: stage,
+                        isLast: index == store.stages.count - 1,
+                        openSession: openSession,
+                        openURL: openURL
+                    )
+                    .id("\(item.id)-\(stage.id)")
+                }
+
+                if !unscopedThreads.isEmpty {
+                    ActiveWorkDiscussionSection(threads: unscopedThreads, openURL: openURL)
+                }
+            }
+            .padding(.top, 14)
+        } label: {
+            HStack(spacing: 8) {
+                Text("Stage details")
+                    .herdrFont(.subheadline, weight: .bold)
+                    .foregroundStyle(HerdrTheme.text)
+                Spacer()
+                Text("\(store.stages.count) stages · sessions & discussions")
+                    .herdrFont(.caption, monospaced: true)
+                    .foregroundStyle(HerdrTheme.muted)
+            }
+        }
+        .tint(HerdrTheme.accent)
+        .padding(14)
+        .background(HerdrTheme.graphite.opacity(0.58), in: .rect(cornerRadius: 13))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13)
+                .strokeBorder(HerdrTheme.surface.opacity(0.4), lineWidth: 1)
+        }
+    }
+
+    private func focusTitle(for item: ActiveWorkItem) -> String {
+        if let key = item.jira?.issueKey, !key.isEmpty {
+            return "\(key) · \(item.title)"
+        }
+        return item.title
     }
 
     private func actionableAttentionReason(for item: ActiveWorkItem) -> String? {
@@ -300,6 +321,466 @@ struct ActiveWorkFocusRouteView: View {
               !reason.isEmpty else { return nil }
         let nextAction = item.nextAction?.trimmingCharacters(in: .whitespacesAndNewlines)
         return reason.caseInsensitiveCompare(nextAction ?? "") == .orderedSame ? nil : reason
+    }
+}
+
+private struct ActiveWorkFocusHero: View {
+    let item: ActiveWorkItem
+    let pipeline: ActiveWorkPipeline
+    let stages: [ActiveWorkPipelineStage]
+
+    private var agents: [ActiveWorkAgent] {
+        ActiveWorkProjection.allAgents(for: item)
+    }
+
+    private var activities: [ActiveWorkActivity] {
+        Array(ActiveWorkProjection.activity(for: item).prefix(12))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            ActiveWorkFocusTrack(item: item, pipeline: pipeline, stages: stages)
+                .padding(.top, 22)
+                .padding(.bottom, 18)
+
+                HStack(alignment: .top, spacing: 12) {
+                    activityPanel
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    castPanel
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+        }
+        .padding(18)
+        .background(HerdrTheme.graphite)
+        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                .strokeBorder(HerdrTheme.mist.opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Focus route for \(focusTitle)")
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(kindTitle)
+                    .herdrFont(size: 9, monospaced: true, weight: .semibold, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(HerdrTheme.elevated.opacity(0.52), in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(HerdrTheme.mist.opacity(0.2), lineWidth: 1)
+                    }
+
+                Text(focusTitle)
+                    .herdrFont(.title2, weight: .bold)
+                    .fontDesign(.rounded)
+                    .foregroundStyle(HerdrTheme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("\(floorTitle) · \(currentSkillTitle)")
+                    .herdrFont(size: 10, monospaced: true, weight: .medium, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .lineLimit(1)
+                    .help("Floor: \(floorTitle). Current skill: \(currentSkillTitle)")
+            }
+
+            Spacer(minLength: 10)
+
+            if !agents.isEmpty {
+                ActiveWorkAvatarStack(agents: agents, size: 30, limit: 6)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private var activityPanel: some View {
+        ActiveWorkFocusPanel(title: "Route activity") {
+            if activities.isEmpty {
+                Text("No route events yet.")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(activities.enumerated(), id: \.element.id) { index, event in
+                        ActiveWorkFocusActivityRow(event: event)
+                            .padding(.vertical, 7)
+                            .overlay(alignment: .top) {
+                                if index > 0 {
+                                    Rectangle()
+                                        .fill(HerdrTheme.surface.opacity(0.34))
+                                        .frame(height: 1)
+                                }
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    private var castPanel: some View {
+        ActiveWorkFocusPanel(title: "Traveling cast") {
+            if agents.isEmpty {
+                Text("No agents are attached yet.")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(agents.enumerated(), id: \.element.id) { index, agent in
+                        ActiveWorkFocusCastRow(agent: agent)
+                            .padding(.vertical, 7)
+                            .overlay(alignment: .top) {
+                                if index > 0 {
+                                    Rectangle()
+                                        .fill(HerdrTheme.surface.opacity(0.34))
+                                        .frame(height: 1)
+                                }
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    private var focusTitle: String {
+        guard let key = item.jira?.issueKey, !key.isEmpty else { return item.title }
+        return "\(key) · \(item.title)"
+    }
+
+    private var kindTitle: String {
+        displayName(for: item.kind)
+    }
+
+    private var currentStage: ActiveWorkPipelineStage? {
+        stages.first { $0.key == item.currentStageKey }
+    }
+
+    private var currentSkillTitle: String {
+        currentStage?.skillName ?? currentStage?.title ?? "idea intake"
+    }
+
+    private var floorTitle: String {
+        let session = currentStage
+            .flatMap { ActiveWorkProjection.sessions(for: item, stage: $0).first }
+            ?? item.piSessions.first(where: { $0.detachedAt == nil })
+            ?? item.piSessions.first
+
+        if let session {
+            let machine = session.machineID ?? "local"
+            if let pane = session.paneID, !pane.isEmpty {
+                return "\(machine) · \(pane)"
+            }
+            if let workspace = session.workspaceID, !workspace.isEmpty {
+                return "\(machine) · \(workspace)"
+            }
+            return machine
+        }
+
+        if let pane = agents.lazy.compactMap(\.paneID).first {
+            return "local · \(pane)"
+        }
+        return "no active floor"
+    }
+
+    private func displayName(for identifier: String) -> String {
+        identifier
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+}
+
+private struct ActiveWorkFocusTrack: View {
+    let item: ActiveWorkItem
+    let pipeline: ActiveWorkPipeline
+    let stages: [ActiveWorkPipelineStage]
+
+    var body: some View {
+        if stages.isEmpty {
+            Text("The route has no configured stages.")
+                .herdrFont(.caption, monospaced: true)
+                .foregroundStyle(HerdrTheme.muted)
+                .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
+        } else {
+            GeometryReader { geometry in
+                let spacing: CGFloat = 8
+                let minimumStageWidth: CGFloat = 62
+                let availableStageWidth = (
+                    geometry.size.width - (spacing * CGFloat(max(0, stages.count - 1)))
+                ) / CGFloat(stages.count)
+                let stageWidth = max(minimumStageWidth, availableStageWidth)
+                let trackWidth = stageWidth * CGFloat(stages.count)
+                    + spacing * CGFloat(max(0, stages.count - 1))
+
+                ScrollView(.horizontal) {
+                    ZStack(alignment: .topLeading) {
+                        Rectangle()
+                            .fill(HerdrTheme.surface)
+                            .frame(width: max(0, trackWidth - stageWidth), height: 1)
+                            .offset(x: stageWidth / 2, y: 53)
+
+                        HStack(alignment: .top, spacing: spacing) {
+                            ForEach(stages) { stage in
+                                ActiveWorkFocusTrackStage(
+                                    item: item,
+                                    pipeline: pipeline,
+                                    stage: stage
+                                )
+                                .frame(width: stageWidth)
+                            }
+                        }
+                    }
+                    .frame(width: trackWidth, height: 92, alignment: .topLeading)
+                }
+                .scrollIndicators(.hidden)
+            }
+            .frame(height: 92)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(pipeline.title) route")
+        }
+    }
+}
+
+private struct ActiveWorkFocusTrackStage: View {
+    let item: ActiveWorkItem
+    let pipeline: ActiveWorkPipeline
+    let stage: ActiveWorkPipelineStage
+
+    private var progress: ActiveWorkStageProgress {
+        ActiveWorkProjection.progress(for: stage, item: item, pipeline: pipeline)
+    }
+
+    private var isCurrent: Bool {
+        stage.key == item.currentStageKey
+    }
+
+    private var agents: [ActiveWorkAgent] {
+        ActiveWorkProjection.agents(for: item, stage: stage, pipeline: pipeline)
+    }
+
+    private var isCheckpoint: Bool {
+        guard let checkpoint = stage.checkpoint?.lowercased() else { return false }
+        return !checkpoint.isEmpty && checkpoint != "none"
+    }
+
+    private var nodeColor: Color {
+        if progress == .complete { return HerdrTheme.signal }
+        if progress == .blocked { return HerdrTheme.alert }
+        if isCurrent { return HerdrTheme.accent }
+        return HerdrTheme.muted
+    }
+
+    private var nodeFill: Color {
+        if progress == .complete { return HerdrTheme.signal }
+        if isCurrent || progress == .blocked { return nodeColor.opacity(0.18) }
+        return HerdrTheme.crust
+    }
+
+    private var nodeText: String {
+        switch progress {
+        case .complete: "✓"
+        case .skipped: "–"
+        default: "\(stage.sequence)"
+        }
+    }
+
+    private var stageTitle: String {
+        switch stage.key {
+        case "start-ticket": "Start"
+        case "plan": "Plan"
+        case "implement": "Implement"
+        case "architect-code-review": "Agent review"
+        case "proof": "Proof"
+        case "code-review-pre-pr": "Pre-PR"
+        case "pr": "PR"
+        case "pr-triage": "Triage"
+        default: stage.shortTitle
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Group {
+                if agents.isEmpty {
+                    Color.clear
+                } else {
+                    ActiveWorkAvatarStack(
+                        agents: agents,
+                        size: 25,
+                        isFuture: progress == .pending,
+                        limit: 2
+                    )
+                }
+            }
+            .frame(height: 38)
+
+            Text(nodeText)
+                .herdrFont(size: 10, monospaced: true, weight: .bold, relativeTo: .caption)
+                .foregroundStyle(progress == .complete ? HerdrTheme.ink : (isCurrent || progress == .blocked ? HerdrTheme.text : HerdrTheme.muted))
+                .frame(width: 30, height: 30)
+                .background {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(nodeFill)
+                }
+                .overlay {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9)
+                            .strokeBorder(
+                                nodeColor.opacity(isCurrent || progress == .blocked ? 1 : 0.5),
+                                lineWidth: isCurrent ? 1.5 : 1
+                            )
+                        if isCurrent {
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(nodeColor.opacity(0.08), lineWidth: 5)
+                                .padding(-4)
+                        }
+                    }
+                }
+
+            HStack(spacing: 2) {
+                Text(stageTitle)
+                    .lineLimit(1)
+                if isCheckpoint {
+                    Image(systemName: "star.fill")
+                        .herdrFont(size: 7, weight: .bold, relativeTo: .caption2)
+                        .foregroundStyle(HerdrTheme.alert)
+                }
+            }
+            .herdrFont(size: 8, monospaced: true, weight: .semibold, relativeTo: .caption2)
+            .foregroundStyle(isCurrent ? HerdrTheme.text : (progress == .complete ? HerdrTheme.mist : HerdrTheme.muted))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 7)
+        }
+        .help("\(stage.title) · \(stage.skillName ?? progress.title)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Stage \(stage.sequence), \(stage.title), \(progress.title)\(isCheckpoint ? ", human checkpoint" : "")")
+        .accessibilityIdentifier("active-work-stage-\(stage.key)")
+    }
+}
+
+private struct ActiveWorkFocusPanel<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .herdrFont(.subheadline, weight: .bold)
+                .foregroundStyle(HerdrTheme.text)
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(HerdrTheme.crust.opacity(0.48), in: .rect(cornerRadius: 13))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13)
+                .strokeBorder(HerdrTheme.mist.opacity(0.16), lineWidth: 1)
+        }
+    }
+}
+
+private struct ActiveWorkFocusActivityRow: View {
+    let event: ActiveWorkActivity
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Group {
+                if event.occurredAt != nil || event.createdAt != nil {
+                    ActiveWorkRelativeTimestamp(value: event.occurredAt ?? event.createdAt)
+                } else {
+                    Text("event")
+                }
+            }
+            .herdrFont(size: 9, monospaced: true, weight: .semibold, relativeTo: .caption)
+            .foregroundStyle(HerdrTheme.muted)
+            .frame(width: 42, alignment: .leading)
+
+            Text(event.source ?? event.actorKind ?? event.kind)
+                .herdrFont(size: 9, monospaced: true, weight: .semibold, relativeTo: .caption)
+                .foregroundStyle(HerdrTheme.accent)
+                .lineLimit(1)
+                .frame(width: 72, alignment: .leading)
+
+            Text(event.message)
+                .herdrFont(.caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ActiveWorkFocusCastRow: View {
+    let agent: ActiveWorkAgent
+
+    private var isQueued: Bool {
+        let linkStates = ([agent.linkState] + agent.stageLinks.map(\.linkState))
+            .compactMap { $0?.lowercased() }
+        if linkStates.contains(where: { $0.contains("active") || $0.contains("working") }) {
+            return false
+        }
+        return agent.status == .idle
+            || linkStates.contains(where: { $0.contains("queued") || $0.contains("waiting") })
+    }
+
+    private var statusTitle: String {
+        if isQueued { return "queued" }
+        if agent.status == .blocked { return "checkpoint" }
+        if agent.status == .working { return "active" }
+        return agent.status.compactTitle.lowercased()
+    }
+
+    private var statusColor: Color {
+        if isQueued { return HerdrTheme.mist }
+        return agent.status.color
+    }
+
+    private var roleTitle: String {
+        agent.roleLabel ?? agent.linkRole ?? agent.kind ?? "attached agent"
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ActiveWorkAgentAvatar(agent: agent, size: 25, isFuture: isQueued)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.displayName)
+                    .herdrFont(.caption, weight: .bold)
+                    .foregroundStyle(HerdrTheme.text)
+                    .lineLimit(1)
+                Text(isQueued ? "joins at next stage" : roleTitle.lowercased())
+                    .herdrFont(size: 9, monospaced: true, weight: .medium, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 5)
+
+            Text(statusTitle)
+                .herdrFont(size: 9, monospaced: true, weight: .semibold, relativeTo: .caption)
+                .foregroundStyle(statusColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(statusColor.opacity(0.08), in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(statusColor.opacity(0.28), lineWidth: 1)
+                }
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -636,7 +1117,7 @@ private struct ActiveWorkRouteStageView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Stage \(stage.sequence), \(stage.title), \(progress.title)")
         }
-        .accessibilityIdentifier("active-work-stage-\(stage.key)")
+        .accessibilityIdentifier("active-work-stage-detail-\(stage.key)")
         .onChange(of: item.currentStageKey) { _, newStageKey in
             if newStageKey == stage.key {
                 isExpanded = true

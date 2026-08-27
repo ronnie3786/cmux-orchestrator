@@ -8,18 +8,19 @@ struct ActiveWorkBoardView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 summary
+                    .padding(.bottom, 6)
 
                 if !store.items.isEmpty {
-                    HerdrSectionLabel(
-                        title: "PIPELINE",
-                        detail: "\(store.items.count) item\(store.items.count == 1 ? "" : "s")"
-                    )
+                    journeySectionHeader
+
                     ForEach(store.items) { item in
                         ActiveWorkBoardCard(
                             item: item,
                             pipeline: store.pipeline,
+                            isSelected: store.selectedItem?.id == item.id,
+                            select: { store.select(item.id) },
                             openFocus: { store.select(item.id, revealFocus: true) },
                             openURL: openURL
                         )
@@ -36,6 +37,7 @@ struct ActiveWorkBoardView: View {
                             .herdrFont(.caption)
                             .foregroundStyle(HerdrTheme.muted)
                     }
+                    .padding(.top, 14)
 
                     ForEach(store.jiraCandidates) { candidate in
                         ActiveWorkJiraCandidateCard(
@@ -44,12 +46,14 @@ struct ActiveWorkBoardView: View {
                             setup: setupJira,
                             openURL: openURL
                         )
+                        .opacity(0.82)
                     }
                 }
             }
-            .frame(maxWidth: 1160, alignment: .leading)
+            .frame(maxWidth: 1120, alignment: .leading)
             .padding(.horizontal, HerdrTheme.pagePadding)
-            .padding(.vertical, 18)
+            .padding(.top, 22)
+            .padding(.bottom, 18)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
@@ -57,176 +61,302 @@ struct ActiveWorkBoardView: View {
     }
 
     private var summary: some View {
-        GlassCard {
-            HStack(spacing: 0) {
-                metric(title: "active", value: store.activeItemCount, symbol: "rectangle.3.group", color: HerdrTheme.accent)
-                divider
-                metric(title: "agents", value: store.activeAgentCount, symbol: "person.2.fill", color: HerdrTheme.mauve)
-                divider
-                metric(title: "need you", value: store.attentionCount, symbol: "hand.raised.fill", color: HerdrTheme.alert)
-                divider
-                metric(title: "set up", value: store.jiraCandidates.count, symbol: "plus.square.on.square", color: HerdrTheme.working)
-            }
-            .padding(.vertical, 12)
+        HStack(spacing: 0) {
+            metric(title: "work items", value: store.items.count)
+            divider
+            metric(title: "agent attachments", value: attachmentCount)
+            divider
+            metric(title: "need you", value: store.attentionCount, color: HerdrTheme.alert)
         }
+        .frame(minHeight: 72)
+        .background(HerdrTheme.graphite)
+        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                .strokeBorder(HerdrTheme.mist.opacity(0.2), lineWidth: 1)
+        }
+    }
+
+    private var journeySectionHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("Journeys")
+                .herdrFont(size: 15, weight: .bold, relativeTo: .headline)
+                .foregroundStyle(HerdrTheme.text)
+
+            Spacer(minLength: 8)
+
+            Text("ordered by next intervention")
+                .herdrFont(size: 10, monospaced: true, weight: .semibold, relativeTo: .caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 1)
     }
 
     private var divider: some View {
         Rectangle()
-            .fill(HerdrTheme.surface.opacity(0.7))
-            .frame(width: 1, height: 44)
+            .fill(Color.white.opacity(0.08))
+            .frame(width: 1, height: 34)
     }
 
-    private func metric(title: String, value: Int, symbol: String, color: Color) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbol)
+    private func metric(
+        title: String,
+        value: Int,
+        color: Color = HerdrTheme.text
+    ) -> some View {
+        VStack(spacing: 5) {
+            Text("\(value)")
+                .herdrFont(size: 16, weight: .bold, relativeTo: .headline)
+                .monospacedDigit()
                 .foregroundStyle(color)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(value)")
-                    .herdrFont(.headline, monospaced: true, weight: .bold, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.text)
-                Text(title)
-                    .herdrFont(.caption, monospaced: true)
-                    .foregroundStyle(HerdrTheme.mist)
-            }
+            Text(title)
+                .herdrFont(size: 11, relativeTo: .caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(value) \(title)")
+    }
+
+    private var attachmentCount: Int {
+        store.items.reduce(into: 0) { count, item in
+            count += ActiveWorkProjection.allAgents(for: item)
+                .count(where: { $0.detachedAt == nil })
+        }
     }
 }
 
 private struct ActiveWorkBoardCard: View {
     let item: ActiveWorkItem
     let pipeline: ActiveWorkPipeline
+    let isSelected: Bool
+    let select: () -> Void
     let openFocus: () -> Void
     let openURL: (URL) -> Void
 
     private var status: AgentStatus { ActiveWorkProjection.status(for: item) }
 
     var body: some View {
-        GlassCard {
-            HStack(alignment: .top, spacing: 0) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(status.color)
-                    .frame(width: 4)
-                    .padding(.vertical, 4)
+        Button(action: select) {
+            VStack(alignment: .leading, spacing: 0) {
+                header
 
-                VStack(alignment: .leading, spacing: 13) {
-                    header
+                ActiveWorkPipelineRail(item: item, pipeline: pipeline)
+                    .padding(.horizontal, 13)
+                    .padding(.top, 11)
+                    .padding(.bottom, 10)
+                    .background(HerdrTheme.crust.opacity(0.7))
+                    .clipShape(.rect(cornerRadius: 14))
+                    .padding(.top, 13)
 
-                    if !item.summary.isEmpty {
-                        Text(item.summary)
-                            .herdrFont(.subheadline)
-                            .foregroundStyle(HerdrTheme.mist)
-                            .lineLimit(2)
-                    }
-
-                    ActiveWorkPipelineRail(item: item, pipeline: pipeline)
-                        .padding(12)
-                        .background(HerdrTheme.ink.opacity(0.62))
-                        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-
-                    if let reason = actionableAttentionReason {
-                        Label(reason, systemImage: "hand.raised.fill")
-                            .herdrFont(.subheadline, weight: .semibold)
-                            .foregroundStyle(HerdrTheme.alert)
-                            .lineLimit(2)
-                            .accessibilityLabel("Needs your attention: \(reason)")
-                    }
-
-                    if let nextAction = item.nextAction, !nextAction.isEmpty {
-                        Label(nextAction, systemImage: "arrow.forward.circle.fill")
-                            .herdrFont(.subheadline, weight: .medium)
-                            .foregroundStyle(item.needsAttention ? HerdrTheme.alert : HerdrTheme.text)
-                            .lineLimit(2)
-                    }
-
-                    footer
+                if isSelected {
+                    journeyDetail
                 }
-                .padding(HerdrTheme.cardPadding)
+            }
+            .padding(15)
+            .padding(.leading, 5)
+            .contentShape(.rect(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+        .background {
+            ZStack {
+                HerdrTheme.graphite.opacity(isSelected ? 1 : 0.78)
+                if isSelected {
+                    LinearGradient(
+                        stops: [
+                            .init(color: HerdrTheme.accent.opacity(0.07), location: 0),
+                            .init(color: .clear, location: 0.62),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                }
             }
         }
+        .clipShape(.rect(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(
+                    isSelected ? HerdrTheme.accent.opacity(0.5) : HerdrTheme.mist.opacity(0.16),
+                    lineWidth: 1
+                )
+        }
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(item.needsAttention ? HerdrTheme.alert : HerdrTheme.accent)
+                .frame(width: 4)
+                .padding(.vertical, 17)
+                .opacity(0.72)
+        }
+        .contextMenu {
+            Button("Open Focus Route", systemImage: "arrow.right.circle", action: openFocus)
+            if let jira = item.jira, let url = jira.browserURL {
+                Button("Open \(jira.issueKey) in Jira", systemImage: "arrow.up.right.square") {
+                    openURL(url)
+                }
+            }
+        }
+        .help(isSelected ? "Journey details shown" : "Reveal journey details")
+        .accessibilityHint("Select to reveal this journey's movement, cast, and continuity")
         .accessibilityIdentifier("active-work-card-\(item.id)")
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
-                    if let jira = item.jira, !jira.issueKey.isEmpty {
-                        Text(jira.issueKey)
-                            .herdrFont(.caption, monospaced: true, weight: .bold)
-                            .foregroundStyle(HerdrTheme.mauve)
-                    }
-                    Text(item.kind.uppercased())
-                        .herdrFont(.caption2, monospaced: true, weight: .bold)
-                        .foregroundStyle(HerdrTheme.muted)
+                    ActiveWorkJourneyPill(title: formattedKind)
+                    ActiveWorkJourneyPill(title: stageSkill)
                 }
 
-                Button(action: openFocus) {
-                    HStack(spacing: 7) {
-                        Text(item.title)
-                            .herdrFont(.title3, weight: .bold)
-                            .fontDesign(.rounded)
-                            .foregroundStyle(HerdrTheme.text)
-                            .multilineTextAlignment(.leading)
-                        Image(systemName: "chevron.right")
-                            .herdrFont(.caption, weight: .bold)
-                            .foregroundStyle(HerdrTheme.muted)
-                    }
-                }
-                .buttonStyle(.plain)
-                .help("Open Focus Route")
-                .accessibilityLabel("Open Focus Route for \(item.title)")
-            }
+                Text(displayTitle)
+                    .herdrFont(size: 15, weight: .bold, relativeTo: .headline)
+                    .foregroundStyle(HerdrTheme.text)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 7) {
-                AgentStatusBadge(status: status, compact: true)
-                ActiveWorkReadinessBadge(readiness: item.readiness)
+                floorAndUpdate
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            ActiveWorkAvatarStack(agents: attachedAgents, size: 30, limit: 4)
+                .fixedSize()
+
+            ActiveWorkJourneyStatusPill(status: status, item: item, pipeline: pipeline)
+                .fixedSize()
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
-            ActiveWorkMetadataChip(title: "rev \(item.revision)", symbol: "arrow.triangle.2.circlepath")
-            if let current = pipeline.stages.first(where: { $0.key == item.currentStageKey }) {
-                ActiveWorkMetadataChip(title: current.shortTitle.lowercased(), symbol: "point.topleft.down.to.point.bottomright.curvepath")
+    private var floorAndUpdate: some View {
+        HStack(spacing: 4) {
+            Text("\(floorLabel) · updated")
+            if item.updatedAt.flatMap(HerdrTimestamp.date(from:)) != nil {
+                ActiveWorkRelativeTimestamp(value: item.updatedAt)
+            } else {
+                Text("pending")
             }
-            if let jira = item.jira, !jira.status.isEmpty {
-                ActiveWorkMetadataChip(
-                    title: jira.status.lowercased(),
-                    symbol: "checkmark.square",
-                    color: HerdrTheme.mauve
-                )
-                .accessibilityLabel("Jira status: \(jira.status)")
-            }
-            if let updatedAt = item.updatedAt {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                    ActiveWorkRelativeTimestamp(value: updatedAt)
-                }
-                .herdrFont(.caption, monospaced: true)
-                .foregroundStyle(HerdrTheme.muted)
-            }
+        }
+        .herdrFont(size: 10, monospaced: true, weight: .medium, relativeTo: .caption)
+        .foregroundStyle(HerdrTheme.mist)
+        .lineLimit(1)
+    }
 
-            Spacer(minLength: 8)
+    private var journeyDetail: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ActiveWorkJourneyDetailBlock(title: "next movement", message: nextMovement)
+            ActiveWorkJourneyDetailBlock(title: "traveling cast", message: travelingCast)
+            ActiveWorkJourneyDetailBlock(title: "continuity", message: continuity)
+        }
+        .padding(.horizontal, 5)
+        .padding(.top, 12)
+        .padding(.bottom, 2)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(HerdrTheme.mist.opacity(0.13))
+                .frame(height: 1)
+        }
+    }
 
-            if let jira = item.jira, let url = jira.browserURL {
-                Button {
-                    openURL(url)
-                } label: {
-                    Label(jira.issueKey, systemImage: "arrow.up.right.square")
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(HerdrTheme.accent)
-                .help("Open in Jira")
+    private var attachedAgents: [ActiveWorkAgent] {
+        ActiveWorkProjection.allAgents(for: item).filter { $0.detachedAt == nil }
+    }
+
+    private var currentStage: ActiveWorkPipelineStage? {
+        pipeline.stages.first(where: { $0.key == item.currentStageKey })
+    }
+
+    private var stageSkill: String {
+        guard let currentStage else { return "idea intake" }
+        return currentStage.skillName ?? currentStage.key
+    }
+
+    private var formattedKind: String {
+        let normalized = item.kind
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacing("_", with: " ")
+        guard let first = normalized.first else { return "Work" }
+        return first.uppercased() + normalized.dropFirst()
+    }
+
+    private var displayTitle: String {
+        guard let key = item.jira?.issueKey.trimmingCharacters(in: .whitespacesAndNewlines),
+              !key.isEmpty else { return item.title }
+        return "\(key) · \(item.title)"
+    }
+
+    private var floorLabel: String {
+        guard let session = allSessions.first(where: { $0.endedAt == nil }) ?? allSessions.first else {
+            return "no floor yet"
+        }
+
+        let machine = session.machineID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let machineLabel = machine.flatMap { $0.isEmpty ? nil : $0 } ?? "local"
+        let workspace = session.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pane = session.paneID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let route: String?
+        if let pane, !pane.isEmpty {
+            if pane.contains(":") || workspace == nil || workspace?.isEmpty == true {
+                route = pane
+            } else if let workspace {
+                route = "\(workspace):\(pane)"
+            } else {
+                route = pane
             }
+        } else if let workspace, !workspace.isEmpty {
+            route = workspace
+        } else {
+            route = nil
+        }
+
+        return route.map { "\(machineLabel) · \($0)" } ?? machineLabel
+    }
+
+    private var nextMovement: String {
+        for candidate in [item.nextAction, actionableAttentionReason, item.summary] {
+            if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        if let next = ActiveWorkProjection.nextStage(for: item, pipeline: pipeline) {
+            return "Move into \(next.title)."
+        }
+        return "Keep the current route under watch."
+    }
+
+    private var travelingCast: String {
+        guard !attachedAgents.isEmpty else { return "No agents attached" }
+        return attachedAgents.map(\.displayName).joined(separator: " · ")
+    }
+
+    private var continuity: String {
+        if !item.continuityArtifacts.isEmpty {
+            return item.continuityArtifacts.joined(separator: " · ")
+        }
+
+        var parts = ["state.json", "handoff.md"]
+        if !allSessions.isEmpty {
+            parts.append(allSessions.count == 1 ? "session context" : "\(allSessions.count) session contexts")
+        }
+        if !allThreads.isEmpty {
+            parts.append(allThreads.count == 1 ? "thread context" : "\(allThreads.count) thread contexts")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var allSessions: [ActiveWorkPiSession] {
+        var seen = Set<String>()
+        return (item.piSessions + item.stages.flatMap(\.piSessions)).filter {
+            seen.insert($0.id).inserted
+        }
+    }
+
+    private var allThreads: [ActiveWorkThread] {
+        var seen = Set<String>()
+        return (item.threads + item.stages.flatMap(\.threads)).filter {
+            seen.insert($0.id).inserted
         }
     }
 
@@ -236,6 +366,93 @@ private struct ActiveWorkBoardCard: View {
               !reason.isEmpty else { return nil }
         let nextAction = item.nextAction?.trimmingCharacters(in: .whitespacesAndNewlines)
         return reason.caseInsensitiveCompare(nextAction ?? "") == .orderedSame ? nil : reason
+    }
+}
+
+private struct ActiveWorkJourneyPill: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .herdrFont(size: 9, monospaced: true, weight: .semibold, relativeTo: .caption)
+            .foregroundStyle(HerdrTheme.mist)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(HerdrTheme.elevated.opacity(0.52), in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(HerdrTheme.mist.opacity(0.2), lineWidth: 1)
+            }
+    }
+}
+
+private struct ActiveWorkJourneyStatusPill: View {
+    let status: AgentStatus
+    let item: ActiveWorkItem
+    let pipeline: ActiveWorkPipeline
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(symbol)
+            Text(title)
+        }
+            .herdrFont(size: 9, monospaced: true, weight: .semibold, relativeTo: .caption)
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(item.needsAttention ? 0.09 : 0.08), in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(color.opacity(item.needsAttention ? 0.3 : 0.28), lineWidth: 1)
+            }
+            .accessibilityLabel("Journey status: \(title)")
+    }
+
+    private var title: String {
+        if item.currentStageKey == nil { return "idea shaping" }
+        if item.needsAttention { return "needs you" }
+        if let current = pipeline.stages.first(where: { $0.key == item.currentStageKey }),
+           current.sequence == pipeline.stages.map(\.sequence).max() {
+            return "monitoring"
+        }
+        return "working"
+    }
+
+    private var symbol: String {
+        item.needsAttention ? "✋" : "⌁"
+    }
+
+    private var color: Color {
+        if item.needsAttention { return HerdrTheme.alert }
+        if title == "monitoring" { return HerdrTheme.signal }
+        return status == .working ? HerdrTheme.working : status.color
+    }
+}
+
+private struct ActiveWorkJourneyDetailBlock: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .herdrFont(size: 9, monospaced: true, weight: .bold, relativeTo: .caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .lineLimit(1)
+            Text(message)
+                .herdrFont(size: 11, relativeTo: .caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .lineLimit(3)
+                .lineSpacing(2)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.leading, 10)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(HerdrTheme.accent.opacity(0.28))
+                .frame(width: 2)
+        }
     }
 }
 
