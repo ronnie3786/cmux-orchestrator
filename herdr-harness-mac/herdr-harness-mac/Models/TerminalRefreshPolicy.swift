@@ -23,4 +23,16 @@ enum TerminalRefreshPolicy {
         guard let lastStreamActivityAt else { return true }
         return now.timeIntervalSince(lastStreamActivityAt) >= streamSilenceLimit
     }
+
+    static func shouldPresentSnapshotFailure(
+        _ error: Error,
+        requestSequence: Int,
+        currentRequestSequence: Int,
+        requestedPaneID: String,
+        currentPaneID: String
+    ) -> Bool {
+        !HerdrCancellation.isCancellation(error)
+            && requestSequence == currentRequestSequence
+            && requestedPaneID == currentPaneID
+    }
 }

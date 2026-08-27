@@ -17,10 +17,11 @@ struct ActiveWorkLinkOpenerTests {
         var openedApplicationURL: URL?
         var activates = false
         var addsToRecentItems = true
+        var createsNewInstance = true
+        var allowsSubstitution = true
 
         let route = await ActiveWorkLinkOpener.open(
             buzzURL,
-            resolveDefaultApplication: { _ in nil },
             resolveBuzzApplication: { expectedApplicationURL },
             openNormally: { _ in
                 Issue.record("The missing-handler path should target Buzz directly")
@@ -31,6 +32,8 @@ struct ActiveWorkLinkOpenerTests {
                 openedApplicationURL = applicationURL
                 activates = configuration.activates
                 addsToRecentItems = configuration.addsToRecentItems
+                createsNewInstance = configuration.createsNewApplicationInstance
+                allowsSubstitution = configuration.allowsRunningApplicationSubstitution
             }
         )
 
@@ -39,27 +42,31 @@ struct ActiveWorkLinkOpenerTests {
         #expect(openedApplicationURL == expectedApplicationURL)
         #expect(activates)
         #expect(!addsToRecentItems)
+        #expect(!createsNewInstance)
+        #expect(!allowsSubstitution)
     }
 
-    @Test("Uses the registered handler when Launch Services can open Buzz")
-    func usesRegisteredSchemeHandler() async {
+    @Test("Targets verified Buzz instead of an arbitrary registered wrapper")
+    func bypassesRegisteredSchemeWrapper() async {
+        let expectedApplicationURL = URL(fileURLWithPath: "/Applications/Buzz.app")
         var normallyOpenedURL: URL?
-        var targetedBuzz = false
+        var targetedApplicationURL: URL?
 
         let route = await ActiveWorkLinkOpener.open(
             buzzURL,
-            resolveDefaultApplication: { _ in URL(fileURLWithPath: "/Applications/Buzz.app") },
-            resolveBuzzApplication: { nil },
+            resolveBuzzApplication: { expectedApplicationURL },
             openNormally: { url in
                 normallyOpenedURL = url
                 return true
             },
-            openWithApplication: { _, _, _ in targetedBuzz = true }
+            openWithApplication: { _, applicationURL, _ in
+                targetedApplicationURL = applicationURL
+            }
         )
 
-        #expect(route == .defaultApplication)
-        #expect(normallyOpenedURL == buzzURL)
-        #expect(!targetedBuzz)
+        #expect(route == .explicitBuzzApplication)
+        #expect(normallyOpenedURL == nil)
+        #expect(targetedApplicationURL == expectedApplicationURL)
     }
 
     @Test("Rejects an unvalidated custom URL before opening an application")
@@ -69,10 +76,6 @@ struct ActiveWorkLinkOpenerTests {
 
         let route = await ActiveWorkLinkOpener.open(
             malformedURL,
-            resolveDefaultApplication: { _ in
-                attemptedOpen = true
-                return nil
-            },
             resolveBuzzApplication: {
                 attemptedOpen = true
                 return nil
@@ -94,12 +97,29 @@ struct ActiveWorkLinkOpenerTests {
 
         let route = await ActiveWorkLinkOpener.open(
             buzzURL,
-            resolveDefaultApplication: { _ in nil },
             resolveBuzzApplication: { URL(fileURLWithPath: "/Applications/Buzz.app") },
             openNormally: { _ in false },
             openWithApplication: { _, _, _ in throw TestFailure() }
         )
 
         #expect(route == .unavailable)
+    }
+
+    @Test("Does not fall back to an unverified Buzz scheme handler")
+    func rejectsUnverifiedSchemeHandler() async {
+        var normallyOpened = false
+
+        let route = await ActiveWorkLinkOpener.open(
+            buzzURL,
+            resolveBuzzApplication: { nil },
+            openNormally: { _ in
+                normallyOpened = true
+                return true
+            },
+            openWithApplication: { _, _, _ in }
+        )
+
+        #expect(route == .unavailable)
+        #expect(!normallyOpened)
     }
 }

@@ -541,6 +541,7 @@ struct PaneSessionView: View {
             } catch is CancellationError {
                 return
             } catch {
+                guard !HerdrCancellation.isCancellation(error) else { return }
                 if let grid = pending.grid {
                     pending.flushTask?.cancel()
                     pending.flushTask = nil
@@ -615,6 +616,13 @@ struct PaneSessionView: View {
         } catch is CancellationError {
             return
         } catch {
+            guard TerminalRefreshPolicy.shouldPresentSnapshotFailure(
+                error,
+                requestSequence: requestSequence,
+                currentRequestSequence: snapshotRequestSequence,
+                requestedPaneID: requestedPaneID,
+                currentPaneID: currentPane.id
+            ) else { return }
             if terminalSource != .stream || TerminalRefreshPolicy.isStreamStale(
                 lastStreamActivityAt: scratch.lastActivityAt
             ) {

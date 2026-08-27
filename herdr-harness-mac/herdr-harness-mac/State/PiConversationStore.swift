@@ -173,7 +173,7 @@ final class PiConversationStore {
             } catch is CancellationError {
                 return
             } catch {
-                guard !Task.isCancelled, !Self.isCancellation(error) else { return }
+                guard !HerdrCancellation.isCancellation(error) else { return }
                 retryAttempt += 1
                 connection = .reconnecting(attempt: retryAttempt)
                 lastError = hasContent
@@ -212,7 +212,7 @@ final class PiConversationStore {
             return true
         } catch {
             commandNotice = nil
-            guard !Self.isCancellation(error) else { return false }
+            guard !HerdrCancellation.isCancellation(error) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -229,7 +229,7 @@ final class PiConversationStore {
             commandNotice = "Stop requested"
             return true
         } catch {
-            guard !Self.isCancellation(error) else { return false }
+            guard !HerdrCancellation.isCancellation(error) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -249,7 +249,7 @@ final class PiConversationStore {
             lastError = "Model switching isn't supported by this Pi session"
             return false
         } catch {
-            guard !Self.isCancellation(error) else { return false }
+            guard !HerdrCancellation.isCancellation(error) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -271,7 +271,7 @@ final class PiConversationStore {
             lastError = "Thinking control isn't supported by this Pi session"
             return false
         } catch {
-            guard !Self.isCancellation(error) else { return false }
+            guard !HerdrCancellation.isCancellation(error) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -304,7 +304,7 @@ final class PiConversationStore {
             lastError = nil
             return true
         } catch {
-            guard !Self.isCancellation(error) else { return false }
+            guard !HerdrCancellation.isCancellation(error) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -482,7 +482,7 @@ final class PiConversationStore {
             } catch is CancellationError {
                 return false
             } catch {
-                guard !Task.isCancelled, !Self.isCancellation(error) else { return false }
+                guard !HerdrCancellation.isCancellation(error) else { return false }
                 retryDelay = min(retryDelay * 1.7, 8)
                 let newConnection: PiConversationConnection = .reconnecting(attempt: 1)
                 let newError = hasContent
@@ -498,13 +498,6 @@ final class PiConversationStore {
             }
         }
         return false
-    }
-
-    private static func isCancellation(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        return error is CancellationError
-            || (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
-            || Task.isCancelled
     }
 
     private func snapshotContentChanged(
@@ -646,7 +639,7 @@ final class PiConversationStore {
         } catch let APIError.server(status, _) where status == 501 {
             isModelSwitchingUnsupported = true
         } catch {
-            guard !Self.isCancellation(error) else { return }
+            guard !HerdrCancellation.isCancellation(error) else { return }
             modelCatalogError = "Couldn't load models"
         }
     }

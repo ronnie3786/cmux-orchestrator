@@ -85,14 +85,17 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
 
         app.typeKey("m", modifierFlags: [.command, .shift])
-        let focusToast = app.buttons["Focused on Mac"]
-        XCTAssertTrue(focusToast.waitForExistence(timeout: 3), "⇧⌘M should focus the current pane")
-        focusToast.click()
+        let focusAndZoomToast = app.buttons["Focused + zoomed on Mac"]
+        XCTAssertTrue(
+            focusAndZoomToast.waitForExistence(timeout: 3),
+            "⇧⌘M should focus and zoom the current pane"
+        )
+        focusAndZoomToast.click()
 
         app.typeKey("m", modifierFlags: [.command, .shift, .option])
         XCTAssertTrue(
-            app.buttons["Focused + zoomed on Mac"].waitForExistence(timeout: 3),
-            "⌥⇧⌘M should focus and zoom the current pane"
+            app.buttons["Focused on Mac"].waitForExistence(timeout: 3),
+            "⌥⇧⌘M should focus the current pane"
         )
     }
 

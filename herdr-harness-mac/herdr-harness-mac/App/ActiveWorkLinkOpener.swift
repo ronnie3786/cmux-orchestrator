@@ -29,7 +29,6 @@ enum ActiveWorkLinkOpener {
     static func open(_ url: URL) async throws {
         let route = await open(
             url,
-            resolveDefaultApplication: { NSWorkspace.shared.urlForApplication(toOpen: $0) },
             resolveBuzzApplication: installedBuzzApplicationURL,
             openNormally: { NSWorkspace.shared.open($0) },
             openWithApplication: { urls, applicationURL, configuration in
@@ -62,7 +61,6 @@ enum ActiveWorkLinkOpener {
     @discardableResult
     static func open(
         _ url: URL,
-        resolveDefaultApplication: @MainActor (URL) -> URL?,
         resolveBuzzApplication: @MainActor () -> URL?,
         openNormally: @MainActor (URL) -> Bool,
         openWithApplication: @MainActor ([URL], URL, NSWorkspace.OpenConfiguration) async throws -> Void
@@ -73,17 +71,13 @@ enum ActiveWorkLinkOpener {
             return openNormally(url) ? .defaultApplication : .unavailable
         }
 
-        if resolveDefaultApplication(url) != nil, openNormally(url) {
-            return .defaultApplication
-        }
-
-        guard let applicationURL = resolveBuzzApplication() else {
-            return openNormally(url) ? .defaultApplication : .unavailable
-        }
+        guard let applicationURL = resolveBuzzApplication() else { return .unavailable }
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         configuration.addsToRecentItems = false
+        configuration.createsNewApplicationInstance = false
+        configuration.allowsRunningApplicationSubstitution = false
         do {
             try await openWithApplication([url], applicationURL, configuration)
             return .explicitBuzzApplication
@@ -93,19 +87,22 @@ enum ActiveWorkLinkOpener {
     }
 
     private static func installedBuzzApplicationURL() -> URL? {
-        if let registeredURL = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: buzzBundleIdentifier
-        ) {
-            return registeredURL
-        }
-
-        let candidates = [
+        let runningApplications = NSWorkspace.shared.runningApplications.compactMap(\.bundleURL)
+        let fixedInstallations = [
             URL(fileURLWithPath: "/Applications/Buzz.app", isDirectory: true),
             FileManager.default.homeDirectoryForCurrentUser
                 .appending(path: "Applications/Buzz.app", directoryHint: .isDirectory),
         ]
-        return candidates.first { candidate in
-            Bundle(url: candidate)?.bundleIdentifier == buzzBundleIdentifier
-        }
+        let registeredInstallation = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: buzzBundleIdentifier
+        )
+        return (runningApplications + fixedInstallations + [registeredInstallation].compactMap { $0 })
+            .first(where: isDesktopBuzzApplication)
+    }
+
+    private static func isDesktopBuzzApplication(_ applicationURL: URL) -> Bool {
+        guard let bundle = Bundle(url: applicationURL) else { return false }
+        return bundle.bundleIdentifier == buzzBundleIdentifier
+            && bundle.object(forInfoDictionaryKey: "CFBundleExecutable") as? String == "buzz-desktop"
     }
 }

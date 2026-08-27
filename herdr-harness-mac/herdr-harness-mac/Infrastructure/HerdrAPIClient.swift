@@ -254,15 +254,8 @@ actor HerdrAPIClient {
         }
     }
 
-    private static func isCancellation(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        return error is CancellationError
-            || (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
-            || Task.isCancelled
-    }
-
     private static func rethrowIfCancelled(_ error: Error) throws {
-        if isCancellation(error) {
+        if HerdrCancellation.isCancellation(error) {
             throw CancellationError()
         }
     }
@@ -654,7 +647,7 @@ actor HerdrAPIClient {
                     }
                     throw APIError.streamEnded
                 } catch {
-                    if Self.isCancellation(error) {
+                    if HerdrCancellation.isCancellation(error) {
                         continuation.finish(throwing: CancellationError())
                     } else {
                         continuation.finish(throwing: error)
@@ -708,7 +701,7 @@ actor HerdrAPIClient {
                     }
                     throw APIError.streamEnded
                 } catch {
-                    if Self.isCancellation(error) {
+                    if HerdrCancellation.isCancellation(error) {
                         continuation.finish(throwing: CancellationError())
                     } else {
                         continuation.finish(throwing: error)
@@ -771,7 +764,7 @@ actor HerdrAPIClient {
                     }
                     throw APIError.streamEnded
                 } catch {
-                    if Self.isCancellation(error) {
+                    if HerdrCancellation.isCancellation(error) {
                         continuation.finish(throwing: CancellationError())
                     } else {
                         continuation.finish(throwing: error)

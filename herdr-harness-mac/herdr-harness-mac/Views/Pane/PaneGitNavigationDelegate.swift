@@ -46,7 +46,7 @@ final class PaneGitNavigationDelegate: NSObject, WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: any Error
     ) {
-        guard (error as? URLError)?.code != .cancelled else { return }
+        guard !HerdrCancellation.isCancellation(error) else { return }
         phase.wrappedValue = .failed(error.localizedDescription)
     }
 
@@ -55,7 +55,7 @@ final class PaneGitNavigationDelegate: NSObject, WKNavigationDelegate {
         didFail navigation: WKNavigation?,
         withError error: any Error
     ) {
-        guard (error as? URLError)?.code != .cancelled else { return }
+        guard !HerdrCancellation.isCancellation(error) else { return }
         phase.wrappedValue = .failed(error.localizedDescription)
     }
 }

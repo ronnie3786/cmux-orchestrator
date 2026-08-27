@@ -18,33 +18,31 @@ enum PanePathOpener {
     }
 
     static func open(path: String) async throws {
-        try await open(path: path) { url, configuration in
-            _ = try await NSWorkspace.shared.open(url, configuration: configuration)
+        try await open(path: path) { folderURLs in
+            NSWorkspace.shared.activateFileViewerSelecting(folderURLs)
         }
     }
 
     static func open(
         path: String,
-        openURL: @MainActor (URL, NSWorkspace.OpenConfiguration) async throws -> Void
+        revealInFinder: @MainActor ([URL]) throws -> Void
     ) async throws {
-        let url = try folderURL(for: path)
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.addsToRecentItems = false
+        let folderPath = try validatedPath(path)
+        let folderURL = URL(filePath: folderPath, directoryHint: .isDirectory)
 
         do {
-            try await openURL(url, configuration)
-        } catch is CancellationError {
+            try revealInFinder([folderURL])
+        } catch where HerdrCancellation.isCancellation(error) {
             throw CancellationError()
         } catch {
-            throw OpenError.finderRejected(path: url.path(percentEncoded: false))
+            throw OpenError.finderRejected(path: folderPath)
         }
     }
 
-    static func folderURL(for path: String) throws -> URL {
+    static func validatedPath(_ path: String) throws -> String {
         guard !path.isEmpty, path.hasPrefix("/"), !path.contains("\0") else {
             throw OpenError.invalidPath
         }
-        return URL(filePath: path, directoryHint: .isDirectory)
+        return path
     }
 }

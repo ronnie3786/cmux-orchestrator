@@ -172,14 +172,14 @@ struct HerdrMacCommands: Commands {
                 guard let pane = selectedPane else { return }
                 Task { await model.focus(pane) }
             }
-            .keyboardShortcut("m", modifiers: [.command, .shift])
+            .keyboardShortcut("m", modifiers: [.command, .shift, .option])
             .disabled(!canFocusSelectedPane)
 
             Button("Focus Current Pane on Mac + Zoom") {
                 guard let pane = selectedPane else { return }
                 Task { await model.focusAndZoom(pane) }
             }
-            .keyboardShortcut("m", modifiers: [.command, .shift, .option])
+            .keyboardShortcut("m", modifiers: [.command, .shift])
             .disabled(!canFocusSelectedPane)
 
             Divider()
