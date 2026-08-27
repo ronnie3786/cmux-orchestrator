@@ -49,19 +49,30 @@ struct HerdPulseTests {
     @Test("Pulse retains the committed client configuration while Settings drafts change")
     @MainActor
     func pulseUsesCommittedConnection() throws {
-        let defaults = UserDefaults.standard
-        let previousURL = defaults.object(forKey: "herdr.serverURL")
-        let previousDemo = defaults.object(forKey: "herdr.demoMode")
-        let previousSetup = defaults.object(forKey: "herdr.completedSetup")
-        let previousToken = KeychainStore.value(for: "api-token")
+        let suiteName = "HerdPulseTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let machineID = "herd-pulse-test-\(UUID().uuidString)"
+        let tokenAccount = "api-token.\(machineID)"
+        let previousToken = KeychainStore.value(for: tokenAccount)
         defer {
-            restore(previousURL, key: "herdr.serverURL", defaults: defaults)
-            restore(previousDemo, key: "herdr.demoMode", defaults: defaults)
-            restore(previousSetup, key: "herdr.completedSetup", defaults: defaults)
-            KeychainStore.set(previousToken, for: "api-token")
+            defaults.removePersistentDomain(forName: suiteName)
+            if previousToken.isEmpty {
+                KeychainStore.removeValue(for: tokenAccount)
+            } else {
+                KeychainStore.set(previousToken, for: tokenAccount)
+            }
         }
 
-        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        defaults.set(
+            try JSONEncoder().encode([
+                HerdrMachine(id: machineID, name: "Test Mac", urlString: "https://before.example")
+            ]),
+            forKey: "herdr.machines"
+        )
+        let model = HerdrAppModel(
+            arguments: ["HerdrTests", "-HerdrDemoMode"],
+            userDefaults: defaults
+        )
         model.serverURLString = "https://active.tailnet.example"
         model.apiToken = "committed-token"
         model.connect()
@@ -84,14 +95,6 @@ struct HerdPulseTests {
     // existed to retry ActivityKit push-token registration with the server; the Mac port
     // renders Herd Pulse in a `MenuBarExtra` fed by the in-process `HerdPulseSyncContext`
     // and registers nothing, so the type is deliberately absent (see explore/pulse.md §4.4).
-
-    private func restore(_ value: Any?, key: String, defaults: UserDefaults) {
-        if let value {
-            defaults.set(value, forKey: key)
-        } else {
-            defaults.removeObject(forKey: key)
-        }
-    }
 
     private func workspace(label: String, panes: [HerdrPane]) -> HerdrWorkspace {
         HerdrWorkspace(

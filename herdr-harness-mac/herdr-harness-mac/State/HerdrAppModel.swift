@@ -282,8 +282,8 @@ final class HerdrAppModel {
         }
         persistMachines()
         userDefaults.set(serverURLString, forKey: "herdr.serverURL")
-        UserDefaults.standard.set(false, forKey: "herdr.demoMode")
-        UserDefaults.standard.set(true, forKey: "herdr.completedSetup")
+        userDefaults.set(false, forKey: "herdr.demoMode")
+        userDefaults.set(true, forKey: "herdr.completedSetup")
         KeychainStore.set(apiToken, for: "api-token.\(machine.id)")
         isDemoMode = false
         hasCompletedSetup = true
@@ -303,8 +303,8 @@ final class HerdrAppModel {
     }
 
     func useDemo() {
-        UserDefaults.standard.set(true, forKey: "herdr.demoMode")
-        UserDefaults.standard.set(true, forKey: "herdr.completedSetup")
+        userDefaults.set(true, forKey: "herdr.demoMode")
+        userDefaults.set(true, forKey: "herdr.completedSetup")
         isDemoMode = true
         hasCompletedSetup = true
         resetConnectionState()
@@ -313,7 +313,7 @@ final class HerdrAppModel {
     }
 
     func leaveDemo() {
-        UserDefaults.standard.set(false, forKey: "herdr.demoMode")
+        userDefaults.set(false, forKey: "herdr.demoMode")
         isDemoMode = false
         hasCompletedSetup = false
         machines = Self.loadMachines(defaults: userDefaults)
@@ -341,7 +341,7 @@ final class HerdrAppModel {
         persistMachines()
         KeychainStore.set(token, for: "api-token.\(machine.id)")
         hasCompletedSetup = true
-        UserDefaults.standard.set(true, forKey: "herdr.completedSetup")
+        userDefaults.set(true, forKey: "herdr.completedSetup")
         errorMessage = nil
         connectionGeneration += 1
         return true
@@ -956,12 +956,12 @@ final class HerdrAppModel {
 
     func setPreferPrivateTranscription(_ enabled: Bool) {
         preferPrivateTranscription = enabled
-        UserDefaults.standard.set(enabled, forKey: "herdr.preferPrivateTranscription")
+        userDefaults.set(enabled, forKey: "herdr.preferPrivateTranscription")
     }
 
     func setShowSessionTitles(_ enabled: Bool) {
         showSessionTitles = enabled
-        UserDefaults.standard.set(enabled, forKey: "herdr.herdPulse.showSessionTitles")
+        userDefaults.set(enabled, forKey: "herdr.herdPulse.showSessionTitles")
     }
 
     func transcribeVoiceNote(at fileURL: URL) async throws -> VoiceTranscription {
@@ -1653,14 +1653,14 @@ final class HerdrAppModel {
         } else {
             smartAlertsEnabled = false
         }
-        UserDefaults.standard.set(smartAlertsEnabled, forKey: "herdr.smartAlerts")
+        userDefaults.set(smartAlertsEnabled, forKey: "herdr.smartAlerts")
     }
 
     func prepareSmartAlerts() async {
         guard smartAlertsEnabled, hasCompletedSetup, !isDemoMode else { return }
         let granted = await NotificationManager.requestAuthorization()
         smartAlertsEnabled = granted
-        UserDefaults.standard.set(granted, forKey: "herdr.smartAlerts")
+        userDefaults.set(granted, forKey: "herdr.smartAlerts")
         if granted {
             NotificationManager.registerForRemoteNotifications()
         }
@@ -2593,8 +2593,8 @@ final class HerdrAppModel {
         machines = Self.loadMachines(defaults: userDefaults)
         isDemoMode = false
         hasCompletedSetup = true
-        UserDefaults.standard.set(false, forKey: "herdr.demoMode")
-        UserDefaults.standard.set(true, forKey: "herdr.completedSetup")
+        userDefaults.set(false, forKey: "herdr.demoMode")
+        userDefaults.set(true, forKey: "herdr.completedSetup")
         resetConnectionState()
     }
 

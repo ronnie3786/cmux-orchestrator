@@ -622,7 +622,15 @@ enum HerdrRenderHarness {
 @MainActor
 enum HerdrRenderFixtures {
     static func demoModel() -> HerdrAppModel {
-        HerdrAppModel(arguments: ["HerdrRenderTests", "-HerdrDemoMode", "-HerdrResetSidebarState"])
+        let suiteName = "HerdrRenderFixtures.demoModel"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("Could not create isolated render defaults")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        return HerdrAppModel(
+            arguments: ["HerdrRenderTests", "-HerdrDemoMode", "-HerdrResetSidebarState"],
+            userDefaults: defaults
+        )
     }
 
     /// Herd Pulse only publishes a content state while its defaults flag is on,

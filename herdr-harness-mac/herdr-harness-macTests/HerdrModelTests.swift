@@ -72,9 +72,14 @@ struct HerdrModelTests {
     @MainActor
     @Test("Sidebar navigation persists collapsed sections and opens workspaces")
     func sidebarNavigation() {
-        UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
-        UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedTabs")
-        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
+        let suiteName = "HerdrModelTests.sidebarNavigation.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            Issue.record("Could not create isolated defaults")
+            return
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: defaults)
 
         model.toggleSidebarSection("demo1|w1")
         #expect(model.collapsedSidebarWorkspaceIDs.contains("demo1|w1"))
@@ -143,7 +148,16 @@ struct HerdrModelTests {
     @MainActor
     @Test("Connection failures escalate only after the reconnect grace period")
     func connectionFailureGracePeriod() {
-        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"])
+        let suiteName = "HerdrModelTests.connectionFailureGracePeriod.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            Issue.record("Could not create isolated defaults")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: defaults)
         let onset = Date(timeIntervalSinceReferenceDate: 0)
 
         #expect(!model.noteConnectionFailure(machineID: "test-machine", now: onset))
