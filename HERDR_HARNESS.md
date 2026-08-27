@@ -334,14 +334,16 @@ the authenticated HTTP API instead of reading the SQLite store or invoking
 `~/Documents/Development/cmux-harness`; do not install from the older
 `~/Documents/Development/cmux-herdr-harness` checkout.
 
-Install one stable command by symlinking the versioned script from the
-canonical checkout into the user-owned bin directory:
+Install one stable command by copying the versioned script from the canonical
+checkout into the user-owned bin directory:
 
 ```bash
 test -x "$HOME/Documents/Development/cmux-harness/scripts/herdr_active_work_cli.py"
-ln -sfn \
+cli_tmp=$(mktemp "$HOME/.local/bin/.herdr-active-work.XXXXXX")
+install -m 0755 \
   "$HOME/Documents/Development/cmux-harness/scripts/herdr_active_work_cli.py" \
-  "$HOME/.local/bin/herdr-active-work"
+  "$cli_tmp"
+mv -f "$cli_tmp" "$HOME/.local/bin/herdr-active-work"
 
 command -v herdr-active-work
 herdr-active-work --help
@@ -349,10 +351,12 @@ herdr-active-work candidates | jq -e '.ok == true'
 ```
 
 On the managed Work Mac, `~/.local/bin` is already present in login,
-non-login, and agent shell paths. The symlink therefore follows future
-fast-forward deployments without copying an unversioned executable. The
-existing `/opt/homebrew/bin/herdr` is a separate Homebrew terminal-workspace
-tool. Do not replace it or install this client under the `herdr` name.
+non-login, and agent shell paths. Keep this as a real file, not a symlink into
+`~/Documents`: macOS privacy controls can deny non-interactive Python access to
+a symlink target there after the Mac locks. Refresh the copy after each CLI
+deployment. The existing `/opt/homebrew/bin/herdr` is a separate Homebrew
+terminal-workspace tool. Do not replace it or install this client under the
+`herdr` name.
 
 ### Management credential
 
