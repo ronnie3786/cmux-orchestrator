@@ -21,7 +21,6 @@ struct HerdrSidebarView: View {
     @State private var closingWorkspace: HerdrWorkspace?
     @State private var closingPane: HerdrPane?
     @State private var snapshotCache = SidebarSnapshotCache()
-    @State private var workInboxStore = WorkInboxStore()
 
     @MainActor
     private struct SidebarSnapshot {
@@ -124,12 +123,6 @@ struct HerdrSidebarView: View {
             header
 
             activeWorkCTA
-
-            SidebarWorkInboxView(
-                store: workInboxStore,
-                refreshID: model.connectionGeneration,
-                refresh: refreshWorkInbox
-            )
 
             if model.machines.count > 1 {
                 machinePicker
@@ -347,12 +340,6 @@ struct HerdrSidebarView: View {
         let setup = activeWorkStore.jiraCandidates.filter { $0.workItemID == nil }.count
         if setup > 0 { return "\(work) active · \(setup) to set up" }
         return "\(work) active · \(activeWorkStore.activeAgentCount) agents"
-    }
-
-    private func refreshWorkInbox() async {
-        await workInboxStore.refresh {
-            try await model.fetchWorkInbox()
-        }
     }
 
     private var machinePicker: some View {
