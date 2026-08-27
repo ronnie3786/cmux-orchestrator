@@ -89,6 +89,13 @@ Configuration:
 - `HERDR_HARNESS_PUSH_STORE_PATH`: optional persisted-device file override.
 - `HERDR_HARNESS_ALERT_STORE_PATH`: persisted alert journal. The launcher
   defaults to `~/.config/herdr-harness/alerts.json` with mode `0600`.
+- `HERDR_HARNESS_ACTIVE_WORK_STORE_PATH`: Herdr-owned SQLite source of truth
+  for Active Work. The launcher defaults to
+  `~/.config/herdr-harness/active-work.sqlite3`; WAL files and the database are
+  restricted to the current user.
+- `HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN`: optional least-privilege bearer
+  token accepted only by Active Work sync-target and ingestion routes. The
+  main API token remains valid for those routes as well.
 - `HERDR_HARNESS_TERMINAL_MAX_STREAMS`: concurrent terminal observer limit,
   default `16`.
 - `HERDR_HARNESS_TERMINAL_MAX_SECONDS`: renewal lifetime for each observer,
@@ -120,6 +127,18 @@ troubleshooting.
   owns attachment storage, retention, and dashboard-startup cleanup.
 - `GET /api/v1/jira/assigned` and `GET /api/v1/jira/issue`, delegated to the
   existing cmux Jira integration.
+- `GET /api/v1/active-work` returns the durable board and live Jira setup
+  candidates. Jira candidates are never imported by observation. A user must
+  explicitly call `POST /api/v1/active-work/jira/{key}/setup`.
+- `POST /api/v1/active-work/items`, `GET|PATCH
+  /api/v1/active-work/items/{id}`, and `POST
+  /api/v1/active-work/items/{id}/transitions` manage Feature, Task, and Idea
+  records with optimistic revisions and the versioned Buzz pipeline.
+- `GET /api/v1/active-work/sync-targets` and `POST
+  /api/v1/active-work/ingestions` support an external Buzz reconciler. Sync is
+  merge-only, idempotent, stale-safe, and cannot create an untracked Jira
+  item. Herdr stores identifiers, bounded summaries, and links, never Buzz or
+  Pi transcript bodies.
 - `POST /api/v1/voice/transcriptions` accepts bounded 16 kHz mono PCM16 WAV
   recordings. The bearer-authenticated Herdr server proxies them to cmux,
   which uses Parakeet and its existing faster-whisper fallback. The response
@@ -142,6 +161,53 @@ troubleshooting.
 Mutation results retain Herdr's native `result` object. The snapshot route
 returns the raw `SessionSnapshot`. Workspace records add only `tabs`, `panes`,
 `agents`, and `layouts`, each containing native Herdr records.
+
+### Active Work Buzz reconciliation
+
+Active Work is deliberately available when Buzz or Jira is offline. After a
+Jira candidate is set up from the Mac app, an external process can reconcile
+the matching `tickets/<KEY>/state.json`, Buzz channel roster, and discussion
+identifiers into Herdr:
+
+```bash
+HERDR_ACTIVE_WORK_TOKEN="$HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN" \
+  python3 scripts/herdr_active_work_sync.py --dry-run
+
+HERDR_ACTIVE_WORK_TOKEN="$HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN" \
+  python3 scripts/herdr_active_work_sync.py --ticket AGENTIC-575
+```
+
+For a launchd job, prefer an absolute path to a token file instead of placing
+the bearer token in the job environment:
+
+```bash
+chmod 600 /Users/ronnierocha/.config/herdr-harness/active-work-ingest-token
+HERDR_ACTIVE_WORK_TOKEN_FILE=/Users/ronnierocha/.config/herdr-harness/active-work-ingest-token \
+  python3 scripts/herdr_active_work_sync.py
+```
+
+`--token-file` is the CLI equivalent. The file must be a small, non-empty
+regular file owned by the current user, may not be a symlink, and may not have
+group or world permissions. Do not configure `HERDR_ACTIVE_WORK_TOKEN` or
+`HERDR_HARNESS_API_TOKEN` at the same time as a token file.
+
+Non-interactive jobs can load the Buzz identity the same way with
+`--buzz-private-key-file` or `BUZZ_PRIVATE_KEY_FILE`. Do not also set
+`BUZZ_PRIVATE_KEY`. The script validates the private file, then supplies the
+key only in the Buzz CLI child process environment. It is never added to the
+command arguments or the Herdr ingestion document.
+
+`scripts/com.ronnierocha.herdr-active-work-sync.plist` is the Work Mac launchd
+job. It runs once at login and every five minutes with the scoped token file,
+the private Buzz identity file, the Work Mac Buzz relay URL, the local Buzz
+CLI, and the canonical Buzz workflow checkout. Install it in
+`~/Library/LaunchAgents/`, validate it with `plutil -lint`, then use
+`launchctl bootstrap gui/$(id -u) ...` and `launchctl kickstart -k ...`.
+
+The script first reads `/api/v1/active-work/sync-targets` and skips every Jira
+directory that has not been explicitly set up. It stores Buzz channel, agent,
+Pi session, and thread identifiers plus bounded metadata. It does not copy
+message bodies, prompts, credentials, or transcripts.
 
 The pane stream route launches Herdr's terminal observer and relays its NDJSON
 terminal frames as authenticated SSE. `/output` remains the low-cost text or

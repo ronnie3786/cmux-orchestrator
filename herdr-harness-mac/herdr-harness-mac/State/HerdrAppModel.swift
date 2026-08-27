@@ -50,6 +50,7 @@ final class HerdrAppModel {
     var lastSyncedAt: Date?
     var fleetRevision = 0
     var refreshTick = 0
+    var activeWorkRefreshTick = 0
     var isRefreshing = false
     var isSending = false
     var connectionGeneration = 0 {
@@ -205,6 +206,14 @@ final class HerdrAppModel {
     var workingCount: Int { workspaces.flatMap(\.panes).count(where: { $0.agentStatus == .working }) }
     var paneCount: Int { workspaces.reduce(0) { $0 + $1.paneCount } }
     var canControl: Bool { isDemoMode || connectionState == .live }
+    var canControlPrimary: Bool {
+        isDemoMode || machines.first.map { canControl(machineID: $0.id) } == true
+    }
+    var primaryConnectionState: ConnectionState {
+        if isDemoMode { return .demo }
+        guard let machineID = machines.first?.id else { return .disconnected }
+        return connectionState(forMachine: machineID)
+    }
     var activityFeedAlerts: [HerdrAlert] {
         ActivityFeed.merged(current: alerts, history: activityHistoryAlerts)
     }
@@ -823,6 +832,79 @@ final class HerdrAppModel {
             throw APIError.noActiveConnection(machineID: machines.first?.name ?? "primary")
         }
         return try await client.fetchWorkInbox()
+    }
+
+    func fetchActiveWork() async throws -> ActiveWorkResponse {
+        if isDemoMode { return DemoData.activeWork }
+        guard let client = primaryClient else {
+            throw APIError.noActiveConnection(machineID: machines.first?.name ?? "primary")
+        }
+        return try await client.fetchActiveWork()
+    }
+
+    func setupActiveWorkJira(key: String) async throws -> ActiveWorkItem {
+        if isDemoMode {
+            guard let item = DemoData.activeWork.items.first else { throw APIError.invalidResponse }
+            return item
+        }
+        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
+        return try await client.setupActiveWorkJira(key: key).item
+    }
+
+    func createActiveWorkItem(
+        kind: String,
+        title: String,
+        summary: String
+    ) async throws -> ActiveWorkItem {
+        if isDemoMode {
+            guard let item = DemoData.activeWork.items.first else { throw APIError.invalidResponse }
+            return item
+        }
+        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
+        return try await client.createActiveWorkItem(
+            ActiveWorkCreateItemRequest(
+                kind: kind,
+                title: title,
+                summary: summary,
+                currentStageKey: nil
+            )
+        ).item
+    }
+
+    func transitionActiveWorkItem(
+        _ item: ActiveWorkItem,
+        to stage: ActiveWorkPipelineStage
+    ) async throws -> ActiveWorkItem {
+        if isDemoMode { return item }
+        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
+        let checkpoint = stage.checkpoint?.lowercased() ?? "none"
+        let isHumanCheckpoint = checkpoint.contains("human") || checkpoint.contains("owner")
+        let response = try await client.transitionActiveWorkItem(
+            id: item.id,
+            requestBody: ActiveWorkTransitionRequest(
+                toStageKey: stage.key,
+                expectedRevision: item.revision,
+                note: nil,
+                attention: isHumanCheckpoint ? "human" : "none",
+                checkpointState: isHumanCheckpoint ? "pending" : nil
+            )
+        )
+        return response.item
+    }
+
+    func setActiveWorkLifecycle(
+        _ item: ActiveWorkItem,
+        lifecycle: String
+    ) async throws -> ActiveWorkItem {
+        if isDemoMode { return item }
+        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
+        return try await client.patchActiveWorkItem(
+            id: item.id,
+            requestBody: ActiveWorkPatchItemRequest(
+                lifecycle: lifecycle,
+                expectedRevision: item.revision
+            )
+        ).item
     }
 
     func fetchJiraTicket(query: String) async throws -> JiraTicket {
@@ -2324,7 +2406,9 @@ final class HerdrAppModel {
                     if event.event == "stream.reset", streamResetIsBackendRestart(event) {
                         resetLastEventID(for: machine.id)
                     }
-                    if event.event == "snapshot.updated" || event.event == "alert.created" ||
+                    if event.event == "active_work.updated" {
+                        activeWorkRefreshTick &+= 1
+                    } else if event.event == "snapshot.updated" || event.event == "alert.created" ||
                         event.event == "alert.updated" || event.event == "alerts.read_state_changed" ||
                         event.event == "stars.changed" || event.event == "stream.reset" ||
                         Self.piCapabilityEvents.contains(event.event) {

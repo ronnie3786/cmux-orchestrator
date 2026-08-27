@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ronnierocha.herdr-active-work-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/ronnierocha/Documents/Development/cmux-harness/scripts/herdr_active_work_sync.py</string>
+        <string>--workflow-root</string>
+        <string>/Users/ronnierocha/Documents/Development/buzz-workflow</string>
+        <string>--base-url</string>
+        <string>http://127.0.0.1:9092</string>
+        <string>--buzz-cli</string>
+        <string>/Users/ronnierocha/.local/bin/buzz</string>
+        <string>--token-file</string>
+        <string>/Users/ronnierocha/.config/herdr-harness/active-work-ingest-token</string>
+        <string>--buzz-private-key-file</string>
+        <string>/Users/ronnierocha/.config/buzz/private-key</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ronnierocha/Documents/Development/cmux-harness</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/ronnierocha</string>
+        <key>PATH</key>
+        <string>/Users/ronnierocha/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>BUZZ_RELAY_URL</key>
+        <string>wss://ronniesitym4mbp.tail1db61d.ts.net</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ronnierocha/Library/Logs/herdr-active-work-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ronnierocha/Library/Logs/herdr-active-work-sync.error.log</string>
+</dict>
+</plist>

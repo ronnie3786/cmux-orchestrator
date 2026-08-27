@@ -338,6 +338,59 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/work-inbox")
     }
 
+    func fetchActiveWork() async throws -> ActiveWorkResponse {
+        try await request(path: "/api/v1/active-work")
+    }
+
+    func setupActiveWorkJira(key: String) async throws -> ActiveWorkItemEnvelope {
+        let safeKey = key.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        ) ?? key
+        return try await request(
+            path: "/api/v1/active-work/jira/\(safeKey)/setup",
+            method: "POST",
+            body: APIActionBody()
+        )
+    }
+
+    func createActiveWorkItem(
+        _ requestBody: ActiveWorkCreateItemRequest
+    ) async throws -> ActiveWorkItemEnvelope {
+        try await request(
+            path: "/api/v1/active-work/items",
+            method: "POST",
+            body: requestBody
+        )
+    }
+
+    func transitionActiveWorkItem(
+        id: String,
+        requestBody: ActiveWorkTransitionRequest
+    ) async throws -> ActiveWorkItemEnvelope {
+        let safeID = id.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        ) ?? id
+        return try await request(
+            path: "/api/v1/active-work/items/\(safeID)/transitions",
+            method: "POST",
+            body: requestBody
+        )
+    }
+
+    func patchActiveWorkItem(
+        id: String,
+        requestBody: ActiveWorkPatchItemRequest
+    ) async throws -> ActiveWorkItemEnvelope {
+        let safeID = id.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        ) ?? id
+        return try await request(
+            path: "/api/v1/active-work/items/\(safeID)",
+            method: "PATCH",
+            body: requestBody
+        )
+    }
+
     func fetchJiraTicket(query: String) async throws -> JiraTicketResponse {
         try await request(
             path: "/api/v1/jira/issue",
@@ -864,6 +917,7 @@ actor HerdrAPIClient {
             return 120
         }
         if path == "/api/v1/work-inbox" ||
+            path.hasPrefix("/api/v1/active-work") ||
             path.hasPrefix("/api/v1/jira/") ||
             (path.hasPrefix("/api/v1/panes/") && path.contains("/git")) ||
             (path.hasPrefix("/api/v1/workspaces/") &&

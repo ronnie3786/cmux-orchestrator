@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Mac shell. This is the iPad-regular `NavigationSplitView` branch of the
@@ -8,14 +9,18 @@ import SwiftUI
 struct WorkspaceNavigationView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
+    @Bindable var activeWorkStore: ActiveWorkStore
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             HerdrSidebarView(
                 model: model,
+                activeWorkStore: activeWorkStore,
                 openPane: openSession,
-                openWorkspace: { shell.showWorkspace(id: $0.id, model: model) }
+                openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
+                openActiveWork: shell.showActiveWork,
+                isActiveWorkSelected: shell.resolvedScope(for: model) == .activeWork
             )
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
                 .background(HerdrTheme.ink)
@@ -26,6 +31,19 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
+        .task(id: model.connectionGeneration) {
+            activeWorkStore.resetForConnectionChange()
+            await refreshActiveWork()
+        }
+        .task(id: model.activeWorkRefreshTick) {
+            guard activeWorkStore.hasLoaded else { return }
+            await refreshActiveWork()
+        }
+        .task(id: model.primaryConnectionState) {
+            guard model.primaryConnectionState == .live || model.primaryConnectionState == .demo,
+                  !activeWorkStore.hasLoaded || activeWorkStore.hasError else { return }
+            await refreshActiveWork()
+        }
     }
 
     @ViewBuilder
@@ -52,6 +70,22 @@ struct WorkspaceNavigationView: View {
                     detail: "Its tabs and panes will appear here."
                 )
             }
+        case .activeWork:
+            ActiveWorkContainerView(
+                store: activeWorkStore,
+                isControlEnabled: model.canControlPrimary,
+                refresh: refreshActiveWork,
+                createItem: createItem,
+                setupJira: setupJira,
+                transition: transition,
+                setLifecycle: setLifecycle,
+                openSession: openTrackedSession,
+                openURL: { NSWorkspace.shared.open($0) },
+                transcribeVoice: { try await model.transcribeVoiceNote(at: $0) },
+                askBoard: { question in
+                    shell.presentAgent(prompt: activeWorkStore.agentPrompt(question: question))
+                }
+            )
         case .attention:
             AttentionView(model: model) { pane, _ in
                 openSession(pane)
@@ -68,6 +102,50 @@ struct WorkspaceNavigationView: View {
     private func openSession(_ pane: HerdrPane) {
         shell.showSession()
         model.openPane(id: pane.id)
+    }
+
+    private func openTrackedSession(_ session: ActiveWorkPiSession) {
+        guard let paneID = session.paneID else { return }
+        let matches = model.workspaces
+            .flatMap(\.panes)
+            .filter { $0.paneID == paneID }
+        let pane = session.machineID.flatMap { machineID in
+            matches.first { $0.machineID == machineID }
+        } ?? (matches.count == 1 ? matches.first : nil)
+        guard let pane else {
+            model.toastMessage = "That Pi session is no longer available in the connected fleet"
+            return
+        }
+        openSession(pane)
+    }
+
+    private func refreshActiveWork() async {
+        await activeWorkStore.refresh {
+            try await model.fetchActiveWork()
+        }
+    }
+
+    private func setupJira(_ candidate: ActiveWorkJiraCandidate) async throws {
+        _ = try await model.setupActiveWorkJira(key: candidate.key)
+        await refreshActiveWork()
+    }
+
+    private func createItem(kind: String, title: String, summary: String) async throws {
+        _ = try await model.createActiveWorkItem(kind: kind, title: title, summary: summary)
+        await refreshActiveWork()
+    }
+
+    private func transition(
+        _ item: ActiveWorkItem,
+        _ target: ActiveWorkPipelineStage
+    ) async throws {
+        _ = try await model.transitionActiveWorkItem(item, to: target)
+        await refreshActiveWork()
+    }
+
+    private func setLifecycle(_ item: ActiveWorkItem, _ lifecycle: String) async throws {
+        _ = try await model.setActiveWorkLifecycle(item, lifecycle: lifecycle)
+        await refreshActiveWork()
     }
 
     @ToolbarContentBuilder

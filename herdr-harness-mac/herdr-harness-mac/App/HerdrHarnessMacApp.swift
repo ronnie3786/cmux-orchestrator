@@ -16,6 +16,7 @@ struct HerdrHarnessMacApp: App {
     @State private var model = HerdrAppModel()
     @State private var herdPulse = HerdPulseCoordinator()
     @State private var shell = HerdrShellState()
+    @State private var activeWorkStore = ActiveWorkStore()
     @State private var connectionDriver = HerdrConnectionDriver()
     @State private var fontScale = HerdrFontScaleStore()
     @State private var cleanupSettings = CleanupSettingsStore()
@@ -25,7 +26,12 @@ struct HerdrHarnessMacApp: App {
         // uniquely-identified window is the only kind `openWindow(id:)` can
         // bring back once it has been closed.
         Window("Herdr", id: HerdrWindowID.main) {
-            AppRootView(model: model, shell: shell, driver: connectionDriver)
+            AppRootView(
+                model: model,
+                shell: shell,
+                activeWorkStore: activeWorkStore,
+                driver: connectionDriver
+            )
                 .environment(herdPulse)
                 // Apple documents `dynamicTypeSize` as not affecting text size
                 // on macOS, so Herdr uses this custom scale environment instead.
@@ -115,6 +121,11 @@ struct HerdrMacCommands: Commands {
                 shell.detailScope = .activity
             }
             .keyboardShortcut("5", modifiers: .command)
+
+            Button("Active Work") {
+                shell.showActiveWork()
+            }
+            .keyboardShortcut("6", modifiers: .command)
 
             Divider()
 

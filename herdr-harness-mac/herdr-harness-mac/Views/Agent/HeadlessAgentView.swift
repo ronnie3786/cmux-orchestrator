@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HeadlessAgentView: View {
     @Bindable var model: HerdrAppModel
+    let initialPrompt: String?
     let openPane: (HerdrPane) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -10,6 +11,17 @@ struct HeadlessAgentView: View {
     @State private var selectedMachineID = ""
     @State private var promotionWorkspaceID = ""
     @FocusState private var isPromptFocused: Bool
+
+    init(
+        model: HerdrAppModel,
+        initialPrompt: String? = nil,
+        openPane: @escaping (HerdrPane) -> Void
+    ) {
+        self.model = model
+        self.initialPrompt = initialPrompt
+        self.openPane = openPane
+        _prompt = State(initialValue: initialPrompt ?? "")
+    }
 
     var body: some View {
         NavigationStack {

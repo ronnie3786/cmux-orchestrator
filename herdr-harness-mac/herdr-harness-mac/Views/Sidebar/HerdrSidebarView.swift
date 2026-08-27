@@ -2,11 +2,14 @@ import SwiftUI
 
 struct HerdrSidebarView: View {
     @Bindable var model: HerdrAppModel
+    @Bindable var activeWorkStore: ActiveWorkStore
     /// Routing is the shell's job — the sidebar states the intent, it does not
     /// infer it from a selection change (clicking the already-selected chat has
     /// to work too).
     let openPane: (HerdrPane) -> Void
     let openWorkspace: (HerdrWorkspace) -> Void
+    let openActiveWork: () -> Void
+    let isActiveWorkSelected: Bool
     @State private var query = ""
     @State private var isPresentingCreateWorkspace = false
     @State private var isPresentingMachines = false
@@ -119,6 +122,8 @@ struct HerdrSidebarView: View {
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 12) {
             header
+
+            activeWorkCTA
 
             SidebarWorkInboxView(
                 store: workInboxStore,
@@ -263,6 +268,85 @@ struct HerdrSidebarView: View {
             .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
             .help("Show chats from \(model.sidebarRecency.title.lowercased())")
         }
+    }
+
+    private var activeWorkCTA: some View {
+        Button(action: openActiveWork) {
+            HStack(spacing: 10) {
+                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                    .herdrFont(.headline, weight: .bold)
+                    .foregroundStyle(HerdrTheme.accent)
+                    .frame(width: 28, height: 28)
+                    .background(HerdrTheme.accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("active work")
+                        .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                        .foregroundStyle(HerdrTheme.text)
+                    Text(activeWorkSubtitle)
+                        .herdrFont(.caption2, monospaced: true)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                if activeWorkStore.attentionCount > 0 {
+                    Text("\(activeWorkStore.attentionCount)")
+                        .herdrFont(.caption2, monospaced: true, weight: .bold)
+                        .foregroundStyle(HerdrTheme.ink)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(HerdrTheme.alert, in: Capsule())
+                        .accessibilityLabel("\(activeWorkStore.attentionCount) need you")
+                } else {
+                    Image(systemName: "chevron.right")
+                        .herdrFont(.caption2, weight: .bold)
+                        .foregroundStyle(HerdrTheme.muted)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 48)
+            .background(isActiveWorkSelected ? HerdrTheme.elevated : HerdrTheme.graphite.opacity(0.42))
+            .overlay(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(isActiveWorkSelected ? HerdrTheme.accent : Color.clear)
+                    .frame(width: 2)
+                    .padding(.vertical, 7)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                    .strokeBorder(
+                        isActiveWorkSelected ? HerdrTheme.accent.opacity(0.48) : HerdrTheme.surface.opacity(0.72),
+                        lineWidth: 1
+                    )
+            }
+            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help("Show Active Work")
+        .accessibilityLabel(
+            "Active Work, \(activeWorkSubtitle)" +
+                (activeWorkStore.attentionCount > 0 ? ", \(activeWorkStore.attentionCount) need you" : "")
+        )
+        .accessibilityHint("Shows the Active Work board")
+        .accessibilityAddTraits(isActiveWorkSelected ? .isSelected : [])
+        .accessibilityIdentifier("sidebar-active-work")
+    }
+
+    private var activeWorkSubtitle: String {
+        guard activeWorkStore.hasLoaded else { return "loading board" }
+        let work = activeWorkStore.activeItemCount
+        if activeWorkStore.hasError {
+            return activeWorkStore.items.isEmpty ? "board unavailable" : "\(work) active · may be stale"
+        }
+        if !activeWorkStore.response.jiraCandidatesStatus.ok {
+            return "\(work) active · Jira stale"
+        }
+        let setup = activeWorkStore.jiraCandidates.filter { $0.workItemID == nil }.count
+        if setup > 0 { return "\(work) active · \(setup) to set up" }
+        return "\(work) active · \(activeWorkStore.activeAgentCount) agents"
     }
 
     private func refreshWorkInbox() async {

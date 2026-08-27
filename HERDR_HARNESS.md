@@ -332,6 +332,19 @@ is intentionally public and contains no session data.
 - `GET /api/v1/health`, `/network`, `/snapshot`, and `/workspaces`
 - `GET /api/v1/events` for replayable topology and lifecycle SSE
 - `GET /api/v1/work-inbox` for GitHub review requests and assigned non-Done Jira tickets
+- `GET /api/v1/active-work` for the durable Active Work board, shared by the
+  Board and Focus Route presentations, plus explicitly untracked Jira setup
+  candidates
+- `POST /api/v1/active-work/jira/{key}/setup` to create a board record for one
+  user-selected Jira item. Listing assigned work never creates records.
+- `POST /api/v1/active-work/items`, `GET|PATCH
+  /api/v1/active-work/items/{id}`, and `POST
+  /api/v1/active-work/items/{id}/transitions` for revisioned Feature, Task, and
+  Idea management
+- `GET /api/v1/active-work/sync-targets` and `POST
+  /api/v1/active-work/ingestions` for an idempotent external Buzz reconciler.
+  Configure `HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN` to give that process a
+  token that cannot control terminals or other Herdr resources.
 - `GET /api/v1/panes/{id}/output` for text or ANSI snapshots
 - `GET /api/v1/panes/{id}/stream` for live terminal-frame SSE
 - `GET /api/v1/panes/{id}/pi/snapshot` for authoritative Pi conversation state

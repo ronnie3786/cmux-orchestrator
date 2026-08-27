@@ -1,0 +1,1222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Herdr Active Work, interaction concepts</title>
+  <style>
+    :root {
+      --crust: #11111b;
+      --ink: #181825;
+      --graphite: #1e1e2e;
+      --elevated: #313244;
+      --surface: #45475a;
+      --muted: #6c7086;
+      --mist: #a6adc8;
+      --text: #cdd6f4;
+      --blue: #89b4fa;
+      --mauve: #cba6f7;
+      --signal: #94e2d5;
+      --green: #a6e3a1;
+      --amber: #f9e2af;
+      --peach: #fab387;
+      --coral: #f38ba8;
+      --display: "Avenir Next", "SF Pro Rounded", ui-rounded, system-ui, sans-serif;
+      --body: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", ui-monospace, monospace;
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: #0b0b12; }
+
+    body {
+      margin: 0;
+      min-width: 960px;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        linear-gradient(rgba(137, 180, 250, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(137, 180, 250, 0.025) 1px, transparent 1px),
+        #0b0b12;
+      background-size: 32px 32px;
+      font-family: var(--body);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; }
+
+    button {
+      color: inherit;
+    }
+
+    button:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 3px;
+    }
+
+    .gallery {
+      width: min(1600px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 22px 0 34px;
+    }
+
+    .gallery-head {
+      display: grid;
+      grid-template-columns: minmax(250px, .8fr) minmax(680px, 2.2fr);
+      gap: 26px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+
+    .gallery-title .eyebrow,
+    .concept-eyebrow,
+    .micro-label {
+      margin: 0 0 6px;
+      color: var(--signal);
+      font: 700 10px/1.2 var(--mono);
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .gallery-title h1 {
+      margin: 0;
+      font: 600 22px/1.1 var(--display);
+      letter-spacing: -.025em;
+    }
+
+    .gallery-title p {
+      max-width: 460px;
+      margin: 7px 0 0;
+      color: var(--mist);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .concept-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 7px;
+    }
+
+    .concept-tab {
+      position: relative;
+      min-height: 58px;
+      padding: 10px 12px;
+      border: 1px solid #292a3c;
+      border-radius: 11px;
+      color: var(--mist);
+      background: rgba(24, 24, 37, .72);
+      text-align: left;
+      cursor: pointer;
+      transition: border-color .18s ease, background .18s ease, transform .18s ease;
+    }
+
+    .concept-tab:hover { transform: translateY(-1px); border-color: var(--surface); }
+
+    .concept-tab.active {
+      border-color: color-mix(in srgb, var(--blue) 55%, transparent);
+      color: var(--text);
+      background: #1b1c2b;
+      box-shadow: inset 0 0 0 1px rgba(137, 180, 250, .08);
+    }
+
+    .concept-tab.active::before {
+      position: absolute;
+      top: -1px;
+      left: 14px;
+      right: 14px;
+      height: 2px;
+      border-radius: 0 0 2px 2px;
+      background: var(--blue);
+      content: "";
+    }
+
+    .concept-tab strong {
+      display: block;
+      margin-bottom: 3px;
+      font: 600 12px/1.2 var(--display);
+    }
+
+    .concept-tab span {
+      display: block;
+      color: var(--muted);
+      font: 500 9px/1.3 var(--mono);
+      letter-spacing: .02em;
+    }
+
+    .concept-tab .recommended {
+      position: absolute;
+      top: 7px;
+      right: 8px;
+      color: var(--signal);
+      font-size: 7px;
+      text-transform: uppercase;
+    }
+
+    .mac-window {
+      overflow: hidden;
+      height: min(850px, calc(100vh - 138px));
+      min-height: 680px;
+      border: 1px solid #34354a;
+      border-radius: 17px;
+      background: var(--ink);
+      box-shadow: 0 34px 90px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .015);
+    }
+
+    .titlebar {
+      height: 38px;
+      display: grid;
+      grid-template-columns: 180px 1fr 180px;
+      align-items: center;
+      padding: 0 13px;
+      border-bottom: 1px solid #27283a;
+      background: #171722;
+      user-select: none;
+    }
+
+    .traffic { display: flex; gap: 7px; }
+    .traffic i { width: 10px; height: 10px; border-radius: 50%; background: var(--surface); }
+    .traffic i:nth-child(1) { background: #ed6a5e; }
+    .traffic i:nth-child(2) { background: #f4bf4f; }
+    .traffic i:nth-child(3) { background: #61c554; }
+
+    .window-title {
+      color: var(--muted);
+      font: 600 10px var(--mono);
+      text-align: center;
+    }
+
+    .prototype-note {
+      color: var(--muted);
+      font: 500 9px var(--mono);
+      text-align: right;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 242px minmax(0, 1fr);
+      height: calc(100% - 38px);
+    }
+
+    .sidebar {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding: 14px 10px 16px;
+      border-right: 1px solid #292a3c;
+      background: var(--ink);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0 4px 15px;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 26px;
+      height: 26px;
+      border: 1px solid #4b4d64;
+      border-radius: 8px;
+      background: var(--graphite);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      position: absolute;
+      width: 5px;
+      height: 11px;
+      top: 7px;
+      border: 2px solid var(--blue);
+      border-top-width: 3px;
+      border-bottom: 0;
+      border-radius: 4px 4px 0 0;
+      content: "";
+    }
+
+    .brand-mark::before { left: 5px; transform: rotate(-8deg); }
+    .brand-mark::after { right: 5px; transform: rotate(8deg); border-color: var(--mauve); }
+
+    .brand strong {
+      font: 700 17px var(--display);
+      letter-spacing: -.035em;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font: 500 8px var(--mono);
+    }
+
+    .active-work-cta {
+      position: relative;
+      overflow: hidden;
+      width: 100%;
+      min-height: 70px;
+      margin-bottom: 14px;
+      padding: 11px 11px 10px 13px;
+      border: 1px solid #3d3e54;
+      border-radius: 12px;
+      background: #202031;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color .18s ease, background .18s ease, transform .18s ease;
+    }
+
+    .active-work-cta:hover {
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--signal) 54%, var(--surface));
+      background: #242538;
+    }
+
+    .active-work-cta.active {
+      border-color: rgba(148, 226, 213, .5);
+      box-shadow: inset 3px 0 0 var(--signal), 0 8px 26px rgba(0, 0, 0, .14);
+    }
+
+    .active-work-cta::after {
+      position: absolute;
+      inset: auto -18px -34px auto;
+      width: 94px;
+      height: 94px;
+      border: 1px solid rgba(148, 226, 213, .12);
+      border-radius: 50%;
+      content: "";
+    }
+
+    .cta-top, .cta-bottom { display: flex; align-items: center; justify-content: space-between; }
+
+    .cta-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font: 650 13px var(--display);
+    }
+
+    .live-seed {
+      position: relative;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0 4px rgba(148, 226, 213, .1);
+    }
+
+    .live-seed::after {
+      position: absolute;
+      inset: -5px;
+      border: 1px solid var(--signal);
+      border-radius: 50%;
+      content: "";
+      animation: beacon 2.4s ease-out infinite;
+    }
+
+    .cta-arrow { color: var(--mist); font-size: 14px; }
+
+    .activity-wave {
+      display: flex;
+      align-items: end;
+      gap: 2px;
+      height: 16px;
+      margin: 7px 0 4px;
+    }
+
+    .activity-wave i {
+      width: 3px;
+      height: var(--h);
+      border-radius: 3px;
+      background: var(--signal);
+      opacity: calc(.28 + var(--o));
+      animation: wave 1.9s ease-in-out infinite alternate;
+      animation-delay: var(--d);
+    }
+
+    .cta-bottom {
+      position: relative;
+      z-index: 1;
+      color: var(--mist);
+      font: 500 9px var(--mono);
+    }
+
+    .cta-bottom strong { color: var(--text); font-weight: 700; }
+
+    .nav-label {
+      margin: 0 8px 6px;
+      color: var(--muted);
+      font: 700 8px var(--mono);
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .side-link {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 8px;
+      color: var(--mist);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .side-link:hover, .side-link.active { color: var(--text); background: var(--graphite); }
+    .side-link svg { width: 14px; height: 14px; color: var(--muted); }
+    .side-link span { font-size: 11px; }
+    .side-link small { margin-left: auto; color: var(--muted); font: 500 8px var(--mono); }
+
+    .side-rule { height: 1px; margin: 12px 8px; background: #292a3c; }
+
+    .chat-list { min-height: 0; overflow: auto; scrollbar-width: none; }
+    .chat-group { margin: 6px 4px 10px; }
+    .chat-group-title { color: var(--muted); font: 600 9px var(--mono); }
+    .chat {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+      padding: 7px;
+      border-radius: 7px;
+      color: var(--mist);
+      font-size: 10px;
+    }
+    .chat-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+    .chat-dot.working { background: var(--amber); }
+    .chat-dot.blocked { background: var(--coral); }
+
+    .sidebar-tip {
+      margin-top: auto;
+      padding: 9px 10px;
+      border: 1px dashed #36374c;
+      border-radius: 8px;
+      color: var(--muted);
+      font: 500 8px/1.45 var(--mono);
+    }
+
+    .center {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: var(--crust);
+    }
+
+    .console-view,
+    .active-view,
+    .concept {
+      width: 100%;
+      height: 100%;
+    }
+
+    .console-view {
+      display: none;
+      padding: 22px;
+      background: #101018;
+    }
+
+    .console-view.show { display: block; }
+    .active-view.hidden { display: none; }
+
+    .terminal-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 15px;
+      color: var(--muted);
+      font: 500 9px var(--mono);
+    }
+
+    .terminal-card {
+      height: calc(100% - 32px);
+      padding: 20px;
+      border: 1px solid #292a3c;
+      border-radius: 12px;
+      color: #bbc0d4;
+      background: #15151f;
+      font: 500 11px/1.8 var(--mono);
+    }
+
+    .terminal-card b { color: var(--green); }
+    .terminal-card .cursor { display: inline-block; width: 7px; height: 14px; vertical-align: -2px; background: var(--mist); animation: blink 1s steps(2) infinite; }
+
+    .concept { display: none; }
+    .concept.active { display: flex; flex-direction: column; }
+
+    .concept-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 24px;
+      min-height: 92px;
+      padding: 17px 20px 15px;
+      border-bottom: 1px solid #292a3c;
+      background: var(--ink);
+    }
+
+    .concept-heading { min-width: 240px; }
+    .concept-eyebrow { margin-bottom: 4px; color: var(--mauve); }
+
+    .concept-heading h2 {
+      margin: 0;
+      font: 650 25px/1.05 var(--display);
+      letter-spacing: -.045em;
+    }
+
+    .concept-heading p {
+      margin: 5px 0 0;
+      color: var(--mist);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .header-signals {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-left: auto;
+      padding-top: 5px;
+    }
+
+    .signal-stat { min-width: 62px; }
+    .signal-stat strong { display: block; font: 650 19px var(--display); }
+    .signal-stat span { color: var(--muted); font: 500 8px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+
+    .scope-controls {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      margin-left: 5px;
+      padding: 3px;
+      border: 1px solid #313247;
+      border-radius: 9px;
+      background: var(--graphite);
+    }
+
+    .scope-button {
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 6px;
+      color: var(--muted);
+      background: transparent;
+      font: 600 8px var(--mono);
+      cursor: pointer;
+    }
+
+    .scope-button.active { color: var(--text); background: var(--elevated); }
+
+    .concept-body {
+      min-height: 0;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 7px;
+      border: 1px solid #3a3b50;
+      border-radius: 999px;
+      color: var(--mist);
+      background: rgba(30, 30, 46, .7);
+      font: 600 8px var(--mono);
+      white-space: nowrap;
+    }
+
+    .pill.signal { color: var(--signal); border-color: rgba(148, 226, 213, .24); }
+    .pill.amber { color: var(--amber); border-color: rgba(249, 226, 175, .2); }
+    .pill.coral { color: var(--coral); border-color: rgba(243, 139, 168, .22); }
+    .pill.blue { color: var(--blue); border-color: rgba(137, 180, 250, .22); }
+
+    .source-glyph {
+      display: inline-grid;
+      place-items: center;
+      width: 18px;
+      height: 18px;
+      border: 1px solid #3d3e52;
+      border-radius: 5px;
+      color: var(--mist);
+      font: 700 8px var(--mono);
+      flex: 0 0 auto;
+    }
+
+    .agent-orbit {
+      position: relative;
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border: 1px solid rgba(203, 166, 247, .34);
+      border-radius: 50%;
+      color: var(--mauve);
+      background: #262438;
+      font: 750 8px var(--mono);
+    }
+
+    .agent-orbit::after {
+      position: absolute;
+      top: -3px;
+      right: -2px;
+      width: 5px;
+      height: 5px;
+      border: 1px solid var(--graphite);
+      border-radius: 50%;
+      background: var(--signal);
+      content: "";
+      box-shadow: 0 0 8px var(--signal);
+    }
+
+    .agent-orbit.idle::after { background: var(--muted); box-shadow: none; }
+
+    .ghost-button,
+    .primary-button,
+    .icon-button {
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform .15s ease, filter .15s ease, background .15s ease;
+    }
+    .ghost-button:hover, .primary-button:hover, .icon-button:hover { transform: translateY(-1px); filter: brightness(1.08); }
+    .ghost-button { padding: 7px 10px; border: 1px solid #3c3d52; color: var(--mist); background: var(--graphite); font-size: 9px; }
+    .primary-button { padding: 8px 11px; border: 1px solid rgba(148, 226, 213, .35); color: #10211f; background: var(--signal); font: 700 9px var(--mono); }
+    .icon-button { width: 28px; height: 28px; border: 1px solid #3c3d52; color: var(--mist); background: var(--graphite); }
+
+    /* Concept A, Signal Loom */
+    .loom-layout { display: grid; grid-template-columns: minmax(470px, 1.4fr) minmax(300px, .8fr); height: 100%; }
+    .loom-list { min-height: 0; overflow: auto; padding: 12px; border-right: 1px solid #292a3c; }
+    .loom-section-label { display: flex; align-items: center; gap: 8px; margin: 5px 3px 9px; color: var(--muted); font: 650 8px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+    .loom-section-label::after { height: 1px; flex: 1; background: #292a3c; content: ""; }
+
+    .work-thread {
+      position: relative;
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+      margin-bottom: 6px;
+      padding: 10px 11px 10px 9px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      color: inherit;
+      background: rgba(30, 30, 46, .68);
+      text-align: left;
+      cursor: pointer;
+    }
+    .work-thread:hover { background: #222235; }
+    .work-thread.selected { border-color: rgba(137, 180, 250, .38); background: #24253a; }
+    .work-thread[hidden] { display: none; }
+
+    .trace {
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      border-radius: 2px;
+      background: var(--muted);
+    }
+    .trace.hot { background: var(--signal); box-shadow: 0 0 10px rgba(148, 226, 213, .44); }
+    .trace.needs { background: var(--coral); }
+    .trace.warm { background: var(--amber); }
+
+    .thread-copy { min-width: 0; }
+    .thread-title { overflow: hidden; color: var(--text); font: 600 11px/1.3 var(--body); text-overflow: ellipsis; white-space: nowrap; }
+    .thread-meta { display: flex; align-items: center; gap: 7px; margin-top: 5px; color: var(--muted); font: 500 8px var(--mono); }
+    .thread-activity { color: var(--signal); }
+    .thread-activity.needs { color: var(--coral); }
+    .thread-side { display: flex; align-items: center; gap: 8px; }
+    .freshness { color: var(--muted); font: 500 8px var(--mono); }
+
+    .loom-detail { min-width: 0; overflow: auto; padding: 17px; background: #15151f; }
+    .detail-top { display: flex; justify-content: space-between; gap: 12px; }
+    .detail-title { margin: 8px 0 8px; font: 650 19px/1.18 var(--display); letter-spacing: -.025em; }
+    .detail-summary { margin: 0; color: var(--mist); font-size: 10px; line-height: 1.55; }
+
+    .thinking-card {
+      margin-top: 15px;
+      padding: 12px;
+      border: 1px solid rgba(203, 166, 247, .18);
+      border-radius: 10px;
+      background: rgba(203, 166, 247, .055);
+    }
+    .thinking-head { display: flex; align-items: center; gap: 8px; color: var(--mauve); font: 650 9px var(--mono); }
+    .thinking-head .agent-orbit { margin-left: auto; }
+    .thinking-card p { margin: 9px 0 0; color: var(--mist); font-size: 9px; line-height: 1.55; }
+    .signal-stack { margin: 14px 0; }
+    .signal-line { display: grid; grid-template-columns: 7px 58px 1fr; gap: 8px; align-items: start; padding: 7px 0; border-bottom: 1px solid #262738; }
+    .signal-line i { width: 5px; height: 5px; margin-top: 3px; border-radius: 50%; background: var(--blue); }
+    .signal-line time { color: var(--muted); font: 500 8px var(--mono); }
+    .signal-line span { color: var(--mist); font-size: 9px; line-height: 1.4; }
+    .detail-actions { display: flex; gap: 7px; }
+
+    /* Concept B, Flight Deck */
+    .deck-body { display: grid; grid-template-rows: 50px minmax(0, 1fr); height: 100%; }
+    .agent-roster { display: flex; align-items: center; gap: 9px; padding: 8px 16px; border-bottom: 1px solid #292a3c; background: #15151f; }
+    .roster-copy { margin-right: auto; }
+    .roster-copy strong { display: block; font: 650 9px var(--mono); }
+    .roster-copy span { color: var(--muted); font-size: 8px; }
+    .agent-chip { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 5px; border: 1px solid #38394f; border-radius: 999px; color: var(--mist); font-size: 8px; }
+
+    .deck-columns { display: grid; grid-template-columns: repeat(4, minmax(185px, 1fr)); gap: 1px; min-height: 0; overflow-x: auto; background: #292a3c; }
+    .deck-column { min-width: 185px; overflow: auto; padding: 11px; background: var(--crust); }
+    .deck-column.drag-over { background: #171a25; box-shadow: inset 0 0 0 1px var(--blue); }
+    .column-head { display: flex; align-items: center; gap: 6px; margin: 2px 2px 10px; }
+    .column-head i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+    .column-head i.needs { background: var(--coral); }
+    .column-head i.moving { background: var(--signal); box-shadow: 0 0 8px rgba(148, 226, 213, .5); }
+    .column-head i.waiting { background: var(--amber); }
+    .column-head strong { font: 650 9px var(--mono); text-transform: uppercase; letter-spacing: .07em; }
+    .column-head span { margin-left: auto; color: var(--muted); font: 500 8px var(--mono); }
+
+    .mission-card {
+      margin-bottom: 8px;
+      padding: 11px;
+      border: 1px solid #34354a;
+      border-radius: 10px;
+      background: var(--graphite);
+      cursor: grab;
+      transition: opacity .15s ease, border-color .15s ease, transform .15s ease;
+    }
+    .mission-card:hover { transform: translateY(-1px); border-color: #4a4b65; }
+    .mission-card.dragging { opacity: .45; }
+    .mission-top { display: flex; align-items: center; gap: 6px; color: var(--muted); font: 600 8px var(--mono); }
+    .mission-top time { margin-left: auto; }
+    .mission-card h3 { margin: 8px 0 9px; font: 600 11px/1.35 var(--body); }
+    .mission-forecast { margin: 0 0 9px; padding-left: 8px; border-left: 2px solid var(--signal); color: var(--mist); font-size: 8px; line-height: 1.45; }
+    .mission-foot { display: flex; align-items: center; gap: 5px; }
+    .mission-foot .agent-orbit { margin-left: auto; }
+    .drop-note { margin: 16px 2px; color: var(--muted); font: 500 8px/1.5 var(--mono); text-align: center; }
+
+    /* Concept C, Narrative */
+    .narrative-layout { display: grid; grid-template-columns: minmax(330px, .82fr) minmax(430px, 1.18fr); height: 100%; }
+    .narrative-feed { min-height: 0; overflow: auto; padding: 15px; border-right: 1px solid #292a3c; }
+    .story-date { display: flex; align-items: center; gap: 8px; margin: 5px 2px 10px; color: var(--muted); font: 650 8px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+    .story-date::after { height: 1px; flex: 1; background: #292a3c; content: ""; }
+    .story-event { display: grid; grid-template-columns: 28px 1fr; gap: 8px; margin: 0 0 5px; padding: 9px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+    .story-event:hover, .story-event.active { border-color: #38394f; background: var(--graphite); }
+    .event-mark { position: relative; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; color: var(--blue); background: rgba(137, 180, 250, .1); font: 700 8px var(--mono); }
+    .event-mark.agent { color: var(--mauve); background: rgba(203, 166, 247, .1); }
+    .event-mark.human { color: var(--coral); background: rgba(243, 139, 168, .1); }
+    .story-event strong { display: block; margin-bottom: 3px; font-size: 10px; }
+    .story-event p { margin: 0; color: var(--mist); font-size: 8px; line-height: 1.45; }
+    .story-event time { display: block; margin-top: 5px; color: var(--muted); font: 500 7px var(--mono); }
+
+    .story-room { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; background: #15151f; }
+    .story-subject { padding: 16px 17px 12px; border-bottom: 1px solid #292a3c; }
+    .story-subject h3 { margin: 7px 0 5px; font: 650 17px var(--display); }
+    .story-subject p { margin: 0; color: var(--mist); font-size: 9px; line-height: 1.45; }
+    .story-canvas { position: relative; min-height: 0; overflow: hidden; padding: 18px; }
+    .context-card { position: absolute; max-width: 225px; padding: 11px; border: 1px solid #37384e; border-radius: 10px; background: var(--graphite); box-shadow: 0 15px 30px rgba(0,0,0,.2); }
+    .context-card:nth-child(1) { left: 8%; top: 10%; transform: rotate(-1.2deg); }
+    .context-card:nth-child(2) { right: 7%; top: 19%; transform: rotate(1.1deg); }
+    .context-card:nth-child(3) { left: 24%; bottom: 10%; transform: rotate(.4deg); }
+    .context-card .micro-label { margin-bottom: 7px; color: var(--muted); }
+    .context-card strong { display: block; font-size: 10px; line-height: 1.4; }
+    .context-card p { margin: 6px 0 0; color: var(--mist); font-size: 8px; line-height: 1.45; }
+    .canvas-thread { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .38; }
+    .canvas-thread path { fill: none; stroke: var(--mauve); stroke-width: 1; stroke-dasharray: 4 5; }
+
+    .agent-composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px 13px; border-top: 1px solid #292a3c; background: var(--ink); }
+    .agent-prompt { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #3a3b50; border-radius: 9px; color: var(--mist); background: var(--graphite); font-size: 9px; }
+    .agent-prompt .agent-orbit { width: 20px; height: 20px; }
+    .draft-result { display: none; position: absolute; right: 18px; bottom: 76px; width: min(360px, 46%); padding: 12px; border: 1px solid rgba(148, 226, 213, .3); border-radius: 10px; background: #202b31; color: var(--text); font-size: 9px; line-height: 1.5; box-shadow: 0 16px 30px rgba(0,0,0,.35); }
+    .draft-result.show { display: block; animation: rise .22s ease-out; }
+
+    /* Concept D, Constellation */
+    .constellation-body { position: relative; height: 100%; overflow: hidden; background: radial-gradient(circle at 50% 48%, #1b2130 0, var(--crust) 39%, #0f0f18 100%); }
+    .constellation-grid { position: absolute; inset: 0; opacity: .15; background-image: radial-gradient(circle, var(--mist) .6px, transparent .7px); background-size: 28px 28px; }
+    .orbit-ring { position: absolute; left: 50%; top: 49%; border: 1px solid rgba(137, 180, 250, .12); border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+    .orbit-ring.r1 { width: 230px; height: 230px; }
+    .orbit-ring.r2 { width: 450px; height: 450px; border-style: dashed; }
+    .orbit-ring.r3 { width: 690px; height: 690px; border-color: rgba(203, 166, 247, .08); }
+    .constellation-body.scanning .orbit-ring.r2 { animation: spin 20s linear infinite; }
+    .constellation-body.scanning::after { position: absolute; left: 50%; top: 49%; width: 335px; height: 335px; border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 81%, rgba(148,226,213,.14) 92%, transparent 100%); content: ""; transform: translate(-50%,-50%); animation: spin 4s linear infinite; pointer-events: none; }
+
+    .you-node { position: absolute; z-index: 2; left: 50%; top: 49%; display: grid; place-items: center; width: 78px; height: 78px; border: 1px solid rgba(148,226,213,.38); border-radius: 50%; color: var(--signal); background: #19272a; font: 700 10px var(--mono); transform: translate(-50%, -50%); box-shadow: 0 0 40px rgba(148,226,213,.09); }
+    .you-node span { display: block; color: var(--muted); font-size: 7px; font-weight: 500; }
+
+    .work-node { position: absolute; z-index: 3; width: 120px; padding: 8px 9px; border: 1px solid #3c3d52; border-radius: 10px; color: var(--text); background: rgba(30,30,46,.94); text-align: left; cursor: pointer; box-shadow: 0 8px 18px rgba(0,0,0,.24); transition: transform .18s ease, border-color .18s ease; }
+    .work-node:hover { transform: scale(1.025); border-color: var(--blue); }
+    .work-node.hot { border-color: rgba(148,226,213,.35); }
+    .work-node.needs { border-color: rgba(243,139,168,.42); }
+    .work-node strong { display: block; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .work-node small { display: block; margin-top: 4px; color: var(--muted); font: 500 7px var(--mono); }
+    .node-pulse { position: absolute; right: 7px; top: 7px; width: 5px; height: 5px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 7px var(--signal); }
+    .work-node.needs .node-pulse { background: var(--coral); box-shadow: 0 0 7px var(--coral); }
+    .node-a { left: 11%; top: 15%; }
+    .node-b { right: 10%; top: 12%; }
+    .node-c { right: 7%; top: 55%; }
+    .node-d { left: 13%; bottom: 11%; }
+    .node-e { left: 40%; bottom: 5%; }
+
+    .constellation-toolbar { position: absolute; z-index: 5; top: 14px; left: 15px; display: flex; gap: 6px; }
+    .legend { position: absolute; z-index: 4; left: 16px; bottom: 15px; display: flex; gap: 12px; color: var(--muted); font: 500 8px var(--mono); }
+    .legend span { display: flex; align-items: center; gap: 5px; }
+    .legend i { width: 5px; height: 5px; border-radius: 50%; background: var(--signal); }
+    .legend span:nth-child(2) i { background: var(--coral); }
+    .legend span:nth-child(3) i { background: var(--muted); }
+
+    .node-drawer { position: absolute; z-index: 7; top: 12px; right: 12px; bottom: 12px; width: 290px; padding: 15px; border: 1px solid #3d3e54; border-radius: 12px; background: rgba(24,24,37,.96); box-shadow: -16px 0 40px rgba(0,0,0,.28); transform: translateX(calc(100% + 20px)); transition: transform .22s ease; }
+    .node-drawer.show { transform: translateX(0); }
+    .drawer-close { float: right; }
+    .node-drawer h3 { clear: both; margin: 22px 0 7px; font: 650 18px var(--display); }
+    .node-drawer p { color: var(--mist); font-size: 9px; line-height: 1.5; }
+    .agent-plan { margin: 14px 0; padding: 11px; border: 1px solid rgba(203,166,247,.2); border-radius: 9px; background: rgba(203,166,247,.06); }
+    .agent-plan strong { color: var(--mauve); font: 650 9px var(--mono); }
+    .agent-plan ol { margin: 8px 0 0 16px; padding: 0; color: var(--mist); font-size: 8px; line-height: 1.7; }
+
+    .why-strip {
+      position: absolute;
+      z-index: 15;
+      right: 13px;
+      bottom: 13px;
+      width: min(390px, 45%);
+      padding: 12px 13px;
+      border: 1px solid #3c3d52;
+      border-radius: 11px;
+      background: rgba(24, 24, 37, .97);
+      box-shadow: 0 14px 30px rgba(0,0,0,.3);
+      transform: translateY(calc(100% + 25px));
+      transition: transform .22s ease;
+    }
+    .why-strip.show { transform: translateY(0); }
+    .why-strip strong { font: 650 10px var(--mono); color: var(--signal); }
+    .why-strip p { margin: 6px 0 0; color: var(--mist); font-size: 9px; line-height: 1.5; }
+
+    .why-button { position: absolute; z-index: 16; right: 14px; bottom: 14px; }
+    .why-strip.show + .why-button { bottom: 105px; }
+
+    .toast {
+      position: fixed;
+      z-index: 100;
+      left: 50%;
+      bottom: 28px;
+      max-width: 460px;
+      padding: 9px 13px;
+      border: 1px solid rgba(148,226,213,.32);
+      border-radius: 9px;
+      color: var(--text);
+      background: #203033;
+      box-shadow: 0 16px 40px rgba(0,0,0,.4);
+      font: 600 9px var(--mono);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 12px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    @keyframes beacon { 0% { opacity: .6; transform: scale(.5); } 75%, 100% { opacity: 0; transform: scale(1.7); } }
+    @keyframes wave { to { height: calc(var(--h) * .45); opacity: .3; } }
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+
+    @media (max-width: 1160px) {
+      .gallery { width: calc(100vw - 20px); }
+      .gallery-head { grid-template-columns: 1fr; gap: 12px; }
+      .gallery-title p { display: none; }
+      .mac-window { height: calc(100vh - 154px); }
+      .app-shell { grid-template-columns: 220px minmax(0, 1fr); }
+      .concept-header { gap: 12px; }
+      .concept-heading p { display: none; }
+      .loom-layout { grid-template-columns: 1.2fr .8fr; }
+      .header-signals { gap: 10px; }
+      .signal-stat:nth-child(3) { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="gallery">
+    <header class="gallery-head">
+      <div class="gallery-title">
+        <p class="eyebrow">Herdr product study · Active Work</p>
+        <h1>Four shapes for an agent-native work surface</h1>
+        <p>Every direction treats pull requests, tickets, and ideas as one living work graph. Source systems become provenance, not navigation.</p>
+      </div>
+      <nav class="concept-tabs" aria-label="Choose a layout concept">
+        <button class="concept-tab active" data-concept-target="loom">
+          <strong>Signal Loom</strong><span>Momentum-ranked threads</span><em class="recommended">recommended</em>
+        </button>
+        <button class="concept-tab" data-concept-target="deck">
+          <strong>Flight Deck</strong><span>Spatial agent stages</span>
+        </button>
+        <button class="concept-tab" data-concept-target="narrative">
+          <strong>Living Brief</strong><span>Events become context</span>
+        </button>
+        <button class="concept-tab" data-concept-target="constellation">
+          <strong>Constellation</strong><span>Ambient work radar</span>
+        </button>
+      </nav>
+    </header>
+
+    <section class="mac-window" aria-label="Interactive Herdr Mac prototype">
+      <div class="titlebar">
+        <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="window-title">Herdr · Work Mac</div>
+        <div class="prototype-note">interactive concept</div>
+      </div>
+
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true"></div>
+            <div><strong>herdr</strong><span>connected · work mac</span></div>
+          </div>
+
+          <button class="active-work-cta active" id="active-work-cta" aria-pressed="true">
+            <div class="cta-top">
+              <span class="cta-title"><i class="live-seed"></i> Active Work</span>
+              <span class="cta-arrow">›</span>
+            </div>
+            <span class="activity-wave" aria-hidden="true">
+              <i style="--h:5px;--o:.1;--d:-.2s"></i><i style="--h:11px;--o:.5;--d:-.6s"></i><i style="--h:7px;--o:.2;--d:-.9s"></i><i style="--h:15px;--o:.7;--d:-1.1s"></i><i style="--h:9px;--o:.3;--d:-.4s"></i><i style="--h:12px;--o:.6;--d:-1.4s"></i><i style="--h:6px;--o:.2;--d:-.8s"></i><i style="--h:10px;--o:.5;--d:-1.6s"></i><i style="--h:4px;--o:.1;--d:-.1s"></i><i style="--h:13px;--o:.6;--d:-1.2s"></i><i style="--h:8px;--o:.3;--d:-.5s"></i><i style="--h:6px;--o:.2;--d:-1.3s"></i>
+            </span>
+            <span class="cta-bottom"><span><strong>8</strong> moving</span><span><strong>2</strong> need you</span><span><strong>3</strong> agents</span></span>
+          </button>
+
+          <p class="nav-label">Spaces</p>
+          <button class="side-link" id="console-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7l4 5-4 5M11 17h7"/></svg>
+            <span>Console</span><small>⌘2</small>
+          </button>
+          <button class="side-link" data-demo-action="Attention stays a focused exception queue.">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4a6 6 0 016 6v3l2 3H4l2-3v-3a6 6 0 016-6zM10 19h4"/></svg>
+            <span>Attention</span><small>2</small>
+          </button>
+          <button class="side-link" data-demo-action="The fleet overview remains one click away.">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>
+            <span>Fleet</span><small>14</small>
+          </button>
+
+          <div class="side-rule"></div>
+          <p class="nav-label">Chats</p>
+          <div class="chat-list">
+            <div class="chat-group">
+              <div class="chat-group-title">cmux-orchestrator</div>
+              <div class="chat"><i class="chat-dot working"></i><span>active work design</span></div>
+              <div class="chat"><i class="chat-dot"></i><span>response audio</span></div>
+            </div>
+            <div class="chat-group">
+              <div class="chat-group-title">ios</div>
+              <div class="chat"><i class="chat-dot blocked"></i><span>auth refresh failure</span></div>
+              <div class="chat"><i class="chat-dot working"></i><span>testflight notes</span></div>
+            </div>
+          </div>
+          <div class="sidebar-tip">Try it: open Console, then click Active Work to replace the center pane.</div>
+        </aside>
+
+        <main class="center">
+          <section class="console-view" id="console-view" aria-label="Console preview">
+            <div class="terminal-bar"><span>cmux-orchestrator</span><span>›</span><span>active-work-design</span></div>
+            <div class="terminal-card"><b>ronnie@rocketbot</b> cmux-orchestrator % git status --short<br><br><span style="color:var(--blue)">On branch main</span><br>Your branch is up to date with 'origin/main'.<br><br><span class="cursor"></span></div>
+          </section>
+
+          <div class="active-view" id="active-view">
+            <section class="concept active" data-concept="loom">
+              <header class="concept-header">
+                <div class="concept-heading">
+                  <p class="concept-eyebrow">Signal Loom · recommended</p>
+                  <h2>Active Work</h2>
+                  <p>One ranked stream, ordered by momentum and the next useful move.</p>
+                </div>
+                <div class="header-signals">
+                  <div class="signal-stat"><strong>8</strong><span>moving</span></div>
+                  <div class="signal-stat"><strong style="color:var(--coral)">2</strong><span>need you</span></div>
+                  <div class="signal-stat"><strong style="color:var(--signal)">3</strong><span>agents awake</span></div>
+                  <div class="scope-controls" aria-label="Filter work">
+                    <button class="scope-button active" data-filter="all">All</button>
+                    <button class="scope-button" data-filter="needs">Needs me</button>
+                    <button class="scope-button" data-filter="agent">Agents active</button>
+                  </div>
+                </div>
+              </header>
+              <div class="concept-body loom-layout">
+                <div class="loom-list">
+                  <div class="loom-section-label">Now, high signal</div>
+                  <button class="work-thread selected" data-work="auth" data-state="needs">
+                    <i class="trace needs"></i><span class="source-glyph">PR</span>
+                    <span class="thread-copy"><span class="thread-title">Handle token refresh without losing the draft</span><span class="thread-meta"><span>#11856</span><span>mobile-platform</span><span class="thread-activity needs">your decision</span></span></span>
+                    <span class="thread-side"><span class="freshness">4m</span><span class="agent-orbit">B1</span></span>
+                  </button>
+                  <button class="work-thread" data-work="crash" data-state="agent">
+                    <i class="trace hot"></i><span class="source-glyph">T</span>
+                    <span class="thread-copy"><span class="thread-title">Intermittent launch crash after session restore</span><span class="thread-meta"><span>IOS-901</span><span>in code review</span><span class="thread-activity">Buzz verifying fix</span></span></span>
+                    <span class="thread-side"><span class="freshness">11m</span><span class="agent-orbit">B2</span></span>
+                  </button>
+                  <button class="work-thread" data-work="sidebar" data-state="agent">
+                    <i class="trace hot"></i><span class="source-glyph">PR</span>
+                    <span class="thread-copy"><span class="thread-title">Unify attention state in the Mac sidebar</span><span class="thread-meta"><span>#520</span><span>herdr</span><span class="thread-activity">Buzz reading comments</span></span></span>
+                    <span class="thread-side"><span class="freshness">18m</span><span class="agent-orbit">B3</span></span>
+                  </button>
+                  <div class="loom-section-label">Building momentum</div>
+                  <button class="work-thread" data-work="voice" data-state="quiet">
+                    <i class="trace warm"></i><span class="source-glyph">T</span>
+                    <span class="thread-copy"><span class="thread-title">Voice response controls for long agent answers</span><span class="thread-meta"><span>MOB-1842</span><span>in progress</span><span>two commits today</span></span></span>
+                    <span class="thread-side"><span class="freshness">42m</span><span class="agent-orbit idle">+B</span></span>
+                  </button>
+                  <button class="work-thread" data-work="idea" data-state="quiet">
+                    <i class="trace"></i><span class="source-glyph">I</span>
+                    <span class="thread-copy"><span class="thread-title">Let agents remember project-specific review heuristics</span><span class="thread-meta"><span>idea</span><span>captured yesterday</span><span>3 related signals</span></span></span>
+                    <span class="thread-side"><span class="freshness">1d</span><span class="agent-orbit idle">+B</span></span>
+                  </button>
+                </div>
+                <aside class="loom-detail">
+                  <div class="detail-top"><div><span class="pill coral">decision needed</span></div><span class="source-glyph">PR</span></div>
+                  <h3 class="detail-title" id="loom-detail-title">Handle token refresh without losing the draft</h3>
+                  <p class="detail-summary" id="loom-detail-summary">A review request changed after the latest push. The implementation now preserves the composer state, but the retry boundary still needs your call.</p>
+                  <div class="thinking-card">
+                    <div class="thinking-head"><span>BUZZ READINESS</span><span class="pill signal" id="readiness-pill">context 82%</span><span class="agent-orbit">B1</span></div>
+                    <p id="thinking-copy">I have the diff, ticket history, prior review comments, and the failing test. One product decision is missing before I can propose the final review.</p>
+                  </div>
+                  <div class="signal-stack" id="signal-stack">
+                    <div class="signal-line"><i></i><time>4m ago</time><span>Author pushed a retry-state fix.</span></div>
+                    <div class="signal-line"><i style="background:var(--coral)"></i><time>18m ago</time><span>CI surfaced one cancellation edge case.</span></div>
+                    <div class="signal-line"><i style="background:var(--mauve)"></i><time>31m ago</time><span>Buzz connected the ticket acceptance criteria.</span></div>
+                  </div>
+                  <div class="detail-actions"><button class="primary-button" id="prime-buzz">Prime Buzz</button><button class="ghost-button" data-demo-action="Opened the source artifact in context.">Open source</button></div>
+                </aside>
+              </div>
+            </section>
+
+            <section class="concept" data-concept="deck">
+              <header class="concept-header">
+                <div class="concept-heading"><p class="concept-eyebrow">Flight Deck</p><h2>Work moves through stages</h2><p>Agent activity is spatial. Drag a card to change its operating posture.</p></div>
+                <div class="header-signals"><div class="signal-stat"><strong>3</strong><span>agents</span></div><div class="signal-stat"><strong>5</strong><span>missions</span></div><div class="signal-stat"><strong style="color:var(--amber)">1</strong><span>waiting</span></div></div>
+              </header>
+              <div class="concept-body deck-body">
+                <div class="agent-roster"><div class="roster-copy"><strong>Buzz roster</strong><span>Agents form around work, not source systems.</span></div><span class="agent-chip"><span class="agent-orbit">B1</span>review scout</span><span class="agent-chip"><span class="agent-orbit">B2</span>test runner</span><span class="agent-chip"><span class="agent-orbit">B3</span>context builder</span></div>
+                <div class="deck-columns">
+                  <section class="deck-column" data-stage="needs"><div class="column-head"><i class="needs"></i><strong>Needs you</strong><span class="column-count">1</span></div>
+                    <article class="mission-card" draggable="true"><div class="mission-top"><span class="source-glyph">PR</span><span>#11856</span><time>4m</time></div><h3>Choose the retry boundary for auth refresh</h3><p class="mission-forecast">One decision unlocks a complete review.</p><div class="mission-foot"><span class="pill coral">decision</span><span class="agent-orbit">B1</span></div></article>
+                  </section>
+                  <section class="deck-column" data-stage="moving"><div class="column-head"><i class="moving"></i><strong>Agents moving</strong><span class="column-count">2</span></div>
+                    <article class="mission-card" draggable="true"><div class="mission-top"><span class="source-glyph">T</span><span>IOS-901</span><time>11m</time></div><h3>Verify session-restore crash fix</h3><p class="mission-forecast">Buzz is reproducing the cold-launch path.</p><div class="mission-foot"><span class="pill signal">testing 3/5</span><span class="agent-orbit">B2</span></div></article>
+                    <article class="mission-card" draggable="true"><div class="mission-top"><span class="source-glyph">PR</span><span>#520</span><time>18m</time></div><h3>Resolve sidebar attention comments</h3><p class="mission-forecast">Two comments map to the same state bug.</p><div class="mission-foot"><span class="pill signal">synthesizing</span><span class="agent-orbit">B3</span></div></article>
+                  </section>
+                  <section class="deck-column" data-stage="waiting"><div class="column-head"><i class="waiting"></i><strong>Waiting outside</strong><span class="column-count">1</span></div>
+                    <article class="mission-card" draggable="true"><div class="mission-top"><span class="source-glyph">T</span><span>MOB-1842</span><time>42m</time></div><h3>Ship response audio controls</h3><p class="mission-forecast">Waiting for QA device coverage.</p><div class="mission-foot"><span class="pill amber">QA handoff</span><span class="agent-orbit idle">B2</span></div></article>
+                  </section>
+                  <section class="deck-column" data-stage="forming"><div class="column-head"><i></i><strong>Forming</strong><span class="column-count">1</span></div>
+                    <article class="mission-card" draggable="true"><div class="mission-top"><span class="source-glyph">I</span><span>idea</span><time>1d</time></div><h3>Project-specific review memory</h3><p class="mission-forecast">Three signals, enough to create a brief.</p><div class="mission-foot"><button class="ghost-button" data-demo-action="Buzz is now forming a brief from three related signals.">Form brief</button><span class="agent-orbit idle">+B</span></div></article>
+                    <p class="drop-note">Drag work here when it is still gathering shape.</p>
+                  </section>
+                </div>
+              </div>
+            </section>
+
+            <section class="concept" data-concept="narrative">
+              <header class="concept-header">
+                <div class="concept-heading"><p class="concept-eyebrow">Living Brief</p><h2>Follow the story, not the status</h2><p>Every event becomes context that an agent can explain, connect, and act on.</p></div>
+                <div class="header-signals"><div class="signal-stat"><strong>14</strong><span>signals today</span></div><div class="signal-stat"><strong style="color:var(--mauve)">6</strong><span>connections</span></div><div class="signal-stat"><strong>82%</strong><span>context ready</span></div></div>
+              </header>
+              <div class="concept-body narrative-layout">
+                <div class="narrative-feed">
+                  <div class="story-date">This morning</div>
+                  <button class="story-event active" data-story-title="Auth refresh now preserves draft state" data-story-copy="Buzz connected the latest push to the original report and the failing cancellation test."><span class="event-mark">PR</span><span><strong>The shape of the auth fix changed</strong><p>A new push preserves the draft through retry.</p><time>7:42 · 4 minutes ago</time></span></button>
+                  <button class="story-event" data-story-title="One product decision blocks the review" data-story-copy="The code can retry before or after the composer snapshot. Both are safe, but they produce different user expectations."><span class="event-mark human">YOU</span><span><strong>A decision is waiting on you</strong><p>Choose when retry state becomes visible.</p><time>7:29 · 17 minutes ago</time></span></button>
+                  <button class="story-event" data-story-title="Session restore fix is holding" data-story-copy="Buzz completed three of five reproduction paths. Cold launch and interrupted restore remain."><span class="event-mark agent">B2</span><span><strong>Buzz ruled out two crash paths</strong><p>The failure is isolated to interrupted restore.</p><time>7:18 · 28 minutes ago</time></span></button>
+                  <div class="story-date">Yesterday</div>
+                  <button class="story-event" data-story-title="Review heuristics keep repeating" data-story-copy="Across four reviews, the same project-specific expectations appeared. This is a strong candidate for durable agent memory."><span class="event-mark">I</span><span><strong>A new idea has enough evidence</strong><p>Four reviews repeat the same heuristics.</p><time>Yesterday · 4:56 PM</time></span></button>
+                </div>
+                <div class="story-room">
+                  <div class="story-subject"><span class="pill blue">current thread</span><h3 id="story-title">Auth refresh now preserves draft state</h3><p id="story-copy">Buzz connected the latest push to the original report and the failing cancellation test.</p></div>
+                  <div class="story-canvas">
+                    <svg class="canvas-thread" viewBox="0 0 600 380" preserveAspectRatio="none"><path d="M150,86 C240,70 275,150 405,135 S400,285 280,304"/></svg>
+                    <div class="context-card"><p class="micro-label">Acceptance intent</p><strong>A retry never discards what the user typed.</strong><p>Source: assigned work item, updated yesterday.</p></div>
+                    <div class="context-card"><p class="micro-label">Latest change</p><strong>Composer state now survives the refresh branch.</strong><p>Source: commit in review, 4 minutes ago.</p></div>
+                    <div class="context-card"><p class="micro-label">Agent inference</p><strong>The remaining failure is timing, not persistence.</strong><p>Confidence 87%, based on test and diff alignment.</p></div>
+                    <div class="draft-result" id="draft-result"><strong style="color:var(--signal)">Buzz drafted the move</strong><br>Ask the author to snapshot before the retry task begins, then add one cancellation test around the transition. This resolves the review without widening scope.</div>
+                  </div>
+                  <div class="agent-composer"><div class="agent-prompt"><span class="agent-orbit">B1</span><span>What is the smallest useful next move?</span></div><button class="primary-button" id="draft-move">Draft the move</button></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="concept" data-concept="constellation">
+              <header class="concept-header">
+                <div class="concept-heading"><p class="concept-eyebrow">Constellation</p><h2>Your work, as an ambient field</h2><p>Distance encodes urgency. Motion encodes agent activity. Click any node.</p></div>
+                <div class="header-signals"><div class="signal-stat"><strong>2</strong><span>near orbit</span></div><div class="signal-stat"><strong style="color:var(--signal)">3</strong><span>agent-touched</span></div><div class="signal-stat"><strong>1</strong><span>idea forming</span></div></div>
+              </header>
+              <div class="concept-body constellation-body scanning" id="constellation-field">
+                <div class="constellation-grid"></div><div class="orbit-ring r1"></div><div class="orbit-ring r2"></div><div class="orbit-ring r3"></div>
+                <div class="constellation-toolbar"><button class="ghost-button" id="scan-toggle">Pause scan</button><button class="ghost-button" data-demo-action="Constellation centered on work needing your judgment.">Center on me</button></div>
+                <div class="you-node">YOU<span>attention core</span></div>
+                <button class="work-node needs node-a" data-node-title="Auth retry boundary" data-node-copy="One decision is waiting. Buzz has 82% of the context and a proposed test plan."><i class="node-pulse"></i><strong>Auth retry boundary</strong><small>decision · 4m</small></button>
+                <button class="work-node hot node-b" data-node-title="Session restore crash" data-node-copy="Buzz is executing three remaining reproduction paths. No action needed yet."><i class="node-pulse"></i><strong>Session restore crash</strong><small>agent testing · 11m</small></button>
+                <button class="work-node hot node-c" data-node-title="Sidebar attention state" data-node-copy="Two review comments converge on a single state bug. Buzz is preparing a patch outline."><i class="node-pulse"></i><strong>Sidebar attention</strong><small>synthesizing · 18m</small></button>
+                <button class="work-node node-d" data-node-title="Response audio controls" data-node-copy="Implementation is ready and waiting for QA coverage on two device classes."><i class="node-pulse" style="background:var(--amber);box-shadow:0 0 7px var(--amber)"></i><strong>Response audio</strong><small>outside wait · 42m</small></button>
+                <button class="work-node node-e" data-node-title="Review memory idea" data-node-copy="Four reviews repeat the same project heuristics. The idea is ready to become a brief."><i class="node-pulse" style="background:var(--muted);box-shadow:none"></i><strong>Review memory</strong><small>idea forming · 1d</small></button>
+                <div class="legend"><span><i></i>agent active</span><span><i></i>needs judgment</span><span><i></i>quiet signal</span></div>
+                <aside class="node-drawer" id="node-drawer"><button class="icon-button drawer-close" id="drawer-close" aria-label="Close detail">×</button><span class="pill signal">work intelligence</span><h3 id="drawer-title">Auth retry boundary</h3><p id="drawer-copy">One decision is waiting. Buzz has 82% of the context and a proposed test plan.</p><div class="agent-plan"><strong>BUZZ PLAN</strong><ol><li>Confirm retry timing</li><li>Review cancellation test</li><li>Draft final recommendation</li></ol></div><button class="primary-button" data-demo-action="Buzz joined this work item and started building context.">Wake Buzz here</button></aside>
+              </div>
+            </section>
+
+            <aside class="why-strip" id="why-strip"><strong id="why-title">Why Signal Loom</strong><p id="why-copy">Best default for daily use. It is compact, fast to scan, and introduces agents as a layer of momentum without making the user learn a new spatial model.</p></aside>
+            <button class="ghost-button why-button" id="why-button">Why this layout?</button>
+          </div>
+        </main>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const tabs = [...document.querySelectorAll('.concept-tab')];
+    const concepts = [...document.querySelectorAll('.concept')];
+    const activeWorkCTA = document.querySelector('#active-work-cta');
+    const consoleLink = document.querySelector('#console-link');
+    const activeView = document.querySelector('#active-view');
+    const consoleView = document.querySelector('#console-view');
+    const toast = document.querySelector('#toast');
+    const whyStrip = document.querySelector('#why-strip');
+    const whyTitle = document.querySelector('#why-title');
+    const whyCopy = document.querySelector('#why-copy');
+    let toastTimer;
+
+    const rationale = {
+      loom: ['Why Signal Loom', 'Best default for daily use. It is compact, fast to scan, and introduces agents as a layer of momentum without making the user learn a new spatial model.'],
+      deck: ['Why Flight Deck', 'Best when agents begin doing substantial work. Spatial stages make ownership and waiting states obvious, though the board needs more room and more active maintenance.'],
+      narrative: ['Why Living Brief', 'Best for understanding how work evolved. It turns scattered updates into a coherent story and gives Buzz unusually strong context, but it is slower for bulk scanning.'],
+      constellation: ['Why Constellation', 'Best as an ambient radar or secondary mode. Urgency and agent motion are immediately felt, but exact comparison is less precise than a ranked list.']
+    };
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    function showActiveWork() {
+      activeView.classList.remove('hidden');
+      consoleView.classList.remove('show');
+      activeWorkCTA.classList.add('active');
+      activeWorkCTA.setAttribute('aria-pressed', 'true');
+      consoleLink.classList.remove('active');
+    }
+
+    function selectConcept(name) {
+      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.conceptTarget === name));
+      concepts.forEach(concept => concept.classList.toggle('active', concept.dataset.concept === name));
+      const [title, copy] = rationale[name];
+      whyTitle.textContent = title;
+      whyCopy.textContent = copy;
+      whyStrip.classList.remove('show');
+      showActiveWork();
+    }
+
+    tabs.forEach(tab => tab.addEventListener('click', () => selectConcept(tab.dataset.conceptTarget)));
+
+    activeWorkCTA.addEventListener('click', () => {
+      showActiveWork();
+      showToast('Active Work replaced the center console.');
+    });
+
+    consoleLink.addEventListener('click', () => {
+      activeView.classList.add('hidden');
+      consoleView.classList.add('show');
+      activeWorkCTA.classList.remove('active');
+      activeWorkCTA.setAttribute('aria-pressed', 'false');
+      consoleLink.classList.add('active');
+    });
+
+    document.querySelector('#why-button').addEventListener('click', () => whyStrip.classList.toggle('show'));
+    document.querySelectorAll('[data-demo-action]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.demoAction)));
+
+    const workDetails = {
+      auth: ['Handle token refresh without losing the draft', 'A review request changed after the latest push. The implementation now preserves the composer state, but the retry boundary still needs your call.', 'I have the diff, ticket history, prior review comments, and the failing test. One product decision is missing before I can propose the final review.', 'context 82%'],
+      crash: ['Intermittent launch crash after session restore', 'The failure is isolated to an interrupted restore path. Three of five reproduction routes are already clean.', 'I am running the remaining paths and comparing the lifecycle logs. You do not need to intervene yet.', 'testing 3/5'],
+      sidebar: ['Unify attention state in the Mac sidebar', 'Two review comments point to the same state ownership issue rather than separate UI bugs.', 'I am reading the surrounding model and preparing a single change that should close both comments.', 'context 74%'],
+      voice: ['Voice response controls for long agent answers', 'Implementation is ready and the ticket is waiting for QA coverage across two device classes.', 'I can prepare the QA script and collect the expected audio-state transitions before the handoff.', 'context 91%'],
+      idea: ['Let agents remember project-specific review heuristics', 'The same expectations appeared across four reviews. This idea has enough evidence to become a concrete brief.', 'I can cluster the repeated heuristics, identify safe memory boundaries, and propose a first schema.', 'signals 3/3']
+    };
+
+    document.querySelectorAll('.work-thread').forEach(thread => thread.addEventListener('click', () => {
+      document.querySelectorAll('.work-thread').forEach(item => item.classList.remove('selected'));
+      thread.classList.add('selected');
+      const [title, summary, thinking, readiness] = workDetails[thread.dataset.work];
+      document.querySelector('#loom-detail-title').textContent = title;
+      document.querySelector('#loom-detail-summary').textContent = summary;
+      document.querySelector('#thinking-copy').textContent = thinking;
+      document.querySelector('#readiness-pill').textContent = readiness;
+    }));
+
+    document.querySelectorAll('.scope-button').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.scope-button').forEach(control => control.classList.remove('active'));
+      button.classList.add('active');
+      const filter = button.dataset.filter;
+      document.querySelectorAll('.work-thread').forEach(thread => {
+        thread.hidden = filter !== 'all' && thread.dataset.state !== filter;
+      });
+    }));
+
+    document.querySelector('#prime-buzz').addEventListener('click', event => {
+      event.currentTarget.textContent = 'Buzz primed';
+      document.querySelector('#readiness-pill').textContent = 'working now';
+      document.querySelector('#thinking-copy').textContent = 'I am assembling the smallest review recommendation and the exact cancellation test to request.';
+      showToast('Buzz is preparing the review brief.');
+    });
+
+    let draggedCard = null;
+    document.querySelectorAll('.mission-card').forEach(card => {
+      card.addEventListener('dragstart', () => { draggedCard = card; card.classList.add('dragging'); });
+      card.addEventListener('dragend', () => { card.classList.remove('dragging'); draggedCard = null; });
+    });
+    document.querySelectorAll('.deck-column').forEach(column => {
+      column.addEventListener('dragover', event => { event.preventDefault(); column.classList.add('drag-over'); });
+      column.addEventListener('dragleave', () => column.classList.remove('drag-over'));
+      column.addEventListener('drop', event => {
+        event.preventDefault();
+        column.classList.remove('drag-over');
+        if (!draggedCard) return;
+        column.appendChild(draggedCard);
+        document.querySelectorAll('.deck-column').forEach(stage => {
+          stage.querySelector('.column-count').textContent = stage.querySelectorAll('.mission-card').length;
+        });
+        showToast(`Moved work to ${column.querySelector('strong').textContent.toLowerCase()}.`);
+      });
+    });
+
+    document.querySelectorAll('.story-event').forEach(event => event.addEventListener('click', () => {
+      document.querySelectorAll('.story-event').forEach(item => item.classList.remove('active'));
+      event.classList.add('active');
+      document.querySelector('#story-title').textContent = event.dataset.storyTitle;
+      document.querySelector('#story-copy').textContent = event.dataset.storyCopy;
+    }));
+
+    document.querySelector('#draft-move').addEventListener('click', () => {
+      document.querySelector('#draft-result').classList.add('show');
+      showToast('Buzz connected the signals and drafted a next move.');
+    });
+
+    const constellation = document.querySelector('#constellation-field');
+    const scanToggle = document.querySelector('#scan-toggle');
+    scanToggle.addEventListener('click', () => {
+      const scanning = constellation.classList.toggle('scanning');
+      scanToggle.textContent = scanning ? 'Pause scan' : 'Resume scan';
+    });
+
+    const drawer = document.querySelector('#node-drawer');
+    document.querySelectorAll('.work-node').forEach(node => node.addEventListener('click', () => {
+      document.querySelector('#drawer-title').textContent = node.dataset.nodeTitle;
+      document.querySelector('#drawer-copy').textContent = node.dataset.nodeCopy;
+      drawer.classList.add('show');
+    }));
+    document.querySelector('#drawer-close').addEventListener('click', () => drawer.classList.remove('show'));
+  </script>
+</body>
+</html>

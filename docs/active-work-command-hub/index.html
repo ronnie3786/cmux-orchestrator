@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Herdr Active Work, Agent Command Concepts</title>
+  <style>
+    :root {
+      --void: #05090e;
+      --shell: #081119;
+      --panel: #0b1821;
+      --panel-2: #10232c;
+      --line: #1b3943;
+      --line-hot: #3b7180;
+      --text: #d8f7ff;
+      --muted: #86a7b2;
+      --quiet: #496771;
+      --cyan: #71e7ff;
+      --mint: #66f5bd;
+      --buzz: #f6c66f;
+      --pi: #b9a6ff;
+      --human: #ff7e96;
+      --display: "Avenir Next Condensed", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
+      --body: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--void); }
+    body {
+      min-width: 980px;
+      min-height: 100vh;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 52% -24%, rgba(113,231,255,.09), transparent 36%),
+        linear-gradient(rgba(113,231,255,.022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(113,231,255,.022) 1px, transparent 1px),
+        var(--void);
+      background-size: auto, 32px 32px, 32px 32px, auto;
+      font-family: var(--body);
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+
+    .gallery { width: min(1660px, calc(100vw - 28px)); margin: 0 auto; padding: 15px 0 22px; }
+    .gallery-head { display: grid; grid-template-columns: 420px 1fr; align-items: end; gap: 24px; margin-bottom: 12px; }
+    .eyebrow, .hud-label { color: var(--cyan); font: 700 7px/1.3 var(--mono); letter-spacing: .15em; text-transform: uppercase; }
+    .gallery-copy h1 { margin: 4px 0; font: 650 24px/1 var(--display); letter-spacing: -.015em; text-transform: uppercase; }
+    .gallery-copy p { max-width: 410px; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .concept-switcher { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .concept-tab { position: relative; min-height: 57px; padding: 9px 10px; border: 1px solid #17323b; border-radius: 3px 12px 3px 12px; color: var(--muted); background: rgba(8,17,25,.78); text-align: left; cursor: pointer; transition: .18s ease; }
+    .concept-tab:hover { border-color: var(--line-hot); background: var(--panel); }
+    .concept-tab.active { border-color: rgba(113,231,255,.58); color: var(--text); background: #0d1e27; box-shadow: inset 2px 0 var(--cyan), 0 0 20px rgba(113,231,255,.05); }
+    .concept-tab strong { display: block; font: 650 11px var(--display); letter-spacing: .045em; text-transform: uppercase; }
+    .concept-tab span { display: block; margin-top: 4px; color: var(--quiet); font: 500 6px/1.3 var(--mono); }
+    .concept-tab em { position: absolute; right: 8px; top: 7px; color: var(--mint); font: 700 6px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+
+    .mac-window { overflow: hidden; height: min(860px, calc(100vh - 108px)); min-height: 590px; border: 1px solid #294852; border-radius: 13px; background: var(--shell); box-shadow: 0 36px 100px rgba(0,0,0,.64); }
+    .titlebar { height: 35px; display: grid; grid-template-columns: 150px 1fr 150px; align-items: center; padding: 0 12px; border-bottom: 1px solid #163039; background: #071017; }
+    .traffic { display: flex; gap: 6px; }
+    .traffic i { width: 9px; height: 9px; border-radius: 50%; background: #36505a; }
+    .traffic i:first-child { background: #ff6f6f; }
+    .traffic i:nth-child(2) { background: var(--buzz); }
+    .traffic i:nth-child(3) { background: var(--mint); }
+    .titlebar strong, .titlebar span { color: var(--quiet); font: 600 7px var(--mono); }
+    .titlebar strong { text-align: center; }
+    .titlebar span { text-align: right; }
+    .app-shell { display: grid; grid-template-columns: 226px minmax(0,1fr); height: calc(100% - 35px); }
+
+    .sidebar { display: flex; flex-direction: column; min-height: 0; padding: 12px 9px; border-right: 1px solid #163039; background: #08121a; }
+    .brand { display: flex; align-items: center; gap: 8px; padding: 1px 5px 12px; }
+    .brand-mark { position: relative; display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid rgba(113,231,255,.52); border-radius: 50%; box-shadow: inset 0 0 13px rgba(113,231,255,.13); }
+    .brand-mark::before { width: 11px; height: 11px; border: 2px solid var(--cyan); border-radius: 50%; content: ""; }
+    .brand-mark::after { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: var(--mint); content: ""; box-shadow: 0 -12px var(--cyan), 10px 6px var(--buzz), -10px 6px var(--pi); }
+    .brand strong { display: block; font: 700 15px var(--display); letter-spacing: .04em; text-transform: uppercase; }
+    .brand small { display: block; margin-top: 1px; color: var(--quiet); font: 500 6px var(--mono); }
+
+    .active-work-cta { position: relative; overflow: hidden; width: 100%; margin-bottom: 13px; padding: 11px 11px 11px 13px; border: 1px solid rgba(113,231,255,.46); border-radius: 4px 13px 4px 13px; background: linear-gradient(105deg, rgba(113,231,255,.12), rgba(102,245,189,.03)); text-align: left; cursor: pointer; box-shadow: inset 3px 0 var(--cyan); }
+    .active-work-cta::after { position: absolute; right: -23px; top: -23px; width: 76px; height: 76px; border: 1px dashed rgba(113,231,255,.2); border-radius: 50%; content: ""; animation: spin 17s linear infinite; }
+    .cta-top { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; }
+    .cta-top strong { font: 700 12px var(--display); letter-spacing: .045em; text-transform: uppercase; }
+    .cta-top b { color: var(--cyan); font: 600 11px var(--mono); }
+    .active-work-cta p { position: relative; z-index: 2; margin: 7px 0 8px; color: var(--muted); font: 500 7px/1.45 var(--mono); }
+    .cta-vitals { position: relative; z-index: 2; display: flex; gap: 5px; }
+    .cta-vitals span { padding: 3px 5px; border: 1px solid rgba(113,231,255,.16); color: var(--quiet); font: 600 6px var(--mono); text-transform: uppercase; }
+    .pulse { display: inline-block; width: 4px; height: 4px; margin-right: 4px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 7px var(--mint); animation: beacon 2s ease-out infinite; }
+    .pulse.human { background: var(--human); box-shadow: 0 0 7px var(--human); }
+    .side-label { margin: 0 7px 5px; color: var(--quiet); font: 700 6px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .side-link { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; text-align: left; cursor: pointer; }
+    .side-link:hover, .side-link.active { color: var(--text); background: var(--panel); }
+    .side-link .icon { width: 15px; color: var(--quiet); font: 700 8px var(--mono); text-align: center; }
+    .side-link span { font-size: 9px; }
+    .side-link small { margin-left: auto; color: var(--quiet); font: 500 6px var(--mono); }
+    .side-rule { height: 1px; margin: 10px 7px; background: #163039; }
+    .watcher { display: grid; grid-template-columns: 23px 1fr auto; align-items: center; gap: 7px; margin: 3px 4px; padding: 7px; border: 1px solid #18333c; border-radius: 6px; background: rgba(11,24,33,.48); }
+    .watcher-eye { position: relative; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid rgba(246,198,111,.4); border-radius: 50%; color: var(--buzz); font: 700 7px var(--mono); }
+    .watcher-eye::after { position: absolute; right: -1px; top: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--mint); content: ""; box-shadow: 0 0 6px var(--mint); }
+    .watcher strong { display: block; font-size: 8px; }
+    .watcher span { display: block; margin-top: 2px; color: var(--quiet); font: 500 6px var(--mono); }
+    .watcher time { color: var(--quiet); font: 500 6px var(--mono); }
+    .legend { margin-top: auto; padding: 9px; border: 1px dashed #24414a; color: var(--quiet); font: 500 6px/1.65 var(--mono); }
+    .legend b { color: var(--muted); }
+    .legend i { display: inline-block; width: 5px; height: 5px; margin: 0 4px 0 7px; border-radius: 50%; }
+
+    .center { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--void); }
+    .console { display: none; height: 100%; padding: 18px; background: #060b10; }
+    .console.show { display: block; }
+    .console-card { height: 100%; padding: 18px; border: 1px solid #17323b; color: #8eb4bf; background: #081119; font: 500 9px/1.8 var(--mono); }
+    .console-card b { color: var(--mint); }
+    .console-card i { display: inline-block; width: 6px; height: 12px; vertical-align: -2px; background: var(--cyan); animation: blink 1s steps(2) infinite; }
+    .active-work-view { height: 100%; }
+    .active-work-view.hidden { display: none; }
+    .concept { display: none; height: 100%; }
+    .concept.active { display: grid; grid-template-rows: 70px minmax(0,1fr) 46px; }
+    .concept-head { display: flex; align-items: center; gap: 16px; padding: 10px 15px; border-bottom: 1px solid #163039; background: #08121a; }
+    .concept-head h2 { margin: 2px 0 1px; font: 650 21px/1 var(--display); letter-spacing: .015em; text-transform: uppercase; }
+    .concept-head p { margin: 0; color: var(--muted); font-size: 8px; }
+    .head-metrics { display: flex; gap: 6px; margin-left: auto; }
+    .metric { min-width: 74px; padding: 6px 8px; border-left: 1px solid var(--line); }
+    .metric strong { display: block; font: 650 14px var(--display); }
+    .metric span { color: var(--quiet); font: 600 6px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .concept-body { position: relative; min-height: 0; overflow: hidden; }
+    .command-bar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid #163039; background: #08121a; }
+    .command-state { display: flex; align-items: center; gap: 6px; min-width: 150px; color: var(--cyan); font: 650 6px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .command-input { width: 100%; padding: 7px 10px; border: 1px solid #24434c; border-radius: 5px; outline: 0; color: var(--text); background: #0b1820; font: 500 8px var(--mono); }
+    .command-input::placeholder { color: var(--quiet); }
+    .command-input:focus { border-color: rgba(113,231,255,.55); box-shadow: 0 0 0 2px rgba(113,231,255,.06); }
+    .hud-button, .send-button { border: 1px solid rgba(113,231,255,.34); color: var(--cyan); background: rgba(113,231,255,.06); font: 700 6px var(--mono); letter-spacing: .07em; text-transform: uppercase; cursor: pointer; }
+    .hud-button { padding: 7px 9px; border-radius: 4px; }
+    .send-button { padding: 8px 12px; border-radius: 4px 9px 4px 9px; }
+    .hud-button:hover, .send-button:hover { background: rgba(113,231,255,.13); }
+    .hud-button.buzz { border-color: rgba(246,198,111,.35); color: var(--buzz); background: rgba(246,198,111,.05); }
+    .hud-button.pi { border-color: rgba(185,166,255,.35); color: var(--pi); background: rgba(185,166,255,.05); }
+    .hud-button.human { border-color: rgba(255,126,150,.36); color: var(--human); background: rgba(255,126,150,.05); }
+    .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid #24434c; border-radius: 999px; color: var(--muted); font: 600 6px var(--mono); text-transform: uppercase; white-space: nowrap; }
+    .chip.buzz { border-color: rgba(246,198,111,.33); color: var(--buzz); }
+    .chip.pi { border-color: rgba(185,166,255,.33); color: var(--pi); }
+    .chip.human { border-color: rgba(255,126,150,.35); color: var(--human); }
+    .chip.mint { border-color: rgba(102,245,189,.3); color: var(--mint); }
+    .chip.cyan { border-color: rgba(113,231,255,.34); color: var(--cyan); }
+    .source-mark { display: inline-grid; place-items: center; width: 19px; height: 19px; border: 1px solid #294852; color: var(--muted); font: 700 6px var(--mono); }
+
+    /* Concept 1: Association Spine */
+    .spine-layout { display: grid; grid-template-columns: 290px minmax(430px,1fr) 255px; height: 100%; background: #061018; }
+    .work-queue { min-height: 0; overflow: auto; padding: 10px; border-right: 1px solid #163039; }
+    .panel-title { display: flex; align-items: center; gap: 7px; margin: 2px 2px 8px; color: var(--quiet); font: 700 6px var(--mono); letter-spacing: .11em; text-transform: uppercase; }
+    .panel-title::after { height: 1px; flex: 1; background: #17343d; content: ""; }
+    .work-item { position: relative; display: grid; grid-template-columns: 21px 1fr auto; gap: 8px; width: 100%; margin-bottom: 6px; padding: 9px 8px; border: 1px solid transparent; color: inherit; background: #0a1820; text-align: left; cursor: pointer; }
+    .work-item::before { position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; background: var(--quiet); content: ""; }
+    .work-item.hot::before { background: var(--human); box-shadow: 0 0 8px var(--human); }
+    .work-item.moving::before { background: var(--mint); box-shadow: 0 0 8px rgba(102,245,189,.5); }
+    .work-item.selected { border-color: rgba(113,231,255,.4); background: #10242c; }
+    .work-item:hover { background: #0f222b; }
+    .work-item strong { display: block; overflow: hidden; font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+    .work-item small { display: block; margin-top: 3px; color: var(--quiet); font: 500 6px var(--mono); }
+    .work-item time { color: var(--quiet); font: 500 6px var(--mono); }
+    .association-stage { position: relative; overflow: auto; padding: 13px 14px; background: radial-gradient(circle at 50% 50%, rgba(113,231,255,.055), transparent 41%), #071018; }
+    .stage-title { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 0 3px 12px; }
+    .stage-title h3 { margin: 3px 0; font: 650 17px/1.05 var(--display); letter-spacing: .01em; text-transform: uppercase; }
+    .stage-title p { margin: 0; color: var(--muted); font-size: 7px; }
+    .stage-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+    .spine { position: relative; display: grid; grid-template-columns: repeat(5, minmax(70px,1fr)); gap: 8px; margin: 21px 0 15px; }
+    .spine::before { position: absolute; left: 7%; right: 7%; top: 27px; height: 1px; background: linear-gradient(90deg, var(--buzz), var(--buzz) 24%, var(--pi) 42%, var(--pi) 75%, var(--human)); content: ""; opacity: .48; }
+    .spine-node { position: relative; z-index: 2; min-width: 0; text-align: center; }
+    .node-orb { position: relative; display: grid; place-items: center; width: 55px; height: 55px; margin: 0 auto 8px; border: 1px solid var(--line-hot); border-radius: 50%; background: #0b2029; color: var(--cyan); font: 800 7px var(--mono); box-shadow: inset 0 0 18px rgba(113,231,255,.07); }
+    .node-orb::after { position: absolute; right: 2px; top: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--mint); content: ""; box-shadow: 0 0 7px var(--mint); }
+    .spine-node.buzz .node-orb { border-color: rgba(246,198,111,.55); color: var(--buzz); }
+    .spine-node.pi .node-orb { border-color: rgba(185,166,255,.55); color: var(--pi); }
+    .spine-node.human .node-orb { border-color: rgba(255,126,150,.6); color: var(--human); }
+    .spine-node.pending .node-orb::after { background: var(--buzz); box-shadow: 0 0 7px var(--buzz); animation: beacon 2s ease-out infinite; }
+    .spine-node strong { display: block; overflow: hidden; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+    .spine-node small { display: block; margin-top: 3px; color: var(--quiet); font: 500 6px/1.35 var(--mono); }
+    .continuity-rail { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 10px; border: 1px solid #1d3b45; background: rgba(10,25,33,.74); }
+    .continuity-rail p { margin: 5px 0 0; color: var(--muted); font: 500 7px/1.45 var(--mono); }
+    .continuity-files { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+    .file-pill { padding: 3px 5px; border: 1px solid #24434c; color: var(--quiet); font: 600 6px var(--mono); }
+    .live-log { margin-top: 10px; }
+    .log-line { display: grid; grid-template-columns: 45px 54px 1fr; gap: 7px; padding: 6px 4px; border-bottom: 1px solid rgba(27,57,67,.65); color: var(--muted); font: 500 6px/1.4 var(--mono); }
+    .log-line time { color: var(--quiet); }
+    .log-line b { color: var(--pi); text-transform: uppercase; }
+    .control-panel { min-height: 0; overflow: auto; padding: 10px; border-left: 1px solid #163039; background: #081119; }
+    .control-card { margin-bottom: 8px; padding: 9px; border: 1px solid #1d3a44; background: #0a1820; }
+    .control-card h4 { margin: 5px 0 4px; font-size: 8px; }
+    .control-card p { margin: 0 0 8px; color: var(--muted); font-size: 7px; line-height: 1.45; }
+    .control-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+    .tag-picker { display: grid; gap: 5px; margin-top: 8px; }
+    .tag-option { display: flex; align-items: center; gap: 7px; padding: 7px; border: 1px solid #1c3943; color: var(--muted); background: #0c1c24; text-align: left; cursor: pointer; }
+    .tag-option:hover { border-color: var(--line-hot); color: var(--text); }
+    .tag-option b { font-size: 7px; }
+    .tag-option > span:last-child { margin-left: auto; }
+
+    /* Concept 2: Bridge */
+    .bridge-layout { display: grid; grid-template-columns: minmax(260px,.9fr) 210px minmax(300px,1.1fr); height: 100%; background: #071018; }
+    .realm { min-height: 0; overflow: auto; padding: 13px; }
+    .realm.buzz-realm { border-right: 1px solid rgba(246,198,111,.2); background: linear-gradient(90deg, rgba(246,198,111,.03), transparent), #081119; }
+    .realm.pi-realm { border-left: 1px solid rgba(185,166,255,.2); background: linear-gradient(270deg, rgba(185,166,255,.035), transparent), #081119; }
+    .realm-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .realm-head h3 { margin: 2px 0 0; font: 650 15px var(--display); text-transform: uppercase; }
+    .message-card, .session-card { margin-bottom: 7px; padding: 9px; border: 1px solid #1c3943; background: #0b1921; }
+    .message-card header, .session-card header { display: flex; align-items: center; gap: 7px; }
+    .message-card header strong, .session-card header strong { font-size: 8px; }
+    .message-card header time, .session-card header time { margin-left: auto; color: var(--quiet); font: 500 6px var(--mono); }
+    .message-card p, .session-card p { margin: 7px 0 0; color: var(--muted); font-size: 7px; line-height: 1.5; }
+    .mention { color: var(--buzz); }
+    .bridge-spine { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 15px 11px; text-align: center; }
+    .bridge-spine::before { position: absolute; top: 12%; bottom: 12%; left: 50%; width: 1px; background: linear-gradient(var(--buzz), var(--cyan), var(--pi)); content: ""; opacity: .38; }
+    .work-core { position: relative; z-index: 2; display: grid; place-items: center; width: 142px; height: 142px; padding: 20px; border: 1px solid rgba(113,231,255,.47); border-radius: 50%; background: #0c2029; box-shadow: inset 0 0 35px rgba(113,231,255,.08), 0 0 28px rgba(113,231,255,.05); }
+    .work-core::before { position: absolute; inset: -9px; border: 1px dashed rgba(113,231,255,.22); border-radius: 50%; content: ""; animation: spin 20s linear infinite; }
+    .work-core strong { display: block; font: 650 12px/1.1 var(--display); text-transform: uppercase; }
+    .work-core small { display: block; margin-top: 6px; color: var(--mint); font: 600 6px var(--mono); }
+    .bridge-link { position: relative; z-index: 2; width: 100%; padding: 7px; border: 1px solid #21414a; color: var(--muted); background: #0a1921; font: 600 6px var(--mono); }
+    .bridge-link b { color: var(--cyan); }
+
+    /* Concept 3: Cast Ledger */
+    .ledger-layout { height: 100%; overflow: auto; padding: 11px; background: #071018; }
+    .ledger-head { display: grid; grid-template-columns: 260px 135px 1fr 1fr 115px; gap: 8px; padding: 0 9px 7px; color: var(--quiet); font: 700 6px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .ledger-row { margin-bottom: 6px; border: 1px solid #1b3943; background: #0a1820; }
+    .ledger-summary { display: grid; grid-template-columns: 260px 135px 1fr 1fr 115px; gap: 8px; align-items: center; width: 100%; padding: 9px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .ledger-summary:hover { background: #0d2028; }
+    .ledger-summary > div { min-width: 0; }
+    .ledger-work strong { display: block; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+    .ledger-work small, .ledger-cell small { display: block; margin-top: 3px; color: var(--quiet); font: 500 6px var(--mono); }
+    .ledger-cell strong { display: block; overflow: hidden; color: var(--muted); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+    .ledger-cell.buzz strong { color: var(--buzz); }
+    .ledger-cell.pi strong { color: var(--pi); }
+    .stage-meter { height: 3px; margin-top: 6px; background: #17323b; }
+    .stage-meter i { display: block; width: var(--progress); height: 100%; background: var(--mint); box-shadow: 0 0 6px rgba(102,245,189,.45); }
+    .ledger-detail { display: none; grid-template-columns: 1.1fr 1fr 1fr auto; gap: 8px; padding: 9px; border-top: 1px solid #1b3943; background: #08131a; }
+    .ledger-row.open .ledger-detail { display: grid; }
+    .detail-cell { padding: 7px; border-left: 1px solid #23434c; }
+    .detail-cell p { margin: 4px 0 0; color: var(--muted); font: 500 6px/1.45 var(--mono); }
+
+    /* Concept 4: Association Orbit */
+    .orbit-layout { display: grid; grid-template-columns: minmax(560px,1fr) 280px; height: 100%; background: #071018; }
+    .orbit-field { position: relative; overflow: hidden; background: radial-gradient(circle at 50% 48%, rgba(113,231,255,.09), transparent 32%), #061018; }
+    .orbit-field::before { position: absolute; inset: 0; background: repeating-radial-gradient(circle at 50% 48%, transparent 0 73px, rgba(113,231,255,.055) 74px 75px); content: ""; }
+    .orbit-core { position: absolute; z-index: 3; left: 50%; top: 48%; display: grid; place-items: center; width: 156px; height: 156px; padding: 20px; border: 1px solid rgba(113,231,255,.5); border-radius: 50%; background: rgba(11,30,39,.95); text-align: center; transform: translate(-50%,-50%); box-shadow: inset 0 0 38px rgba(113,231,255,.08), 0 0 40px rgba(113,231,255,.06); }
+    .orbit-core strong { display: block; font: 650 13px/1.08 var(--display); text-transform: uppercase; }
+    .orbit-core small { display: block; margin-top: 7px; color: var(--mint); font: 600 6px var(--mono); }
+    .orbit-node { position: absolute; z-index: 4; min-width: 110px; padding: 8px; border: 1px solid #24444e; color: inherit; background: rgba(10,27,35,.96); text-align: left; cursor: pointer; }
+    .orbit-node::before { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 6px var(--mint); content: ""; }
+    .orbit-node strong { font-size: 7px; }
+    .orbit-node small { display: block; margin: 4px 0 0 10px; color: var(--quiet); font: 500 6px var(--mono); }
+    .orbit-node:hover, .orbit-node.active { border-color: var(--cyan); background: #10242c; }
+    .orbit-node.buzz { border-color: rgba(246,198,111,.4); }
+    .orbit-node.buzz::before { background: var(--buzz); box-shadow: 0 0 6px var(--buzz); }
+    .orbit-node.pi { border-color: rgba(185,166,255,.4); }
+    .orbit-node.pi::before { background: var(--pi); box-shadow: 0 0 6px var(--pi); }
+    .orbit-node.human { border-color: rgba(255,126,150,.46); }
+    .orbit-node.human::before { background: var(--human); box-shadow: 0 0 6px var(--human); }
+    .o1 { left: 8%; top: 17%; } .o2 { right: 8%; top: 17%; } .o3 { right: 6%; bottom: 20%; } .o4 { left: 7%; bottom: 19%; } .o5 { left: 18%; top: 46%; } .o6 { right: 17%; top: 47%; }
+    .orbit-panel { min-height: 0; overflow: auto; padding: 12px; border-left: 1px solid #163039; background: #081119; }
+    .orbit-readout { margin-top: 9px; padding: 11px; border: 1px solid #1d3b45; background: #0b1921; }
+    .orbit-readout h3 { margin: 5px 0; font: 650 14px var(--display); text-transform: uppercase; }
+    .orbit-readout p { margin: 0 0 9px; color: var(--muted); font-size: 7px; line-height: 1.5; }
+    .relationship { display: grid; grid-template-columns: auto 1fr; gap: 7px; margin-top: 7px; color: var(--muted); font: 500 6px/1.4 var(--mono); }
+    .relationship b { color: var(--cyan); }
+
+    .why-toggle { position: absolute; z-index: 8; right: 10px; bottom: 55px; }
+    .why-card { position: absolute; z-index: 9; right: 10px; bottom: 87px; display: none; width: 290px; padding: 11px; border: 1px solid rgba(113,231,255,.38); background: rgba(8,20,28,.97); box-shadow: 0 18px 45px rgba(0,0,0,.45); }
+    .why-card.show { display: block; }
+    .why-card strong { display: block; margin-bottom: 5px; color: var(--cyan); font: 650 10px var(--display); text-transform: uppercase; }
+    .why-card span { color: var(--muted); font-size: 7px; line-height: 1.5; }
+    .toast { position: fixed; z-index: 100; left: 50%; bottom: 24px; padding: 9px 12px; border: 1px solid rgba(113,231,255,.5); border-radius: 4px; color: var(--text); background: rgba(7,22,29,.96); font: 600 8px var(--mono); opacity: 0; pointer-events: none; transform: translate(-50%, 12px); transition: .18s ease; box-shadow: 0 12px 35px rgba(0,0,0,.45); }
+    .toast.show { opacity: 1; transform: translate(-50%,0); }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes beacon { 0% { box-shadow: 0 0 0 0 currentColor; } 70% { box-shadow: 0 0 0 5px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+    @keyframes blink { 50% { opacity: .15; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+    @media (max-width: 1120px) {
+      body { min-width: 760px; }
+      .gallery-head { grid-template-columns: 320px 1fr; }
+      .app-shell { grid-template-columns: 194px minmax(0,1fr); }
+      .spine-layout { grid-template-columns: 240px minmax(400px,1fr); }
+      .control-panel { display: none; }
+      .bridge-layout { grid-template-columns: minmax(230px,1fr) 180px minmax(250px,1fr); }
+      .ledger-head, .ledger-summary { grid-template-columns: 220px 110px 1fr 1fr 95px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="gallery">
+    <header class="gallery-head">
+      <div class="gallery-copy">
+        <div class="eyebrow">Herdr design study 03 · grounded in Buzz Workflow</div>
+        <h1>Active Work is an association system</h1>
+        <p>The same real work, arranged four ways. Buzz coordinates. Pi executes. Handoff files carry continuity. You enter only at the gates that need judgment.</p>
+      </div>
+      <nav class="concept-switcher" aria-label="Choose an Active Work layout">
+        <button class="concept-tab active" data-concept-target="spine"><em>recommended</em><strong>Association Spine</strong><span>work-first command chain</span></button>
+        <button class="concept-tab" data-concept-target="bridge"><strong>Buzz ↔ Pi Bridge</strong><span>coordination and execution split</span></button>
+        <button class="concept-tab" data-concept-target="ledger"><strong>Cast Ledger</strong><span>dense multi-work overview</span></button>
+        <button class="concept-tab" data-concept-target="orbit"><strong>Association Orbit</strong><span>JARVIS spatial briefing</span></button>
+      </nav>
+    </header>
+
+    <section class="mac-window" aria-label="Herdr Mac interface preview">
+      <div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><strong>HERDR · WORK MAC</strong><span>DEVBOX + LOCAL FLOORS ONLINE</span></div>
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="brand"><span class="brand-mark"></span><div><strong>Herdr</strong><small>agent work control</small></div></div>
+          <button class="active-work-cta" id="active-work-cta" aria-pressed="true">
+            <div class="cta-top"><strong>Active Work</strong><b>7</b></div>
+            <p>Every ticket, PR, channel, and running agent in one view.</p>
+            <div class="cta-vitals"><span><i class="pulse"></i>5 moving</span><span><i class="pulse human"></i>2 need you</span></div>
+          </button>
+          <div class="side-label">Workspace</div>
+          <button class="side-link" id="console-link"><span class="icon">›_</span><span>Console</span><small>4 panes</small></button>
+          <button class="side-link"><span class="icon">◇</span><span>Workspaces</span><small>8</small></button>
+          <button class="side-link"><span class="icon">⌁</span><span>Sessions</span><small>13</small></button>
+          <div class="side-rule"></div>
+          <div class="side-label">Watchers</div>
+          <div class="watcher"><span class="watcher-eye">👀</span><div><strong>PR Review Scout</strong><span>Buzz watchdog · active</span></div><time>10m</time></div>
+          <div class="watcher"><span class="watcher-eye" style="border-color:rgba(185,166,255,.4);color:var(--pi)">QA</span><div><strong>QA iOS Agent</strong><span>Buzz + Pi canonical role</span></div><time>idle</time></div>
+          <div class="legend"><b>Identity key</b><br><i style="background:var(--buzz)"></i>Buzz coordination <i style="background:var(--pi)"></i>Pi execution<br><i style="background:var(--human)"></i>Your checkpoint <i style="background:var(--mint)"></i>moving now</div>
+        </aside>
+
+        <main class="center">
+          <section class="console" id="console"><div class="console-card"><b>herdr@work-mac</b> workspace list<br>iOS Doximity&nbsp;&nbsp;&nbsp;&nbsp;8 tabs&nbsp;&nbsp;&nbsp;&nbsp;11 panes<br>dox-pr-orchestrator&nbsp;&nbsp;&nbsp;&nbsp;1 tab&nbsp;&nbsp;&nbsp;&nbsp;1 pane<br><br><b>agent state</b><br>pi-coder-agentic575-76441&nbsp;&nbsp;thinking<br>pi-watch-iosdox-27458&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;done<br><br><i></i></div></section>
+          <div class="active-work-view" id="active-work-view">
+            <section class="concept active" data-concept="spine">
+              <header class="concept-head"><div><div class="hud-label">Association Spine · command mode</div><h2>Follow the living chain</h2><p>Select work, see who found it, who coordinates it, who is executing, and where you enter.</p></div><div class="head-metrics"><div class="metric"><strong style="color:var(--human)">02</strong><span>need Ronnie</span></div><div class="metric"><strong style="color:var(--mint)">05</strong><span>agents moving</span></div><div class="metric"><strong>03</strong><span>floors linked</span></div></div></header>
+              <div class="concept-body spine-layout">
+                <section class="work-queue">
+                  <div class="panel-title">Priority by attention</div>
+                  <button class="work-item hot selected" data-work="agentic575"><span class="source-mark">J</span><span><strong>Mobile API Impact Guard</strong><small>AGENTIC-575 · implementing</small></span><time>now</time></button>
+                  <button class="work-item hot" data-work="pr11847"><span class="source-mark">PR</span><span><strong>iOS-Doximity review request</strong><small>#11847 · Scout triaged</small></span><time>8m</time></button>
+                  <button class="work-item moving" data-work="ios27458"><span class="source-mark">J</span><span><strong>Ask Analytics Audit</strong><small>IOSDOX-27458 · built</small></span><time>21m</time></button>
+                  <button class="work-item moving" data-work="agentic472"><span class="source-mark">PR</span><span><strong>OpenCode MOA Management</strong><small>AGENTIC-472 · PR #510</small></span><time>36m</time></button>
+                  <div class="panel-title" style="margin-top:13px">What the system sees</div>
+                  <div class="control-card"><span class="chip buzz">Scout</span><h4>Review queue scanned</h4><p>Only new requests create a signal. No activity on empty checks.</p></div>
+                  <div class="control-card"><span class="chip cyan">Files are truth</span><h4>Continuity intact</h4><p>Every active ticket exposes state and handoff records to the next Pi session.</p></div>
+                </section>
+
+                <section class="association-stage">
+                  <div class="stage-title"><div><div class="hud-label" id="spine-key">AGENTIC-575 · implementing</div><h3 id="spine-title">Mobile API Impact Guard</h3><p id="spine-summary">Build the review guard, then tag Architect iOS with the review location.</p></div><div class="stage-tags"><span class="chip cyan" id="stage-chip">local floor</span><span class="chip mint" id="status-chip">moving</span></div></div>
+                  <div class="spine" id="association-spine">
+                    <div class="spine-node buzz"><span class="node-orb" id="origin-orb">W</span><strong id="origin-name">Worker Bee</strong><small id="origin-detail">request received</small></div>
+                    <div class="spine-node buzz"><span class="node-orb">BZ</span><strong id="buzz-name">iOS-mobile-api-impact-guard</strong><small id="buzz-detail">Buzz driver · channel live</small></div>
+                    <div class="spine-node pi"><span class="node-orb">πO</span><strong id="orch-name">ticket orchestrator</strong><small id="orch-detail">herdr pane w1G:p1</small></div>
+                    <div class="spine-node pi"><span class="node-orb">πC</span><strong id="cast-name">DeepSeek coder</strong><small id="cast-detail">thinking · max</small></div>
+                    <div class="spine-node human pending" id="human-node"><span class="node-orb">YOU</span><strong id="gate-name">Architect tag gate</strong><small id="gate-detail">add member, then mention</small></div>
+                  </div>
+                  <div class="continuity-rail"><div><div class="hud-label">Continuity layer · survives every fresh session</div><p>The next agent reads the ticket state and handoff instead of reconstructing context from chat.</p><div class="continuity-files" id="continuity-files"><span class="file-pill">state.json</span><span class="file-pill">handoff.md</span><span class="file-pill">context-dump.md</span><span class="file-pill">coder brief</span></div></div><button class="hud-button" data-toast="Opened the durable handoff packet for AGENTIC-575.">Read handoff</button></div>
+                  <div class="live-log"><div class="panel-title">Agent activity, translated into intent</div><div id="activity-log"><div class="log-line"><time>13:30</time><b>Buzz</b><span>Driver accepted ownership and started the implementation run.</span></div><div class="log-line"><time>13:31</time><b>Pi coder</b><span>Reading the execution brief and locating schema integration points.</span></div><div class="log-line"><time>next</time><b style="color:var(--human)">Gate</b><span>Add Architect iOS to the channel, then tag with branch, files, and review location.</span></div></div></div>
+                </section>
+
+                <aside class="control-panel">
+                  <div class="panel-title">Selected work controls</div>
+                  <div class="control-card"><span class="chip buzz">Buzz surface</span><h4 id="channel-label">AGENTIC-575 channel</h4><p>Status, approvals, and mentions. The driver coordinates here.</p><div class="control-actions"><button class="hud-button buzz" data-toast="Opening the AGENTIC-575 Buzz channel.">Open channel</button><button class="hud-button buzz" id="tag-architect">Tag Architect iOS</button></div></div>
+                  <div class="control-card"><span class="chip pi">Pi floor</span><h4 id="floor-label">w1G:t1 · local</h4><p>Real code changes happen in the worktree through fresh Pi sessions.</p><div class="control-actions"><button class="hud-button pi" data-toast="Opening Pi pane w1G:p1 at the ticket worktree.">Open Pi pane</button><button class="hud-button pi" data-toast="Prepared a fresh-session prompt from state.json and handoff.md.">Fresh session</button></div></div>
+                  <div class="control-card"><span class="chip human">Your gate</span><h4 id="gate-card-title">Review association pending</h4><p id="gate-card-copy">Architect iOS must be a channel member before the driver can mention it.</p><button class="hud-button human" data-toast="Pinned this checkpoint to your immediate attention queue.">Handle now</button></div>
+                  <div class="panel-title" style="margin-top:13px">Associate another agent</div>
+                  <div class="tag-picker"><button class="tag-option" data-tag="Research Scout"><span class="chip buzz">Buzz</span><b>Research Scout</b><span>+</span></button><button class="tag-option" data-tag="iOS QA"><span class="chip pi">Pi</span><b>iOS QA executor</b><span>+</span></button><button class="tag-option" data-tag="Kimi Reviewer"><span class="chip pi">Pi</span><b>Kimi reviewer</b><span>+</span></button></div>
+                </aside>
+              </div>
+              <div class="command-bar"><div class="command-state"><i class="pulse"></i><span id="spine-command-state">association graph current</span></div><input class="command-input" id="spine-input" aria-label="Command Active Work" placeholder="Example: Tag Architect iOS when the coder has a reviewable diff"><button class="send-button" id="spine-send">Direct</button></div>
+            </section>
+
+            <section class="concept" data-concept="bridge">
+              <header class="concept-head"><div><div class="hud-label">Buzz ↔ Pi Bridge · context mode</div><h2>One mission, two environments</h2><p>Buzz owns coordination. Pi owns execution. The selected work and handoff record bridge them.</p></div><div class="head-metrics"><div class="metric"><strong style="color:var(--buzz)">04</strong><span>Buzz actors</span></div><div class="metric"><strong style="color:var(--pi)">07</strong><span>Pi sessions</span></div><div class="metric"><strong style="color:var(--human)">01</strong><span>tag pending</span></div></div></header>
+              <div class="concept-body bridge-layout">
+                <section class="realm buzz-realm"><div class="realm-head"><div><div class="hud-label" style="color:var(--buzz)">Buzz · coordination</div><h3>AGENTIC-575 channel</h3></div><button class="hud-button buzz" data-toast="Opening the Buzz channel.">Open</button></div>
+                  <article class="message-card"><header><span class="chip buzz">Driver</span><strong>iOS-mobile-api-impact-guard</strong><time>13:30</time></header><p>I own this run. I started a fresh Pi coder on the local floor and will relay each step boundary here.</p></article>
+                  <article class="message-card"><header><span class="chip human">Ronnie</span><strong>Directive</strong><time>13:25</time></header><p>Implement now. When the diff is ready, <span class="mention">@Architect iOS</span> with the exact review location.</p></article>
+                  <article class="message-card"><header><span class="chip buzz">Association</span><strong>Channel roster</strong><time>live</time></header><p>Worker Bee · iOS Project Manager · iOS-mobile-api-impact-guard · Ronnie. Architect iOS is pending membership.</p></article>
+                  <button class="hud-button buzz" id="bridge-tag">Add + tag Architect iOS</button>
+                </section>
+                <section class="bridge-spine"><span class="chip cyan">work target</span><div class="work-core"><div><strong>Mobile API<br>Impact Guard</strong><small>implementing · local</small></div></div><div class="bridge-link"><b>state.json</b><br>machine-readable stage</div><div class="bridge-link"><b>handoff.md</b><br>fresh-session context</div><div class="bridge-link"><b>channel ↔ pane</b><br>status translated both ways</div></section>
+                <section class="realm pi-realm"><div class="realm-head"><div><div class="hud-label" style="color:var(--pi)">Pi · execution floor</div><h3>w1G:t1 · worktree</h3></div><button class="hud-button pi" data-toast="Opening Pi pane w1G:p1.">Open</button></div>
+                  <article class="session-card"><header><span class="chip pi">Pi coder</span><strong>pi-coder-agentic575-76441</strong><time>thinking</time></header><p>DeepSeek V4 Flash 0731 at max. Reading the fixed execution contract and checking current schema locations before editing.</p></article>
+                  <article class="session-card"><header><span class="chip pi">Next cast</span><strong>Architect iOS</strong><time>queued</time></header><p>Design-only review. Receives the real branch, changed files, tests, and review location after the coder produces a scoped diff.</p></article>
+                  <article class="session-card"><header><span class="chip cyan">Freshness</span><strong>New unit, new session</strong><time>rule</time></header><p>Completed sessions remain for reference. Every new chunk, review, or fix loop starts fresh from the durable records.</p></article>
+                  <div class="control-actions"><button class="hud-button pi" data-toast="Prepared a new coder session from the handoff packet.">Spawn fresh coder</button><button class="hud-button pi" data-toast="Opened semantic Pi chat for the active pane.">Read Pi chat</button></div>
+                </section>
+              </div>
+              <div class="command-bar"><div class="command-state"><i class="pulse"></i><span id="bridge-state">bridge synchronized</span></div><input class="command-input" id="bridge-input" aria-label="Command the Buzz Pi bridge" placeholder="Example: Ask the driver for a two-line coder status"><button class="send-button" id="bridge-send">Relay</button></div>
+            </section>
+
+            <section class="concept" data-concept="ledger">
+              <header class="concept-head"><div><div class="hud-label">Cast Ledger · operations mode</div><h2>Every association, no mystery</h2><p>A dense view for comparing work stages, Buzz ownership, Pi execution, and the next human gate.</p></div><div class="head-metrics"><div class="metric"><strong>04</strong><span>work shown</span></div><div class="metric"><strong style="color:var(--buzz)">04</strong><span>Buzz links</span></div><div class="metric"><strong style="color:var(--pi)">06</strong><span>Pi links</span></div></div></header>
+              <div class="concept-body ledger-layout">
+                <div class="ledger-head"><span>Work object</span><span>Workflow stage</span><span>Buzz coordinator</span><span>Pi execution</span><span>Your gate</span></div>
+                <article class="ledger-row open"><button class="ledger-summary"><div class="ledger-work"><strong>AGENTIC-575 · Mobile API Impact Guard</strong><small>Jira ticket · local worktree</small></div><div class="ledger-cell"><span class="chip mint">implementing</span><div class="stage-meter"><i style="--progress:58%"></i></div></div><div class="ledger-cell buzz"><strong>iOS-mobile-api-impact-guard</strong><small>channel live · driver saved</small></div><div class="ledger-cell pi"><strong>DeepSeek coder</strong><small>thinking · w1G:p1</small></div><div class="ledger-cell"><span class="chip human">tag review</span><small>after scoped diff</small></div></button><div class="ledger-detail"><div class="detail-cell"><span class="hud-label">Association path</span><p>Worker Bee → Buzz driver → Pi coder → Architect iOS → Ronnie.</p></div><div class="detail-cell"><span class="hud-label">Continuity</span><p>state.json · handoff.md · context-dump.md · coder brief.</p></div><div class="detail-cell"><span class="hud-label">Next movement</span><p>Coder produces reviewable code, driver tags Architect iOS with location.</p></div><button class="hud-button" data-toast="Opened AGENTIC-575 in Association Spine.">Command</button></div></article>
+                <article class="ledger-row"><button class="ledger-summary"><div class="ledger-work"><strong>PR #11847 · iOS-Doximity review request</strong><small>GitHub PR · discovered automatically</small></div><div class="ledger-cell"><span class="chip human">review</span><div class="stage-meter"><i style="--progress:24%;background:var(--human)"></i></div></div><div class="ledger-cell buzz"><strong>PR Review Scout</strong><small>#iOS Work · Ronnie tagged</small></div><div class="ledger-cell pi"><strong>Scout triage session</strong><small>DeepSeek · completed</small></div><div class="ledger-cell"><span class="chip human">read triage</span><small>score 1–5 ready</small></div></button><div class="ledger-detail"><div class="detail-cell"><span class="hud-label">Association path</span><p>GitHub review request → deterministic poller → Scout Pi run → Buzz #iOS Work → Ronnie.</p></div><div class="detail-cell"><span class="hud-label">Dedupe</span><p>Only new queue entries alert. Empty ten-minute scans stay silent.</p></div><div class="detail-cell"><span class="hud-label">Next movement</span><p>Open the Scout-authored triage, then jump to the PR if it deserves attention.</p></div><button class="hud-button human" data-toast="Opened the Scout triage for PR #11847.">Read triage</button></div></article>
+                <article class="ledger-row"><button class="ledger-summary"><div class="ledger-work"><strong>IOSDOX-27458 · Ask Analytics Audit</strong><small>Jira ticket · DevBox floor</small></div><div class="ledger-cell"><span class="chip mint">built</span><div class="stage-meter"><i style="--progress:74%"></i></div></div><div class="ledger-cell buzz"><strong>iOS-ask-analytics-audit</strong><small>channel live · status posted</small></div><div class="ledger-cell pi"><strong>8 coders + reviewer cast</strong><small>8/8 chunks · final PASS</small></div><div class="ledger-cell"><span class="chip human">proof + PR</span><small>open draft next</small></div></button><div class="ledger-detail"><div class="detail-cell"><span class="hud-label">Association path</span><p>Buzz driver → orchestrator → chunk coders → same-reviewer confirmations → Ronnie proof.</p></div><div class="detail-cell"><span class="hud-label">Continuity</span><p>plan.md · implementation-steps.md · chunk-log.md · review-log.md.</p></div><div class="detail-cell"><span class="hud-label">Next movement</span><p>Open draft PR, run simulator proof, then perform the Sumo query.</p></div><button class="hud-button human" data-toast="Pinned IOSDOX-27458 proof and PR gate.">Handle gate</button></div></article>
+                <article class="ledger-row"><button class="ledger-summary"><div class="ledger-work"><strong>AGENTIC-472 · OpenCode MOA Management</strong><small>Jira + GitHub PR #510</small></div><div class="ledger-cell"><span class="chip cyan">reviewing</span><div class="stage-meter"><i style="--progress:88%;background:var(--cyan)"></i></div></div><div class="ledger-cell buzz"><strong>PR triage monitor</strong><small>5-minute watcher · channel linked</small></div><div class="ledger-cell pi"><strong>Coder + same reviewer</strong><small>fixes PASS · pushed</small></div><div class="ledger-cell"><span class="chip human">paste replies</span><small>manual GitHub action</small></div></button><div class="ledger-detail"><div class="detail-cell"><span class="hud-label">Association path</span><p>PR comments → monitor → fresh orchestrator → coder → same reviewer → Ronnie reply packet.</p></div><div class="detail-cell"><span class="hud-label">Policy</span><p>Agents never post GitHub review comments. Reply drafts remain manual.</p></div><div class="detail-cell"><span class="hud-label">Next movement</span><p>Paste the prepared replies and continue monitoring the open review.</p></div><button class="hud-button human" data-toast="Opened the prepared PR #510 reply packet.">Open replies</button></div></article>
+              </div>
+              <div class="command-bar"><div class="command-state"><i class="pulse"></i><span id="ledger-state">ledger reconciled</span></div><input class="command-input" id="ledger-input" aria-label="Filter or command the cast ledger" placeholder="Example: Show only work where a human gate blocks an agent"><button class="send-button" id="ledger-send">Apply</button></div>
+            </section>
+
+            <section class="concept" data-concept="orbit">
+              <header class="concept-head"><div><div class="hud-label">Association Orbit · briefing mode</div><h2>Ask who is attached to the mission</h2><p>A spatial JARVIS view, but every orbit is a real relationship rather than decoration.</p></div><div class="head-metrics"><div class="metric"><strong style="color:var(--buzz)">02</strong><span>Buzz orbit</span></div><div class="metric"><strong style="color:var(--pi)">03</strong><span>Pi orbit</span></div><div class="metric"><strong style="color:var(--human)">01</strong><span>human gate</span></div></div></header>
+              <div class="concept-body orbit-layout">
+                <section class="orbit-field"><div class="orbit-core"><div><div class="hud-label">Selected mission</div><strong>Mobile API<br>Impact Guard</strong><small>AGENTIC-575 · live</small></div></div>
+                  <button class="orbit-node buzz o1 active" data-orbit-title="Buzz driver" data-orbit-kind="coordination identity" data-orbit-surface="Buzz channel" data-orbit-signal="Implementation moving" data-orbit-copy="iOS-mobile-api-impact-guard owns the visible channel, relays Pi progress, and summons the next specialist when the work is ready."><strong>iOS-mobile-api-impact-guard</strong><small>Buzz driver · live</small></button>
+                  <button class="orbit-node buzz o2" data-orbit-title="Worker Bee" data-orbit-kind="request origin" data-orbit-surface="Buzz channel" data-orbit-signal="Directive handed off" data-orbit-copy="Worker Bee carried the implementation directive into the channel and handed execution ownership to the per-ticket driver."><strong>Worker Bee</strong><small>Buzz origin · handed off</small></button>
+                  <button class="orbit-node pi o3" data-orbit-title="Architect iOS" data-orbit-kind="design review cast" data-orbit-surface="Canonical Buzz + Pi role" data-orbit-signal="Waiting for scoped diff" data-orbit-copy="Architect iOS joins after the coder produces a scoped diff. It stays design-only and receives the exact branch, files, tests, and review location."><strong>Architect iOS</strong><small>Pi/Buzz canonical · queued</small></button>
+                  <button class="orbit-node pi o4" data-orbit-title="DeepSeek coder" data-orbit-kind="Pi executor" data-orbit-surface="Pi pane w1G:p1" data-orbit-signal="Thinking on implementation" data-orbit-copy="The fresh Pi coder runs in w1G:p1 at the ticket worktree, using DeepSeek V4 Flash at max to execute the fixed brief."><strong>DeepSeek coder</strong><small>Pi session · thinking</small></button>
+                  <button class="orbit-node pi o5" data-orbit-title="Ticket orchestrator" data-orbit-kind="Pi delegator" data-orbit-surface="Pi floor w1G:t1" data-orbit-signal="Routing the active cast" data-orbit-copy="The long-lived ticket orchestrator routes work to isolated cast members. It coordinates context but does not impersonate the Buzz driver."><strong>Ticket orchestrator</strong><small>Pi floor · w1G:p1</small></button>
+                  <button class="orbit-node human o6" data-orbit-title="Ronnie gate" data-orbit-kind="human checkpoint" data-orbit-surface="Active Work attention queue" data-orbit-signal="Review association next" data-orbit-copy="Your next intervention is the review association: make Architect iOS a channel member, then let the driver mention it with the concrete review location."><strong>Ronnie</strong><small>review association · next</small></button>
+                </section>
+                <aside class="orbit-panel"><div class="panel-title">Relationship readout</div><div class="orbit-readout"><span class="chip buzz" id="orbit-chip">coordination identity</span><h3 id="orbit-title">Buzz driver</h3><p id="orbit-copy">iOS-mobile-api-impact-guard owns the visible channel, relays Pi progress, and summons the next specialist when the work is ready.</p><div class="relationship"><b>Attached to</b><span>AGENTIC-575</span><b>Surface</b><span id="orbit-surface">Buzz channel</span><b>State source</b><span>state.json + handoff.md</span><b>Current signal</b><span id="orbit-signal">Implementation moving</span></div><div class="control-actions" style="margin-top:10px"><button class="hud-button buzz" data-toast="Opening the selected agent at its Buzz or Pi surface.">Open agent</button><button class="hud-button" data-toast="Pinned this association to the work detail view.">Pin</button></div></div><div class="control-card" style="margin-top:9px"><span class="hud-label">Brief me</span><h4>One sentence, not a dashboard</h4><p>AGENTIC-575 is moving in Pi; the Buzz driver is healthy; Architect iOS is the next association; no code decision needs you yet.</p><button class="hud-button" id="voice-brief">Play briefing</button></div></aside>
+              </div>
+              <div class="command-bar"><div class="command-state"><i class="pulse"></i><span id="orbit-state">relationship field live</span></div><input class="command-input" id="orbit-input" aria-label="Ask about the association orbit" placeholder="Example: Which agent is waiting on me, and why?"><button class="send-button" id="orbit-send">Ask Herdr</button></div>
+            </section>
+
+            <aside class="why-card" id="why-card"><strong id="why-title">Why Association Spine</strong><span id="why-copy">The strongest default for Herdr. It keeps work as the anchor and turns the Buzz-to-Pi handoff into a readable command chain, with the next human gate always visible.</span></aside>
+            <button class="hud-button why-toggle" id="why-toggle">Why this layout?</button>
+          </div>
+        </main>
+      </div>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const tabs = [...document.querySelectorAll('.concept-tab')];
+    const concepts = [...document.querySelectorAll('.concept')];
+    const activeWorkCTA = document.querySelector('#active-work-cta');
+    const consoleLink = document.querySelector('#console-link');
+    const activeWorkView = document.querySelector('#active-work-view');
+    const consoleView = document.querySelector('#console');
+    const toast = document.querySelector('#toast');
+    const whyCard = document.querySelector('#why-card');
+    const whyTitle = document.querySelector('#why-title');
+    const whyCopy = document.querySelector('#why-copy');
+    let toastTimer;
+
+    const reasons = {
+      spine: ['Why Association Spine', 'The strongest default for Herdr. It keeps work as the anchor and turns the Buzz-to-Pi handoff into a readable command chain, with the next human gate always visible.'],
+      bridge: ['Why Buzz ↔ Pi Bridge', 'The clearest mental model for the workflow boundary. It shows Buzz as the coordination surface, Pi as the execution floor, and the durable records as the bridge between them.'],
+      ledger: ['Why Cast Ledger', 'The fastest layout when many tickets and PRs are active. Every row exposes ownership, execution, continuity, and the human gate without opening a separate agent dashboard.'],
+      orbit: ['Why Association Orbit', 'The most JARVIS-like briefing surface. The spatial treatment earns its place because every orbit encodes a real attachment to the selected work item.']
+    };
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+    }
+    function showActiveWork() {
+      activeWorkView.classList.remove('hidden');
+      consoleView.classList.remove('show');
+      activeWorkCTA.setAttribute('aria-pressed', 'true');
+      consoleLink.classList.remove('active');
+    }
+    function selectConcept(name) {
+      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.conceptTarget === name));
+      concepts.forEach(concept => concept.classList.toggle('active', concept.dataset.concept === name));
+      const reason = reasons[name];
+      whyTitle.textContent = reason[0];
+      whyCopy.textContent = reason[1];
+      whyCard.classList.remove('show');
+      showActiveWork();
+    }
+    tabs.forEach(tab => tab.addEventListener('click', () => selectConcept(tab.dataset.conceptTarget)));
+    activeWorkCTA.addEventListener('click', () => { showActiveWork(); showToast('Active Work replaced the center console.'); });
+    consoleLink.addEventListener('click', () => { activeWorkView.classList.add('hidden'); consoleView.classList.add('show'); activeWorkCTA.setAttribute('aria-pressed', 'false'); consoleLink.classList.add('active'); });
+    document.querySelector('#why-toggle').addEventListener('click', () => whyCard.classList.toggle('show'));
+    document.querySelectorAll('[data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
+
+    const workData = {
+      agentic575: {
+        key: 'AGENTIC-575 · implementing', title: 'Mobile API Impact Guard', summary: 'Build the review guard, then tag Architect iOS with the review location.', floor: 'local floor', status: 'moving', origin: ['W', 'Worker Bee', 'request received'], buzz: ['iOS-mobile-api-impact-guard', 'Buzz driver · channel live'], orch: ['ticket orchestrator', 'herdr pane w1G:p1'], cast: ['DeepSeek coder', 'thinking · max'], gate: ['Architect tag gate', 'add member, then mention'], channel: 'AGENTIC-575 channel', floorLabel: 'w1G:t1 · local', gateCard: ['Review association pending', 'Architect iOS must be a channel member before the driver can mention it.'], files: ['state.json', 'handoff.md', 'context-dump.md', 'coder brief'], logs: [['13:30','Buzz','Driver accepted ownership and started the implementation run.'],['13:31','Pi coder','Reading the execution brief and locating schema integration points.'],['next','Gate','Add Architect iOS to the channel, then tag with branch, files, and review location.']]
+      },
+      pr11847: {
+        key: 'PR #11847 · review requested', title: 'iOS-Doximity review request', summary: 'Scout discovered a new review request, rated it, and tagged Ronnie in #iOS Work.', floor: 'watchdog', status: 'needs you', origin: ['GH', 'GitHub queue', 'new review request'], buzz: ['PR Review Scout', '#iOS Work · Ronnie tagged'], orch: ['deterministic poller', '10-minute cadence'], cast: ['Scout Pi agent', 'triage completed'], gate: ['Read triage', 'choose review priority'], channel: '#iOS Work', floorLabel: 'Scout · no ticket floor', gateCard: ['Triage ready for judgment', 'Open the Scout-authored rating, then jump to the PR if it deserves attention.'], files: ['alerted.json', 'payload.json', 'task.md', 'scout.out'], logs: [['08:02','Poller','Detected one new PR in the direct and team review queue.'],['08:03','Scout','Produced a 1–5 triage and posted using the Scout identity.'],['now','Ronnie','Mention delivered in #iOS Work. Review priority needs your call.']]
+      },
+      ios27458: {
+        key: 'IOSDOX-27458 · built', title: 'Ask Analytics Audit', summary: 'Eight chunks and final review passed. Draft PR and simulator proof are next.', floor: 'DevBox floor', status: 'gate next', origin: ['J', 'Jira ticket', 'workflow started'], buzz: ['iOS-ask-analytics-audit', 'Buzz driver · status live'], orch: ['GLM orchestrator', '8 chunks coordinated'], cast: ['Coder + reviewer cast', 'final PASS'], gate: ['Proof + draft PR', 'human checkpoint'], channel: 'IOSDOX-27458 channel', floorLabel: 'wX:t1 · DevBox', gateCard: ['Proof and PR gate', 'Open the draft PR, step through the feature, and verify one lower-environment Sumo query.'], files: ['state.json', 'handoff.md', 'chunk-log.md', 'review-log.md'], logs: [['08:01','Pi cast','Chunk 8 approved after the scoped fix loop.'],['08:10','Reviewer','Integration and final independent review passed.'],['next','Ronnie','Open the draft PR and perform the proof walkthrough.']]
+      },
+      agentic472: {
+        key: 'AGENTIC-472 · reviewing', title: 'OpenCode MOA Management', summary: 'Fixes passed and were pushed. A manual GitHub reply packet is waiting.', floor: 'local floor', status: 'monitoring', origin: ['PR', 'GitHub comments', 'monitor detected'], buzz: ['PR triage monitor', 'channel linked'], orch: ['fresh GLM run', 'triage complete'], cast: ['Coder + same reviewer', 'fixes PASS'], gate: ['Paste replies', 'manual GitHub action'], channel: 'AGENTIC-472 channel', floorLabel: 'wK:t9 · local', gateCard: ['Reply packet ready', 'Agents prepared the responses, but GitHub review comments remain a manual action.'], files: ['state.json', 'handoff.md', 'pr-reply-drafts.md', 'review-log.md'], logs: [['22:30','Reviewer','All three approved fixes passed the confirmation review.'],['22:42','Buzz','Commit pushed and reply packet prepared.'],['now','Ronnie','Paste the three drafted replies into PR #510.']]
+      }
+    };
+
+    function setText(selector, value) { document.querySelector(selector).textContent = value; }
+    document.querySelectorAll('.work-item').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.work-item').forEach(work => work.classList.remove('selected'));
+      item.classList.add('selected');
+      const data = workData[item.dataset.work];
+      setText('#spine-key', data.key); setText('#spine-title', data.title); setText('#spine-summary', data.summary);
+      setText('#stage-chip', data.floor); setText('#status-chip', data.status);
+      setText('#origin-orb', data.origin[0]); setText('#origin-name', data.origin[1]); setText('#origin-detail', data.origin[2]);
+      setText('#buzz-name', data.buzz[0]); setText('#buzz-detail', data.buzz[1]);
+      setText('#orch-name', data.orch[0]); setText('#orch-detail', data.orch[1]);
+      setText('#cast-name', data.cast[0]); setText('#cast-detail', data.cast[1]);
+      setText('#gate-name', data.gate[0]); setText('#gate-detail', data.gate[1]);
+      setText('#channel-label', data.channel); setText('#floor-label', data.floorLabel);
+      setText('#gate-card-title', data.gateCard[0]); setText('#gate-card-copy', data.gateCard[1]);
+      document.querySelector('#continuity-files').innerHTML = data.files.map(file => `<span class="file-pill">${file}</span>`).join('');
+      document.querySelector('#activity-log').innerHTML = data.logs.map((log, index) => `<div class="log-line"><time>${log[0]}</time><b${index === 2 ? ' style="color:var(--human)"' : ''}>${log[1]}</b><span>${log[2]}</span></div>`).join('');
+      showToast(`${data.key} loaded with its Buzz and Pi associations.`);
+    }));
+
+    document.querySelector('#tag-architect').addEventListener('click', event => {
+      event.currentTarget.textContent = 'Architect tagged ✓';
+      setText('#gate-card-title', 'Architect iOS associated');
+      setText('#gate-card-copy', 'Channel membership and mention are represented as one explicit work association.');
+      setText('#gate-detail', 'associated · review queued');
+      document.querySelector('#human-node').classList.remove('pending');
+      showToast('Architect iOS added to the channel and tagged with the review location.');
+    });
+    document.querySelectorAll('.tag-option').forEach(option => option.addEventListener('click', () => {
+      option.querySelector('span:last-child').textContent = '✓';
+      showToast(`${option.dataset.tag} associated with AGENTIC-575.`);
+    }));
+    document.querySelector('#bridge-tag').addEventListener('click', event => {
+      event.currentTarget.textContent = 'Architect iOS tagged ✓';
+      setText('#bridge-state', 'review association synchronized');
+      showToast('Buzz membership updated and the Pi review handoff linked.');
+    });
+
+    document.querySelectorAll('.ledger-summary').forEach(summary => summary.addEventListener('click', () => summary.closest('.ledger-row').classList.toggle('open')));
+    document.querySelectorAll('.orbit-node').forEach(node => node.addEventListener('click', () => {
+      document.querySelectorAll('.orbit-node').forEach(item => item.classList.remove('active'));
+      node.classList.add('active');
+      setText('#orbit-title', node.dataset.orbitTitle);
+      setText('#orbit-chip', node.dataset.orbitKind);
+      setText('#orbit-copy', node.dataset.orbitCopy);
+      setText('#orbit-surface', node.dataset.orbitSurface);
+      setText('#orbit-signal', node.dataset.orbitSignal);
+      const orbitChip = document.querySelector('#orbit-chip');
+      orbitChip.className = `chip ${node.classList.contains('human') ? 'human' : node.classList.contains('pi') ? 'pi' : 'buzz'}`;
+    }));
+    document.querySelector('#voice-brief').addEventListener('click', event => {
+      event.currentTarget.textContent = 'Briefing active…';
+      showToast('AGENTIC-575 is moving. Architect iOS is the next association. No code decision needs you yet.');
+      setTimeout(() => { event.currentTarget.textContent = 'Play briefing'; }, 2400);
+    });
+
+    function wireCommand(inputSelector, buttonSelector, prefix, stateSelector) {
+      const input = document.querySelector(inputSelector);
+      const button = document.querySelector(buttonSelector);
+      const run = () => {
+        const command = input.value.trim();
+        if (!command) { showToast('Enter a directive or ask about an association.'); return; }
+        showToast(`${prefix}: ${command}`);
+        input.value = '';
+        if (stateSelector) setText(stateSelector, 'directive routed');
+      };
+      button.addEventListener('click', run);
+      input.addEventListener('keydown', event => { if (event.key === 'Enter') run(); });
+    }
+    wireCommand('#spine-input', '#spine-send', 'Herdr routed the directive through the work chain', '#spine-command-state');
+    wireCommand('#bridge-input', '#bridge-send', 'The Buzz driver received the relay', '#bridge-state');
+    wireCommand('#ledger-input', '#ledger-send', 'The ledger applied the work filter', '#ledger-state');
+    wireCommand('#orbit-input', '#orbit-send', 'Herdr is tracing the association', '#orbit-state');
+  </script>
+</body>
+</html>

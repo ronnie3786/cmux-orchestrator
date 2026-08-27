@@ -17,6 +17,8 @@ from typing import Any, Callable, Mapping, Optional, TypeVar
 
 from .alerts import AlertStore, utc_now
 from . import attachments, cmux_tools, response_audio, voice, workspace_tools
+from .active_work import ActiveWorkError
+from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAULT_ACTIVE_WORK_STORE_PATH
 from .agent_runs import AgentRunError, AgentRunManager
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import CleanupManager
@@ -100,6 +102,7 @@ class HerdrService:
         response_audio_service: Optional[response_audio.ResponseAudioService] = None,
         cleanup: Optional[CleanupManager] = None,
         agent_runs: Optional[AgentRunManager] = None,
+        active_work: Optional[ActiveWorkRepository] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -126,6 +129,11 @@ class HerdrService:
         )
         self.response_audio = response_audio_service or response_audio.ResponseAudioService(self.environ)
         self.cleanup = cleanup or CleanupManager(self, environ=self.environ)
+        active_work_store_path = self.environ.get("HERDR_HARNESS_ACTIVE_WORK_STORE_PATH")
+        if not active_work_store_path:
+            active_work_store_path = DEFAULT_ACTIVE_WORK_STORE_PATH if production_environment else ":memory:"
+        self.active_work = active_work or ActiveWorkRepository(active_work_store_path)
+        self._owns_active_work = active_work is None
         # Agent runs are initialized lazily. Most harness requests do not need
         # a subprocess manager, and delaying creation avoids touching its
         # private persistence directory until the feature is actually used.
@@ -274,6 +282,8 @@ class HerdrService:
             stop_agent_runs = getattr(self._agent_runs, "stop", None)
             if callable(stop_agent_runs):
                 stop_agent_runs()
+        if self._owns_active_work:
+            self.active_work.close()
 
     @property
     def agent_runs(self) -> AgentRunManager:
@@ -1088,6 +1098,114 @@ class HerdrService:
             "review_requests": review_section,
             "jira_tickets": jira_section,
         }
+
+    def active_work_board(self) -> dict:
+        """Return durable Active Work state with live, explicitly untracked Jira candidates.
+
+        Jira is an enrichment source only. A Jira or cmux outage must not make
+        the durable board unavailable, and merely observing a candidate never
+        creates a work item.
+        """
+
+        candidates: list[dict] = []
+        jira_status: dict[str, Any] = {"ok": True, "error": None}
+        try:
+            payload = self.cmux_tools.jira_assigned(limit=100)
+            site = payload.get("site")
+            raw_tickets = payload.get("tickets")
+            for raw in raw_tickets if isinstance(raw_tickets, list) else []:
+                ticket = self._jira_ticket(raw)
+                if ticket is None:
+                    continue
+                if isinstance(site, str) and site.strip():
+                    ticket["site"] = site.strip()
+                candidates.append(ticket)
+                # Refresh only an already-tracked link. This method is
+                # intentionally incapable of creating work from observation.
+                try:
+                    self.active_work.refresh_tracked_jira(ticket)
+                except ActiveWorkError:
+                    # One malformed optional Jira candidate must not make the
+                    # durable Active Work board unavailable.
+                    continue
+        except cmux_tools.CmuxToolsError as exc:
+            jira_status = {"ok": False, "error": str(exc)}
+
+        result = self.active_work.board_projection(candidates)
+        result["jira_candidates_status"] = jira_status
+        return result
+
+    def active_work_item(self, item_id: str) -> dict:
+        item = self.active_work.item_projection(item_id)
+        if item is None:
+            raise ActiveWorkError(
+                "Active Work item not found",
+                code="active_work_item_not_found",
+                status=404,
+            )
+        return {"ok": True, "item": item, "generated_at": utc_now()}
+
+    def create_active_work_item(self, payload: dict) -> dict:
+        item = self.active_work.create_item(payload, actor="user")
+        self._publish_active_work_updated(item, change="created")
+        return {"ok": True, "item": item, "generated_at": utc_now()}
+
+    def patch_active_work_item(self, item_id: str, payload: dict) -> dict:
+        item = self.active_work.patch_item(item_id, payload, actor="user")
+        self._publish_active_work_updated(item, change="patched")
+        return {"ok": True, "item": item, "generated_at": utc_now()}
+
+    def transition_active_work_item(self, item_id: str, payload: dict) -> dict:
+        item = self.active_work.transition(item_id, payload, actor="user")
+        self._publish_active_work_updated(item, change="transitioned")
+        return {"ok": True, "item": item, "generated_at": utc_now()}
+
+    def setup_active_work_jira(self, issue_key: str) -> dict:
+        """Set up one user-selected Jira issue without creating Buzz resources."""
+
+        payload = self._tool_call(self.cmux_tools.jira_issue, issue_key)
+        ticket = self._jira_ticket(payload.get("ticket"))
+        if ticket is None:
+            raise ActiveWorkError(
+                "Jira returned an invalid issue",
+                code="active_work_jira_invalid_response",
+                status=502,
+            )
+        site = payload.get("site")
+        if isinstance(site, str) and site.strip():
+            ticket["site"] = site.strip()
+        result = self.active_work.setup_jira(ticket, actor="user")
+        item = result["item"]
+        self._publish_active_work_updated(
+            item,
+            change="jira_setup" if result["created"] else "jira_refreshed",
+        )
+        return {"ok": True, **result, "generated_at": utc_now()}
+
+    def ingest_active_work(self, payload: dict, *, actor: Optional[str] = None) -> dict:
+        source_name = str(payload.get("source") or "ingest") if isinstance(payload, dict) else "ingest"
+        result = self.active_work.ingest(
+            payload,
+            actor=actor or f"ingest:{source_name[:64]}",
+        )
+        item = result.get("item")
+        if result.get("applied") and isinstance(item, dict):
+            self._publish_active_work_updated(item, change="ingested")
+        return {"ok": True, **result, "generated_at": utc_now()}
+
+    def active_work_sync_targets(self) -> dict:
+        return self.active_work.sync_targets()
+
+    def _publish_active_work_updated(self, item: dict, *, change: str) -> None:
+        self.broker.publish(
+            "active_work.updated",
+            {
+                "work_item_id": item.get("id"),
+                "revision": item.get("revision"),
+                "change": change,
+                "generated_at": utc_now(),
+            },
+        )
 
     def jira_issue(self, *, query: str) -> dict:
         payload = self._tool_call(self.cmux_tools.jira_issue, query)

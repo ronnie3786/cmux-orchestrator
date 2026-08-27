@@ -6,6 +6,7 @@ import SwiftUI
 enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case session
     case workspace
+    case activeWork
     case attention
     case activity
 
@@ -15,6 +16,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .session: "Session"
         case .workspace: "Workspace"
+        case .activeWork: "Active Work"
         case .attention: "Attention"
         case .activity: "Activity"
         }
@@ -24,6 +26,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .session: "bubble.left.and.bubble.right"
         case .workspace: "rectangle.3.group"
+        case .activeWork: "point.topleft.down.to.point.bottomright.curvepath"
         case .attention: "bell.badge"
         case .activity: "clock.arrow.circlepath"
         }
@@ -39,6 +42,7 @@ final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
     var isCreatingWorkspace = false
     var isAgentPresented = false
+    var agentInitialPrompt: String?
     var isCommandPalettePresented = false
     private(set) var commandPaletteFocusRequest = 0
 
@@ -64,6 +68,15 @@ final class HerdrShellState {
         detailScope = .session
     }
 
+    func showActiveWork() {
+        detailScope = .activeWork
+    }
+
+    func presentAgent(prompt: String? = nil) {
+        agentInitialPrompt = prompt
+        isAgentPresented = true
+    }
+
     /// Show a workspace's tab/pane overview — what iOS navigated to when you
     /// opened a workspace rather than one of its panes.
     func showWorkspace(id: String, model: HerdrAppModel) {
@@ -86,6 +99,8 @@ final class HerdrShellState {
             return .attention
         case .workspace:
             return model.workspace(id: model.selectedWorkspaceID) != nil ? .workspace : .attention
+        case .activeWork:
+            return .activeWork
         case .attention:
             return .attention
         case .activity:
@@ -97,6 +112,7 @@ final class HerdrShellState {
 struct AppRootView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
+    @Bindable var activeWorkStore: ActiveWorkStore
     let driver: HerdrConnectionDriver
     @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -115,7 +131,11 @@ struct AppRootView: View {
     private var rootContent: some View {
         Group {
             if model.hasCompletedSetup {
-                WorkspaceNavigationView(model: model, shell: shell)
+                WorkspaceNavigationView(
+                    model: model,
+                    shell: shell,
+                    activeWorkStore: activeWorkStore
+                )
             } else {
                 OnboardingView(model: model)
             }
@@ -189,9 +209,10 @@ struct AppRootView: View {
             .frame(minWidth: 460, minHeight: 340)
         }
         .sheet(isPresented: $shell.isAgentPresented) {
-            HeadlessAgentView(model: model) { pane in
+            HeadlessAgentView(model: model, initialPrompt: shell.agentInitialPrompt) { pane in
                 openPane(id: pane.id)
             }
+            .onDisappear { shell.agentInitialPrompt = nil }
         }
         .overlay(alignment: .top) {
             if let message = model.toastMessage {

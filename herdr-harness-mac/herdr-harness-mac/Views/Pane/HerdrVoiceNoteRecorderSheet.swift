@@ -14,6 +14,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
     let transcribe: (URL) async throws -> VoiceTranscription
     let insertTranscript: (VoiceTranscription) -> Void
     let cancel: () -> Void
+    var allowsRawSave = true
 
     @State private var recorder = HerdrVoiceRecorder()
     @State private var didSave = false
@@ -226,17 +227,19 @@ struct HerdrVoiceNoteRecorderSheet: View {
             .help(isTranscribing ? "Cancel transcription" : recorder.hasRecording ? "Discard this recording" : "Close")
             .accessibilityLabel(isTranscribing ? "Cancel transcription" : recorder.hasRecording ? "Discard" : "Close")
 
-            Button {
-                saveRecording()
-            } label: {
-                Image(systemName: "paperclip")
-                    .frame(width: 44, height: 46)
+            if allowsRawSave {
+                Button {
+                    saveRecording()
+                } label: {
+                    Image(systemName: "paperclip")
+                        .frame(width: 44, height: 46)
+                }
+                .buttonStyle(.bordered)
+                .tint(HerdrTheme.mist)
+                .disabled(!recorder.canSave || isTranscribing)
+                .help("Attach the audio file without transcribing it")
+                .accessibilityLabel("Attach audio without transcribing")
             }
-            .buttonStyle(.bordered)
-            .tint(HerdrTheme.mist)
-            .disabled(!recorder.canSave || isTranscribing)
-            .help("Attach the audio file without transcribing it")
-            .accessibilityLabel("Attach audio without transcribing")
 
             Button {
                 transcriptionError = nil
@@ -272,7 +275,13 @@ struct HerdrVoiceNoteRecorderSheet: View {
         case .recording:
             "recording · tap stop when finished"
         case .finished:
-            isTranscribing ? "transcribing · this may take a moment" : "ready to transcribe or attach"
+            if isTranscribing {
+                "transcribing · this may take a moment"
+            } else if allowsRawSave {
+                "ready to transcribe or attach"
+            } else {
+                "ready to transcribe"
+            }
         }
     }
 

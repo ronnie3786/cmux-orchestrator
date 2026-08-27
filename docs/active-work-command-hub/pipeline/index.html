@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Herdr Active Work, Pipeline Concepts</title>
+  <style>
+    :root {
+      --ink: #181825;
+      --graphite: #1e1e2e;
+      --elevated: #313244;
+      --surface: #45475a;
+      --mist: #a6adc8;
+      --muted: #6c7086;
+      --text: #e5eafa;
+      --accent: #89b4fa;
+      --mauve: #cba6f7;
+      --signal: #94e2d5;
+      --success: #a6e3a1;
+      --working: #f9e2af;
+      --alert: #f38ba8;
+      --warning: #fab387;
+      --code: #f5c2e7;
+      --crust: #11111b;
+      --body: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      --rounded: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", Menlo, ui-monospace, monospace;
+      --card-radius: 16px;
+      --compact-radius: 10px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-width: 1020px; min-height: 100%; }
+    body { margin: 0; color: var(--text); background: #050506; font-family: var(--body); -webkit-font-smoothing: antialiased; }
+    button, input { font: inherit; }
+    button { padding: 0; border: 0; color: inherit; background: none; -webkit-appearance: none; appearance: none; }
+    button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+    .app-window {
+      width: min(1700px, calc(100vw - 28px));
+      height: min(930px, calc(100vh - 24px));
+      min-height: 680px;
+      margin: 12px auto;
+      overflow: hidden;
+      border: 1px solid rgba(166,173,200,.34);
+      border-radius: 28px;
+      background: var(--ink);
+      box-shadow: 0 30px 90px rgba(0,0,0,.62);
+    }
+
+    .window-toolbar { position: relative; height: 66px; display: grid; grid-template-columns: 270px 1fr 270px; align-items: center; padding: 0 18px; border-bottom: 1px solid rgba(166,173,200,.13); background: var(--ink); }
+    .traffic { display: flex; gap: 10px; }
+    .traffic i { width: 14px; height: 14px; border-radius: 50%; background: #ff5f57; }
+    .traffic i:nth-child(2) { background: #febc2e; }
+    .traffic i:nth-child(3) { background: #28c840; }
+    .concept-picker { justify-self: center; display: grid; grid-template-columns: repeat(4, auto); padding: 3px; border: 1px solid rgba(166,173,200,.2); border-radius: 13px; background: rgba(17,17,27,.42); }
+    .concept-button { min-width: 116px; padding: 8px 12px; border: 0; border-radius: 9px; color: var(--mist); background: transparent; font: 650 11px var(--body); cursor: pointer; transition: background .2s ease, color .2s ease; }
+    .concept-button:hover { color: var(--text); }
+    .concept-button.active { color: var(--text); background: var(--elevated); box-shadow: inset 0 0 0 1px rgba(166,173,200,.12); }
+    .toolbar-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
+    .toolbar-icon { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid rgba(166,173,200,.2); border-radius: 12px; color: var(--mist); background: transparent; cursor: pointer; }
+    .toolbar-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .toolbar-icon.voice-shortcut { border-color: transparent; color: var(--ink); background: var(--accent); }
+    .shell { display: grid; grid-template-columns: 310px minmax(0,1fr); height: calc(100% - 66px); }
+
+    .sidebar { display: flex; flex-direction: column; min-height: 0; padding: 14px 10px 18px; border-right: 1px solid rgba(166,173,200,.16); background: var(--ink); }
+    .brand { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px 8px; }
+    .brand-bars { display: flex; align-items: center; gap: 3px; width: 29px; height: 29px; }
+    .brand-bars i { width: 6px; border-radius: 3px; background: var(--accent); }
+    .brand-bars i:first-child { height: 23px; }
+    .brand-bars i:nth-child(2) { height: 17px; background: var(--mauve); }
+    .brand-bars i:nth-child(3) { height: 23px; background: var(--signal); }
+    .brand strong { font: 750 15px var(--mono); letter-spacing: .015em; }
+    .brand .history { margin-left: auto; color: var(--mist); font-size: 18px; }
+
+    .active-cta { position: relative; width: 100%; margin: 2px 0 14px; padding: 12px 12px 12px 15px; border: 1px solid rgba(137,180,250,.38); border-radius: var(--compact-radius); color: inherit; background: var(--graphite); text-align: left; cursor: pointer; overflow: hidden; }
+    .active-cta::before { position: absolute; inset: 0 auto 0 0; width: 3px; background: linear-gradient(var(--mauve), var(--accent)); content: ""; }
+    .active-cta.selected { background: linear-gradient(90deg, rgba(137,180,250,.1), transparent 68%), var(--graphite); border-color: rgba(137,180,250,.52); }
+    .active-cta header { display: flex; align-items: center; gap: 8px; }
+    .active-cta strong { font: 700 13px var(--mono); text-decoration: underline; text-underline-offset: 2px; }
+    .active-cta b { margin-left: auto; color: var(--mist); font: 600 11px var(--mono); }
+    .active-cta p { margin: 7px 0 9px; color: var(--mist); font-size: 11px; line-height: 1.4; }
+    .cta-stats { display: flex; gap: 6px; }
+    .mini-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid rgba(166,173,200,.18); border-radius: 7px; color: var(--mist); font: 600 9px var(--mono); }
+    .mini-pill i { width: 5px; height: 5px; border-radius: 50%; background: var(--signal); }
+    .mini-pill.attention i { background: var(--alert); }
+
+    .side-section-label { display: flex; align-items: baseline; gap: 8px; padding: 0 9px 4px; color: var(--mist); }
+    .side-section-label strong { font: 700 12px var(--mono); text-decoration: underline; text-underline-offset: 2px; }
+    .side-section-label span { margin-left: auto; font: 500 10px var(--mono); }
+    .provider { margin-bottom: 5px; }
+    .provider-head { display: flex; align-items: center; width: 100%; padding: 6px 9px; border: 0; color: var(--text); background: transparent; text-align: left; cursor: pointer; }
+    .provider-head b { margin-left: 7px; font: 700 12px var(--mono); }
+    .count { display: grid; place-items: center; min-width: 21px; height: 21px; margin-left: auto; padding: 0 5px; border-radius: 11px; color: var(--ink); background: var(--mauve); font: 700 10px var(--mono); }
+    .provider-items { display: grid; gap: 2px; }
+    .inbox-item { padding: 7px 9px 7px 14px; border-left: 2px solid transparent; color: var(--mist); cursor: default; }
+    .inbox-item b { display: flex; color: var(--mauve); font: 650 10px var(--mono); }
+    .inbox-item b span { margin-left: auto; color: var(--mist); }
+    .inbox-item p { margin: 3px 0; color: var(--text); font-size: 11px; line-height: 1.3; }
+    .inbox-item small { color: var(--muted); font: 500 9px var(--mono); }
+    .inbox-item:hover { border-left-color: var(--accent); background: rgba(49,50,68,.42); }
+    .side-rule { height: 1px; margin: 9px 8px 11px; background: rgba(166,173,200,.15); }
+    .side-nav { display: grid; gap: 2px; }
+    .side-link { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; color: var(--mist); background: transparent; text-align: left; cursor: pointer; }
+    .side-link:hover, .side-link.active { color: var(--text); background: var(--elevated); }
+    .side-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+    .side-link span { font: 600 11px var(--mono); }
+    .side-footer { margin-top: auto; padding: 10px 9px 0; border-top: 1px solid rgba(166,173,200,.14); color: var(--muted); font: 500 9px/1.6 var(--mono); }
+    .side-footer b { color: var(--accent); }
+
+    .detail { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--ink); }
+    .console-view { display: none; height: 100%; padding: 22px; }
+    .console-view.show { display: block; }
+    .console-card { height: 100%; padding: 18px; border: 1px solid rgba(166,173,200,.2); border-radius: var(--card-radius); color: var(--mist); background: var(--graphite); font: 500 11px/1.8 var(--mono); }
+    .console-card b { color: var(--accent); }
+    .board { height: 100%; }
+    .board.hidden { display: none; }
+    .concept { display: none; height: 100%; }
+    .concept.active { display: block; }
+    .concept-scroll { height: 100%; overflow: auto; scrollbar-color: var(--surface) transparent; }
+    .content { width: min(1120px, calc(100% - 36px)); margin: 0 auto; padding: 22px 0 96px; }
+    .board-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+    .board-head h1 { margin: 0; font: 750 30px/1.1 var(--rounded); letter-spacing: -.02em; }
+    .board-head p { margin: 7px 0 0; color: var(--mist); font-size: 13px; line-height: 1.45; }
+    .head-actions { display: flex; gap: 8px; margin-left: auto; }
+    .native-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 11px; border: 1px solid rgba(166,173,200,.22); border-radius: 9px; color: var(--mist); background: var(--graphite); font: 650 10px var(--mono); cursor: pointer; }
+    .native-button:hover { color: var(--text); border-color: rgba(137,180,250,.45); }
+    .native-button.primary { color: var(--ink); border-color: var(--accent); background: var(--accent); }
+    .summary-card { display: grid; grid-template-columns: repeat(3,1fr); margin-bottom: 18px; border: 1px solid rgba(166,173,200,.2); border-radius: var(--card-radius); background: var(--graphite); }
+    .summary-metric { position: relative; display: grid; place-items: center; gap: 5px; min-height: 72px; padding: 12px; text-align: center; }
+    .summary-metric + .summary-metric::before { position: absolute; left: 0; width: 1px; height: 34px; background: rgba(255,255,255,.08); content: ""; }
+    .summary-metric strong { font: 750 16px var(--body); }
+    .summary-metric span { color: var(--mist); font-size: 11px; }
+    .summary-metric.attention strong { color: var(--alert); }
+
+    .section-head { display: flex; align-items: center; margin: 18px 0 9px; }
+    .section-head h2 { margin: 0; font: 700 15px var(--body); }
+    .section-head span { margin-left: auto; color: var(--mist); font: 600 10px var(--mono); }
+    .kind-pill, .status-pill, .stage-skill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid rgba(166,173,200,.2); border-radius: 999px; color: var(--mist); background: rgba(49,50,68,.52); font: 650 9px var(--mono); white-space: nowrap; }
+    .status-pill.working { color: var(--working); border-color: rgba(249,226,175,.28); background: rgba(249,226,175,.08); }
+    .status-pill.attention { color: var(--alert); border-color: rgba(243,139,168,.3); background: rgba(243,139,168,.09); }
+    .status-pill.done { color: var(--signal); border-color: rgba(148,226,213,.28); background: rgba(148,226,213,.08); }
+
+    .agent-stack { display: flex; align-items: center; min-width: max-content; }
+    .agent-avatar { position: relative; display: inline-grid; place-items: center; width: 30px; height: 30px; margin-left: -6px; border: 2px solid var(--ink); border-radius: 50%; background: var(--elevated); overflow: visible; }
+    .agent-avatar:first-child { margin-left: 0; }
+    .agent-avatar svg { width: 100%; height: 100%; border-radius: 50%; overflow: hidden; }
+    .agent-avatar::after { position: absolute; right: -1px; bottom: 0; width: 6px; height: 6px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--signal); content: ""; }
+    .agent-avatar.queued { opacity: .48; }
+    .agent-avatar.queued::after { background: var(--muted); }
+    .agent-avatar.attention::after { background: var(--alert); }
+    .agent-avatar.working::after { background: var(--working); animation: breathe 1.15s ease-in-out infinite; }
+    .agent-avatar.small { width: 25px; height: 25px; }
+
+    /* Concept 1 */
+    .journey-list { display: grid; gap: 12px; }
+    .journey-card { position: relative; padding: 15px; border: 1px solid rgba(166,173,200,.16); border-radius: 18px; background: rgba(30,30,46,.78); cursor: pointer; transition: border-color .2s ease, background .2s ease; }
+    .journey-card::before { position: absolute; left: 0; top: 17px; bottom: 17px; width: 4px; border-radius: 2px; background: var(--accent); content: ""; opacity: .72; }
+    .journey-card.needs::before { background: var(--alert); }
+    .journey-card.selected { border-color: rgba(137,180,250,.5); background: linear-gradient(90deg, rgba(137,180,250,.07), transparent 62%), var(--graphite); }
+    .journey-top { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 12px; padding-left: 5px; }
+    .journey-title { min-width: 0; }
+    .journey-title .meta { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+    .journey-title h3 { margin: 0; overflow: hidden; font-size: 15px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+    .journey-title p { margin: 4px 0 0; color: var(--mist); font: 500 10px var(--mono); }
+    .pipeline-inset { margin-top: 13px; padding: 13px 13px 10px; border-radius: 14px; background: rgba(17,17,27,.7); }
+    .stage-rail { position: relative; display: grid; grid-template-columns: repeat(8, minmax(68px,1fr)); gap: 5px; }
+    .stage-rail::before { position: absolute; left: 5%; right: 5%; top: 38px; height: 1px; background: var(--surface); content: ""; }
+    .rail-stage { position: relative; z-index: 1; min-width: 0; text-align: center; }
+    .riders { height: 31px; display: flex; align-items: center; justify-content: center; }
+    .stage-node { display: grid; place-items: center; width: 15px; height: 15px; margin: 0 auto 6px; border: 1px solid rgba(166,173,200,.38); border-radius: 5px; color: var(--muted); background: var(--crust); font: 700 8px var(--mono); }
+    .rail-stage.complete .stage-node { color: var(--ink); border-color: var(--signal); background: var(--signal); }
+    .rail-stage.current .stage-node { width: 19px; height: 19px; margin-top: -2px; margin-bottom: 4px; border: 1.5px solid var(--accent); color: var(--text); background: rgba(137,180,250,.22); }
+    .journey-card.needs .rail-stage.current .stage-node { border-color: var(--alert); background: rgba(243,139,168,.18); }
+    .stage-name { display: block; overflow: hidden; color: var(--muted); font: 600 8px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .rail-stage.complete .stage-name { color: var(--mist); }
+    .rail-stage.current .stage-name { color: var(--text); }
+    .checkpoint-star { color: var(--alert); }
+    .idea-preflight { display: flex; align-items: center; gap: 9px; min-height: 58px; padding: 10px 12px; border: 1px dashed rgba(203,166,247,.35); border-radius: 11px; color: var(--mist); background: rgba(203,166,247,.045); }
+    .idea-preflight strong { color: var(--mauve); font-size: 11px; }
+    .idea-preflight p { margin: 2px 0 0; font-size: 10px; }
+    .journey-detail { display: none; grid-template-columns: 1.15fr 1fr 1fr; gap: 10px; margin-top: 12px; padding: 12px 5px 2px; border-top: 1px solid rgba(166,173,200,.13); }
+    .journey-card.selected .journey-detail { display: grid; }
+    .detail-block { padding-left: 10px; border-left: 2px solid rgba(137,180,250,.28); }
+    .detail-block b { display: block; margin-bottom: 4px; color: var(--mist); font: 700 9px var(--mono); text-transform: lowercase; }
+    .detail-block p { margin: 0; color: var(--mist); font-size: 11px; line-height: 1.45; }
+
+    /* Concept 2 */
+    .matrix-card { overflow: hidden; border: 1px solid rgba(166,173,200,.18); border-radius: var(--card-radius); background: var(--graphite); }
+    .matrix-row { display: grid; grid-template-columns: 230px repeat(8, minmax(74px,1fr)); min-height: 62px; border-top: 1px solid rgba(166,173,200,.12); }
+    .matrix-row:first-child { border-top: 0; }
+    .matrix-head { min-height: 48px; color: var(--mist); background: rgba(49,50,68,.5); }
+    .matrix-cell { position: relative; display: grid; place-items: center; min-width: 0; padding: 7px 5px; border-left: 1px solid rgba(166,173,200,.1); text-align: center; }
+    .matrix-cell:first-child { border-left: 0; }
+    .matrix-head .matrix-cell { font: 650 8px/1.3 var(--mono); }
+    .matrix-work { place-items: center start; padding: 10px 12px; text-align: left; cursor: pointer; }
+    .matrix-work strong { display: block; max-width: 200px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .matrix-work small { margin-top: 4px; color: var(--muted); font: 500 9px var(--mono); }
+    .matrix-stage { cursor: pointer; }
+    .matrix-stage:hover { background: rgba(137,180,250,.06); }
+    .matrix-stage.complete { color: var(--signal); background: rgba(148,226,213,.035); }
+    .matrix-stage.current { background: rgba(137,180,250,.1); box-shadow: inset 0 0 0 1px rgba(137,180,250,.45); }
+    .matrix-stage.needs { background: rgba(243,139,168,.08); box-shadow: inset 0 0 0 1px rgba(243,139,168,.42); }
+    .matrix-mark { color: var(--muted); font: 700 11px var(--mono); }
+    .matrix-stage.complete .matrix-mark { color: var(--signal); }
+    .matrix-inspector { display: grid; grid-template-columns: 1.2fr 1fr auto; align-items: center; gap: 16px; margin-top: 12px; padding: 14px; border: 1px solid rgba(166,173,200,.18); border-radius: var(--card-radius); background: var(--graphite); }
+    .matrix-inspector h3 { margin: 0 0 4px; font-size: 14px; }
+    .matrix-inspector p { margin: 0; color: var(--mist); font-size: 11px; line-height: 1.45; }
+
+    /* Concept 3 */
+    .phase-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+    .phase-column { min-height: 530px; padding: 12px; border: 1px solid rgba(166,173,200,.16); border-radius: var(--card-radius); background: rgba(30,30,46,.62); }
+    .phase-head { margin-bottom: 12px; }
+    .phase-head strong { font-size: 13px; }
+    .phase-head p { margin: 4px 0 0; color: var(--muted); font: 500 9px var(--mono); }
+    .phase-slots { display: flex; gap: 5px; margin-top: 9px; }
+    .phase-slot { flex: 1; padding: 5px; border: 1px solid rgba(166,173,200,.18); border-radius: 7px; color: var(--muted); font: 600 8px var(--mono); text-align: center; }
+    .phase-slot.human { color: var(--alert); border-color: rgba(243,139,168,.25); }
+    .phase-cards { display: grid; gap: 9px; }
+    .phase-card { position: relative; padding: 12px; border: 1px solid rgba(166,173,200,.15); border-radius: 13px; background: var(--graphite); cursor: pointer; }
+    .phase-card:hover, .phase-card.selected { border-color: rgba(137,180,250,.5); background: linear-gradient(rgba(137,180,250,.06), rgba(137,180,250,.06)), var(--graphite); }
+    .phase-card h3 { margin: 7px 0 4px; font-size: 12px; line-height: 1.35; }
+    .phase-card p { margin: 0; color: var(--muted); font: 500 9px/1.4 var(--mono); }
+    .phase-card footer { display: flex; align-items: center; margin-top: 10px; }
+    .phase-card footer span { margin-left: auto; color: var(--mist); font: 600 9px var(--mono); }
+    .phase-callout { margin-top: 9px; padding: 10px; border: 1px dashed rgba(203,166,247,.3); border-radius: 11px; color: var(--mist); font-size: 10px; line-height: 1.45; }
+
+    /* Concept 4 */
+    .focus-layout { display: grid; grid-template-columns: 255px minmax(0,1fr); gap: 14px; }
+    .focus-list { display: grid; align-content: start; gap: 6px; }
+    .focus-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; width: 100%; padding: 11px; border: 1px solid transparent; border-radius: 11px; color: var(--mist); background: var(--graphite); text-align: left; cursor: pointer; }
+    .focus-item.active { color: var(--text); border-color: rgba(137,180,250,.5); background: linear-gradient(90deg, rgba(137,180,250,.1), transparent), var(--graphite); }
+    .focus-item strong { display: block; font-size: 11px; }
+    .focus-item small { display: block; margin-top: 4px; color: var(--muted); font: 500 9px var(--mono); }
+    .focus-item .agent-stack { align-self: center; }
+    .focus-card { padding: 18px; border: 1px solid rgba(166,173,200,.18); border-radius: var(--card-radius); background: var(--graphite); }
+    .focus-title { display: flex; align-items: flex-start; gap: 12px; }
+    .focus-title h2 { margin: 6px 0 4px; font: 750 23px var(--rounded); }
+    .focus-title p { margin: 0; color: var(--mist); font: 500 10px var(--mono); }
+    .focus-title .agent-stack { margin-left: auto; }
+    .focus-track { position: relative; display: grid; grid-template-columns: repeat(8,1fr); gap: 8px; margin: 24px 0 18px; }
+    .focus-track::before { position: absolute; left: 5%; right: 5%; top: 53px; height: 1px; background: var(--surface); content: ""; }
+    .focus-stage { position: relative; z-index: 1; min-width: 0; text-align: center; cursor: pointer; }
+    .focus-rider { height: 38px; display: flex; align-items: center; justify-content: center; }
+    .focus-node { display: grid; place-items: center; width: 30px; height: 30px; margin: 0 auto 7px; border: 1px solid rgba(166,173,200,.35); border-radius: 9px; color: var(--muted); background: var(--crust); font: 700 10px var(--mono); }
+    .focus-stage.complete .focus-node { color: var(--ink); border-color: var(--signal); background: var(--signal); }
+    .focus-stage.current .focus-node { color: var(--text); border: 1.5px solid var(--accent); background: rgba(137,180,250,.18); box-shadow: 0 0 0 5px rgba(137,180,250,.05); }
+    .focus-stage span { display: block; overflow: hidden; color: var(--muted); font: 600 8px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .focus-stage.current span { color: var(--text); }
+    .focus-lower { display: grid; grid-template-columns: 1.15fr .9fr; gap: 12px; }
+    .focus-panel { padding: 14px; border: 1px solid rgba(166,173,200,.16); border-radius: 13px; background: rgba(17,17,27,.48); }
+    .focus-panel h3 { margin: 0 0 9px; font-size: 13px; }
+    .event { display: grid; grid-template-columns: 42px 72px 1fr; gap: 8px; padding: 7px 0; border-top: 1px solid rgba(166,173,200,.1); color: var(--mist); font-size: 10px; line-height: 1.4; }
+    .event:first-of-type { border-top: 0; }
+    .event time, .event b { font: 600 9px var(--mono); }
+    .event time { color: var(--muted); }
+    .event b { color: var(--accent); }
+    .roster-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-top: 1px solid rgba(166,173,200,.1); }
+    .roster-row:first-of-type { border-top: 0; }
+    .roster-row strong { display: block; font-size: 11px; }
+    .roster-row small { display: block; margin-top: 2px; color: var(--muted); font: 500 9px var(--mono); }
+    .roster-row .status-pill { margin-left: auto; }
+
+    /* Voice */
+    .voice-cta { position: absolute; z-index: 20; right: 22px; bottom: 20px; display: grid; place-items: center; width: 48px; height: 48px; border: 0; border-radius: var(--compact-radius); color: var(--ink); background: var(--accent); cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.32); transition: transform .2s ease; }
+    .voice-cta:hover { transform: translateY(-1px); }
+    .voice-cta svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+    .voice-cta.recording { background: var(--alert); animation: record-pulse .9s ease-in-out infinite; }
+    .voice-panel { position: absolute; z-index: 19; right: 22px; bottom: 78px; display: none; width: 330px; padding: 14px; border: 1px solid rgba(166,173,200,.24); border-radius: var(--card-radius); background: var(--graphite); box-shadow: 0 18px 48px rgba(0,0,0,.48); }
+    .voice-panel.show { display: block; }
+    .voice-panel header { display: flex; align-items: center; }
+    .voice-panel h3 { margin: 0; font-size: 14px; }
+    .voice-panel header button { margin-left: auto; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
+    .voice-wave { display: flex; align-items: center; justify-content: center; gap: 4px; height: 56px; margin: 12px 0; border: 1px solid var(--surface); border-radius: var(--compact-radius); background: var(--elevated); }
+    .voice-wave i { width: 4px; height: var(--h); border-radius: 2px; background: var(--accent); opacity: .55; }
+    .voice-panel.recording .voice-wave i { background: var(--alert); animation: wave .7s ease-in-out infinite alternate; animation-delay: var(--d); }
+    .voice-copy { margin: 0 0 10px; color: var(--mist); font-size: 11px; line-height: 1.45; }
+    .voice-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .voice-suggestions button { padding: 6px 8px; border: 1px solid rgba(166,173,200,.2); border-radius: 8px; color: var(--mist); background: rgba(49,50,68,.6); font-size: 10px; cursor: pointer; }
+    .voice-answer { display: none; margin-top: 10px; padding: 9px; border-left: 2px solid var(--accent); color: var(--mist); background: rgba(137,180,250,.05); font-size: 10px; line-height: 1.5; }
+    .voice-answer.show { display: block; }
+    .toast { position: fixed; z-index: 100; left: 50%; bottom: 28px; padding: 9px 12px; border: 1px solid rgba(137,180,250,.45); border-radius: 9px; color: var(--text); background: rgba(30,30,46,.98); font: 600 10px var(--mono); opacity: 0; pointer-events: none; transform: translate(-50%,10px); transition: .2s ease; }
+    .toast.show { opacity: 1; transform: translate(-50%,0); }
+
+    @keyframes breathe { 50% { box-shadow: 0 0 0 4px rgba(249,226,175,.08); } }
+    @keyframes record-pulse { 50% { transform: scale(1.035); } }
+    @keyframes wave { to { transform: scaleY(.45); opacity: .4; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+    @media (max-width: 1250px) {
+      .window-toolbar { grid-template-columns: 190px 1fr 190px; }
+      .concept-button { min-width: 94px; padding-inline: 8px; }
+      .shell { grid-template-columns: 270px minmax(0,1fr); }
+      .content { width: calc(100% - 28px); }
+      .stage-name { font-size: 7px; }
+      .phase-grid { grid-template-columns: repeat(2,1fr); }
+      .phase-column { min-height: 300px; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <defs>
+      <symbol id="av-driver" viewBox="0 0 40 40"><defs><linearGradient id="gd" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f9e2af"/><stop offset="1" stop-color="#fab387"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#gd)"/><path d="M10 16c3-7 17-7 20 0v12H10Z" fill="#2b2b3f"/><circle cx="15" cy="20" r="2" fill="#f9e2af"/><circle cx="25" cy="20" r="2" fill="#f9e2af"/><path d="M15 27c3 2 7 2 10 0" fill="none" stroke="#f9e2af" stroke-width="1.6" stroke-linecap="round"/><path d="M7 17h4M29 17h4" stroke="#2b2b3f" stroke-width="3" stroke-linecap="round"/></symbol>
+      <symbol id="av-coder" viewBox="0 0 40 40"><defs><linearGradient id="gc" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#89b4fa"/><stop offset="1" stop-color="#74c7ec"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#gc)"/><rect x="9" y="11" width="22" height="19" rx="7" fill="#20243a"/><path d="m15 18 3 3-3 3M21 24h5" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 7v4" stroke="#20243a" stroke-width="2"/><circle cx="20" cy="7" r="2" fill="#20243a"/></symbol>
+      <symbol id="av-architect" viewBox="0 0 40 40"><defs><linearGradient id="ga" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#cba6f7"/><stop offset="1" stop-color="#f5c2e7"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#ga)"/><path d="M20 7 32 14v13L20 34 8 27V14Z" fill="#29233d"/><path d="m20 12 7 4v8l-7 4-7-4v-8Z" fill="none" stroke="#cba6f7" stroke-width="1.6"/><path d="M13 24 27 16M13 16l14 8" stroke="#cba6f7" stroke-width="1.2"/></symbol>
+      <symbol id="av-reviewer" viewBox="0 0 40 40"><defs><linearGradient id="gr" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f38ba8"/><stop offset="1" stop-color="#f5c2e7"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#gr)"/><circle cx="14" cy="19" r="5" fill="#2c2339"/><circle cx="26" cy="19" r="5" fill="#2c2339"/><path d="M19 19h2M12 28c5 3 11 3 16 0" fill="none" stroke="#2c2339" stroke-width="2" stroke-linecap="round"/><circle cx="14" cy="19" r="1.5" fill="#f38ba8"/><circle cx="26" cy="19" r="1.5" fill="#f38ba8"/></symbol>
+      <symbol id="av-qa" viewBox="0 0 40 40"><defs><linearGradient id="gq" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#94e2d5"/><stop offset="1" stop-color="#a6e3a1"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#gq)"/><path d="M20 7 31 11v9c0 7-4 11-11 14-7-3-11-7-11-14v-9Z" fill="#21363a"/><path d="m14 20 4 4 8-9" fill="none" stroke="#94e2d5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="av-scout" viewBox="0 0 40 40"><defs><linearGradient id="gs" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fab387"/><stop offset="1" stop-color="#f9e2af"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#gs)"/><path d="M6 20s5-9 14-9 14 9 14 9-5 9-14 9S6 20 6 20Z" fill="#302b3d"/><circle cx="20" cy="20" r="6" fill="#fab387"/><circle cx="20" cy="20" r="3" fill="#302b3d"/></symbol>
+      <symbol id="av-research" viewBox="0 0 40 40"><defs><linearGradient id="gx" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b4befe"/><stop offset="1" stop-color="#89b4fa"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#gx)"/><circle cx="17" cy="17" r="8" fill="none" stroke="#252a42" stroke-width="3"/><path d="m23 23 8 8" stroke="#252a42" stroke-width="4" stroke-linecap="round"/><path d="M13 17h8M17 13v8" stroke="#252a42" stroke-width="1.5"/></symbol>
+      <symbol id="av-human" viewBox="0 0 40 40"><circle cx="20" cy="20" r="20" fill="#f38ba8"/><circle cx="20" cy="15" r="7" fill="#342637"/><path d="M8 34c1-8 5-12 12-12s11 4 12 12" fill="#342637"/><text x="20" y="18" fill="#f38ba8" font-family="system-ui" font-size="7" font-weight="800" text-anchor="middle">R</text></symbol>
+    </defs>
+  </svg>
+
+  <div class="app-window">
+    <header class="window-toolbar">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <nav class="concept-picker" aria-label="Pipeline layout concepts">
+        <button class="concept-button active" data-concept-target="journeys">Journey rows</button>
+        <button class="concept-button" data-concept-target="matrix">Pipeline matrix</button>
+        <button class="concept-button" data-concept-target="phases">Phase board</button>
+        <button class="concept-button" data-concept-target="focus">Focus route</button>
+      </nav>
+      <div class="toolbar-actions">
+        <button class="toolbar-icon voice-shortcut open-voice" aria-label="Ask about this board" title="Ask about this board"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg></button>
+        <button class="toolbar-icon" aria-label="More options"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></svg></button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-bars"><i></i><i></i><i></i></span><strong>herdr</strong><span class="history">◷</span></div>
+        <button class="active-cta selected" id="active-cta" aria-pressed="true"><header><strong>active work</strong><b>4 riding</b></header><p>Tickets, features, and ideas moving through the Buzz pipeline.</p><div class="cta-stats"><span class="mini-pill"><i></i>3 moving</span><span class="mini-pill attention"><i></i>2 need you</span></div></button>
+
+        <div class="side-section-label"><strong>my work</strong><span>5 watching</span></div>
+        <div class="provider"><button class="provider-head"><span>⌄</span><b>github reviews</b><span class="count">2</span></button><div class="provider-items"><div class="inbox-item"><b>doximity/iOS-Doximity <span>#11,856</span></b><p>Add calculator access to the drawer</p><small>Chandlerdea ↗</small></div><div class="inbox-item"><b>doximity/agentic-dev <span>#520</span></b><p>Register managed MCP runtime</p><small>TheMetalCode ↗</small></div></div></div>
+        <div class="provider"><button class="provider-head"><span>›</span><b>jira tickets</b><span class="count" style="background:var(--accent)">3</span></button></div>
+        <div class="side-rule"></div>
+        <nav class="side-nav">
+          <button class="side-link" id="console-link"><svg viewBox="0 0 24 24"><path d="m5 7 4 4-4 4M11 17h8"/></svg><span>console</span></button>
+          <button class="side-link"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="7" rx="1"/><rect x="13" y="4" width="8" height="7" rx="1"/><rect x="3" y="13" width="8" height="7" rx="1"/><rect x="13" y="13" width="8" height="7" rx="1"/></svg><span>workspaces</span></button>
+          <button class="side-link"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7Z"/></svg><span>new pi session</span></button>
+        </nav>
+        <div class="side-footer"><b>board source</b><br>8 buzz-* stages · 4 checkpoints<br>tickets/&lt;KEY&gt;/ carries state</div>
+      </aside>
+
+      <main class="detail">
+        <section class="console-view" id="console-view"><div class="console-card"><b>herdr@work-mac</b> board state<br><br>AGENTIC-575&nbsp;&nbsp;&nbsp;implementing&nbsp;&nbsp;&nbsp;3 agents<br>IOSDOX-27458&nbsp;&nbsp;&nbsp;proof&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3 agents<br>AGENTIC-472&nbsp;&nbsp;&nbsp;&nbsp;pr-triage&nbsp;&nbsp;&nbsp;&nbsp;3 agents<br><br><b>tip</b> Click active work to return to the board.</div></section>
+        <div class="board" id="board">
+          <section class="concept active" data-concept="journeys"><div class="concept-scroll"><div class="content"><header class="board-head"><div><h1>Active work</h1><p>Each item carries its agents through the full Buzz pipeline.</p></div><div class="head-actions"><button class="native-button" data-toast="Board refreshed from ticket state and handoff records.">↻ Refresh</button><button class="native-button primary open-voice">⌁ Ask board</button></div></header><div class="summary-card"><div class="summary-metric"><strong>4</strong><span>work items</span></div><div class="summary-metric"><strong>14</strong><span>agent attachments</span></div><div class="summary-metric attention"><strong>2</strong><span>need you</span></div></div><div class="section-head"><h2>Journeys</h2><span>ordered by next intervention</span></div><div class="journey-list" id="journey-list"></div></div></div></section>
+
+          <section class="concept" data-concept="matrix"><div class="concept-scroll"><div class="content"><header class="board-head"><div><h1>Pipeline matrix</h1><p>Compare every work item against the same eight-stage route.</p></div><div class="head-actions"><button class="native-button" data-toast="Showing human checkpoints across all work.">★ Checkpoints</button><button class="native-button primary open-voice">⌁ Ask board</button></div></header><div class="summary-card"><div class="summary-metric"><strong>8</strong><span>pipeline stages</span></div><div class="summary-metric"><strong>4</strong><span>human checkpoints</span></div><div class="summary-metric attention"><strong>2</strong><span>open gates</span></div></div><div class="matrix-card" id="matrix-card"></div><div class="matrix-inspector" id="matrix-inspector"></div></div></div></section>
+
+          <section class="concept" data-concept="phases"><div class="concept-scroll"><div class="content"><header class="board-head"><div><h1>Phase board</h1><p>The eight skills grouped into four calm operating zones.</p></div><div class="head-actions"><button class="native-button" data-toast="Safe skips are visible inside each phase.">Show safe skips</button><button class="native-button primary open-voice">⌁ Ask board</button></div></header><div class="phase-grid" id="phase-grid"></div></div></div></section>
+
+          <section class="concept" data-concept="focus"><div class="concept-scroll"><div class="content"><header class="board-head"><div><h1>Focus route</h1><p>One item in depth, with its stage history and complete traveling cast.</p></div><div class="head-actions"><button class="native-button" data-toast="Opened the selected ticket's handoff packet.">Open handoff</button><button class="native-button primary open-voice">⌁ Ask board</button></div></header><div class="focus-layout"><aside class="focus-list" id="focus-list"></aside><article class="focus-card" id="focus-card"></article></div></div></div></section>
+
+          <aside class="voice-panel" id="voice-panel"><header><h3>Ask about this board</h3><button id="close-voice" aria-label="Close">×</button></header><div class="voice-wave"><i style="--h:14px;--d:-.1s"></i><i style="--h:28px;--d:-.3s"></i><i style="--h:20px;--d:-.5s"></i><i style="--h:36px;--d:-.2s"></i><i style="--h:18px;--d:-.6s"></i><i style="--h:30px;--d:-.4s"></i><i style="--h:12px;--d:-.15s"></i></div><p class="voice-copy" id="voice-copy">Tap the microphone, or choose a quick question.</p><div class="voice-suggestions"><button data-question="What needs me next?">What needs me next?</button><button data-question="Where is AGENTIC-575?">Where is AGENTIC-575?</button><button data-question="Which agents are waiting?">Which agents are waiting?</button></div><div class="voice-answer" id="voice-answer"></div></aside>
+          <button class="voice-cta" id="voice-cta" aria-label="Ask about this board" title="Ask about this board"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg></button>
+        </div>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const stages = [
+      { name: 'Start', full: 'Start Ticket', skill: 'buzz-start-ticket', checkpoint: false },
+      { name: 'Plan', full: 'Plan', skill: 'buzz-plan', checkpoint: true },
+      { name: 'Implement', full: 'Implement', skill: 'buzz-implement', checkpoint: false },
+      { name: 'Agent review', full: 'Architect Code Review', skill: 'buzz-architect-code-review', checkpoint: false },
+      { name: 'Proof', full: 'Proof', skill: 'buzz-proof', checkpoint: true },
+      { name: 'Pre-PR', full: 'Code Review Pre PR', skill: 'buzz-code-review-pre-pr', checkpoint: true },
+      { name: 'PR', full: 'PR', skill: 'buzz-pr', checkpoint: true },
+      { name: 'Triage', full: 'PR Triage', skill: 'buzz-pr-triage', checkpoint: false }
+    ];
+
+    const agentCatalog = {
+      driver: { name: 'Buzz driver', avatar: 'driver', tint: 'working' },
+      coder: { name: 'DeepSeek coder', avatar: 'coder', tint: 'working' },
+      architect: { name: 'Architect iOS', avatar: 'architect', tint: 'queued' },
+      reviewer: { name: 'Kimi reviewer', avatar: 'reviewer', tint: 'working' },
+      qa: { name: 'iOS QA', avatar: 'qa', tint: 'working' },
+      scout: { name: 'PR Review Scout', avatar: 'scout', tint: 'working' },
+      research: { name: 'Research Scout', avatar: 'research', tint: 'working' },
+      ronnie: { name: 'Ronnie', avatar: 'human', tint: 'attention' }
+    };
+
+    const work = [
+      { id:'agentic575', key:'AGENTIC-575', title:'Mobile API Impact Guard', kind:'Jira ticket', stage:2, status:'working', floor:'local · w1G:t1', updated:'now', needs:false, agents:[{role:'driver',stage:2},{role:'coder',stage:2},{role:'architect',stage:3,queued:true}], next:'Coder produces a scoped diff, then the Buzz driver adds and tags Architect iOS.', artifacts:'state.json · handoff.md · context-dump.md · coder brief', activity:[['13:30','Buzz driver','Accepted ownership and started execution.'],['13:31','Pi coder','Reading schema integration points.'],['next','Architect','Queued for the scoped design review.']] },
+      { id:'ios27458', key:'IOSDOX-27458', title:'Ask Analytics Audit', kind:'Feature', stage:4, status:'attention', floor:'DevBox · wX:t1', updated:'21m', needs:true, agents:[{role:'driver',stage:4},{role:'qa',stage:4},{role:'reviewer',stage:5,queued:true},{role:'ronnie',stage:4}], next:'Walk the simulator flows, review the proof packet, then move into the seven-reviewer pre-PR pass.', artifacts:'state.json · handoff.md · chunk-log.md · review-log.md', activity:[['08:01','Reviewer','All eight implementation chunks passed.'],['08:10','QA iOS','Proof route prepared from acceptance flows.'],['now','Ronnie','Proof sign-off is the next checkpoint.']] },
+      { id:'agentic472', key:'AGENTIC-472', title:'OpenCode MOA Agent Management', kind:'Ticket + PR #510', stage:7, status:'attention', floor:'local · wK:t9', updated:'36m', needs:true, agents:[{role:'scout',stage:7},{role:'reviewer',stage:7},{role:'coder',stage:7},{role:'ronnie',stage:7}], next:'Paste the prepared review replies manually, then keep the open PR under watch.', artifacts:'state.json · handoff.md · pr-reply-drafts.md · review-log.md', activity:[['22:30','Reviewer','Three approved fixes passed confirmation.'],['22:42','PR monitor','Push and reply packet completed.'],['now','Ronnie','Manual reply paste remains.']] },
+      { id:'memoryidea', key:'IDEA-07', title:'Project Review Memory', kind:'Idea', stage:-1, status:'working', floor:'no floor yet', updated:'forming', needs:false, agents:[{role:'research',stage:-1},{role:'driver',stage:-1},{role:'architect',stage:1,queued:true}], next:'Research Scout shapes the idea. A prototype decision would admit it into Plan.', artifacts:'idea-brief.md · investigation.md · no worktree', activity:[['today','Research Scout','Collecting comparable workflows.'],['next','Buzz driver','Will post the prototype decision.'],['later','Architect','Joins only if the idea enters planning.']] }
+    ];
+
+    const phaseData = [
+      { title:'Open', stages:[0,1], copy:'channel, floor, and approved direction' },
+      { title:'Build', stages:[2,3], copy:'implementation and agent cleanup' },
+      { title:'Prove', stages:[4,5], copy:'evidence and heavy review' },
+      { title:'Ship', stages:[6,7], copy:'draft PR and respond to feedback' }
+    ];
+
+    let selectedWork = 'agentic575';
+    let toastTimer;
+    const byID = id => work.find(item => item.id === id);
+    const escapeHTML = value => String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+
+    function avatar(agent, small = false) {
+      const meta = agentCatalog[agent.role];
+      const tone = agent.queued ? 'queued' : meta.tint;
+      return `<span class="agent-avatar ${tone}${small ? ' small' : ''}" title="${escapeHTML(meta.name)}"><svg viewBox="0 0 40 40" role="img" aria-label="${escapeHTML(meta.name)}"><use href="#av-${meta.avatar}"></use></svg></span>`;
+    }
+    function avatarStack(item, small = false) { return `<span class="agent-stack">${item.agents.map(agent => avatar(agent, small)).join('')}</span>`; }
+    function statusLabel(item) {
+      if (item.stage < 0) return 'idea shaping';
+      if (item.needs) return 'needs you';
+      return item.stage >= 7 ? 'monitoring' : 'working';
+    }
+    function agentsAt(item, index) { return item.agents.filter(agent => agent.stage === index); }
+
+    function railHTML(item) {
+      if (item.stage < 0) return `<div class="idea-preflight">${avatarStack(item)}<div><strong>Idea intake, before the ticket pipeline</strong><p>Explore first. No worktree until a prototype decision is approved.</p></div></div>`;
+      return `<div class="stage-rail">${stages.map((stage, index) => {
+        const state = index < item.stage ? 'complete' : index === item.stage ? 'current' : '';
+        const riders = agentsAt(item,index).map(agent => avatar(agent,true)).join('');
+        return `<div class="rail-stage ${state}" title="${escapeHTML(stage.skill)}"><div class="riders">${riders}</div><span class="stage-node">${index < item.stage ? '✓' : index + 1}</span><span class="stage-name">${escapeHTML(stage.name)}${stage.checkpoint ? ' <i class="checkpoint-star">★</i>' : ''}</span></div>`;
+      }).join('')}</div>`;
+    }
+
+    function renderJourneys() {
+      document.querySelector('#journey-list').innerHTML = work.map(item => `<article class="journey-card ${item.needs ? 'needs' : ''} ${item.id === selectedWork ? 'selected' : ''}" data-work-id="${item.id}" tabindex="0">
+        <div class="journey-top"><div class="journey-title"><div class="meta"><span class="kind-pill">${escapeHTML(item.kind)}</span><span class="stage-skill">${item.stage < 0 ? 'idea intake' : escapeHTML(stages[item.stage].skill)}</span></div><h3>${escapeHTML(item.key)} · ${escapeHTML(item.title)}</h3><p>${escapeHTML(item.floor)} · updated ${escapeHTML(item.updated)}</p></div>${avatarStack(item)}<span class="status-pill ${item.needs ? 'attention' : item.stage >= 7 ? 'done' : 'working'}">${item.needs ? '✋' : '⌁'} ${statusLabel(item)}</span></div>
+        <div class="pipeline-inset">${railHTML(item)}</div>
+        <div class="journey-detail"><div class="detail-block"><b>next movement</b><p>${escapeHTML(item.next)}</p></div><div class="detail-block"><b>traveling cast</b><p>${item.agents.map(agent => escapeHTML(agentCatalog[agent.role].name)).join(' · ')}</p></div><div class="detail-block"><b>continuity</b><p>${escapeHTML(item.artifacts)}</p></div></div>
+      </article>`).join('');
+      document.querySelectorAll('.journey-card').forEach(card => {
+        const select = () => { selectedWork = card.dataset.workId; renderJourneys(); };
+        card.addEventListener('click', select);
+        card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') select(); });
+      });
+    }
+
+    function renderMatrix() {
+      const head = `<div class="matrix-row matrix-head"><div class="matrix-cell">work item</div>${stages.map(stage => `<div class="matrix-cell">${escapeHTML(stage.name)}${stage.checkpoint ? '<span class="checkpoint-star"> ★</span>' : ''}</div>`).join('')}</div>`;
+      const rows = work.map(item => `<div class="matrix-row"><button class="matrix-cell matrix-work" data-matrix-work="${item.id}"><span><strong>${escapeHTML(item.key)}</strong><small>${escapeHTML(item.title)}</small></span></button>${stages.map((stage,index) => {
+        const state = item.stage < 0 ? '' : index < item.stage ? 'complete' : index === item.stage ? `current ${item.needs ? 'needs' : ''}` : '';
+        const riders = agentsAt(item,index);
+        return `<button class="matrix-cell matrix-stage ${state}" data-matrix-work="${item.id}" data-stage="${index}" title="${escapeHTML(stage.skill)}">${riders.length ? avatarStack({...item,agents:riders},true) : `<span class="matrix-mark">${index < item.stage ? '✓' : '·'}</span>`}</button>`;
+      }).join('')}</div>`).join('');
+      document.querySelector('#matrix-card').innerHTML = head + rows;
+      document.querySelectorAll('[data-matrix-work]').forEach(cell => cell.addEventListener('click', () => { selectedWork = cell.dataset.matrixWork; renderMatrixInspector(cell.dataset.stage); }));
+      renderMatrixInspector();
+    }
+
+    function renderMatrixInspector(stageIndex) {
+      const item = byID(selectedWork);
+      const index = stageIndex === undefined ? item.stage : Number(stageIndex);
+      const stage = index >= 0 ? stages[index] : null;
+      document.querySelector('#matrix-inspector').innerHTML = `<div><span class="stage-skill">${stage ? escapeHTML(stage.skill) : 'idea intake'}</span><h3>${escapeHTML(item.key)} · ${escapeHTML(item.title)}</h3><p>${escapeHTML(stage ? `${stage.full}. ${item.next}` : item.next)}</p></div><div><p><b style="color:var(--mist)">Attached here</b><br>${agentsAt(item,index).map(agent => escapeHTML(agentCatalog[agent.role].name)).join(' · ') || 'No agent at this stage'}</p></div><button class="native-button" data-toast="Opened ${escapeHTML(item.key)} in Focus Route.">Open route</button>`;
+      document.querySelectorAll('#matrix-inspector [data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
+    }
+
+    function renderPhases() {
+      document.querySelector('#phase-grid').innerHTML = phaseData.map((phase, phaseIndex) => {
+        const items = work.filter(item => item.stage < 0 ? phaseIndex === 0 : Math.floor(item.stage / 2) === phaseIndex);
+        return `<section class="phase-column"><header class="phase-head"><strong>${escapeHTML(phase.title)}</strong><p>${escapeHTML(phase.copy)}</p><div class="phase-slots">${phase.stages.map(index => `<span class="phase-slot ${stages[index].checkpoint ? 'human' : ''}">${escapeHTML(stages[index].name)}${stages[index].checkpoint ? ' ★' : ''}</span>`).join('')}</div></header><div class="phase-cards">${items.map(item => `<article class="phase-card" data-phase-work="${item.id}"><span class="kind-pill">${escapeHTML(item.kind)}</span><h3>${escapeHTML(item.key)} · ${escapeHTML(item.title)}</h3><p>${item.stage < 0 ? 'Idea shaping before Start Ticket' : escapeHTML(stages[item.stage].skill)}</p><footer>${avatarStack(item,true)}<span>${item.needs ? 'needs you' : item.updated}</span></footer></article>`).join('') || '<div class="phase-callout">No item is parked here. The phase remains visible so the one-way route never disappears.</div>'}</div>${phaseIndex === 2 ? '<div class="phase-callout">Safe skip: a pure refactor can skip Proof when there is no user flow to walk.</div>' : ''}</section>`;
+      }).join('');
+      document.querySelectorAll('[data-phase-work]').forEach(card => card.addEventListener('click', () => { selectedWork = card.dataset.phaseWork; document.querySelector('[data-concept-target="focus"]').click(); renderFocus(); }));
+    }
+
+    function renderFocusList() {
+      document.querySelector('#focus-list').innerHTML = work.map(item => `<button class="focus-item ${item.id === selectedWork ? 'active' : ''}" data-focus-work="${item.id}"><span><strong>${escapeHTML(item.key)}</strong><small>${escapeHTML(item.title)} · ${statusLabel(item)}</small></span>${avatarStack(item,true)}</button>`).join('');
+      document.querySelectorAll('[data-focus-work]').forEach(button => button.addEventListener('click', () => { selectedWork = button.dataset.focusWork; renderFocus(); }));
+    }
+
+    function renderFocus() {
+      renderFocusList();
+      const item = byID(selectedWork);
+      const track = item.stage < 0 ? `<div class="idea-preflight" style="margin:24px 0 18px">${avatarStack(item)}<div><strong>Idea intake</strong><p>This item has not entered the eight-stage ticket pipeline.</p></div></div>` : `<div class="focus-track">${stages.map((stage,index) => `<button class="focus-stage ${index < item.stage ? 'complete' : index === item.stage ? 'current' : ''}" data-focus-stage="${index}" title="${escapeHTML(stage.skill)}"><div class="focus-rider">${agentsAt(item,index).map(agent => avatar(agent,true)).join('')}</div><b class="focus-node">${index < item.stage ? '✓' : index + 1}</b><span>${escapeHTML(stage.name)}${stage.checkpoint ? ' <i class="checkpoint-star">★</i>' : ''}</span></button>`).join('')}</div>`;
+      document.querySelector('#focus-card').innerHTML = `<header class="focus-title"><div><span class="kind-pill">${escapeHTML(item.kind)}</span><h2>${escapeHTML(item.key)} · ${escapeHTML(item.title)}</h2><p>${escapeHTML(item.floor)} · ${item.stage < 0 ? 'idea intake' : escapeHTML(stages[item.stage].skill)}</p></div>${avatarStack(item)}</header>${track}<div class="focus-lower"><section class="focus-panel"><h3>Route activity</h3>${item.activity.map(event => `<div class="event"><time>${escapeHTML(event[0])}</time><b>${escapeHTML(event[1])}</b><span>${escapeHTML(event[2])}</span></div>`).join('')}</section><section class="focus-panel"><h3>Traveling cast</h3>${item.agents.map(agent => { const meta = agentCatalog[agent.role]; return `<div class="roster-row">${avatar(agent,true)}<div><strong>${escapeHTML(meta.name)}</strong><small>${agent.queued ? 'joins at next stage' : 'attached to this work'}</small></div><span class="status-pill ${agent.queued ? '' : agent.role === 'ronnie' ? 'attention' : 'working'}">${agent.queued ? 'queued' : agent.role === 'ronnie' ? 'checkpoint' : 'active'}</span></div>`; }).join('')}</section></div>`;
+      document.querySelectorAll('[data-focus-stage]').forEach(button => button.addEventListener('click', () => { const stage = stages[Number(button.dataset.focusStage)]; showToast(`${item.key}: ${stage.full} uses ${stage.skill}.`); }));
+    }
+
+    function showBoard() { document.querySelector('#board').classList.remove('hidden'); document.querySelector('#console-view').classList.remove('show'); document.querySelector('#active-cta').classList.add('selected'); document.querySelector('#active-cta').setAttribute('aria-pressed','true'); document.querySelector('#console-link').classList.remove('active'); }
+    function selectConcept(name) { document.querySelectorAll('.concept-button').forEach(button => button.classList.toggle('active', button.dataset.conceptTarget === name)); document.querySelectorAll('.concept').forEach(concept => concept.classList.toggle('active', concept.dataset.concept === name)); showBoard(); }
+    document.querySelectorAll('.concept-button').forEach(button => button.addEventListener('click', () => selectConcept(button.dataset.conceptTarget)));
+    document.querySelector('#active-cta').addEventListener('click', () => { showBoard(); showToast('Active work replaced the center console.'); });
+    document.querySelector('#console-link').addEventListener('click', () => { document.querySelector('#board').classList.add('hidden'); document.querySelector('#console-view').classList.add('show'); document.querySelector('#active-cta').classList.remove('selected'); document.querySelector('#active-cta').setAttribute('aria-pressed','false'); document.querySelector('#console-link').classList.add('active'); });
+
+    const voicePanel = document.querySelector('#voice-panel');
+    const voiceCTA = document.querySelector('#voice-cta');
+    const voiceAnswer = document.querySelector('#voice-answer');
+    const voiceCopy = document.querySelector('#voice-copy');
+    function openVoice() { voicePanel.classList.add('show'); voiceAnswer.classList.remove('show'); voiceCopy.textContent = 'Tap the microphone, or choose a quick question.'; }
+    document.querySelectorAll('.open-voice').forEach(button => button.addEventListener('click', openVoice));
+    document.querySelector('#close-voice').addEventListener('click', () => { voicePanel.classList.remove('show'); voicePanel.classList.remove('recording'); voiceCTA.classList.remove('recording'); });
+    voiceCTA.addEventListener('click', () => {
+      if (!voicePanel.classList.contains('show')) { openVoice(); return; }
+      const recording = !voicePanel.classList.contains('recording');
+      voicePanel.classList.toggle('recording', recording); voiceCTA.classList.toggle('recording', recording);
+      voiceCopy.textContent = recording ? 'Listening for a board question…' : 'Transcribing…';
+      if (!recording) setTimeout(() => answerQuestion('What needs me next?'), 550);
+    });
+    const answers = {
+      'What needs me next?':'IOSDOX-27458 is waiting for proof sign-off. AGENTIC-472 has a manual PR reply packet ready after that.',
+      'Where is AGENTIC-575?':'AGENTIC-575 is in Implement. The Buzz driver and DeepSeek coder are active; Architect iOS is queued at Agent Review.',
+      'Which agents are waiting?':'Architect iOS is queued behind the AGENTIC-575 coder. Kimi reviewer is queued for IOSDOX-27458 pre-PR review.'
+    };
+    function answerQuestion(question) { voicePanel.classList.remove('recording'); voiceCTA.classList.remove('recording'); voiceCopy.textContent = question; voiceAnswer.textContent = answers[question] || answers['What needs me next?']; voiceAnswer.classList.add('show'); }
+    document.querySelectorAll('[data-question]').forEach(button => button.addEventListener('click', () => answerQuestion(button.dataset.question)));
+
+    function showToast(message) { const toast = document.querySelector('#toast'); toast.textContent = message; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 2300); }
+    document.querySelectorAll('[data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
+
+    renderJourneys();
+    renderMatrix();
+    renderPhases();
+    renderFocus();
+  </script>
+</body>
+</html>

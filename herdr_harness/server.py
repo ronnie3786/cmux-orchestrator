@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
 from . import attachments, response_audio, voice
+from .active_work import ActiveWorkError
 from .agent_runs import AgentRunError
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
@@ -248,6 +249,9 @@ def api_description() -> dict:
             "workspaceFiles": "/api/v1/workspaces/{workspaceId}/files",
             "jiraAssigned": "/api/v1/jira/assigned",
             "workInbox": "/api/v1/work-inbox",
+            "activeWork": "/api/v1/active-work",
+            "activeWorkItem": "/api/v1/active-work/items/{workItemId}",
+            "activeWorkSyncTargets": "/api/v1/active-work/sync-targets",
             "voiceTranscriptions": "/api/v1/voice/transcriptions",
             "responseAudioCapabilities": "/api/v1/response-audio/capabilities",
             "responseAudioPrepare": "/api/v1/response-audio/prepare",
@@ -295,6 +299,11 @@ def api_description() -> dict:
             "POST /api/v1/push/devices|unregister",
             "POST /api/v1/live-activities|unregister",
             "POST /api/v1/voice/transcriptions",
+            "POST /api/v1/active-work/items",
+            "PATCH /api/v1/active-work/items/{workItemId}",
+            "POST /api/v1/active-work/items/{workItemId}/transitions",
+            "POST /api/v1/active-work/jira/{issueKey}/setup",
+            "POST /api/v1/active-work/ingestions",
             "POST /api/v1/response-audio/prepare|speech",
             "POST /api/v1/quick-sessions/pi",
             "POST /api/v1/agent-runs",
@@ -311,6 +320,7 @@ def api_description() -> dict:
             "alerts.read_state_changed",
             "stars.changed",
             "cleanup.run_updated",
+            "active_work.updated",
         ],
         "generatedAt": utc_now(),
     }
@@ -345,6 +355,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
     """Create a request handler bound to one HerdrService."""
 
     configured_token = api_token if api_token is not None else service.environ.get("HERDR_HARNESS_API_TOKEN", "")
+    configured_ingest_token = service.environ.get("HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN", "")
     cors_origin = service.environ.get("HERDR_HARNESS_CORS_ORIGIN", "")
     universal_app_ids = _universal_link_app_ids(service.environ)
 
@@ -380,12 +391,30 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 status,
             )
 
-        def _authorized(self) -> bool:
-            if not configured_token:
-                return True
+        def _authorized(self, *, path: str, method: str) -> bool:
             authorization = self.headers.get("Authorization", "")
             scheme, separator, candidate = authorization.partition(" ")
-            valid = separator and scheme.lower() == "bearer" and hmac.compare_digest(candidate, configured_token)
+            bearer = bool(separator and scheme.lower() == "bearer")
+            scoped_route = (
+                (method == "GET" and path == "/api/v1/active-work/sync-targets")
+                or (method == "POST" and path == "/api/v1/active-work/ingestions")
+            )
+            if not configured_token and not (configured_ingest_token and scoped_route):
+                self._active_work_ingest_scope = False
+                return True
+            valid_main = bool(
+                bearer
+                and configured_token
+                and hmac.compare_digest(candidate, configured_token)
+            )
+            valid_ingest = bool(
+                bearer
+                and configured_ingest_token
+                and scoped_route
+                and hmac.compare_digest(candidate, configured_ingest_token)
+            )
+            valid = valid_main or valid_ingest
+            self._active_work_ingest_scope = bool(valid_ingest and not valid_main)
             if not valid:
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -497,7 +526,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "Configure HERDR_HARNESS_API_TOKEN before managing push devices",
                     )
                     return
-                if not self._authorized():
+                if not self._authorized(path=path, method=method):
                     return
                 attachment_upload = (
                     method == "POST"
@@ -533,6 +562,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except CleanupError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except AgentRunError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except ActiveWorkError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except WorkspaceToolError as exc:
                 self._error(exc.status, exc.code, str(exc))
@@ -763,6 +794,47 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             file=file,
                             expected_root=expected_root,
                         )
+            if method == "GET" and tail == ["active-work"]:
+                return service.active_work_board()
+            if method == "GET" and tail == ["active-work", "sync-targets"]:
+                return service.active_work_sync_targets()
+            if method == "POST" and tail == ["active-work", "ingestions"]:
+                if getattr(self, "_active_work_ingest_scope", False):
+                    if body.get("source") != "buzz":
+                        raise ActiveWorkError(
+                            "The scoped Active Work token only accepts Buzz observations",
+                            code="active_work_ingest_scope_forbidden",
+                            status=403,
+                        )
+                    return service.ingest_active_work(body, actor="sync:buzz")
+                return service.ingest_active_work(body)
+            if method == "POST" and tail == ["active-work", "items"]:
+                return service.create_active_work_item(body), 201
+            if len(tail) == 3 and tail[:2] == ["active-work", "items"]:
+                item_id = _identifier(tail[2], "work item ID")
+                if method == "GET":
+                    return service.active_work_item(item_id)
+                if method == "PATCH":
+                    return service.patch_active_work_item(item_id, body)
+            if (
+                method == "POST"
+                and len(tail) == 4
+                and tail[:2] == ["active-work", "items"]
+                and tail[3] == "transitions"
+            ):
+                item_id = _identifier(tail[2], "work item ID")
+                return service.transition_active_work_item(item_id, body)
+            if (
+                method == "POST"
+                and len(tail) == 4
+                and tail[:2] == ["active-work", "jira"]
+                and tail[3] == "setup"
+            ):
+                if body:
+                    raise HTTPValidationError("Jira setup request does not accept a body")
+                issue_key = _identifier(tail[2], "Jira key")
+                result = service.setup_active_work_jira(issue_key)
+                return result, 201 if result.get("created") else 200
             if method == "GET" and tail == ["work-inbox"]:
                 return service.work_inbox()
             if method == "GET" and tail == ["jira", "assigned"]:

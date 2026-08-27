@@ -73,6 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         os.path.expanduser("~/.config/herdr-harness/pi-semantic.sqlite3"),
     )
     service_environ.setdefault(
+        "HERDR_HARNESS_ACTIVE_WORK_STORE_PATH",
+        os.path.expanduser("~/.config/herdr-harness/active-work.sqlite3"),
+    )
+    service_environ.setdefault(
         "HERDR_HARNESS_CLEANUP_RUNS_ROOT",
         os.path.expanduser("~/.config/herdr-harness/cleanup/runs"),
     )

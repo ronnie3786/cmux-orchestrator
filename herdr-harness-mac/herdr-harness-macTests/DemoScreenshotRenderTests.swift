@@ -36,6 +36,7 @@ struct DemoScreenshotRenderTests {
         let model = HerdrRenderFixtures.demoModel()
         model.openPane(id: "demo1|w1:p2")
         let shell = HerdrShellState()
+        let activeWorkStore = demoActiveWorkStore()
         let pane = try #require(model.pane(id: model.selectedPaneID))
         #expect(shell.resolvedScope(for: model) == .session)
 
@@ -51,7 +52,14 @@ struct DemoScreenshotRenderTests {
             // composes it — `HerdrSidebarView` at its ideal 320pt width, the
             // hairline, and the resolved detail scope — minus system chrome.
             HStack(spacing: 0) {
-                HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+                HerdrSidebarView(
+                    model: model,
+                    activeWorkStore: activeWorkStore,
+                    openPane: { _ in },
+                    openWorkspace: { _ in },
+                    openActiveWork: {},
+                    isActiveWorkSelected: false
+                )
                     .frame(width: 320)
 
                 Rectangle()
@@ -74,12 +82,20 @@ struct DemoScreenshotRenderTests {
         let model = HerdrRenderFixtures.demoModel()
         model.selectedPaneID = "demo1|w1:p2"
         model.starredChatIDs = ["demo1|w1:p1", "demo1|w2:p1"]
+        let activeWorkStore = demoActiveWorkStore()
 
         let result = try await HerdrRenderHarness.render(
             "02-sidebar.png",
             size: CGSize(width: 300, height: 760)
         ) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+            HerdrSidebarView(
+                model: model,
+                activeWorkStore: activeWorkStore,
+                openPane: { _ in },
+                openWorkspace: { _ in },
+                openActiveWork: {},
+                isActiveWorkSelected: false
+            )
         }
 
         result.expectSubstantial()
@@ -90,25 +106,108 @@ struct DemoScreenshotRenderTests {
         let model = HerdrRenderFixtures.demoModel()
         model.selectedPaneID = "demo1|w1:p2"
         model.starredChatIDs = ["demo1|w1:p1", "demo1|w2:p1"]
+        let activeWorkStore = demoActiveWorkStore()
 
         let defaultResult = try await HerdrRenderHarness.render(
             "02-sidebar.png",
             size: CGSize(width: 300, height: 760)
         ) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+            HerdrSidebarView(
+                model: model,
+                activeWorkStore: activeWorkStore,
+                openPane: { _ in },
+                openWorkspace: { _ in },
+                openActiveWork: {},
+                isActiveWorkSelected: false
+            )
         }
 
         let xxLargeResult = try await HerdrRenderHarness.render(
             "02b-sidebar-xxlarge.png",
             size: CGSize(width: 300, height: 760)
         ) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+            HerdrSidebarView(
+                model: model,
+                activeWorkStore: activeWorkStore,
+                openPane: { _ in },
+                openWorkspace: { _ in },
+                openActiveWork: {},
+                isActiveWorkSelected: false
+            )
                 .environment(\.herdrFontScale, .xxLarge)
         }
 
         defaultResult.expectSubstantial()
         xxLargeResult.expectSubstantial()
         #expect(xxLargeResult.byteCount != defaultResult.byteCount)
+    }
+
+    // MARK: - Active Work
+
+    @Test("Active Work board renders routes, traveling agents, and Jira setup")
+    func rendersActiveWorkBoard() async throws {
+        let store = demoActiveWorkStore()
+
+        let result = try await HerdrRenderHarness.render(
+            "active-work-board.png",
+            size: CGSize(width: 920, height: 760)
+        ) {
+            activeWorkContainer(store: store)
+        }
+
+        result.expectSubstantial()
+    }
+
+    @Test("Active Work header adapts at minimum detail width and XXX-Large text")
+    func rendersActiveWorkCompactAtXXXLargeText() async throws {
+        let store = demoActiveWorkStore()
+
+        let result = try await HerdrRenderHarness.render(
+            "active-work-compact-xxxlarge.png",
+            size: CGSize(width: 680, height: 760)
+        ) {
+            activeWorkContainer(store: store)
+                .environment(\.herdrFontScale, .xxxLarge)
+        }
+
+        result.expectSubstantial()
+    }
+
+    @Test("Focus Route renders phase discussions and Pi sessions")
+    func rendersActiveWorkFocusRoute() async throws {
+        let store = demoActiveWorkStore()
+        store.select("work_mobile_guard", revealFocus: true)
+
+        let result = try await HerdrRenderHarness.render(
+            "active-work-focus-route.png",
+            size: CGSize(width: 920, height: 760)
+        ) {
+            activeWorkContainer(store: store)
+        }
+
+        result.expectSubstantial()
+    }
+
+    private func demoActiveWorkStore() -> ActiveWorkStore {
+        let store = ActiveWorkStore()
+        store.receive(DemoData.activeWork)
+        return store
+    }
+
+    private func activeWorkContainer(store: ActiveWorkStore) -> some View {
+        ActiveWorkContainerView(
+            store: store,
+            isControlEnabled: true,
+            refresh: {},
+            createItem: { _, _, _ in },
+            setupJira: { _ in },
+            transition: { _, _ in },
+            setLifecycle: { _, _ in },
+            openSession: { _ in },
+            openURL: { _ in },
+            transcribeVoice: { _ in throw CancellationError() },
+            askBoard: { _ in }
+        )
     }
 
     // MARK: - 03 · Attention deck
