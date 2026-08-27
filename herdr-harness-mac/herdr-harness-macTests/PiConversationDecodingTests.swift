@@ -27,6 +27,7 @@ struct PiConversationDecodingTests {
                       "steer": true,
                       "followUp": true,
                       "abort": true,
+                      "compact": true,
                       "interactionResponse": true
                     }
                   }
@@ -39,6 +40,7 @@ struct PiConversationDecodingTests {
         #expect(pane.piSemantic?.sessionID == "session-1")
         #expect(pane.piSemantic?.cursor == "42")
         #expect(pane.piSemantic?.capabilities.followUp == true)
+        #expect(pane.piSemantic?.capabilities.compact == true)
     }
 
     @Test("Model capabilities accept snake case, camel case, and absent fields")
@@ -65,9 +67,11 @@ struct PiConversationDecodingTests {
         #expect(!absent.listModels)
         #expect(!absent.setModel)
         #expect(!absent.setThinkingLevel)
+        #expect(!absent.compact)
         #expect(!PiSemanticCapabilities.unavailable.listModels)
         #expect(!PiSemanticCapabilities.unavailable.setModel)
         #expect(!PiSemanticCapabilities.unavailable.setThinkingLevel)
+        #expect(!PiSemanticCapabilities.unavailable.compact)
     }
 
     @Test("Snapshot retains unknown entries and accepts snake case aliases")

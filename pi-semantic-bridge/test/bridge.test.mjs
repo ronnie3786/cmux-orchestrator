@@ -25,6 +25,7 @@ const bridgeModule = await jiti.import("../extensions/pi-semantic-bridge.ts");
 const handlers = new Map();
 const sent = [];
 let aborted = false;
+let compactCalls = 0;
 const setModelCalls = [];
 let setModelResult = true;
 const setThinkingLevelCalls = [];
@@ -111,6 +112,7 @@ const context = {
 	getContextUsage: () => contextUsageValue,
 	hasPendingMessages: () => false,
 	abort: () => { aborted = true; },
+	compact: () => { compactCalls += 1; },
 	modelRegistry: {
 		getAvailable: () => availableModels,
 		find: (provider, id) => availableModels.find((item) => item.provider === provider && item.id === id),
@@ -201,6 +203,7 @@ try {
 	assert.equal(hello.capabilities.listModels, true);
 	assert.equal(hello.capabilities.setModel, true);
 	assert.equal(hello.capabilities.setThinkingLevel, true);
+	assert.equal(hello.capabilities.compact, true);
 
 	assert.ok(Math.abs(snapshot.state.cost.totalUSD - 0.035) < 1e-9);
 	assert.equal(snapshot.state.cost.totalTokens, 195);
@@ -309,7 +312,38 @@ try {
 	assert.deepEqual(sent.at(-1), { text: "Fix it", options: undefined });
 	prompt.destroy();
 
+	const compact = await connect(socketPath);
+	const compactResponse = readRecords(compact, (records) => records.some((item) => item.request_id === "compact-1"));
+	compact.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "compact-1",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "compact",
+		payload: {},
+	})}\n`);
+	assert.equal((await compactResponse)[0].success, true);
+	assert.equal(compactCalls, 1);
+	compact.destroy();
+
 	idle = false;
+	const busyCompact = await connect(socketPath);
+	const busyCompactResponse = readRecords(busyCompact, (records) => records.some((item) => item.request_id === "compact-busy"));
+	busyCompact.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "compact-busy",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "compact",
+		payload: {},
+	})}\n`);
+	const busyCompactRecord = (await busyCompactResponse)[0];
+	assert.equal(busyCompactRecord.success, false);
+	assert.equal(busyCompactRecord.error.code, "command_rejected");
+	assert.equal(busyCompactRecord.error.message, "Pi is busy; wait for the current turn to finish");
+	assert.equal(compactCalls, 1);
+	busyCompact.destroy();
+
 	const abort = await connect(socketPath);
 	const abortResponse = readRecords(abort, (records) => records.some((item) => item.request_id === "abort-1"));
 	abort.write(`${JSON.stringify({

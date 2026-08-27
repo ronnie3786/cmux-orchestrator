@@ -168,6 +168,13 @@ struct HerdrMacCommands: Commands {
             .keyboardShortcut("k", modifiers: .command)
             .disabled(!model.hasCompletedSetup)
 
+            Button("Focus Current Pane on Mac") {
+                guard let pane = selectedPane else { return }
+                Task { await model.focus(pane) }
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+            .disabled(!canFocusSelectedPane)
+
             Divider()
 
             Button("Next Pane") {
@@ -195,6 +202,14 @@ struct HerdrMacCommands: Commands {
     private func focusPane(mode: PaneDetailMode) {
         shell.detailScope = .session
         NotificationCenter.default.post(name: .herdrFocusPaneMode, object: mode)
+    }
+
+    private var selectedPane: HerdrPane? {
+        model.pane(id: model.selectedPaneID)
+    }
+
+    private var canFocusSelectedPane: Bool {
+        selectedPane.map { model.canControl(machineID: $0.machineID) } == true
     }
 
     /// Panes in the order the sidebar draws them, so ⇧⌘] walks the tree

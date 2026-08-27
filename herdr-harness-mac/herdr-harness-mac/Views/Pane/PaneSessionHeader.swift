@@ -28,11 +28,25 @@ struct PaneSessionHeader: View {
                         .foregroundStyle(pane.agentStatus.labelColor)
                 }
 
-                Text(context)
-                    .herdrFont(.caption, monospaced: true)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                HStack(spacing: 3) {
+                    Text(locationName)
+                        .herdrFont(.caption, monospaced: true)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .lineLimit(1)
+
+                    if !pane.displayPath.isEmpty {
+                        Text("·")
+                            .herdrFont(.caption, monospaced: true)
+                            .foregroundStyle(HerdrTheme.mist)
+                            .accessibilityHidden(true)
+
+                        PanePathButton(
+                            path: pane.displayPath,
+                            reportFailure: reportPathOpenFailure
+                        )
+                        .layoutPriority(1)
+                    }
+                }
             }
 
             Spacer(minLength: 8)
@@ -83,18 +97,24 @@ struct PaneSessionHeader: View {
             }
             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             .buttonStyle(.plain)
-            .disabled(!model.canControl)
-            .help(pane.focused ? "This pane is focused in Herdr" : "Focus this pane in Herdr")
+            .disabled(!model.canControl(machineID: pane.machineID))
+            .help(pane.focused ? "This pane is focused in cmux" : "Focus this pane in cmux")
             .accessibilityHint(pane.focused ? "This pane is focused on your Mac" : "Focuses this pane on your Mac")
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: gitIsAvailable)
         .accessibilityElement(children: .contain)
     }
 
-    private var context: String {
-        let workspace = model.workspace(containing: pane)?.label ?? pane.workspaceID
-        guard !pane.displayPath.isEmpty else { return workspace }
-        return "\(workspace) · \(pane.displayPath)"
+    private var locationName: String {
+        guard let workspace = model.workspace(containing: pane) else { return pane.workspaceID }
+        guard let tab = workspace.tabs.first(where: { $0.id == pane.scopedTabID }) else {
+            return workspace.label
+        }
+        return "\(workspace.label) · \(tab.label)"
+    }
+
+    private func reportPathOpenFailure() {
+        model.toastMessage = "That folder is not available on this Mac"
     }
 
     private var gitReturnTitle: String {

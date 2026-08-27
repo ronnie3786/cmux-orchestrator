@@ -96,6 +96,12 @@ struct PaneSessionView: View {
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)
         }
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                model.acknowledgeUnreadAlerts(for: currentPane)
+            }
+        )
         .navigationTitle(currentPane.displayTitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -347,6 +353,7 @@ struct PaneSessionView: View {
     /// surface. Chat is refused on a pane that has no Pi session — the mode
     /// would only render the unavailable placeholder.
     private func focus(mode: PaneDetailMode) {
+        model.acknowledgeUnreadAlerts(for: currentPane)
         switch mode {
         case .chat:
             guard currentPane.supportsPiSemanticChat else { return }

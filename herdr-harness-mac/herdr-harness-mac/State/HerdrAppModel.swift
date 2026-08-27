@@ -86,6 +86,10 @@ final class HerdrAppModel {
     @ObservationIgnored var clientFactory: (ServerConfiguration) -> HerdrAPIClient = {
         HerdrAPIClient(configuration: $0)
     }
+    /// Internal test seam for verifying that focus hands control back to cmux.
+    @ObservationIgnored var activateCmuxApplication: @MainActor () async throws -> Void = {
+        try await CmuxApplicationActivator.activate()
+    }
     @ObservationIgnored var fleetRefreshRetryBase: Duration = .seconds(2)
     @ObservationIgnored var fleetRefreshBaseWindow = Duration.milliseconds(200)
     @ObservationIgnored var fleetRefreshBackoffWindow = Duration.seconds(1)
@@ -203,6 +207,9 @@ final class HerdrAppModel {
     }
 
     var unreadAlertCount: Int { alerts.count(where: { !$0.isRead }) }
+    var unreadPaneIDs: Set<String> {
+        Set(alerts.lazy.filter { !$0.isRead }.map(\.scopedPaneID))
+    }
     var workingCount: Int { workspaces.flatMap(\.panes).count(where: { $0.agentStatus == .working }) }
     var paneCount: Int { workspaces.reduce(0) { $0 + $1.paneCount } }
     var canControl: Bool { isDemoMode || connectionState == .live }
@@ -1201,6 +1208,12 @@ final class HerdrAppModel {
         }
     }
 
+    func compactPiChat(in pane: HerdrPane) async {
+        await perform("Compaction started", machineID: pane.machineID) { client in
+            try await client.compactPiConversation(paneID: pane.paneID)
+        }
+    }
+
     func endPiSession(in pane: HerdrPane) async {
         noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {
@@ -1306,6 +1319,7 @@ final class HerdrAppModel {
     func focus(_ pane: HerdrPane) async {
         await perform("Focused on Mac", machineID: pane.machineID) { client in
             try await client.focusPane(id: pane.paneID)
+            try await activateCmuxApplication()
         }
     }
 
@@ -1313,6 +1327,7 @@ final class HerdrAppModel {
         await perform("Focused + zoomed on Mac", machineID: pane.machineID) { client in
             try await client.focusPane(id: pane.paneID)
             try await client.zoomPane(id: pane.paneID, mode: "on")
+            try await activateCmuxApplication()
         }
     }
 
@@ -1333,6 +1348,7 @@ final class HerdrAppModel {
     func focus(_ workspace: HerdrWorkspace) async {
         await perform("Workspace focused on Mac", machineID: workspace.machineID) { client in
             try await client.focusWorkspace(id: workspace.workspaceID)
+            try await activateCmuxApplication()
         }
     }
 
@@ -1683,6 +1699,15 @@ final class HerdrAppModel {
         }
         pendingPaneID = nil
         route(to: pane)
+    }
+
+    /// Acknowledges a pane only when this client currently knows about an
+    /// unread alert for it. The mounted session uses this for clicks and focus
+    /// changes so normal interaction does not POST on every tap.
+    func acknowledgeUnreadAlerts(for pane: HerdrPane) {
+        guard markPaneAlertsReadLocally(pane.id) else { return }
+        noteUserInteraction(machineID: pane.machineID)
+        markPaneAlertsReadRemotely(pane)
     }
 
     func toggleSidebarSection(_ workspaceID: String) {
@@ -2239,39 +2264,38 @@ final class HerdrAppModel {
         selectedPaneID = pane.id
         workspacePath = selectedWorkspaceID.map { [.workspace($0), .pane(pane.id)] } ?? [.pane(pane.id)]
 
-        var hasUnreadAlerts = false
-        for alert in alerts where alert.scopedPaneID == pane.id && !alert.isRead {
-            hasUnreadAlerts = true
-            break
-        }
-        if hasUnreadAlerts {
-            var updatedAlerts: [HerdrAlert] = []
-            updatedAlerts.reserveCapacity(alerts.count)
-            for alert in alerts {
-                if alert.scopedPaneID == pane.id && !alert.isRead {
-                    updatedAlerts.append(
-                        HerdrAlert(
-                            id: alert.rawID,
-                            workspaceID: alert.workspaceID,
-                            paneID: alert.paneID,
-                            status: alert.status,
-                            title: alert.title,
-                            message: alert.message,
-                            createdAt: alert.createdAt,
-                            isRead: true
-                        ).stamped(machineID: alert.machineID)
-                    )
-                } else {
-                    updatedAlerts.append(alert)
-                }
-            }
-            alerts = updatedAlerts
-            updateBadgeIfNeeded()
+        // Routing remains unconditional on the server. Besides clearing known
+        // alerts, the endpoint acknowledges a stale done-state projection even
+        // when this client has not fetched the matching alert yet.
+        _ = markPaneAlertsReadLocally(pane.id)
+        markPaneAlertsReadRemotely(pane)
+    }
+
+    @discardableResult
+    private func markPaneAlertsReadLocally(_ paneID: String) -> Bool {
+        guard alerts.contains(where: { $0.scopedPaneID == paneID && !$0.isRead }) else {
+            return false
         }
 
-        guard !isDemoMode else { return }
+        alerts = alerts.map { alert in
+            guard alert.scopedPaneID == paneID, !alert.isRead else { return alert }
+            return HerdrAlert(
+                id: alert.rawID,
+                workspaceID: alert.workspaceID,
+                paneID: alert.paneID,
+                status: alert.status,
+                title: alert.title,
+                message: alert.message,
+                createdAt: alert.createdAt,
+                isRead: true
+            ).stamped(machineID: alert.machineID)
+        }
+        updateBadgeIfNeeded()
+        return true
+    }
 
-        guard let client = client(forMachine: pane.machineID) else { return }
+    private func markPaneAlertsReadRemotely(_ pane: HerdrPane) {
+        guard !isDemoMode, let client = client(forMachine: pane.machineID) else { return }
         Task {
             do {
                 try await client.markPaneAlertsRead(paneID: pane.paneID)

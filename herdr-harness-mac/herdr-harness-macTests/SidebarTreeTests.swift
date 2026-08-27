@@ -61,6 +61,25 @@ struct SidebarTreeTests {
         #expect(groups[0].chats.map(\.id) == ["starred:p1"])
     }
 
+    @Test("Recent-only filtering applies to unread groups")
+    func recentOnlyFiltersUnreadGroups() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let tabs = [tab(id: "unread:t1", workspaceID: "unread", number: 1, label: "Today", paneCount: 2)]
+        let panes = [
+            pane(id: "unread:p1", workspaceID: "unread", tabID: "unread:t1", title: "Today", firstSeenAt: now),
+            pane(id: "unread:p2", workspaceID: "unread", tabID: "unread:t1", title: "Old", firstSeenAt: now.addingTimeInterval(-3 * 86_400)),
+        ]
+        let groups = SidebarTree.unreadGroups(
+            workspaces: [workspace(id: "unread", number: 1, label: "Unread", tabs: tabs, panes: panes)],
+            query: "",
+            unreadIDs: ["unread:p1", "unread:p2"],
+            recency: .today,
+            now: now
+        )
+
+        #expect(groups[0].chats.map(\.id) == ["unread:p1"])
+    }
+
     @Test("Recent-only filtering drops empty tabs and workspaces")
     func recentOnlyDropsEmptyTabsAndWorkspaces() {
         let now = Date(timeIntervalSince1970: 1_735_732_800)
@@ -175,6 +194,16 @@ struct SidebarTreeTests {
         #expect(groups.count == 1)
         #expect(groups[0].chats.map(\.paneID) == ["stale:p2", "stale:p1"])
         #expect(groups[0].workspaceIDs == ["stale"])
+
+        let excludingUnread = SidebarTree.staleGroups(
+            machines: [machine],
+            workspaces: [stamped],
+            query: "",
+            excludedPaneIDs: ["m1|stale:p2"],
+            now: now,
+            calendar: calendar
+        )
+        #expect(excludingUnread[0].chats.map(\.paneID) == ["stale:p1"])
 
         let tree = SidebarTree.build(
             workspaces: [stamped],
@@ -362,6 +391,55 @@ struct SidebarTreeTests {
         #expect(tree[0].sections[1].chats.map(\.id) == ["w1:p3"])
     }
 
+    @Test("Builds and filters unread groups across workspaces")
+    func buildsUnreadGroups() {
+        let unreadIDs: Set<String> = ["w2:p1", "w1:p2"]
+
+        let allUnread = SidebarTree.unreadGroups(
+            workspaces: workspaces,
+            query: "",
+            unreadIDs: unreadIDs
+        )
+        #expect(allUnread.map(\.id) == ["unread:w1", "unread:w2"])
+        #expect(allUnread[0].chats.map(\.id) == ["w1:p2"])
+        #expect(allUnread[1].chats.map(\.id) == ["w2:p1"])
+
+        let matchingUnread = SidebarTree.unreadGroups(
+            workspaces: workspaces,
+            query: "Auth",
+            unreadIDs: unreadIDs
+        )
+        #expect(matchingUnread.map(\.id) == ["unread:w1"])
+        #expect(matchingUnread[0].chats.map(\.id) == ["w1:p2"])
+    }
+
+    @Test("Unread promotion wins over starred and workspace placement")
+    func unreadPromotionAvoidsDuplicates() {
+        let unreadGroups = SidebarTree.unreadGroups(
+            workspaces: workspaces,
+            query: "",
+            unreadIDs: ["w1:p2"]
+        )
+        let unreadPaneIDs = Set(unreadGroups.flatMap(\.chats).map(\.id))
+        let starredGroups = SidebarTree.starredGroups(
+            workspaces: workspaces,
+            query: "",
+            starredIDs: ["w1:p2", "w2:p1"],
+            excludedPaneIDs: unreadPaneIDs
+        )
+        let tree = SidebarTree.build(
+            workspaces: workspaces,
+            query: "",
+            collapsedWorkspaceIDs: [],
+            starredIDs: ["w1:p2", "w2:p1"],
+            excludedPaneIDs: unreadPaneIDs
+        )
+
+        #expect(unreadGroups.flatMap(\.chats).map(\.id) == ["w1:p2"])
+        #expect(starredGroups.flatMap(\.chats).map(\.id) == ["w2:p1"])
+        #expect(!tree.flatMap { $0.sections.flatMap(\.chats) + $0.looseChats }.contains { $0.id == "w1:p2" })
+    }
+
     @Test("Builds and filters starred groups across workspaces")
     func buildsStarredGroups() {
         let starredIDs: Set<String> = ["w2:p1", "w1:p2"]
@@ -498,6 +576,24 @@ struct SidebarTreeTests {
         )
 
         #expect(groups.map(\.id) == ["starred:two|w1", "starred:one|w1", "starred:one|w2"])
+        #expect(Set(groups.map(\.id)).count == 3)
+    }
+
+    @Test("Unread groups sort by machine order then workspace number")
+    func unreadGroupsHonorMachineOrder() {
+        let first = HerdrMachine(id: "one", name: "First", urlString: "https://first.example.com")
+        let second = HerdrMachine(id: "two", name: "Second", urlString: "https://second.example.com")
+        let firstW1 = workspaceOne.stamped(machineID: "one")
+        let firstW2 = workspaceTwo.stamped(machineID: "one")
+        let secondW1 = workspaceOne.stamped(machineID: "two")
+        let groups = SidebarTree.unreadGroups(
+            workspaces: [firstW2, secondW1, firstW1],
+            query: "",
+            unreadIDs: ["one|w1:p1", "one|w2:p1", "two|w1:p1"],
+            machines: [second, first]
+        )
+
+        #expect(groups.map(\.id) == ["unread:two|w1", "unread:one|w1", "unread:one|w2"])
         #expect(Set(groups.map(\.id)).count == 3)
     }
 

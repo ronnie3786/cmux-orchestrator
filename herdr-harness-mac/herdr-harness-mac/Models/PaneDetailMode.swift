@@ -21,7 +21,7 @@ enum PaneDetailMode: String, CaseIterable, Codable, Hashable, Identifiable, Send
         switch self {
         case .chat: "bubble.left.and.bubble.right"
         case .terminal: "terminal"
-        case .git: "point.3.connected.trianglepath.dotted"
+        case .git: "arrow.triangle.branch"
         case .skills: "wand.and.stars"
         }
     }

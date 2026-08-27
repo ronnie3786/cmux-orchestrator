@@ -1094,6 +1094,7 @@ class PiSemanticManager:
             "steer": True,
             "followUp": True,
             "abort": True,
+            "compact": True,
             "listModels": True,
             "setModel": True,
             "setThinkingLevel": True,

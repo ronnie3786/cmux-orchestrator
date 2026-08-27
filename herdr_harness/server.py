@@ -1263,9 +1263,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "steer",
                         "follow-up",
                         "abort",
+                        "compact",
                     }:
                         payload: dict[str, Any] = {}
-                        if pi_action != "abort":
+                        if pi_action not in {"abort", "compact"}:
                             payload["text"] = _string(body.get("text"), "text", maximum=131072)
                         return service.pi_command(pane_id, pi_action.replace("-", "_"), payload)
                     if method == "POST" and len(tail) == 4 and pi_action == "model":

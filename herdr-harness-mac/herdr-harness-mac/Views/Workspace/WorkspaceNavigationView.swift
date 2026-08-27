@@ -22,7 +22,7 @@ struct WorkspaceNavigationView: View {
                 openActiveWork: shell.showActiveWork,
                 isActiveWorkSelected: shell.resolvedScope(for: model) == .activeWork
             )
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+                .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 480)
                 .background(HerdrTheme.ink)
         } detail: {
             detail

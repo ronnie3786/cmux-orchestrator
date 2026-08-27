@@ -803,6 +803,15 @@ actor HerdrAPIClient {
         guard response.accepted else { throw APIError.invalidResponse }
     }
 
+    func compactPiConversation(paneID: String) async throws {
+        let response: PiCommandResponse = try await request(
+            path: "/api/v1/panes/\(paneID)/pi/compact",
+            method: "POST",
+            body: APIActionBody()
+        )
+        guard response.accepted else { throw APIError.invalidResponse }
+    }
+
     func setPiModel(paneID: String, provider: String, modelID: String) async throws {
         let response: PiCommandResponse = try await request(
             path: "/api/v1/panes/\(paneID)/pi/model",

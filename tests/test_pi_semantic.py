@@ -509,6 +509,7 @@ class PiSemanticTests(unittest.TestCase):
         self.assertFalse(capability["connected"])
         self.assertTrue(capability["capabilities"]["listModels"])
         self.assertTrue(capability["capabilities"]["setModel"])
+        self.assertTrue(capability["capabilities"]["compact"])
         manager.close()
 
     def test_explicit_empty_environment_uses_an_in_memory_store(self):

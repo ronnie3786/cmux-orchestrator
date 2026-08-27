@@ -193,10 +193,15 @@ struct PromptComposerView: View {
             updateSkillsPalette()
         }
         .onChange(of: isFocused) { _, focused in
-            // Leaving the field is as clear a "not now" as pressing escape.
-            if !focused { skillsPalette.dismiss() }
+            if focused {
+                model.acknowledgeUnreadAlerts(for: pane)
+            } else {
+                // Leaving the field is as clear a "not now" as pressing escape.
+                skillsPalette.dismiss()
+            }
         }
         .onChange(of: focusRequest) {
+            model.acknowledgeUnreadAlerts(for: pane)
             isFocused = true
         }
         .onChange(of: dismissFocusRequest) {

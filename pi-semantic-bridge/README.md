@@ -52,7 +52,9 @@ Authenticated harness routes for a detected Pi pane are:
 - `POST /api/v1/panes/{paneId}/pi/steer`
 - `POST /api/v1/panes/{paneId}/pi/follow-up`
 - `POST /api/v1/panes/{paneId}/pi/abort`
+- `POST /api/v1/panes/{paneId}/pi/compact`
 
-Prompt, steer, follow-up, and abort are delivered to the same Pi process. Stock
-TUI extension dialogs remain terminal-owned, so interaction responses are
-advertised as unsupported. The terminal PTY path remains unchanged.
+Prompt, steer, follow-up, abort, and compact are delivered to the same Pi
+process. Compact is accepted only while Pi is idle. Stock TUI extension dialogs
+remain terminal-owned, so interaction responses are advertised as unsupported.
+The terminal PTY path remains unchanged.

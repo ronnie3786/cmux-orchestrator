@@ -1220,6 +1220,11 @@ class HerdrHTTPTests(unittest.TestCase):
             method="POST",
             payload={},
         )
+        compact_status, _, _ = self.request(
+            "/api/v1/panes/w1:p1/pi/compact",
+            method="POST",
+            payload={},
+        )
 
         self.assertEqual(snapshot_status, 200)
         self.assertEqual(snapshot["protocol"], {"name": "herdr.pi.semantic", "version": 1})
@@ -1231,9 +1236,11 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertTrue(prompt["success"])
         self.assertEqual(follow_status, 200)
         self.assertEqual(abort_status, 200)
+        self.assertEqual(compact_status, 200)
         self.assertIn(("pi.prompt", {"pane_id": "w1:p1", "payload": {"text": "Fix the tests"}}), self.service.calls)
         self.assertIn(("pi.follow_up", {"pane_id": "w1:p1", "payload": {"text": "Then review it"}}), self.service.calls)
         self.assertIn(("pi.abort", {"pane_id": "w1:p1", "payload": {}}), self.service.calls)
+        self.assertIn(("pi.compact", {"pane_id": "w1:p1", "payload": {}}), self.service.calls)
         self.assertIn(("pi.list_models", {"pane_id": "w1:p1", "payload": {}}), self.service.calls)
 
     def test_pi_model_route_validates_and_forwards(self):

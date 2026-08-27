@@ -56,7 +56,11 @@ struct SidebarProjectRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "chevron.right")
-                    .herdrFont(.caption2, weight: .bold)
+                    .herdrFont(
+                        size: SidebarMetrics.hierarchyIconSize,
+                        weight: .bold,
+                        relativeTo: .caption2
+                    )
                     .foregroundStyle(HerdrTheme.mist)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
@@ -64,7 +68,12 @@ struct SidebarProjectRow: View {
                 SidebarStatusDot(status: workspace.agentStatus)
 
                 Text(workspace.label)
-                    .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                    .herdrFont(
+                        size: SidebarMetrics.projectLabelSize,
+                        monospaced: true,
+                        weight: .bold,
+                        relativeTo: .subheadline
+                    )
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
@@ -88,7 +97,7 @@ struct SidebarProjectRow: View {
                 }
             }
             .padding(.horizontal, 12)
-            .frame(minHeight: 30)
+            .frame(minHeight: SidebarMetrics.projectRowHeight)
             .contentShape(Rectangle())
             .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
         }
@@ -182,11 +191,19 @@ struct SidebarSectionRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: attentionStatus != nil ? "folder.fill" : (isExpanded ? "folder" : "folder.fill"))
-                    .herdrFont(.caption2)
+                    .herdrFont(
+                        size: SidebarMetrics.hierarchyIconSize,
+                        relativeTo: .caption2
+                    )
                     .foregroundStyle(folderColor)
 
                 Text(tab.label)
-                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                    .herdrFont(
+                        size: SidebarMetrics.tabLabelSize,
+                        monospaced: true,
+                        weight: .bold,
+                        relativeTo: .caption
+                    )
                     .foregroundStyle(attentionStatus != nil ? HerdrTheme.text : HerdrTheme.mist)
                     .lineLimit(1)
 
@@ -199,7 +216,7 @@ struct SidebarSectionRow: View {
             }
             .padding(.leading, 18)
             .padding(.trailing, 12)
-            .frame(minHeight: 26)
+            .frame(minHeight: SidebarMetrics.tabRowHeight)
             .contentShape(Rectangle())
             .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
         }
@@ -236,7 +253,11 @@ struct SidebarChatRow: View {
                 SidebarStatusDot(status: pane.agentStatus)
 
                 Text(pane.displayTitle)
-                    .herdrFont(.subheadline, monospaced: true)
+                    .herdrFont(
+                        size: SidebarMetrics.chatLabelSize,
+                        monospaced: true,
+                        relativeTo: .subheadline
+                    )
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
@@ -244,7 +265,11 @@ struct SidebarChatRow: View {
 
                 if isStarred {
                     Image(systemName: "star.fill")
-                        .herdrFont(.caption2, monospaced: true)
+                        .herdrFont(
+                            size: SidebarMetrics.hierarchyIconSize,
+                            monospaced: true,
+                            relativeTo: .caption2
+                        )
                         .foregroundStyle(SidebarTone.status)
                 }
 
@@ -255,7 +280,7 @@ struct SidebarChatRow: View {
             }
             .padding(.leading, 34)
             .padding(.trailing, 12)
-            .frame(minHeight: 26)
+            .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .background(rowBackground)
             .overlay(alignment: .leading) {

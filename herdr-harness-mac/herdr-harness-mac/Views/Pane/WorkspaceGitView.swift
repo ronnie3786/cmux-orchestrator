@@ -31,7 +31,7 @@ struct WorkspaceGitView: View {
                             emptyCard(
                                 title: "No Git data",
                                 detail: "This workspace does not have a Git repository yet.",
-                                symbol: "point.3.connected.trianglepath.dotted"
+                                symbol: PaneDetailMode.git.symbol
                             )
                         }
                     }
@@ -57,7 +57,7 @@ struct WorkspaceGitView: View {
     private var repositoryHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 9) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: PaneDetailMode.git.symbol)
                     .foregroundStyle(HerdrTheme.mauve)
 
                 Text(status?.branch?.nonEmpty ?? workspace.tokens["branch"]?.nonEmpty ?? "detached")

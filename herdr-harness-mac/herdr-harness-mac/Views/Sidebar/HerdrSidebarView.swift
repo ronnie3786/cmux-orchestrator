@@ -27,6 +27,7 @@ struct HerdrSidebarView: View {
         let scopedWorkspaces: [HerdrWorkspace]
         let tree: [SidebarTree.ProjectEntry]
         let machineGroups: [SidebarTree.MachineGroup]
+        let unreadGroups: [SidebarTree.UnreadGroup]
         let starredGroups: [SidebarTree.StarredGroup]
         let staleGroups: [SidebarTree.StaleGroup]
         let showsMachineChrome: Bool
@@ -39,15 +40,27 @@ struct HerdrSidebarView: View {
             }
             showsMachineChrome = model.machineScope == .all && model.machines.count > 1
             let now = Date()
+            let scopedPaneIDs = Set(scopedWorkspaces.flatMap(\.panes).map(\.id))
+            let unreadPaneIDs = model.unreadPaneIDs.intersection(scopedPaneIDs)
+            unreadGroups = SidebarTree.unreadGroups(
+                workspaces: scopedWorkspaces,
+                query: query,
+                unreadIDs: unreadPaneIDs,
+                machines: model.machines,
+                recency: model.sidebarRecency,
+                now: now
+            )
             staleGroups = model.sidebarRecency == .all
                 ? SidebarTree.staleGroups(
                     machines: model.machines,
                     workspaces: scopedWorkspaces,
                     query: query,
+                    excludedPaneIDs: unreadPaneIDs,
                     now: now
                 )
                 : []
             let stalePaneIDs = Set(staleGroups.flatMap(\.chats).map(\.id))
+            let promotedPaneIDs = unreadPaneIDs.union(stalePaneIDs)
             tree = SidebarTree.build(
                 workspaces: scopedWorkspaces,
                 query: query,
@@ -55,7 +68,7 @@ struct HerdrSidebarView: View {
                 collapsedTabIDs: model.collapsedSidebarTabIDs,
                 starredIDs: model.starredChatIDs,
                 recency: model.sidebarRecency,
-                excludedPaneIDs: stalePaneIDs,
+                excludedPaneIDs: promotedPaneIDs,
                 now: now
             )
             machineGroups = SidebarTree.machineGroups(
@@ -71,15 +84,16 @@ struct HerdrSidebarView: View {
                 starredIDs: model.starredChatIDs,
                 machines: model.machines,
                 recency: model.sidebarRecency,
-                excludedPaneIDs: stalePaneIDs,
+                excludedPaneIDs: promotedPaneIDs,
                 now: now
             )
         }
 
+        var unreadCount: Int { unreadGroups.reduce(0) { $0 + $1.chats.count } }
         var starredCount: Int { starredGroups.reduce(0) { $0 + $1.chats.count } }
         var staleCount: Int { staleGroups.reduce(0) { $0 + $1.chats.count } }
         var paneCount: Int {
-            starredCount + staleCount + HerdrSidebarView.paneCount(
+            unreadCount + starredCount + staleCount + HerdrSidebarView.paneCount(
                 in: showsMachineChrome ? machineGroups.flatMap(\.entries) : tree
             )
         }
@@ -94,6 +108,7 @@ struct HerdrSidebarView: View {
         let collapsedMachineIDs: Set<String>
         let collapsedTabIDs: Set<String>
         let starredChatIDs: Set<String>
+        let unreadPaneIDs: Set<String>
         let machineStates: [String: ConnectionState]
         let recency: SidebarRecency
     }
@@ -115,6 +130,7 @@ struct HerdrSidebarView: View {
             collapsedMachineIDs: model.collapsedSidebarMachineIDs,
             collapsedTabIDs: model.collapsedSidebarTabIDs,
             starredChatIDs: model.starredChatIDs,
+            unreadPaneIDs: model.unreadPaneIDs,
             machineStates: model.machineStates,
             recency: model.sidebarRecency
         )
@@ -138,6 +154,7 @@ struct HerdrSidebarView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
+                    unreadSection(snapshot)
                     starredSection(snapshot)
                     staleSection(snapshot)
                     workspaceContent(snapshot)
@@ -452,13 +469,47 @@ struct HerdrSidebarView: View {
     }
 
     @ViewBuilder
+    private func unreadSection(_ snapshot: SidebarSnapshot) -> some View {
+        if !snapshot.unreadGroups.isEmpty {
+            HerdrSectionLabel(title: "unread", detail: "\(snapshot.unreadCount)")
+                .padding(.top, 4)
+                .accessibilityIdentifier("sidebar-unread-section")
+                .accessibilityLabel("Unread chats")
+                .accessibilityValue("\(snapshot.unreadCount)")
+            ForEach(snapshot.unreadGroups) { group in
+                Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
+                    .herdrFont(
+                        size: SidebarMetrics.projectLabelSize,
+                        monospaced: true,
+                        weight: .bold,
+                        relativeTo: .caption
+                    )
+                    .foregroundStyle(HerdrTheme.muted)
+                    .lineLimit(1)
+                    .padding(.leading, 34)
+                    .padding(.top, 6)
+                ForEach(group.chats) { chatRow($0) }
+            }
+            separator
+        }
+    }
+
+    @ViewBuilder
     private func starredSection(_ snapshot: SidebarSnapshot) -> some View {
         if !snapshot.starredGroups.isEmpty {
             HerdrSectionLabel(title: "starred", detail: "\(snapshot.starredCount)")
                 .padding(.top, 4)
+                .accessibilityIdentifier("sidebar-starred-section")
+                .accessibilityLabel("Starred chats")
+                .accessibilityValue("\(snapshot.starredCount)")
             ForEach(snapshot.starredGroups) { group in
-                Text(starredGroupTitle(group, showsMachineChrome: snapshot.showsMachineChrome))
-                    .herdrFont(.caption, monospaced: true)
+                Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
+                    .herdrFont(
+                        size: SidebarMetrics.projectLabelSize,
+                        monospaced: true,
+                        weight: .bold,
+                        relativeTo: .caption
+                    )
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(1)
                     .padding(.leading, 34)
@@ -540,14 +591,16 @@ struct HerdrSidebarView: View {
             }
         } else if snapshot.tree.isEmpty {
             if model.sidebarRecency != .all {
-                if snapshot.starredGroups.isEmpty {
+                if snapshot.unreadGroups.isEmpty && snapshot.starredGroups.isEmpty {
                     Text("no chats from \(model.sidebarRecency.title.lowercased())")
                         .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(HerdrTheme.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 42)
                 }
-            } else if snapshot.staleGroups.isEmpty && snapshot.starredGroups.isEmpty {
+            } else if snapshot.unreadGroups.isEmpty
+                && snapshot.staleGroups.isEmpty
+                && snapshot.starredGroups.isEmpty {
                 emptyState
                     .frame(maxWidth: .infinity)
                     .padding(.top, 42)
@@ -843,12 +896,12 @@ struct HerdrSidebarView: View {
         }
     }
 
-    private func starredGroupTitle(_ group: SidebarTree.StarredGroup, showsMachineChrome: Bool) -> String {
+    private func priorityGroupTitle(_ workspace: HerdrWorkspace, showsMachineChrome: Bool) -> String {
         guard showsMachineChrome,
-              let machineID = MachineScopedID.split(group.workspace.id)?.machineID,
+              let machineID = MachineScopedID.split(workspace.id)?.machineID,
               let machine = model.machines.first(where: { $0.id == machineID })
-        else { return group.workspace.label.lowercased() }
-        return "\(machine.name.lowercased()) · \(group.workspace.label.lowercased())"
+        else { return workspace.label.lowercased() }
+        return "\(machine.name.lowercased()) · \(workspace.label.lowercased())"
     }
 
     private static func paneCount(in entries: [SidebarTree.ProjectEntry]) -> Int {

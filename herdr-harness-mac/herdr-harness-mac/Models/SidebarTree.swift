@@ -25,6 +25,13 @@ enum SidebarTree {
         var id: String { "starred:\(workspace.id)" }
     }
 
+    struct UnreadGroup: Identifiable, Equatable {
+        let workspace: HerdrWorkspace
+        let chats: [HerdrPane]
+
+        var id: String { "unread:\(workspace.id)" }
+    }
+
     struct MachineGroup: Identifiable, Equatable {
         let machine: HerdrMachine
         let state: ConnectionState
@@ -104,6 +111,47 @@ enum SidebarTree {
             }
     }
 
+    static func unreadGroups(
+        workspaces: [HerdrWorkspace],
+        query: String,
+        unreadIDs: Set<String>,
+        machines: [HerdrMachine] = [],
+        recency: SidebarRecency = .all,
+        now: Date = Date(),
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> [UnreadGroup] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let machineOrder = Dictionary(uniqueKeysWithValues: machines.enumerated().map { ($0.element.id, $0.offset) })
+        return workspaces
+            .sorted {
+                let lhsMachine = MachineScopedID.split($0.id)?.machineID
+                let rhsMachine = MachineScopedID.split($1.id)?.machineID
+                let lhsOrder = lhsMachine.flatMap { machineOrder[$0] } ?? Int.max
+                let rhsOrder = rhsMachine.flatMap { machineOrder[$0] } ?? Int.max
+                if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
+                return $0.number < $1.number
+            }
+            .compactMap { workspace in
+                let workspaceMatches = trimmedQuery.isEmpty
+                    || workspace.label.localizedStandardContains(trimmedQuery)
+                    || workspace.displayPath.localizedStandardContains(trimmedQuery)
+                let matchingTabIDs = Set(workspace.tabs.filter {
+                    $0.label.localizedStandardContains(trimmedQuery)
+                }.map(\.id))
+                let chats = workspace.panes
+                    .filter {
+                        unreadIDs.contains($0.id)
+                            && (workspaceMatches
+                                || matchingTabIDs.contains($0.scopedTabID)
+                                || matchesPaneQuery($0, query: trimmedQuery))
+                            && recency.includes($0, now: now, calendar: calendar)
+                    }
+                    .sorted { $0.paneID < $1.paneID }
+                guard !chats.isEmpty else { return nil }
+                return UnreadGroup(workspace: workspace, chats: chats)
+            }
+    }
+
     static func machineGroups(
         machines: [HerdrMachine],
         states: [String: ConnectionState],
@@ -143,6 +191,7 @@ enum SidebarTree {
         machines: [HerdrMachine],
         workspaces: [HerdrWorkspace],
         query: String,
+        excludedPaneIDs: Set<String> = [],
         now: Date = Date(),
         calendar: Calendar = .autoupdatingCurrent
     ) -> [StaleGroup] {
@@ -158,7 +207,8 @@ enum SidebarTree {
                         $0.label.localizedStandardContains(trimmedQuery)
                     }.map(\.id))
                     return workspace.panes.filter { pane in
-                        PaneFreshness.isStale(pane, now: now, calendar: calendar)
+                        !excludedPaneIDs.contains(pane.id)
+                            && PaneFreshness.isStale(pane, now: now, calendar: calendar)
                             && (workspaceMatches
                                 || matchingTabIDs.contains(pane.scopedTabID)
                                 || matchesPaneQuery(pane, query: trimmedQuery))

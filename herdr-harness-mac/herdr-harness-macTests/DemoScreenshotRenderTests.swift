@@ -49,7 +49,7 @@ struct DemoScreenshotRenderTests {
             // white slab because the split view's backdrop is drawn outside
             // the hierarchy `cacheDisplay` walks (the detail column is fine).
             // So the shell is composed the way `WorkspaceNavigationView`
-            // composes it — `HerdrSidebarView` at its ideal 320pt width, the
+            // composes it — `HerdrSidebarView` at its ideal 360pt width, the
             // hairline, and the resolved detail scope — minus system chrome.
             HStack(spacing: 0) {
                 HerdrSidebarView(
@@ -60,7 +60,7 @@ struct DemoScreenshotRenderTests {
                     openActiveWork: {},
                     isActiveWorkSelected: false
                 )
-                    .frame(width: 320)
+                    .frame(width: 360)
 
                 Rectangle()
                     .fill(HerdrTheme.surface)
@@ -83,10 +83,11 @@ struct DemoScreenshotRenderTests {
         model.selectedPaneID = "demo1|w1:p2"
         model.starredChatIDs = ["demo1|w1:p1", "demo1|w2:p1"]
         let activeWorkStore = demoActiveWorkStore()
+        #expect(model.unreadPaneIDs == ["demo1|w1:p2", "demo1|w2:p1"])
 
         let result = try await HerdrRenderHarness.render(
             "02-sidebar.png",
-            size: CGSize(width: 300, height: 760)
+            size: CGSize(width: 360, height: 760)
         ) {
             HerdrSidebarView(
                 model: model,
@@ -110,7 +111,7 @@ struct DemoScreenshotRenderTests {
 
         let defaultResult = try await HerdrRenderHarness.render(
             "02-sidebar.png",
-            size: CGSize(width: 300, height: 760)
+            size: CGSize(width: 360, height: 760)
         ) {
             HerdrSidebarView(
                 model: model,
@@ -124,7 +125,7 @@ struct DemoScreenshotRenderTests {
 
         let xxLargeResult = try await HerdrRenderHarness.render(
             "02b-sidebar-xxlarge.png",
-            size: CGSize(width: 300, height: 760)
+            size: CGSize(width: 360, height: 760)
         ) {
             HerdrSidebarView(
                 model: model,
@@ -355,6 +356,45 @@ struct DemoScreenshotRenderTests {
         }
 
         result.expectSubstantial()
+    }
+
+    @Test("Markdown tables fill sparse layouts and scroll dense layouts")
+    func rendersMarkdownTables() async throws {
+        let wideTable = PiMarkdownTable(
+            headers: ["Command", "State", "Cost"],
+            alignments: [.leading, .center, .trailing],
+            rows: [
+                ["`build|test`", "**ready**", "$4"],
+                ["Generate release notes", "waiting", "$12"],
+                ["Deploy and verify", "complete", "$19"],
+            ]
+        )
+        let denseTable = PiMarkdownTable(
+            headers: ["Owner", "Branch", "State", "Tests", "Review", "Deploy"],
+            alignments: [.leading, .leading, .center, .trailing, .center, .center],
+            rows: [
+                ["Codex", "feature/table-polish", "working", "148", "ready", "waiting"],
+                ["Claude", "fix/sidebar-type", "done", "92", "approved", "shipped"],
+            ]
+        )
+
+        let wideResult = try await HerdrRenderHarness.render(
+            "06b-markdown-table-wide.png",
+            size: CGSize(width: 760, height: 280)
+        ) {
+            PiMarkdownTableView(table: wideTable)
+                .padding(24)
+        }
+        let denseResult = try await HerdrRenderHarness.render(
+            "06c-markdown-table-overflow.png",
+            size: CGSize(width: 420, height: 280)
+        ) {
+            PiMarkdownTableView(table: denseTable)
+                .padding(24)
+        }
+
+        wideResult.expectSubstantial()
+        denseResult.expectSubstantial()
     }
 
     // MARK: - 07 · Composer with its tool row

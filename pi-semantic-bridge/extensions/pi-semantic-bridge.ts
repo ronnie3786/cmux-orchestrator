@@ -495,6 +495,7 @@ class BridgeRuntime {
 				steer: true,
 				followUp: true,
 				abort: true,
+				compact: true,
 				listModels: true,
 				setModel: true,
 				setThinkingLevel: true,
@@ -728,6 +729,10 @@ class BridgeRuntime {
 				case "abort":
 					if (ctx.isIdle()) throw new Error("Pi is already idle");
 					ctx.abort();
+					break;
+				case "compact":
+					if (!ctx.isIdle()) throw new Error("Pi is busy; wait for the current turn to finish");
+					ctx.compact();
 					break;
 				case "list_models": {
 					const source = ctx.scopedModels.length > 0

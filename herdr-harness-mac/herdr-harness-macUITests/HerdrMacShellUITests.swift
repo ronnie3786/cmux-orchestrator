@@ -144,4 +144,18 @@ final class HerdrMacShellUITests: HerdrUITestCase {
             "The shell should run in a single document window"
         )
     }
+
+    @MainActor
+    func testPaneHeaderExposesWorkingFolderButton() throws {
+        let app = launchDemoApp()
+        let pane = app.buttons["sidebar-pane-demo1|w1:p2"]
+        XCTAssertTrue(pane.waitForExistence(timeout: 10))
+
+        pane.click()
+
+        XCTAssertTrue(
+            app.buttons["pane-path-button"].waitForExistence(timeout: 5),
+            "A selected pane should expose its working folder as a Finder button"
+        )
+    }
 }

@@ -118,4 +118,63 @@ final class HerdrSidebarUITests: HerdrUITestCase {
             "Clearing the filter should restore the whole tree"
         )
     }
+
+    @MainActor
+    func testUnreadSectionAppearsAboveStarred() throws {
+        let app = launchDemoApp()
+        let unread = app.control(identifier: "sidebar-unread-section")
+        let starred = app.control(identifier: "sidebar-starred-section")
+
+        XCTAssertTrue(unread.waitForExistence(timeout: 10))
+        XCTAssertTrue(starred.waitForExistence(timeout: 5))
+        XCTAssertEqual(unread.value as? String, "2")
+        XCTAssertLessThan(
+            unread.frame.minY,
+            starred.frame.minY,
+            "Unread chats should be the first promoted session section"
+        )
+    }
+
+    @MainActor
+    func testActiveSessionBodyAndPromptClearNewUnreadAlerts() throws {
+        let app = launchDemoApp()
+        let paneRow = app.buttons["sidebar-pane-demo1|w1:p2"]
+        XCTAssertTrue(paneRow.waitForExistence(timeout: 10))
+        paneRow.click()
+
+        let terminal = app.control(identifier: "terminal-demo1|w1:p2")
+        let composer = app.control(identifier: "prompt-composer")
+        let unread = app.control(identifier: "sidebar-unread-section")
+        XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue("1", of: unread), "Opening the pane should clear its first unread alert")
+
+        // Demo refresh restores its canned unread alerts without routing away
+        // from the already-mounted pane. That reproduces an alert arriving
+        // while the user is looking at the same session.
+        app.typeKey("r", modifierFlags: .command)
+        XCTAssertTrue(waitForValue("2", of: unread), "Refresh should restore the active pane's unread alert")
+
+        terminal.click()
+        XCTAssertTrue(waitForValue("1", of: unread), "Clicking the active session body should acknowledge it")
+
+        app.typeKey("r", modifierFlags: .command)
+        XCTAssertTrue(waitForValue("2", of: unread), "Refresh should restore the prompt-focus scenario")
+
+        composer.click()
+        XCTAssertTrue(waitForValue("1", of: unread), "Focusing the active prompt should acknowledge it")
+    }
+
+    @MainActor
+    private func waitForValue(
+        _ value: String,
+        of element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", value),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
 }

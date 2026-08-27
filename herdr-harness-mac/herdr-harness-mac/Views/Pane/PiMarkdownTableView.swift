@@ -3,22 +3,46 @@ import SwiftUI
 struct PiMarkdownTableView: View {
     let table: PiMarkdownTable
     @Environment(\.herdrFontScale) private var fontScale
+    @State private var viewportWidth: CGFloat = 0
 
     var body: some View {
+        let layout = PiMarkdownTableLayout(
+            viewportWidth: viewportWidth,
+            columnCount: table.headers.count,
+            fontScale: fontScale
+        )
+
         ScrollView(.horizontal) {
             Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
-                tableRow(table.headers, rowIndex: nil)
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, cells in
-                    tableRow(cells, rowIndex: rowIndex)
+                tableRow(
+                    table.headers,
+                    rowIndex: nil,
+                    columnWidth: layout.columnWidth,
+                    isLastRow: table.rows.isEmpty
+                )
+                ForEach(table.rows.indices, id: \.self) { rowIndex in
+                    tableRow(
+                        table.rows[rowIndex],
+                        rowIndex: rowIndex,
+                        columnWidth: layout.columnWidth,
+                        isLastRow: rowIndex == table.rows.indices.last
+                    )
                 }
             }
+            .frame(minWidth: layout.contentWidth, alignment: .leading)
         }
         .scrollIndicators(.visible)
-        .background(HerdrTheme.ink.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HerdrTheme.graphite.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
         .clipShape(.rect(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(HerdrTheme.surface.opacity(0.78), lineWidth: 1)
+        }
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            geometry.size.width
+        } action: { newWidth in
+            viewportWidth = newWidth
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
@@ -26,47 +50,62 @@ struct PiMarkdownTableView: View {
         )
     }
 
-    private func tableRow(_ cells: [String], rowIndex: Int?) -> some View {
+    private func tableRow(
+        _ cells: [String],
+        rowIndex: Int?,
+        columnWidth: CGFloat,
+        isLastRow: Bool
+    ) -> some View {
         GridRow {
-            ForEach(Array(cells.enumerated()), id: \.offset) { columnIndex, cell in
+            ForEach(cells.indices, id: \.self) { columnIndex in
+                let role: HerdrProse.Role = rowIndex == nil ? .tableHeader : .tableCell
                 PiMarkdownText(
-                    cell,
-                    font: rowIndex == nil
-                        ? HerdrProse.font(.tableHeader, scale: fontScale)
-                        : HerdrProse.font(.tableCell, scale: fontScale)
+                    cells[columnIndex],
+                    font: HerdrProse.font(role, scale: fontScale),
+                    inlineCodeFont: HerdrProse.inlineCodeFont(role, scale: fontScale),
+                    inlineCodeColor: HerdrProse.inlineCodeColor
                 )
                 .multilineTextAlignment(textAlignment(for: columnIndex))
-                .frame(
-                    minWidth: 112,
-                    idealWidth: 152,
-                    maxWidth: 232,
-                    alignment: frameAlignment(for: columnIndex)
-                )
-                .padding(.horizontal, 11)
+                .padding(.horizontal, 12)
                 .padding(.vertical, rowIndex == nil ? 10 : 9)
-                .background(cellBackground(rowIndex: rowIndex))
+                .frame(width: columnWidth, alignment: frameAlignment(for: columnIndex))
                 .overlay(alignment: .trailing) {
-                    Rectangle()
-                        .fill(HerdrTheme.surface.opacity(0.48))
-                        .frame(width: 1)
-                }
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(HerdrTheme.surface.opacity(0.48))
-                        .frame(height: 1)
+                    if columnIndex < cells.count - 1 {
+                        Rectangle()
+                            .fill(HerdrTheme.surface.opacity(0.34))
+                            .frame(width: 1)
+                    }
                 }
                 .accessibilityLabel(
-                    accessibilityLabel(cell: cell, columnIndex: columnIndex, rowIndex: rowIndex)
+                    accessibilityLabel(
+                        cell: cells[columnIndex],
+                        columnIndex: columnIndex,
+                        rowIndex: rowIndex
+                    )
                 )
+            }
+        }
+        .background(rowBackground(rowIndex: rowIndex))
+        .overlay(alignment: .bottom) {
+            if !isLastRow {
+                Rectangle()
+                    .fill(rowDivider(rowIndex: rowIndex))
+                    .frame(height: 1)
             }
         }
     }
 
-    private func cellBackground(rowIndex: Int?) -> Color {
-        guard let rowIndex else { return HerdrTheme.elevated.opacity(0.72) }
+    private func rowBackground(rowIndex: Int?) -> Color {
+        guard let rowIndex else { return HerdrTheme.elevated.opacity(0.88) }
         return rowIndex.isMultiple(of: 2)
-            ? HerdrTheme.graphite.opacity(0.6)
-            : HerdrTheme.ink.opacity(0.35)
+            ? HerdrTheme.graphite.opacity(0.78)
+            : HerdrTheme.ink.opacity(0.52)
+    }
+
+    private func rowDivider(rowIndex: Int?) -> Color {
+        rowIndex == nil
+            ? HerdrTheme.accent.opacity(0.44)
+            : HerdrTheme.surface.opacity(0.56)
     }
 
     private func frameAlignment(for column: Int) -> Alignment {

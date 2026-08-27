@@ -103,6 +103,70 @@ struct HerdrAlertTests {
             .init(method: "POST", path: "/api/v1/panes/w1:p1/alerts/read"),
         ])
     }
+
+    @Test("Active session engagement posts only for a locally unread pane")
+    func activeSessionEngagementRequiresUnreadAlert() async throws {
+        await AlertReadOnOpenRequestRecorder.shared.reset()
+        let suiteName = "HerdrAlertTests.activeEngagement.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let machine = HerdrMachine(id: "m1", name: "Machine", urlString: "http://localhost:9092")
+        let configuration = try #require(ServerConfiguration(urlString: machine.urlString, token: "test"))
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [AlertReadOnOpenURLProtocol.self]
+        let client = HerdrAPIClient(configuration: configuration, session: URLSession(configuration: sessionConfiguration))
+        let model = HerdrAppModel(arguments: [], userDefaults: defaults)
+        model.machines = [machine]
+        model.clientFactory = { _ in client }
+        model.prepareRuntime(for: machine, generation: model.connectionGeneration)
+        model.machineStates[machine.id] = .live
+
+        let rawPane = HerdrPane(
+            paneID: "w1:p1", terminalID: "w1:p1", workspaceID: "w1", tabID: "",
+            focused: true, agentStatus: .done, revision: 1, cwd: nil, foregroundCWD: nil,
+            label: nil, title: nil, agent: nil, displayAgent: nil, terminalTitle: nil,
+            terminalTitleStripped: nil
+        )
+        model.workspaces = [HerdrWorkspace(
+            workspaceID: "w1", number: 1, label: "Workspace", focused: true,
+            paneCount: 1, tabCount: 0, activeTabID: "", agentStatus: .done, panes: [rawPane]
+        ).stamped(machineID: machine.id)]
+        let pane = try #require(model.pane(id: "m1|w1:p1"))
+        model.selectedPaneID = pane.id
+
+        model.alerts = []
+        model.acknowledgeUnreadAlerts(for: pane)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(await AlertReadOnOpenRequestRecorder.shared.requests().isEmpty)
+
+        model.alerts = [HerdrAlert(
+            id: "alert-1",
+            workspaceID: "w1",
+            paneID: pane.paneID,
+            status: .done,
+            title: "Ready",
+            message: "",
+            createdAt: "2026-08-26T12:00:00Z",
+            isRead: false
+        ).stamped(machineID: machine.id)]
+        #expect(model.unreadPaneIDs == [pane.id])
+
+        model.acknowledgeUnreadAlerts(for: pane)
+        #expect(model.alerts[0].isRead)
+        #expect(model.unreadPaneIDs.isEmpty)
+        for _ in 0..<20 {
+            if !(await AlertReadOnOpenRequestRecorder.shared.requests()).isEmpty { break }
+            await Task.yield()
+        }
+        #expect(await AlertReadOnOpenRequestRecorder.shared.requests() == [
+            .init(method: "POST", path: "/api/v1/panes/w1:p1/alerts/read"),
+        ])
+
+        model.acknowledgeUnreadAlerts(for: pane)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(await AlertReadOnOpenRequestRecorder.shared.requests().count == 1)
+    }
 }
 
 private actor AlertReadOnOpenRequestRecorder {
