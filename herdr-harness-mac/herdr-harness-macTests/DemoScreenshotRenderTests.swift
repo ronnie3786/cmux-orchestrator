@@ -358,7 +358,7 @@ struct DemoScreenshotRenderTests {
         result.expectSubstantial()
     }
 
-    @Test("Markdown tables fill sparse layouts and scroll dense layouts")
+    @Test("Markdown tables use square grid chrome, fill sparse layouts, and scroll dense layouts")
     func rendersMarkdownTables() async throws {
         let wideTable = PiMarkdownTable(
             headers: ["Command", "State", "Cost"],
@@ -379,14 +379,14 @@ struct DemoScreenshotRenderTests {
         )
 
         let wideResult = try await HerdrRenderHarness.render(
-            "06b-markdown-table-wide.png",
+            "06b-markdown-table-square-wide.png",
             size: CGSize(width: 760, height: 280)
         ) {
             PiMarkdownTableView(table: wideTable)
                 .padding(24)
         }
         let denseResult = try await HerdrRenderHarness.render(
-            "06c-markdown-table-overflow.png",
+            "06c-markdown-table-square-overflow.png",
             size: CGSize(width: 420, height: 280)
         ) {
             PiMarkdownTableView(table: denseTable)

@@ -45,6 +45,26 @@ struct HerdrAPIClientStreamBackpressureTests {
         #expect(delivered == 200)
     }
 
+    @Test("URL-session cancellation remains a cancellation at the stream boundary")
+    func urlSessionCancellationIsPreserved() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CancelledStreamURLProtocol.self]
+        let client = HerdrAPIClient(
+            configuration: self.configuration,
+            session: URLSession(configuration: configuration)
+        )
+        let stream = await client.piConversationEvents(paneID: "cancelled", after: nil)
+
+        do {
+            for try await _ in stream { }
+            Issue.record("Expected URLSession cancellation to remain observable")
+        } catch is CancellationError {
+            // Cancellation is lifecycle state, not a connection failure.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
     private var configuration: ServerConfiguration {
         ServerConfiguration(urlString: "http://localhost:9092", token: "test")!
     }
@@ -54,6 +74,17 @@ struct HerdrAPIClientStreamBackpressureTests {
         configuration.protocolClasses = [TerminalStreamURLProtocol.self]
         return URLSession(configuration: configuration)
     }
+}
+
+private final class CancelledStreamURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+    }
+
+    override func stopLoading() { }
 }
 
 private final class TerminalStreamURLProtocol: URLProtocol {

@@ -99,13 +99,11 @@ struct PaneActionsMenu: View {
     @ViewBuilder
     private var piSessionActions: some View {
         if pane.supportsPiSemanticChat || isPiPane {
-            if pane.piSemantic?.capabilities.compact == true {
-                Button("Compact Pi chat", systemImage: "arrow.down.right.and.arrow.up.left") {
-                    Task { await model.compactPiChat(in: pane) }
-                }
-                .accessibilityIdentifier("pane-action-compact-pi-chat")
-                .disabled(!model.canControl(machineID: pane.machineID))
+            Button("Compact Pi chat", systemImage: "arrow.down.right.and.arrow.up.left") {
+                Task { await model.compactPiChat(in: pane) }
             }
+            .accessibilityIdentifier("pane-action-compact-pi-chat")
+            .disabled(!model.canControl(machineID: pane.machineID))
 
             Button("New Pi chat", systemImage: "plus.bubble") {
                 Task { await model.startNewPiChat(in: pane) }
@@ -113,7 +111,7 @@ struct PaneActionsMenu: View {
             .accessibilityIdentifier("pane-action-new-pi-chat")
             .disabled(!model.canControl(machineID: pane.machineID))
 
-            Button("End Pi session", systemImage: "xmark.bubble", role: .destructive) {
+            Button("End Pi session", systemImage: "stop.circle.fill", role: .destructive) {
                 Task { await model.endPiSession(in: pane) }
             }
             .accessibilityIdentifier("pane-action-end-pi-session")

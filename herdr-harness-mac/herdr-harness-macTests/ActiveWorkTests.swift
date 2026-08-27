@@ -4,6 +4,35 @@ import Testing
 
 @Suite("Active Work")
 struct ActiveWorkTests {
+    @Test("Accepts a Buzz message link without an optional thread root")
+    func acceptsRootlessBuzzMessageLink() throws {
+        let rawURL = "buzz://message?channel=89a5bbb0-7a26-438f-81fb-ceb65d82b683&id=d7f719aaed94d298ba9f5b151f3247ade3a2ca3d0c22c544afadd1c80f3ea452"
+        let thread = try decodeThread(url: rawURL)
+
+        #expect(thread.url == rawURL)
+        #expect(thread.browserURL?.absoluteString == rawURL)
+        #expect(thread.browserURL?.host == "message")
+    }
+
+    @Test("Rejects malformed Buzz message links")
+    func rejectsMalformedBuzzMessageLinks() throws {
+        let malformedURLs = [
+            "buzz://channel?channel=channel-1&id=event-1",
+            "buzz://message?id=event-1",
+            "buzz://message?channel=channel-1",
+            "buzz://message?channel=channel-1&id=event-1&id=event-2",
+            "buzz://message?channel=channel-1&id=event-1&root=root-1",
+            "buzz://person@message?channel=channel-1&id=event-1",
+            "buzz://message?channel=channel-1&id=event-1#fragment",
+            "buzz://message?channel=channel-1&id=event-1&redirect=https://example.com",
+        ]
+
+        for rawURL in malformedURLs {
+            let thread = try decodeThread(url: rawURL)
+            #expect(thread.browserURL == nil, "Expected to reject \(rawURL)")
+        }
+    }
+
     @Test("Decodes concise and persisted Active Work shapes")
     func decodesResponse() throws {
         let response = try decodeFixture()
@@ -121,6 +150,16 @@ struct ActiveWorkTests {
 
     private func decodeFixture() throws -> ActiveWorkResponse {
         try JSONDecoder().decode(ActiveWorkResponse.self, from: Self.fixture)
+    }
+
+    private func decodeThread(url: String) throws -> ActiveWorkThread {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": "thread-regression",
+            "title": "Regression discussion",
+            "url": url,
+            "status": "active",
+        ])
+        return try JSONDecoder().decode(ActiveWorkThread.self, from: data)
     }
 
     private enum FixtureError: LocalizedError {

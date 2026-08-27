@@ -197,6 +197,39 @@ struct PiConversationStoreReloadGuardTests {
         await task.value
     }
 
+    @Test("URL-session cancellation does not become a persistent connection error")
+    func urlCancellationDoesNotSurfaceAsAnError() async throws {
+        let store = PiConversationStore()
+        let pane = testPane()
+        store.snapshotProvider = { _ in try self.snapshot() }
+        store.eventsProvider = { _, _ in
+            AsyncThrowingStream { continuation in
+                continuation.finish(throwing: NSError(
+                    domain: NSURLErrorDomain,
+                    code: NSURLErrorCancelled
+                ))
+            }
+        }
+
+        await store.follow(model: HerdrAppModel(arguments: []), pane: pane)
+
+        #expect(store.connection == .connected)
+        #expect(store.lastError == nil)
+    }
+
+    @Test("Snapshot cancellation does not become a persistent connection error")
+    func snapshotCancellationDoesNotSurfaceAsAnError() async {
+        let store = PiConversationStore()
+        store.snapshotProvider = { _ in
+            throw NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+        }
+
+        await store.follow(model: HerdrAppModel(arguments: []), pane: testPane())
+
+        #expect(store.connection == .loading)
+        #expect(store.lastError == nil)
+    }
+
     private func testPane() -> HerdrPane {
         HerdrPane(
             paneID: "w1:p1", terminalID: "w1:p1", workspaceID: "w1", tabID: "",

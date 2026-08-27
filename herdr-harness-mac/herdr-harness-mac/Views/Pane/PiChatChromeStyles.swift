@@ -142,7 +142,7 @@ private struct PiChatButtonBody: View {
 extension View {
     /// Keeps a `Menu` looking like the flat Herdr capsule chip. Without this,
     /// macOS wraps the label in a bordered pull-down button and adds a second
-    /// indicator next to the chip's own `chevron.up.down`.
+    /// indicator next to the chip's own `chevron.up.chevron.down`.
     func piChipMenu() -> some View {
         menuStyle(.button)
             .buttonStyle(.plain)

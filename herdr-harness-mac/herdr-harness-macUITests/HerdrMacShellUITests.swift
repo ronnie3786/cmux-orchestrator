@@ -65,6 +65,38 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     }
 
     @MainActor
+    func testFocusCommandsExposeDistinctKeyboardShortcuts() throws {
+        let app = launchDemoApp()
+        let pane = app.buttons["sidebar-pane-demo1|w1:p1"]
+        XCTAssertTrue(pane.waitForExistence(timeout: 10))
+        pane.click()
+        XCTAssertTrue(app.control(identifier: "terminal-demo1|w1:p1").waitForExistence(timeout: 5))
+
+        guard let focus = app.menuBarItem("Navigate", item: "Focus Current Pane on Mac") else {
+            return XCTFail("Navigate should expose Focus Current Pane on Mac")
+        }
+        XCTAssertTrue(focus.isEnabled)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+
+        guard let focusAndZoom = app.menuBarItem("Navigate", item: "Focus Current Pane on Mac + Zoom") else {
+            return XCTFail("Navigate should expose Focus Current Pane on Mac + Zoom")
+        }
+        XCTAssertTrue(focusAndZoom.isEnabled)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+
+        app.typeKey("m", modifierFlags: [.command, .shift])
+        let focusToast = app.buttons["Focused on Mac"]
+        XCTAssertTrue(focusToast.waitForExistence(timeout: 3), "⇧⌘M should focus the current pane")
+        focusToast.click()
+
+        app.typeKey("m", modifierFlags: [.command, .shift, .option])
+        XCTAssertTrue(
+            app.buttons["Focused + zoomed on Mac"].waitForExistence(timeout: 3),
+            "⌥⇧⌘M should focus and zoom the current pane"
+        )
+    }
+
+    @MainActor
     func testCommandOneReachesTheAttentionDeckFromTheKeyboard() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-pane-demo1|w1:p2"].waitForExistence(timeout: 10))

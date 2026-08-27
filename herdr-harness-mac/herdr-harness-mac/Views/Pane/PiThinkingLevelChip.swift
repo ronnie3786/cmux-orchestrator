@@ -48,7 +48,7 @@ struct PiThinkingLevelChip: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             if isInteractive {
-                Image(systemName: "chevron.up.down")
+                Image(systemName: "chevron.up.chevron.down")
                     .herdrFont(.caption2)
             }
         }

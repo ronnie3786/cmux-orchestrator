@@ -80,7 +80,15 @@ struct WorkspaceNavigationView: View {
                 transition: transition,
                 setLifecycle: setLifecycle,
                 openSession: openTrackedSession,
-                openURL: { NSWorkspace.shared.open($0) },
+                openURL: { url in
+                    Task {
+                        do {
+                            try await ActiveWorkLinkOpener.open(url)
+                        } catch {
+                            model.toastMessage = error.localizedDescription
+                        }
+                    }
+                },
                 transcribeVoice: { try await model.transcribeVoiceNote(at: $0) },
                 askBoard: { question in
                     shell.presentAgent(prompt: activeWorkStore.agentPrompt(question: question))

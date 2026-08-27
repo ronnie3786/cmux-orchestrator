@@ -113,8 +113,8 @@ struct PaneSessionHeader: View {
         return "\(workspace.label) · \(tab.label)"
     }
 
-    private func reportPathOpenFailure() {
-        model.toastMessage = "That folder is not available on this Mac"
+    private func reportPathOpenFailure(_ message: String) {
+        model.toastMessage = message
     }
 
     private var gitReturnTitle: String {

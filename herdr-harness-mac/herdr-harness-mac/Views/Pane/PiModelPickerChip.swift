@@ -65,7 +65,7 @@ struct PiModelPickerChip: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             if isInteractive {
-                Image(systemName: "chevron.up.down")
+                Image(systemName: "chevron.up.chevron.down")
                     .herdrFont(.caption2)
             }
         }

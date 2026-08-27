@@ -75,5 +75,9 @@ final class HerdrActiveWorkUITests: HerdrUITestCase {
             app.text(containing: "Architecture review discussion").waitForExistence(timeout: 5),
             "The expanded current phase should expose its associated Buzz thread"
         )
+        XCTAssertTrue(
+            app.control(identifier: "active-work-open-buzz-thread_1").waitForExistence(timeout: 5),
+            "A rootless Buzz message link should render an Open control"
+        )
     }
 }

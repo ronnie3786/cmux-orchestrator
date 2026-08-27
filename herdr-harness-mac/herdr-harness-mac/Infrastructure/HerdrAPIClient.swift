@@ -254,8 +254,15 @@ actor HerdrAPIClient {
         }
     }
 
+    private static func isCancellation(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return error is CancellationError
+            || (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
+            || Task.isCancelled
+    }
+
     private static func rethrowIfCancelled(_ error: Error) throws {
-        if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+        if isCancellation(error) {
             throw CancellationError()
         }
     }
@@ -646,10 +653,12 @@ actor HerdrAPIClient {
                         }
                     }
                     throw APIError.streamEnded
-                } catch is CancellationError {
-                    continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    if Self.isCancellation(error) {
+                        continuation.finish(throwing: CancellationError())
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
                 }
             }
 
@@ -698,10 +707,12 @@ actor HerdrAPIClient {
                         }
                     }
                     throw APIError.streamEnded
-                } catch is CancellationError {
-                    continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    if Self.isCancellation(error) {
+                        continuation.finish(throwing: CancellationError())
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
                 }
             }
 
@@ -759,10 +770,12 @@ actor HerdrAPIClient {
                         }
                     }
                     throw APIError.streamEnded
-                } catch is CancellationError {
-                    continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    if Self.isCancellation(error) {
+                        continuation.finish(throwing: CancellationError())
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
                 }
             }
 

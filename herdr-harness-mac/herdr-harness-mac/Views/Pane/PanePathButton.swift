@@ -1,9 +1,8 @@
-import AppKit
 import SwiftUI
 
 struct PanePathButton: View {
     let path: String
-    let reportFailure: () -> Void
+    let reportFailure: (String) -> Void
     @State private var isHovering = false
 
     var body: some View {
@@ -36,9 +35,14 @@ struct PanePathButton: View {
     }
 
     private func openInFinder() {
-        guard NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path) else {
-            reportFailure()
-            return
+        Task {
+            do {
+                try await PanePathOpener.open(path: path)
+            } catch is CancellationError {
+                return
+            } catch {
+                reportFailure(error.localizedDescription)
+            }
         }
     }
 }

@@ -706,6 +706,7 @@ private struct ActiveWorkRouteStageView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mauve)
                 .accessibilityLabel("Open Buzz thread \(thread.title)")
+                .accessibilityIdentifier("active-work-open-buzz-\(thread.id)")
             }
         }
         .padding(9)
@@ -747,6 +748,7 @@ private struct ActiveWorkDiscussionSection: View {
                         .foregroundStyle(HerdrTheme.mauve)
                         .help("Open this Buzz discussion")
                         .accessibilityLabel("Open Buzz thread \(thread.title)")
+                        .accessibilityIdentifier("active-work-open-buzz-\(thread.id)")
                     }
                 }
                 .padding(11)

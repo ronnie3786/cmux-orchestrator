@@ -1209,8 +1209,19 @@ final class HerdrAppModel {
     }
 
     func compactPiChat(in pane: HerdrPane) async {
-        await perform("Compaction started", machineID: pane.machineID) { client in
-            try await client.compactPiConversation(paneID: pane.paneID)
+        noteUserInteraction(machineID: pane.machineID)
+        if isDemoMode {
+            toastMessage = "compaction started"
+            return
+        }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return }
+        do {
+            try await client.sendText(toPane: pane.paneID, text: "/compact", submit: false)
+            try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
+            toastMessage = "compaction started"
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

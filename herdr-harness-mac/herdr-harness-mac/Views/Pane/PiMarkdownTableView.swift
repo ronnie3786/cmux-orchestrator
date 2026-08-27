@@ -33,10 +33,10 @@ struct PiMarkdownTableView: View {
         }
         .scrollIndicators(.visible)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HerdrTheme.graphite.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
-        .clipShape(.rect(cornerRadius: 10))
+        .background(HerdrTheme.graphite.opacity(0.62), in: Rectangle())
+        .clipShape(Rectangle())
         .overlay {
-            RoundedRectangle(cornerRadius: 10)
+            Rectangle()
                 .strokeBorder(HerdrTheme.surface.opacity(0.78), lineWidth: 1)
         }
         .onGeometryChange(for: CGFloat.self) { geometry in
