@@ -1145,23 +1145,35 @@ class HerdrService:
             )
         return {"ok": True, "item": item, "generated_at": utc_now()}
 
-    def create_active_work_item(self, payload: dict) -> dict:
-        item = self.active_work.create_item(payload, actor="user")
+    def create_active_work_item(self, payload: dict, *, actor: str = "user") -> dict:
+        item = self.active_work.create_item(payload, actor=actor)
         self._publish_active_work_updated(item, change="created")
         return {"ok": True, "item": item, "generated_at": utc_now()}
 
-    def patch_active_work_item(self, item_id: str, payload: dict) -> dict:
-        item = self.active_work.patch_item(item_id, payload, actor="user")
+    def patch_active_work_item(
+        self,
+        item_id: str,
+        payload: dict,
+        *,
+        actor: str = "user",
+    ) -> dict:
+        item = self.active_work.patch_item(item_id, payload, actor=actor)
         self._publish_active_work_updated(item, change="patched")
         return {"ok": True, "item": item, "generated_at": utc_now()}
 
-    def transition_active_work_item(self, item_id: str, payload: dict) -> dict:
-        item = self.active_work.transition(item_id, payload, actor="user")
+    def transition_active_work_item(
+        self,
+        item_id: str,
+        payload: dict,
+        *,
+        actor: str = "user",
+    ) -> dict:
+        item = self.active_work.transition(item_id, payload, actor=actor)
         self._publish_active_work_updated(item, change="transitioned")
         return {"ok": True, "item": item, "generated_at": utc_now()}
 
-    def setup_active_work_jira(self, issue_key: str) -> dict:
-        """Set up one user-selected Jira issue without creating Buzz resources."""
+    def setup_active_work_jira(self, issue_key: str, *, actor: str = "user") -> dict:
+        """Set up one explicitly selected Jira issue without creating Buzz resources."""
 
         payload = self._tool_call(self.cmux_tools.jira_issue, issue_key)
         ticket = self._jira_ticket(payload.get("ticket"))
@@ -1174,7 +1186,7 @@ class HerdrService:
         site = payload.get("site")
         if isinstance(site, str) and site.strip():
             ticket["site"] = site.strip()
-        result = self.active_work.setup_jira(ticket, actor="user")
+        result = self.active_work.setup_jira(ticket, actor=actor)
         item = result["item"]
         self._publish_active_work_updated(
             item,

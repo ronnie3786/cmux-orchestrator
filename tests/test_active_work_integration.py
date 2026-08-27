@@ -6,15 +6,22 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 from herdr_harness import cmux_tools
 from herdr_harness.active_work_store import ActiveWorkRepository
 from herdr_harness.events import EventBroker
-from herdr_harness.server import make_server
+from herdr_harness.server import (
+    ActiveWorkAuthConfigurationError,
+    _configured_manage_token,
+    make_handler,
+    make_server,
+)
 from herdr_harness.service import HerdrService
 
 
 MAIN_TOKEN = "active-work-main-token"
+MANAGE_TOKEN = "active-work-manage-token"
 INGEST_TOKEN = "active-work-ingest-token"
 
 
@@ -98,7 +105,10 @@ class ActiveWorkIntegrationFixture:
         self.service = HerdrService(
             FakeHerdrClient(),
             broker=self.broker,
-            environ={"HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": INGEST_TOKEN},
+            environ={
+                "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": MANAGE_TOKEN,
+                "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": INGEST_TOKEN,
+            },
             tools=self.tools,
             pi_semantic=QuietPiSemantic(),
             active_work=self.repository,
@@ -159,6 +169,112 @@ class ActiveWorkServiceIntegrationTests(ActiveWorkIntegrationFixture, unittest.T
         self.assertEqual(self.repository.sync_targets()["items"], [])
 
 
+class ActiveWorkAuthConfigurationTests(unittest.TestCase):
+    def test_manage_token_defaults_to_injected_home_and_explicit_file_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "service-home"
+            default_file = (
+                home / ".config" / "herdr-harness" / "active-work-manage-token"
+            )
+            default_file.parent.mkdir(parents=True)
+            default_file.write_text(MANAGE_TOKEN + "\n", encoding="utf-8")
+            default_file.chmod(0o600)
+
+            self.assertEqual(
+                _configured_manage_token({"HOME": str(home)}),
+                MANAGE_TOKEN,
+            )
+
+            explicit_file = Path(temporary) / "explicit-manage-token"
+            explicit_file.write_text("explicit-manage-token\n", encoding="utf-8")
+            explicit_file.chmod(0o600)
+            # An explicit file is authoritative and the default is not opened.
+            default_file.chmod(0o644)
+            self.assertEqual(
+                _configured_manage_token(
+                    {
+                        "HOME": str(home),
+                        "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN_FILE": str(
+                            explicit_file
+                        ),
+                    }
+                ),
+                "explicit-manage-token",
+            )
+
+    def test_unsafe_or_ambiguous_manage_token_files_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "service-home"
+            default_file = (
+                home / ".config" / "herdr-harness" / "active-work-manage-token"
+            )
+            default_file.parent.mkdir(parents=True)
+            default_file.write_text(MANAGE_TOKEN, encoding="utf-8")
+            default_file.chmod(0o644)
+
+            with self.assertRaisesRegex(
+                ActiveWorkAuthConfigurationError,
+                "group or other",
+            ):
+                _configured_manage_token({"HOME": str(home)})
+
+            explicit_file = Path(temporary) / "explicit-manage-token"
+            explicit_file.write_text(MANAGE_TOKEN, encoding="utf-8")
+            explicit_file.chmod(0o600)
+            with self.assertRaisesRegex(
+                ActiveWorkAuthConfigurationError,
+                "either.*MANAGE_TOKEN.*MANAGE_TOKEN_FILE",
+            ):
+                _configured_manage_token(
+                    {
+                        "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": MANAGE_TOKEN,
+                        "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN_FILE": str(
+                            explicit_file
+                        ),
+                    }
+                )
+
+    def test_inaccessible_default_manage_token_path_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "service-home"
+            private_directory = home / ".config" / "herdr-harness"
+            default_file = private_directory / "active-work-manage-token"
+            private_directory.mkdir(parents=True)
+            default_file.write_text(MANAGE_TOKEN, encoding="utf-8")
+            default_file.chmod(0o600)
+            private_directory.chmod(0o000)
+            try:
+                with self.assertRaisesRegex(
+                    ActiveWorkAuthConfigurationError,
+                    "cannot inspect the default Active Work management token file",
+                ):
+                    _configured_manage_token({"HOME": str(home)})
+            finally:
+                private_directory.chmod(0o700)
+
+    def test_main_manage_and_ingest_tokens_must_be_distinct(self):
+        collision_cases = (
+            {
+                "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": MAIN_TOKEN,
+                "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": INGEST_TOKEN,
+            },
+            {
+                "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": MANAGE_TOKEN,
+                "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": MAIN_TOKEN,
+            },
+            {
+                "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": MANAGE_TOKEN,
+                "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": MANAGE_TOKEN,
+            },
+        )
+        for environ in collision_cases:
+            with self.subTest(environ=environ), self.assertRaisesRegex(
+                ActiveWorkAuthConfigurationError,
+                "distinct bearer tokens",
+            ):
+                make_handler(SimpleNamespace(environ=environ), api_token=MAIN_TOKEN)
+
+
 class ActiveWorkHTTPIntegrationTests(ActiveWorkIntegrationFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()
@@ -178,15 +294,26 @@ class ActiveWorkHTTPIntegrationTests(ActiveWorkIntegrationFixture, unittest.Test
         self.server_thread.join(timeout=1)
         super().tearDown()
 
-    def request(self, path, *, method="GET", payload=None, token=MAIN_TOKEN):
+    def request(
+        self,
+        path,
+        *,
+        method="GET",
+        payload=None,
+        token=MAIN_TOKEN,
+        actor=None,
+        base_url=None,
+    ):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        if actor is not None:
+            headers["X-Herdr-Actor"] = actor
         if data is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
-            self.base_url + path,
+            (base_url or self.base_url) + path,
             method=method,
             data=data,
             headers=headers,
@@ -195,7 +322,10 @@ class ActiveWorkHTTPIntegrationTests(ActiveWorkIntegrationFixture, unittest.Test
             with urllib.request.urlopen(request, timeout=2) as response:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
+            try:
+                return exc.code, json.loads(exc.read())
+            finally:
+                exc.close()
 
     def test_explicit_jira_setup_is_idempotent_and_publishes_sse_update(self):
         before = self.broker.latest_id
@@ -230,6 +360,179 @@ class ActiveWorkHTTPIntegrationTests(ActiveWorkIntegrationFixture, unittest.Test
         self.assertTrue(
             all(event["data"]["work_item_id"] == first["item"]["id"] for event in updates)
         )
+        audit = self.repository._database.execute(
+            "SELECT actor FROM active_work_audit_events WHERE action = 'setup_jira'"
+        ).fetchone()
+        self.assertEqual(audit["actor"], "user")
+
+    def test_manage_token_controls_only_active_work_and_records_agent_actor(self):
+        create_status, created = self.request(
+            "/api/v1/active-work/items",
+            method="POST",
+            token=MANAGE_TOKEN,
+            actor="agent:ticket-curator",
+            payload={"kind": "task", "title": "Managed by an agent"},
+        )
+        item_id = created["item"]["id"]
+        detail_status, detail = self.request(
+            f"/api/v1/active-work/items/{item_id}",
+            token=MANAGE_TOKEN,
+        )
+        patch_status, patched = self.request(
+            f"/api/v1/active-work/items/{item_id}",
+            method="PATCH",
+            token=MANAGE_TOKEN,
+            actor="agent:ticket-curator",
+            payload={
+                "expected_revision": detail["item"]["revision"],
+                "summary": "Updated through the least-privilege API.",
+            },
+        )
+        transition_status, transitioned = self.request(
+            f"/api/v1/active-work/items/{item_id}/transitions",
+            method="POST",
+            token=MANAGE_TOKEN,
+            actor="agent:pipeline-manager",
+            payload={
+                "expected_revision": patched["item"]["revision"],
+                "to_stage_key": "plan",
+            },
+        )
+        targets_status, targets = self.request(
+            "/api/v1/active-work/sync-targets",
+            token=MANAGE_TOKEN,
+        )
+        ingest_status, ingested = self.request(
+            "/api/v1/active-work/ingestions",
+            method="POST",
+            token=MANAGE_TOKEN,
+            actor="agent:activity-observer",
+            payload={
+                "source": "agent-cli",
+                "idempotency_key": "manage-token-observation-1",
+                "observed_at": "2026-08-26T20:00:00Z",
+                "selector": {"work_item_id": item_id},
+                "item": {"next_action": "Review the generated plan."},
+            },
+        )
+        board_status, _ = self.request(
+            "/api/v1/active-work",
+            token=MANAGE_TOKEN,
+        )
+        health_status, health_denied = self.request(
+            "/api/v1/health",
+            token=MANAGE_TOKEN,
+        )
+        workspaces_status, workspaces_denied = self.request(
+            "/api/v1/workspaces",
+            token=MANAGE_TOKEN,
+        )
+
+        self.assertEqual(
+            [
+                create_status,
+                detail_status,
+                patch_status,
+                transition_status,
+                targets_status,
+                ingest_status,
+                board_status,
+            ],
+            [201, 200, 200, 200, 200, 200, 200],
+        )
+        self.assertEqual(transitioned["item"]["current_stage_key"], "plan")
+        self.assertEqual([item["work_item_id"] for item in targets["items"]], [item_id])
+        self.assertTrue(ingested["applied"])
+        self.assertEqual(health_status, 401)
+        self.assertEqual(workspaces_status, 401)
+        self.assertEqual(health_denied["error"]["code"], "unauthorized")
+        self.assertEqual(workspaces_denied["error"]["code"], "unauthorized")
+
+        audit = self.repository._database.execute(
+            "SELECT action, actor FROM active_work_audit_events ORDER BY created_at"
+        ).fetchall()
+        self.assertEqual(
+            [(row["action"], row["actor"]) for row in audit],
+            [
+                ("create_item", "agent:ticket-curator"),
+                ("patch_item", "agent:ticket-curator"),
+                ("transition", "agent:pipeline-manager"),
+                ("ingest", "agent:activity-observer"),
+            ],
+        )
+
+    def test_manage_token_has_safe_default_actor_and_rejects_spoofed_actor(self):
+        setup_status, setup = self.request(
+            "/api/v1/active-work/jira/AGENTIC-575/setup",
+            method="POST",
+            token=MANAGE_TOKEN,
+        )
+        invalid_status, invalid = self.request(
+            "/api/v1/active-work/items",
+            method="POST",
+            token=MANAGE_TOKEN,
+            actor="user",
+            payload={"title": "Must not be created"},
+        )
+
+        self.assertEqual(setup_status, 201)
+        self.assertTrue(setup["created"])
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid["error"]["code"], "active_work_actor_invalid")
+        audit = self.repository._database.execute(
+            "SELECT actor FROM active_work_audit_events WHERE action = 'setup_jira'"
+        ).fetchone()
+        self.assertEqual(audit["actor"], "agent:active-work-cli")
+        self.assertEqual(len(self.repository.board_projection()["items"]), 1)
+
+    def test_scoped_tokens_do_not_lock_unrelated_routes_without_main_token(self):
+        open_server = make_server(
+            self.service,
+            host="127.0.0.1",
+            port=0,
+            api_token="",
+        )
+        thread = threading.Thread(target=open_server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{open_server.server_address[1]}"
+        self.addCleanup(thread.join, 1)
+        self.addCleanup(open_server.server_close)
+        self.addCleanup(open_server.shutdown)
+
+        health_status, _ = self.request(
+            "/api/v1/health",
+            token=None,
+            base_url=base_url,
+        )
+        board_denied_status, _ = self.request(
+            "/api/v1/active-work",
+            token=None,
+            base_url=base_url,
+        )
+        board_status, _ = self.request(
+            "/api/v1/active-work",
+            token=MANAGE_TOKEN,
+            base_url=base_url,
+        )
+        targets_status, _ = self.request(
+            "/api/v1/active-work/sync-targets",
+            token=INGEST_TOKEN,
+            base_url=base_url,
+        )
+
+        self.assertEqual(health_status, 200)
+        self.assertEqual(board_denied_status, 401)
+        self.assertEqual(board_status, 200)
+        self.assertEqual(targets_status, 200)
+
+    def test_options_advertises_active_work_actor_header(self):
+        request = urllib.request.Request(
+            self.base_url + "/api/v1/active-work",
+            method="OPTIONS",
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            allowed = response.headers.get("Access-Control-Allow-Headers", "")
+        self.assertIn("X-Herdr-Actor", allowed)
 
     def test_create_detail_patch_and_transition_routes_share_one_revisioned_item(self):
         create_status, created = self.request(
@@ -302,6 +605,7 @@ class ActiveWorkHTTPIntegrationTests(ActiveWorkIntegrationFixture, unittest.Test
             "/api/v1/active-work/ingestions",
             method="POST",
             token=INGEST_TOKEN,
+            actor="user",
             payload={
                 "source": "buzz",
                 "idempotency_key": "integration-observation-1",

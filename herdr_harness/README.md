@@ -93,6 +93,16 @@ Configuration:
   for Active Work. The launcher defaults to
   `~/.config/herdr-harness/active-work.sqlite3`; WAL files and the database are
   restricted to the current user.
+- `HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN` or
+  `HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN_FILE`: optional least-privilege
+  credential for the `herdr-active-work` CLI. It authorizes every
+  `/api/v1/active-work` route, including observation ingestion, but no terminal,
+  pane, workspace, alert, push, or other Herdr route. The conventional private
+  file is `~/.config/herdr-harness/active-work-manage-token`, which the server
+  discovers from `HOME` when it exists. Choose the value or file form, never
+  both. The main API token remains valid for Active Work so existing Mac and
+  iOS clients remain compatible. Main, manage, and ingest credentials must be
+  distinct when configured together.
 - `HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN`: optional least-privilege bearer
   token accepted only by Active Work sync-target and ingestion routes. The
   main API token remains valid for those routes as well.
@@ -162,12 +172,129 @@ Mutation results retain Herdr's native `result` object. The snapshot route
 returns the raw `SessionSnapshot`. Workspace records add only `tabs`, `panes`,
 `agents`, and `layouts`, each containing native Herdr records.
 
+### Active Work command line
+
+`herdr-active-work` is the supported interface for people and agents that need
+to read or manage the board. It is a thin client for the authenticated Herdr
+API, not a direct SQLite or `acli` wrapper. By default it connects to
+`http://127.0.0.1:9092`, reads the manage credential from
+`~/.config/herdr-harness/active-work-manage-token`, and identifies writes as
+`agent:herdr-active-work-cli`.
+
+Every successful command writes one compact JSON envelope to stdout. Every
+failure writes one JSON error envelope to stderr and exits nonzero. The stable
+envelope version is `herdr.active-work.cli/v1` and contains `ok`, `command`,
+and either `data` or `error`. `--pretty` indents the same JSON for manual use;
+there is no `--json` flag because JSON is always the output format. Global
+options must precede the command:
+
+```bash
+herdr-active-work --pretty candidates
+herdr-active-work --timeout 30 list | jq .
+```
+
+The command surface is:
+
+| Command | Purpose |
+| --- | --- |
+| `candidates [--all]` | List untracked assigned Jira candidates. By default, candidates already represented on the board are omitted. |
+| `list [--full]` | List tracked work in a compact agent-friendly shape, or return full projections with `--full`. |
+| `show REF` | Resolve a work item ID or Jira key and return its full projection. |
+| `connect JIRA-KEY` | Explicitly connect exactly one Jira issue. The operation is idempotent and refreshes the same item when repeated. |
+| `create --title T ...` | Create a non-Jira Feature, Task, or Idea. |
+| `update REF ...` | Patch mutable item fields, optionally guarded by `--expected-revision N`. |
+| `move REF --to STAGE ...` | Move an item through its versioned pipeline, with optional state, attention, checkpoint, note, and revision controls. |
+| `observe --file PATH` | Submit one exact Active Work ingestion object from a file, or use `--file -` for stdin. |
+
+Listing candidates never creates board records. `connect` deliberately accepts
+one Jira key and has no bulk or `--all` form, so importing assigned work always
+requires a singular, reviewable decision:
+
+```bash
+herdr-active-work candidates | jq .
+herdr-active-work --pretty connect AGENTIC-575
+herdr-active-work show AGENTIC-575 | jq '.data'
+```
+
+Create, update, and pipeline movement expose the same validated fields as the
+HTTP API:
+
+```bash
+herdr-active-work create \
+  --kind task \
+  --title "Prepare Active Work rollout" \
+  --summary "Verify the agent and manual workflows" \
+  --next-action "Run the Work Mac smoke test"
+
+herdr-active-work update AGENTIC-575 \
+  --next-action "Review the implementation" \
+  --expected-revision 3
+
+herdr-active-work move AGENTIC-575 \
+  --to implement \
+  --state active \
+  --attention none \
+  --checkpoint none \
+  --note "Implementation started" \
+  --expected-revision 4
+```
+
+`create` also accepts `--id`, `--lifecycle`, `--current-stage`, and
+`--metadata-json`. `update` accepts the mutable title, summary, lifecycle,
+kind, next-action, and metadata fields. Valid values are printed by
+`herdr-active-work <command> --help`; callers should use revision guards when
+acting on state fetched earlier.
+
+`observe` is the low-level agent and integration bridge to
+`POST /api/v1/active-work/ingestions`. Its file must contain one JSON object
+with at least `source`, `idempotency_key`, `observed_at`, and `selector`. The
+remaining item, stage, channel, thread, and activity fields are optional
+observations to merge. It is not a watch command and never creates or connects
+a work item. Reusing an idempotency key with the same payload is a replay;
+older observations are accepted as stale without moving durable state
+backward.
+
+For example, `observation.json` can carry a caller's bounded next-action
+observation for an already-connected Jira issue:
+
+```json
+{
+  "source": "agent",
+  "idempotency_key": "agent:AGENTIC-575:20260826T224500Z",
+  "observed_at": "2026-08-26T22:45:00Z",
+  "selector": { "jira_key": "AGENTIC-575" },
+  "item": { "next_action": "Review the implementation result." }
+}
+```
+
+```bash
+herdr-active-work observe --file observation.json
+jq -c . observation.json | herdr-active-work observe --file -
+```
+
+Configure the CLI with global options or their environment equivalents:
+
+- `--base-url` or `HERDR_ACTIVE_WORK_BASE_URL`
+- `--token-file` or `HERDR_ACTIVE_WORK_MANAGE_TOKEN_FILE`
+- `HERDR_ACTIVE_WORK_MANAGE_TOKEN` for an ephemeral direct value
+- `--actor` or `HERDR_ACTIVE_WORK_ACTOR`, in `agent:<lowercase-slug>` form
+- `--timeout` or `HERDR_ACTIVE_WORK_TIMEOUT`
+
+Do not set both manage-token environment forms. Prefer the mode-`0600` token
+file because a direct value can leak through shell or process configuration;
+the CLI intentionally has no raw-token command-line option. The file must be a
+regular file owned by the current user, must not be a symlink, and must have no
+group or world permissions. The manage token can use every Active Work route,
+including `observe`, but cannot control any other Herdr resource. The separate
+ingest token is narrower still: it accepts only sync-target reads and Buzz
+ingestion writes.
+
 ### Active Work Buzz reconciliation
 
 Active Work is deliberately available when Buzz or Jira is offline. After a
-Jira candidate is set up from the Mac app, an external process can reconcile
-the matching `tickets/<KEY>/state.json`, Buzz channel roster, and discussion
-identifiers into Herdr:
+Jira candidate is connected from the Mac app or CLI, an external process can
+reconcile the matching `tickets/<KEY>/state.json`, Buzz channel roster, and
+discussion identifiers into Herdr:
 
 ```bash
 HERDR_ACTIVE_WORK_TOKEN="$HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN" \
@@ -205,9 +332,19 @@ CLI, and the canonical Buzz workflow checkout. Install it in
 `launchctl bootstrap gui/$(id -u) ...` and `launchctl kickstart -k ...`.
 
 The script first reads `/api/v1/active-work/sync-targets` and skips every Jira
-directory that has not been explicitly set up. It stores Buzz channel, agent,
-Pi session, and thread identifiers plus bounded metadata. It does not copy
-message bodies, prompts, credentials, or transcripts.
+directory that has not been explicitly set up. It stores Buzz channel,
+agent-runtime, Herdr workspace/pane association, and discussion-thread
+identifiers plus bounded metadata. A Pi-looking association is a runtime proxy,
+not a durable copy of a native ephemeral Pi session ID, and the stock sync does
+not synthesize activity events. It does not copy message bodies, prompts,
+credentials, or transcripts.
+
+That five-minute job is reconciliation, not orchestration. It refreshes only
+already-connected tickets and never connects assigned Jira work, creates a
+Buzz channel, transitions Jira, starts an agent, creates a Herdr workspace, or
+sends a prompt. `observe` likewise submits one caller-produced snapshot and
+does not install or schedule a watcher. Manual and agent-driven `create`,
+`update`, and `move` operations remain explicit.
 
 The pane stream route launches Herdr's terminal observer and relays its NDJSON
 terminal frames as authenticated SSE. `/output` remains the low-cost text or

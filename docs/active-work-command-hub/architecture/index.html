@@ -1,0 +1,1783 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Active Work Architecture</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Active Work Architecture" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Active Work Architecture&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: var(--border-radius-lg, 12.5px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress {
+  display: flex;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed=&quot;true&quot;],
+  [aria-selected=&quot;true&quot;],
+  .is-selected
+) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: 16px !important;
+  height: 16px !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div id=&quot;active-work-architecture&quot;&gt;
+  &lt;style&gt;
+    #active-work-architecture {
+      color: var(--foreground);
+      display: grid;
+      gap: 1rem;
+      width: 100%;
+    }
+
+    #active-work-architecture h1,
+    #active-work-architecture h2,
+    #active-work-architecture h3,
+    #active-work-architecture p {
+      margin: 0;
+    }
+
+    #active-work-architecture .section-stack {
+      display: grid;
+      gap: 0.875rem;
+    }
+
+    #active-work-architecture .section-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    #active-work-architecture .system-flow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: stretch;
+      gap: 0.5rem;
+      padding-block: 0.75rem;
+    }
+
+    #active-work-architecture .flow-step {
+      border-block-start: 3px solid var(--viz-series-1);
+      min-width: 0;
+      padding-block: 0.625rem;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    #active-work-architecture .flow-step strong,
+    #active-work-architecture .flow-step span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    #active-work-architecture .flow-step strong {
+      font-weight: 500;
+      margin-block: 0.25rem;
+    }
+
+    #active-work-architecture .flow-arrow {
+      align-self: center;
+      color: var(--muted-foreground);
+      text-align: center;
+    }
+
+    #active-work-architecture .selected-detail {
+      border-inline-start: 3px solid var(--viz-series-1);
+      padding-inline-start: 0.75rem;
+    }
+
+    #active-work-architecture .state-chain,
+    #active-work-architecture .live-chain {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+
+    #active-work-architecture .state-step,
+    #active-work-architecture .live-step {
+      border-block-start: 1px solid var(--border);
+      min-width: 0;
+      padding-block-start: 0.625rem;
+    }
+
+    #active-work-architecture .state-step strong,
+    #active-work-architecture .state-step span,
+    #active-work-architecture .live-step strong,
+    #active-work-architecture .live-step span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    #active-work-architecture .state-step strong,
+    #active-work-architecture .live-step strong {
+      font-weight: 500;
+      margin-block: 0.25rem;
+    }
+
+    #active-work-architecture .relationship-map {
+      display: grid;
+      gap: 0;
+    }
+
+    #active-work-architecture .relation-row {
+      border-block-start: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: minmax(7rem, 0.85fr) minmax(9rem, 1fr) minmax(12rem, 1.6fr);
+      gap: 0.875rem;
+      padding-block: 0.875rem;
+    }
+
+    #active-work-architecture .relation-cell {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    #active-work-architecture .relation-cell strong,
+    #active-work-architecture .relation-cell span,
+    #active-work-architecture .relation-cell &gt; code {
+      display: block;
+    }
+
+    #active-work-architecture .relation-cell strong {
+      font-weight: 500;
+      margin-block-end: 0.25rem;
+    }
+
+    #active-work-architecture .status-real {
+      color: var(--green);
+      font-weight: 500;
+    }
+
+    #active-work-architecture .status-partial {
+      color: var(--orange);
+      font-weight: 500;
+    }
+
+    #active-work-architecture .status-gap {
+      color: var(--muted-foreground);
+      font-weight: 500;
+    }
+
+    #active-work-architecture .status-demo {
+      color: var(--purple);
+      font-weight: 500;
+    }
+
+    #active-work-architecture [hidden] {
+      display: none !important;
+    }
+
+    @media (max-width: 620px) {
+      #active-work-architecture .system-flow {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.25rem;
+      }
+
+      #active-work-architecture .flow-arrow {
+        transform: rotate(90deg);
+      }
+
+      #active-work-architecture .state-chain,
+      #active-work-architecture .live-chain {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      #active-work-architecture .relation-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.5rem;
+      }
+    }
+
+    @media (max-width: 380px) {
+      #active-work-architecture .state-chain,
+      #active-work-architecture .live-chain {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #active-work-architecture .flow-step {
+        transition: none;
+      }
+    }
+  &lt;/style&gt;
+
+  &lt;h1&gt;Active Work: production wiring&lt;/h1&gt;
+
+  &lt;div class=&quot;viz-grid&quot; aria-label=&quot;Verified production snapshot&quot;&gt;
+    &lt;div class=&quot;card viz-stat&quot;&gt;
+      &lt;span class=&quot;text-muted&quot;&gt;Production core&lt;/span&gt;
+      &lt;span class=&quot;viz-stat-value&quot;&gt;Real&lt;/span&gt;
+      &lt;span class=&quot;text-small&quot;&gt;Mac app → HTTP → SQLite → SSE&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;card viz-stat&quot;&gt;
+      &lt;span class=&quot;text-muted&quot;&gt;Live board&lt;/span&gt;
+      &lt;span class=&quot;viz-stat-value&quot;&gt;0 tracked&lt;/span&gt;
+      &lt;span class=&quot;text-small&quot;&gt;No seeded work, agents, sessions, or threads&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;card viz-stat&quot;&gt;
+      &lt;span class=&quot;text-muted&quot;&gt;Jira intake&lt;/span&gt;
+      &lt;span class=&quot;viz-stat-value&quot;&gt;5 candidates&lt;/span&gt;
+      &lt;span class=&quot;text-small&quot;&gt;3 In Progress · 2 In Code Review&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;viz-controls&quot; role=&quot;group&quot; aria-label=&quot;Explainer view&quot;&gt;
+    &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-view=&quot;runtime&quot; aria-pressed=&quot;true&quot;&gt;Runtime flow&lt;/button&gt;
+    &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-view=&quot;tracking&quot; aria-pressed=&quot;false&quot;&gt;Tracking model&lt;/button&gt;
+    &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-view=&quot;reality&quot; aria-pressed=&quot;false&quot;&gt;Reality check&lt;/button&gt;
+  &lt;/div&gt;
+
+  &lt;section class=&quot;section-stack&quot; data-panel=&quot;runtime&quot; aria-labelledby=&quot;runtime-heading&quot;&gt;
+    &lt;div class=&quot;section-heading&quot;&gt;
+      &lt;h2 id=&quot;runtime-heading&quot;&gt;Follow one production path&lt;/h2&gt;
+      &lt;span class=&quot;viz-badge&quot;&gt;live mode&lt;/span&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;viz-controls&quot; role=&quot;group&quot; aria-label=&quot;Runtime scenario&quot;&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-scenario=&quot;open&quot; aria-pressed=&quot;true&quot;&gt;Open board&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-scenario=&quot;setup&quot; aria-pressed=&quot;false&quot;&gt;Set up Jira&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-scenario=&quot;sync&quot; aria-pressed=&quot;false&quot;&gt;Buzz reconcile&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-scenario=&quot;transition&quot; aria-pressed=&quot;false&quot;&gt;Move stage&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-scenario=&quot;voice&quot; aria-pressed=&quot;false&quot;&gt;Ask by voice&lt;/button&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;system-flow&quot; id=&quot;runtime-flow&quot; aria-live=&quot;polite&quot; aria-label=&quot;Selected production data path&quot;&gt;
+      &lt;div class=&quot;flow-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot; data-step-kicker&gt;01 · client&lt;/span&gt;
+        &lt;strong data-step-label&gt;ActiveWorkStore&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot; data-step-note&gt;One app-lifetime response&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;span class=&quot;flow-arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/span&gt;
+      &lt;div class=&quot;flow-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot; data-step-kicker&gt;02 · HTTP&lt;/span&gt;
+        &lt;strong data-step-label&gt;GET /active-work&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot; data-step-note&gt;Bearer-authenticated request&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;span class=&quot;flow-arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/span&gt;
+      &lt;div class=&quot;flow-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot; data-step-kicker&gt;03 · sources&lt;/span&gt;
+        &lt;strong data-step-label&gt;Jira + SQLite&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot; data-step-note&gt;Live candidates, durable items&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;span class=&quot;flow-arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/span&gt;
+      &lt;div class=&quot;flow-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot; data-step-kicker&gt;04 · server&lt;/span&gt;
+        &lt;strong data-step-label&gt;Board projection&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot; data-step-note&gt;Stages and associations joined&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;span class=&quot;flow-arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/span&gt;
+      &lt;div class=&quot;flow-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot; data-step-kicker&gt;05 · views&lt;/span&gt;
+        &lt;strong data-step-label&gt;Board + Focus Route&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot; data-step-note&gt;Two views, one store&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;selected-detail&quot; id=&quot;runtime-detail&quot; aria-live=&quot;polite&quot;&gt;
+      Durable records remain available if Jira is down; Jira observation never creates a board item.
+    &lt;/div&gt;
+
+    &lt;div class=&quot;section-heading&quot;&gt;
+      &lt;h3&gt;Activation states&lt;/h3&gt;
+      &lt;span class=&quot;text-small text-muted&quot;&gt;Set up is the boundary&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;state-chain&quot; aria-label=&quot;Active Work setup lifecycle&quot;&gt;
+      &lt;div class=&quot;state-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;Jira only&lt;/span&gt;
+        &lt;strong&gt;available&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;Candidate, no Herdr row&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;state-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;after click&lt;/span&gt;
+        &lt;strong&gt;board_created&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;Item + 8 stage states&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;state-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;after ingestion&lt;/span&gt;
+        &lt;strong&gt;channel_linked&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;Active Buzz channel&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;state-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;driver present&lt;/span&gt;
+        &lt;strong&gt;ready&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;Channel + driver agent link&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section-stack&quot; data-panel=&quot;tracking&quot; aria-labelledby=&quot;tracking-heading&quot; hidden&gt;
+    &lt;div class=&quot;section-heading&quot;&gt;
+      &lt;h2 id=&quot;tracking-heading&quot;&gt;How one route carries its cast&lt;/h2&gt;
+      &lt;span class=&quot;viz-badge&quot;&gt;schema example, not live rows&lt;/span&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;viz-grid&quot; role=&quot;group&quot; aria-label=&quot;Choose a pipeline stage&quot;&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;start-ticket&quot; aria-pressed=&quot;true&quot;&gt;01 Start Ticket&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;plan&quot; aria-pressed=&quot;false&quot;&gt;02 Plan&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;implement&quot; aria-pressed=&quot;false&quot;&gt;03 Implement&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;architect-code-review&quot; aria-pressed=&quot;false&quot;&gt;04 Architect Review&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;proof&quot; aria-pressed=&quot;false&quot;&gt;05 Proof&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;code-review-pre-pr&quot; aria-pressed=&quot;false&quot;&gt;06 Pre-PR Review&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;pr&quot; aria-pressed=&quot;false&quot;&gt;07 PR&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn viz-tile&quot; data-stage=&quot;pr-triage&quot; aria-pressed=&quot;false&quot;&gt;08 PR Triage&lt;/button&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;selected-detail&quot; aria-live=&quot;polite&quot;&gt;
+      &lt;strong id=&quot;stage-title&quot;&gt;01 · Start Ticket&lt;/strong&gt;
+      &lt;span id=&quot;stage-description&quot;&gt;open phase · buzz-start-ticket · no human checkpoint&lt;/span&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;relationship-map&quot; aria-label=&quot;Active Work association model&quot;&gt;
+      &lt;div class=&quot;relation-row&quot;&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;selected stage&lt;/span&gt;
+          &lt;strong data-stage-name&gt;Start Ticket&lt;/strong&gt;
+          &lt;code data-stage-key&gt;start-ticket&lt;/code&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;many-to-many join&lt;/span&gt;
+          &lt;strong&gt;stage_agent_links&lt;/strong&gt;
+          &lt;code&gt;work + stage + agent&lt;/code&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;global identity&lt;/span&gt;
+          &lt;strong&gt;agent_profiles&lt;/strong&gt;
+          &lt;span&gt;Stable &lt;code&gt;(source, external_id)&lt;/code&gt;; role and link state belong to each stage attachment. One agent may attach to many stages and items.&lt;/span&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      &lt;div class=&quot;relation-row&quot;&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;selected stage&lt;/span&gt;
+          &lt;strong data-stage-name&gt;Start Ticket&lt;/strong&gt;
+          &lt;span&gt;0…many session links&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;many-to-many join&lt;/span&gt;
+          &lt;strong&gt;stage_session_links&lt;/strong&gt;
+          &lt;code&gt;work + stage + session&lt;/code&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;runtime identity&lt;/span&gt;
+          &lt;strong&gt;pi_sessions&lt;/strong&gt;
+          &lt;span&gt;One work item; may span stages. Fields support machine, workspace, pane, native session, model, status, and timestamps.&lt;/span&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      &lt;div class=&quot;relation-row&quot;&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;optional scope&lt;/span&gt;
+          &lt;strong data-stage-name&gt;Start Ticket&lt;/strong&gt;
+          &lt;span&gt;or ticket-level&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;direct reference&lt;/span&gt;
+          &lt;strong&gt;buzz_threads.stage_id?&lt;/strong&gt;
+          &lt;code&gt;zero or one stage&lt;/code&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;durable discussion link&lt;/span&gt;
+          &lt;strong&gt;buzz_threads&lt;/strong&gt;
+          &lt;span&gt;Stores channel UUID + root event identity and a &lt;code&gt;buzz://message&lt;/code&gt; deep link, not transcript bodies. Unscoped threads remain visible at item level.&lt;/span&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      &lt;div class=&quot;relation-row&quot;&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;item-level&lt;/span&gt;
+          &lt;strong&gt;work_items&lt;/strong&gt;
+          &lt;span&gt;One current stage ID&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;unique external link&lt;/span&gt;
+          &lt;strong&gt;jira_links&lt;/strong&gt;
+          &lt;code&gt;(site, issue_key)&lt;/code&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;relation-cell&quot;&gt;
+          &lt;span class=&quot;text-small text-muted&quot;&gt;history and safety&lt;/span&gt;
+          &lt;strong&gt;activity + audit + receipts&lt;/strong&gt;
+          &lt;span&gt;Optimistic revisions, monotonic stages, idempotency hashes, stale-observation checks, source cursors, and explicit removals.&lt;/span&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section-stack&quot; data-panel=&quot;reality&quot; aria-labelledby=&quot;reality-heading&quot; hidden&gt;
+    &lt;div class=&quot;section-heading&quot;&gt;
+      &lt;h2 id=&quot;reality-heading&quot;&gt;What is live, partial, or only a hook&lt;/h2&gt;
+      &lt;span class=&quot;viz-badge&quot;&gt;Work Mac verified&lt;/span&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;live-chain&quot; aria-label=&quot;Current production ingestion state&quot;&gt;
+      &lt;div class=&quot;live-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;scheduled sync&lt;/span&gt;
+        &lt;strong&gt;19 runs&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;Last exit 0&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;live-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;workflow scan&lt;/span&gt;
+        &lt;strong&gt;8 discovered&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;Real state.json folders&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;live-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;eligible targets&lt;/span&gt;
+        &lt;strong&gt;0 tracked&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;All 8 skipped by design&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;live-step&quot;&gt;
+        &lt;span class=&quot;text-small text-muted&quot;&gt;durable associations&lt;/span&gt;
+        &lt;strong&gt;0 rows&lt;/strong&gt;
+        &lt;span class=&quot;text-small&quot;&gt;Agents, Pi, channels, threads&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;table-responsive&quot;&gt;
+      &lt;table class=&quot;table table-sm&quot;&gt;
+        &lt;thead&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;col&quot;&gt;Capability&lt;/th&gt;
+            &lt;th scope=&quot;col&quot;&gt;Truth&lt;/th&gt;
+            &lt;th scope=&quot;col&quot;&gt;What drives it&lt;/th&gt;
+            &lt;th scope=&quot;col&quot;&gt;Boundary&lt;/th&gt;
+          &lt;/tr&gt;
+        &lt;/thead&gt;
+        &lt;tbody&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Mac → API → SQLite → SSE&lt;/th&gt;
+            &lt;td class=&quot;status-real&quot;&gt;Real now&lt;/td&gt;
+            &lt;td&gt;Authenticated routes, WAL store, shared ActiveWorkStore, event refetch&lt;/td&gt;
+            &lt;td&gt;Production app is live mode&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Jira candidates + Set up&lt;/th&gt;
+            &lt;td class=&quot;status-real&quot;&gt;Real now&lt;/td&gt;
+            &lt;td&gt;Live acli query; exact Jira fetch; idempotent item creation&lt;/td&gt;
+            &lt;td&gt;Set up creates Herdr rows, not Buzz resources&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Buzz reconcile&lt;/th&gt;
+            &lt;td class=&quot;status-real&quot;&gt;Real, gated&lt;/td&gt;
+            &lt;td&gt;Five-minute launchd job; state.json + real Buzz CLI; scoped ingest token&lt;/td&gt;
+            &lt;td&gt;Only Jira-linked sync targets are eligible&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Buzz agents + avatars&lt;/th&gt;
+            &lt;td class=&quot;status-partial&quot;&gt;Partial connector&lt;/td&gt;
+            &lt;td&gt;Current channel bots + inferred driver attach to the observed stage&lt;/td&gt;
+            &lt;td&gt;Membership is real; live execution status is usually unknown&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Pi sessions&lt;/th&gt;
+            &lt;td class=&quot;status-partial&quot;&gt;Schema real, proxy input&lt;/td&gt;
+            &lt;td&gt;Backend supports native IDs; stock sync synthesizes workspace/pane identity&lt;/td&gt;
+            &lt;td&gt;Not native ephemeral Pi telemetry yet&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Buzz threads&lt;/th&gt;
+            &lt;td class=&quot;status-partial&quot;&gt;Real links, partial scope&lt;/td&gt;
+            &lt;td&gt;Thread roots + &lt;code&gt;buzz://message&lt;/code&gt; deep links from up to 200 messages&lt;/td&gt;
+            &lt;td&gt;Usually ticket-level unless state.json names a stage&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Pipeline skill names&lt;/th&gt;
+            &lt;td class=&quot;status-gap&quot;&gt;Metadata only&lt;/td&gt;
+            &lt;td&gt;Eight durable ordered stage definitions&lt;/td&gt;
+            &lt;td&gt;Moving a stage does not invoke a skill or spawn an agent&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Ask Board + voice&lt;/th&gt;
+            &lt;td class=&quot;status-partial&quot;&gt;Real execution, no writeback&lt;/td&gt;
+            &lt;td&gt;Transcription + bounded board JSON + one-off read-only Pi run&lt;/td&gt;
+            &lt;td&gt;The run is not attached to the item or stage&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;AI enrichment + cleanup&lt;/th&gt;
+            &lt;td class=&quot;status-gap&quot;&gt;Hook, not worker&lt;/td&gt;
+            &lt;td&gt;Ingestion API accepts richer summaries, activity, real sessions, and removals&lt;/td&gt;
+            &lt;td&gt;No scheduled AI population agent exists yet&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;Demo cards and no-op mutations&lt;/th&gt;
+            &lt;td class=&quot;status-demo&quot;&gt;Demo mode only&lt;/td&gt;
+            &lt;td&gt;Embedded deterministic fixtures for previews and tests&lt;/td&gt;
+            &lt;td&gt;Not used by the verified production Work Mac&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;th scope=&quot;row&quot;&gt;GitHub review requests&lt;/th&gt;
+            &lt;td class=&quot;status-gap&quot;&gt;Separate surface&lt;/td&gt;
+            &lt;td&gt;Existing My Work inbox&lt;/td&gt;
+            &lt;td&gt;Not yet part of Active Work&lt;/td&gt;
+          &lt;/tr&gt;
+        &lt;/tbody&gt;
+      &lt;/table&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById(&quot;active-work-architecture&quot;);
+      if (!root) return;
+
+      const runtimeScenarios = {
+        open: {
+          steps: [
+            [&quot;01 · client&quot;, &quot;ActiveWorkStore&quot;, &quot;One app-lifetime response&quot;],
+            [&quot;02 · HTTP&quot;, &quot;GET /active-work&quot;, &quot;Bearer-authenticated request&quot;],
+            [&quot;03 · sources&quot;, &quot;Jira + SQLite&quot;, &quot;Live candidates, durable items&quot;],
+            [&quot;04 · server&quot;, &quot;Board projection&quot;, &quot;Stages and associations joined&quot;],
+            [&quot;05 · views&quot;, &quot;Board + Focus Route&quot;, &quot;Two views, one store&quot;]
+          ],
+          detail: &quot;Durable records remain available if Jira is down; Jira observation never creates a board item.&quot;
+        },
+        setup: {
+          steps: [
+            [&quot;01 · user&quot;, &quot;Set up CTA&quot;, &quot;One selected Jira candidate&quot;],
+            [&quot;02 · HTTP&quot;, &quot;POST /jira/{KEY}/setup&quot;, &quot;Authenticated mutation&quot;],
+            [&quot;03 · source&quot;, &quot;Exact Jira fetch&quot;, &quot;Authoritative issue fields&quot;],
+            [&quot;04 · transaction&quot;, &quot;Item + 8 stage states&quot;, &quot;Starts at Start Ticket&quot;],
+            [&quot;05 · refresh&quot;, &quot;active_work.updated&quot;, &quot;SSE triggers board refetch&quot;]
+          ],
+          detail: &quot;Set up is idempotent and creates no Buzz channel or agent; it only makes the item eligible for later reconciliation.&quot;
+        },
+        sync: {
+          steps: [
+            [&quot;01 · scheduler&quot;, &quot;launchd · every 5 min&quot;, &quot;One-shot background job&quot;],
+            [&quot;02 · gate&quot;, &quot;GET /sync-targets&quot;, &quot;Only configured Jira keys&quot;],
+            [&quot;03 · sources&quot;, &quot;state.json + Buzz CLI&quot;, &quot;Channel, bots, recent threads&quot;],
+            [&quot;04 · HTTP&quot;, &quot;POST /ingestions&quot;, &quot;Scoped token, stable hash&quot;],
+            [&quot;05 · merge&quot;, &quot;SQLite + SSE&quot;, &quot;Idempotent, stale-safe, monotonic&quot;]
+          ],
+          detail: &quot;Untracked workflows are skipped before any Buzz query or write; missing fields are preserved and removals must be explicit.&quot;
+        },
+        transition: {
+          steps: [
+            [&quot;01 · user&quot;, &quot;Advance or approve&quot;, &quot;Board item + target stage&quot;],
+            [&quot;02 · guard&quot;, &quot;expected_revision&quot;, &quot;Rejects stale edits&quot;],
+            [&quot;03 · transaction&quot;, &quot;Move current stage&quot;, &quot;No backward movement&quot;],
+            [&quot;04 · history&quot;, &quot;Activity + audit&quot;, &quot;Prior states and checkpoint data&quot;],
+            [&quot;05 · refresh&quot;, &quot;active_work.updated&quot;, &quot;Board and Focus stay aligned&quot;]
+          ],
+          detail: &quot;The route transition is real database state, but it does not invoke the stage skill, spawn an agent, or write back to Buzz.&quot;
+        },
+        voice: {
+          steps: [
+            [&quot;01 · user&quot;, &quot;Voice capture&quot;, &quot;Ask about this board&quot;],
+            [&quot;02 · service&quot;, &quot;Transcription&quot;, &quot;Server, then Apple fallback&quot;],
+            [&quot;03 · grounding&quot;, &quot;Bounded board JSON&quot;, &quot;External fields marked untrusted&quot;],
+            [&quot;04 · agent&quot;, &quot;One-off read-only Pi&quot;, &quot;User confirms Ask Agent&quot;],
+            [&quot;05 · result&quot;, &quot;Answer in sheet&quot;, &quot;No board association or writeback&quot;]
+          ],
+          detail: &quot;The question and Pi answer are real; that run is not persisted as an Active Work agent or Pi-session attachment.&quot;
+        }
+      };
+
+      const stages = [
+        { key: &quot;start-ticket&quot;, index: &quot;01&quot;, title: &quot;Start Ticket&quot;, phase: &quot;open&quot;, skill: &quot;buzz-start-ticket&quot;, checkpoint: &quot;no human checkpoint&quot; },
+        { key: &quot;plan&quot;, index: &quot;02&quot;, title: &quot;Plan&quot;, phase: &quot;open&quot;, skill: &quot;buzz-plan&quot;, checkpoint: &quot;human checkpoint&quot; },
+        { key: &quot;implement&quot;, index: &quot;03&quot;, title: &quot;Implement&quot;, phase: &quot;build&quot;, skill: &quot;buzz-implement&quot;, checkpoint: &quot;no human checkpoint&quot; },
+        { key: &quot;architect-code-review&quot;, index: &quot;04&quot;, title: &quot;Architect Code Review&quot;, phase: &quot;build&quot;, skill: &quot;buzz-architect-code-review&quot;, checkpoint: &quot;no human checkpoint&quot; },
+        { key: &quot;proof&quot;, index: &quot;05&quot;, title: &quot;Proof&quot;, phase: &quot;prove&quot;, skill: &quot;buzz-proof&quot;, checkpoint: &quot;human checkpoint&quot; },
+        { key: &quot;code-review-pre-pr&quot;, index: &quot;06&quot;, title: &quot;Code Review Pre PR&quot;, phase: &quot;prove&quot;, skill: &quot;buzz-code-review-pre-pr&quot;, checkpoint: &quot;human checkpoint&quot; },
+        { key: &quot;pr&quot;, index: &quot;07&quot;, title: &quot;PR&quot;, phase: &quot;ship&quot;, skill: &quot;buzz-pr&quot;, checkpoint: &quot;human checkpoint&quot; },
+        { key: &quot;pr-triage&quot;, index: &quot;08&quot;, title: &quot;PR Triage&quot;, phase: &quot;ship&quot;, skill: &quot;buzz-pr-triage&quot;, checkpoint: &quot;no human checkpoint&quot; }
+      ];
+
+      const setPressed = (buttons, selected) =&gt; {
+        buttons.forEach((button) =&gt; {
+          button.setAttribute(&quot;aria-pressed&quot;, button === selected ? &quot;true&quot; : &quot;false&quot;);
+        });
+      };
+
+      const viewButtons = Array.from(root.querySelectorAll(&quot;[data-view]&quot;));
+      const panels = Array.from(root.querySelectorAll(&quot;[data-panel]&quot;));
+      viewButtons.forEach((button) =&gt; {
+        button.addEventListener(&quot;click&quot;, () =&gt; {
+          setPressed(viewButtons, button);
+          panels.forEach((panel) =&gt; {
+            panel.hidden = panel.dataset.panel !== button.dataset.view;
+          });
+        });
+      });
+
+      const scenarioButtons = Array.from(root.querySelectorAll(&quot;[data-scenario]&quot;));
+      const stepKickers = Array.from(root.querySelectorAll(&quot;[data-step-kicker]&quot;));
+      const stepLabels = Array.from(root.querySelectorAll(&quot;[data-step-label]&quot;));
+      const stepNotes = Array.from(root.querySelectorAll(&quot;[data-step-note]&quot;));
+      const runtimeDetail = root.querySelector(&quot;#runtime-detail&quot;);
+
+      const renderScenario = (key) =&gt; {
+        const scenario = runtimeScenarios[key];
+        if (!scenario || !runtimeDetail) return;
+        scenario.steps.forEach((step, index) =&gt; {
+          if (stepKickers[index]) stepKickers[index].textContent = step[0];
+          if (stepLabels[index]) stepLabels[index].textContent = step[1];
+          if (stepNotes[index]) stepNotes[index].textContent = step[2];
+        });
+        runtimeDetail.textContent = scenario.detail;
+      };
+
+      scenarioButtons.forEach((button) =&gt; {
+        button.addEventListener(&quot;click&quot;, () =&gt; {
+          setPressed(scenarioButtons, button);
+          renderScenario(button.dataset.scenario);
+        });
+      });
+
+      const stageButtons = Array.from(root.querySelectorAll(&quot;[data-stage]&quot;));
+      const stageTitle = root.querySelector(&quot;#stage-title&quot;);
+      const stageDescription = root.querySelector(&quot;#stage-description&quot;);
+      const stageNames = Array.from(root.querySelectorAll(&quot;[data-stage-name]&quot;));
+      const stageKeys = Array.from(root.querySelectorAll(&quot;[data-stage-key]&quot;));
+
+      const renderStage = (key) =&gt; {
+        const stage = stages.find((candidate) =&gt; candidate.key === key);
+        if (!stage || !stageTitle || !stageDescription) return;
+        stageTitle.textContent = `${stage.index} · ${stage.title}`;
+        stageDescription.textContent = `${stage.phase} phase · ${stage.skill} · ${stage.checkpoint}`;
+        stageNames.forEach((label) =&gt; {
+          label.textContent = stage.title;
+        });
+        stageKeys.forEach((label) =&gt; {
+          label.textContent = stage.key;
+        });
+      };
+
+      stageButtons.forEach((button) =&gt; {
+        button.addEventListener(&quot;click&quot;, () =&gt; {
+          setPressed(stageButtons, button);
+          renderStage(button.dataset.stage);
+        });
+      });
+    })();
+  &lt;/script&gt;
+&lt;/div&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>

@@ -54,6 +54,8 @@ operation to cmux on the same Mac.
 - `herdr_harness/`: native Herdr socket adapter, cached model, REST API, SSE,
   terminal observer bridge, alert journal, network discovery, and optional
   APNs.
+- `scripts/herdr_active_work_cli.py`: JSON-first `herdr-active-work` client for
+  people and agents managing the durable Active Work board.
 - `pi-semantic-bridge/`: an optional Pi extension that publishes semantic
   lifecycle events through a private, pane-scoped Unix socket without replacing
   or parsing Pi's TUI.
@@ -324,6 +326,142 @@ python3 herdr_dashboard.py --no-browser
 The app will then show that session's real workspaces, tabs, panes, layouts,
 and agents with the same navigation and controls.
 
+## Active Work CLI on the Work Mac
+
+The supported agent interface to Active Work is `herdr-active-work`. It uses
+the authenticated HTTP API instead of reading the SQLite store or invoking
+`acli` directly. The Work Mac's canonical checkout is
+`~/Documents/Development/cmux-harness`; do not install from the older
+`~/Documents/Development/cmux-herdr-harness` checkout.
+
+Install one stable command by symlinking the versioned script from the
+canonical checkout into the user-owned bin directory:
+
+```bash
+test -x "$HOME/Documents/Development/cmux-harness/scripts/herdr_active_work_cli.py"
+ln -sfn \
+  "$HOME/Documents/Development/cmux-harness/scripts/herdr_active_work_cli.py" \
+  "$HOME/.local/bin/herdr-active-work"
+
+command -v herdr-active-work
+herdr-active-work --help
+herdr-active-work candidates | jq -e '.ok == true'
+```
+
+On the managed Work Mac, `~/.local/bin` is already present in login,
+non-login, and agent shell paths. The symlink therefore follows future
+fast-forward deployments without copying an unversioned executable. The
+existing `/opt/homebrew/bin/herdr` is a separate Homebrew terminal-workspace
+tool. Do not replace it or install this client under the `herdr` name.
+
+### Management credential
+
+Create the dedicated management token once and keep it separate from both the
+full pairing token and the Buzz-only ingestion token:
+
+```bash
+mkdir -p "$HOME/.config/herdr-harness"
+umask 077
+HERDR_MANAGE_TOKEN_FILE="$HOME/.config/herdr-harness/active-work-manage-token"
+openssl rand -hex 32 > "$HERDR_MANAGE_TOKEN_FILE"
+chmod 600 "$HERDR_MANAGE_TOKEN_FILE"
+```
+
+Do not repeat that generation block during an ordinary deployment. Restart the
+Herdr Harness service after initially creating or intentionally rotating the
+file. Both the server and CLI discover this conventional path from `HOME`, so
+the Work Mac launchd service needs no additional token environment setting and
+an agent normally needs no token flag or environment variable:
+
+```bash
+herdr-active-work candidates
+herdr-active-work list
+```
+
+The management token authorizes all and only `/api/v1/active-work` routes,
+including `observe`. It cannot control terminals, panes, workspaces, agents,
+alerts, push registration, or any other Herdr resource. The full
+`~/.config/herdr-harness/api-token` remains globally valid for the Mac and iOS
+apps. The separate `active-work-ingest-token` remains narrower: it can only
+read sync targets and post Buzz observations. The server rejects a main,
+manage, or ingest token that duplicates either of the other configured values.
+
+For a nonstandard installation, select a file with global `--token-file` or
+`HERDR_ACTIVE_WORK_MANAGE_TOKEN_FILE`. An ephemeral direct value can use
+`HERDR_ACTIVE_WORK_MANAGE_TOKEN`. Never set the file and value forms together,
+and prefer the owner-only token file. There is intentionally no raw-token
+command-line flag. Server-side equivalents are
+`HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN_FILE` and
+`HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN`.
+
+### Agent and manual workflow
+
+JSON is always the output format. Success is one compact envelope on stdout;
+failure is one envelope on stderr with a nonzero exit status. Use the global
+`--pretty` option before the command for manual reading, or consume the default
+compact result directly from an agent:
+
+```bash
+herdr-active-work candidates | jq .
+herdr-active-work --pretty list --full
+herdr-active-work show AGENTIC-575 | jq '.data'
+```
+
+The stable envelope has API version `herdr.active-work.cli/v1`, the command
+name, `ok`, and either `data` or `error`. Other global configuration is
+`--base-url`, `--actor`, and `--timeout`, with environment equivalents
+`HERDR_ACTIVE_WORK_BASE_URL`, `HERDR_ACTIVE_WORK_ACTOR`, and
+`HERDR_ACTIVE_WORK_TIMEOUT`. The defaults are the loopback API on port `9092`
+and actor `agent:herdr-active-work-cli`. Custom actors must use
+`agent:<lowercase-slug>` form.
+
+Candidate discovery is read-only. Connecting work is deliberately singular
+and explicit:
+
+```bash
+herdr-active-work candidates
+herdr-active-work --pretty connect AGENTIC-575
+```
+
+`connect` accepts exactly one Jira key, has no bulk form, and is idempotent
+when repeated. Assigned Jira work is never imported merely because an agent,
+app, or CLI lists it. Other management commands are:
+
+- `candidates [--all]`: list untracked Jira candidates, or include represented
+  candidates with `--all`.
+- `list [--full]`: list tracked items, optionally with full projections.
+- `show REF`: resolve an Active Work ID or Jira key.
+- `create --title T`: create a Feature, Task, or Idea, with optional ID, kind,
+  summary, lifecycle, current stage, next action, and JSON metadata.
+- `update REF`: change mutable fields, preferably with
+  `--expected-revision N` after a prior read.
+- `move REF --to STAGE`: move through the pipeline with optional `--state`,
+  `--attention`, `--checkpoint`, `--note`, and `--expected-revision`.
+- `observe --file PATH|-`: submit one exact ingestion JSON object from a file
+  or stdin.
+
+An `observe` payload must contain `source`, `idempotency_key`, `observed_at`,
+and `selector`. Optional item, stage, channel, thread, and activity fields are
+merged into an item that is already connected or created. `observe` never
+creates work, never queries Jira or Buzz, and is not a long-running watch
+command. Replayed and stale observations are handled idempotently by the API.
+
+### What runs automatically
+
+The installed `com.ronnierocha.herdr-active-work-sync` launchd job runs once at
+login and every five minutes. It reads the Buzz workflow state only for
+already-connected Active Work targets, then merges bounded channel, stage,
+agent-runtime, Herdr workspace/pane association, and discussion-thread metadata
+with the scoped ingestion credential. A Pi-looking association from this job is
+a workspace/pane runtime proxy, not a durable copy of a native ephemeral Pi
+session ID, and the stock sync does not synthesize activity events.
+
+The reconciler does not connect assigned Jira issues, create Buzz channels,
+transition Jira, start agents, create workspaces, send prompts, or copy message
+bodies and transcripts. The CLI also installs no scheduler. Connecting one
+ticket, creating manual work, editing fields, moving pipeline stages, and
+producing any custom `observe` payload remain explicit user or agent actions.
+
 ## API overview
 
 All `/api/v1` endpoints support bearer authentication. The setup page at `/`
@@ -336,7 +474,8 @@ is intentionally public and contains no session data.
   Board and Focus Route presentations, plus explicitly untracked Jira setup
   candidates
 - `POST /api/v1/active-work/jira/{key}/setup` to create a board record for one
-  user-selected Jira item. Listing assigned work never creates records.
+  user-selected Jira item. `herdr-active-work connect JIRA-KEY` is the
+  supported CLI wrapper. Listing assigned work never creates records.
 - `POST /api/v1/active-work/items`, `GET|PATCH
   /api/v1/active-work/items/{id}`, and `POST
   /api/v1/active-work/items/{id}/transitions` for revisioned Feature, Task, and
