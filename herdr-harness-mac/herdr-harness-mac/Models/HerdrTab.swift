@@ -1,5 +1,11 @@
 import Foundation
 
+enum SendToHerdrCommand {
+    static func text(workspaceID: String, tabID: String) -> String {
+        "/send-to-herdr --workspace-id \(workspaceID) --tab-id \(tabID)"
+    }
+}
+
 struct HerdrTab: Codable, Equatable, Hashable, Identifiable, Sendable {
     let tabID: String
     let workspaceID: String

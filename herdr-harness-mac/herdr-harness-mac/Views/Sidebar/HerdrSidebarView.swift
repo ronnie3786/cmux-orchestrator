@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct HerdrSidebarView: View {
@@ -646,6 +647,16 @@ struct HerdrSidebarView: View {
                                 Task { await model.addPane(toTab: section.tab, in: entry.workspace) }
                             }
                             .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
+                            Divider()
+                            Button("Copy /send-to-herdr Command", systemImage: "doc.on.doc") {
+                                copySendToHerdrCommand(
+                                    workspaceID: entry.workspace.workspaceID,
+                                    tabID: section.tab.tabID
+                                )
+                            }
+                            .disabled(firstPane == nil)
+                            .help("Paste into a Pi session on \(machineName(for: entry.workspace.machineID))")
+                            .accessibilityIdentifier("sidebar-tab-copy-send-to-herdr-\(section.tab.id)")
                         }
                     if section.isExpanded {
                         ForEach(section.chats) { chatRow($0) }
@@ -719,6 +730,12 @@ struct HerdrSidebarView: View {
 
     private func machineName(for machineID: String) -> String {
         model.machines.first(where: { $0.id == machineID })?.name ?? "this machine"
+    }
+
+    private func copySendToHerdrCommand(workspaceID: String, tabID: String) {
+        let command = SendToHerdrCommand.text(workspaceID: workspaceID, tabID: tabID)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
     }
 
     private func tabAttentionStatus(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> AgentStatus? {

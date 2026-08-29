@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// The Mac rewrite of the iOS sidebar suite.
@@ -81,6 +82,38 @@ final class HerdrSidebarUITests: HerdrUITestCase {
             "Clicking it again should restore them"
         )
         XCTAssertEqual(workspace.value as? String, "expanded")
+    }
+
+    @MainActor
+    func testTabContextMenuCopiesPasteReadySendToHerdrCommand() throws {
+        let app = launchDemoApp()
+        let visibleScrollAnchor = app.buttons["sidebar-pane-demo1|w1:p1"]
+        let tab = app.buttons["sidebar-tab-demo1|w1:t2"]
+
+        XCTAssertTrue(visibleScrollAnchor.waitForExistence(timeout: 10))
+        visibleScrollAnchor.scroll(byDeltaX: 0, deltaY: -100)
+        XCTAssertTrue(tab.waitForExistence(timeout: 5))
+        XCTAssertTrue(tab.isHittable)
+
+        let pasteboard = NSPasteboard.general
+        let previousItems = pasteboard.pasteboardItems?.map(Self.copyPasteboardItem) ?? []
+        defer {
+            pasteboard.clearContents()
+            if !previousItems.isEmpty {
+                pasteboard.writeObjects(previousItems)
+            }
+        }
+        pasteboard.clearContents()
+
+        tab.rightClick()
+        let copyCommand = app.menuItems["Copy /send-to-herdr Command"]
+        XCTAssertTrue(copyCommand.waitForExistence(timeout: 3))
+        copyCommand.click()
+
+        XCTAssertEqual(
+            pasteboard.string(forType: .string),
+            "/send-to-herdr --workspace-id w1 --tab-id w1:t2"
+        )
     }
 
     /// Mac-only: the phone had no room for a persistent filter field, so this
@@ -186,5 +219,15 @@ final class HerdrSidebarUITests: HerdrUITestCase {
             object: element
         )
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private static func copyPasteboardItem(_ item: NSPasteboardItem) -> NSPasteboardItem {
+        let copy = NSPasteboardItem()
+        for type in item.types {
+            if let data = item.data(forType: type) {
+                copy.setData(data, forType: type)
+            }
+        }
+        return copy
     }
 }

@@ -126,6 +126,25 @@ struct HerdrModelTests {
         }
     }
 
+    @Test("Send-to-Herdr commands use raw workspace and tab IDs")
+    func sendToHerdrCommandUsesRawIDs() {
+        let tab = HerdrTab(
+            tabID: "w15:t1",
+            workspaceID: "w15",
+            number: 1,
+            label: "One-off Tasks",
+            focused: true,
+            paneCount: 2,
+            agentStatus: .idle
+        ).stamped(machineID: "work-mac")
+
+        #expect(tab.id == "work-mac|w15:t1")
+        #expect(
+            SendToHerdrCommand.text(workspaceID: tab.workspaceID, tabID: tab.tabID)
+                == "/send-to-herdr --workspace-id w15 --tab-id w15:t1"
+        )
+    }
+
     @MainActor
     @Test("Opening a universal link routes to the pane")
     func universalLinkRoutesToPane() throws {
