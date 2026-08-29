@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// Mac-only shell coverage: the menu bar and the detail-scope control that
@@ -8,6 +9,59 @@ import XCTest
 /// get the same treatment the tab bar used to: assert they exist, are enabled in
 /// demo mode, and actually move the detail column.
 final class HerdrMacShellUITests: HerdrUITestCase {
+    @MainActor
+    func testPaneDeepLinkRecreatesClosedMainWindow() async throws {
+        let app = launchDemoApp()
+        XCTAssertTrue(
+            app.buttons["sidebar-pane-demo1|w1:p1"].waitForExistence(timeout: 10),
+            "The demo fleet should be loaded before closing the window"
+        )
+
+        let runningApplication = try XCTUnwrap(
+            NSRunningApplication.runningApplications(
+                withBundleIdentifier: "dev.ronnierocha.herdr-harness.herdr-harness-mac"
+            ).first(where: \.isActive),
+            "The launched UI-test application should be the active Herdr process"
+        )
+        let originalProcessIdentifier = runningApplication.processIdentifier
+        let applicationURL = try XCTUnwrap(runningApplication.bundleURL)
+
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(
+            app.shellWindow.waitForNonExistence(timeout: 5),
+            "Closing Herdr's only window should leave no document window"
+        )
+        XCTAssertFalse(runningApplication.isTerminated, "Closing the window must keep Herdr running")
+
+        let paneURL = try XCTUnwrap(URL(string: "herdr://pane/demo1%7Cw1%3Ap2"))
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.createsNewApplicationInstance = false
+        configuration.allowsRunningApplicationSubstitution = false
+        let openedApplication: NSRunningApplication? = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<NSRunningApplication?, Error>) in
+            NSWorkspace.shared.open(
+                [paneURL],
+                withApplicationAt: applicationURL,
+                configuration: configuration
+            ) { application, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: application)
+                }
+            }
+        }
+
+        XCTAssertEqual(openedApplication?.processIdentifier, originalProcessIdentifier)
+        XCTAssertTrue(
+            app.control(identifier: "terminal-demo1|w1:p2").waitForExistence(timeout: 10),
+            "Opening a pane deep link should recreate the main window and route to that pane"
+        )
+        XCTAssertEqual(app.windows.count, 1, "The deep link should recreate exactly one main window")
+    }
+
     @MainActor
     func testViewMenuMovesTheDetailScope() throws {
         let app = launchDemoApp()

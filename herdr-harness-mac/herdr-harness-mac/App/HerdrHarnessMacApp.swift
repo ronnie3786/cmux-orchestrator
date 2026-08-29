@@ -10,6 +10,13 @@ enum HerdrWindowID {
     static let main = "herdr-main"
 }
 
+enum HerdrExternalEvent {
+    /// `Scene.handlesExternalEvents(matching:)` compares these strings against
+    /// the complete URL, so the custom scheme and universal-link path can share
+    /// the same single-window route.
+    static let paneRoutes: Set<String> = ["herdr://", "/open/pane"]
+}
+
 @main
 struct HerdrHarnessMacApp: App {
     @NSApplicationDelegateAdaptor(HerdrMacAppDelegate.self) private var appDelegate
@@ -41,6 +48,9 @@ struct HerdrHarnessMacApp: App {
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)
         }
+        // When the NSWindow has been closed, ask SwiftUI to recreate this scene
+        // before delivering the URL to AppRootView's onOpenURL handler.
+        .handlesExternalEvents(matching: HerdrExternalEvent.paneRoutes)
         .defaultSize(width: 1240, height: 820)
         // The ink background bleeds into the title bar; the detail toolbar
         // supplies the only chrome the window needs.

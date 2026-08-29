@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import herdr_harness_mac
 
@@ -37,5 +38,15 @@ struct NotificationManagerTests {
         #expect(HerdrMacAppDelegate.resolvedPaneID(fromUserInfo: ["pane_id": paneID]) == paneID)
         #expect(HerdrMacAppDelegate.resolvedPaneID(fromUserInfo: ["paneId": paneID]) == paneID)
         #expect(HerdrMacAppDelegate.resolvedPaneID(fromUserInfo: [:]) == nil)
+    }
+
+    @Test("Notification pane URLs safely round-trip machine-scoped IDs")
+    func notificationPaneURLRoundTripsMachineScopedID() throws {
+        let paneID = "machine-1|workspace-1:pane-1"
+        let url = try #require(HerdrMacAppDelegate.notificationPaneURL(for: paneID))
+
+        #expect(url.scheme == "herdr")
+        #expect(url.host == "pane")
+        #expect(HerdrAppModel.paneID(from: url) == paneID)
     }
 }

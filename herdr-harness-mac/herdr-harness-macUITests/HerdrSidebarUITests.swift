@@ -51,12 +51,22 @@ final class HerdrSidebarUITests: HerdrUITestCase {
     func testSidebarProjectRowCollapsesAndExpands() throws {
         let app = launchDemoApp()
         let workspace = app.buttons["sidebar-workspace-demo1|w1"]
-        let workspaceTab = app.buttons["sidebar-tab-demo1|w1:t1"]
+        // The first tab's active panes can be promoted into Unread/Stale. The
+        // second tab owns a stable shell pane and therefore remains nested.
+        let workspaceTab = app.buttons["sidebar-tab-demo1|w1:t2"]
 
         XCTAssertTrue(
             workspaceTab.waitForExistence(timeout: 10),
             "-HerdrResetSidebarState should leave every workspace expanded"
         )
+
+        // Promoted unread and stale chats can push the workspace row under the
+        // sidebar's bottom edge. Scroll its enclosing navigator before clicking
+        // so this exercises the row instead of the overlay at that coordinate.
+        let visibleScrollAnchor = app.buttons["sidebar-pane-demo1|w1:p1"]
+        XCTAssertTrue(visibleScrollAnchor.isHittable, "The promoted chat should anchor the scroll gesture")
+        visibleScrollAnchor.scroll(byDeltaX: 0, deltaY: -100)
+        XCTAssertTrue(workspace.isHittable, "The workspace row should be visible before clicking")
 
         workspace.click()
         XCTAssertTrue(

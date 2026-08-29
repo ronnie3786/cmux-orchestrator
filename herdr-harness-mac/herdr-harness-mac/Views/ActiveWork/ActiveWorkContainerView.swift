@@ -94,6 +94,9 @@ struct ActiveWorkContainerView: View {
 
         }
         .navigationTitle("Active Work")
+        // Keep the container addressable without replacing the board, focus
+        // route, card, and action identifiers published by its descendants.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("active-work-container")
         .task {
             guard !store.hasLoaded else { return }
