@@ -54,6 +54,11 @@ QUICK_PI_WORKSPACE_LABEL = "Random"
 QUICK_PI_TAB_LABEL = "One-off Tasks"
 QUICK_SESSION_IDEMPOTENCY_TTL_SECONDS = 10 * 60
 QUICK_SESSION_READY_TIMEOUT_MS = 15_000
+QUICK_SESSION_AGENT_BUSY_TIMEOUT_SECONDS = 2.0
+QUICK_SESSION_AGENT_BUSY_RETRY_SECONDS = 0.05
+QUICK_SESSION_AGENT_BUSY_RETRIES = int(
+    QUICK_SESSION_AGENT_BUSY_TIMEOUT_SECONDS / QUICK_SESSION_AGENT_BUSY_RETRY_SECONDS
+)
 
 
 def _find_pane_id(value: Any) -> Optional[str]:
@@ -1411,21 +1416,42 @@ class HerdrService:
         return None
 
     @staticmethod
-    def _nested_identifier(value: object, key: str) -> Optional[str]:
-        if isinstance(value, dict):
-            item = value.get(key)
-            if isinstance(item, (str, int)) and str(item):
-                return str(item)
-            for child in value.values():
-                found = HerdrService._nested_identifier(child, key)
-                if found:
-                    return found
-        elif isinstance(value, list):
-            for child in value:
-                found = HerdrService._nested_identifier(child, key)
-                if found:
-                    return found
-        return None
+    def _quick_new_identifier(
+        value: object,
+        key: str,
+        *,
+        before_ids: set[str],
+    ) -> Optional[str]:
+        """Return one response ID only when it was absent before the create call.
+
+        Native create responses can include the target object alongside the
+        newly created object. Treating that target as the result can start Pi
+        in, and later roll back, a pane that the quick-session request does not
+        own. Multiple unseen IDs are likewise not enough to establish
+        ownership; the topology-diff recovery path must disambiguate them.
+        """
+
+        candidates: list[str] = []
+
+        def collect(item: object) -> None:
+            if isinstance(item, dict):
+                identifier = item.get(key)
+                if isinstance(identifier, (str, int)):
+                    normalized = str(identifier)
+                    if (
+                        normalized
+                        and normalized not in before_ids
+                        and normalized not in candidates
+                    ):
+                        candidates.append(normalized)
+                for child in item.values():
+                    collect(child)
+            elif isinstance(item, list):
+                for child in item:
+                    collect(child)
+
+        collect(value)
+        return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
     def _quick_record_sort_key(item: dict, identifier_key: str) -> tuple[int, str]:
@@ -1490,21 +1516,34 @@ class HerdrService:
         raw: object,
         *,
         before_workspace_ids: set[str],
+        before_tab_ids: set[str],
         before_pane_ids: set[str],
         desired_label: str,
     ) -> tuple[str, str, str]:
-        workspace_id = self._nested_identifier(raw, "workspace_id")
-        pane_id = _find_pane_id(raw)
-        tab_id = self._nested_identifier(raw, "tab_id")
+        workspace_id = self._quick_new_identifier(
+            raw,
+            "workspace_id",
+            before_ids=before_workspace_ids,
+        )
+        pane_id = self._quick_new_identifier(raw, "pane_id", before_ids=before_pane_ids)
+        tab_id = self._quick_new_identifier(raw, "tab_id", before_ids=before_tab_ids)
         if isinstance(raw, dict):
             workspace = raw.get("workspace")
             if isinstance(workspace, dict):
-                workspace_id = str(workspace.get("workspace_id") or workspace_id or "") or None
-                tab_id = str(workspace.get("active_tab_id") or tab_id or "") or None
+                raw_workspace_id = str(workspace.get("workspace_id") or "")
+                if raw_workspace_id and raw_workspace_id not in before_workspace_ids:
+                    workspace_id = raw_workspace_id
+                raw_tab_id = str(workspace.get("active_tab_id") or "")
+                if raw_tab_id and raw_tab_id not in before_tab_ids:
+                    tab_id = raw_tab_id
             pane = raw.get("pane") or raw.get("root_pane")
             if isinstance(pane, dict):
-                pane_id = str(pane.get("pane_id") or pane_id or "") or None
-                tab_id = str(pane.get("tab_id") or tab_id or "") or None
+                raw_pane_id = str(pane.get("pane_id") or "")
+                if raw_pane_id and raw_pane_id not in before_pane_ids:
+                    pane_id = raw_pane_id
+                raw_tab_id = str(pane.get("tab_id") or "")
+                if raw_tab_id and raw_tab_id not in before_tab_ids:
+                    tab_id = raw_tab_id
 
         if workspace_id and pane_id and tab_id:
             return workspace_id, tab_id, pane_id
@@ -1561,19 +1600,27 @@ class HerdrService:
         before_tab_ids: set[str],
         before_pane_ids: set[str],
     ) -> tuple[str, str]:
-        tab_id = self._nested_identifier(raw, "tab_id")
-        pane_id = _find_pane_id(raw)
+        tab_id = self._quick_new_identifier(raw, "tab_id", before_ids=before_tab_ids)
+        pane_id = self._quick_new_identifier(raw, "pane_id", before_ids=before_pane_ids)
         if isinstance(raw, dict):
             tab = raw.get("tab")
             if isinstance(tab, dict):
-                tab_id = str(tab.get("tab_id") or tab_id or "") or None
+                raw_tab_id = str(tab.get("tab_id") or "")
+                if raw_tab_id and raw_tab_id not in before_tab_ids:
+                    tab_id = raw_tab_id
                 pane = tab.get("root_pane")
                 if isinstance(pane, dict):
-                    pane_id = str(pane.get("pane_id") or pane_id or "") or None
+                    raw_pane_id = str(pane.get("pane_id") or "")
+                    if raw_pane_id and raw_pane_id not in before_pane_ids:
+                        pane_id = raw_pane_id
             pane = raw.get("pane") or raw.get("root_pane")
             if isinstance(pane, dict):
-                pane_id = str(pane.get("pane_id") or pane_id or "") or None
-                tab_id = str(pane.get("tab_id") or tab_id or "") or None
+                raw_pane_id = str(pane.get("pane_id") or "")
+                if raw_pane_id and raw_pane_id not in before_pane_ids:
+                    pane_id = raw_pane_id
+                raw_tab_id = str(pane.get("tab_id") or "")
+                if raw_tab_id and raw_tab_id not in before_tab_ids:
+                    tab_id = raw_tab_id
 
         if tab_id and pane_id:
             return tab_id, pane_id
@@ -1615,7 +1662,7 @@ class HerdrService:
         tab_id: str,
         before_pane_ids: set[str],
     ) -> str:
-        pane_id = _find_pane_id(raw)
+        pane_id = self._quick_new_identifier(raw, "pane_id", before_ids=before_pane_ids)
         if pane_id:
             return pane_id
         snapshot = self._quick_recovery_snapshot()
@@ -1634,6 +1681,41 @@ class HerdrService:
                 code="invalid_herdr_response",
             )
         return pane_id
+
+    @staticmethod
+    def _quick_pane_retry_state(
+        snapshot: dict,
+        *,
+        pane_id: str,
+        workspace_id: str,
+        tab_id: str,
+    ) -> str:
+        pane = next(
+            (
+                item
+                for item in snapshot.get("panes", [])
+                if isinstance(item, dict) and str(item.get("pane_id") or "") == pane_id
+            ),
+            None,
+        )
+        if pane is None:
+            return "missing"
+        if (
+            str(pane.get("workspace_id") or "") != workspace_id
+            or str(pane.get("tab_id") or "") != tab_id
+        ):
+            return "conflict"
+        if any(
+            isinstance(item, dict) and str(item.get("pane_id") or "") == pane_id
+            for item in snapshot.get("agents", [])
+        ):
+            return "conflict"
+        if any(
+            pane.get(key)
+            for key in ("agent", "display_agent", "agent_session", "agent_info")
+        ):
+            return "conflict"
+        return "ready"
 
     def _quick_cached_result(self, request_id: Optional[str], signature: str) -> Optional[dict]:
         if request_id is None:
@@ -1926,6 +2008,11 @@ class HerdrService:
                         for item in snapshot.get("workspaces", [])
                         if isinstance(item, dict) and item.get("workspace_id")
                     }
+                    before_tab_ids = {
+                        str(item.get("tab_id"))
+                        for item in snapshot.get("tabs", [])
+                        if isinstance(item, dict) and item.get("tab_id")
+                    }
                     before_pane_ids = {
                         str(item.get("pane_id"))
                         for item in snapshot.get("panes", [])
@@ -1935,13 +2022,18 @@ class HerdrService:
                         "workspace.create",
                         {"label": desired_workspace_label, "cwd": str(target_cwd), "focus": True},
                     )
-                    provisional_workspace_id = self._nested_identifier(raw, "workspace_id")
+                    provisional_workspace_id = self._quick_new_identifier(
+                        raw,
+                        "workspace_id",
+                        before_ids=before_workspace_ids,
+                    )
                     if provisional_workspace_id:
                         cleanup_method = "workspace.close"
                         cleanup_params = {"workspace_id": provisional_workspace_id}
                     workspace_id, resolved_tab_id, pane_id = self._quick_created_workspace_ids(
                         raw,
                         before_workspace_ids=before_workspace_ids,
+                        before_tab_ids=before_tab_ids,
                         before_pane_ids=before_pane_ids,
                         desired_label=desired_workspace_label,
                     )
@@ -1980,7 +2072,11 @@ class HerdrService:
                             "focus": True,
                         },
                     )
-                    provisional_pane_id = _find_pane_id(raw)
+                    provisional_pane_id = self._quick_new_identifier(
+                        raw,
+                        "pane_id",
+                        before_ids=before_pane_ids,
+                    )
                     if provisional_pane_id:
                         cleanup_method = "pane.close"
                         cleanup_params = {"pane_id": provisional_pane_id}
@@ -2011,7 +2107,11 @@ class HerdrService:
                     if reuse_named_tab:
                         params["label"] = tab_label or QUICK_PI_TAB_LABEL
                     raw = self._request_native("tab.create", params)
-                    provisional_tab_id = self._nested_identifier(raw, "tab_id")
+                    provisional_tab_id = self._quick_new_identifier(
+                        raw,
+                        "tab_id",
+                        before_ids=before_tab_ids,
+                    )
                     if provisional_tab_id:
                         cleanup_method = "tab.close"
                         cleanup_params = {"tab_id": provisional_tab_id}
@@ -2026,16 +2126,67 @@ class HerdrService:
                     cleanup_params = {"tab_id": tab_id}
 
                 name = "quick-pi-" + uuid.uuid4().hex[:8]
-                self._request_native(
-                    "agent.start",
-                    {
-                        "pane_id": pane_id,
-                        "name": name,
-                        "kind": "pi",
-                        "args": agent_args,
-                        "timeout_ms": 30000,
-                    },
-                )
+                start_params = {
+                    "pane_id": pane_id,
+                    "name": name,
+                    "kind": "pi",
+                    "args": agent_args,
+                    "timeout_ms": 30000,
+                }
+                busy_deadline = time.monotonic() + QUICK_SESSION_AGENT_BUSY_TIMEOUT_SECONDS
+                busy_waits = 0
+                for attempt in range(QUICK_SESSION_AGENT_BUSY_RETRIES + 1):
+                    try:
+                        self._request_native("agent.start", start_params)
+                        break
+                    except HerdrClientError as exc:
+                        if exc.code != "agent_pane_busy":
+                            raise
+                        while True:
+                            try:
+                                retry_snapshot = self._quick_recovery_snapshot()
+                            except Exception as verification_error:
+                                cleanup_method = None
+                                cleanup_params = None
+                                raise HerdrClientError(
+                                    "The new pane could not be verified after Pi reported it busy",
+                                    code="quick_session_outcome_unknown",
+                                ) from verification_error
+                            retry_state = self._quick_pane_retry_state(
+                                retry_snapshot,
+                                pane_id=pane_id,
+                                workspace_id=str(workspace_id),
+                                tab_id=str(tab_id),
+                            )
+                            if retry_state == "ready":
+                                break
+                            if retry_state == "conflict":
+                                cleanup_method = None
+                                cleanup_params = None
+                                raise HerdrClientError(
+                                    "The new pane was claimed or moved before Pi could start",
+                                    code="quick_session_placement_conflict",
+                                ) from exc
+                            remaining = busy_deadline - time.monotonic()
+                            if (
+                                busy_waits >= QUICK_SESSION_AGENT_BUSY_RETRIES
+                                or remaining <= 0
+                            ):
+                                cleanup_method = None
+                                cleanup_params = None
+                                raise HerdrClientError(
+                                    "The new pane disappeared before Pi could start",
+                                    code="quick_session_placement_conflict",
+                                ) from exc
+                            time.sleep(min(QUICK_SESSION_AGENT_BUSY_RETRY_SECONDS, remaining))
+                            busy_waits += 1
+                        if attempt >= QUICK_SESSION_AGENT_BUSY_RETRIES:
+                            raise
+                        remaining = busy_deadline - time.monotonic()
+                        if busy_waits >= QUICK_SESSION_AGENT_BUSY_RETRIES or remaining <= 0:
+                            raise
+                        time.sleep(min(QUICK_SESSION_AGENT_BUSY_RETRY_SECONDS, remaining))
+                        busy_waits += 1
                 if expected_session_id is not None:
                     self._quick_wait_for_pi_session(pane_id, expected_session_id)
             except Exception as original_error:

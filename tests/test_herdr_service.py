@@ -1123,6 +1123,282 @@ class HerdrServiceTests(unittest.TestCase):
 
         self.assertIn(("pane.close", {"pane_id": "w-random:p2"}), client.requests)
 
+    def test_quick_pi_session_uses_topology_diff_when_split_response_echoes_anchor(self):
+        snapshot = {
+            "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+            "tabs": [
+                {"tab_id": "w-random:t1", "workspace_id": "w-random", "label": "One-off Tasks"}
+            ],
+            "panes": [
+                {"pane_id": "w-random:p1", "workspace_id": "w-random", "tab_id": "w-random:t1"}
+            ],
+            "agents": [],
+        }
+        client = FakeQuickSessionClient(snapshot, {})
+
+        def split_echoing_anchor(_params):
+            client._snapshot["panes"].append(
+                {
+                    "pane_id": "w-random:p2",
+                    "workspace_id": "w-random",
+                    "tab_id": "w-random:t1",
+                }
+            )
+            return {
+                "pane": {
+                    "pane_id": "w-random:p1",
+                    "workspace_id": "w-random",
+                    "tab_id": "w-random:t1",
+                }
+            }
+
+        client.responses.update(
+            {
+                "pane.split": split_echoing_anchor,
+                "agent.start": HerdrClientError("start failed", code="herdr_unavailable"),
+            }
+        )
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        with self.assertRaises(HerdrClientError):
+            service.quick_pi_session("new session")
+
+        start_request = next(params for method, params in client.requests if method == "agent.start")
+        self.assertEqual(start_request["pane_id"], "w-random:p2")
+        self.assertIn(("pane.close", {"pane_id": "w-random:p2"}), client.requests)
+        self.assertNotIn(("pane.close", {"pane_id": "w-random:p1"}), client.requests)
+
+    def test_quick_pi_session_retries_busy_pane_until_late_success(self):
+        snapshot = {
+            "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+            "tabs": [
+                {"tab_id": "w-random:t1", "workspace_id": "w-random", "label": "One-off Tasks"}
+            ],
+            "panes": [
+                {"pane_id": "w-random:p1", "workspace_id": "w-random", "tab_id": "w-random:t1"}
+            ],
+            "agents": [],
+        }
+        client = FakeQuickSessionClient(snapshot, {})
+        start_attempts = 0
+
+        def split(_params):
+            client._snapshot["panes"].append(
+                {
+                    "pane_id": "w-random:p2",
+                    "workspace_id": "w-random",
+                    "tab_id": "w-random:t1",
+                }
+            )
+            return {"pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}}
+
+        def busy_then_start(_params):
+            nonlocal start_attempts
+            start_attempts += 1
+            if start_attempts <= 20:
+                if start_attempts == 1:
+                    client._snapshot["panes"].pop()
+                raise HerdrClientError("pane is not ready", code="agent_pane_busy")
+            return {"ok": True}
+
+        def publish_delayed_pane(_seconds):
+            if not any(item.get("pane_id") == "w-random:p2" for item in client._snapshot["panes"]):
+                client._snapshot["panes"].append(
+                    {
+                        "pane_id": "w-random:p2",
+                        "workspace_id": "w-random",
+                        "tab_id": "w-random:t1",
+                    }
+                )
+
+        client.responses.update({"pane.split": split, "agent.start": busy_then_start})
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        with patch("herdr_harness.service.time.sleep", side_effect=publish_delayed_pane):
+            result = service.quick_pi_session("new session")
+
+        self.assertEqual(result["pane_id"], "w-random:p2")
+        self.assertEqual(start_attempts, 21)
+        self.assertNotIn("pane.close", [method for method, _ in client.requests])
+
+    def test_quick_pi_session_exhausts_busy_retry_window_then_closes_owned_pane(self):
+        snapshot = {
+            "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+            "tabs": [
+                {"tab_id": "w-random:t1", "workspace_id": "w-random", "label": "One-off Tasks"}
+            ],
+            "panes": [
+                {"pane_id": "w-random:p1", "workspace_id": "w-random", "tab_id": "w-random:t1"}
+            ],
+            "agents": [],
+        }
+        client = FakeQuickSessionClient(snapshot, {})
+
+        def split(_params):
+            client._snapshot["panes"].append(
+                {
+                    "pane_id": "w-random:p2",
+                    "workspace_id": "w-random",
+                    "tab_id": "w-random:t1",
+                }
+            )
+            return {"pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}}
+
+        client.responses.update(
+            {
+                "pane.split": split,
+                "agent.start": HerdrClientError("pane stayed busy", code="agent_pane_busy"),
+            }
+        )
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        with patch("herdr_harness.service.time.sleep"), self.assertRaises(HerdrClientError) as context:
+            service.quick_pi_session("new session")
+
+        self.assertEqual(context.exception.code, "agent_pane_busy")
+        self.assertEqual(sum(method == "agent.start" for method, _ in client.requests), 41)
+        self.assertIn(("pane.close", {"pane_id": "w-random:p2"}), client.requests)
+        self.assertNotIn(("pane.close", {"pane_id": "w-random:p1"}), client.requests)
+
+    def test_quick_pi_session_does_not_retry_or_close_a_claimed_moved_or_missing_pane(self):
+        for changed_state in ("claimed", "moved", "missing"):
+            with self.subTest(changed_state=changed_state):
+                snapshot = {
+                    "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+                    "tabs": [
+                        {
+                            "tab_id": "w-random:t1",
+                            "workspace_id": "w-random",
+                            "label": "One-off Tasks",
+                        }
+                    ],
+                    "panes": [
+                        {
+                            "pane_id": "w-random:p1",
+                            "workspace_id": "w-random",
+                            "tab_id": "w-random:t1",
+                        }
+                    ],
+                    "agents": [],
+                }
+                client = FakeQuickSessionClient(snapshot, {})
+
+                def split(_params):
+                    client._snapshot["panes"].append(
+                        {
+                            "pane_id": "w-random:p2",
+                            "workspace_id": "w-random",
+                            "tab_id": "w-random:t1",
+                        }
+                    )
+                    return {"pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}}
+
+                def claim_or_move(_params):
+                    if changed_state == "claimed":
+                        client._snapshot["agents"].append(
+                            {
+                                "pane_id": "w-random:p2",
+                                "workspace_id": "w-random",
+                                "tab_id": "w-random:t1",
+                                "agent": "pi",
+                            }
+                        )
+                    elif changed_state == "moved":
+                        client._snapshot["panes"][-1]["tab_id"] = "w-random:t-other"
+                    else:
+                        client._snapshot["panes"].pop()
+                    raise HerdrClientError("pane was claimed", code="agent_pane_busy")
+
+                client.responses.update({"pane.split": split, "agent.start": claim_or_move})
+                service = HerdrService(
+                    client,
+                    environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+                )
+
+                with patch("herdr_harness.service.time.sleep"), self.assertRaises(
+                    HerdrClientError
+                ) as context:
+                    service.quick_pi_session("new session")
+
+                self.assertEqual(context.exception.code, "quick_session_placement_conflict")
+                self.assertEqual(sum(method == "agent.start" for method, _ in client.requests), 1)
+                self.assertNotIn("pane.close", [method for method, _ in client.requests])
+
+    def test_quick_pi_session_never_closes_preexisting_ids_echoed_by_create_responses(self):
+        cases = (
+            (
+                {
+                    "workspaces": [{"workspace_id": "w-existing", "label": "Project"}],
+                    "tabs": [
+                        {
+                            "tab_id": "w-existing:t1",
+                            "workspace_id": "w-existing",
+                            "label": "Build",
+                        }
+                    ],
+                    "panes": [
+                        {
+                            "pane_id": "w-existing:p1",
+                            "workspace_id": "w-existing",
+                            "tab_id": "w-existing:t1",
+                        }
+                    ],
+                },
+                "workspace.create",
+                {
+                    "workspace": {
+                        "workspace_id": "w-existing",
+                        "active_tab_id": "w-existing:t1",
+                    },
+                    "pane": {"pane_id": "w-existing:p1", "tab_id": "w-existing:t1"},
+                },
+                "workspace.close",
+            ),
+            (
+                {
+                    "workspaces": [{"workspace_id": "w-existing", "label": "Random"}],
+                    "tabs": [
+                        {
+                            "tab_id": "w-existing:t1",
+                            "workspace_id": "w-existing",
+                            "label": "Build",
+                        }
+                    ],
+                    "panes": [
+                        {
+                            "pane_id": "w-existing:p1",
+                            "workspace_id": "w-existing",
+                            "tab_id": "w-existing:t1",
+                        }
+                    ],
+                },
+                "tab.create",
+                {
+                    "tab": {
+                        "tab_id": "w-existing:t1",
+                        "root_pane": {
+                            "pane_id": "w-existing:p1",
+                            "tab_id": "w-existing:t1",
+                        },
+                    }
+                },
+                "tab.close",
+            ),
+        )
+        for snapshot, create_method, response, close_method in cases:
+            with self.subTest(create_method=create_method):
+                client = FakeQuickSessionClient(snapshot, {create_method: response})
+                service = HerdrService(
+                    client,
+                    environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+                )
+
+                with self.assertRaises(HerdrClientError) as context:
+                    service.quick_pi_session("new session")
+
+                self.assertEqual(context.exception.code, "invalid_herdr_response")
+                self.assertNotIn(close_method, [method for method, _ in client.requests])
+
     def test_quick_pi_session_rejects_ambiguous_snapshot_diff_before_starting_pi(self):
         snapshot = {
             "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
