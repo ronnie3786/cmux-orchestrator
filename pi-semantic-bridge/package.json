@@ -2,11 +2,14 @@
   "name": "@herdr/pi-semantic-bridge",
   "version": "1.0.0",
   "private": true,
-  "description": "A local semantic side channel for Pi's stock TUI",
+  "description": "Herdr integration for Pi's stock TUI",
   "keywords": ["pi-package"],
   "type": "module",
   "pi": {
-    "extensions": ["./extensions/pi-semantic-bridge.ts"]
+    "extensions": [
+      "./extensions/pi-semantic-bridge.ts",
+      "./extensions/send-to-herdr.ts"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

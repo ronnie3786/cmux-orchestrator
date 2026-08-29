@@ -246,19 +246,43 @@ class FakeHTTPService:
         self.pi_extension_args_calls += 1
         return ["--extension", "/fake/bridge"]
 
-    def quick_pi_session(self, label, *, workspace_id=None, cwd=None):
+    def quick_pi_session(
+        self,
+        label,
+        *,
+        workspace_id=None,
+        tab_id=None,
+        cwd=None,
+        session_file=None,
+        session_id=None,
+        request_id=None,
+    ):
         self.calls.append(
             (
                 "quick_pi_session",
-                {"label": label, "workspace_id": workspace_id, "cwd": cwd},
+                {
+                    "label": label,
+                    "workspace_id": workspace_id,
+                    "tab_id": tab_id,
+                    "cwd": cwd,
+                    "session_file": session_file,
+                    "session_id": session_id,
+                    "request_id": request_id,
+                },
             )
         )
         return {
             "ok": True,
             "workspace_id": "w1",
+            "tab_id": "w1:t1",
             "pane_id": "w1:p1",
             "created_workspace": True,
+            "created_tab": True,
+            "created_pane": True,
             "pi_extension_attached": True,
+            "pi_semantic_ready": session_id is not None,
+            "request_id": request_id,
+            "session_id": session_id,
         }
 
     @staticmethod
@@ -663,9 +687,15 @@ class HerdrHTTPTests(unittest.TestCase):
             {
                 "ok": True,
                 "workspace_id": "w1",
+                "tab_id": "w1:t1",
                 "pane_id": "w1:p1",
                 "created_workspace": True,
+                "created_tab": True,
+                "created_pane": True,
                 "pi_extension_attached": True,
+                "pi_semantic_ready": False,
+                "request_id": None,
+                "session_id": None,
             },
         )
         self.assertEqual(
@@ -675,7 +705,11 @@ class HerdrHTTPTests(unittest.TestCase):
                 {
                     "label": "aug 18, 2:34 pm",
                     "workspace_id": None,
+                    "tab_id": None,
                     "cwd": None,
+                    "session_file": None,
+                    "session_id": None,
+                    "request_id": None,
                 },
             ),
         )
@@ -690,11 +724,19 @@ class HerdrHTTPTests(unittest.TestCase):
                 self.assertEqual(invalid_status, 400)
                 self.assertEqual(invalid_body["error"]["code"], "invalid_request")
 
-    def test_quick_pi_session_forwards_optional_workspace_and_cwd(self):
+    def test_quick_pi_session_forwards_optional_placement_and_resume_fields(self):
         status, _, _ = self.request(
             "/api/v1/quick-sessions/pi",
             method="POST",
-            payload={"label": "Project question", "workspaceId": "w1", "cwd": "/tmp"},
+            payload={
+                "label": "Project question",
+                "workspaceId": "w1",
+                "tabId": "w1:t1",
+                "cwd": "/tmp",
+                "sessionFile": "/tmp/pi-session.jsonl",
+                "sessionId": "pi-session-1",
+                "requestId": "request-1",
+            },
         )
 
         self.assertEqual(status, 200)
@@ -702,9 +744,35 @@ class HerdrHTTPTests(unittest.TestCase):
             self.service.calls[-1],
             (
                 "quick_pi_session",
-                {"label": "Project question", "workspace_id": "w1", "cwd": "/tmp"},
+                {
+                    "label": "Project question",
+                    "workspace_id": "w1",
+                    "tab_id": "w1:t1",
+                    "cwd": "/tmp",
+                    "session_file": "/tmp/pi-session.jsonl",
+                    "session_id": "pi-session-1",
+                    "request_id": "request-1",
+                },
             ),
         )
+
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "Project question", "tabId": "not/a/tab"},
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_request")
+
+        call_count = len(self.service.calls)
+        missing_file_status, _, missing_file_body = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "Project question", "sessionId": "pi-session-1"},
+        )
+        self.assertEqual(missing_file_status, 400)
+        self.assertEqual(missing_file_body["error"]["code"], "invalid_request")
+        self.assertEqual(len(self.service.calls), call_count)
 
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(

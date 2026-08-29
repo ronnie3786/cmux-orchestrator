@@ -16,16 +16,25 @@ struct PaneSessionHeader: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            HerdrStatusDot(status: pane.agentStatus)
+            if showsCompaction {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(HerdrTheme.working)
+                    .frame(width: 12, height: 12)
+                    .accessibilityHidden(true)
+            } else {
+                HerdrStatusDot(status: pane.agentStatus)
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(pane.displayAgentName.lowercased())
                         .herdrFont(.subheadline, monospaced: true, weight: .bold)
                         .foregroundStyle(HerdrTheme.text)
-                    Text(pane.agentStatus.compactTitle.lowercased())
+                    Text(sessionStatusTitle.lowercased())
                         .herdrFont(.caption, monospaced: true)
-                        .foregroundStyle(pane.agentStatus.labelColor)
+                        .foregroundStyle(sessionStatusColor)
+                        .accessibilityIdentifier("pane-session-status")
                 }
 
                 HStack(spacing: 3) {
@@ -102,7 +111,35 @@ struct PaneSessionHeader: View {
             .accessibilityHint(pane.focused ? "This pane is focused on your Mac" : "Focuses this pane on your Mac")
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: gitIsAvailable)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.compactionActivity)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.connection)
         .accessibilityElement(children: .contain)
+    }
+
+    private var showsCompaction: Bool {
+        store.connection == .connected && store.compactionActivity != nil
+    }
+
+    private var sessionStatusTitle: String {
+        switch store.connection {
+        case .bridgeOffline:
+            "Offline"
+        case .reconnecting:
+            "Reconnecting"
+        case .unavailable:
+            "Unavailable"
+        case .loading, .connected:
+            showsCompaction ? "Compacting" : pane.agentStatus.compactTitle
+        }
+    }
+
+    private var sessionStatusColor: Color {
+        switch store.connection {
+        case .bridgeOffline, .reconnecting, .unavailable:
+            HerdrTheme.warning
+        case .loading, .connected:
+            showsCompaction ? HerdrTheme.working : pane.agentStatus.labelColor
+        }
     }
 
     private var locationName: String {

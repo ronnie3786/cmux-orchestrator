@@ -38,6 +38,13 @@ const UNIX_PATH_BYTES = 100;
 const SNAPSHOT_ENTRY_BYTES = Math.min(384 * 1024, Math.max(16 * 1024, Math.floor(MAX_QUEUE_BYTES / 2)));
 
 type JsonObject = Record<string, unknown>;
+type CompactionReason = "manual" | "threshold" | "overflow" | "unknown";
+type CompactionOutcome = "completed" | "failed" | "aborted" | "settled";
+type ActiveCompaction = {
+	reason: CompactionReason;
+	willRetry: boolean;
+	generation: number;
+};
 type WireRecord = JsonObject & {
 	protocol: typeof PROTOCOL;
 	pane_id: string;
@@ -173,6 +180,17 @@ function projectAssistantUpdate(event: JsonObject): JsonObject {
 	return { assistantMessageEvent: result };
 }
 
+function compactionReason(value: unknown): CompactionReason {
+	return value === "manual" || value === "threshold" || value === "overflow" ? value : "unknown";
+}
+
+function projectedCompaction(value: JsonObject): JsonObject {
+	return {
+		reason: compactionReason(value.reason),
+		willRetry: value.willRetry === true,
+	};
+}
+
 function projectEvent(type: string, event: unknown, ctx: ExtensionContext): JsonObject | undefined {
 	const value = event && typeof event === "object" ? event as JsonObject : {};
 	switch (type) {
@@ -181,9 +199,13 @@ function projectEvent(type: string, event: unknown, ctx: ExtensionContext): Json
 		case "tool_result":
 		case "session_before_switch":
 		case "session_before_fork":
-		case "session_before_compact":
 		case "session_before_tree":
 			return undefined;
+		case "session_before_compact":
+			// Compaction preparation contains the full conversation and optional
+			// custom instructions. Only its non-sensitive activity metadata crosses
+			// the bridge.
+			return projectedCompaction(value);
 		case "agent_end":
 			return {};
 		case "turn_end":
@@ -338,6 +360,8 @@ class BridgeRuntime {
 	private ownedSocketIdentity?: SocketIdentity;
 	private lastSessionId?: string;
 	private hasStarted = false;
+	private activeCompaction?: ActiveCompaction;
+	private compactionGeneration = 0;
 
 	constructor(private readonly pi: ExtensionAPI, herdrPath: string, paneId: string) {
 		this.paneId = paneId;
@@ -390,6 +414,7 @@ class BridgeRuntime {
 	}
 
 	private rotateSource(): void {
+		this.clearCompaction();
 		this.instanceId = randomUUID();
 		this.sequence = 0;
 		this.queue = [];
@@ -428,6 +453,42 @@ class BridgeRuntime {
 		this.latestContext = ctx;
 	}
 
+	beginCompaction(event: unknown): void {
+		const value = event && typeof event === "object" ? event as JsonObject : {};
+		this.clearCompaction();
+		const generation = ++this.compactionGeneration;
+		this.activeCompaction = {
+			reason: compactionReason(value.reason),
+			willRetry: value.willRetry === true,
+			generation,
+		};
+
+		const signal = value.signal as {
+			aborted?: boolean;
+			addEventListener?: (type: string, listener: () => void, options?: { once?: boolean }) => void;
+		} | undefined;
+		if (signal?.addEventListener) {
+			signal.addEventListener("abort", () => this.finishCompaction("aborted", generation), { once: true });
+		}
+		if (signal?.aborted) queueMicrotask(() => this.finishCompaction("aborted", generation));
+	}
+
+	finishCompaction(outcome: CompactionOutcome, generation?: number): void {
+		const activity = this.activeCompaction;
+		if (!activity || (generation !== undefined && activity.generation !== generation)) return;
+		this.clearCompaction();
+		this.emit("session_compact_end", {
+			reason: activity.reason,
+			willRetry: activity.willRetry,
+			outcome,
+		});
+		this.checkpoint();
+	}
+
+	clearCompaction(): void {
+		this.activeCompaction = undefined;
+	}
+
 	emit(type: string, payload: unknown, replaceKey?: string): void {
 		const ctx = this.latestContext;
 		if (!ctx) return;
@@ -463,6 +524,12 @@ class BridgeRuntime {
 					idle: ctx.isIdle(),
 					working: !ctx.isIdle(),
 					isStreaming: !ctx.isIdle(),
+					isCompacting: this.activeCompaction !== undefined,
+					compaction: this.activeCompaction ? {
+						active: true,
+						reason: this.activeCompaction.reason,
+						willRetry: this.activeCompaction.willRetry,
+					} : null,
 					pendingMessages: ctx.hasPendingMessages(),
 					model: modelIdentity(ctx.model),
 					thinkingLevel: ctx.thinkingLevel,
@@ -712,6 +779,11 @@ class BridgeRuntime {
 		const provider = typeof payload?.provider === "string" ? payload.provider.trim() : "";
 		const id = typeof payload?.id === "string" ? payload.id.trim() : "";
 		try {
+			if (this.activeCompaction && [
+				"prompt", "steer", "follow_up", "abort", "compact", "set_model", "set_thinking_level",
+			].includes(command)) {
+				throw new Error("Pi is compacting context; wait for compaction to finish");
+			}
 			switch (command) {
 				case "prompt":
 					if (!text) throw new Error("Prompt text is required");
@@ -732,7 +804,10 @@ class BridgeRuntime {
 					break;
 				case "compact":
 					if (!ctx.isIdle()) throw new Error("Pi is busy; wait for the current turn to finish");
-					ctx.compact();
+					ctx.compact({
+						onComplete: () => this.finishCompaction("completed"),
+						onError: () => this.finishCompaction("failed"),
+					});
 					break;
 				case "list_models": {
 					const source = ctx.scopedModels.length > 0
@@ -805,6 +880,7 @@ class BridgeRuntime {
 	}
 
 	shutdown(): void {
+		this.clearCompaction();
 		this.flush();
 		this.active = false;
 		for (const socket of this.subscribers) socket.end();
@@ -848,6 +924,7 @@ export default function piSemanticBridge(pi: ExtensionAPI): void {
 	] as const;
 
 	pi.on("session_start", (event, ctx) => {
+		runtime.clearCompaction();
 		runtime.start(ctx);
 		runtime.emit("session_start", event);
 		runtime.recover("session_started");
@@ -855,20 +932,39 @@ export default function piSemanticBridge(pi: ExtensionAPI): void {
 	for (const type of events) {
 		// ExtensionAPI's overloads cannot express a dynamic, statically known
 		// event tuple. Runtime registration still retains each native event raw.
-		(pi.on as unknown as (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => void)(
+		(pi.on as unknown as (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => void)(
 			type,
 			(event, ctx) => {
 				runtime.setContext(ctx);
+				if (type === "session_before_compact") {
+					runtime.beginCompaction(event);
+					runtime.emit(type, event);
+					runtime.checkpoint();
+					return;
+				}
+				if (type === "session_compact") runtime.clearCompaction();
+				if (type === "session_tree") runtime.clearCompaction();
+				if (type === "agent_settled") runtime.finishCompaction("settled");
+				// Pi 0.84.1 does not expose its internal compaction_end event to
+				// extensions. A manual /compact provider failure therefore has no
+				// public terminal event. The input hook is a safe recovery edge: Pi
+				// rejects prompts before emitting input while its compaction controller
+				// is active. Agent-start hooks cover extension-injected continuations.
+				if (type === "input" || type === "before_agent_start" || type === "agent_start") {
+					runtime.finishCompaction("settled");
+				}
 				runtime.emit(type, event, replaceKeyFor(type, event));
 				if (type === "agent_settled") runtime.checkpoint();
 				if (type === "session_tree" || type === "session_compact") {
 					runtime.recover(type === "session_tree" ? "session_tree_changed" : "session_compacted");
 				}
+				if (type === "input") return { action: "continue" };
 			},
 		);
 	}
 	pi.on("session_shutdown", (event, ctx) => {
 		runtime.setContext(ctx);
+		runtime.clearCompaction();
 		runtime.emit("session_shutdown", event);
 		runtime.checkpoint();
 		runtime.shutdown();

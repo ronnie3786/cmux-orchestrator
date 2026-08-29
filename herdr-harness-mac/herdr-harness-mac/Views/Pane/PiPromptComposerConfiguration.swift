@@ -5,6 +5,7 @@ import Foundation
 struct PiPromptComposerConfiguration {
     let capabilities: PiSemanticCapabilities
     let phase: PiConversationPhase
+    let compactionActivity: PiCompactionActivity?
     let isConnected: Bool
     let isSubmitting: Bool
     let isAborting: Bool
@@ -22,8 +23,12 @@ struct PiPromptComposerConfiguration {
     let isSettingThinkingLevel: Bool
     let selectThinkingLevel: (PiThinkingLevel) async -> Bool
 
+    var isCompacting: Bool {
+        compactionActivity != nil
+    }
+
     var availableDispositions: [PiPromptDisposition] {
-        guard isConnected else { return [] }
+        guard isConnected, !isCompacting else { return [] }
         guard phase == .working else {
             return capabilities.prompt ? [.prompt] : []
         }
@@ -40,15 +45,15 @@ struct PiPromptComposerConfiguration {
     }
 
     var canAbort: Bool {
-        phase == .working && isConnected && capabilities.abort && !isAborting
+        phase == .working && isConnected && capabilities.abort && !isAborting && !isCompacting
     }
 
     var canSelectModel: Bool {
-        capabilities.setModel && isConnected && !isSettingModel
+        capabilities.setModel && isConnected && !isSettingModel && !isCompacting
     }
 
     var canSelectThinkingLevel: Bool {
-        capabilities.setThinkingLevel && isConnected && !isSettingThinkingLevel
+        capabilities.setThinkingLevel && isConnected && !isSettingThinkingLevel && !isCompacting
     }
 
     var supportsModelMenu: Bool {
@@ -67,6 +72,7 @@ struct PiPromptComposerConfiguration {
 
     func placeholder(for disposition: PiPromptDisposition) -> String {
         guard isConnected else { return "Pi is offline" }
+        if isCompacting { return "Pi is compacting context" }
         return switch disposition {
         case .prompt: "Message Pi"
         case .steer: "Steer this turn"
@@ -79,6 +85,7 @@ extension PiPromptComposerConfiguration: Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.capabilities == rhs.capabilities
             && lhs.phase == rhs.phase
+            && lhs.compactionActivity == rhs.compactionActivity
             && lhs.isConnected == rhs.isConnected
             && lhs.isSubmitting == rhs.isSubmitting
             && lhs.isAborting == rhs.isAborting

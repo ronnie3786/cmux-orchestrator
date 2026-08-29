@@ -1,7 +1,11 @@
-# Pi semantic bridge
+# Herdr Pi integration
 
-This Pi package adds a local, pane-specific semantic side channel to the stock
-interactive TUI. It does not replace or parse the terminal.
+This Pi package adds two integrations to the stock interactive TUI:
+
+- a local, pane-specific semantic side channel for Pi processes launched by
+  Herdr, without replacing or parsing the terminal;
+- `/send-to-herdr`, which hands a persisted Pi session running outside Herdr to
+  the local Herdr Harness and opens the resulting pane in the Mac app.
 
 For an isolated local test, launch Pi through Herdr with this directory as a
 temporary extension:
@@ -22,6 +26,50 @@ No global Pi settings are changed by either command. For durable installation,
 `pi install /absolute/path/to/cmux-orchestrator/pi-semantic-bridge` is
 idempotent because Pi records the local package path rather than copying or
 modifying another extension.
+
+## Send an existing session to Herdr
+
+The package must be installed in Pi's user settings so the command is present
+in sessions started outside Herdr. From a persisted Pi session, run:
+
+```text
+/send-to-herdr
+```
+
+Herdr resumes the exact session in workspace `Random`, tab `One-off Tasks`,
+reusing either by an exact name match and creating it when missing. The command
+first waits for Pi to become idle, then switches the source process to a blank
+placeholder session. That releases the original session file before Herdr
+starts it. The harness does not report success until the new pane's semantic
+bridge is connected and reports the exact requested session ID.
+
+After that readiness proof, the command opens `herdr://pane/<id>` and cleanly
+exits the source Pi process. A known harness rejection restores the original
+session locally and removes the blank placeholder. If a transport failure makes
+the outcome unknowable, the original stays closed so two Pi processes cannot
+write the same session file. The warning tells the user to check Herdr before
+resuming manually. Successful handoffs remove any exact, empty placeholder file
+after the source process exits, so it does not remain in Pi's session history.
+
+Explicit Herdr IDs override either default destination:
+
+```text
+/send-to-herdr --workspace-id <workspace-id>
+/send-to-herdr --tab-id <tab-id>
+/send-to-herdr --workspace-id <workspace-id> --tab-id <tab-id>
+```
+
+Use `/send-to-herdr --help` for the same usage summary. The command requires a
+persisted session and reads the local bearer token from the user-only
+`~/.config/herdr-harness/api-token` file. It connects to
+`http://127.0.0.1:9092` by default. A same-machine development harness on a
+different loopback origin can be selected with `HERDR_SEND_TO_HERDR_URL` (or
+the existing `HERDR_HARNESS_URL`). Redirects and non-loopback origins are
+rejected so the bearer token cannot be forwarded elsewhere.
+
+The command is deliberately a no-op inside an already Herdr-managed Pi pane.
+Existing Pi processes started before installation can load the command with
+`/reload`; newly started processes discover it automatically.
 
 The extension socket is derived from the complete Herdr socket path and a full
 SHA-256 of `HERDR_PANE_ID`, so multiple Pi panes coexist safely. The socket is

@@ -14,6 +14,7 @@ struct PiStreamCoalescerTests {
         let now = clock.now
         let bypasses: [PiStreamCoalescer.Trigger] = [
             .phaseTransition,
+            .compactionChange,
             .pendingInteraction,
             .turnBoundary,
             .turnCompletion,

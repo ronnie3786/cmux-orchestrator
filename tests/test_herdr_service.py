@@ -137,8 +137,10 @@ class FakeQuickSessionClient:
         self.socket_path = "/private/tmp/fake-herdr.sock"
         self.session = "quick-session-fixtures"
         self.requests = []
+        self.snapshot_calls = 0
 
     def snapshot(self):
+        self.snapshot_calls += 1
         return copy.deepcopy(self._snapshot)
 
     def request(self, method, params):
@@ -150,6 +152,40 @@ class FakeQuickSessionClient:
 
     def subscribe_forever(self, *_args, **_kwargs):
         return None
+
+
+class FakeReadyPiSemantic:
+    def __init__(self, session_id=None, *, connected=True):
+        self.session_id = session_id
+        self.connected = connected
+        self.start_calls = 0
+        self.capability_calls = []
+        self.snapshots = []
+
+    def start(self):
+        self.start_calls += 1
+
+    def sync_snapshot(self, snapshot):
+        self.snapshots.append(copy.deepcopy(snapshot))
+
+    def capability(self, pane_id):
+        self.capability_calls.append(pane_id)
+        return {"connected": self.connected, "session_id": self.session_id}
+
+
+class FakeFailingPiSemantic(FakeReadyPiSemantic):
+    def __init__(self, *, failures=1):
+        super().__init__()
+        self.failures = failures
+        self.stop_calls = 0
+
+    def start(self):
+        self.start_calls += 1
+        if self.start_calls <= self.failures:
+            raise RuntimeError("semantic start failed")
+
+    def stop(self):
+        self.stop_calls += 1
 
 
 class FakePush:
@@ -615,6 +651,25 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertFalse(health["herdr"]["connected"])
         self.assertTrue(health["cache"]["stale"])
 
+    def test_start_failure_resets_started_state_and_retries_semantic_start(self):
+        semantic = FakeFailingPiSemantic(failures=2)
+        service = HerdrService(
+            FakeQuickSessionClient(snapshot_with_status(), {}),
+            environ={},
+            pi_semantic=semantic,
+        )
+
+        for expected_calls in (1, 2):
+            with self.assertRaises(HerdrClientError) as context:
+                service.start()
+            self.assertEqual(context.exception.code, "quick_session_not_ready")
+            self.assertFalse(service._started)
+            self.assertEqual(semantic.start_calls, expected_calls)
+            self.assertEqual(semantic.stop_calls, expected_calls)
+
+        self.assertIsNone(service._event_thread)
+        self.assertIsNone(service._refresh_thread)
+
     def test_terminal_observer_slots_are_bounded_and_reusable(self):
         service = HerdrService(
             FakeClient([snapshot_with_status()]),
@@ -639,13 +694,13 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(client.requests, [("pane.focus", {"pane_id": "w1:p1"})])
         self.assertEqual(service.snapshot_response()["snapshot"]["protocol"], 19)
 
-    def test_quick_pi_session_creates_random_tasks_and_accepts_pane_result(self):
+    def test_quick_pi_session_creates_named_workspace_and_renames_root_tab(self):
         client = FakeQuickSessionClient(
-            {"workspaces": []},
+            {"workspaces": [], "tabs": [], "panes": []},
             {
                 "workspace.create": {
-                    "workspace": {"workspace_id": "w-random"},
-                    "pane": {"pane_id": "w-random:p1"},
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
                 }
             },
         )
@@ -660,7 +715,7 @@ class HerdrServiceTests(unittest.TestCase):
             client.requests[0],
             (
                 "workspace.create",
-                {"label": "random tasks", "cwd": os.path.expanduser("~"), "focus": True},
+                {"label": "Random", "cwd": str(Path.home().resolve()), "focus": True},
             ),
         )
         self.assertEqual(
@@ -668,34 +723,45 @@ class HerdrServiceTests(unittest.TestCase):
             {
                 "ok": True,
                 "workspace_id": "w-random",
+                "tab_id": "w-random:t1",
                 "pane_id": "w-random:p1",
                 "created_workspace": True,
+                "created_tab": True,
+                "created_pane": True,
                 "pi_extension_attached": True,
+                "pi_semantic_ready": False,
+                "request_id": None,
+                "session_id": None,
             },
         )
         self.assertEqual(
-            client.requests[1][1],
+            client.requests[1],
+            ("tab.rename", {"tab_id": "w-random:t1", "label": "One-off Tasks"}),
+        )
+        self.assertEqual(
+            client.requests[2][1],
             {
                 "pane_id": "w-random:p1",
-                "name": client.requests[1][1]["name"],
+                "name": client.requests[2][1]["name"],
                 "kind": "pi",
                 "args": ["--extension", extension_path],
                 "timeout_ms": 30000,
             },
         )
-        self.assertRegex(client.requests[1][1]["name"], r"^quick-pi-[a-z0-9]{8}$")
+        self.assertRegex(client.requests[2][1]["name"], r"^quick-pi-[a-z0-9]{8}$")
         self.assertEqual(
-            client.requests[2],
+            client.requests[3],
             ("pane.rename", {"pane_id": "w-random:p1", "label": "aug 18, 2:34 pm"}),
         )
+        self.assertEqual(client.snapshot_calls, 2)
 
     def test_quick_pi_session_accepts_root_pane_from_workspace_create(self):
         client = FakeQuickSessionClient(
-            {"workspaces": []},
+            {"workspaces": [], "tabs": [], "panes": []},
             {
                 "workspace.create": {
-                    "workspace": {"workspace_id": "w-random"},
-                    "root_pane": {"pane_id": "w-random:p1"},
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "root_pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
                 }
             },
         )
@@ -707,24 +773,32 @@ class HerdrServiceTests(unittest.TestCase):
         result = service.quick_pi_session("new session")
 
         self.assertEqual(result["pane_id"], "w-random:p1")
-        self.assertEqual(client.requests[1][1]["args"], [])
+        self.assertEqual(client.requests[2][1]["args"], [])
         self.assertFalse(result["pi_extension_attached"])
 
-    def test_quick_pi_session_reuses_case_insensitive_random_tasks_workspace(self):
+    def test_quick_pi_session_reuses_exact_named_workspace_and_tab_by_splitting(self):
         client = FakeQuickSessionClient(
             {
-                "workspaces": [
-                    {"workspace_id": "w-existing", "label": "  Random Tasks  "}
+                "workspaces": [{"workspace_id": "w-existing", "number": 2, "label": "Random"}],
+                "tabs": [
+                    {
+                        "tab_id": "w-existing:t1",
+                        "workspace_id": "w-existing",
+                        "number": 1,
+                        "label": "One-off Tasks",
+                    }
                 ],
                 "panes": [
                     {
                         "pane_id": "w-existing:p1",
                         "workspace_id": "w-existing",
+                        "tab_id": "w-existing:t1",
+                        "focused": True,
                         "foreground_cwd": os.path.expanduser("~"),
                     }
                 ],
             },
-            {"tab.create": {"tab": {"root_pane": {"pane_id": "w-existing:p2"}}}},
+            {"pane.split": {"pane": {"pane_id": "w-existing:p2", "tab_id": "w-existing:t1"}}},
         )
         service = HerdrService(
             client,
@@ -734,25 +808,29 @@ class HerdrServiceTests(unittest.TestCase):
         result = service.quick_pi_session("new session")
 
         self.assertNotIn("workspace.create", [method for method, _ in client.requests])
+        self.assertNotIn("tab.create", [method for method, _ in client.requests])
         self.assertEqual(
             client.requests[0],
             (
-                "tab.create",
+                "pane.split",
                 {
-                    "workspace_id": "w-existing",
+                    "target_pane_id": "w-existing:p1",
+                    "direction": "right",
                     "cwd": str(Path.home().resolve()),
                     "focus": True,
                 },
             ),
         )
         self.assertEqual(result["workspace_id"], "w-existing")
+        self.assertEqual(result["tab_id"], "w-existing:t1")
         self.assertEqual(result["pane_id"], "w-existing:p2")
         self.assertFalse(result["created_workspace"])
+        self.assertFalse(result["created_tab"])
 
     def test_quick_pi_session_uses_fresh_snapshot_when_cached_topology_is_stale(self):
         client = FakeQuickSessionClient(
-            {"workspaces": []},
-            {"tab.create": {"tab": {"root_pane": {"pane_id": "w-existing:p2"}}}},
+            {"workspaces": [], "tabs": [], "panes": []},
+            {"pane.split": {"pane": {"pane_id": "w-existing:p2", "tab_id": "w-existing:t1"}}},
         )
         service = HerdrService(
             client,
@@ -760,11 +838,19 @@ class HerdrServiceTests(unittest.TestCase):
         )
         service.refresh_snapshot()
         client._snapshot = {
-            "workspaces": [{"workspace_id": "w-existing", "label": "random tasks"}],
+            "workspaces": [{"workspace_id": "w-existing", "label": "Random"}],
+            "tabs": [
+                {
+                    "tab_id": "w-existing:t1",
+                    "workspace_id": "w-existing",
+                    "label": "One-off Tasks",
+                }
+            ],
             "panes": [
                 {
                     "pane_id": "w-existing:p1",
                     "workspace_id": "w-existing",
+                    "tab_id": "w-existing:t1",
                     "cwd": str(Path.home().resolve()),
                 }
             ],
@@ -778,15 +864,22 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(result["workspace_id"], "w-existing")
         self.assertFalse(result["created_workspace"])
 
-    def test_quick_pi_session_targets_an_explicit_workspace_and_cwd(self):
+    def test_quick_pi_session_creates_named_tab_in_explicit_workspace_and_cwd(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory) / "home"
             target = Path(directory) / "project"
             home.mkdir()
             target.mkdir()
             client = FakeQuickSessionClient(
-                {"workspaces": [{"workspace_id": "w-target", "label": "Project"}]},
-                {"tab.create": {"tab": {"root_pane": {"pane_id": "w-target:p2"}}}},
+                {"workspaces": [{"workspace_id": "w-target", "label": "Project"}], "tabs": [], "panes": []},
+                {
+                    "tab.create": {
+                        "tab": {
+                            "tab_id": "w-target:t2",
+                            "root_pane": {"pane_id": "w-target:p2", "tab_id": "w-target:t2"},
+                        }
+                    }
+                },
             )
             service = HerdrService(
                 client,
@@ -810,12 +903,46 @@ class HerdrServiceTests(unittest.TestCase):
                     "workspace_id": "w-target",
                     "cwd": str(target.resolve()),
                     "focus": True,
+                    "label": "One-off Tasks",
                 },
             ),
         )
         self.assertFalse(result["created_workspace"])
+        self.assertTrue(result["created_tab"])
+        self.assertEqual(result["tab_id"], "w-target:t2")
 
-    def test_quick_pi_session_does_not_reuse_a_mismatched_random_tasks_workspace(self):
+    def test_quick_pi_session_explicit_workspace_inherits_its_cwd_when_omitted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace_cwd = Path(directory) / "workspace"
+            workspace_cwd.mkdir()
+            client = FakeQuickSessionClient(
+                {
+                    "workspaces": [
+                        {"workspace_id": "w-target", "label": "Project", "cwd": str(workspace_cwd)}
+                    ],
+                    "tabs": [],
+                    "panes": [],
+                },
+                {
+                    "tab.create": {
+                        "tab": {
+                            "tab_id": "w-target:t2",
+                            "root_pane": {"pane_id": "w-target:p2", "tab_id": "w-target:t2"},
+                        }
+                    }
+                },
+            )
+            service = HerdrService(
+                client,
+                environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            )
+
+            service.quick_pi_session("new session", workspace_id="w-target")
+
+        tab_request = next(params for method, params in client.requests if method == "tab.create")
+        self.assertEqual(tab_request["cwd"], str(workspace_cwd.resolve()))
+
+    def test_quick_pi_session_name_match_is_exact_and_independent_of_cwd(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory) / "home"
             project = Path(directory) / "project"
@@ -824,8 +951,9 @@ class HerdrServiceTests(unittest.TestCase):
             client = FakeQuickSessionClient(
                 {
                     "workspaces": [
-                        {"workspace_id": "w-project", "label": "random tasks"}
+                        {"workspace_id": "w-project", "label": "random"}
                     ],
+                    "tabs": [],
                     "panes": [
                         {
                             "pane_id": "w-project:p1",
@@ -836,8 +964,8 @@ class HerdrServiceTests(unittest.TestCase):
                 },
                 {
                     "workspace.create": {
-                        "workspace": {"workspace_id": "w-home"},
-                        "pane": {"pane_id": "w-home:p1"},
+                        "workspace": {"workspace_id": "w-home", "active_tab_id": "w-home:t1"},
+                        "pane": {"pane_id": "w-home:p1", "tab_id": "w-home:t1"},
                     }
                 },
             )
@@ -856,13 +984,69 @@ class HerdrServiceTests(unittest.TestCase):
             (
                 "workspace.create",
                 {
-                    "label": "random tasks",
+                    "label": "Random",
                     "cwd": str(home.resolve()),
                     "focus": True,
                 },
             ),
         )
         self.assertTrue(result["created_workspace"])
+
+        exact_client = FakeQuickSessionClient(
+            {
+                "workspaces": [{"workspace_id": "w-project", "label": "Random"}],
+                "tabs": [],
+                "panes": [
+                    {
+                        "pane_id": "w-project:p1",
+                        "workspace_id": "w-project",
+                        "tab_id": "w-project:t1",
+                        "cwd": str(project),
+                    }
+                ],
+            },
+            {
+                "tab.create": {
+                    "tab": {
+                        "tab_id": "w-project:t2",
+                        "root_pane": {"pane_id": "w-project:p2", "tab_id": "w-project:t2"},
+                    }
+                }
+            },
+        )
+        exact_service = HerdrService(
+            exact_client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+        )
+        exact_result = exact_service.quick_pi_session("new session")
+        self.assertEqual(exact_result["workspace_id"], "w-project")
+        self.assertNotIn("workspace.create", [method for method, _ in exact_client.requests])
+
+    def test_quick_pi_session_explicit_tab_infers_workspace_and_validates_pair(self):
+        snapshot = {
+            "workspaces": [{"workspace_id": "w-target", "label": "Project"}],
+            "tabs": [{"tab_id": "w-target:t1", "workspace_id": "w-target", "label": "Build"}],
+            "panes": [
+                {"pane_id": "w-target:p1", "workspace_id": "w-target", "tab_id": "w-target:t1"}
+            ],
+        }
+        client = FakeQuickSessionClient(
+            snapshot,
+            {"pane.split": {"pane": {"pane_id": "w-target:p2", "tab_id": "w-target:t1"}}},
+        )
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        result = service.quick_pi_session("continued session", tab_id="w-target:t1")
+
+        self.assertEqual(result["workspace_id"], "w-target")
+        self.assertEqual(result["tab_id"], "w-target:t1")
+        with self.assertRaises(HerdrClientError) as context:
+            service.quick_pi_session(
+                "bad target",
+                workspace_id="w-other",
+                tab_id="w-target:t1",
+            )
+        self.assertEqual(context.exception.code, "quick_session_target_conflict")
 
     def test_quick_pi_session_rejects_an_explicit_missing_workspace(self):
         service = HerdrService(
@@ -877,11 +1061,11 @@ class HerdrServiceTests(unittest.TestCase):
 
     def test_quick_pi_session_ignores_pane_rename_failure(self):
         client = FakeQuickSessionClient(
-            {"workspaces": []},
+            {"workspaces": [], "tabs": [], "panes": []},
             {
                 "workspace.create": {
-                    "workspace": {"workspace_id": "w-random"},
-                    "pane": {"pane_id": "w-random:p1"},
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
                 },
                 "pane.rename": HerdrClientError("rename failed", code="herdr_unavailable"),
             },
@@ -895,6 +1079,323 @@ class HerdrServiceTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(client.requests[-1], ("pane.rename", {"pane_id": "w-random:p1", "label": "new session"}))
+
+    def test_quick_pi_session_rolls_back_created_workspace_when_tab_rename_fails(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [], "tabs": [], "panes": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
+                },
+                "tab.rename": HerdrClientError("rename failed", code="herdr_unavailable"),
+            },
+        )
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        with self.assertRaises(HerdrClientError):
+            service.quick_pi_session("new session")
+
+        self.assertIn(("workspace.close", {"workspace_id": "w-random"}), client.requests)
+        self.assertNotIn("agent.start", [method for method, _ in client.requests])
+
+    def test_quick_pi_session_rolls_back_split_pane_when_agent_start_fails(self):
+        snapshot = {
+            "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+            "tabs": [
+                {"tab_id": "w-random:t1", "workspace_id": "w-random", "label": "One-off Tasks"}
+            ],
+            "panes": [
+                {"pane_id": "w-random:p1", "workspace_id": "w-random", "tab_id": "w-random:t1"}
+            ],
+        }
+        client = FakeQuickSessionClient(
+            snapshot,
+            {
+                "pane.split": {"pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}},
+                "agent.start": HerdrClientError("start failed", code="herdr_unavailable"),
+            },
+        )
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        with self.assertRaises(HerdrClientError):
+            service.quick_pi_session("new session")
+
+        self.assertIn(("pane.close", {"pane_id": "w-random:p2"}), client.requests)
+
+    def test_quick_pi_session_rejects_ambiguous_snapshot_diff_before_starting_pi(self):
+        snapshot = {
+            "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+            "tabs": [
+                {"tab_id": "w-random:t1", "workspace_id": "w-random", "label": "One-off Tasks"}
+            ],
+            "panes": [
+                {"pane_id": "w-random:p1", "workspace_id": "w-random", "tab_id": "w-random:t1"}
+            ],
+        }
+        client = FakeQuickSessionClient(snapshot, {})
+
+        def ambiguous_split(_params):
+            client._snapshot["panes"].extend(
+                [
+                    {
+                        "pane_id": "w-random:p2",
+                        "workspace_id": "w-random",
+                        "tab_id": "w-random:t1",
+                    },
+                    {
+                        "pane_id": "w-random:p3",
+                        "workspace_id": "w-random",
+                        "tab_id": "w-random:t1",
+                    },
+                ]
+            )
+            return {"ok": True}
+
+        client.responses["pane.split"] = ambiguous_split
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        with self.assertRaises(HerdrClientError) as context:
+            service.quick_pi_session("new session")
+
+        self.assertEqual(context.exception.code, "quick_session_placement_conflict")
+        self.assertNotIn("agent.start", [method for method, _ in client.requests])
+        self.assertNotIn("pane.close", [method for method, _ in client.requests])
+
+    def test_quick_pi_session_rolls_back_created_tab_when_agent_start_fails(self):
+        snapshot = {
+            "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+            "tabs": [],
+            "panes": [],
+        }
+        client = FakeQuickSessionClient(
+            snapshot,
+            {
+                "tab.create": {
+                    "tab": {
+                        "tab_id": "w-random:t2",
+                        "root_pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t2"},
+                    }
+                },
+                "agent.start": HerdrClientError("start failed", code="herdr_unavailable"),
+            },
+        )
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        with self.assertRaises(HerdrClientError):
+            service.quick_pi_session("new session")
+
+        self.assertIn(("tab.close", {"tab_id": "w-random:t2"}), client.requests)
+        self.assertNotIn("workspace.close", [method for method, _ in client.requests])
+
+    def test_quick_pi_session_request_id_replays_result_and_rejects_conflicts(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [], "tabs": [], "panes": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
+                }
+            },
+        )
+        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+
+        first = service.quick_pi_session("new session", request_id="request-1")
+        second = service.quick_pi_session("new session", request_id="request-1")
+
+        self.assertEqual(first, second)
+        self.assertEqual(sum(method == "agent.start" for method, _ in client.requests), 1)
+        self.assertEqual(client.snapshot_calls, 2)
+        with self.assertRaises(HerdrClientError) as context:
+            service.quick_pi_session("different", request_id="request-1")
+        self.assertEqual(context.exception.code, "quick_session_request_conflict")
+
+    def test_quick_pi_session_rejects_session_id_without_file(self):
+        client = FakeQuickSessionClient({"workspaces": [], "tabs": [], "panes": []}, {})
+        service = HerdrService(client, environ={})
+
+        with self.assertRaises(HerdrClientError) as context:
+            service.quick_pi_session("continued", session_id="session-1")
+
+        self.assertEqual(context.exception.code, "session_file_required")
+        self.assertEqual(client.snapshot_calls, 0)
+        self.assertEqual(client.requests, [])
+
+    def test_quick_pi_session_waits_for_exact_resumed_session_before_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_file = Path(directory) / "session.jsonl"
+            session_file.write_text(
+                json.dumps({"type": "session", "id": "session-1", "cwd": directory}) + "\n",
+                encoding="utf-8",
+            )
+            snapshot = {
+                "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+                "tabs": [
+                    {
+                        "tab_id": "w-random:t1",
+                        "workspace_id": "w-random",
+                        "label": "One-off Tasks",
+                    }
+                ],
+                "panes": [
+                    {
+                        "pane_id": "w-random:p1",
+                        "workspace_id": "w-random",
+                        "tab_id": "w-random:t1",
+                    }
+                ],
+            }
+            client = FakeQuickSessionClient(
+                snapshot,
+                {"pane.split": {"pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}}},
+            )
+            semantic = FakeReadyPiSemantic("session-1")
+            service = HerdrService(
+                client,
+                environ={"HERDR_HARNESS_PI_EXTENSION_PATH": directory},
+                pi_semantic=semantic,
+            )
+
+            result = service.quick_pi_session(
+                "continued",
+                session_file=str(session_file),
+                session_id="session-1",
+                request_id="request-1",
+            )
+
+        self.assertTrue(result["pi_semantic_ready"])
+        self.assertEqual(result["session_id"], "session-1")
+        self.assertEqual(semantic.start_calls, 1)
+        self.assertEqual(semantic.capability_calls, ["w-random:p2"])
+
+    def test_quick_pi_session_rolls_back_when_resumed_identity_is_wrong(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_file = Path(directory) / "session.jsonl"
+            session_file.write_text(
+                json.dumps({"type": "session", "id": "session-1", "cwd": directory}) + "\n",
+                encoding="utf-8",
+            )
+            snapshot = {
+                "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+                "tabs": [
+                    {
+                        "tab_id": "w-random:t1",
+                        "workspace_id": "w-random",
+                        "label": "One-off Tasks",
+                    }
+                ],
+                "panes": [
+                    {
+                        "pane_id": "w-random:p1",
+                        "workspace_id": "w-random",
+                        "tab_id": "w-random:t1",
+                    }
+                ],
+            }
+            client = FakeQuickSessionClient(
+                snapshot,
+                {"pane.split": {"pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}}},
+            )
+            service = HerdrService(
+                client,
+                environ={"HERDR_HARNESS_PI_EXTENSION_PATH": directory},
+                pi_semantic=FakeReadyPiSemantic("different-session"),
+            )
+
+            with self.assertRaises(HerdrClientError) as context:
+                service.quick_pi_session(
+                    "continued",
+                    session_file=str(session_file),
+                    session_id="session-1",
+                )
+
+        self.assertEqual(context.exception.code, "quick_session_identity_mismatch")
+        self.assertIn(("pane.close", {"pane_id": "w-random:p2"}), client.requests)
+
+    def test_quick_pi_session_rolls_back_when_semantic_manager_cannot_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_file = Path(directory) / "session.jsonl"
+            session_file.write_text(
+                json.dumps({"type": "session", "id": "session-1", "cwd": directory}) + "\n",
+                encoding="utf-8",
+            )
+            snapshot = {
+                "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+                "tabs": [
+                    {
+                        "tab_id": "w-random:t1",
+                        "workspace_id": "w-random",
+                        "label": "One-off Tasks",
+                    }
+                ],
+                "panes": [
+                    {
+                        "pane_id": "w-random:p1",
+                        "workspace_id": "w-random",
+                        "tab_id": "w-random:t1",
+                    }
+                ],
+            }
+            client = FakeQuickSessionClient(
+                snapshot,
+                {"pane.split": {"pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}}},
+            )
+            service = HerdrService(
+                client,
+                environ={"HERDR_HARNESS_PI_EXTENSION_PATH": directory},
+                pi_semantic=FakeFailingPiSemantic(),
+            )
+
+            with self.assertRaises(HerdrClientError) as context:
+                service.quick_pi_session("continued", session_file=str(session_file))
+
+        self.assertEqual(context.exception.code, "quick_session_not_ready")
+        self.assertIn(("pane.close", {"pane_id": "w-random:p2"}), client.requests)
+
+    def test_quick_pi_session_reports_unknown_outcome_when_rollback_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_file = Path(directory) / "session.jsonl"
+            session_file.write_text(
+                json.dumps({"type": "session", "id": "session-1", "cwd": directory}) + "\n",
+                encoding="utf-8",
+            )
+            snapshot = {
+                "workspaces": [{"workspace_id": "w-random", "label": "Random"}],
+                "tabs": [
+                    {
+                        "tab_id": "w-random:t1",
+                        "workspace_id": "w-random",
+                        "label": "One-off Tasks",
+                    }
+                ],
+                "panes": [
+                    {
+                        "pane_id": "w-random:p1",
+                        "workspace_id": "w-random",
+                        "tab_id": "w-random:t1",
+                    }
+                ],
+            }
+            client = FakeQuickSessionClient(
+                snapshot,
+                {
+                    "pane.split": {
+                        "pane": {"pane_id": "w-random:p2", "tab_id": "w-random:t1"}
+                    },
+                    "pane.close": HerdrClientError("close timed out", code="herdr_timeout"),
+                },
+            )
+            service = HerdrService(
+                client,
+                environ={"HERDR_HARNESS_PI_EXTENSION_PATH": directory},
+                pi_semantic=FakeReadyPiSemantic("different-session"),
+            )
+
+            with self.assertRaises(HerdrClientError) as context:
+                service.quick_pi_session("continued", session_file=str(session_file))
+
+        self.assertEqual(context.exception.code, "quick_session_outcome_unknown")
+        self.assertIn(("pane.close", {"pane_id": "w-random:p2"}), client.requests)
 
     def test_default_pi_extension_path_is_detected_when_present(self):
         expected_path = Path(herdr_harness.__file__).resolve().parent.parent / "pi-semantic-bridge"

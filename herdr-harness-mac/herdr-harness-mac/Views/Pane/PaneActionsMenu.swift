@@ -5,6 +5,7 @@ struct PaneActionsMenu: View {
     let pane: HerdrPane
     @Binding var selectedMode: PaneDetailMode
     var gitIsAvailable = false
+    var isPiCompacting = false
     @State private var isConfirmingClose = false
     @State private var isConfirmingEndPiAndClose = false
     @State private var isRenaming = false
@@ -103,26 +104,37 @@ struct PaneActionsMenu: View {
                 Task { await model.compactPiChat(in: pane) }
             }
             .accessibilityIdentifier("pane-action-compact-pi-chat")
-            .disabled(!model.canControl(machineID: pane.machineID))
+            .disabled(piSessionMutationIsDisabled)
 
             Button("New Pi chat", systemImage: "plus.bubble") {
                 Task { await model.startNewPiChat(in: pane) }
             }
             .accessibilityIdentifier("pane-action-new-pi-chat")
-            .disabled(!model.canControl(machineID: pane.machineID))
+            .disabled(piSessionMutationIsDisabled)
 
             Button("End Pi session", systemImage: "stop.circle.fill", role: .destructive) {
                 Task { await model.endPiSession(in: pane) }
             }
             .accessibilityIdentifier("pane-action-end-pi-session")
-            .disabled(!model.canControl(machineID: pane.machineID))
+            .disabled(piSessionMutationIsDisabled)
 
             Button("End Pi & close pane", systemImage: "xmark.rectangle", role: .destructive) {
                 isConfirmingEndPiAndClose = true
             }
             .accessibilityIdentifier("pane-action-end-pi-and-close-pane")
-            .disabled(!model.canControl(machineID: pane.machineID))
+            .disabled(piSessionMutationIsDisabled)
         }
+    }
+
+    private var piSessionMutationIsDisabled: Bool {
+        !Self.piSessionMutationsEnabled(
+            canControl: model.canControl(machineID: pane.machineID),
+            isCompacting: isPiCompacting
+        )
+    }
+
+    static func piSessionMutationsEnabled(canControl: Bool, isCompacting: Bool) -> Bool {
+        canControl && !isCompacting
     }
 
     @ViewBuilder

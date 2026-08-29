@@ -25,7 +25,7 @@ from .cleanup import CleanupManager
 from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
-from .pi_semantic import PiSemanticManager
+from .pi_semantic import PiSemanticError, PiSemanticManager
 from .panes_seen import PaneFirstSeenStore
 from .push_notifications import APNsManager
 from .stars import StarStore
@@ -50,6 +50,10 @@ GLOBAL_PI_EVENT_TYPES = frozenset(
 )
 _VOLATILE_SNAPSHOT_KEYS = frozenset({"generated_at", "generatedAt", "updated_at", "updatedAt"})
 _STATUS_ROLLUP_PRECEDENCE = ("blocked", "done", "working", "idle", "unknown")
+QUICK_PI_WORKSPACE_LABEL = "Random"
+QUICK_PI_TAB_LABEL = "One-off Tasks"
+QUICK_SESSION_IDEMPOTENCY_TTL_SECONDS = 10 * 60
+QUICK_SESSION_READY_TIMEOUT_MS = 15_000
 
 
 def _find_pane_id(value: Any) -> Optional[str]:
@@ -140,6 +144,21 @@ class HerdrService:
         self._agent_runs = agent_runs
         self._lock = threading.RLock()
         self._quick_session_lock = threading.Lock()
+        self._quick_session_results: dict[str, tuple[float, str, dict]] = {}
+        self._quick_session_idempotency_ttl = _bounded_environment_int(
+            self.environ,
+            "HERDR_HARNESS_QUICK_SESSION_IDEMPOTENCY_TTL_SECONDS",
+            QUICK_SESSION_IDEMPOTENCY_TTL_SECONDS,
+            minimum=30,
+            maximum=24 * 60 * 60,
+        )
+        self._quick_session_ready_timeout = _bounded_environment_int(
+            self.environ,
+            "HERDR_HARNESS_QUICK_SESSION_READY_TIMEOUT_MS",
+            QUICK_SESSION_READY_TIMEOUT_MS,
+            minimum=100,
+            maximum=60_000,
+        ) / 1000.0
         self._agent_promotion_lock = threading.Lock()
         self._snapshot: Optional[dict] = None
         self._snapshot_fingerprint: Optional[str] = None
@@ -248,7 +267,19 @@ class HerdrService:
             self.refresh_snapshot(force=True)
         except HerdrClientError:
             pass
-        self.pi_semantic.start()
+        try:
+            self.pi_semantic.start()
+        except Exception as exc:
+            try:
+                self.pi_semantic.stop()
+            except Exception:
+                pass
+            with self._lock:
+                self._started = False
+            raise HerdrClientError(
+                "The Pi semantic bridge could not start",
+                code="quick_session_not_ready",
+            ) from exc
         self._event_thread = threading.Thread(
             target=self._event_loop,
             name="herdr-events",
@@ -1303,13 +1334,17 @@ class HerdrService:
         payload["authRequired"] = bool(self.environ.get("HERDR_HARNESS_API_TOKEN"))
         return payload
 
-    def invoke(self, method: str, params: dict) -> dict:
+    def _request_native(self, method: str, params: dict) -> Any:
         try:
             result = self.client.request(method, params)
         except HerdrClientError as exc:
             self._record_request_error(exc)
             raise
         self._record_request_success()
+        return result
+
+    def invoke(self, method: str, params: dict) -> dict:
+        result = self._request_native(method, params)
         try:
             self.refresh_snapshot()
         except HerdrClientError:
@@ -1392,19 +1427,388 @@ class HerdrService:
                     return found
         return None
 
+    @staticmethod
+    def _quick_record_sort_key(item: dict, identifier_key: str) -> tuple[int, str]:
+        try:
+            number = int(item.get("number"))
+        except (TypeError, ValueError):
+            number = 2**31 - 1
+        return number, str(item.get(identifier_key) or "")
+
+    @classmethod
+    def _quick_exact_workspace(cls, snapshot: dict, label: str) -> Optional[dict]:
+        matches = [
+            item
+            for item in snapshot.get("workspaces", [])
+            if isinstance(item, dict) and item.get("label") == label and item.get("workspace_id")
+        ]
+        return min(matches, key=lambda item: cls._quick_record_sort_key(item, "workspace_id"), default=None)
+
+    @classmethod
+    def _quick_exact_tab(cls, snapshot: dict, workspace_id: str, label: str) -> Optional[dict]:
+        matches = [
+            item
+            for item in snapshot.get("tabs", [])
+            if isinstance(item, dict)
+            and str(item.get("workspace_id") or "") == workspace_id
+            and item.get("label") == label
+            and item.get("tab_id")
+        ]
+        return min(matches, key=lambda item: cls._quick_record_sort_key(item, "tab_id"), default=None)
+
+    @classmethod
+    def _quick_anchor_pane(cls, snapshot: dict, tab_id: str) -> Optional[dict]:
+        matches = [
+            item
+            for item in snapshot.get("panes", [])
+            if isinstance(item, dict)
+            and str(item.get("tab_id") or "") == tab_id
+            and item.get("pane_id")
+        ]
+        return min(
+            matches,
+            key=lambda item: (not bool(item.get("focused")), str(item.get("pane_id") or "")),
+            default=None,
+        )
+
+    @staticmethod
+    def _quick_unique_created_candidate(candidates: list[dict], object_name: str) -> Optional[dict]:
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            raise HerdrClientError(
+                f"A concurrent topology change made the new {object_name} ambiguous",
+                code="quick_session_placement_conflict",
+            )
+        return None
+
+    def _quick_recovery_snapshot(self) -> dict:
+        return self.refresh_snapshot(force=True)
+
+    def _quick_created_workspace_ids(
+        self,
+        raw: object,
+        *,
+        before_workspace_ids: set[str],
+        before_pane_ids: set[str],
+        desired_label: str,
+    ) -> tuple[str, str, str]:
+        workspace_id = self._nested_identifier(raw, "workspace_id")
+        pane_id = _find_pane_id(raw)
+        tab_id = self._nested_identifier(raw, "tab_id")
+        if isinstance(raw, dict):
+            workspace = raw.get("workspace")
+            if isinstance(workspace, dict):
+                workspace_id = str(workspace.get("workspace_id") or workspace_id or "") or None
+                tab_id = str(workspace.get("active_tab_id") or tab_id or "") or None
+            pane = raw.get("pane") or raw.get("root_pane")
+            if isinstance(pane, dict):
+                pane_id = str(pane.get("pane_id") or pane_id or "") or None
+                tab_id = str(pane.get("tab_id") or tab_id or "") or None
+
+        if workspace_id and pane_id and tab_id:
+            return workspace_id, tab_id, pane_id
+
+        snapshot = self._quick_recovery_snapshot()
+        if not workspace_id:
+            candidates = [
+                item
+                for item in snapshot.get("workspaces", [])
+                if isinstance(item, dict)
+                and item.get("label") == desired_label
+                and str(item.get("workspace_id") or "") not in before_workspace_ids
+            ]
+            selected = self._quick_unique_created_candidate(candidates, "workspace")
+            if selected is not None:
+                workspace_id = str(selected.get("workspace_id") or "") or None
+                tab_id = str(selected.get("active_tab_id") or tab_id or "") or None
+        if workspace_id and not pane_id:
+            candidates = [
+                item
+                for item in snapshot.get("panes", [])
+                if isinstance(item, dict)
+                and str(item.get("workspace_id") or "") == workspace_id
+                and (not tab_id or str(item.get("tab_id") or "") == tab_id)
+                and str(item.get("pane_id") or "") not in before_pane_ids
+            ]
+            selected = self._quick_unique_created_candidate(candidates, "workspace pane")
+            if selected is not None:
+                pane_id = str(selected.get("pane_id") or "") or None
+                tab_id = str(selected.get("tab_id") or tab_id or "") or None
+        if workspace_id and not tab_id:
+            workspace = next(
+                (
+                    item
+                    for item in snapshot.get("workspaces", [])
+                    if isinstance(item, dict) and str(item.get("workspace_id") or "") == workspace_id
+                ),
+                None,
+            )
+            if workspace is not None:
+                tab_id = str(workspace.get("active_tab_id") or "") or None
+        if not workspace_id or not pane_id or not tab_id:
+            raise HerdrClientError(
+                "workspace.create did not return a workspace, tab, and pane",
+                code="invalid_herdr_response",
+            )
+        return workspace_id, tab_id, pane_id
+
+    def _quick_created_tab_ids(
+        self,
+        raw: object,
+        *,
+        workspace_id: str,
+        before_tab_ids: set[str],
+        before_pane_ids: set[str],
+    ) -> tuple[str, str]:
+        tab_id = self._nested_identifier(raw, "tab_id")
+        pane_id = _find_pane_id(raw)
+        if isinstance(raw, dict):
+            tab = raw.get("tab")
+            if isinstance(tab, dict):
+                tab_id = str(tab.get("tab_id") or tab_id or "") or None
+                pane = tab.get("root_pane")
+                if isinstance(pane, dict):
+                    pane_id = str(pane.get("pane_id") or pane_id or "") or None
+            pane = raw.get("pane") or raw.get("root_pane")
+            if isinstance(pane, dict):
+                pane_id = str(pane.get("pane_id") or pane_id or "") or None
+                tab_id = str(pane.get("tab_id") or tab_id or "") or None
+
+        if tab_id and pane_id:
+            return tab_id, pane_id
+
+        snapshot = self._quick_recovery_snapshot()
+        if not tab_id:
+            candidates = [
+                item
+                for item in snapshot.get("tabs", [])
+                if isinstance(item, dict)
+                and str(item.get("workspace_id") or "") == workspace_id
+                and str(item.get("tab_id") or "") not in before_tab_ids
+            ]
+            selected = self._quick_unique_created_candidate(candidates, "tab")
+            if selected is not None:
+                tab_id = str(selected.get("tab_id") or "") or None
+        if tab_id and not pane_id:
+            candidates = [
+                item
+                for item in snapshot.get("panes", [])
+                if isinstance(item, dict)
+                and str(item.get("tab_id") or "") == tab_id
+                and str(item.get("pane_id") or "") not in before_pane_ids
+            ]
+            selected = self._quick_unique_created_candidate(candidates, "tab pane")
+            if selected is not None:
+                pane_id = str(selected.get("pane_id") or "") or None
+        if not tab_id or not pane_id:
+            raise HerdrClientError(
+                "tab.create did not return a tab and pane",
+                code="invalid_herdr_response",
+            )
+        return tab_id, pane_id
+
+    def _quick_split_pane_id(
+        self,
+        raw: object,
+        *,
+        tab_id: str,
+        before_pane_ids: set[str],
+    ) -> str:
+        pane_id = _find_pane_id(raw)
+        if pane_id:
+            return pane_id
+        snapshot = self._quick_recovery_snapshot()
+        candidates = [
+            item
+            for item in snapshot.get("panes", [])
+            if isinstance(item, dict)
+            and str(item.get("tab_id") or "") == tab_id
+            and str(item.get("pane_id") or "") not in before_pane_ids
+        ]
+        selected = self._quick_unique_created_candidate(candidates, "split pane")
+        pane_id = str(selected.get("pane_id") or "") if selected is not None else ""
+        if not pane_id:
+            raise HerdrClientError(
+                "pane.split did not return a pane",
+                code="invalid_herdr_response",
+            )
+        return pane_id
+
+    def _quick_cached_result(self, request_id: Optional[str], signature: str) -> Optional[dict]:
+        if request_id is None:
+            return None
+        now = time.monotonic()
+        self._quick_session_results = {
+            key: value for key, value in self._quick_session_results.items() if value[0] > now
+        }
+        cached = self._quick_session_results.get(request_id)
+        if cached is None:
+            return None
+        _, cached_signature, result = cached
+        if cached_signature != signature:
+            raise HerdrClientError(
+                "requestId was already used for a different quick session request",
+                code="quick_session_request_conflict",
+            )
+        return copy.deepcopy(result)
+
+    def _quick_store_result(self, request_id: Optional[str], signature: str, result: dict) -> None:
+        if request_id is None:
+            return
+        self._quick_session_results[request_id] = (
+            time.monotonic() + self._quick_session_idempotency_ttl,
+            signature,
+            copy.deepcopy(result),
+        )
+
+    @staticmethod
+    def _quick_session_file_id(session_path: Path) -> str:
+        try:
+            with session_path.open("rb") as handle:
+                raw_header = handle.readline(64 * 1024 + 1)
+        except OSError as exc:
+            raise HerdrClientError(
+                "Pi session file is unavailable",
+                code="agent_run_session_missing",
+            ) from exc
+        if not raw_header or len(raw_header) > 64 * 1024 or not raw_header.endswith(b"\n"):
+            raise HerdrClientError(
+                "Pi session file has an invalid header",
+                code="invalid_pi_session_file",
+            )
+        try:
+            header = json.loads(raw_header.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HerdrClientError(
+                "Pi session file has an invalid header",
+                code="invalid_pi_session_file",
+            ) from exc
+        actual_session_id = header.get("id") if isinstance(header, dict) else None
+        if (
+            not isinstance(header, dict)
+            or header.get("type") != "session"
+            or not isinstance(actual_session_id, str)
+            or not actual_session_id
+            or len(actual_session_id) > 256
+            or "\x00" in actual_session_id
+        ):
+            raise HerdrClientError(
+                "Pi session file has an invalid header",
+                code="invalid_pi_session_file",
+            )
+        return actual_session_id
+
+    def _quick_wait_for_pi_session(self, pane_id: str, expected_session_id: str) -> None:
+        """Wait until the bridge proves the resumed pane owns the expected session."""
+
+        # ``start`` is idempotent. Calling it here also makes direct service use
+        # honor the same readiness contract as the long-running HTTP server.
+        try:
+            self.pi_semantic.start()
+        except Exception as exc:
+            raise HerdrClientError(
+                "The new Pi pane could not start its semantic bridge",
+                code="quick_session_not_ready",
+            ) from exc
+        deadline = time.monotonic() + self._quick_session_ready_timeout
+        last_session_id: Optional[str] = None
+        while True:
+            try:
+                self.refresh_snapshot(force=True)
+            except HerdrClientError:
+                pass
+            except Exception as exc:
+                raise HerdrClientError(
+                    "The new Pi pane could not be verified",
+                    code="quick_session_not_ready",
+                ) from exc
+            try:
+                capability = self.pi_semantic.capability(pane_id)
+            except PiSemanticError:
+                capability = {}
+            except Exception as exc:
+                raise HerdrClientError(
+                    "The new Pi pane could not be verified",
+                    code="quick_session_not_ready",
+                ) from exc
+            if not isinstance(capability, dict):
+                capability = {}
+            observed = capability.get("session_id") if isinstance(capability, dict) else None
+            last_session_id = str(observed) if isinstance(observed, str) and observed else None
+            if capability.get("connected") is True:
+                if last_session_id == expected_session_id:
+                    return
+                if last_session_id is not None:
+                    raise HerdrClientError(
+                        "The new Pi pane resumed a different session",
+                        code="quick_session_identity_mismatch",
+                    )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                detail = (
+                    "The new Pi pane did not connect its semantic bridge"
+                    if last_session_id is None
+                    else "The new Pi pane did not confirm the requested session"
+                )
+                raise HerdrClientError(detail, code="quick_session_not_ready")
+            time.sleep(min(0.05, remaining))
+
     def quick_pi_session(
         self,
         label: str,
         *,
         workspace_id: Optional[str] = None,
+        tab_id: Optional[str] = None,
         cwd: Optional[str] = None,
         session_file: Optional[str] = None,
+        session_id: Optional[str] = None,
+        request_id: Optional[str] = None,
         workspace_label: Optional[str] = None,
+        tab_label: Optional[str] = None,
+        reuse_named_tab: bool = True,
     ) -> dict:
         """Create an interactive Pi pane, optionally resuming an exact session."""
 
         with self._quick_session_lock:
-            snapshot = self.refresh_snapshot()
+            if request_id is not None and (
+                not isinstance(request_id, str) or not request_id or len(request_id) > 128
+            ):
+                raise HerdrClientError("requestId is invalid", code="invalid_request_id")
+            signature = json.dumps(
+                {
+                    "label": label,
+                    "workspace_id": workspace_id,
+                    "tab_id": tab_id,
+                    "cwd": cwd,
+                    "session_file": session_file,
+                    "session_id": session_id,
+                    "workspace_label": workspace_label,
+                    "tab_label": tab_label,
+                    "reuse_named_tab": reuse_named_tab,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            cached = self._quick_cached_result(request_id, signature)
+            if cached is not None:
+                return cached
+
+            if session_id is not None and (
+                not isinstance(session_id, str)
+                or not session_id
+                or len(session_id) > 256
+                or "\x00" in session_id
+            ):
+                raise HerdrClientError("sessionId is invalid", code="invalid_session_id")
+            if session_id is not None and session_file is None:
+                raise HerdrClientError(
+                    "sessionId requires sessionFile",
+                    code="session_file_required",
+                )
+
+            snapshot = self.refresh_snapshot(force=True)
             requested_cwd = self._canonical_directory(cwd) if cwd is not None else None
             if cwd is not None and requested_cwd is None:
                 raise HerdrClientError(
@@ -1414,6 +1818,7 @@ class HerdrService:
             extension_args = self.pi_extension_args()
             pi_extension_attached = bool(extension_args)
             agent_args = list(extension_args)
+            expected_session_id: Optional[str] = None
             if session_file is not None:
                 try:
                     session_path = Path(session_file).expanduser().resolve()
@@ -1427,12 +1832,38 @@ class HerdrService:
                         "Pi session file is unavailable",
                         code="agent_run_session_missing",
                     )
+                expected_session_id = self._quick_session_file_id(session_path)
+                if session_id is not None and session_id != expected_session_id:
+                    raise HerdrClientError(
+                        "sessionId does not match the Pi session file",
+                        code="quick_session_identity_mismatch",
+                    )
+                session_id = expected_session_id
                 agent_args = ["--session", str(session_path), *extension_args]
 
             workspaces = [
                 item for item in snapshot.get("workspaces", []) if isinstance(item, dict)
             ]
+            tabs = [item for item in snapshot.get("tabs", []) if isinstance(item, dict)]
             existing_workspace: Optional[dict] = None
+            existing_tab: Optional[dict] = None
+            explicit_destination = workspace_id is not None or tab_id is not None
+
+            if tab_id is not None:
+                existing_tab = next(
+                    (item for item in tabs if str(item.get("tab_id") or "") == tab_id),
+                    None,
+                )
+                if existing_tab is None:
+                    raise HerdrClientError("Tab not found", code="tab_not_found")
+                tab_workspace_id = str(existing_tab.get("workspace_id") or "")
+                if workspace_id is not None and workspace_id != tab_workspace_id:
+                    raise HerdrClientError(
+                        "Tab does not belong to the requested workspace",
+                        code="quick_session_target_conflict",
+                    )
+                workspace_id = tab_workspace_id
+
             if workspace_id is not None:
                 existing_workspace = next(
                     (
@@ -1447,70 +1878,155 @@ class HerdrService:
                         "Workspace not found",
                         code="workspace_not_found",
                     )
-                target_cwd = (
-                    requested_cwd
-                    or self._workspace_cwd(snapshot, existing_workspace)
-                    or self._server_home()
-                )
             else:
-                home = self._server_home() if requested_cwd is None else None
-                target_cwd = requested_cwd or home
-                assert target_cwd is not None
-                desired_workspace_label = workspace_label or "random tasks"
-                # Automatic reuse is intentionally conservative. A similarly
-                # named project workspace must never receive a home-level chat.
-                if home is not None and target_cwd == home:
-                    existing_workspace = next(
-                        (
-                            item
-                            for item in workspaces
-                            if str(item.get("label") or "").strip().casefold()
-                            == desired_workspace_label.strip().casefold()
-                            and self._workspace_cwd(snapshot, item) == home
-                        ),
-                        None,
-                    )
+                desired_workspace_label = workspace_label or QUICK_PI_WORKSPACE_LABEL
+                if reuse_named_tab:
+                    existing_workspace = self._quick_exact_workspace(snapshot, desired_workspace_label)
+                else:
+                    home = self._server_home() if requested_cwd is None else None
+                    target_cwd = requested_cwd or home
+                    assert target_cwd is not None
+                    if home is not None and target_cwd == home:
+                        existing_workspace = next(
+                            (
+                                item
+                                for item in workspaces
+                                if str(item.get("label") or "").strip().casefold()
+                                == desired_workspace_label.strip().casefold()
+                                and self._workspace_cwd(snapshot, item) == home
+                            ),
+                            None,
+                        )
 
-            created_tab_id: Optional[str] = None
-            if existing_workspace is None:
-                desired_workspace_label = workspace_label or "random tasks"
-                result = self.invoke(
-                    "workspace.create",
-                    {"label": desired_workspace_label, "cwd": str(target_cwd), "focus": True},
+            if existing_workspace is not None:
+                workspace_id = str(existing_workspace.get("workspace_id") or "")
+            if reuse_named_tab and existing_workspace is not None and existing_tab is None:
+                existing_tab = self._quick_exact_tab(
+                    snapshot,
+                    str(existing_workspace.get("workspace_id") or ""),
+                    tab_label or QUICK_PI_TAB_LABEL,
                 )
-                raw = result["result"]
-                workspace = raw.get("workspace")
-                workspace_id = workspace.get("workspace_id") if isinstance(workspace, dict) else None
-                pane = raw.get("pane") or raw.get("root_pane")
-                pane_id = pane.get("pane_id") if isinstance(pane, dict) else None
-                if not workspace_id or not pane_id:
-                    raise HerdrClientError(
-                        "workspace.create did not return a workspace and pane",
-                        code="invalid_herdr_response",
-                    )
-                created_workspace = True
+
+            if requested_cwd is not None:
+                target_cwd = requested_cwd
+            elif existing_workspace is not None and (explicit_destination or not reuse_named_tab):
+                target_cwd = self._workspace_cwd(snapshot, existing_workspace) or self._server_home()
             else:
-                workspace_id = str(existing_workspace["workspace_id"])
-                result = self.invoke(
-                    "tab.create",
-                    {"workspace_id": workspace_id, "cwd": str(target_cwd), "focus": True},
-                )
-                raw = result["result"]
-                created_tab_id = self._nested_identifier(raw, "tab_id")
-                pane = raw.get("pane") or raw.get("root_pane")
-                pane_id = pane.get("pane_id") if isinstance(pane, dict) else None
-                if not pane_id:
-                    pane_id = _find_pane_id(raw)
-                if not pane_id:
-                    raise HerdrClientError(
-                        "tab.create did not return a pane",
-                        code="invalid_herdr_response",
-                    )
-                created_workspace = False
+                target_cwd = self._server_home()
 
-            name = "quick-pi-" + uuid.uuid4().hex[:8]
+            created_workspace = False
+            created_tab = False
+            cleanup_method: Optional[str] = None
+            cleanup_params: Optional[dict] = None
             try:
-                self.invoke(
+                if existing_workspace is None:
+                    desired_workspace_label = workspace_label or QUICK_PI_WORKSPACE_LABEL
+                    before_workspace_ids = {
+                        str(item.get("workspace_id"))
+                        for item in snapshot.get("workspaces", [])
+                        if isinstance(item, dict) and item.get("workspace_id")
+                    }
+                    before_pane_ids = {
+                        str(item.get("pane_id"))
+                        for item in snapshot.get("panes", [])
+                        if isinstance(item, dict) and item.get("pane_id")
+                    }
+                    raw = self._request_native(
+                        "workspace.create",
+                        {"label": desired_workspace_label, "cwd": str(target_cwd), "focus": True},
+                    )
+                    provisional_workspace_id = self._nested_identifier(raw, "workspace_id")
+                    if provisional_workspace_id:
+                        cleanup_method = "workspace.close"
+                        cleanup_params = {"workspace_id": provisional_workspace_id}
+                    workspace_id, resolved_tab_id, pane_id = self._quick_created_workspace_ids(
+                        raw,
+                        before_workspace_ids=before_workspace_ids,
+                        before_pane_ids=before_pane_ids,
+                        desired_label=desired_workspace_label,
+                    )
+                    tab_id = resolved_tab_id
+                    created_workspace = True
+                    created_tab = True
+                    cleanup_method = "workspace.close"
+                    cleanup_params = {"workspace_id": workspace_id}
+                    if reuse_named_tab:
+                        self._request_native(
+                            "tab.rename",
+                            {"tab_id": tab_id, "label": tab_label or QUICK_PI_TAB_LABEL},
+                        )
+                elif existing_tab is not None:
+                    tab_id = str(existing_tab.get("tab_id") or "")
+                    anchor = self._quick_anchor_pane(snapshot, tab_id)
+                    if anchor is None:
+                        snapshot = self._quick_recovery_snapshot()
+                        anchor = self._quick_anchor_pane(snapshot, tab_id)
+                    if anchor is None:
+                        raise HerdrClientError(
+                            "The target tab has no pane to split",
+                            code="target_tab_unusable",
+                        )
+                    before_pane_ids = {
+                        str(item.get("pane_id"))
+                        for item in snapshot.get("panes", [])
+                        if isinstance(item, dict) and item.get("pane_id")
+                    }
+                    raw = self._request_native(
+                        "pane.split",
+                        {
+                            "target_pane_id": str(anchor["pane_id"]),
+                            "direction": "right",
+                            "cwd": str(target_cwd),
+                            "focus": True,
+                        },
+                    )
+                    provisional_pane_id = _find_pane_id(raw)
+                    if provisional_pane_id:
+                        cleanup_method = "pane.close"
+                        cleanup_params = {"pane_id": provisional_pane_id}
+                    pane_id = self._quick_split_pane_id(
+                        raw,
+                        tab_id=tab_id,
+                        before_pane_ids=before_pane_ids,
+                    )
+                    cleanup_method = "pane.close"
+                    cleanup_params = {"pane_id": pane_id}
+                else:
+                    workspace_id = str(existing_workspace["workspace_id"])
+                    before_tab_ids = {
+                        str(item.get("tab_id"))
+                        for item in snapshot.get("tabs", [])
+                        if isinstance(item, dict) and item.get("tab_id")
+                    }
+                    before_pane_ids = {
+                        str(item.get("pane_id"))
+                        for item in snapshot.get("panes", [])
+                        if isinstance(item, dict) and item.get("pane_id")
+                    }
+                    params: dict[str, object] = {
+                        "workspace_id": workspace_id,
+                        "cwd": str(target_cwd),
+                        "focus": True,
+                    }
+                    if reuse_named_tab:
+                        params["label"] = tab_label or QUICK_PI_TAB_LABEL
+                    raw = self._request_native("tab.create", params)
+                    provisional_tab_id = self._nested_identifier(raw, "tab_id")
+                    if provisional_tab_id:
+                        cleanup_method = "tab.close"
+                        cleanup_params = {"tab_id": provisional_tab_id}
+                    tab_id, pane_id = self._quick_created_tab_ids(
+                        raw,
+                        workspace_id=workspace_id,
+                        before_tab_ids=before_tab_ids,
+                        before_pane_ids=before_pane_ids,
+                    )
+                    created_tab = True
+                    cleanup_method = "tab.close"
+                    cleanup_params = {"tab_id": tab_id}
+
+                name = "quick-pi-" + uuid.uuid4().hex[:8]
+                self._request_native(
                     "agent.start",
                     {
                         "pane_id": pane_id,
@@ -1520,29 +2036,49 @@ class HerdrService:
                         "timeout_ms": 30000,
                     },
                 )
-            except HerdrClientError:
-                # Avoid leaving an empty shell behind when Pi could not start.
+                if expected_session_id is not None:
+                    self._quick_wait_for_pi_session(pane_id, expected_session_id)
+            except Exception as original_error:
+                cleanup_error: Optional[Exception] = None
                 try:
-                    if created_workspace:
-                        self.invoke("workspace.close", {"workspace_id": workspace_id})
-                    elif created_tab_id:
-                        self.invoke("tab.close", {"tab_id": created_tab_id})
-                    else:
-                        self.invoke("pane.close", {"pane_id": pane_id})
-                except HerdrClientError:
+                    if cleanup_method is not None and cleanup_params is not None:
+                        self._request_native(cleanup_method, cleanup_params)
+                except Exception as exc:
+                    cleanup_error = exc
+                try:
+                    self.refresh_snapshot(force=True)
+                except Exception:
                     pass
+                if cleanup_error is not None:
+                    raise HerdrClientError(
+                        "The failed quick session could not be confirmed closed; "
+                        "check Herdr before resuming the original Pi session",
+                        code="quick_session_outcome_unknown",
+                    ) from original_error
                 raise
             try:
-                self.invoke("pane.rename", {"pane_id": pane_id, "label": label})
+                self._request_native("pane.rename", {"pane_id": pane_id, "label": label})
             except HerdrClientError:
                 pass
-            return {
+            try:
+                self.refresh_snapshot(force=True)
+            except HerdrClientError:
+                pass
+            result = {
                 "ok": True,
                 "workspace_id": workspace_id,
+                "tab_id": tab_id,
                 "pane_id": pane_id,
                 "created_workspace": created_workspace,
+                "created_tab": created_tab,
+                "created_pane": True,
                 "pi_extension_attached": pi_extension_attached,
+                "pi_semantic_ready": expected_session_id is not None,
+                "request_id": request_id,
+                "session_id": session_id,
             }
+            self._quick_store_result(request_id, signature, result)
+            return result
 
     def _agent_topology(self) -> dict:
         snapshot, generated_at = self._cached_snapshot()
@@ -1662,6 +2198,7 @@ class HerdrService:
                     cwd=cwd,
                     session_file=session_file,
                     workspace_label=workspace_label or "Agent chats",
+                    reuse_named_tab=False,
                 )
             except Exception:
                 try:

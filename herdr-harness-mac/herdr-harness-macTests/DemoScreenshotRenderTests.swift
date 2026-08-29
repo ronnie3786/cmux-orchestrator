@@ -756,6 +756,7 @@ enum HerdrRenderFixtures {
         PiPromptComposerConfiguration(
             capabilities: piCapabilities,
             phase: .working,
+            compactionActivity: nil,
             isConnected: true,
             isSubmitting: false,
             isAborting: false,

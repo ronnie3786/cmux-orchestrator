@@ -466,14 +466,34 @@ actor HerdrAPIClient {
 
     func createQuickPiSession(
         label: String,
+        requestID: String,
         workspaceID: String? = nil,
-        cwd: String? = nil
+        tabID: String? = nil,
+        cwd: String? = nil,
+        sessionFile: String? = nil,
+        sessionID: String? = nil
     ) async throws -> QuickPiSessionResponse {
-        try await request(
+        let response: QuickPiSessionResponse = try await request(
             path: "/api/v1/quick-sessions/pi",
             method: "POST",
-            body: QuickPiSessionRequest(label: label, workspaceID: workspaceID, cwd: cwd)
+            body: QuickPiSessionRequest(
+                label: label,
+                requestID: requestID,
+                workspaceID: workspaceID,
+                tabID: tabID,
+                cwd: cwd,
+                sessionFile: sessionFile,
+                sessionID: sessionID
+            )
         )
+        guard response.ok,
+              !response.workspaceID.isEmpty,
+              !response.tabID.isEmpty,
+              !response.paneID.isEmpty,
+              response.createdPane,
+              response.requestID == requestID
+        else { throw APIError.invalidResponse }
+        return response
     }
 
     func fetchAlerts(limit: Int = 500) async throws -> AlertsResponse {

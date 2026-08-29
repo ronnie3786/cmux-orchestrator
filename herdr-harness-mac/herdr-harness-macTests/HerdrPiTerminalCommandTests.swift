@@ -5,10 +5,29 @@ import Testing
 @MainActor
 @Suite("Herdr Pi terminal commands", .serialized)
 struct HerdrPiTerminalCommandTests {
-    @Test("Compact sends the slash command and submits it through the terminal")
-    func compactSendsSlashCommand() async throws {
+    @Test("Pane session mutations are disabled while Pi is compacting")
+    func paneMenuCompactionPolicy() {
+        #expect(PaneActionsMenu.piSessionMutationsEnabled(canControl: true, isCompacting: false))
+        #expect(!PaneActionsMenu.piSessionMutationsEnabled(canControl: true, isCompacting: true))
+        #expect(!PaneActionsMenu.piSessionMutationsEnabled(canControl: false, isCompacting: false))
+    }
+
+    @Test("Semantic Pi compaction uses the native command endpoint")
+    func compactUsesSemanticCommand() async throws {
         PiTerminalCommandURLProtocol.recorder.reset()
-        let fixture = try makeFixture()
+        let fixture = try makeFixture(supportsSemanticCompaction: true)
+
+        await fixture.model.compactPiChat(in: fixture.pane)
+
+        let requests = PiTerminalCommandURLProtocol.recorder.requests()
+        #expect(requests.map(\.path) == ["/api/v1/panes/w1:p1/pi/compact"])
+        #expect(fixture.model.toastMessage == "compaction started")
+    }
+
+    @Test("Legacy Pi panes retain the terminal slash-command fallback")
+    func compactSendsSlashCommandForLegacyPane() async throws {
+        PiTerminalCommandURLProtocol.recorder.reset()
+        let fixture = try makeFixture(supportsSemanticCompaction: false)
 
         await fixture.model.compactPiChat(in: fixture.pane)
 
@@ -22,7 +41,9 @@ struct HerdrPiTerminalCommandTests {
         #expect(fixture.model.toastMessage == "compaction started")
     }
 
-    private func makeFixture() throws -> (model: HerdrAppModel, pane: HerdrPane) {
+    private func makeFixture(
+        supportsSemanticCompaction: Bool
+    ) throws -> (model: HerdrAppModel, pane: HerdrPane) {
         let suiteName = "HerdrPiTerminalCommandTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
@@ -46,6 +67,22 @@ struct HerdrPiTerminalCommandTests {
         model.prepareRuntime(for: machine, generation: model.connectionGeneration)
         model.machineStates[machine.id] = .live
 
+        let piSemantic: PiSemanticCapability? = if supportsSemanticCompaction {
+            try JSONDecoder().decode(
+                PiSemanticCapability.self,
+                from: Data(
+                    """
+                    {
+                      "available":true,"connected":true,"protocolVersion":1,
+                      "capabilities":{"compact":true}
+                    }
+                    """.utf8
+                )
+            )
+        } else {
+            nil
+        }
+
         let rawPane = HerdrPane(
             paneID: "w1:p1",
             terminalID: "w1:p1",
@@ -61,7 +98,8 @@ struct HerdrPiTerminalCommandTests {
             agent: "pi",
             displayAgent: "Pi",
             terminalTitle: nil,
-            terminalTitleStripped: nil
+            terminalTitleStripped: nil,
+            piSemantic: piSemantic
         )
         model.workspaces = [HerdrWorkspace(
             workspaceID: "w1",

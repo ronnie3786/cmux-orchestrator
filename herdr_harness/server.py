@@ -1316,16 +1316,46 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if method == "POST" and len(tail) == 3 and tail[0] == "agents" and tail[2] == "prompt":
                 return self._prompt(_identifier(tail[1], "agent target"), body)
             if method == "POST" and tail == ["quick-sessions", "pi"]:
-                if any(key not in {"label", "workspaceId", "cwd"} for key in body):
+                if any(
+                    key
+                    not in {
+                        "label",
+                        "workspaceId",
+                        "tabId",
+                        "cwd",
+                        "sessionFile",
+                        "sessionId",
+                        "requestId",
+                    }
+                    for key in body
+                ):
                     raise HTTPValidationError("Quick session request contains an unsupported field")
                 label = _string(body.get("label"), "label", maximum=120)
                 workspace_id = None
                 if body.get("workspaceId") is not None:
                     workspace_id = _identifier(body.get("workspaceId"), "workspace ID")
+                tab_id = None
+                if body.get("tabId") is not None:
+                    tab_id = _identifier(body.get("tabId"), "tab ID")
+                session_file = None
+                if body.get("sessionFile") is not None:
+                    session_file = _string(body.get("sessionFile"), "sessionFile", maximum=4096)
+                session_id = None
+                if body.get("sessionId") is not None:
+                    session_id = _string(body.get("sessionId"), "sessionId", maximum=256)
+                    if session_file is None:
+                        raise HTTPValidationError("sessionId requires sessionFile")
+                request_id = None
+                if body.get("requestId") is not None:
+                    request_id = _identifier(body.get("requestId"), "request ID")
                 return service.quick_pi_session(
                     label,
                     workspace_id=workspace_id,
+                    tab_id=tab_id,
                     cwd=_optional_cwd(body),
+                    session_file=session_file,
+                    session_id=session_id,
+                    request_id=request_id,
                 )
             if method == "POST" and tail == ["agent-runs"]:
                 if any(key not in {"prompt", "label"} for key in body):

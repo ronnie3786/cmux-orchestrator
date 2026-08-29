@@ -13,7 +13,7 @@ from herdr_harness.agent_runs import (
     AgentRunManager,
 )
 from herdr_harness.service import HerdrService
-from tests.test_herdr_service import FakeQuickSessionClient
+from tests.test_herdr_service import FakeQuickSessionClient, FakeReadyPiSemantic
 
 
 def write_fake_pi(directory: Path) -> Path:
@@ -291,9 +291,22 @@ class AgentRunServiceTests(unittest.TestCase):
             }
             client = FakeQuickSessionClient(
                 snapshot,
-                {"tab.create": {"tab": {"root_pane": {"pane_id": "w1:p2"}}}},
+                {
+                    "tab.create": {
+                        "tab": {
+                            "tab_id": "w1:t2",
+                            "root_pane": {"pane_id": "w1:p2", "tab_id": "w1:t2"},
+                        }
+                    }
+                },
             )
-            service = HerdrService(client, environ=environ, agent_runs=manager)
+            semantic = FakeReadyPiSemantic()
+            service = HerdrService(
+                client,
+                environ=environ,
+                agent_runs=manager,
+                pi_semantic=semantic,
+            )
             service.refresh_snapshot()
 
             started = service.start_agent_run(prompt="What is auth doing?")
@@ -306,12 +319,15 @@ class AgentRunServiceTests(unittest.TestCase):
             self.assertEqual(context["panes"][0]["status"], "working")
             self.assertIsNotNone(context["panes"][0]["workingSince"])
             completed = wait_for_status(manager, run_id, {"completed"})
+            with Path(completed["run"]["sessionFile"]).open(encoding="utf-8") as handle:
+                semantic.session_id = json.loads(handle.readline())["id"]
 
             promoted = service.promote_agent_run(run_id, workspace_id="w1")
 
             self.assertEqual(promoted["run"]["status"], "promoted")
             tab_request = next(params for method, params in client.requests if method == "tab.create")
             self.assertEqual(tab_request["cwd"], str(home.resolve()))
+            self.assertNotIn("label", tab_request)
             start_request = next(params for method, params in client.requests if method == "agent.start")
             self.assertEqual(
                 start_request["args"],

@@ -26,6 +26,7 @@ const handlers = new Map();
 const sent = [];
 let aborted = false;
 let compactCalls = 0;
+let compactOptions;
 const setModelCalls = [];
 let setModelResult = true;
 const setThinkingLevelCalls = [];
@@ -112,7 +113,10 @@ const context = {
 	getContextUsage: () => contextUsageValue,
 	hasPendingMessages: () => false,
 	abort: () => { aborted = true; },
-	compact: () => { compactCalls += 1; },
+	compact: (options) => {
+		compactCalls += 1;
+		compactOptions = options;
+	},
 	modelRegistry: {
 		getAvailable: () => availableModels,
 		find: (provider, id) => availableModels.find((item) => item.provider === provider && item.id === id),
@@ -137,8 +141,16 @@ function readRecords(socket, until) {
 	return new Promise((resolve, reject) => {
 		const records = [];
 		let buffered = "";
-		const timeout = setTimeout(() => reject(new Error("timed out waiting for bridge records")), 3000);
-		socket.on("data", (chunk) => {
+		const cleanup = () => {
+			clearTimeout(timeout);
+			socket.off("data", onData);
+			socket.off("error", onError);
+		};
+		const onError = (error) => {
+			cleanup();
+			reject(error);
+		};
+		const onData = (chunk) => {
 			buffered += chunk.toString("utf8");
 			let newline = buffered.indexOf("\n");
 			while (newline >= 0) {
@@ -146,14 +158,19 @@ function readRecords(socket, until) {
 				buffered = buffered.slice(newline + 1);
 				if (raw) records.push(JSON.parse(raw));
 				if (until(records)) {
-					clearTimeout(timeout);
+					cleanup();
 					resolve(records);
 					return;
 				}
 				newline = buffered.indexOf("\n");
 			}
-		});
-		socket.on("error", reject);
+		};
+		const timeout = setTimeout(() => {
+			cleanup();
+			reject(new Error("timed out waiting for bridge records"));
+		}, 3000);
+		socket.on("data", onData);
+		socket.on("error", onError);
 	});
 }
 
@@ -198,6 +215,8 @@ try {
 	assert.equal(snapshot.state.idle, true);
 	assert.equal(snapshot.state.working, false);
 	assert.equal(snapshot.state.isStreaming, false);
+	assert.equal(snapshot.state.isCompacting, false);
+	assert.equal(snapshot.state.compaction, null);
 	assert.deepEqual(snapshot.state.context, { tokens: 12_345, contextWindow: 192_000, percent: 6.43 });
 	const hello = initial.find((item) => item.kind === "hello");
 	assert.equal(hello.capabilities.listModels, true);
@@ -234,11 +253,46 @@ try {
 		systemPrompt: privateSentinel,
 		messages: [{ role: "user", content: privateSentinel }],
 	}, context);
+	const compactionAbortController = new AbortController();
+	const compactingRecordsPromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "session_before_compact",
+	) && records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.isCompacting === true,
+	));
 	handlers.get("session_before_compact")({
 		type: "session_before_compact",
+		reason: "threshold",
+		willRetry: true,
+		signal: compactionAbortController.signal,
+		preparation: { secret: privateSentinel },
 		branchEntries: [{ id: "inactive", content: privateSentinel.repeat(20_000) }],
 		customInstructions: privateSentinel,
 	}, context);
+	const compactingRecords = await compactingRecordsPromise;
+	const compactingEvent = compactingRecords.find((item) => item.event?.type === "session_before_compact").event;
+	assert.deepEqual(compactingEvent, {
+		reason: "threshold",
+		willRetry: true,
+		type: "session_before_compact",
+	});
+	const compactingSnapshot = compactingRecords.find(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.isCompacting === true,
+	).snapshot;
+	assert.deepEqual(compactingSnapshot.state.compaction, {
+		active: true,
+		reason: "threshold",
+		willRetry: true,
+	});
+	assert.equal(JSON.stringify(compactingRecords).includes(privateSentinel), false);
+
+	const abortedCompactionPromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "session_compact_end" && item.event.outcome === "aborted",
+	) && records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.isCompacting === false,
+	));
+	compactionAbortController.abort();
+	const abortedCompactionRecords = await abortedCompactionPromise;
+	assert.equal(JSON.stringify(abortedCompactionRecords).includes(privateSentinel), false);
 	handlers.get("session_before_tree")({
 		type: "session_before_tree",
 		entriesToSummarize: [{ id: "inactive-tree", content: privateSentinel.repeat(20_000) }],
@@ -298,6 +352,33 @@ try {
 		{ tokens: null, contextWindow: null, percent: null },
 	);
 
+	const nativeCompactionStarted = readRecords(subscription, (records) => records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.compaction?.reason === "overflow",
+	));
+	handlers.get("session_before_compact")({
+		type: "session_before_compact",
+		reason: "overflow",
+		willRetry: true,
+		signal: new AbortController().signal,
+		preparation: {},
+		branchEntries: [],
+	}, context);
+	await nativeCompactionStarted;
+	const nativeCompactionFinished = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "session_compact",
+	) && records.some(
+		(item) => (item.kind === "reset" || item.kind === "snapshot")
+			&& item.snapshot?.state?.isCompacting === false,
+	));
+	handlers.get("session_compact")({
+		type: "session_compact",
+		reason: "overflow",
+		willRetry: true,
+		fromExtension: false,
+		compactionEntry: { type: "compaction", id: "compaction-1" },
+	}, context);
+	await nativeCompactionFinished;
+
 	const prompt = await connect(socketPath);
 	const promptResponse = readRecords(prompt, (records) => records.some((item) => item.request_id === "prompt-1"));
 	prompt.write(`${JSON.stringify({
@@ -324,7 +405,52 @@ try {
 	})}\n`);
 	assert.equal((await compactResponse)[0].success, true);
 	assert.equal(compactCalls, 1);
+	assert.equal(typeof compactOptions?.onComplete, "function");
+	assert.equal(typeof compactOptions?.onError, "function");
 	compact.destroy();
+
+	const callbackCompactionStarted = readRecords(subscription, (records) => records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.compaction?.reason === "manual",
+	));
+	handlers.get("session_before_compact")({
+		type: "session_before_compact",
+		reason: "manual",
+		willRetry: false,
+		signal: new AbortController().signal,
+		preparation: {},
+		branchEntries: [],
+	}, context);
+	await callbackCompactionStarted;
+	const blockedDuringCompaction = await connect(socketPath);
+	const blockedDuringCompactionResponse = readRecords(
+		blockedDuringCompaction,
+		(records) => records.some((item) => item.request_id === "prompt-during-compaction"),
+	);
+	const sentBeforeBlockedPrompt = sent.length;
+	blockedDuringCompaction.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "prompt-during-compaction",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "prompt",
+		payload: { text: "Do not send yet" },
+	})}\n`);
+	const blockedDuringCompactionRecord = (await blockedDuringCompactionResponse)[0];
+	assert.equal(blockedDuringCompactionRecord.success, false);
+	assert.equal(
+		blockedDuringCompactionRecord.error.message,
+		"Pi is compacting context; wait for compaction to finish",
+	);
+	assert.equal(sent.length, sentBeforeBlockedPrompt);
+	blockedDuringCompaction.destroy();
+	const callbackFailurePromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "session_compact_end" && item.event.outcome === "failed",
+	) && records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.isCompacting === false,
+	));
+	compactOptions.onError(new Error(privateSentinel));
+	const callbackFailureRecords = await callbackFailurePromise;
+	assert.equal(JSON.stringify(callbackFailureRecords).includes(privateSentinel), false);
 
 	idle = false;
 	const busyCompact = await connect(socketPath);
@@ -543,6 +669,74 @@ try {
 	assert.equal(unknownThinkingLevelRecord.error.message, "Unknown thinking level");
 	assert.equal(setThinkingLevelCalls.length, setThinkingLevelCallCount);
 	unknownThinkingLevel.destroy();
+
+	idle = true;
+	const settledCompactionStarted = readRecords(subscription, (records) => records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.compaction?.reason === "threshold",
+	));
+	handlers.get("session_before_compact")({
+		type: "session_before_compact",
+		reason: "threshold",
+		willRetry: false,
+		signal: new AbortController().signal,
+		preparation: {},
+		branchEntries: [],
+	}, context);
+	await settledCompactionStarted;
+	const settledCompactionFinished = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "session_compact_end" && item.event.outcome === "settled",
+	));
+	handlers.get("agent_settled")({ type: "agent_settled" }, context);
+	await settledCompactionFinished;
+
+	const recoveryCompactionStarted = readRecords(subscription, (records) => records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.compaction?.reason === "manual",
+	));
+	handlers.get("session_before_compact")({
+		type: "session_before_compact",
+		reason: "manual",
+		willRetry: false,
+		signal: new AbortController().signal,
+		preparation: {},
+		branchEntries: [],
+	}, context);
+	await recoveryCompactionStarted;
+
+	// Do not guess that a slow compaction ended based on wall-clock time. Pi
+	// 0.84.1 can legitimately spend minutes retrying a summarization request.
+	await delay(300);
+	const slowCompactionProbe = await connect(socketPath);
+	const slowCompactionSnapshotPromise = readRecords(
+		slowCompactionProbe,
+		(records) => records.some((item) => item.kind === "snapshot"),
+	);
+	slowCompactionProbe.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "slow-compaction-probe",
+		type: "subscribe",
+		pane_id: "w1:p1",
+		after: 0,
+	})}\n`);
+	const slowCompactionSnapshot = (await slowCompactionSnapshotPromise)
+		.find((item) => item.kind === "snapshot").snapshot;
+	assert.equal(slowCompactionSnapshot.state.isCompacting, true);
+	slowCompactionProbe.destroy();
+
+	// After a failed manual /compact, Pi only emits its private compaction_end.
+	// The next accepted input is the first public proof that compaction ended.
+	const recoveredCompactionPromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "session_compact_end" && item.event.outcome === "settled",
+	) && records.some(
+		(item) => item.kind === "snapshot" && item.snapshot?.state?.isCompacting === false,
+	));
+	const inputResult = await handlers.get("input")({
+		type: "input",
+		text: privateSentinel,
+		source: "interactive",
+	}, context);
+	assert.deepEqual(inputResult, { action: "continue" });
+	const recoveredCompactionRecords = await recoveredCompactionPromise;
+	assert.equal(JSON.stringify(recoveredCompactionRecords).includes(privateSentinel), false);
 
 	const shutdownRecord = readRecords(subscription, (records) => records.some(
 		(item) => item.event?.type === "session_shutdown",

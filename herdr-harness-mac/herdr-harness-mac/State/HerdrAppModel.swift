@@ -53,9 +53,13 @@ final class HerdrAppModel {
     var activeWorkRefreshTick = 0
     var isRefreshing = false
     var isSending = false
+    private(set) var quickPiSessionMachineIDs: Set<String> = []
     var connectionGeneration = 0 {
         didSet {
-            if connectionGeneration != oldValue { cancelDeferredRefreshes() }
+            if connectionGeneration != oldValue {
+                cancelDeferredRefreshes()
+                discardPendingQuickPaneRoutes()
+            }
         }
     }
     private(set) var activeServerConnection: ActiveServerConnection?
@@ -77,7 +81,8 @@ final class HerdrAppModel {
     private let userDefaults: UserDefaults
     @ObservationIgnored private var runtimes: [String: MachineRuntime] = [:]
     @ObservationIgnored private var pendingPushToken: String?
-    @ObservationIgnored private var pendingPaneID: String?
+    @ObservationIgnored private var pendingPaneRoutes: [PendingPaneRouteKey: PendingPaneRoute] = [:]
+    @ObservationIgnored private var nextPaneRouteOrder: UInt64 = 0
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
@@ -101,6 +106,16 @@ final class HerdrAppModel {
     private struct PaneLocation {
         let workspaceIndex: Int
         let paneIndex: Int
+    }
+
+    private enum PendingPaneRouteKey: Hashable {
+        case direct
+        case quick(machineID: String, requestID: String)
+    }
+
+    private struct PendingPaneRoute {
+        var paneID: String?
+        let order: UInt64
     }
 
     private struct ActivityFetchResult: Sendable {
@@ -1217,8 +1232,12 @@ final class HerdrAppModel {
         guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID) else { return }
         do {
-            try await client.sendText(toPane: pane.paneID, text: "/compact", submit: false)
-            try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
+            if pane.piSemantic?.capabilities.compact == true {
+                try await client.compactPiConversation(paneID: pane.paneID)
+            } else {
+                try await client.sendText(toPane: pane.paneID, text: "/compact", submit: false)
+                try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
+            }
             toastMessage = "compaction started"
         } catch {
             errorMessage = error.localizedDescription
@@ -1398,21 +1417,122 @@ final class HerdrAppModel {
         return succeeded
     }
 
-    func createQuickPiSession(machineID: String? = nil, workspaceID: String? = nil) async {
+    func isCreatingQuickPiSession(machineID: String?) -> Bool {
+        guard let machineID else { return false }
+        return quickPiSessionMachineIDs.contains(machineID)
+    }
+
+    func createQuickPiSession(
+        machineID: String? = nil,
+        workspaceID: String? = nil,
+        tabID: String? = nil,
+        cwd: String? = nil,
+        sessionFile: String? = nil,
+        sessionID: String? = nil
+    ) async {
         if isDemoMode {
             toastMessage = "quick pi sessions need a live connection"
             return
         }
-        let targetMachineID = machineID ?? machines.first?.id
+        guard let targetMachineID = machineID ?? machines.first?.id else {
+            toastMessage = "Reconnect before controlling Herdr"
+            return
+        }
+        guard !quickPiSessionMachineIDs.contains(targetMachineID) else { return }
+        guard canControl(machineID: targetMachineID), let client = client(forMachine: targetMachineID) else {
+            toastMessage = "Reconnect before controlling Herdr"
+            return
+        }
+        noteUserInteraction(machineID: targetMachineID)
+        quickPiSessionMachineIDs.insert(targetMachineID)
+        defer { quickPiSessionMachineIDs.remove(targetMachineID) }
+
         let label = Date.now.formatted(.dateTime.month(.abbreviated).day().hour().minute()).lowercased()
-        var spawnedPaneID: String?
-        await perform("pi session spawning", machineID: targetMachineID) { client in
-            let response = try await client.createQuickPiSession(label: label, workspaceID: workspaceID)
-            spawnedPaneID = response.paneID
+        let requestID = UUID().uuidString
+        let pendingRouteKey = beginQuickPaneRoute(
+            machineID: targetMachineID,
+            requestID: requestID
+        )
+        let generation = connectionGeneration
+        do {
+            let response = try await createQuickPiSessionWithRetry(
+                client: client,
+                label: label,
+                requestID: requestID,
+                workspaceID: workspaceID,
+                tabID: tabID,
+                cwd: cwd,
+                sessionFile: sessionFile,
+                sessionID: sessionID
+            )
+            guard generation == connectionGeneration else { return }
+            let scopedPaneID = MachineScopedID.compose(
+                machineID: targetMachineID,
+                rawID: response.paneID
+            )
+            // Resolve immediately when topology is already current. Otherwise,
+            // retain this machine/request route until a later refresh observes it.
+            completeQuickPaneRoute(pendingRouteKey, paneID: scopedPaneID)
+            try? await refresh(
+                machineID: targetMachineID,
+                using: client,
+                showSpinner: false,
+                expectedGeneration: generation
+            )
+            guard generation == connectionGeneration else { return }
+            toastMessage = "pi session ready"
+        } catch {
+            guard generation == connectionGeneration else { return }
+            cancelPendingPaneRoute(pendingRouteKey)
+            errorMessage = error.localizedDescription
         }
-        if let targetMachineID, let spawnedPaneID {
-            openPane(id: MachineScopedID.compose(machineID: targetMachineID, rawID: spawnedPaneID))
+    }
+
+    private func createQuickPiSessionWithRetry(
+        client: HerdrAPIClient,
+        label: String,
+        requestID: String,
+        workspaceID: String?,
+        tabID: String?,
+        cwd: String?,
+        sessionFile: String?,
+        sessionID: String?
+    ) async throws -> QuickPiSessionResponse {
+        do {
+            return try await client.createQuickPiSession(
+                label: label,
+                requestID: requestID,
+                workspaceID: workspaceID,
+                tabID: tabID,
+                cwd: cwd,
+                sessionFile: sessionFile,
+                sessionID: sessionID
+            )
+        } catch {
+            guard Self.isTransientQuickPiSessionError(error) else { throw error }
+            try await Task.sleep(for: .milliseconds(150))
+            return try await client.createQuickPiSession(
+                label: label,
+                requestID: requestID,
+                workspaceID: workspaceID,
+                tabID: tabID,
+                cwd: cwd,
+                sessionFile: sessionFile,
+                sessionID: sessionID
+            )
         }
+    }
+
+    private static func isTransientQuickPiSessionError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        return [
+            .timedOut,
+            .cannotFindHost,
+            .cannotConnectToHost,
+            .networkConnectionLost,
+            .dnsLookupFailed,
+            .notConnectedToInternet,
+        ].contains(urlError.code)
     }
 
     func refreshActivityFeed() async {
@@ -1704,11 +1824,14 @@ final class HerdrAppModel {
     func openPane(id paneID: String) {
         noteUserInteraction()
         guard !paneID.isEmpty else { return }
+        let pendingRoute = PendingPaneRoute(paneID: paneID, order: nextPendingPaneRouteOrder())
+        // A sidebar click, notification, or deep link is a newer explicit user
+        // choice and must not be stolen later by an outstanding quick session.
+        pendingPaneRoutes.removeAll(keepingCapacity: true)
         guard let pane = pane(id: paneID) ?? resolveRawPane(id: paneID) else {
-            pendingPaneID = paneID
+            pendingPaneRoutes[.direct] = pendingRoute
             return
         }
-        pendingPaneID = nil
         route(to: pane)
     }
 
@@ -2210,6 +2333,8 @@ final class HerdrAppModel {
         lastSyncedAt = nil
         isRefreshing = false
         isSending = false
+        quickPiSessionMachineIDs = []
+        discardPendingQuickPaneRoutes()
         remotePushConfigured = false
         remotePushDeliveryVerified = false
         remotePushRegistrationError = nil
@@ -2262,9 +2387,47 @@ final class HerdrAppModel {
         }
     }
 
+    private func beginQuickPaneRoute(
+        machineID: String,
+        requestID: String
+    ) -> PendingPaneRouteKey {
+        let key = PendingPaneRouteKey.quick(machineID: machineID, requestID: requestID)
+        pendingPaneRoutes[key] = PendingPaneRoute(
+            paneID: nil,
+            order: nextPendingPaneRouteOrder()
+        )
+        return key
+    }
+
+    private func completeQuickPaneRoute(_ key: PendingPaneRouteKey, paneID: String) {
+        guard var pendingRoute = pendingPaneRoutes[key] else { return }
+        pendingRoute.paneID = paneID
+        pendingPaneRoutes[key] = pendingRoute
+        resolvePendingPaneRoute()
+    }
+
+    private func cancelPendingPaneRoute(_ key: PendingPaneRouteKey) {
+        guard pendingPaneRoutes.removeValue(forKey: key) != nil else { return }
+        resolvePendingPaneRoute()
+    }
+
+    private func discardPendingQuickPaneRoutes() {
+        let directRoute = pendingPaneRoutes[.direct]
+        pendingPaneRoutes.removeAll(keepingCapacity: true)
+        if let directRoute { pendingPaneRoutes[.direct] = directRoute }
+    }
+
+    private func nextPendingPaneRouteOrder() -> UInt64 {
+        nextPaneRouteOrder &+= 1
+        return nextPaneRouteOrder
+    }
+
     private func resolvePendingPaneRoute() {
-        guard let pendingPaneID, let pane = resolveRawPane(id: pendingPaneID) else { return }
-        self.pendingPaneID = nil
+        guard let pendingRoute = pendingPaneRoutes.values.max(by: { $0.order < $1.order }),
+              let pendingPaneID = pendingRoute.paneID,
+              let pane = pane(id: pendingPaneID) ?? resolveRawPane(id: pendingPaneID)
+        else { return }
+        pendingPaneRoutes.removeAll(keepingCapacity: true)
         route(to: pane)
     }
 

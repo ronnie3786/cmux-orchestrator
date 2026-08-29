@@ -55,3 +55,29 @@ struct PiPromptComposerStatusBar: View {
         .accessibilityElement(children: .contain)
     }
 }
+
+/// Compaction remains visible even while Pi reports an otherwise idle session.
+/// There are intentionally no prompt controls here because accepting a model,
+/// thinking, or message command during summary generation is unsafe.
+struct PiCompactionStatusBar: View {
+    let activity: PiCompactionActivity
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(HerdrTheme.working)
+                .accessibilityHidden(true)
+
+            Text(activity.statusMessage)
+                .herdrFont(.caption, weight: .medium)
+                .foregroundStyle(HerdrTheme.working)
+
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(activity.statusMessage)
+        .accessibilityIdentifier("pi-chat-compacting")
+    }
+}

@@ -112,6 +112,7 @@ struct PiChatView: View {
         PiPromptComposerConfiguration(
             capabilities: composerPane.piSemantic?.capabilities ?? .unavailable,
             phase: store.phase,
+            compactionActivity: store.compactionActivity,
             isConnected: store.canSendCommands,
             isSubmitting: store.isSubmitting,
             isAborting: store.isAborting,

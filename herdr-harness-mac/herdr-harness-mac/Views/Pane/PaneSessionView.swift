@@ -109,7 +109,8 @@ struct PaneSessionView: View {
                     model: model,
                     pane: currentPane,
                     selectedMode: modeSelection,
-                    gitIsAvailable: gitIsAvailable
+                    gitIsAvailable: gitIsAvailable,
+                    isPiCompacting: piConversationStore.isCompacting
                 )
             }
         }
@@ -137,9 +138,7 @@ struct PaneSessionView: View {
             }
         }
         .task(id: piChatTaskID) {
-            guard selectedMode == .chat,
-                  currentPane.supportsPiSemanticChat
-            else { return }
+            guard currentPane.supportsPiSemanticChat else { return }
             await piConversationStore.follow(model: model, pane: currentPane)
         }
         .task(id: gitProbeTaskID) {
@@ -409,7 +408,7 @@ struct PaneSessionView: View {
     }
 
     private var piChatTaskID: String {
-        "\(pane.id):pi-chat:\(model.connectionGeneration):\(selectedMode.rawValue)"
+        "\(pane.id):pi-chat:\(model.connectionGeneration):\(currentPane.supportsPiSemanticChat)"
     }
 
     private var gitProbeTaskID: String {

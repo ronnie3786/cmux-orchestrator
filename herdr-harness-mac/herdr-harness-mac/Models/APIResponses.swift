@@ -75,37 +75,70 @@ struct NetworkInfoResponse: Decodable, Sendable {
 struct QuickPiSessionResponse: Decodable, Sendable {
     let ok: Bool
     let workspaceID: String
+    let tabID: String
     let paneID: String
     let createdWorkspace: Bool
+    let createdTab: Bool
+    let createdPane: Bool
     let piExtensionAttached: Bool
+    let requestID: String?
+    let sessionID: String?
 
     enum CodingKeys: String, CodingKey {
         case ok
         case workspaceID = "workspace_id"
+        case tabID = "tab_id"
         case paneID = "pane_id"
         case createdWorkspace = "created_workspace"
+        case createdTab = "created_tab"
+        case createdPane = "created_pane"
         case piExtensionAttached = "pi_extension_attached"
+        case requestID = "request_id"
+        case sessionID = "session_id"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? true
-        workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceID) ?? ""
-        paneID = try container.decodeIfPresent(String.self, forKey: .paneID) ?? ""
-        createdWorkspace = try container.decodeIfPresent(Bool.self, forKey: .createdWorkspace) ?? false
-        piExtensionAttached = try container.decodeIfPresent(Bool.self, forKey: .piExtensionAttached) ?? false
+        ok = try container.decode(Bool.self, forKey: .ok)
+        workspaceID = try container.decode(String.self, forKey: .workspaceID)
+        tabID = try container.decode(String.self, forKey: .tabID)
+        paneID = try container.decode(String.self, forKey: .paneID)
+        createdWorkspace = try container.decode(Bool.self, forKey: .createdWorkspace)
+        createdTab = try container.decode(Bool.self, forKey: .createdTab)
+        createdPane = try container.decode(Bool.self, forKey: .createdPane)
+        piExtensionAttached = try container.decode(Bool.self, forKey: .piExtensionAttached)
+        requestID = try container.decodeIfPresent(String.self, forKey: .requestID)
+        sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+        guard ok,
+              !workspaceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !paneID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              createdPane
+        else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Quick Pi placement is incomplete")
+            )
+        }
     }
 }
 
 struct QuickPiSessionRequest: Encodable, Sendable {
     let label: String
+    let requestID: String
     let workspaceID: String?
+    let tabID: String?
     let cwd: String?
+    let sessionFile: String?
+    let sessionID: String?
 
     enum CodingKeys: String, CodingKey {
         case label
+        case requestID = "requestId"
         case workspaceID = "workspaceId"
+        case tabID = "tabId"
         case cwd
+        case sessionFile
+        case sessionID
     }
 }
 

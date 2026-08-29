@@ -16,6 +16,7 @@ final class PiConversationStore {
     private(set) var turns: [PiConversationTurn] = []
     private(set) var pendingInteractions: [PiPendingInteraction] = []
     private(set) var phase: PiConversationPhase = .idle
+    private(set) var compactionActivity: PiCompactionActivity?
     private(set) var connection: PiConversationConnection = .loading
     private(set) var revision = 0
     private(set) var structureRevision = 0
@@ -55,6 +56,10 @@ final class PiConversationStore {
 
     var hasContent: Bool {
         turns.contains(where: \.hasVisibleContent)
+    }
+
+    var isCompacting: Bool {
+        compactionActivity != nil
     }
 
     var latestCompletedAssistantResponse: String? {
@@ -197,7 +202,7 @@ final class PiConversationStore {
         pane: HerdrPane
     ) async -> Bool {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !isSubmitting else { return false }
+        guard !prompt.isEmpty, !isSubmitting, compactionActivity == nil else { return false }
         guard canSendCommands else {
             lastError = "Pi is offline. Reconnect before sending a message."
             return false
@@ -219,7 +224,7 @@ final class PiConversationStore {
     }
 
     func abort(model: HerdrAppModel, pane: HerdrPane) async -> Bool {
-        guard !isAborting, canSendCommands else { return false }
+        guard !isAborting, canSendCommands, compactionActivity == nil else { return false }
         isAborting = true
         commandNotice = nil
         defer { isAborting = false }
@@ -236,7 +241,7 @@ final class PiConversationStore {
     }
 
     func setModel(_ candidate: PiAvailableModel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
-        guard canSendCommands, !isSettingModel else { return false }
+        guard canSendCommands, !isSettingModel, compactionActivity == nil else { return false }
         isSettingModel = true
         commandNotice = nil
         defer { isSettingModel = false }
@@ -256,7 +261,7 @@ final class PiConversationStore {
     }
 
     func setThinkingLevel(_ level: PiThinkingLevel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
-        guard canSendCommands, !isSettingThinkingLevel else { return false }
+        guard canSendCommands, !isSettingThinkingLevel, compactionActivity == nil else { return false }
         isSettingThinkingLevel = true
         commandNotice = nil
         defer { isSettingThinkingLevel = false }
@@ -333,6 +338,7 @@ final class PiConversationStore {
             case let .envelope(envelope):
                 HerdrPerfDiagnostics.checkpoint("pi.envelope")
                 let previousPhase = reducer.phase
+                let previousCompactionActivity = reducer.compactionActivity
                 let previousTurnCount = reducer.turns.count
                 let previousPendingInteractions = reducer.pendingInteractions
                 let previousBridgeConnected = reducer.bridgeConnected
@@ -343,6 +349,7 @@ final class PiConversationStore {
                     trigger(
                         for: effect,
                         previousPhase: previousPhase,
+                        previousCompactionActivity: previousCompactionActivity,
                         previousTurnCount: previousTurnCount,
                         previousPendingInteractions: previousPendingInteractions,
                         previousBridgeConnected: previousBridgeConnected
@@ -404,6 +411,7 @@ final class PiConversationStore {
         turns = []
         pendingInteractions = []
         phase = .idle
+        compactionActivity = nil
         connection = .loading
         revision &+= 1
         structureRevision = 0
@@ -542,6 +550,7 @@ final class PiConversationStore {
             lastUserMessage = PiLastPrompt.lastUserMessage(in: turns)
         }
         phase = reducer.phase
+        compactionActivity = reducer.compactionActivity
         isTruncated = reducer.isTruncated
         bridgeConnected = reducer.bridgeConnected
         contextUsage = reducer.contextUsage
@@ -575,6 +584,7 @@ final class PiConversationStore {
     private func trigger(
         for effect: PiConversationReducer.Effect,
         previousPhase: PiConversationPhase,
+        previousCompactionActivity: PiCompactionActivity?,
         previousTurnCount: Int,
         previousPendingInteractions: [PiPendingInteraction],
         previousBridgeConnected: Bool
@@ -586,6 +596,8 @@ final class PiConversationStore {
             .turnCompletion
         case .interactionRequested:
             .pendingInteraction
+        case .compactionChanged:
+            .compactionChange
         case .failed:
             .phaseTransition
         case .none:
@@ -593,6 +605,8 @@ final class PiConversationStore {
                 .connectionChange
             } else if reducer.phase != previousPhase {
                 .phaseTransition
+            } else if reducer.compactionActivity != previousCompactionActivity {
+                .compactionChange
             } else if reducer.pendingInteractions != previousPendingInteractions {
                 .pendingInteraction
             } else if reducer.turns.count > previousTurnCount {

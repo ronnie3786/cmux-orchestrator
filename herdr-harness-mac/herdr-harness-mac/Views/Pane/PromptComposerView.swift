@@ -100,7 +100,10 @@ struct PromptComposerView: View {
                 )
             }
 
-            if let piConfiguration, piConfiguration.phase == .working {
+            if let activity = piConfiguration?.compactionActivity {
+                PiCompactionStatusBar(activity: activity)
+                    .transition(semanticControlTransition)
+            } else if let piConfiguration, piConfiguration.phase == .working {
                 PiPromptComposerStatusBar(
                     disposition: effectiveDisposition,
                     availableDispositions: piConfiguration.availableDispositions,
@@ -138,6 +141,10 @@ struct PromptComposerView: View {
         .animation(
             reduceMotion ? nil : .snappy(duration: 0.24),
             value: piConfiguration?.phase
+        )
+        .animation(
+            reduceMotion ? nil : .snappy(duration: 0.24),
+            value: piConfiguration?.compactionActivity
         )
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: quickVoiceCapture.phase)
         .animation(reduceMotion ? nil : .snappy(duration: 0.16), value: skillsPalette.isVisible)
@@ -420,7 +427,7 @@ struct PromptComposerView: View {
                     .padding(.horizontal, 13)
                     .padding(.vertical, 12)
                     .frame(minHeight: 48)
-                    .disabled(isSubmitting || !canControl)
+                    .disabled(isSubmitting || !canControl || isPiCompacting)
             }
         }
         .frame(minHeight: 48)
@@ -471,7 +478,11 @@ struct PromptComposerView: View {
             value: isLockPulsing
         )
         .buttonStyle(.plain)
-        .disabled(isCTATranscribing || (!isCTAMicAvailable && !isCTALockedCapture && !canSend))
+        .disabled(
+            (isPiCompacting && !isCTALockedCapture)
+                || isCTATranscribing
+                || (!isCTAMicAvailable && !isCTALockedCapture && !canSend)
+        )
         .help(trailingComposerAccessibilityHint)
         .accessibilityLabel(trailingComposerAccessibilityLabel)
         .accessibilityHint(trailingComposerAccessibilityHint)
@@ -493,6 +504,10 @@ struct PromptComposerView: View {
 
     private var isSubmitting: Bool {
         piConfiguration?.isSubmitting ?? model.isSending
+    }
+
+    private var isPiCompacting: Bool {
+        piConfiguration?.isCompacting ?? false
     }
 
     private var sendAccessibilityHint: String {
@@ -548,7 +563,7 @@ struct PromptComposerView: View {
     }
 
     private var isCTAMicAvailable: Bool {
-        isEmptyInput && quickVoiceCapture.phase == .idle && !isCTACapture
+        isEmptyInput && quickVoiceCapture.phase == .idle && !isCTACapture && !isPiCompacting
     }
 
     private var composerInputBorder: Color {

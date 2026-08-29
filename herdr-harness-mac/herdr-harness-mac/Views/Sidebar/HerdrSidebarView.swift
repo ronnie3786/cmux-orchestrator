@@ -410,13 +410,25 @@ struct HerdrSidebarView: View {
 
             Menu {
                 ForEach(model.machines) { machine in
-                    Menu(machine.name) {
-                        quickPiDestinations(for: machine)
+                    Button {
+                        Task { await model.createQuickPiSession(machineID: machine.id) }
+                    } label: {
+                        Label(
+                            model.isCreatingQuickPiSession(machineID: machine.id)
+                                ? "starting on \(machine.name)…"
+                                : machine.name,
+                            systemImage: model.isCreatingQuickPiSession(machineID: machine.id)
+                                ? "hourglass"
+                                : "bolt"
+                        )
                     }
+                    .disabled(
+                        model.isCreatingQuickPiSession(machineID: machine.id)
+                            || !model.canControl(machineID: machine.id)
+                    )
                 }
             } label: {
-                Label("new pi session", systemImage: "bolt")
-                    .sidebarActionStyle()
+                quickPiActionLabel(machineID: nil)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-new-pi-session")
@@ -428,44 +440,35 @@ struct HerdrSidebarView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-new-workspace")
 
-            Menu {
-                if let machine = model.machines.first(where: { $0.id == scopedMachineID }) {
-                    quickPiDestinations(for: machine)
-                }
+            Button {
+                Task { await model.createQuickPiSession(machineID: scopedMachineID) }
             } label: {
-                Label("new pi session", systemImage: "bolt")
-                    .sidebarActionStyle()
+                quickPiActionLabel(machineID: scopedMachineID)
             }
             .buttonStyle(.plain)
-            .disabled(scopedMachineID == nil)
+            .disabled(
+                scopedMachineID == nil
+                    || model.isCreatingQuickPiSession(machineID: scopedMachineID)
+                    || !(scopedMachineID.map { model.canControl(machineID: $0) } ?? false)
+            )
             .accessibilityIdentifier("sidebar-new-pi-session")
         }
     }
 
     @ViewBuilder
-    private func quickPiDestinations(for machine: HerdrMachine) -> some View {
-        Button("quick chats (~)", systemImage: "house") {
-            Task { await model.createQuickPiSession(machineID: machine.id) }
-        }
-
-        let destinations = model.workspaces
-            .filter { $0.machineID == machine.id }
-            .sorted { $0.number < $1.number }
-        if !destinations.isEmpty {
-            Divider()
-            Section("existing workspace") {
-                ForEach(destinations) { workspace in
-                    Button(workspace.label, systemImage: "rectangle.3.group") {
-                        Task {
-                            await model.createQuickPiSession(
-                                machineID: machine.id,
-                                workspaceID: workspace.workspaceID
-                            )
-                        }
-                    }
-                }
+    private func quickPiActionLabel(machineID: String?) -> some View {
+        let isCreating = machineID.map { model.isCreatingQuickPiSession(machineID: $0) }
+            ?? !model.quickPiSessionMachineIDs.isEmpty
+        HStack(spacing: 7) {
+            if isCreating {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "bolt")
             }
+            Text(isCreating ? "starting pi session…" : "new pi session")
         }
+        .sidebarActionStyle()
     }
 
     @ViewBuilder
