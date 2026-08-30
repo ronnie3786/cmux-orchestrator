@@ -4,6 +4,11 @@ import Testing
 
 @Suite("Herdr HUD placement")
 struct HerdrHudPlacementTests {
+    @Test("Default inset is the compact eight-point corner offset")
+    func defaultInsetIsEightPoints() {
+        #expect(HerdrHudPlacement.defaultInset == 8)
+    }
+
     // MARK: - Frame placement
 
     @Test("Default offset places the collapsed HUD inside the top-right inset")

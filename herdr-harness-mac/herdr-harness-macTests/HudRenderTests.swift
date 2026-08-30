@@ -6,7 +6,7 @@ import Testing
 @Suite("Herdr HUD renders", .serialized)
 @MainActor
 struct HudRenderTests {
-    @Test("HUD card renders a completed Ask and Do transcript")
+    @Test("HUD card renders completed transcript rows")
     func rendersHudCard() async throws {
         let model = HerdrRenderFixtures.demoModel()
         let session = HerdrHudSession(userDefaults: makeDefaults())
@@ -14,7 +14,6 @@ struct HudRenderTests {
             HerdrHudExchange(
                 id: "hud-fleet-status",
                 machineID: "demo1",
-                mode: .ask,
                 prompt: "What is the current status of the demo fleet?",
                 sentPrompt: "What is the current status of the demo fleet?",
                 response: "The fleet is healthy. Two alerts need attention, and one pane is waiting for review.",
@@ -22,12 +21,12 @@ struct HudRenderTests {
                 status: .completed,
                 costUSD: nil,
                 createdAt: .now,
-                promotedPaneID: nil
+                promotedPaneID: nil,
+                attachmentFilenames: []
             ),
             HerdrHudExchange(
                 id: "hud-resolve-alert",
                 machineID: "demo1",
-                mode: .act,
                 prompt: "Resolve the stale attention alert and summarize the change.",
                 sentPrompt: "Resolve the stale attention alert and summarize the change.",
                 response: "Resolved the stale alert, refreshed its status, and left the active pane open for review.",
@@ -35,7 +34,8 @@ struct HudRenderTests {
                 status: .completed,
                 costUSD: 0.0042,
                 createdAt: .now,
-                promotedPaneID: nil
+                promotedPaneID: nil,
+                attachmentFilenames: ["alert-screenshot.png"]
             ),
         ])
 

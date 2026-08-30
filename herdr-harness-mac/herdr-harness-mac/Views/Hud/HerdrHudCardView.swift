@@ -1,6 +1,9 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HerdrHudCardView: View {
+    private static let allowedImageContentTypes: [UTType] = [.png, .jpeg, .gif, .webP, .heic]
+
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     @Bindable var session: HerdrHudSession
@@ -30,6 +33,12 @@ struct HerdrHudCardView: View {
                 .strokeBorder(HerdrTheme.surface, lineWidth: 1)
         }
         .shadow(color: HerdrTheme.ink.opacity(0.7), radius: 28, y: 12)
+        .dropDestination(for: URL.self) { urls, _ in
+            let imageURLs = urls.filter { isImageURL($0) }
+            guard !imageURLs.isEmpty else { return false }
+            session.addImageAttachments(imageURLs)
+            return true
+        }
         .task(id: session.selectedMachineID) {
             updateResponseAudioAvailability()
             session.responseAudioPlayer.stop()
@@ -50,5 +59,12 @@ struct HerdrHudCardView: View {
 
     private func openPaneInMainWindow(_ paneID: String) {
         HerdrMacAppDelegate.openPaneURLWithFallback(paneID)
+    }
+
+    private func isImageURL(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.contentTypeKey])
+        let contentType = values?.contentType ?? UTType(filenameExtension: url.pathExtension)
+        guard let contentType else { return false }
+        return Self.allowedImageContentTypes.contains { contentType.conforms(to: $0) }
     }
 }

@@ -43,7 +43,7 @@ struct HerdrHudTranscriptView: View {
                     .padding(HerdrTheme.cardPadding)
                 }
                 .scrollIndicators(.hidden)
-                .onChange(of: session.exchanges.count) { _, _ in
+                .onChange(of: session.exchanges.last) { _, _ in
                     scrollToLatest(using: proxy)
                 }
                 .onChange(of: session.isRunning) { _, isRunning in

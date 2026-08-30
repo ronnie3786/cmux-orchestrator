@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import stat
@@ -194,6 +195,214 @@ class AgentRunManagerTests(unittest.TestCase):
             )
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertNotIn("ACT mode", charter)
+            manager.stop()
+
+    def test_model_and_thinking_level_are_stored_and_appended_to_argv(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+            model = "accounts/fireworks/models/deepseek-v4-flash-0731"
+
+            started = manager.start(
+                prompt="What changed?",
+                label="Fleet question",
+                cwd=str(directory / "home"),
+                topology={},
+                model=model,
+                thinking_level="high",
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertEqual(finished["run"]["model"], model)
+            self.assertEqual(finished["run"]["thinkingLevel"], "high")
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertEqual(capture["argv"][capture["argv"].index("--model") + 1], model)
+            self.assertEqual(capture["argv"][capture["argv"].index("--thinking") + 1], "high")
+            manager.stop()
+
+    def test_invalid_model_and_thinking_level_are_rejected(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+
+            with self.assertRaises(AgentRunError) as context:
+                manager.start(
+                    prompt="What changed?",
+                    label="Fleet question",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    model="bad model with spaces",
+                )
+            self.assertEqual(context.exception.status, 400)
+
+            with self.assertRaises(AgentRunError) as context:
+                manager.start(
+                    prompt="What changed?",
+                    label="Fleet question",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    thinking_level="ultra",
+                )
+            self.assertEqual(context.exception.status, 400)
+            manager.stop()
+
+    def test_attachments_are_written_to_run_dir_and_appended_as_at_args(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+            data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL2NwAAAABJRU5ErkJggg==")
+
+            started = manager.start(
+                prompt="Look at this",
+                label="Image question",
+                cwd=str(directory / "home"),
+                topology={},
+                attachments=[
+                    {"filename": "photo.png", "dataBase64": base64.b64encode(data).decode()}
+                ],
+            )
+            run_id = started["run"]["id"]
+            finished = wait_for_status(manager, run_id, {"completed"})
+            attachment_path = manager.runs_root / run_id / "attachments" / "photo.png"
+
+            self.assertEqual(attachment_path.read_bytes(), data)
+            self.assertEqual(finished["run"]["attachments"], ["photo.png"])
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertIn("@" + str(attachment_path), capture["argv"])
+            manager.stop()
+
+    def test_duplicate_attachment_filenames_are_deduped_with_a_numeric_suffix(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            first = b"first image"
+            second = b"second image"
+
+            started = manager.start(
+                prompt="Look at these",
+                label="Image question",
+                cwd=str(directory / "home"),
+                topology={},
+                attachments=[
+                    {"filename": "photo.png", "dataBase64": base64.b64encode(first).decode()},
+                    {"filename": "photo.png", "dataBase64": base64.b64encode(second).decode()},
+                ],
+            )
+            run_id = started["run"]["id"]
+            finished = wait_for_status(manager, run_id, {"completed"})
+            attachments_dir = manager.runs_root / run_id / "attachments"
+
+            self.assertEqual(finished["run"]["attachments"], ["photo.png", "photo-1.png"])
+            self.assertEqual((attachments_dir / "photo.png").read_bytes(), first)
+            self.assertEqual((attachments_dir / "photo-1.png").read_bytes(), second)
+            manager.stop()
+
+    def test_case_and_unicode_normalization_variants_are_deduped_too(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            first = b"first image"
+            second = b"second image"
+
+            started = manager.start(
+                prompt="Look at these",
+                label="Image question",
+                cwd=str(directory / "home"),
+                topology={},
+                attachments=[
+                    {"filename": "Photo.png", "dataBase64": base64.b64encode(first).decode()},
+                    {"filename": "photo.png", "dataBase64": base64.b64encode(second).decode()},
+                ],
+            )
+            run_id = started["run"]["id"]
+            finished = wait_for_status(manager, run_id, {"completed"})
+            attachments_dir = manager.runs_root / run_id / "attachments"
+
+            self.assertEqual(finished["run"]["attachments"], ["Photo.png", "photo-1.png"])
+            self.assertEqual((attachments_dir / "Photo.png").read_bytes(), first)
+            self.assertEqual((attachments_dir / "photo-1.png").read_bytes(), second)
+            manager.stop()
+
+    def test_invalid_attachments_are_rejected(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            valid_data = base64.b64encode(b"image").decode()
+            options = {
+                "prompt": "Look at this",
+                "label": "Image question",
+                "cwd": str(directory / "home"),
+                "topology": {},
+            }
+
+            for attachments, status in (
+                ([{"filename": "malware.exe", "dataBase64": valid_data}], 400),
+                (
+                    [
+                        {
+                            "filename": "photo.png",
+                            "dataBase64": base64.b64encode(
+                                b"a" * (21 * 1024 * 1024)
+                            ).decode(),
+                        }
+                    ],
+                    413,
+                ),
+                ([{"filename": "../evil.png", "dataBase64": valid_data}], 400),
+            ):
+                with self.assertRaises(AgentRunError) as context:
+                    manager.start(**options, attachments=attachments)
+                self.assertEqual(context.exception.status, status)
+            manager.stop()
+
+    def test_attachment_filename_rejects_excessive_utf16_units(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            filename = "🎉" * 130 + ".png"
+            self.assertLessEqual(len(filename), 200)
+            self.assertGreater(len(filename.encode("utf-16-le")) // 2, 240)
+
+            with self.assertRaises(AgentRunError) as context:
+                manager.start(
+                    prompt="Look at this",
+                    label="Image question",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    attachments=[
+                        {
+                            "filename": filename,
+                            "dataBase64": base64.b64encode(b"image").decode(),
+                        }
+                    ],
+                )
+
+            self.assertEqual(context.exception.status, 400)
+            manager.stop()
+
+    def test_no_new_fields_means_identical_behavior_to_today(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+
+            started = manager.start(
+                prompt="What changed?",
+                label="Fleet question",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertIsNone(finished["run"]["model"])
+            self.assertIsNone(finished["run"]["thinkingLevel"])
+            self.assertEqual(finished["run"]["attachments"], [])
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertNotIn("--model", capture["argv"])
+            self.assertNotIn("--thinking", capture["argv"])
+            self.assertFalse(any(item.startswith("@") for item in capture["argv"]))
             manager.stop()
 
     def test_invalid_mode_is_rejected(self):

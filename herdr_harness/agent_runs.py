@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
+import errno
 import json
 import math
 import os
@@ -12,18 +15,22 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from .alerts import utc_now
+from .attachments import MAX_ATTACHMENT_BYTES
 
 
 PUBLIC_RUN_KEYS = (
     "id",
     "status",
     "mode",
+    "model",
+    "thinkingLevel",
     "prompt",
     "response",
     "error",
@@ -35,8 +42,13 @@ PUBLIC_RUN_KEYS = (
     "costUSD",
     "promotedWorkspaceId",
     "promotedPaneId",
+    "attachments",
 )
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "promoted"})
+MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._/:-]{1,200}$")
+THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh", "max"})
+ATTACHMENT_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "heic"})
+MAX_ATTACHMENTS = 4
 _RUN_ID_RE = re.compile(r"^agr_[0-9a-f]{12}$")
 MAX_RESPONSE_CHARS = 512 * 1024
 MAX_EVENT_LINE_BYTES = 2 * 1024 * 1024
@@ -47,6 +59,108 @@ class AgentRunError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.status = status
+
+
+def _sanitize_attachment_filename(value: Any) -> str:
+    """Reject (never silently rewrite) unsafe attachment filenames.
+
+    Any path separator or traversal segment causes rejection rather than
+    stripping, so a caller can never be surprised that "../evil.png" was
+    silently accepted as "evil.png".
+    """
+    if not isinstance(value, str):
+        raise AgentRunError(
+            "attachment filename is invalid", code="invalid_agent_attachment", status=400
+        )
+    name = value.strip()
+    if (
+        not name
+        or "\x00" in name
+        or len(name) > 200
+        or len(name.encode("utf-16-le")) // 2 > 240
+        or "/" in name
+        or "\\" in name
+        or name in {".", ".."}
+        or os.path.basename(name) != name
+    ):
+        raise AgentRunError(
+            "attachment filename is invalid", code="invalid_agent_attachment", status=400
+        )
+    extension = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if extension not in ATTACHMENT_EXTENSIONS:
+        raise AgentRunError(
+            "attachment file type is not supported",
+            code="invalid_agent_attachment",
+            status=400,
+        )
+    return name
+
+
+def _decode_attachment_data(value: Any) -> bytes:
+    if not isinstance(value, str) or not value:
+        raise AgentRunError(
+            "attachment dataBase64 is required", code="invalid_agent_attachment", status=400
+        )
+    maximum_encoded = ((MAX_ATTACHMENT_BYTES + 2) // 3) * 4
+    if len(value) > maximum_encoded:
+        raise AgentRunError(
+            "attachment exceeds 20 MB limit", code="agent_attachment_too_large", status=413
+        )
+    try:
+        data = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise AgentRunError(
+            "attachment dataBase64 must be valid base64",
+            code="invalid_agent_attachment",
+            status=400,
+        ) from exc
+    if not data:
+        raise AgentRunError(
+            "attachment file is empty", code="invalid_agent_attachment", status=400
+        )
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise AgentRunError(
+            "attachment exceeds 20 MB limit", code="agent_attachment_too_large", status=413
+        )
+    return data
+
+
+def _prepare_attachments(attachments: Optional[list]) -> list[tuple[str, bytes]]:
+    if attachments is None:
+        return []
+    if not isinstance(attachments, list) or len(attachments) > MAX_ATTACHMENTS:
+        raise AgentRunError(
+            f"attachments must be a list of at most {MAX_ATTACHMENTS} items",
+            code="invalid_agent_attachment",
+            status=400,
+        )
+
+    def _fs_key(n: str) -> str:
+        return unicodedata.normalize("NFC", n).casefold()
+
+    used: set[str] = set()
+    prepared: list[tuple[str, bytes]] = []
+    for item in attachments:
+        if not isinstance(item, dict) or set(item) != {"filename", "dataBase64"}:
+            raise AgentRunError(
+                "attachment must have filename and dataBase64",
+                code="invalid_agent_attachment",
+                status=400,
+            )
+        filename = _sanitize_attachment_filename(item.get("filename"))
+        data = _decode_attachment_data(item.get("dataBase64"))
+        name = filename
+        key = _fs_key(name)
+        if key in used:
+            stem, dot, ext = filename.rpartition(".")
+            counter = 1
+            while key in used:
+                name = f"{stem}-{counter}.{ext}" if dot else f"{filename}-{counter}"
+                key = _fs_key(name)
+                counter += 1
+        used.add(key)
+        prepared.append((name, data))
+    return prepared
 
 
 def _bounded_int(
@@ -200,6 +314,7 @@ class AgentRunManager:
     def _public(run: dict) -> dict:
         public = {key: copy.deepcopy(run.get(key)) for key in PUBLIC_RUN_KEYS}
         public["mode"] = run.get("mode") or "ask"
+        public["attachments"] = list(run.get("attachments") or [])
         return public
 
     def _envelope(self, run: dict) -> dict:
@@ -278,6 +393,9 @@ class AgentRunManager:
         cwd: str,
         topology: dict,
         mode: str = "ask",
+        model: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+        attachments: Optional[list] = None,
     ) -> dict:
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 131072:
             raise AgentRunError("prompt is invalid", code="invalid_agent_prompt", status=400)
@@ -285,6 +403,13 @@ class AgentRunManager:
             raise AgentRunError("label is invalid", code="invalid_agent_label", status=400)
         if mode not in ("ask", "act"):
             raise AgentRunError("mode is invalid", code="invalid_agent_mode", status=400)
+        if model is not None and (not isinstance(model, str) or not MODEL_PATTERN.fullmatch(model)):
+            raise AgentRunError("model is invalid", code="invalid_agent_model", status=400)
+        if thinking_level is not None and (
+            not isinstance(thinking_level, str) or thinking_level not in THINKING_LEVELS
+        ):
+            raise AgentRunError("thinkingLevel is invalid", code="invalid_agent_thinking_level", status=400)
+        prepared_attachments = _prepare_attachments(attachments)
         try:
             working_directory = Path(cwd).expanduser().resolve()
         except (OSError, RuntimeError, TypeError) as exc:
@@ -327,13 +452,34 @@ class AgentRunManager:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.chmod(context_path, 0o600)
-        except OSError:
+            attachment_names: list[str] = []
+            if prepared_attachments:
+                attachments_dir = run_dir / "attachments"
+                attachments_dir.mkdir(mode=0o700)
+                for name, data in prepared_attachments:
+                    target = attachments_dir / name
+                    with target.open("xb") as handle:
+                        handle.write(data)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.chmod(target, 0o600)
+                    attachment_names.append(name)
+        except OSError as exc:
             shutil.rmtree(run_dir, ignore_errors=True)
+            if exc.errno == errno.ENAMETOOLONG and prepared_attachments:
+                raise AgentRunError(
+                    "attachment filename is too long",
+                    code="invalid_agent_attachment",
+                    status=400,
+                ) from exc
             raise
         run = {
             "id": run_id,
             "status": "queued",
             "mode": mode,
+            "model": model,
+            "thinkingLevel": thinking_level,
+            "attachments": attachment_names,
             "prompt": prompt,
             "response": None,
             "error": None,
@@ -460,6 +606,26 @@ class AgentRunManager:
                 "--no-prompt-templates",
                 "--no-approve",
             ]
+            model = run.get("model")
+            if isinstance(model, str) and model:
+                command.extend(["--model", model])
+            thinking_level = run.get("thinkingLevel")
+            if isinstance(thinking_level, str) and thinking_level:
+                command.extend(["--thinking", thinking_level])
+            attachment_names = run.get("attachments") or []
+            if attachment_names:
+                # Empirically verified against /opt/homebrew/bin/pi (2026-08-30): piping
+                # the prompt over stdin ("printf '...' | pi -p --mode json @tiny.png")
+                # combines cleanly with positional `@<path>` image arguments -- pi
+                # appends a `<file name="...">` marker to the stdin text and adds each
+                # file as a separate image content part on the SAME user message, in
+                # argv order (confirmed with two attachments too). So attachment runs
+                # keep feeding the prompt via stdin exactly like prompt-only runs; we
+                # only need to append each stored attachment's absolute path as a
+                # trailing positional `@<path>` argv element -- no argv-based prompt
+                # is needed.
+                attachments_dir = self._run_dir(run_id) / "attachments"
+                command.extend(f"@{attachments_dir / name}" for name in attachment_names)
             child_env = dict(os.environ)
             child_env.update(self.environ)
             child_env["PI_SKIP_VERSION_CHECK"] = "1"

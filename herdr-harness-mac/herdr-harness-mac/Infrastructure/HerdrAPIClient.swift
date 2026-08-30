@@ -505,12 +505,21 @@ actor HerdrAPIClient {
 
     func startHeadlessAgent(
         prompt: String,
-        mode: HeadlessAgentRunMode = .ask
+        mode: HeadlessAgentRunMode = .ask,
+        model: String? = nil,
+        thinkingLevel: String? = nil,
+        attachments: [HeadlessAgentAttachment]? = nil
     ) async throws -> HeadlessAgentRunEnvelope {
         try await request(
             path: "/api/v1/agent-runs",
             method: "POST",
-            body: HeadlessAgentStartRequest(prompt: prompt, mode: mode)
+            body: HeadlessAgentStartRequest(
+                prompt: prompt,
+                mode: mode,
+                model: model,
+                thinkingLevel: thinkingLevel,
+                attachments: attachments
+            )
         )
     }
 
@@ -936,6 +945,9 @@ actor HerdrAPIClient {
         }
         if path == "/api/v1/quick-sessions/pi" {
             return 75
+        }
+        if path == "/api/v1/agent-runs", method == "POST" {
+            return 90
         }
         if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") {
             return 30

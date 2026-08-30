@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct HerdrHudOrbView: View {
@@ -24,9 +25,19 @@ struct HerdrHudOrbView: View {
 
                 stateRing
 
-                Image(systemName: "sparkles")
-                    .foregroundStyle(glyphColor)
-                    .accessibilityHidden(true)
+                Group {
+                    if let appIcon = NSApp.applicationIconImage {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .scaledToFit()
+                    } else {
+                        Image(systemName: "sparkles")
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
+                .foregroundStyle(glyphColor)
+                .accessibilityHidden(true)
 
                 if attentionCount > 0 {
                     Text("\(attentionCount)")

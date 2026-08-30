@@ -38,6 +38,8 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let status: HeadlessAgentRunStatus
     let mode: HeadlessAgentRunMode?
+    let model: String?
+    let thinkingLevel: String?
     let prompt: String
     let response: String?
     let error: String?
@@ -49,11 +51,14 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let costUSD: Double?
     let promotedWorkspaceID: String?
     let promotedPaneID: String?
+    let attachments: [String]?
 
     enum CodingKeys: String, CodingKey {
         case id
         case status
         case mode
+        case model
+        case thinkingLevel
         case prompt
         case response
         case error
@@ -65,6 +70,7 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
         case costUSD
         case promotedWorkspaceID = "promotedWorkspaceId"
         case promotedPaneID = "promotedPaneId"
+        case attachments
     }
 }
 
@@ -78,18 +84,34 @@ struct HeadlessAgentPromotionResult: Sendable {
     let pane: HerdrPane
 }
 
+struct HeadlessAgentAttachment: Encodable, Equatable, Sendable {
+    let filename: String
+    let dataBase64: String
+}
+
 struct HeadlessAgentStartRequest: Encodable, Sendable {
     let prompt: String
     let mode: HeadlessAgentRunMode
+    let model: String?
+    let thinkingLevel: String?
+    let attachments: [HeadlessAgentAttachment]?
 
-    init(prompt: String, mode: HeadlessAgentRunMode = .ask) {
+    init(
+        prompt: String,
+        mode: HeadlessAgentRunMode = .ask,
+        model: String? = nil,
+        thinkingLevel: String? = nil,
+        attachments: [HeadlessAgentAttachment]? = nil
+    ) {
         self.prompt = prompt
         self.mode = mode
+        self.model = model
+        self.thinkingLevel = thinkingLevel
+        self.attachments = attachments
     }
 
     private enum CodingKeys: String, CodingKey {
-        case prompt
-        case mode
+        case prompt, mode, model, thinkingLevel, attachments
     }
 
     func encode(to encoder: Encoder) throws {
@@ -97,6 +119,11 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
         try container.encode(prompt, forKey: .prompt)
         if mode != .ask {
             try container.encode(mode, forKey: .mode)
+        }
+        try container.encodeIfPresent(model, forKey: .model)
+        try container.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
+        if let attachments, !attachments.isEmpty {
+            try container.encode(attachments, forKey: .attachments)
         }
     }
 }

@@ -15,7 +15,7 @@ struct HerdrHudTranscriptEmptyView: View {
             Text("Ask anything, anywhere")
                 .herdrFont(.headline, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
-            Text("⌥Space summons the HUD · Do mode runs real commands")
+            Text("⌃⌥Space summons the HUD, anywhere.")
                 .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.muted)
                 .multilineTextAlignment(.center)

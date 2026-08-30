@@ -37,6 +37,55 @@ struct HeadlessAgentRunTests {
         #expect(!HeadlessAgentRunStatus.running.isTerminal)
     }
 
+    @Test("Decodes model routing and attachment fields")
+    func decodesModelRoutingAndAttachments() throws {
+        let data = Data(#"""
+        {
+          "ok": true,
+          "run": {
+            "id": "run-vision",
+            "status": "completed",
+            "prompt": "Describe this",
+            "response": "A screenshot.",
+            "error": null,
+            "createdAt": "2026-08-25T12:00:00Z",
+            "model": "openai-codex/gpt-5.6-luna",
+            "thinkingLevel": "max",
+            "attachments": ["a.png", "b.png"]
+          }
+        }
+        """#.utf8)
+
+        let envelope = try JSONDecoder().decode(HeadlessAgentRunEnvelope.self, from: data)
+
+        #expect(envelope.run.model == "openai-codex/gpt-5.6-luna")
+        #expect(envelope.run.thinkingLevel == "max")
+        #expect(envelope.run.attachments == ["a.png", "b.png"])
+    }
+
+    @Test("Decodes legacy run envelopes without model routing or attachments")
+    func decodesLegacyRunEnvelopeWithoutModelRoutingOrAttachments() throws {
+        let data = Data(#"""
+        {
+          "ok": true,
+          "run": {
+            "id": "run-legacy",
+            "status": "completed",
+            "prompt": "What changed?",
+            "response": "Nothing.",
+            "error": null,
+            "createdAt": "2026-08-25T12:00:00Z"
+          }
+        }
+        """#.utf8)
+
+        let envelope = try JSONDecoder().decode(HeadlessAgentRunEnvelope.self, from: data)
+
+        #expect(envelope.run.model == nil)
+        #expect(envelope.run.thinkingLevel == nil)
+        #expect(envelope.run.attachments == nil)
+    }
+
     @Test("Decodes the act mode from a run envelope")
     func decodesActMode() throws {
         let data = Data(#"""
@@ -112,5 +161,31 @@ struct HeadlessAgentRunTests {
 
         #expect(object["prompt"] == "hello")
         #expect(object["mode"] == nil)
+    }
+
+    @Test("Encodes optional model routing and attachments")
+    func encodesModelRoutingAndAttachments() throws {
+        let data = try JSONEncoder().encode(
+            HeadlessAgentStartRequest(
+                prompt: "hello",
+                model: "openai-codex/gpt-5.6-luna",
+                thinkingLevel: "max",
+                attachments: [HeadlessAgentAttachment(filename: "a.png", dataBase64: "Zm9v")]
+            )
+        )
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["model"] as? String == "openai-codex/gpt-5.6-luna")
+        #expect(object["thinkingLevel"] as? String == "max")
+        let attachments = try #require(object["attachments"] as? [[String: String]])
+        #expect(attachments == [["filename": "a.png", "dataBase64": "Zm9v"]])
+    }
+
+    @Test("Omits optional model routing and attachments when absent")
+    func omitsOptionalModelRoutingAndAttachmentsWhenAbsent() throws {
+        let data = try JSONEncoder().encode(HeadlessAgentStartRequest(prompt: "hello"))
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["model"] == nil)
+        #expect(object["thinkingLevel"] == nil)
+        #expect(object["attachments"] == nil)
     }
 }

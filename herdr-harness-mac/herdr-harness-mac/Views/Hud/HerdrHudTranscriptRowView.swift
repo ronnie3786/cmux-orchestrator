@@ -28,6 +28,13 @@ struct HerdrHudTranscriptRowView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+            if !exchange.attachmentFilenames.isEmpty {
+                Label(exchange.attachmentFilenames.joined(separator: ", "), systemImage: "paperclip")
+                    .herdrFont(.caption2, monospaced: true)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
             Text(exchange.createdAt, format: .dateTime.hour().minute())
                 .herdrFont(.caption2, monospaced: true)
                 .foregroundStyle(HerdrTheme.muted)
@@ -63,11 +70,6 @@ struct HerdrHudTranscriptRowView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            if exchange.mode == .act {
-                Label("Do", systemImage: "bolt.fill")
-                    .herdrFont(.caption, monospaced: true, weight: .bold)
-                    .foregroundStyle(HerdrTheme.warning)
-            }
             if let costUSD = exchange.costUSD {
                 Text("$\(costUSD.formatted(.number.precision(.fractionLength(4))))")
                     .herdrFont(.caption, monospaced: true)

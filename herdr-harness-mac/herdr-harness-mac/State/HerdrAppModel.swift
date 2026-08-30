@@ -1633,7 +1633,10 @@ final class HerdrAppModel {
     func startHeadlessAgent(
         prompt: String,
         machineID: String,
-        mode: HeadlessAgentRunMode = .ask
+        mode: HeadlessAgentRunMode = .ask,
+        model: String? = nil,
+        thinkingLevel: String? = nil,
+        attachments: [HeadlessAgentAttachment]? = nil
     ) async throws -> HeadlessAgentRun {
         if isDemoMode {
             let now = HerdrTimestamp.string(from: .now)
@@ -1641,6 +1644,8 @@ final class HerdrAppModel {
                 id: "demo-agent-\(UUID().uuidString)",
                 status: .completed,
                 mode: mode,
+                model: model,
+                thinkingLevel: thinkingLevel,
                 prompt: prompt,
                 response: "This is a demo Agent response. On a live machine, Pi answers from your home folder with a read-only snapshot of the current Herdr fleet.",
                 error: nil,
@@ -1651,7 +1656,8 @@ final class HerdrAppModel {
                 sessionFile: "demo-session.jsonl",
                 costUSD: 0,
                 promotedWorkspaceID: nil,
-                promotedPaneID: nil
+                promotedPaneID: nil,
+                attachments: attachments?.map(\.filename)
             )
         }
         guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
@@ -1659,7 +1665,13 @@ final class HerdrAppModel {
                 machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
             )
         }
-        return try await client.startHeadlessAgent(prompt: prompt, mode: mode).run
+        return try await client.startHeadlessAgent(
+            prompt: prompt,
+            mode: mode,
+            model: model,
+            thinkingLevel: thinkingLevel,
+            attachments: attachments
+        ).run
     }
 
     func fetchHeadlessAgent(runID: String, machineID: String) async throws -> HeadlessAgentRun {
@@ -1707,6 +1719,8 @@ final class HerdrAppModel {
                     id: runID,
                     status: .promoted,
                     mode: .ask,
+                    model: nil,
+                    thinkingLevel: nil,
                     prompt: "Demo prompt",
                     response: "Demo response",
                     error: nil,
@@ -1717,7 +1731,8 @@ final class HerdrAppModel {
                     sessionFile: "demo-session.jsonl",
                     costUSD: 0,
                     promotedWorkspaceID: workspace.workspaceID,
-                    promotedPaneID: pane.paneID
+                    promotedPaneID: pane.paneID,
+                    attachments: nil
                 ),
                 pane: pane
             )

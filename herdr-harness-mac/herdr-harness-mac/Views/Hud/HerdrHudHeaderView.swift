@@ -33,6 +33,7 @@ struct HerdrHudHeaderView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
+                .disabled(session.isRunning)
                 .accessibilityLabel("Clear HUD history")
                 .accessibilityIdentifier("hud-clear-history")
             }

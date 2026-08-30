@@ -17,7 +17,7 @@ from typing import Any, Mapping, Optional
 
 from . import attachments, response_audio, voice
 from .active_work import ActiveWorkError
-from .agent_runs import AgentRunError
+from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
 from .cleanup import CleanupError
@@ -278,6 +278,50 @@ def _optional_env(body: dict) -> dict[str, str]:
         if not isinstance(item, str) or "\x00" in item or len(item) > 8192:
             raise HTTPValidationError(f"env value for {key} is invalid")
         result[key] = item
+    return result
+
+
+def _optional_agent_model(body: dict) -> Optional[str]:
+    if "model" not in body or body.get("model") is None:
+        return None
+    model = _string(body.get("model"), "model", maximum=200)
+    if not MODEL_PATTERN.fullmatch(model):
+        raise HTTPValidationError("model is invalid", code="invalid_agent_model")
+    return model
+
+
+def _optional_agent_thinking_level(body: dict) -> Optional[str]:
+    if "thinkingLevel" not in body or body.get("thinkingLevel") is None:
+        return None
+    level = _string(body.get("thinkingLevel"), "thinkingLevel", maximum=16)
+    if level not in THINKING_LEVELS:
+        raise HTTPValidationError("thinkingLevel is invalid", code="invalid_agent_thinking_level")
+    return level
+
+
+def _optional_agent_attachments(body: dict) -> Optional[list]:
+    if "attachments" not in body or body.get("attachments") is None:
+        return None
+    value = body.get("attachments")
+    if not isinstance(value, list) or len(value) > MAX_ATTACHMENTS:
+        raise HTTPValidationError(
+            f"attachments must be a list of at most {MAX_ATTACHMENTS} items",
+            code="invalid_agent_attachment",
+        )
+    result = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"filename", "dataBase64"}:
+            raise HTTPValidationError(
+                "attachment must have filename and dataBase64",
+                code="invalid_agent_attachment",
+            )
+        filename = _string(item.get("filename"), "attachment filename", maximum=200)
+        data_base64 = _string(
+            item.get("dataBase64"),
+            "attachment dataBase64",
+            maximum=attachments.MAX_ATTACHMENT_JSON_BYTES,
+        )
+        result.append({"filename": filename, "dataBase64": data_base64})
     return result
 
 
@@ -692,8 +736,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     and segments[:3] == ["api", "v1", "workspaces"]
                     and segments[4] == "attachments"
                 )
+                agent_run_create = method == "POST" and segments == ["api", "v1", "agent-runs"]
                 voice_upload = method == "POST" and segments[2:] == ["voice", "transcriptions"]
-                if attachment_upload:
+                if attachment_upload or agent_run_create:
                     maximum = attachments.MAX_ATTACHMENT_JSON_BYTES
                 elif voice_upload:
                     maximum = voice.MAX_VOICE_JSON_BYTES
@@ -1358,7 +1403,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     request_id=request_id,
                 )
             if method == "POST" and tail == ["agent-runs"]:
-                if any(key not in {"prompt", "label", "mode"} for key in body):
+                if any(
+                    key not in {"prompt", "label", "mode", "model", "thinkingLevel", "attachments"}
+                    for key in body
+                ):
                     raise HTTPValidationError("Agent run request contains an unsupported field")
                 prompt = _string(body.get("prompt"), "prompt", maximum=131072)
                 if not prompt.strip():
@@ -1369,7 +1417,20 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 mode = body.get("mode", "ask")
                 if not isinstance(mode, str) or mode not in {"ask", "act"}:
                     raise HTTPValidationError("mode must be ask or act")
-                return service.start_agent_run(prompt=prompt, label=label, mode=mode), 202
+                model = _optional_agent_model(body)
+                thinking_level = _optional_agent_thinking_level(body)
+                request_attachments = _optional_agent_attachments(body)
+                return (
+                    service.start_agent_run(
+                        prompt=prompt,
+                        label=label,
+                        mode=mode,
+                        model=model,
+                        thinking_level=thinking_level,
+                        attachments=request_attachments,
+                    ),
+                    202,
+                )
             if len(tail) >= 2 and tail[0] == "agent-runs":
                 run_id = _agent_run_id(tail[1])
                 if method == "GET" and len(tail) == 2:

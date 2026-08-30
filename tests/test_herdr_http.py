@@ -293,6 +293,8 @@ class FakeHTTPService:
                 "id": "agr_0123456789ab",
                 "status": status,
                 "mode": mode,
+                "model": None,
+                "thinkingLevel": None,
                 "prompt": "What changed?",
                 "response": "An answer" if status in {"completed", "promoted"} else None,
                 "error": None,
@@ -304,13 +306,41 @@ class FakeHTTPService:
                 "costUSD": 0.01,
                 "promotedWorkspaceId": "w1" if status == "promoted" else None,
                 "promotedPaneId": "w1:p1" if status == "promoted" else None,
+                "attachments": [],
             },
         }
 
-    def start_agent_run(self, *, prompt, label=None, mode="ask"):
-        self.calls.append(("agent_run.start", {"prompt": prompt, "label": label, "mode": mode}))
+    def start_agent_run(
+        self,
+        *,
+        prompt,
+        label=None,
+        mode="ask",
+        model=None,
+        thinking_level=None,
+        attachments=None,
+    ):
+        self.calls.append(
+            (
+                "agent_run.start",
+                {
+                    "prompt": prompt,
+                    "label": label,
+                    "mode": mode,
+                    "model": model,
+                    "thinking_level": thinking_level,
+                    "attachments": attachments,
+                },
+            )
+        )
         result = self._agent_run("queued", mode=mode)
         result["run"]["prompt"] = prompt
+        if model is not None:
+            result["run"]["model"] = model
+        if thinking_level is not None:
+            result["run"]["thinkingLevel"] = thinking_level
+        if attachments is not None:
+            result["run"]["attachments"] = [item["filename"] for item in attachments]
         return result
 
     def get_agent_run(self, run_id):
@@ -790,6 +820,8 @@ class HerdrHTTPTests(unittest.TestCase):
                 "id",
                 "status",
                 "mode",
+                "model",
+                "thinkingLevel",
                 "prompt",
                 "response",
                 "error",
@@ -801,11 +833,22 @@ class HerdrHTTPTests(unittest.TestCase):
                 "costUSD",
                 "promotedWorkspaceId",
                 "promotedPaneId",
+                "attachments",
             },
         )
         self.assertEqual(
             self.service.calls[-1],
-            ("agent_run.start", {"prompt": "What changed?", "label": None, "mode": "ask"}),
+            (
+                "agent_run.start",
+                {
+                    "prompt": "What changed?",
+                    "label": None,
+                    "mode": "ask",
+                    "model": None,
+                    "thinking_level": None,
+                    "attachments": None,
+                },
+            ),
         )
 
         get_status, _, get_body = self.request("/api/v1/agent-runs/agr_0123456789ab")
@@ -833,7 +876,14 @@ class HerdrHTTPTests(unittest.TestCase):
             self.service.calls[-1],
             (
                 "agent_run.start",
-                {"prompt": "Open the browser", "label": None, "mode": "act"},
+                {
+                    "prompt": "Open the browser",
+                    "label": None,
+                    "mode": "act",
+                    "model": None,
+                    "thinking_level": None,
+                    "attachments": None,
+                },
             ),
         )
 
@@ -856,6 +906,90 @@ class HerdrHTTPTests(unittest.TestCase):
 
         self.assertEqual(unhashable_status, 400)
         self.assertEqual(unhashable_body["error"]["code"], "invalid_request")
+        self.assertEqual(len(self.service.calls), call_count)
+
+    def test_agent_run_model_and_thinking_level_are_validated_and_forwarded(self):
+        model = "accounts/fireworks/models/deepseek-v4-flash-0731"
+        status, _, body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Look at this", "model": model, "thinkingLevel": "high"},
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(body["run"]["model"], model)
+        self.assertEqual(body["run"]["thinkingLevel"], "high")
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "agent_run.start",
+                {
+                    "prompt": "Look at this",
+                    "label": None,
+                    "mode": "ask",
+                    "model": model,
+                    "thinking_level": "high",
+                    "attachments": None,
+                },
+            ),
+        )
+
+        call_count = len(self.service.calls)
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "x", "model": "bad model!"},
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_agent_model")
+        self.assertEqual(len(self.service.calls), call_count)
+
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "x", "thinkingLevel": "ultra"},
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_agent_thinking_level")
+        self.assertEqual(len(self.service.calls), call_count)
+
+    def test_agent_run_attachments_are_shape_validated_and_forwarded(self):
+        attachment = {"filename": "a.png", "dataBase64": "aGVsbG8="}
+        status, _, _ = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Look at this", "attachments": [attachment]},
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(self.service.calls[-1][1]["attachments"], [attachment])
+
+        call_count = len(self.service.calls)
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "x", "attachments": "not-a-list"},
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_agent_attachment")
+        self.assertEqual(len(self.service.calls), call_count)
+
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "x", "attachments": [attachment] * 5},
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_agent_attachment")
+        self.assertEqual(len(self.service.calls), call_count)
+
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "x", "attachments": [{"filename": "a.png"}]},
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_agent_attachment")
         self.assertEqual(len(self.service.calls), call_count)
 
     def test_agent_run_promote_and_delete_forward_validated_options(self):

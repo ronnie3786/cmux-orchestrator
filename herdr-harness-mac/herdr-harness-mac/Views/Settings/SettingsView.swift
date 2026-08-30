@@ -167,11 +167,11 @@ struct SettingsView: View {
                 )
             )
 
-            LabeledContent("Summon", value: "⌥Space")
+            LabeledContent("Summon", value: "⌃⌥Space")
         } header: {
             Text("HUD")
         } footer: {
-            Text("Ask mode investigates read-only. Do mode can run real commands on the selected machine.")
+            Text("The HUD can run real commands on the selected machine.")
         }
     }
 

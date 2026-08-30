@@ -5,7 +5,7 @@ import CoreGraphics
 struct HerdrHudPlacement: Equatable, Sendable {
     var topRightOffset: CGSize
 
-    static let defaultInset: CGFloat = 16
+    static let defaultInset: CGFloat = 8
     static let collapsedSize = CGSize(width: 72, height: 72)
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HerdrHudComposerView: View {
     @Bindable var model: HerdrAppModel
@@ -9,11 +10,12 @@ struct HerdrHudComposerView: View {
     @FocusState private var isComposerFocused: Bool
     @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
     @State private var voiceErrorMessage: String?
+    @State private var isShowingImagePicker = false
 
     var body: some View {
         VStack(spacing: 8) {
-            if let clipboardAttachment = session.clipboardAttachment {
-                clipboardChip(clipboardAttachment)
+            if !session.imageAttachments.isEmpty {
+                attachmentChips
             }
             if let voiceErrorMessage, !voiceErrorMessage.isEmpty {
                 Text(voiceErrorMessage)
@@ -43,27 +45,32 @@ struct HerdrHudComposerView: View {
                 .accessibilityLabel(voiceCaptureAccessibilityLabel)
                 .accessibilityIdentifier("hud-mic")
 
-                Button(action: attachClipboard) {
-                    Image(systemName: "doc.on.clipboard")
+                Button {
+                    isShowingImagePicker = true
+                } label: {
+                    Image(systemName: "paperclip")
                         .foregroundStyle(HerdrTheme.mist)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Attach clipboard")
-                .accessibilityIdentifier("hud-clipboard")
+                .accessibilityLabel("Attach image")
+                .accessibilityIdentifier("hud-attach-image")
 
                 Spacer()
-
-                Picker("Mode", selection: $session.mode) {
-                    Label("Ask", systemImage: "sparkles").tag(HeadlessAgentRunMode.ask)
-                    Label("Do", systemImage: "bolt.fill").tag(HeadlessAgentRunMode.act)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 122)
-                .herdrFont(.caption, weight: .bold)
-                .accessibilityIdentifier("hud-mode-picker")
             }
         }
         .padding(12)
+        .fileImporter(
+            isPresented: $isShowingImagePicker,
+            allowedContentTypes: [.png, .jpeg, .gif, .webP, .heic],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case let .success(urls):
+                session.addImageAttachments(urls)
+            case let .failure(error):
+                session.reportAttachmentError(error.localizedDescription)
+            }
+        }
         .task(id: controller.focusRequest) {
             isComposerFocused = true
         }
@@ -75,6 +82,21 @@ struct HerdrHudComposerView: View {
                 finishVoiceCapture()
             }
         }
+    }
+
+    private var attachmentChips: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(session.imageAttachments) { attachment in
+                    HerdrHudAttachmentChipView(
+                        attachment: attachment,
+                        remove: { session.removeImageAttachment(attachment.id) }
+                    )
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -98,7 +120,7 @@ struct HerdrHudComposerView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 42)
             } else {
-                TextField(placeholder, text: $session.draft, axis: .vertical)
+                TextField("Ask anything — or tell it what to do…", text: $session.draft, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
                     .herdrFont(.callout)
@@ -119,10 +141,6 @@ struct HerdrHudComposerView: View {
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
     }
 
-    private var placeholder: String {
-        session.mode == .ask ? "Ask your fleet…" : "Tell it what to do…"
-    }
-
     private var canSubmit: Bool {
         !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.isRunning
     }
@@ -139,28 +157,6 @@ struct HerdrHudComposerView: View {
         }
     }
 
-    private func clipboardChip(_ attachment: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "doc.on.clipboard")
-                .foregroundStyle(HerdrTheme.accent)
-            Text("\(attachment.count) chars")
-                .herdrFont(.caption, monospaced: true)
-                .foregroundStyle(HerdrTheme.mist)
-            Button {
-                session.clipboardAttachment = nil
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(HerdrTheme.mist)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove clipboard attachment")
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     private func handleReturnKey(_ press: KeyPress) -> KeyPress.Result {
         guard !press.modifiers.contains(.shift), !press.modifiers.contains(.option) else {
             return .ignored
@@ -172,11 +168,6 @@ struct HerdrHudComposerView: View {
     private func submit() {
         guard canSubmit else { return }
         Task { await session.submit(model: model) }
-    }
-
-    private func attachClipboard() {
-        guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        session.attachClipboard(text)
     }
 
     private func toggleVoiceCapture() {

@@ -20,7 +20,7 @@ final class HerdrHudPanel: NSPanel {
 final class HerdrHudController {
     private enum DefaultsKey {
         static let enabled = "herdr.hud.enabled"
-        static let offset = "herdr.hud.offset"
+        static let offset = "herdr.hud.offset.v2"
     }
 
     private let userDefaults: UserDefaults
@@ -148,7 +148,7 @@ final class HerdrHudController {
         if hotKey == nil {
             hotKey = HerdrGlobalHotKey(
                 keyCode: UInt32(kVK_Space),
-                modifiers: UInt32(optionKey)
+                modifiers: UInt32(controlKey | optionKey)
             ) { [weak self] in
                 self?.toggleFromHotKey()
             }
@@ -229,7 +229,7 @@ final class HerdrHudController {
     }
 
     private func visibleFrame(for panel: NSPanel?) -> CGRect {
-        panel?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        panel?.screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
     }
 
     private func loadPlacementOffset() -> CGSize {

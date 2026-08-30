@@ -2315,6 +2315,9 @@ class HerdrService:
         prompt: str,
         label: Optional[str] = None,
         mode: str = "ask",
+        model: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+        attachments: Optional[list] = None,
     ) -> dict:
         display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
         try:
@@ -2329,6 +2332,9 @@ class HerdrService:
             cwd=str(self._server_home()),
             topology=self._agent_topology(),
             mode=mode,
+            model=model,
+            thinking_level=thinking_level,
+            attachments=attachments,
         )
 
     def get_agent_run(self, run_id: str) -> dict:
