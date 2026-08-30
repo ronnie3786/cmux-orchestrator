@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Active Work Concept Tour</title>
+<style>
+  :root {
+    --ink:#181825; --graphite:#1e1e2e; --elevated:#313244; --surface:#45475a;
+    --mist:#a6adc8; --muted:#6c7086; --text:#e5eafa; --accent:#89b4fa;
+    --mauve:#cba6f7; --signal:#94e2d5; --success:#a6e3a1; --working:#f9e2af;
+    --alert:#f38ba8; --warning:#fab387; --crust:#11111b;
+    --body:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+    --rounded:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+    --mono:"SFMono-Regular","SF Mono",Menlo,ui-monospace,monospace;
+    --hairline:rgba(166,173,200,.16);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { background:#050506; }
+  body {
+    background:#050506; color:var(--text);
+    font:400 14px/1.65 var(--body);
+    -webkit-font-smoothing:antialiased;
+  }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .page { width:min(940px, calc(100vw - 40px)); margin:0 auto; padding:64px 0 96px; }
+
+  /* ---------- header ---------- */
+  .eyebrow {
+    font:650 10px var(--mono); letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow .bars { display:inline-flex; gap:2.5px; align-items:flex-end; }
+  .eyebrow .bars i { width:3.5px; border-radius:2px; display:block; }
+  .eyebrow .bars i:nth-child(1){ height:8px;  background:var(--accent); }
+  .eyebrow .bars i:nth-child(2){ height:12px; background:var(--mauve); }
+  .eyebrow .bars i:nth-child(3){ height:6px;  background:var(--signal); }
+  h1 {
+    font:750 34px/1.12 var(--rounded); letter-spacing:-.02em;
+    margin:14px 0 14px; text-wrap:balance;
+  }
+  .lede { color:var(--mist); font-size:15px; max-width:64ch; }
+  .lede b { color:var(--text); font-weight:600; }
+  .provenance {
+    margin-top:22px; display:flex; flex-wrap:wrap; gap:8px;
+  }
+  .prov-chip {
+    font:600 10px var(--mono); letter-spacing:.02em; color:var(--mist);
+    border:1px solid var(--hairline); border-radius:999px; padding:5px 11px;
+    background:rgba(30,30,46,.6);
+  }
+  .prov-chip b { color:var(--text); font-weight:650; }
+
+  /* ---------- compare strip ---------- */
+  .compare {
+    margin:40px 0 12px; padding:16px 18px; border:1px solid var(--hairline);
+    border-radius:14px; background:var(--ink);
+    display:grid; grid-template-columns:auto 1fr; gap:6px 22px; align-items:baseline;
+  }
+  .compare .k { font:650 10px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  .compare .v { color:var(--mist); font-size:12.5px; }
+  .compare .v code { font:600 11px var(--mono); color:var(--text); }
+
+  /* ---------- option cards ---------- */
+  .options { display:grid; gap:22px; margin-top:34px; }
+  .option {
+    border:1px solid var(--hairline); border-radius:20px; background:var(--ink);
+    overflow:hidden;
+  }
+  .opt-head {
+    display:flex; align-items:center; gap:14px; padding:20px 24px 0;
+  }
+  .opt-num {
+    font:750 11px var(--mono); letter-spacing:.1em; color:var(--muted);
+  }
+  .opt-name { font:750 21px var(--rounded); letter-spacing:-.015em; }
+  .opt-tag  { color:var(--muted); font-size:12.5px; margin-left:auto; text-align:right; }
+  .signature { padding:18px 24px 0; }
+  .signature svg { display:block; width:100%; height:auto; border-radius:12px; background:var(--crust); border:1px solid rgba(166,173,200,.1); }
+  .opt-body { padding:18px 24px 22px; display:grid; grid-template-columns:1.25fr 1fr; gap:8px 30px; }
+  .opt-what { color:var(--mist); font-size:13px; }
+  .opt-what b { color:var(--text); font-weight:600; }
+  .col-label {
+    font:650 9.5px var(--mono); letter-spacing:.12em; text-transform:uppercase;
+    color:var(--muted); margin-bottom:8px;
+  }
+  .try { list-style:none; display:grid; gap:7px; }
+  .try li {
+    font-size:12.5px; color:var(--mist); padding-left:18px; position:relative;
+  }
+  .try li::before {
+    content:""; position:absolute; left:2px; top:.62em; width:6px; height:6px;
+    border-radius:50%; border:1.5px solid var(--accent); opacity:.7;
+  }
+  .try code, .opt-what code {
+    font:600 11px var(--mono); color:var(--text);
+    background:rgba(49,50,68,.55); border-radius:5px; padding:1.5px 6px; white-space:nowrap;
+  }
+  .stolen { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; }
+  .stolen span {
+    font:600 9.5px var(--mono); color:var(--mauve);
+    border:1px dashed rgba(203,166,247,.35); background:rgba(203,166,247,.05);
+    border-radius:999px; padding:4px 10px;
+  }
+  .opt-foot {
+    display:flex; align-items:center; gap:18px; padding:16px 24px;
+    border-top:1px solid rgba(255,255,255,.07); background:rgba(17,17,27,.5);
+  }
+  .cost { display:flex; align-items:center; gap:8px; font:600 10px var(--mono); letter-spacing:.06em; color:var(--muted); text-transform:uppercase; }
+  .cost .dots { display:inline-flex; gap:4px; }
+  .cost .dots i { width:7px; height:7px; border-radius:50%; background:var(--surface); display:block; }
+  .cost .dots i.on { background:var(--warning); }
+  .verdict-pill {
+    font:650 10px var(--mono); border-radius:999px; padding:4px 11px;
+    color:var(--signal); background:rgba(148,226,213,.08); border:1px solid rgba(148,226,213,.28);
+  }
+  .open-btn {
+    margin-left:auto; display:inline-block;
+    font:650 12px var(--body); color:var(--crust); background:var(--accent);
+    border-radius:9px; padding:9px 16px; transition:filter .2s ease;
+  }
+  .open-btn:hover { filter:brightness(1.1); text-decoration:none; }
+  .open-quiet {
+    font:600 11px var(--mono); color:var(--mist); border:1px solid var(--hairline);
+    border-radius:9px; padding:8px 13px;
+  }
+  .open-quiet:hover { color:var(--text); text-decoration:none; border-color:rgba(166,173,200,.34); }
+
+  /* ---------- sections ---------- */
+  h2 {
+    font:700 17px var(--rounded); letter-spacing:-.01em; margin:56px 0 6px;
+  }
+  .sub { color:var(--muted); font-size:12.5px; margin-bottom:18px; }
+  .foundation {
+    display:grid; grid-template-columns:repeat(2, 1fr); gap:14px;
+  }
+  .found-card {
+    border:1px solid var(--hairline); border-radius:14px; background:var(--ink);
+    padding:16px 18px;
+  }
+  .found-card h3 { font:650 12.5px var(--body); margin-bottom:6px; }
+  .found-card p { color:var(--mist); font-size:12.5px; }
+  .found-card code { font:600 10.5px var(--mono); color:var(--text); background:rgba(49,50,68,.55); border-radius:5px; padding:1px 5px; }
+
+  .take {
+    border:1px solid rgba(137,180,250,.3); border-left:3px solid var(--accent);
+    border-radius:14px; background:linear-gradient(90deg, rgba(137,180,250,.06), transparent 55%), var(--ink);
+    padding:18px 22px; margin-top:18px;
+  }
+  .take p { color:var(--mist); font-size:13.5px; }
+  .take p + p { margin-top:10px; }
+  .take b { color:var(--text); font-weight:650; }
+
+  footer {
+    margin-top:64px; padding-top:18px; border-top:1px solid rgba(255,255,255,.07);
+    font:500 10.5px var(--mono); color:var(--muted); display:flex; flex-wrap:wrap; gap:6px 24px;
+  }
+
+  @media (max-width:760px) {
+    .opt-body { grid-template-columns:1fr; }
+    .foundation { grid-template-columns:1fr; }
+    .opt-tag { display:none; }
+    .compare { grid-template-columns:1fr; gap:2px 0; }
+    .compare .v { margin-bottom:8px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="eyebrow"><span class="bars"><i></i><i></i><i></i></span> herdr · active work · design exploration · aug 29 2026</div>
+  <h1>Four ways to ride the Buzz line</h1>
+  <p class="lede">
+    Four interactive prototypes for the Active Work board, exploring how far to lean into
+    <a href="https://github.com/sodiumsun/agenttrail">agenttrail</a>'s live-map ideas versus refining the
+    shipped Journey&nbsp;rows + Focus&nbsp;route design. All of them answer the same brief:
+    <b>follow each item's path, see which agents, Buzz threads, and Pi sessions belong to each stage,
+    and dive deeper</b> — with one obvious next action and progressive disclosure everywhere else.
+  </p>
+  <div class="provenance">
+    <span class="prov-chip">inspired by <b>sodiumsun/agenttrail</b></span>
+    <span class="prov-chip">chrome + palette from <b>HerdrTheme</b> (Catppuccin Mocha)</span>
+    <span class="prov-chip">data shapes mirror <b>GET /api/v1/active-work</b></span>
+    <span class="prov-chip">principles from <b>ADHD_FRIENDLY_UI_NOTES</b></span>
+  </div>
+
+  <div class="compare">
+    <span class="k">fair test</span>
+    <span class="v">Options 02–04 share identical Herdr chrome, dataset, and interaction contract. Option 01 deliberately breaks the chrome rule — it wears agenttrail's own skin (amber, grain, light/dark toggle), because fidelity to the source is its thesis.</span>
+    <span class="k">dataset</span>
+    <span class="v"><code>AGENTIC-575</code> working at Implement · <code>IOSDOX-27458</code> blocked on your Proof approval · <code>AGENTIC-472</code> waiting on your merge call · <code>IDEA-07</code> still in idea intake.</span>
+    <span class="k">alive</span>
+    <span class="v">Every page runs a simulator: AGENTIC-575's coder keeps working (~7s ticks), timestamps age in real time, working dots breathe.</span>
+  </div>
+
+  <div class="options">
+
+    <!-- ============ OPTION D (the faithful port) ============ -->
+    <section class="option" id="buzz-trail" style="border-color:rgba(233,162,59,.4);">
+      <div class="opt-head">
+        <span class="opt-num" style="color:#e9a23b;">01</span>
+        <span class="opt-name">Buzz Trail</span>
+        <span class="opt-tag">agenttrail itself, pointed at the ticket pipeline — the faithful port</span>
+      </div>
+      <div class="signature" aria-hidden="true">
+        <svg viewBox="0 0 640 96" xmlns="http://www.w3.org/2000/svg" style="background:#000;">
+          <rect x="0" y="0" width="640" height="96" fill="#000"/>
+          <g fill="#313131" opacity=".5">
+            <circle cx="30" cy="20" r="1"/><circle cx="90" cy="50" r="1"/><circle cx="160" cy="80" r="1"/>
+            <circle cx="300" cy="16" r="1"/><circle cx="420" cy="84" r="1"/><circle cx="560" cy="30" r="1"/>
+            <circle cx="610" cy="70" r="1"/><circle cx="230" cy="42" r="1"/><circle cx="500" cy="12" r="1"/>
+          </g>
+          <polyline points="60,48 250,48 440,60" fill="none" stroke="#5b7fd6" stroke-width="2" stroke-dasharray="1 7" stroke-linecap="round" opacity=".55"/>
+          <rect x="24" y="18" width="150" height="60" rx="9" fill="#181818" stroke="#313131"/>
+          <text x="36" y="34" font-family="ui-monospace,monospace" font-size="7.5" letter-spacing="1" fill="#686868">buzz-plan</text>
+          <text x="36" y="50" font-family="-apple-system,sans-serif" font-size="11" font-weight="600" fill="#fff">Plan</text>
+          <circle cx="156" cy="32" r="7" fill="#3f7f57"/><path d="M152.5 32l2.5 2.5 4.5-5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+          <rect x="36" y="62" width="126" height="4" rx="2" fill="#3f7f57"/>
+          <line x1="174" y1="48" x2="252" y2="48" stroke="#e9a23b" stroke-width="1.5" stroke-dasharray="5 8"/>
+          <path d="M252 48l-6-3.5v7z" fill="#313131"/>
+          <rect x="256" y="18" width="150" height="60" rx="9" fill="#181818" stroke="#e9a23b" stroke-width="1.2"/>
+          <text x="268" y="34" font-family="ui-monospace,monospace" font-size="7.5" letter-spacing="1" fill="#686868">buzz-implement</text>
+          <text x="268" y="50" font-family="-apple-system,sans-serif" font-size="11" font-weight="600" fill="#fff">Implement</text>
+          <circle cx="388" cy="32" r="7" fill="none" stroke="#313131" stroke-width="2"/>
+          <circle cx="388" cy="32" r="7" fill="none" stroke="#e9a23b" stroke-width="2" stroke-dasharray="16 41" stroke-linecap="round"/>
+          <text x="330" y="72" font-family="ui-monospace,monospace" font-size="7.5" fill="#e9a23b">Editing · context-dump.md · 2s</text>
+          <rect x="268" y="62" width="52" height="4" rx="2" fill="#e9a23b"/><rect x="320" y="62" width="74" height="4" rx="2" fill="#313131"/>
+          <rect x="428" y="26" width="186" height="20" rx="10" fill="#181818" stroke="#313131"/>
+          <circle cx="442" cy="36" r="6" fill="none" stroke="#e9a23b" stroke-width="1.6" stroke-dasharray="12 26"/>
+          <text x="454" y="39" font-family="ui-monospace,monospace" font-size="8" fill="#d1d1d1">AGENTIC-575 · riding</text>
+          <rect x="428" y="52" width="186" height="20" rx="10" fill="#181818" stroke="#313131"/>
+          <circle cx="442" cy="62" r="6" fill="#db6b67"/><text x="440" y="65" font-family="-apple-system,sans-serif" font-size="8" font-weight="700" fill="#fff">!</text>
+          <text x="454" y="65" font-family="ui-monospace,monospace" font-size="8" fill="#e79490">IOSDOX-27458 · your gate</text>
+        </svg>
+      </div>
+      <div class="opt-body">
+        <div>
+          <div class="col-label">what it is</div>
+          <p class="opt-what">
+            The open-source board itself, re-pointed: where agenttrail maps a codebase into component cards,
+            this maps the Buzz pipeline — <b>the eight stages are the stable geography</b> across an INTAKE →
+            OPEN / BUILD / PROVE / SHIP world, and <b>your tickets ride through them as task capsules</b>
+            (<code>[~]</code> riding · <code>[!]</code> your gate · <code>[x]</code> cleared, with agent
+            <i>by:</i> chips). The sidebar leads with a <b>ticket selector</b> — click one ticket to see just its
+            journey, ⌘-click to compare several, Overview for everything — above your <b>agent roster</b>
+            and <b>Jira candidates</b>. Now fleshed out with the real harness model: six tickets across both
+            machines, setup states, all four checkpoint states, a done ticket living on as a faded trail —
+            and <b>working behaviors</b>: gate approvals that actually advance the board, a needs-you panel
+            with ack, Pi handoff copy commands, a live <code>buzz.log</code> console, and Ask board answers
+            computed from current state. Both themes, verbatim agenttrail skin.
+          </p>
+          <div class="stolen">
+            <span>everything — this IS agenttrail</span><span>its tokens + motion, verbatim</span>
+            <span>light + dark themes</span><span>capsule grammar</span><span>ticket tree w/ hot stamps</span>
+          </div>
+        </div>
+        <div>
+          <div class="col-label">try this</div>
+          <ul class="try">
+            <li>Click <code>AGENTIC-575</code> in the sidebar to isolate its journey — the board drops everything else; ⌘-click adds tickets to compare; Overview brings it all back.</li>
+            <li>Approve the Proof gate on IOSDOX-27458 — the ticket <b>actually advances</b>: trail extends, cards recount, the badge drops. Then merge PR #510.</li>
+            <li>Click <code>3 need you</code> — jump to any gate from the panel, or <code>ack</code> a row to quiet it.</li>
+            <li>Open <code>buzz.log</code> in the sidebar for the live merged activity stream, filterable per ticket.</li>
+            <li>Ask the board <code>⌁</code> "What needs me next?" — answers derive from the current state, even after your approvals.</li>
+            <li>Copy a <code>herdr pi handoff --pane …</code> command from any session row; set up a Jira candidate and watch it land in INTAKE.</li>
+            <li>Flip <code>Light</code>/<code>Dark</code> · <code>F</code> to fit · <code>⌘ scroll</code> to zoom — far out, regions collapse to phase plates.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="opt-foot">
+        <span class="cost">migration <span class="dots"><i class="on"></i><i></i><i></i></span> web board — ships nearly as-is</span>
+        <span class="verdict-pill" style="color:#e9a23b;background:rgba(233,162,59,.08);border-color:rgba(233,162,59,.3);">the requested direction</span>
+        <a class="open-btn" href="option-d-buzz-trail.html" style="background:#e9a23b;">Open Buzz Trail →</a>
+      </div>
+    </section>
+
+    <!-- ============ OPTION A ============ -->
+    <section class="option" id="trail-map">
+      <div class="opt-head">
+        <span class="opt-num">02</span>
+        <span class="opt-name">Trail Map</span>
+        <span class="opt-tag">the full agenttrail transplant — the pipeline as a place</span>
+      </div>
+      <div class="signature" aria-hidden="true">
+        <svg viewBox="0 0 640 96" xmlns="http://www.w3.org/2000/svg">
+          <rect x="16" y="12" width="140" height="72" rx="10" fill="rgba(30,30,46,.5)" stroke="rgba(166,173,200,.14)"/>
+          <rect x="168" y="12" width="140" height="72" rx="10" fill="rgba(30,30,46,.5)" stroke="rgba(166,173,200,.14)"/>
+          <rect x="320" y="12" width="140" height="72" rx="10" fill="rgba(30,30,46,.5)" stroke="rgba(243,139,168,.35)"/>
+          <rect x="472" y="12" width="140" height="72" rx="10" fill="rgba(30,30,46,.5)" stroke="rgba(166,173,200,.14)"/>
+          <text x="24" y="28" font-family="ui-monospace,monospace" font-size="8" letter-spacing="2" fill="#6c7086">OPEN</text>
+          <text x="176" y="28" font-family="ui-monospace,monospace" font-size="8" letter-spacing="2" fill="#6c7086">BUILD</text>
+          <text x="328" y="28" font-family="ui-monospace,monospace" font-size="8" letter-spacing="2" fill="#6c7086">PROVE</text>
+          <text x="480" y="28" font-family="ui-monospace,monospace" font-size="8" letter-spacing="2" fill="#6c7086">SHIP</text>
+          <polyline points="40,56 110,56 190,56" fill="none" stroke="#94e2d5" stroke-width="2.5" opacity=".6"/>
+          <line x1="190" y1="56" x2="250" y2="56" stroke="#89b4fa" stroke-width="2.5" stroke-dasharray="5 8"/>
+          <polyline points="250,56 390,56 590,56" fill="none" stroke="rgba(166,173,200,.35)" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round"/>
+          <circle cx="40" cy="56" r="4" fill="#94e2d5"/><circle cx="110" cy="56" r="4" fill="#94e2d5"/>
+          <circle cx="250" cy="56" r="6.5" fill="none" stroke="#89b4fa" stroke-width="2"/>
+          <circle cx="250" cy="56" r="11" fill="none" stroke="#89b4fa" stroke-width="1" opacity=".3"/>
+          <rect x="384" y="50" width="11" height="11" rx="2" transform="rotate(45 390 56)" fill="none" stroke="#f38ba8" stroke-width="1.5"/>
+          <circle cx="510" cy="56" r="4" fill="none" stroke="#6c7086" stroke-width="1.5"/>
+          <circle cx="242" cy="42" r="5" fill="#89b4fa" opacity=".9"/><circle cx="256" cy="42" r="5" fill="#f9e2af" opacity=".9"/>
+          <rect x="196" y="64" width="108" height="16" rx="4" fill="#1e1e2e" stroke="rgba(137,180,250,.5)"/>
+          <text x="204" y="75" font-family="ui-monospace,monospace" font-size="8" fill="#e5eafa">AGENTIC-575</text>
+        </svg>
+      </div>
+      <div class="opt-body">
+        <div>
+          <div class="col-label">what it is</div>
+          <p class="opt-what">
+            A zoomable world where journeys are <b>trails through eight stations</b> across Open → Build →
+            Prove → Ship regions. Traveled track is solid teal, the live segment marches, the future is dotted.
+            agenttrail-style cards dock at each item's current station; live Pi <b>run cards</b> stream tool
+            lines top-right; a needs-you dock and a minimap keep the whole fleet one glance away. It even keeps
+            agenttrail's honesty trick — a second "observed" ring that shows what files are <i>actually</i>
+            changing versus what the stage claims.
+          </p>
+          <div class="stolen">
+            <span>pan/zoom world + camera flights</span><span>run cards</span><span>declared vs observed</span>
+            <span>dash-grammar edges</span><span>minimap</span><span>LOD name plates</span>
+          </div>
+        </div>
+        <div>
+          <div class="col-label">try this</div>
+          <ul class="try">
+            <li>Drag to pan, <code>⌘ scroll</code> to zoom, <code>F</code> to fit.</li>
+            <li>Zoom past ~50% — name plates bloom into full cards.</li>
+            <li>Click a card → <code>SHOW STAGES</code> → expand a stage row for its threads, sessions, and activity.</li>
+            <li>Click a needs-you dock strip — the camera flies to the blocked item.</li>
+            <li>Watch the DeepSeek run card and the card's observed file line tick as the simulator works.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="opt-foot">
+        <span class="cost">migration <span class="dots"><i class="on"></i><i class="on"></i><i class="on"></i></span> big build</span>
+        <span class="verdict-pill">best fleet awareness</span>
+        <a class="open-btn" href="option-a-trail-map.html">Open Trail Map →</a>
+      </div>
+    </section>
+
+    <!-- ============ OPTION B ============ -->
+    <section class="option" id="run-ledger">
+      <div class="opt-head">
+        <span class="opt-num">03</span>
+        <span class="opt-name">Run Ledger</span>
+        <span class="opt-tag">agenttrail's liveness, grafted onto the feed you already scan</span>
+      </div>
+      <div class="signature" aria-hidden="true">
+        <svg viewBox="0 0 640 96" xmlns="http://www.w3.org/2000/svg">
+          <text x="20" y="24" font-family="ui-monospace,monospace" font-size="7.5" letter-spacing="1.5" fill="#6c7086">CAST</text>
+          <g font-family="ui-monospace,monospace" font-size="7.5" fill="#6c7086" text-anchor="middle">
+            <text x="205" y="24">01</text><text x="275" y="24">02</text><text x="345" y="24">03</text>
+            <text x="415" y="24">04</text><text x="485" y="24">05</text><text x="555" y="24">06</text>
+          </g>
+          <rect x="310" y="14" width="70" height="72" rx="6" fill="rgba(137,180,250,.08)"/>
+          <circle cx="28" cy="40" r="7" fill="#f9e2af"/><text x="42" y="43" font-family="-apple-system,sans-serif" font-size="9" fill="#e5eafa">Buzz driver</text>
+          <rect x="180" y="37" width="190" height="6" rx="3" fill="#94e2d5" opacity=".45"/>
+          <rect x="312" y="37" width="66" height="6" rx="3" fill="#89b4fa"/>
+          <circle cx="28" cy="60" r="7" fill="#89b4fa"/><text x="42" y="63" font-family="-apple-system,sans-serif" font-size="9" fill="#e5eafa">DeepSeek coder</text>
+          <rect x="312" y="57" width="66" height="6" rx="3" fill="#89b4fa"/>
+          <text x="390" y="64" font-family="ui-monospace,monospace" font-size="7.5" fill="#89b4fa">Editing · impact_guard.py · 4s</text>
+          <circle cx="28" cy="80" r="7" fill="#cba6f7"/><text x="42" y="83" font-family="-apple-system,sans-serif" font-size="9" fill="#e5eafa">Architect iOS</text>
+          <rect x="382" y="77" width="66" height="6" rx="3" fill="none" stroke="#6c7086" stroke-width="1" stroke-dasharray="3 3"/>
+        </svg>
+      </div>
+      <div class="opt-body">
+        <div>
+          <div class="col-label">what it is</div>
+          <p class="opt-what">
+            The vertical feed stays, but each journey becomes a live run strip whose signature is the
+            <b>cast ledger</b> — an agents × stages grid where attachment bars show exactly who rode which
+            stage, and when. The live agent carries an observed file line beneath its bar. Every stage column
+            header opens that stage's <b>dossier</b>: Buzz threads with <i>Open in Buzz</i>, Pi sessions with
+            <i>Open pane</i>, the checkpoint record, continuity docs, and the activity log. Needs-you items sit
+            in loud flight strips at the top, each with exactly one action.
+          </p>
+          <div class="stolen">
+            <span>streaming tool line</span><span>observed vs declared</span><span>t-ago live stamps</span>
+            <span>recency fades</span><span>two-speed motion</span>
+          </div>
+        </div>
+        <div>
+          <div class="col-label">try this</div>
+          <ul class="try">
+            <li>Read AGENTIC-575's ledger row by row — who was where is instant.</li>
+            <li>Click column headers <code>01</code>–<code>08</code> to walk the stage dossiers.</li>
+            <li>Hover an attachment bar for its attach → detach span.</li>
+            <li>Hit <code>Review event map</code> on the top flight strip.</li>
+            <li>Use <code>←</code> <code>→</code> on a focused strip to move between stage columns.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="opt-foot">
+        <span class="cost">migration <span class="dots"><i class="on"></i><i class="on"></i><i></i></span> moderate</span>
+        <span class="verdict-pill">recommended daily driver</span>
+        <a class="open-btn" href="option-b-run-ledger.html">Open Run Ledger →</a>
+      </div>
+    </section>
+
+    <!-- ============ OPTION C ============ -->
+    <section class="option" id="journey-refit">
+      <div class="opt-head">
+        <span class="opt-num">04</span>
+        <span class="opt-name">Journey Refit</span>
+        <span class="opt-tag">the shipped design, rebuilt with precision — cheapest to land</span>
+      </div>
+      <div class="signature" aria-hidden="true">
+        <svg viewBox="0 0 640 96" xmlns="http://www.w3.org/2000/svg">
+          <line x1="40" y1="46" x2="600" y2="46" stroke="#45475a" stroke-width="3" stroke-linecap="round"/>
+          <line x1="40" y1="46" x2="320" y2="46" stroke="#94e2d5" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="40" cy="46" r="5" fill="#94e2d5"/>
+          <rect x="114" y="40" width="12" height="12" rx="2.5" transform="rotate(45 120 46)" fill="#94e2d5"/>
+          <circle cx="200" cy="46" r="5" fill="#94e2d5"/>
+          <circle cx="320" cy="46" r="8" fill="none" stroke="#89b4fa" stroke-width="2.5"/>
+          <circle cx="320" cy="46" r="13" fill="none" stroke="#89b4fa" stroke-width="1" opacity=".3"/>
+          <circle cx="312" cy="30" r="5.5" fill="#89b4fa"/><circle cx="326" cy="30" r="5.5" fill="#f9e2af"/>
+          <rect x="434" y="40" width="12" height="12" rx="2.5" transform="rotate(45 440 46)" fill="none" stroke="#f38ba8" stroke-width="1.8"/>
+          <circle cx="520" cy="46" r="4" fill="none" stroke="#6c7086" stroke-width="1.5"/>
+          <circle cx="600" cy="46" r="4" fill="none" stroke="#6c7086" stroke-width="1.5"/>
+          <circle cx="316" cy="60" r="2" fill="#89b4fa"/><circle cx="324" cy="60" r="2" fill="#cba6f7"/>
+          <rect x="352" y="56" width="150" height="30" rx="7" fill="#313244" stroke="rgba(166,173,200,.22)"/>
+          <text x="362" y="68" font-family="ui-monospace,monospace" font-size="7" letter-spacing="1" fill="#a6adc8">IMPLEMENT · CAST 2</text>
+          <text x="362" y="79" font-family="ui-monospace,monospace" font-size="7" fill="#89b4fa">1 thread · 1 pi session</text>
+        </svg>
+      </div>
+      <div class="opt-body">
+        <div>
+          <div class="col-label">what it is</div>
+          <p class="opt-what">
+            Same information architecture as the shipped SwiftUI — Journey rows and Focus route — visually
+            rebuilt. The boxy stepper becomes a <b>metro line</b> with checkpoint gates that show approval
+            state, and <b>every station is clickable</b>: a popover reveals that stage's cast, threads, and
+            sessions — the association data today's UI hides. Focus route grows a real activity timeline,
+            per-agent stage strips, and a working <b>Approve</b> flow on pending checkpoints. Maps 1:1 onto
+            <code>ActiveWorkBoardView</code> / <code>ActiveWorkFocusRouteView</code>.
+          </p>
+          <div class="stolen">
+            <span>0fr→1fr accordions</span><span>t-ago live stamps</span><span>breathing dots</span><span>calm two-speed motion</span>
+          </div>
+        </div>
+        <div>
+          <div class="col-label">try this</div>
+          <ul class="try">
+            <li>Click any station on any rail — the dossier popover opens in place.</li>
+            <li>Note the dot-badges under stations: accent = has Pi sessions, mauve = has threads.</li>
+            <li>Switch to <code>Focus route</code> in the toolbar for the full dossier view.</li>
+            <li>Click <code>Approve</code> on the Proof checkpoint — the gate fills and the journey advances.</li>
+            <li>Hover a cast row — that agent's stations light up on the hero rail.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="opt-foot">
+        <span class="cost">migration <span class="dots"><i class="on"></i><i></i><i></i></span> one week</span>
+        <span class="verdict-pill">safest upgrade</span>
+        <a class="open-btn" href="option-c-journey-refit.html">Open Journey Refit →</a>
+      </div>
+    </section>
+  </div>
+
+  <h2>Shared foundation</h2>
+  <p class="sub">What all three are built on — and why none of them needs backend work.</p>
+  <div class="foundation">
+    <div class="found-card">
+      <h3>The harness already knows everything</h3>
+      <p><code>GET /api/v1/active-work</code> already serves per-stage <code>agents[]</code> (role + link state),
+      <code>buzz_threads[]</code> with <code>buzz://</code> deep links, <code>pi_sessions[]</code> with pane IDs for
+      <code>/open/pane/…</code>, checkpoint states, and pushes <code>active_work.updated</code> over SSE.
+      These designs are pure presentation.</p>
+    </div>
+    <div class="found-card">
+      <h3>ADHD-first rules</h3>
+      <p>One obvious priority (needs-you is the only loud thing), progressive disclosure (dossiers on demand,
+      never all at once), calm color (status hues signal state, nothing else), and no dead pixels —
+      everything that looks clickable responds.</p>
+    </div>
+    <div class="found-card">
+      <h3>Herdr's own skin</h3>
+      <p>Catppuccin Mocha tokens from <code>HerdrTheme.swift</code>, SF Pro / SF Pro Rounded / SF Mono,
+      the same window chrome and sidebar in all three — so options compare on design, not dressing.</p>
+    </div>
+    <div class="found-card">
+      <h3>agenttrail's transplanted mechanics</h3>
+      <p>Timestamps mutate, structure doesn't (1s <code>t-ago</code> patcher); dash grammar encodes
+      relationship types; declared-vs-observed keeps agents honest; motion runs at two speeds
+      (700ms ambient / 250ms controls) and respects reduced-motion.</p>
+    </div>
+  </div>
+
+  <h2>The recommendation</h2>
+  <div class="take">
+    <p><b>Buzz Trail is the chosen direction</b> — Ronnie's call after reviewing the first three: lean all the
+    way into agenttrail rather than borrowing from it. Its practical advantage is real, too: like agenttrail,
+    it's one self-contained web page, so it can ship almost as-is as a harness-served board (a browser tab or
+    a WebView in Herdr) wired to <code>GET /api/v1/active-work</code> + SSE — no SwiftUI rebuild required.</p>
+    <p><b>Where the others still earn their keep:</b> Run Ledger's cast-ledger grid remains the best answer to
+    "who was where, when" and could become a zoom altitude or expanded card state inside Buzz Trail; Journey
+    Refit's station popovers are still the cheapest upgrade to the existing native views while the board
+    matures; Trail Map is superseded by Buzz Trail.</p>
+  </div>
+
+  <footer>
+    <span>docs/active-work-command-hub/prototypes/</span>
+    <span>specs + agenttrail cookbook live alongside</span>
+    <span>built 2026-08-29</span>
+  </footer>
+</div>
+</body>
+</html>

@@ -16,7 +16,7 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 DEFAULT_PIPELINE_ID = "pipeline_buzz_feature_work_v1"
 DEFAULT_PIPELINE_SLUG = "buzz-feature-work"
 DEFAULT_PIPELINE_VERSION = 1

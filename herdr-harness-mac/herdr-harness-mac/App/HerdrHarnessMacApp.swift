@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 /// exists for.
 enum HerdrWindowID {
     static let main = "herdr-main"
+    static let activeWorkBoard = "herdr-active-work-board"
 }
 
 enum HerdrExternalEvent {
@@ -69,6 +70,16 @@ struct HerdrHarnessMacApp: App {
                 hudController: hudController
             )
         }
+
+        Window("Active Work", id: HerdrWindowID.activeWorkBoard) {
+            ActiveWorkBoardWindowRoot(model: model, shell: shell)
+                .environment(\.herdrFontScale, fontScale.scale)
+                .frame(minWidth: 900, minHeight: 640)
+                .background(HerdrTheme.ink)
+                .preferredColorScheme(.dark)
+                .tint(HerdrTheme.accent)
+        }
+        .defaultSize(width: 1280, height: 860)
 
         // ⌘, — replaces the iOS Settings tab.
         Settings {

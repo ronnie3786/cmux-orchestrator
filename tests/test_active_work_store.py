@@ -1,3 +1,7 @@
+"""Behavioral tests for the durable Active Work repository."""
+
+from __future__ import annotations
+
 import os
 import sqlite3
 import stat
@@ -6,8 +10,18 @@ import threading
 import unittest
 from pathlib import Path
 
-from herdr_harness.active_work import ActiveWorkError, link_url, site_from_ticket, url
-from herdr_harness.active_work_store import ActiveWorkRepository
+from herdr_harness.active_work import (
+    ActiveWorkError,
+    DEFAULT_PIPELINE_ID,
+    DEFAULT_PIPELINE_SLUG,
+    DEFAULT_PIPELINE_STAGES,
+    DEFAULT_PIPELINE_VERSION,
+    link_url,
+    site_from_ticket,
+    url,
+)
+from herdr_harness.active_work_store import ActiveWorkRepository, SCHEMA_V1
+from herdr_harness.workflows import WorkflowConfigError, parse_workflow_config
 
 
 EXPECTED_STAGES = [
@@ -51,7 +65,7 @@ class ActiveWorkStoreTests(unittest.TestCase):
         self.addCleanup(self.repo.close)
 
     def test_schema_is_versioned_private_and_seeds_exact_buzz_pipeline(self):
-        self.assertEqual(self.repo.schema_version(), 1)
+        self.assertEqual(self.repo.schema_version(), 2)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
 
         board = self.repo.board_projection()
@@ -674,6 +688,172 @@ class ActiveWorkStoreTests(unittest.TestCase):
         self.assertFalse(errors)
         self.assertTrue(all(not thread.is_alive() for thread in threads))
         self.assertEqual(len(self.repo.board_projection()["items"]), 32)
+
+    def test_migration_from_v1_preserves_rows_and_bumps_user_version(self):
+        legacy_path = Path(self.temp.name) / "legacy-v1.sqlite3"
+        connection = sqlite3.connect(legacy_path)
+        connection.executescript(SCHEMA_V1)
+        created_at = "2026-08-30T00:00:00Z"
+        connection.execute(
+            "INSERT INTO pipeline_templates(id, slug, version, title, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                DEFAULT_PIPELINE_ID,
+                DEFAULT_PIPELINE_SLUG,
+                DEFAULT_PIPELINE_VERSION,
+                "Buzz Feature Work",
+                created_at,
+            ),
+        )
+        for stage in DEFAULT_PIPELINE_STAGES:
+            connection.execute(
+                """
+                INSERT INTO pipeline_stage_definitions(
+                    id, template_id, stage_key, sequence, phase_key, title,
+                    skill_name, checkpoint_kind, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    stage["id"],
+                    DEFAULT_PIPELINE_ID,
+                    stage["stage_key"],
+                    stage["sequence"],
+                    stage["phase_key"],
+                    stage["title"],
+                    stage["skill_name"],
+                    stage["checkpoint_kind"],
+                    created_at,
+                ),
+            )
+        connection.execute(
+            """
+            INSERT INTO work_items(
+                id, kind, title, summary, lifecycle, template_id, current_stage_id,
+                next_action, revision, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, '', 'active', ?, ?, '', 1, '{}', ?, ?)
+            """,
+            ("work_legacy", "task", "Legacy item", DEFAULT_PIPELINE_ID,
+             DEFAULT_PIPELINE_STAGES[0]["id"], created_at, created_at),
+        )
+        for stage in DEFAULT_PIPELINE_STAGES:
+            connection.execute(
+                """
+                INSERT INTO work_stage_states(
+                    work_item_id, stage_id, state, attention, checkpoint_state, summary,
+                    content_json, updated_at
+                ) VALUES (?, ?, ?, 'none', 'none', '', '{}', ?)
+                """,
+                ("work_legacy", stage["id"], "active" if stage["sequence"] == 1 else "pending", created_at),
+            )
+        connection.execute("PRAGMA user_version=1")
+        connection.commit()
+        connection.close()
+
+        migrated = ActiveWorkRepository(legacy_path)
+        self.addCleanup(migrated.close)
+        self.assertEqual(migrated.schema_version(), 2)
+        self.assertEqual(migrated.item_projection("work_legacy")["title"], "Legacy item")
+        self.assertIsInstance(migrated.get_workflow("buzz-feature-work")["config"], dict)
+
+    def test_workflow_apply_creates_template_and_is_idempotent_but_conflicts_on_changed_content(self):
+        payload = {
+            "workflow": "small-flow",
+            "version": 1,
+            "title": "Small Flow",
+            "description": "A test flow.",
+            "phases": [{"key": "start", "title": "Start"}, {"key": "finish", "title": "Finish"}],
+            "stages": [
+                {"key": "inspect", "title": "Inspect", "phase": "start", "skill": "inspect"},
+                {"key": "finish", "title": "Finish", "phase": "finish", "skill": "finish"},
+            ],
+        }
+        config = parse_workflow_config(payload)
+        first = self.repo.apply_workflow(config)
+        self.assertTrue(first["applied"])
+        self.assertEqual(first["workflow"]["slug"], "small-flow")
+        self.assertEqual(first["workflow"]["version"], 1)
+        workflow = next(item for item in self.repo.list_workflows() if item["slug"] == "small-flow")
+        self.assertEqual(workflow["stage_count"], 2)
+        self.assertFalse(self.repo.apply_workflow(config)["applied"])
+        self.assertEqual(self.repo.apply_workflow(config)["reason"], "unchanged")
+
+        changed = dict(payload)
+        changed["stages"] = [dict(stage) for stage in payload["stages"]]
+        changed["stages"][0]["title"] = "Different"
+        with self.assertRaises(ActiveWorkError) as context:
+            self.repo.apply_workflow(parse_workflow_config(changed))
+        self.assertEqual(context.exception.code, "workflow_version_conflict")
+        self.assertEqual(context.exception.status, 409)
+
+    def test_workflow_config_rejects_backward_next(self):
+        payload = {
+            "workflow": "backward-flow",
+            "version": 1,
+            "title": "Backward Flow",
+            "description": "",
+            "phases": [{"key": "one", "title": "One"}],
+            "stages": [
+                {"key": "first", "title": "First", "phase": "one", "skill": "first", "next": ["first"]},
+                {"key": "second", "title": "Second", "phase": "one", "skill": "second"},
+            ],
+        }
+        with self.assertRaises(WorkflowConfigError) as context:
+            parse_workflow_config(payload)
+        self.assertEqual(context.exception.code, "workflow_config_invalid")
+
+    def test_create_item_with_workflow_field_starts_at_its_first_stage_and_validates_its_own_stages(self):
+        item = self.repo.create_item({"kind": "task", "title": "Spike it", "workflow": "research-spike"})
+        self.assertEqual(item["current_stage_key"], "survey")
+        self.assertEqual(item["pipeline"]["slug"], "research-spike")
+        moved = self.repo.transition(
+            item["id"], {"to_stage_key": "decision", "expected_revision": item["revision"]}
+        )
+        with self.assertRaises(ActiveWorkError):
+            self.repo.transition(
+                moved["id"], {"to_stage_key": "plan", "expected_revision": moved["revision"]}
+            )
+        first_stage = self.repo.create_item({"kind": "task", "title": "Another", "workflow": "research-spike"})
+        with self.assertRaises(ActiveWorkError) as context:
+            self.repo.patch_item(
+                first_stage["id"], {"lifecycle": "done", "expected_revision": first_stage["revision"]}
+            )
+        self.assertEqual(context.exception.status, 409)
+        done = self.repo.patch_item(
+            moved["id"], {"lifecycle": "done", "expected_revision": moved["revision"]}
+        )
+        self.assertEqual(done["lifecycle"], "done")
+
+    def test_board_projection_includes_pipelines_list_with_phases_and_next_default_pipeline_unchanged(self):
+        board = self.repo.board_projection()
+        self.assertEqual(len(board["pipelines"]), 1)
+        pipeline = board["pipelines"][0]
+        self.assertEqual(
+            pipeline["phases"],
+            [{"key": "open", "title": "Open"}, {"key": "build", "title": "Build"},
+             {"key": "prove", "title": "Prove"}, {"key": "ship", "title": "Ship"}],
+        )
+        self.assertEqual(pipeline["stages"][0]["next"], ["plan"])
+        self.assertEqual(pipeline["stages"][-1]["next"], [])
+        self.assertEqual(board["pipeline"]["slug"], "buzz-feature-work")
+        self.assertEqual([stage["stage_key"] for stage in board["pipeline"]["stages"]], EXPECTED_STAGES)
+        self.repo.create_item({"title": "Spike", "workflow": "research-spike"})
+        self.assertEqual(len(self.repo.board_projection()["pipelines"]), 2)
+
+    def test_patch_stage_merges_documents_without_deleting_existing_keys_and_bumps_revision(self):
+        item = self.repo.create_item({"title": "Stage document"})
+        first = self.repo.patch_stage(
+            item["id"], "plan", {"content": {"documents": {"doc-1": {"title": "a"}}}}
+        )
+        second = self.repo.patch_stage(
+            item["id"], "plan", {"content": {"documents": {"doc-2": {"title": "b"}}}}
+        )
+        stage = next(stage for stage in second["stages"] if stage["stage_key"] == "plan")
+        self.assertEqual(set(stage["content"]["documents"]), {"doc-1", "doc-2"})
+        self.assertEqual(first["revision"], item["revision"] + 1)
+        self.assertEqual(second["revision"], item["revision"] + 2)
+        with self.assertRaises(ActiveWorkError) as context:
+            self.repo.patch_stage(item["id"], "not-a-real-stage", {"summary": "x"})
+        self.assertEqual(context.exception.code, "active_work_stage_not_found")
+        self.assertEqual(context.exception.status, 404)
 
 
 if __name__ == "__main__":

@@ -144,6 +144,17 @@ troubleshooting.
   /api/v1/active-work/items/{id}`, and `POST
   /api/v1/active-work/items/{id}/transitions` manage Feature, Task, and Idea
   records with optimistic revisions and the versioned Buzz pipeline.
+- `GET /api/v1/active-work/workflows` lists stored workflow templates. `GET
+  /api/v1/active-work/workflows/{slug}` returns the latest version, or accepts
+  optional `?version=` for a specific version. `POST
+  /api/v1/active-work/workflows` applies a workflow idempotently: identical
+  content is a no-op, while different content at the same slug and version is
+  a `409` that asks the caller to bump the version.
+- `PATCH /api/v1/active-work/items/{id}/stages/{stageKey}` deep-merges
+  `{summary?, content?}` directly into one stage without an ingestion envelope.
+  It returns `404` when the stage is not on that item's workflow template.
+  The board projection's existing `pipeline` key is unchanged and now also
+  includes `pipelines`, every applied workflow that is the default or in use.
 - `GET /api/v1/active-work/sync-targets` and `POST
   /api/v1/active-work/ingestions` support an external Buzz reconciler. Sync is
   merge-only, idempotent, stale-safe, and cannot create an untracked Jira
@@ -154,7 +165,11 @@ troubleshooting.
   which uses Parakeet and its existing faster-whisper fallback. The response
   contains text for the iOS composer and never submits a prompt or appends to
   cmux chat.
-- `GET /api/v1/events`
+- `GET /api/v1/events`. The Active Work manage token is also accepted here and
+  can observe event metadata (IDs and revisions only, never content).
+- `GET /board/` serves the read-only Active Work board page before auth, like
+  `/herdr-web/`. `GET /board` redirects relatively to `board/`; the page's own
+  data calls still require a token.
 - `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/read`
 - `GET /api/v1/push/status`, `POST /api/v1/push/devices`, and
   `POST /api/v1/push/unregister`
@@ -171,6 +186,35 @@ troubleshooting.
 Mutation results retain Herdr's native `result` object. The snapshot route
 returns the raw `SessionSnapshot`. Workspace records add only `tabs`, `panes`,
 `agents`, and `layouts`, each containing native Herdr records.
+
+### Workflows
+
+A workflow config contains phases and ordered stages. Each stage declares its
+skill, checkpoint, and forward-only `next` stages. Shipped defaults live in
+`herdr_harness/workflows/*.json`: `buzz-feature-work` expresses the existing
+default pipeline in this schema, and `research-spike` is a second example.
+
+At startup, the server loads shipped configs first, then
+`$HOME/.config/herdr-harness/workflows/*.json` or
+`HERDR_HARNESS_WORKFLOWS_DIR`. It skips and logs a warning for each file that
+fails validation, without failing startup. `create --workflow SLUG` in the CLI,
+or `"workflow": "<slug>"` in `POST /api/v1/active-work/items`, starts an item
+at that workflow's first stage. Later transitions validate against that
+workflow's own stages.
+
+Stage documents live in `content.documents`, keyed by document ID. Each entry
+uses `title`, `kind`, `skill`, `status` (`approved`, `changes_requested`,
+`awaiting-you`, or `info`), `by`, `at`, and optional `url`:
+
+```json
+"content": { "documents": { "plan-approval": {
+  "title": "plan-approval.html", "kind": "html", "skill": "buzz-plan",
+  "status": "approved", "by": "Ronnie", "at": "2026-08-30T18:04:00.000Z",
+  "url": "https://.../tickets/AGENTIC-575/plan-approval.html"
+}}}
+```
+
+`herdr-active-work attach-doc` builds this payload.
 
 ### Active Work command line
 
@@ -205,6 +249,11 @@ The command surface is:
 | `update REF ...` | Patch mutable item fields, optionally guarded by `--expected-revision N`. |
 | `move REF --to STAGE ...` | Move an item through its versioned pipeline, with optional state, attention, checkpoint, note, and revision controls. |
 | `observe --file PATH` | Submit one exact Active Work ingestion object from a file, or use `--file -` for stdin. |
+| `workflow-list` | List stored workflow templates. |
+| `workflow-show SLUG [--wf-version N]` | Show a workflow's phases, stages, and allowed next stages. |
+| `workflow-apply --file PATH|- [--validate]` | Validate and apply a workflow config, or validate locally only. |
+| `stage-set REF --stage KEY [--summary TEXT] [--content-file PATH|-]` | Merge a summary or JSON content object into one stage. |
+| `attach-doc REF --stage KEY --id DOCID --title T --kind html\|json\|md\|other --skill NAME --status approved\|changes_requested\|awaiting-you\|info [--by NAME] [--url URL] [--at ISO]` | Attach or update one stage document. |
 
 Listing candidates never creates board records. `connect` deliberately accepts
 one Jira key and has no bulk or `--all` form, so importing assigned work always
@@ -239,8 +288,8 @@ herdr-active-work move AGENTIC-575 \
   --expected-revision 4
 ```
 
-`create` also accepts `--id`, `--lifecycle`, `--current-stage`, and
-`--metadata-json`. `update` accepts the mutable title, summary, lifecycle,
+`create` also accepts `--id`, `--lifecycle`, `--current-stage`, `--workflow`,
+and `--metadata-json`. `update` accepts the mutable title, summary, lifecycle,
 kind, next-action, and metadata fields. Valid values are printed by
 `herdr-active-work <command> --help`; callers should use revision guards when
 acting on state fetched earlier.

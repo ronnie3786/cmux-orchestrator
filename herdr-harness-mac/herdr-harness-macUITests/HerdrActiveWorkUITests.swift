@@ -8,9 +8,24 @@ import XCTest
 /// read-only while proving the sidebar and segmented view switch drive the real
 /// shell.
 final class HerdrActiveWorkUITests: HerdrUITestCase {
+    private var extraLaunchArguments: [String] = []
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        extraLaunchArguments = ["-HerdrActiveWorkLegacy"]
+    }
+
+    @MainActor
+    private func launchLegacyDemoApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState"] + extraLaunchArguments
+        app.launch()
+        return app
+    }
+
     @MainActor
     func testSidebarOpensBoardAndSwitchesToFocusRoute() throws {
-        let app = launchDemoApp()
+        let app = launchLegacyDemoApp()
 
         let activeWork = app.control(identifier: "sidebar-active-work")
         XCTAssertTrue(

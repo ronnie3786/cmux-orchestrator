@@ -72,6 +72,7 @@ _AGENT_KINDS = frozenset(
 _DISCONNECT_ERRNOS = {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.EPIPE}
 
 _HERDR_WEB_STATIC = os.path.join(os.path.dirname(__file__), "static", "herdr-web")
+_BOARD_STATIC = os.path.join(os.path.dirname(__file__), "static", "board.html")
 _HERDR_WEB_CONTENT_TYPES = {
     ".html": "text/html",
     ".js": "text/javascript",
@@ -124,6 +125,8 @@ class ActiveWorkAuthConfigurationError(ValueError):
 def _active_work_manage_route(method: str, path: str) -> bool:
     """Return whether a method/path belongs to the Active Work API surface."""
 
+    if method == "GET" and path == "/api/v1/events":
+        return True
     return method in {"GET", "POST", "PATCH", "DELETE"} and _active_work_api_route(
         path
     )
@@ -397,7 +400,11 @@ def api_description() -> dict:
             "workInbox": "/api/v1/work-inbox",
             "activeWork": "/api/v1/active-work",
             "activeWorkItem": "/api/v1/active-work/items/{workItemId}",
+            "activeWorkWorkflows": "/api/v1/active-work/workflows",
+            "activeWorkWorkflow": "/api/v1/active-work/workflows/{slug}",
+            "activeWorkItemStage": "/api/v1/active-work/items/{workItemId}/stages/{stageKey}",
             "activeWorkSyncTargets": "/api/v1/active-work/sync-targets",
+            "board": "/board",
             "voiceTranscriptions": "/api/v1/voice/transcriptions",
             "responseAudioCapabilities": "/api/v1/response-audio/capabilities",
             "responseAudioPrepare": "/api/v1/response-audio/prepare",
@@ -448,6 +455,8 @@ def api_description() -> dict:
             "POST /api/v1/active-work/items",
             "PATCH /api/v1/active-work/items/{workItemId}",
             "POST /api/v1/active-work/items/{workItemId}/transitions",
+            "POST /api/v1/active-work/workflows",
+            "PATCH /api/v1/active-work/items/{workItemId}/stages/{stageKey}",
             "POST /api/v1/active-work/jira/{issueKey}/setup",
             "POST /api/v1/active-work/ingestions",
             "POST /api/v1/response-audio/prepare|speech",
@@ -709,6 +718,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return
                 if method == "GET" and self._serve_herdr_web_static(path):
                     return
+                if method == "GET" and self._serve_board_static(path):
+                    return
                 if len(segments) < 2 or segments[:2] != ["api", "v1"]:
                     self._error(404, "not_found", "Endpoint not found")
                     return
@@ -823,6 +834,41 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self._common_headers()
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return False
+            return True
+
+        def _serve_board_static(self, path: str) -> bool:
+            if path == "/board":
+                raw_path = urllib.parse.urlparse(self.path).path
+                if not raw_path.endswith("/"):
+                    # Keep the redirect relative so a reverse-proxy prefix is
+                    # preserved by the browser (for example /base/board/).
+                    try:
+                        self.send_response(308)
+                        self.send_header("Location", "board/")
+                        self.send_header("Content-Length", "0")
+                        self._common_headers()
+                        self.end_headers()
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        pass
+                    return True
+                target = _BOARD_STATIC
+            elif path == "/board/":
+                target = _BOARD_STATIC
+            else:
+                return False
+            if not os.path.isfile(target):
+                return False
+            with open(target, "rb") as handle:
+                body = handle.read()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self._common_headers()
                 self.end_headers()
@@ -999,6 +1045,22 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         )
             if method == "GET" and tail == ["active-work"]:
                 return service.active_work_board()
+            if method == "GET" and tail == ["active-work", "workflows"]:
+                return service.list_active_work_workflows()
+            if method == "POST" and tail == ["active-work", "workflows"]:
+                return service.apply_active_work_workflow(body)
+            if method == "GET" and len(tail) == 3 and tail[:2] == ["active-work", "workflows"]:
+                slug = _identifier(tail[2], "workflow slug")
+                raw_version = str((query.get("version") or [""])[0]).strip()
+                version = None
+                if raw_version:
+                    try:
+                        version = int(raw_version)
+                    except ValueError as exc:
+                        raise HTTPValidationError("version must be an integer") from exc
+                    if version < 1:
+                        raise HTTPValidationError("version must be a positive integer")
+                return service.get_active_work_workflow(slug, version=version)
             if method == "GET" and tail == ["active-work", "sync-targets"]:
                 return service.active_work_sync_targets()
             if method == "POST" and tail == ["active-work", "ingestions"]:
@@ -1039,6 +1101,20 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 item_id = _identifier(tail[2], "work item ID")
                 return service.transition_active_work_item(
                     item_id,
+                    body,
+                    actor=getattr(self, "_active_work_actor", "user"),
+                )
+            if (
+                method == "PATCH"
+                and len(tail) == 5
+                and tail[:2] == ["active-work", "items"]
+                and tail[3] == "stages"
+            ):
+                item_id = _identifier(tail[2], "work item ID")
+                stage_key = _identifier(tail[4], "stage key")
+                return service.patch_active_work_stage(
+                    item_id,
+                    stage_key,
                     body,
                     actor=getattr(self, "_active_work_actor", "user"),
                 )

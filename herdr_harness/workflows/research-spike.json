@@ -1,0 +1,15 @@
+{
+  "workflow": "research-spike",
+  "version": 1,
+  "title": "Research Spike",
+  "description": "Explore an open question and decide the next move.",
+  "phases": [
+    { "key": "explore", "title": "Explore" },
+    { "key": "decide", "title": "Decide" }
+  ],
+  "stages": [
+    { "key": "survey", "title": "Survey", "phase": "explore", "skill": "buzz-research-survey", "checkpoint": "none" },
+    { "key": "prototype", "title": "Prototype", "phase": "explore", "skill": "buzz-prototype", "checkpoint": "none" },
+    { "key": "decision", "title": "Decision", "phase": "decide", "skill": "buzz-decision-brief", "checkpoint": "human" }
+  ]
+}

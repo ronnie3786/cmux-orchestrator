@@ -30,6 +30,7 @@ from .panes_seen import PaneFirstSeenStore
 from .push_notifications import APNsManager
 from .stars import StarStore
 from .terminal import TerminalObserver, TerminalObserverError
+from .workflows import parse_workflow_config
 
 
 _ToolResult = TypeVar("_ToolResult")
@@ -141,7 +142,7 @@ class HerdrService:
         active_work_store_path = self.environ.get("HERDR_HARNESS_ACTIVE_WORK_STORE_PATH")
         if not active_work_store_path:
             active_work_store_path = DEFAULT_ACTIVE_WORK_STORE_PATH if production_environment else ":memory:"
-        self.active_work = active_work or ActiveWorkRepository(active_work_store_path)
+        self.active_work = active_work or ActiveWorkRepository(active_work_store_path, environ=self.environ)
         self._owns_active_work = active_work is None
         # Agent runs are initialized lazily. Most harness requests do not need
         # a subprocess manager, and delaying creation avoids touching its
@@ -1181,6 +1182,22 @@ class HerdrService:
             )
         return {"ok": True, "item": item, "generated_at": utc_now()}
 
+    def list_active_work_workflows(self) -> dict:
+        return {
+            "ok": True,
+            "workflows": self.active_work.list_workflows(),
+            "generated_at": utc_now(),
+        }
+
+    def get_active_work_workflow(self, slug: str, *, version: Optional[int] = None) -> dict:
+        workflow = self.active_work.get_workflow(slug, version)
+        return {"ok": True, "workflow": workflow, "generated_at": utc_now()}
+
+    def apply_active_work_workflow(self, payload: dict) -> dict:
+        config = parse_workflow_config(payload)
+        result = self.active_work.apply_workflow(config)
+        return {"ok": True, **result, "generated_at": utc_now()}
+
     def create_active_work_item(self, payload: dict, *, actor: str = "user") -> dict:
         item = self.active_work.create_item(payload, actor=actor)
         self._publish_active_work_updated(item, change="created")
@@ -1206,6 +1223,13 @@ class HerdrService:
     ) -> dict:
         item = self.active_work.transition(item_id, payload, actor=actor)
         self._publish_active_work_updated(item, change="transitioned")
+        return {"ok": True, "item": item, "generated_at": utc_now()}
+
+    def patch_active_work_stage(
+        self, item_id: str, stage_key: str, payload: dict, *, actor: str = "user"
+    ) -> dict:
+        item = self.active_work.patch_stage(item_id, stage_key, payload, actor=actor)
+        self._publish_active_work_updated(item, change="stage_patched")
         return {"ok": True, "item": item, "generated_at": utc_now()}
 
     def setup_active_work_jira(self, issue_key: str, *, actor: str = "user") -> dict:

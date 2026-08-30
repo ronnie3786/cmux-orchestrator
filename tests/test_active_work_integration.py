@@ -1,4 +1,5 @@
 import copy
+import http.client
 import json
 import tempfile
 import threading
@@ -326,6 +327,173 @@ class ActiveWorkHTTPIntegrationTests(ActiveWorkIntegrationFixture, unittest.Test
                 return exc.code, json.loads(exc.read())
             finally:
                 exc.close()
+
+    def test_manage_token_can_read_events_stream_but_ingest_token_cannot(self):
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.server.server_address[1],
+            timeout=2,
+        )
+        self.addCleanup(connection.close)
+        connection.request(
+            "GET",
+            "/api/v1/events?once=true",
+            headers={"Authorization": f"Bearer {MANAGE_TOKEN}"},
+        )
+        response = connection.getresponse()
+        payload = response.read().decode("utf-8")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("event: ready", payload)
+
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.server.server_address[1],
+            timeout=2,
+        )
+        self.addCleanup(connection.close)
+        connection.request(
+            "GET",
+            "/api/v1/events?once=true",
+            headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
+        )
+        response = connection.getresponse()
+        response.read()
+        self.assertEqual(response.status, 401)
+
+    def test_workflow_apply_route_creates_template_no_ops_on_replay_and_conflicts_on_changed_content(
+        self,
+    ):
+        config = {
+            "workflow": "integration-workflow",
+            "version": 1,
+            "title": "Integration workflow",
+            "phases": [
+                {"key": "plan", "title": "Plan"},
+                {"key": "build", "title": "Build"},
+            ],
+            "stages": [
+                {
+                    "key": "plan",
+                    "title": "Plan",
+                    "phase": "plan",
+                    "skill": "plan-skill",
+                    "next": ["build"],
+                },
+                {
+                    "key": "build",
+                    "title": "Build",
+                    "phase": "build",
+                    "skill": "build-skill",
+                    "next": [],
+                },
+            ],
+        }
+        create_status, created = self.request(
+            "/api/v1/active-work/workflows",
+            method="POST",
+            token=MANAGE_TOKEN,
+            payload=config,
+        )
+        list_status, listed = self.request(
+            "/api/v1/active-work/workflows",
+            token=MANAGE_TOKEN,
+        )
+        get_status, fetched = self.request(
+            "/api/v1/active-work/workflows/integration-workflow",
+            token=MANAGE_TOKEN,
+        )
+        replay_status, replayed = self.request(
+            "/api/v1/active-work/workflows",
+            method="POST",
+            token=MANAGE_TOKEN,
+            payload=config,
+        )
+        changed = copy.deepcopy(config)
+        changed["stages"][1]["title"] = "Changed build"
+        conflict_status, conflict = self.request(
+            "/api/v1/active-work/workflows",
+            method="POST",
+            token=MANAGE_TOKEN,
+            payload=changed,
+        )
+        invalid_status, invalid = self.request(
+            "/api/v1/active-work/workflows",
+            method="POST",
+            token=MANAGE_TOKEN,
+            payload={
+                "workflow": "invalid-workflow",
+                "version": 1,
+                "title": "Invalid workflow",
+                "phases": [{"key": "plan", "title": "Plan"}],
+            },
+        )
+
+        self.assertEqual(create_status, 200)
+        self.assertTrue(created["applied"])
+        self.assertEqual(created["workflow"]["slug"], "integration-workflow")
+        self.assertEqual(created["workflow"]["version"], 1)
+        self.assertEqual(list_status, 200)
+        matching = [
+            workflow
+            for workflow in listed["workflows"]
+            if workflow["slug"] == "integration-workflow"
+        ]
+        self.assertEqual(matching[0]["stage_count"], 2)
+        self.assertEqual(get_status, 200)
+        self.assertIn("phases", fetched["workflow"])
+        self.assertIn("stages", fetched["workflow"])
+        self.assertIn("config", fetched["workflow"])
+        self.assertEqual(replay_status, 200)
+        self.assertFalse(replayed["applied"])
+        self.assertEqual(replayed["reason"], "unchanged")
+        self.assertEqual(conflict_status, 409)
+        self.assertEqual(conflict["error"]["code"], "workflow_version_conflict")
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid["error"]["code"], "workflow_config_invalid")
+        self.assertIn("stages", invalid["error"]["message"])
+
+    def test_stage_patch_merges_documents_bumps_revision_and_emits_sse_stage_patched(self):
+        create_status, created = self.request(
+            "/api/v1/active-work/items",
+            method="POST",
+            token=MANAGE_TOKEN,
+            payload={"kind": "task", "title": "Stage patch target"},
+        )
+        item_id = created["item"]["id"]
+        before = self.broker.latest_id
+        patch_status, patched = self.request(
+            f"/api/v1/active-work/items/{item_id}/stages/plan",
+            method="PATCH",
+            token=MANAGE_TOKEN,
+            payload={"content": {"documents": {"doc-1": {"title": "a"}}}},
+        )
+        unknown_status, unknown = self.request(
+            f"/api/v1/active-work/items/{item_id}/stages/unknown-stage",
+            method="PATCH",
+            token=MANAGE_TOKEN,
+            payload={"summary": "No such stage"},
+        )
+
+        self.assertEqual(create_status, 201)
+        self.assertEqual(patch_status, 200)
+        self.assertEqual(patched["item"]["revision"], created["item"]["revision"] + 1)
+        plan = next(stage for stage in patched["item"]["stages"] if stage["stage_key"] == "plan")
+        self.assertEqual(plan["content"]["documents"]["doc-1"], {"title": "a"})
+        updates = [
+            event
+            for event in self.broker.after(before)
+            if event["event"] == "active_work.updated"
+        ]
+        self.assertTrue(
+            any(
+                event["data"]["change"] == "stage_patched"
+                and event["data"]["work_item_id"] == item_id
+                for event in updates
+            )
+        )
+        self.assertEqual(unknown_status, 404)
+        self.assertEqual(unknown["error"]["code"], "active_work_stage_not_found")
 
     def test_explicit_jira_setup_is_idempotent_and_publishes_sse_update(self):
         before = self.broker.latest_id

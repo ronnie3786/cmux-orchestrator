@@ -8,9 +8,11 @@ explicit, idempotent user action.
 from __future__ import annotations
 
 import copy
+import json
 import os
 import sqlite3
 import stat
+import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -28,7 +30,6 @@ from .active_work import (
     DEFAULT_PIPELINE_STAGES,
     DEFAULT_PIPELINE_VERSION,
     SESSION_STATUSES,
-    STAGE_KEYS,
     STAGE_STATES,
     THREAD_STATUSES,
     WORK_KINDS,
@@ -54,6 +55,7 @@ from .active_work import (
     url,
     utc_now,
 )
+from .workflows import WorkflowConfig, parse_workflow_config
 
 
 DEFAULT_STORE_PATH = "~/.config/herdr-harness/active-work.sqlite3"
@@ -307,6 +309,36 @@ def _merge_json_objects(existing: Any, incoming: Any) -> dict[str, Any]:
     return base
 
 
+def _default_pipeline_workflow_payload() -> dict:
+    """Reconstruct DEFAULT_PIPELINE_STAGES as a workflow config payload for backfill."""
+
+    phase_titles = {"open": "Open", "build": "Build", "prove": "Prove", "ship": "Ship"}
+    seen: list[str] = []
+    phases = []
+    for stage in DEFAULT_PIPELINE_STAGES:
+        if stage["phase_key"] not in seen:
+            seen.append(stage["phase_key"])
+            phases.append({"key": stage["phase_key"], "title": phase_titles[stage["phase_key"]]})
+    stages = [
+        {
+            "key": stage["stage_key"],
+            "title": stage["title"],
+            "phase": stage["phase_key"],
+            "skill": stage["skill_name"],
+            "checkpoint": stage["checkpoint_kind"],
+        }
+        for stage in DEFAULT_PIPELINE_STAGES
+    ]
+    return {
+        "workflow": DEFAULT_PIPELINE_SLUG,
+        "version": DEFAULT_PIPELINE_VERSION,
+        "title": "Buzz Feature Work",
+        "description": "Ship pipeline for ticketed feature work.",
+        "phases": phases,
+        "stages": stages,
+    }
+
+
 class ActiveWorkRepository:
     """Thread-safe durable repository used by the Herdr HTTP service."""
 
@@ -315,8 +347,10 @@ class ActiveWorkRepository:
         db_path: str | Path = DEFAULT_STORE_PATH,
         *,
         now: Callable[[], str] = utc_now,
+        environ: Optional[Mapping[str, str]] = None,
     ) -> None:
         self._now = now
+        self._environ = dict(environ) if environ is not None else {}
         self._lock = threading.RLock()
         self.path = self._prepare_path(db_path)
         self._database = sqlite3.connect(
@@ -333,6 +367,8 @@ class ActiveWorkRepository:
                 self._database.execute("PRAGMA synchronous=NORMAL")
             self._migrate_locked()
             self._seed_pipeline_locked()
+            self._backfill_default_workflow_config_locked()
+            self._load_workflow_configs_locked()
             self._secure_database_files()
 
     @staticmethod
@@ -438,6 +474,23 @@ class ActiveWorkRepository:
                 except sqlite3.Error:
                     pass
                 raise
+            version = 1
+        if version == 1:
+            applied_at = self._now().replace("'", "''")
+            script = (
+                "BEGIN IMMEDIATE;\n"
+                "ALTER TABLE pipeline_templates ADD COLUMN config_json TEXT;\n"
+                + f"INSERT OR REPLACE INTO active_work_schema_migrations(version, applied_at) VALUES (2, '{applied_at}');\n"
+                + "PRAGMA user_version=2;\nCOMMIT;"
+            )
+            try:
+                self._database.executescript(script)
+            except Exception:
+                try:
+                    self._database.rollback()
+                except sqlite3.Error:
+                    pass
+                raise
 
     def _seed_pipeline_locked(self) -> None:
         created_at = self._now()
@@ -476,6 +529,51 @@ class ActiveWorkRepository:
                     ),
                 )
 
+    def _backfill_default_workflow_config_locked(self) -> None:
+        row = self._database.execute(
+            "SELECT config_json FROM pipeline_templates WHERE id = ?", (DEFAULT_PIPELINE_ID,)
+        ).fetchone()
+        if row is None or row["config_json"]:
+            return
+        payload = _default_pipeline_workflow_payload()
+        parse_workflow_config(payload)
+        encoded = json_dump(bounded_json(payload, "workflow config", maximum_bytes=64 * 1024))
+        with self._database:
+            self._database.execute(
+                "UPDATE pipeline_templates SET config_json = ? WHERE id = ?",
+                (encoded, DEFAULT_PIPELINE_ID),
+            )
+
+    def _load_workflow_configs_locked(self) -> None:
+        shipped_dir = Path(__file__).resolve().parent / "workflows"
+        self._apply_workflow_directory_locked(shipped_dir, create_if_missing=False)
+        override = self._environ.get("HERDR_HARNESS_WORKFLOWS_DIR")
+        if override:
+            user_dir: Optional[Path] = Path(os.path.abspath(os.path.expanduser(override)))
+        else:
+            home = self._environ.get("HOME")
+            user_dir = Path(home) / ".config" / "herdr-harness" / "workflows" if home else None
+        if user_dir is not None:
+            self._apply_workflow_directory_locked(user_dir, create_if_missing=True)
+
+    def _apply_workflow_directory_locked(self, directory: Path, *, create_if_missing: bool) -> None:
+        if create_if_missing:
+            try:
+                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            except OSError:
+                return
+        if not directory.is_dir():
+            return
+        for path in sorted(directory.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                config = parse_workflow_config(payload)
+                self.apply_workflow(config)
+            except ActiveWorkError as exc:
+                print(f"[active-work] skipped workflow config {path}: {exc}", file=sys.stderr, flush=True)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                print(f"[active-work] skipped workflow config {path}: {exc}", file=sys.stderr, flush=True)
+
     def schema_version(self) -> int:
         with self._lock:
             return int(self._database.execute("PRAGMA user_version").fetchone()[0])
@@ -494,10 +592,22 @@ class ActiveWorkRepository:
             ).fetchall()
             items = [self._item_projection_locked(str(row["id"])) for row in rows]
             candidates = [self._candidate_projection_locked(item) for item in (jira_candidates or [])]
+            template_ids = {DEFAULT_PIPELINE_ID}
+            for row in self._database.execute(
+                "SELECT DISTINCT template_id FROM work_items WHERE lifecycle != 'archived'"
+            ).fetchall():
+                template_ids.add(str(row["template_id"]))
+            placeholders = ",".join("?" * len(template_ids))
+            template_rows = self._database.execute(
+                f"SELECT id FROM pipeline_templates WHERE id IN ({placeholders}) ORDER BY created_at, id",
+                tuple(template_ids),
+            ).fetchall()
+            pipelines = [self._pipeline_projection_locked(str(row["id"])) for row in template_rows]
             return {
                 "ok": True,
                 "schema_version": CURRENT_SCHEMA_VERSION,
                 "pipeline": self._pipeline_projection_locked(DEFAULT_PIPELINE_ID),
+                "pipelines": pipelines,
                 "items": [item for item in items if item is not None],
                 "jira_candidates": candidates,
                 "generated_at": self._now(),
@@ -522,6 +632,7 @@ class ActiveWorkRepository:
                 "current_stage_key",
                 "next_action",
                 "metadata",
+                "workflow",
             },
             "work item",
         )
@@ -530,6 +641,120 @@ class ActiveWorkRepository:
         result = self.item_projection(item_id)
         assert result is not None
         return result
+
+    def apply_workflow(self, config: WorkflowConfig) -> dict:
+        """Validate-and-store one workflow config as a pipeline template and stage definitions."""
+
+        template_id = f"pipeline_{config.slug.replace('-', '_')}_v{config.version}"
+        encoded = json_dump(bounded_json(config.raw, "workflow config", maximum_bytes=64 * 1024))
+        applied = False
+        reason: Optional[str] = None
+        with self._transaction() as conn:
+            existing = conn.execute(
+                "SELECT config_json FROM pipeline_templates WHERE slug = ? AND version = ?",
+                (config.slug, config.version),
+            ).fetchone()
+            if existing is not None:
+                if existing["config_json"] == encoded:
+                    reason = "unchanged"
+                else:
+                    raise ActiveWorkError(
+                        f"{config.slug} v{config.version} already exists with different content; "
+                        "bump the version",
+                        code="workflow_version_conflict",
+                        status=409,
+                    )
+            else:
+                now = self._now()
+                conn.execute(
+                    "INSERT INTO pipeline_templates(id, slug, version, title, config_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (template_id, config.slug, config.version, config.title, encoded, now),
+                )
+                for stage in config.stages:
+                    stage_id = (
+                        f"stage_{config.slug.replace('-', '_')}_v{config.version}_{stage.sequence:02d}"
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO pipeline_stage_definitions(
+                            id, template_id, stage_key, sequence, phase_key, title,
+                            skill_name, checkpoint_kind, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            stage_id,
+                            template_id,
+                            stage.key,
+                            stage.sequence,
+                            stage.phase,
+                            stage.title,
+                            stage.skill,
+                            stage.checkpoint,
+                            now,
+                        ),
+                    )
+                applied = True
+        return {
+            "applied": applied,
+            "reason": reason,
+            "workflow": self.get_workflow(config.slug, config.version),
+        }
+
+    def list_workflows(self) -> list[dict]:
+        """Return stored workflow templates with their use counts."""
+
+        with self._lock:
+            rows = self._database.execute(
+                "SELECT id, slug, version, title FROM pipeline_templates ORDER BY slug, version"
+            ).fetchall()
+            result = []
+            for row in rows:
+                template_id = str(row["id"])
+                stage_count = self._database.execute(
+                    "SELECT COUNT(*) FROM pipeline_stage_definitions WHERE template_id = ?",
+                    (template_id,),
+                ).fetchone()[0]
+                in_use_count = self._database.execute(
+                    "SELECT COUNT(*) FROM work_items WHERE template_id = ?", (template_id,)
+                ).fetchone()[0]
+                raw_config = self._template_config_locked(template_id)
+                description = raw_config.get("description", "") if isinstance(raw_config, dict) else ""
+                result.append(
+                    {
+                        "id": template_id,
+                        "slug": row["slug"],
+                        "version": int(row["version"]),
+                        "title": row["title"],
+                        "description": description,
+                        "stage_count": int(stage_count),
+                        "in_use_count": int(in_use_count),
+                    }
+                )
+            return result
+
+    def get_workflow(self, slug: str, version: Optional[int] = None) -> dict:
+        """Return one workflow projection, choosing its latest version by default."""
+
+        with self._lock:
+            if version is None:
+                row = self._database.execute(
+                    "SELECT id FROM pipeline_templates WHERE slug = ? ORDER BY version DESC LIMIT 1",
+                    (slug,),
+                ).fetchone()
+            else:
+                row = self._database.execute(
+                    "SELECT id FROM pipeline_templates WHERE slug = ? AND version = ?",
+                    (slug, version),
+                ).fetchone()
+            if row is None:
+                raise ActiveWorkError(
+                    "Workflow not found", code="active_work_workflow_not_found", status=404
+                )
+            template_id = str(row["id"])
+            projection = self._pipeline_projection_locked(template_id)
+            projection["config"] = self._template_config_locked(template_id)
+            return projection
 
     def setup_jira(self, ticket: dict, *, actor: str = "user") -> dict:
         """Idempotently create one tracked item from an explicitly chosen Jira ticket."""
@@ -668,7 +893,8 @@ class ActiveWorkRepository:
                     "SELECT stage_key FROM pipeline_stage_definitions WHERE id = ?",
                     (row["current_stage_id"],),
                 ).fetchone()
-                if current_stage is None or current_stage["stage_key"] != "pr-triage":
+                terminal_key = self._terminal_stage_key_locked(conn, str(row["template_id"]))
+                if current_stage is None or current_stage["stage_key"] != terminal_key:
                     raise ActiveWorkError(
                         "Work can only be marked done at the final pipeline stage",
                         code="active_work_invalid_terminal_state",
@@ -747,7 +973,7 @@ class ActiveWorkRepository:
             "transition",
         )
         revision = self._expected_revision(body, None)
-        target_key = choice(body.get("to_stage_key"), "to_stage_key", STAGE_KEYS)
+        target_key_raw = text(body.get("to_stage_key"), "to_stage_key", maximum=64, required=True)
         target_state = choice(body.get("state"), "state", {"active", "blocked"}, default="active")
         attention = choice(body.get("attention"), "attention", ATTENTION_STATES, default="none")
         note = text(body.get("note"), "note", maximum=32768)
@@ -759,6 +985,11 @@ class ActiveWorkRepository:
                     code="active_work_revision_conflict",
                     status=409,
                 )
+            target_key = choice(
+                target_key_raw,
+                "to_stage_key",
+                self._template_stage_keys_locked(conn, str(item["template_id"])),
+            )
             target = self._require_stage_locked(conn, str(item["template_id"]), target_key)
             current = None
             if item["current_stage_id"]:
@@ -802,6 +1033,56 @@ class ActiveWorkRepository:
                 actor_id=actor,
             )
             self._audit_locked(conn, actor, "transition", "work_item", normalized_id, body)
+        result = self.item_projection(normalized_id)
+        assert result is not None
+        return result
+
+    def patch_stage(self, item_id: str, stage_key: str, payload: dict, *, actor: str = "user") -> dict:
+        """Directly patch one stage's summary/content. Used by the stage-document PATCH endpoint."""
+
+        normalized_id = internal_id(item_id, "work item ID")
+        body = require_mapping(payload, "stage patch")
+        reject_unknown(body, {"summary", "content"}, "stage patch")
+        with self._transaction() as conn:
+            item = self._require_item_locked(conn, normalized_id)
+            template_id = str(item["template_id"])
+            if stage_key not in self._template_stage_keys_locked(conn, template_id):
+                raise ActiveWorkError(
+                    "Pipeline stage is invalid", code="active_work_stage_not_found", status=404
+                )
+            stage = self._require_stage_locked(conn, template_id, stage_key)
+            stage_state = conn.execute(
+                "SELECT * FROM work_stage_states WHERE work_item_id = ? AND stage_id = ?",
+                (normalized_id, stage["id"]),
+            ).fetchone()
+            if stage_state is None:
+                raise ActiveWorkError(
+                    "Pipeline stage is invalid", code="active_work_stage_not_found", status=404
+                )
+            now = self._now()
+            updates: dict[str, Any] = {"updated_at": now}
+            if "summary" in body:
+                updates["summary"] = text(body["summary"], "stage summary", maximum=32768)
+            if "content" in body:
+                merged_content = _merge_json_objects(
+                    json_load(stage_state["content_json"], {}),
+                    bounded_json(body["content"], "stage content", maximum_bytes=256 * 1024),
+                )
+                updates["content_json"] = json_dump(
+                    bounded_json(merged_content, "stage content", maximum_bytes=256 * 1024)
+                )
+            if len(updates) == 1:
+                return self._item_projection_locked(normalized_id) or {}
+            assignments = ", ".join(f"{column} = ?" for column in updates)
+            conn.execute(
+                f"UPDATE work_stage_states SET {assignments} WHERE work_item_id = ? AND stage_id = ?",
+                [*updates.values(), normalized_id, stage["id"]],
+            )
+            conn.execute(
+                "UPDATE work_items SET revision = revision + 1, updated_at = ? WHERE id = ?",
+                (now, normalized_id),
+            )
+            self._audit_locked(conn, actor, "stage_content_patched", "work_item", normalized_id, body)
         result = self.item_projection(normalized_id)
         assert result is not None
         return result
@@ -868,6 +1149,9 @@ class ActiveWorkRepository:
                     status=404,
                 )
             item = self._require_item_locked(conn, item_id)
+            pipeline_terminal_stage_key = self._terminal_stage_key_locked(
+                conn, str(item["template_id"])
+            )
             source_state = conn.execute(
                 "SELECT observed_at FROM work_source_state WHERE work_item_id = ? AND source = ?",
                 (item_id, source_name),
@@ -904,7 +1188,11 @@ class ActiveWorkRepository:
             target = None
             target_key = body.get("current_stage_key")
             if target_key is not None:
-                normalized_target = choice(target_key, "current_stage_key", STAGE_KEYS)
+                normalized_target = choice(
+                    target_key,
+                    "current_stage_key",
+                    self._template_stage_keys_locked(conn, str(item["template_id"])),
+                )
                 candidate_target = self._require_stage_locked(
                     conn, str(item["template_id"]), normalized_target
                 )
@@ -929,6 +1217,7 @@ class ActiveWorkRepository:
                     item_id,
                     require_mapping(item_patch, "item"),
                     terminal_stage_key=terminal_stage_key,
+                    pipeline_terminal_stage_key=pipeline_terminal_stage_key,
                 )
 
             channel_id = None
@@ -948,7 +1237,10 @@ class ActiveWorkRepository:
                         "lifecycle"
                     ]
                 )
-                terminal = current_lifecycle in {"done", "archived"} and target["stage_key"] == "pr-triage"
+                terminal = (
+                    current_lifecycle in {"done", "archived"}
+                    and target["stage_key"] == pipeline_terminal_stage_key
+                )
                 advancing = (
                     current_definition is None
                     or int(target["sequence"]) > int(current_definition["sequence"])
@@ -1011,7 +1303,9 @@ class ActiveWorkRepository:
                 (item_id,),
             ).fetchone()
             if terminal_item["lifecycle"] == "done":
-                final_stage = self._require_stage_locked(conn, str(item["template_id"]), "pr-triage")
+                final_stage = self._require_stage_locked(
+                    conn, str(item["template_id"]), pipeline_terminal_stage_key
+                )
                 if terminal_item["current_stage_id"] != final_stage["id"]:
                     raise ActiveWorkError(
                         "Done work must remain at the final pipeline stage",
@@ -1154,27 +1448,36 @@ class ActiveWorkRepository:
         next_action = text(body.get("next_action"), "next_action", maximum=8192)
         metadata = bounded_json(body.get("metadata"), "metadata", maximum_bytes=128 * 1024)
         item_id = internal_id(body["id"], "work item ID") if body.get("id") else safe_id("work")
+        workflow_slug = body.get("workflow")
+        if workflow_slug is not None:
+            workflow_slug = text(workflow_slug, "workflow", maximum=64, required=True)
+        template_id = self._resolve_template_id_locked(conn, workflow_slug)
+        stages = conn.execute(
+            "SELECT * FROM pipeline_stage_definitions WHERE template_id = ? ORDER BY sequence",
+            (template_id,),
+        ).fetchall()
+        if not stages:
+            raise ActiveWorkError("Pipeline template has no stages", status=500)
+        stage_keys = frozenset(str(stage["stage_key"]) for stage in stages)
+        first_stage_key = str(stages[0]["stage_key"])
+        terminal_stage_key = str(stages[-1]["stage_key"])
         current_raw = body.get("current_stage_key", "__missing__")
         current_key: Optional[str]
         if current_raw == "__missing__":
             if lifecycle == "done":
-                current_key = "pr-triage"
+                current_key = terminal_stage_key
             else:
-                current_key = None if kind == "idea" else "start-ticket"
+                current_key = None if kind == "idea" else first_stage_key
         elif current_raw is None:
             current_key = None
         else:
-            current_key = choice(current_raw, "current_stage_key", STAGE_KEYS)
-        if lifecycle == "done" and current_key != "pr-triage":
+            current_key = choice(current_raw, "current_stage_key", stage_keys)
+        if lifecycle == "done" and current_key != terminal_stage_key:
             raise ActiveWorkError(
                 "Work can only be marked done at the final pipeline stage",
                 code="active_work_invalid_terminal_state",
                 status=409,
             )
-        stages = conn.execute(
-            "SELECT * FROM pipeline_stage_definitions WHERE template_id = ? ORDER BY sequence",
-            (DEFAULT_PIPELINE_ID,),
-        ).fetchall()
         current = next((stage for stage in stages if stage["stage_key"] == current_key), None)
         now = self._now()
         conn.execute(
@@ -1190,7 +1493,7 @@ class ActiveWorkRepository:
                 title_value,
                 summary,
                 lifecycle,
-                DEFAULT_PIPELINE_ID,
+                template_id,
                 current["id"] if current else None,
                 next_action,
                 json_dump(metadata),
@@ -1351,6 +1654,42 @@ class ActiveWorkRepository:
             raise ActiveWorkError("Pipeline stage is invalid")
         return row
 
+    def _template_stage_keys_locked(
+        self, conn: sqlite3.Connection, template_id: str
+    ) -> frozenset[str]:
+        rows = conn.execute(
+            "SELECT stage_key FROM pipeline_stage_definitions WHERE template_id = ?",
+            (template_id,),
+        ).fetchall()
+        return frozenset(str(row["stage_key"]) for row in rows)
+
+    def _terminal_stage_key_locked(self, conn: sqlite3.Connection, template_id: str) -> str:
+        row = conn.execute(
+            "SELECT stage_key FROM pipeline_stage_definitions WHERE template_id = ? "
+            "ORDER BY sequence DESC LIMIT 1",
+            (template_id,),
+        ).fetchone()
+        if row is None:
+            raise ActiveWorkError("Pipeline template has no stages", status=500)
+        return str(row["stage_key"])
+
+    def _resolve_template_id_locked(
+        self, conn: sqlite3.Connection, workflow_slug: Optional[str]
+    ) -> str:
+        if not workflow_slug:
+            return DEFAULT_PIPELINE_ID
+        row = conn.execute(
+            "SELECT id FROM pipeline_templates WHERE slug = ? ORDER BY version DESC LIMIT 1",
+            (workflow_slug,),
+        ).fetchone()
+        if row is None:
+            raise ActiveWorkError(
+                f"Unknown workflow: {workflow_slug}",
+                code="active_work_workflow_not_found",
+                status=400,
+            )
+        return str(row["id"])
+
     def _set_current_stage_locked(
         self,
         conn: sqlite3.Connection,
@@ -1436,6 +1775,7 @@ class ActiveWorkRepository:
         body: Mapping[str, Any],
         *,
         terminal_stage_key: Optional[str] = None,
+        pipeline_terminal_stage_key: Optional[str] = None,
     ) -> bool:
         reject_unknown(body, {"title", "summary", "lifecycle", "next_action", "metadata"}, "ingested item")
         current = self._require_item_locked(conn, item_id)
@@ -1458,7 +1798,7 @@ class ActiveWorkRepository:
                 maximum_bytes=128 * 1024,
             )
             updates["metadata_json"] = json_dump(merged_metadata)
-        if updates.get("lifecycle") == "done" and terminal_stage_key != "pr-triage":
+        if updates.get("lifecycle") == "done" and terminal_stage_key != pipeline_terminal_stage_key:
             raise ActiveWorkError(
                 "Work can only be marked done at the final pipeline stage",
                 code="active_work_invalid_terminal_state",
@@ -1599,7 +1939,11 @@ class ActiveWorkRepository:
             },
             "stage",
         )
-        stage_key = choice(body.get("stage_key"), "stage_key", STAGE_KEYS)
+        stage_key = choice(
+            body.get("stage_key"),
+            "stage_key",
+            self._template_stage_keys_locked(conn, template_id),
+        )
         stage = self._require_stage_locked(conn, template_id, stage_key)
         stage_state = conn.execute(
             "SELECT * FROM work_stage_states WHERE work_item_id = ? AND stage_id = ?",
@@ -2152,7 +2496,11 @@ class ActiveWorkRepository:
                 self._require_stage_locked(
                     conn,
                     template_id,
-                    choice(body["stage_key"], "activity stage_key", STAGE_KEYS),
+                    choice(
+                        body["stage_key"],
+                        "activity stage_key",
+                        self._template_stage_keys_locked(conn, template_id),
+                    ),
                 )["id"]
             )
         self._activity_locked(
@@ -2316,17 +2664,62 @@ class ActiveWorkRepository:
         ).fetchone()
         if template is None:
             raise ActiveWorkError("Pipeline template not found", status=500)
-        stages = self._database.execute(
+        stage_rows = self._database.execute(
             "SELECT * FROM pipeline_stage_definitions WHERE template_id = ? ORDER BY sequence",
             (template_id,),
         ).fetchall()
+        extras = self._template_projection_extras_locked(template_id, stage_rows)
         return {
             "id": template["id"],
             "slug": template["slug"],
             "version": int(template["version"]),
             "title": template["title"],
-            "stages": [self._stage_definition_from_row(row) for row in stages],
+            "description": extras["description"],
+            "phases": extras["phases"],
+            "stages": [
+                {
+                    **self._stage_definition_from_row(row),
+                    "next": extras["next_by_stage"].get(str(row["stage_key"]), []),
+                }
+                for row in stage_rows
+            ],
         }
+
+    def _template_config_locked(self, template_id: str) -> Optional[dict]:
+        row = self._database.execute(
+            "SELECT config_json FROM pipeline_templates WHERE id = ?", (template_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return json_load(row["config_json"], None)
+
+    def _template_projection_extras_locked(self, template_id: str, stage_rows: list) -> dict:
+        """Return workflow description, phases, and onward stage mappings."""
+
+        raw_config = self._template_config_locked(template_id)
+        if raw_config is not None:
+            try:
+                parsed = parse_workflow_config(raw_config)
+                return {
+                    "description": parsed.description,
+                    "phases": [{"key": phase.key, "title": phase.title} for phase in parsed.phases],
+                    "next_by_stage": {stage.key: list(stage.next) for stage in parsed.stages},
+                }
+            except ActiveWorkError:
+                pass
+        ordered = sorted(stage_rows, key=lambda row: int(row["sequence"]))
+        seen_phase_keys: list[str] = []
+        phases = []
+        for row in ordered:
+            phase_key = str(row["phase_key"])
+            if phase_key not in seen_phase_keys:
+                seen_phase_keys.append(phase_key)
+                phases.append({"key": phase_key, "title": phase_key.replace("-", " ").title()})
+        next_by_stage: dict[str, list[str]] = {}
+        for index, row in enumerate(ordered):
+            key = str(row["stage_key"])
+            next_by_stage[key] = [str(ordered[index + 1]["stage_key"])] if index + 1 < len(ordered) else []
+        return {"description": "", "phases": phases, "next_by_stage": next_by_stage}
 
     def _item_projection_locked(self, item_id: str) -> Optional[dict]:
         row = self._database.execute("SELECT * FROM work_items WHERE id = ?", (item_id,)).fetchone()
@@ -2366,6 +2759,9 @@ class ActiveWorkRepository:
                 }
             )
             stages.append(projected)
+        extras = self._template_projection_extras_locked(template_id, stage_rows)
+        for projected in stages:
+            projected["next"] = extras["next_by_stage"].get(str(projected["stage_key"]), [])
         jira_links = [
             self._jira_from_row(link)
             for link in self._database.execute(

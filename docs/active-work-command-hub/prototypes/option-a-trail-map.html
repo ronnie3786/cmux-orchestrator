@@ -1,0 +1,1902 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Herdr Trail Map</title>
+<style>
+/* ============================================================
+   Option A — "Trail Map"  ·  Herdr Active Work prototype
+   Catppuccin Mocha, agenttrail canvas mechanics, vanilla JS.
+   ============================================================ */
+
+:root {
+  --ink:#181825; --graphite:#1e1e2e; --elevated:#313244; --surface:#45475a;
+  --mist:#a6adc8; --muted:#6c7086; --text:#e5eafa; --accent:#89b4fa;
+  --mauve:#cba6f7; --signal:#94e2d5; --success:#a6e3a1; --working:#f9e2af;
+  --alert:#f38ba8; --warning:#fab387; --code:#f5c2e7; --crust:#11111b;
+  --body:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --rounded:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --mono:"SFMono-Regular","SF Mono",Menlo,ui-monospace,monospace;
+  --card-radius:16px; --compact-radius:10px;
+  --hairline:rgba(166,173,200,.18);
+  --hairline-strong:rgba(166,173,200,.22);
+  --divider:rgba(255,255,255,.08);
+  --ease:cubic-bezier(.32,.72,0,1);       /* 700ms ambient */
+  --ease-out:cubic-bezier(.23,1,.32,1);   /* 250ms controls */
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  background:#050506; color:var(--text);
+  font-family:var(--body); font-size:13px; line-height:1.45;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
+:focus { outline:none; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+
+/* ---- grain overlay ------------------------------------------------ */
+.grain {
+  position:fixed; inset:0; z-index:90; pointer-events:none; opacity:.025;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* ---- app window --------------------------------------------------- */
+.app-window {
+  width:min(1700px, calc(100vw - 28px));
+  height:min(930px, calc(100vh - 24px));
+  border-radius:28px; border:1px solid rgba(166,173,200,.34);
+  box-shadow:0 30px 90px rgba(0,0,0,.62);
+  background:var(--ink); overflow:hidden;
+  display:flex; flex-direction:column; position:relative;
+  min-width:900px;
+}
+
+/* ---- toolbar ------------------------------------------------------ */
+.toolbar {
+  height:66px; flex:0 0 66px;
+  display:grid; grid-template-columns:270px 1fr 270px; align-items:center;
+  padding:0 22px; border-bottom:1px solid var(--hairline);
+}
+.traffic { display:flex; gap:8px; align-items:center; }
+.traffic i { width:14px; height:14px; border-radius:50%; display:block; }
+.traffic i:nth-child(1){ background:#ff5f57; } .traffic i:nth-child(2){ background:#febc2e; }
+.traffic i:nth-child(3){ background:#28c840; }
+.seg-wrap { display:flex; align-items:center; justify-content:center; gap:12px; }
+.seg {
+  display:flex; background:var(--graphite); border:1px solid var(--hairline);
+  border-radius:12px; padding:3px;
+}
+.seg .pill {
+  font-family:var(--mono); font-size:11px; font-weight:650; letter-spacing:.04em;
+  padding:6px 18px; border-radius:9px; color:var(--crust);
+  background:var(--accent);
+}
+.seg-caption { font-family:var(--mono); font-size:10px; color:var(--muted); letter-spacing:.05em; }
+.toolbar-right { display:flex; justify-content:flex-end; gap:10px; }
+.mic-btn {
+  width:40px; height:40px; border-radius:12px; background:var(--accent);
+  display:flex; align-items:center; justify-content:center;
+  transition:background 250ms var(--ease-out);
+}
+.mic-btn:hover { background:#a3c6ff; }
+.mic-btn:active { transform:scale(.96); }
+.more-btn {
+  width:40px; height:40px; border-radius:12px; border:1px solid var(--hairline);
+  color:var(--mist); font-size:17px; letter-spacing:1px;
+  display:flex; align-items:center; justify-content:center;
+  transition:border-color 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.more-btn:hover { border-color:var(--hairline-strong); color:var(--text); }
+.more-btn:active { transform:scale(.96); }
+
+/* ---- shell -------------------------------------------------------- */
+.shell { flex:1; display:grid; grid-template-columns:310px minmax(0,1fr); min-height:0; }
+
+/* ---- sidebar ------------------------------------------------------ */
+.sidebar {
+  border-right:1px solid var(--hairline); padding:20px 18px 14px;
+  display:flex; flex-direction:column; gap:16px; overflow-y:auto; min-height:0;
+}
+.wordmark { display:flex; align-items:center; gap:9px; padding:0 4px; }
+.wordmark .bars { display:flex; gap:2.5px; align-items:flex-end; height:14px; }
+.wordmark .bars i { width:3.5px; border-radius:2px; display:block; }
+.wordmark .bars i:nth-child(1){ height:8px;  background:var(--accent); }
+.wordmark .bars i:nth-child(2){ height:14px; background:var(--mauve); }
+.wordmark .bars i:nth-child(3){ height:10px; background:var(--signal); }
+.wordmark b { font-family:var(--mono); font-size:15px; font-weight:750; letter-spacing:-.02em; }
+
+.nav-card {
+  position:relative; background:var(--graphite); border:1px solid var(--hairline);
+  border-radius:var(--card-radius); padding:14px 14px 13px 18px; cursor:pointer;
+  transition:border-color 700ms var(--ease), background 700ms var(--ease);
+  text-align:left; width:100%; display:block;
+}
+.nav-card:hover { border-color:var(--hairline-strong); background:#222234; }
+.nav-card::before {
+  content:""; position:absolute; left:0; top:12px; bottom:12px; width:3px;
+  border-radius:3px; background:linear-gradient(180deg, var(--mauve), var(--accent));
+}
+.nav-card .row1 { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+.nav-card .row1 b { font-family:var(--rounded); font-weight:700; font-size:14.5px; letter-spacing:-.01em; }
+.nav-card .row1 span { font-family:var(--mono); font-size:9.5px; font-weight:600; color:var(--mist); letter-spacing:.04em; }
+.nav-card p { color:var(--mist); font-size:11px; line-height:1.5; margin-top:5px; }
+.mini-pills { display:flex; gap:6px; margin-top:9px; }
+.mini-pill {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.05em;
+  padding:3px 8px; border-radius:99px; white-space:nowrap;
+}
+.mini-pill.moving { color:var(--working); background:rgba(249,226,175,.08); border:1px solid rgba(249,226,175,.28); }
+.mini-pill.need { color:var(--alert); background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3); }
+
+.side-section { display:flex; flex-direction:column; gap:2px; }
+.side-head {
+  font-family:var(--mono); font-size:9.5px; font-weight:650; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--muted); padding:4px 6px 7px;
+}
+.side-row {
+  display:flex; align-items:center; justify-content:space-between; width:100%;
+  padding:8px 10px; border-radius:var(--compact-radius); color:var(--mist);
+  font-size:12px; text-align:left;
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.side-row:hover { background:rgba(49,50,68,.5); color:var(--text); }
+.side-row .chev { font-size:9px; color:var(--muted); margin-right:7px;
+  display:inline-block; transition:transform 250ms var(--ease-out); }
+.side-row[aria-expanded="true"] .chev { transform:rotate(90deg); }
+.side-row .lbl { display:flex; align-items:center; }
+.count-badge {
+  font-family:var(--mono); font-size:9px; font-weight:650; color:var(--mist);
+  background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+  padding:1px 7px; border-radius:99px;
+}
+.side-sub {
+  display:grid; grid-template-rows:0fr; opacity:0;
+  transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out);
+}
+.side-sub > div { overflow:hidden; }
+.side-sub.open { grid-template-rows:1fr; opacity:1; }
+.inbox-item {
+  display:block; width:100%; text-align:left; padding:6px 10px 6px 27px;
+  border-radius:8px; color:var(--mist); font-size:11px; line-height:1.4;
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.inbox-item:hover { background:rgba(49,50,68,.4); color:var(--text); }
+.inbox-item .repo { font-family:var(--mono); font-size:9px; letter-spacing:.03em; display:block; color:var(--muted); }
+.side-links { display:flex; flex-direction:column; gap:1px; margin-top:2px; }
+.side-link {
+  text-align:left; padding:7px 10px; border-radius:var(--compact-radius);
+  color:var(--mist); font-size:12px; width:100%;
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.side-link:hover { background:rgba(49,50,68,.5); color:var(--text); }
+.side-foot {
+  margin-top:auto; padding:12px 6px 2px; border-top:1px solid var(--divider);
+  font-family:var(--mono); font-size:9px; color:var(--muted); line-height:1.7; letter-spacing:.02em;
+}
+
+/* ---- world viewport ----------------------------------------------- */
+.worldwrap {
+  position:relative; overflow:hidden; background:var(--crust); min-width:0;
+  cursor:grab;
+}
+.worldwrap.dragging { cursor:grabbing; }
+.worldwrap.dragging * { cursor:grabbing !important; }
+svg.dotgrid { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+svg.stage-svg { position:absolute; inset:0; width:100%; height:100%; display:block; }
+
+/* SVG world inks */
+.region-rect { fill:rgba(30,30,46,.5); stroke:var(--hairline); stroke-width:1; vector-effect:non-scaling-stroke; }
+.region-rect.hot { stroke:rgba(243,139,168,.4); }
+.region-rect.idea { fill:rgba(203,166,247,.045); stroke:rgba(203,166,247,.35); stroke-dasharray:6 6; }
+.region-label {
+  font-family:var(--mono); font-size:44px; font-weight:700; letter-spacing:-1px;
+  fill:rgba(166,173,200,.13); text-transform:uppercase; user-select:none; pointer-events:none;
+}
+.region-label.idea { fill:rgba(203,166,247,.22); font-size:24px; letter-spacing:0; }
+.station-col { stroke:rgba(166,173,200,.09); stroke-width:1; vector-effect:non-scaling-stroke; }
+
+.rail-done   { stroke:var(--signal); stroke-width:2.5; opacity:.55; stroke-linecap:round; vector-effect:non-scaling-stroke; }
+.rail-live   { stroke:var(--accent); stroke-width:2.5; stroke-dasharray:5 8; stroke-linecap:round; vector-effect:non-scaling-stroke; }
+.rail-future { stroke:rgba(166,173,200,.35); stroke-width:2; stroke-dasharray:2 7; stroke-linecap:round; vector-effect:non-scaling-stroke; }
+
+.st-passed { fill:var(--signal); }
+.st-passed-check { stroke:var(--crust); stroke-width:1.6; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+.st-current-ring { fill:var(--crust); stroke-width:2.5; vector-effect:non-scaling-stroke; }
+.st-halo { pointer-events:none; }
+.st-future { fill:none; stroke:var(--muted); stroke-width:1.5; vector-effect:non-scaling-stroke; }
+.gate { stroke-width:2; vector-effect:non-scaling-stroke; }
+.gate.approved { fill:var(--signal); stroke:var(--signal); }
+.gate.pending  { fill:rgba(243,139,168,.14); stroke:var(--alert); }
+.gate.future   { fill:none; stroke:var(--muted); stroke-width:1.5; }
+.stage-tag {
+  font-family:var(--mono); font-size:8px; font-weight:600; letter-spacing:.06em;
+  fill:var(--muted); text-anchor:middle; text-transform:lowercase;
+  opacity:0; transition:opacity 250ms var(--ease-out); pointer-events:none; user-select:none;
+}
+.zoom-labels .stage-tag { opacity:1; }
+.station-hit { fill:transparent; cursor:pointer; }
+.station-hit:focus-visible { outline:none; stroke:var(--accent); stroke-width:2; vector-effect:non-scaling-stroke; }
+.agent-mark { pointer-events:none; }
+.agent-mark.queued { opacity:.48; }
+.tether { stroke:rgba(166,173,200,.3); stroke-width:1.5; stroke-dasharray:3 5; stroke-linecap:round; vector-effect:non-scaling-stroke; }
+
+/* ---- item card (gnode) -------------------------------------------- */
+.fo { pointer-events:none; overflow:visible; }
+.fo > * { pointer-events:auto; }
+.gcard {
+  width:400px; height:128px; border-radius:12px; background:var(--graphite);
+  border:1px solid var(--hairline); padding:12px 14px 11px;
+  display:flex; flex-direction:column; cursor:pointer; position:relative;
+  transition:border-color 700ms var(--ease), box-shadow 700ms var(--ease);
+  font-family:var(--body);
+}
+.gcard:hover { border-color:var(--hairline-strong); box-shadow:0 10px 34px rgba(0,0,0,.45); }
+.gcard.needs { border-color:rgba(243,139,168,.55); }
+.gcard.selected { border-color:var(--accent); border-width:1.5px; padding:11.5px 13.5px 10.5px; }
+.gcard.idea { background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35); }
+.gcard.idea:hover { border-color:rgba(203,166,247,.55); }
+.gcard .kicker-row { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+.gcard .kicker {
+  font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.03em;
+  color:var(--muted); display:flex; align-items:center; gap:7px; white-space:nowrap;
+}
+.gcard .kicker .needs-pill {
+  color:var(--alert); background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3);
+  font-size:8.5px; font-weight:650; padding:1.5px 7px; border-radius:99px; letter-spacing:.07em;
+  text-transform:uppercase;
+}
+.gcard .kicker .idea-pill {
+  color:var(--mauve); border:1px dashed rgba(203,166,247,.35); background:rgba(203,166,247,.045);
+  font-size:8.5px; font-weight:650; padding:1.5px 7px; border-radius:99px; letter-spacing:.07em;
+  text-transform:uppercase;
+}
+.gcard .title { font-size:15px; font-weight:600; letter-spacing:-.01em; margin-top:3px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:44px; }
+.gcard .meta-row { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-top:3px; }
+.gcard .meta {
+  font-family:var(--mono); font-size:10px; font-weight:600; color:var(--mist);
+  letter-spacing:.02em; font-variant-numeric:tabular-nums; white-space:nowrap;
+}
+.gcard .meta .stage-now { color:var(--working); }
+.gcard.needs .meta .stage-now { color:var(--alert); }
+.gcard .upd { font-family:var(--mono); font-size:9px; font-weight:600; color:var(--muted);
+  font-variant-numeric:tabular-nums; white-space:nowrap; }
+.gcard .bar { height:4px; border-radius:99px; background:rgba(49,50,68,.9); margin-top:7px; overflow:hidden; }
+.gcard .bar i { display:block; height:100%; border-radius:99px; background:var(--accent);
+  transition:width 700ms var(--ease); }
+.gcard.needs .bar i { background:var(--alert); }
+.gcard .foot { display:flex; align-items:center; justify-content:space-between; margin-top:auto; gap:10px; }
+.gcard .show-stages {
+  font-family:var(--mono); font-size:11px; font-weight:500; letter-spacing:.04em;
+  color:var(--mist); transition:color 250ms var(--ease-out); white-space:nowrap;
+}
+.gcard:hover .show-stages { color:var(--accent); }
+.gcard .chip-rail { display:flex; align-items:center; }
+.gcard .chip-rail .avmark { margin-left:-5px; border-radius:50%; box-shadow:0 0 0 2px var(--graphite); }
+.gcard .chip-rail .avmark:first-child { margin-left:0; }
+.card-primary {
+  font-family:var(--mono); font-size:10px; font-weight:650; letter-spacing:.04em;
+  color:var(--crust); background:var(--alert); border-radius:8px; padding:5px 11px;
+  white-space:nowrap; transition:background 250ms var(--ease-out);
+}
+.card-primary:hover { background:#f7a8bf; }
+.card-primary:active { transform:scale(.98); }
+
+/* status icon cluster (top-right) */
+.status-cluster { position:absolute; top:10px; right:10px; width:34px; height:34px; }
+.status-cluster svg { display:block; width:34px; height:34px; overflow:visible; }
+.sc-track { fill:none; stroke:rgba(166,173,200,.22); stroke-width:2; }
+.sc-arc { fill:none; stroke:var(--accent); stroke-width:2; stroke-linecap:round;
+  transform-box:fill-box; transform-origin:center; }
+.sc-alert-ring { fill:rgba(243,139,168,.12); stroke:var(--alert); stroke-width:2; }
+.sc-bang { font-family:var(--mono); font-size:12px; font-weight:750; fill:var(--alert); text-anchor:middle; }
+.sc-done { fill:var(--signal); }
+.sc-check { stroke:var(--crust); stroke-width:2; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+.obs-ring { fill:none; stroke:var(--accent); stroke-width:1.5; stroke-linecap:round;
+  stroke-dasharray:23 59; transform-box:fill-box; transform-origin:center;
+  opacity:0; transition:opacity 400ms var(--ease-out); }
+.gcard.obs-live .obs-ring { opacity:1; }
+.obs-label {
+  font-family:var(--mono); font-size:9px; font-weight:600; color:var(--accent);
+  letter-spacing:.02em; opacity:0; transition:opacity 400ms var(--ease-out);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:190px;
+}
+.gcard.obs-live .obs-label { opacity:1; }
+.obs-label .ofile { color:var(--code); }
+.obs-label .t-ago { color:var(--muted); }
+.gcard.obs-flash { box-shadow:0 0 0 1px rgba(137,180,250,.5), 0 10px 34px rgba(0,0,0,.45); }
+
+/* LOD nameplate */
+.gcard-mini {
+  width:400px; height:128px; border-radius:12px; background:var(--graphite);
+  border:1px solid var(--hairline); padding:16px 20px; cursor:pointer;
+  display:none; flex-direction:column; justify-content:center; gap:8px;
+  transition:border-color 700ms var(--ease);
+}
+.gcard-mini:hover { border-color:var(--hairline-strong); }
+.gcard-mini.needs { border-color:rgba(243,139,168,.55); }
+.gcard-mini.idea { background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35); }
+.gcard-mini .plate-row { display:flex; align-items:center; gap:14px; }
+.gcard-mini .plate-key {
+  font-family:var(--mono); font-size:34px; font-weight:750; letter-spacing:-.02em;
+  color:var(--text); white-space:nowrap;
+}
+.gcard-mini .plate-sq { width:16px; height:16px; border-radius:4px; flex:0 0 16px; }
+.plate-sq.working { background:var(--working); }
+.plate-sq.needs { background:var(--alert); }
+.plate-sq.idea { background:var(--mauve); opacity:.7; }
+.gcard-mini .plate-marks { display:flex; margin-left:auto; }
+.gcard-mini .plate-marks .avmark { margin-left:-7px; border-radius:50%; box-shadow:0 0 0 2.5px var(--graphite); }
+.gcard-mini .plate-marks .avmark:first-child { margin-left:0; }
+.lod-mini .gcard { display:none; }
+.lod-mini .gcard-mini { display:flex; }
+
+/* ---- expanded capsule list ---------------------------------------- */
+.capsule {
+  width:460px; border-radius:var(--card-radius); background:var(--graphite);
+  border:1px solid var(--hairline); box-shadow:0 22px 60px rgba(0,0,0,.6);
+  padding:8px; font-family:var(--body); cursor:default;
+}
+.cap-row { border-radius:10px; transition:background 250ms var(--ease-out); }
+.cap-row + .cap-row { margin-top:1px; }
+.cap-head {
+  display:flex; align-items:center; gap:11px; width:100%; text-align:left;
+  padding:8px 10px; border-radius:10px; cursor:pointer;
+  transition:background 250ms var(--ease-out);
+}
+.cap-head:hover { background:rgba(49,50,68,.45); }
+.cap-head:active { transform:scale(.995); }
+.cap-title { font-size:12.5px; font-weight:600; color:var(--text); white-space:nowrap; }
+.cap-row.dim .cap-title { color:var(--muted); font-weight:500; }
+.cap-right { margin-left:auto; display:flex; align-items:center; gap:6px; }
+.cap-chips { display:flex; margin-right:2px; }
+.cap-chips .avmark { margin-left:-4px; border-radius:50%; box-shadow:0 0 0 1.5px var(--graphite); }
+.cap-chips .avmark:first-child { margin-left:0; }
+.cap-chips .avmark.queued { opacity:.48; }
+.cap-pill {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.04em;
+  padding:2.5px 8px; border-radius:99px; white-space:nowrap;
+  color:var(--mist); background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+}
+.cap-pill.pi { color:var(--accent); background:rgba(137,180,250,.08); border-color:rgba(137,180,250,.3); }
+.cap-pill.ok { color:var(--signal); background:rgba(148,226,213,.08); border-color:rgba(148,226,213,.28); }
+.cap-pill.wait { color:var(--alert); background:rgba(243,139,168,.09); border-color:rgba(243,139,168,.3); }
+.cap-chev { font-size:9px; color:var(--muted); transition:transform 250ms var(--ease-out); width:10px; text-align:center; }
+.cap-row.open .cap-chev { transform:rotate(90deg); }
+
+/* badges */
+.badge { flex:0 0 24px; width:24px; height:24px; position:relative; }
+.badge svg { display:block; width:24px; height:24px; overflow:visible; }
+.b-done-circle { fill:var(--signal); }
+.b-done-check { stroke:var(--crust); stroke-width:2; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+.b-track { fill:none; stroke:rgba(166,173,200,.22); stroke-width:2; }
+.b-live { fill:none; stroke:var(--accent); stroke-width:2; stroke-linecap:round;
+  stroke-dasharray:19.35 49.76; transform-box:fill-box; transform-origin:center; }
+.b-live.alert { stroke:var(--alert); }
+.b-num { font-family:var(--mono); font-size:10px; font-weight:650; fill:var(--mist); text-anchor:middle; }
+.b-num.on { fill:var(--text); }
+.b-num.al { fill:var(--alert); }
+.b-hollow { fill:none; stroke:rgba(166,173,200,.3); stroke-width:1.5; }
+
+/* row detail accordion */
+.cap-detail { display:grid; grid-template-rows:0fr; opacity:0;
+  transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out); }
+.cap-detail > div { overflow:hidden; }
+.cap-row.open .cap-detail { grid-template-rows:1fr; opacity:1; }
+.cap-detail-inner { padding:2px 10px 12px 45px; display:flex; flex-direction:column; gap:9px; }
+.d-section { display:flex; flex-direction:column; gap:4px; }
+.d-label {
+  font-family:var(--mono); font-size:8.5px; font-weight:650; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted);
+}
+.d-line { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--mist); min-width:0; }
+.d-line .dtitle { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.d-line .dmeta { font-family:var(--mono); font-size:9px; color:var(--muted);
+  font-variant-numeric:tabular-nums; white-space:nowrap; }
+.d-link {
+  font-family:var(--mono); font-size:9.5px; font-weight:650; letter-spacing:.03em;
+  color:var(--accent); white-space:nowrap; margin-left:auto; padding:2px 8px;
+  border:1px solid rgba(137,180,250,.3); border-radius:7px; background:rgba(137,180,250,.06);
+  transition:background 250ms var(--ease-out), border-color 250ms var(--ease-out);
+}
+.d-link:hover { background:rgba(137,180,250,.14); border-color:rgba(137,180,250,.5); }
+.d-link:active { transform:scale(.98); }
+.doc-chips { display:flex; flex-wrap:wrap; gap:5px; }
+.doc-chip {
+  font-family:var(--mono); font-size:9px; font-weight:600; color:var(--mist);
+  background:rgba(49,50,68,.52); border:1px solid var(--hairline); border-radius:7px;
+  padding:3px 9px; transition:color 250ms var(--ease-out), border-color 250ms var(--ease-out);
+}
+.doc-chip:hover { color:var(--code); border-color:rgba(245,194,231,.4); }
+.act-line { font-family:var(--mono); font-size:10px; color:var(--mist); line-height:1.55;
+  font-variant-numeric:tabular-nums; }
+.act-line .at { color:var(--muted); }
+.act-line .actor { color:var(--accent); font-weight:600; }
+.act-line.fresh .actor { color:var(--working); }
+.act-line .t-ago { color:var(--muted); }
+.d-empty { font-size:11px; color:var(--mist); font-style:italic; }
+.cap-foot {
+  margin-top:7px; padding:10px 10px 4px; border-top:1px solid var(--divider);
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+}
+.cap-foot .why { font-size:11px; color:var(--mist); line-height:1.45; }
+.cap-foot .why b { color:var(--alert); font-weight:650; }
+.primary-btn {
+  font-family:var(--mono); font-size:10.5px; font-weight:650; letter-spacing:.04em;
+  color:var(--crust); background:var(--alert); border-radius:9px; padding:8px 14px;
+  white-space:nowrap; transition:background 250ms var(--ease-out);
+}
+.primary-btn:hover { background:#f7a8bf; }
+.primary-btn:active { transform:scale(.98); }
+.primary-btn.calm { background:var(--accent); }
+.primary-btn.calm:hover { background:#a3c6ff; }
+
+/* ---- overlays ------------------------------------------------------ */
+.overlay { position:absolute; z-index:20; }
+.canvas-tools {
+  top:16px; left:16px; display:flex; align-items:center; gap:2px;
+  background:rgba(30,30,46,.92); border:1px solid var(--hairline); border-radius:12px;
+  padding:4px; backdrop-filter:blur(8px);
+}
+.tool-btn {
+  width:30px; height:30px; border-radius:8px; color:var(--mist); font-size:14px;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.tool-btn:hover { background:rgba(49,50,68,.7); color:var(--text); }
+.tool-btn:active { transform:scale(.96); }
+.zoom-read {
+  font-family:var(--mono); font-size:10px; font-weight:650; color:var(--mist);
+  min-width:44px; text-align:center; font-variant-numeric:tabular-nums; letter-spacing:.02em;
+}
+.dock { top:62px; left:16px; display:flex; flex-direction:column; gap:7px; width:284px;
+  transition:top 250ms var(--ease-out); }
+.dock-head {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--alert); padding:0 2px;
+  display:flex; align-items:center; gap:7px;
+}
+.dock-head .dot { width:6px; height:6px; border-radius:50%; background:var(--alert); }
+.dock-strip {
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3);
+  border-radius:var(--compact-radius); padding:9px 12px; cursor:pointer;
+  transition:background 250ms var(--ease-out), border-color 250ms var(--ease-out);
+}
+.dock-strip:hover { background:rgba(243,139,168,.15); border-color:rgba(243,139,168,.5); }
+.dock-strip:active { transform:scale(.99); }
+.dock-strip .key { font-family:var(--mono); font-size:10px; font-weight:650; color:var(--alert); white-space:nowrap; }
+.dock-strip .what { font-size:11.5px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dock-strip .go { margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--alert); }
+
+.runcards { top:16px; right:16px; display:flex; flex-direction:column; gap:10px; width:340px; }
+/* narrow world viewport (<700px): shrink the HUD and drop the dock below it so
+   needs-you strips are never click-shadowed by the run-card stack */
+.worldwrap.narrow .runcards { width:280px; }
+.run-card {
+  background:rgba(30,30,46,.94); border:1px solid var(--hairline); border-radius:14px;
+  box-shadow:0 12px 40px rgba(0,0,0,.8); padding:11px 13px 10px; cursor:pointer;
+  backdrop-filter:blur(8px);
+  transition:border-color 700ms var(--ease), opacity 700ms var(--ease);
+}
+.run-card:hover { border-color:var(--hairline-strong); }
+.run-card.ended { opacity:.55; }
+.run-head { display:flex; align-items:center; gap:7px; min-width:0; }
+.run-name { font-size:12.5px; font-weight:600; white-space:nowrap; flex:0 0 auto; }
+.run-proj { font-family:var(--mono); font-size:9px; font-weight:600; letter-spacing:.03em;
+  color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.run-dot { width:6px; height:6px; border-radius:50%; background:var(--success); flex:0 0 6px; position:relative; }
+.run-dot::after { content:""; position:absolute; inset:-3px; border-radius:50%;
+  border:1px solid var(--success); opacity:0; }
+.run-card.ended .run-dot { background:var(--muted); }
+.run-card.ended .run-dot::after { display:none; }
+.run-right { margin-left:auto; display:flex; align-items:baseline; gap:5px; white-space:nowrap; }
+.run-elapsed { font-family:var(--mono); font-size:9.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.run-in {
+  font-family:var(--mono); font-size:9.5px; font-weight:650; color:var(--accent);
+  letter-spacing:.02em; padding:1px 2px; border-radius:4px;
+  transition:color 250ms var(--ease-out);
+}
+.run-in:hover { color:#a3c6ff; text-decoration:underline; }
+.run-task { font-size:12.5px; color:var(--mist); margin-top:6px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.run-tool { display:flex; align-items:baseline; gap:7px; margin-top:6px;
+  font-family:var(--mono); font-size:11.5px; min-width:0; }
+.run-tool .tn { color:var(--accent); font-weight:650; flex:0 0 auto; }
+.run-tool .td { color:var(--mist); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.run-tool .ta { color:var(--muted); margin-left:auto; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+.run-hist { display:grid; grid-template-rows:0fr; opacity:0;
+  transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out); }
+.run-hist > div { overflow:hidden; }
+.run-card.open .run-hist { grid-template-rows:1fr; opacity:1; }
+.run-hist-inner { padding-top:7px; margin-top:8px; border-top:1px solid var(--divider);
+  display:flex; flex-direction:column; gap:4px; }
+.hist-row { display:flex; align-items:baseline; gap:7px; font-family:var(--mono); font-size:11px; min-width:0; }
+.hist-row .tn { color:var(--mist); font-weight:600; flex:0 0 52px; }
+.hist-row .td { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.hist-row .ta { color:var(--muted); margin-left:auto; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+
+.minimap {
+  bottom:16px; right:16px; width:150px; background:rgba(30,30,46,.92);
+  border:1px solid var(--hairline); border-radius:10px; padding:5px; cursor:pointer;
+  backdrop-filter:blur(8px);
+}
+.minimap svg { display:block; width:100%; border-radius:6px; }
+.mm-region { fill:rgba(69,71,90,.35); }
+.mm-region.idea { fill:rgba(203,166,247,.12); }
+.mm-item { rx:1.5; }
+.mm-item.working { fill:var(--working); }
+.mm-item.needs { fill:var(--alert); }
+.mm-item.idea { fill:var(--mauve); opacity:.7; }
+.mm-view { fill:rgba(137,180,250,.16); stroke:var(--accent); stroke-width:1; vector-effect:non-scaling-stroke; }
+
+.hints { bottom:16px; left:16px; display:flex; align-items:center; gap:12px;
+  font-family:var(--mono); font-size:9.5px; color:var(--muted); letter-spacing:.03em; }
+.hints .pair { display:flex; align-items:center; gap:5px; }
+.key {
+  display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:17px;
+  padding:0 5px; border-radius:5px; border:1px solid var(--hairline);
+  background:rgba(30,30,46,.9); color:var(--mist); font-size:9px; font-weight:650;
+}
+
+/* ---- toast --------------------------------------------------------- */
+.toast {
+  position:fixed; left:50%; bottom:34px; transform:translate(-50%, 8px);
+  background:var(--elevated); border:1px solid var(--hairline-strong);
+  border-radius:12px; box-shadow:0 16px 48px rgba(0,0,0,.7);
+  padding:11px 18px; font-size:12.5px; color:var(--text);
+  opacity:0; pointer-events:none; z-index:100; max-width:480px; text-align:center;
+  transition:opacity 250ms var(--ease-out), transform 250ms var(--ease-out);
+}
+.toast.show { opacity:1; transform:translate(-50%, 0); }
+.toast .tmono { font-family:var(--mono); font-size:11px; color:var(--accent); font-weight:650; }
+
+/* ---- avatar marks -------------------------------------------------- */
+.avmark { display:block; flex:0 0 auto; }
+
+/* ---- motion (all animation lives behind the no-preference gate) ---- */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes working-pulse { 50% { opacity:.35; } }
+  @keyframes breathe { from { opacity:.4; transform:scale(.65); } to { opacity:1; transform:scale(1); } }
+  @keyframes reveal { from { opacity:0; transform:translateY(16px); filter:blur(4px); }
+                      to { opacity:1; transform:none; filter:blur(0); } }
+  @keyframes travel { to { stroke-dashoffset:-26; } }
+  @keyframes capsule-spin { to { transform:rotate(360deg); } }
+  @keyframes capsule-pop { from { opacity:0; transform:scale(.95); } to { opacity:1; transform:none; } }
+  @keyframes rail-shimmer { from { opacity:.5; } to { opacity:1; } }
+  @keyframes beacon { from { transform:scale(.5); opacity:.75; } to { transform:scale(2.3); opacity:0; } }
+  @keyframes halo-breathe { 0%,100% { box-shadow:0 0 0 0 rgba(166,227,161,.35); }
+                            50% { box-shadow:0 0 0 4px rgba(166,227,161,.12); } }
+  .rail-live { animation:travel 900ms linear infinite, rail-shimmer 1.6s ease-in-out infinite alternate; }
+  .sc-arc { animation:capsule-spin 1100ms linear infinite; }
+  .obs-ring { animation:capsule-spin 1300ms linear infinite; }
+  .b-live { animation:capsule-spin 1100ms linear infinite; }
+  .b-done-pop { animation:capsule-pop 300ms var(--ease-out) both; }
+  .st-halo { transform-box:fill-box; transform-origin:center; animation:beacon 1.8s ease-out infinite; }
+  .run-dot::after { animation:breathe 1800ms ease-in-out infinite alternate; }
+  .run-dot { animation:halo-breathe 1.15s ease infinite; }
+  .dock-head .dot { animation:working-pulse 1.6s ease-in-out infinite; }
+  .capsule { animation:reveal 350ms var(--ease-out) both; }
+  .cap-row { animation:reveal 300ms var(--ease-out) both; }
+  .act-line.enter { animation:reveal 350ms var(--ease-out) both; }
+  .run-card { animation:reveal 400ms var(--ease-out) both; }
+  .live-tick { animation:working-pulse 1.6s ease-in-out infinite; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration:1ms !important; animation-iteration-count:1 !important;
+      transition-duration:1ms !important; }
+}
+</style>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<!-- shared avatar symbol set: one gradient circle per avatar_key, reused at every size -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <radialGradient id="g-driver" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#f9e2af"/><stop offset="100%" stop-color="#fab387"/>
+    </radialGradient>
+    <radialGradient id="g-coder" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#89b4fa"/><stop offset="100%" stop-color="#74c7ec"/>
+    </radialGradient>
+    <radialGradient id="g-architect" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#cba6f7"/><stop offset="100%" stop-color="#f5c2e7"/>
+    </radialGradient>
+    <radialGradient id="g-qa" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#94e2d5"/><stop offset="100%" stop-color="#a6e3a1"/>
+    </radialGradient>
+    <radialGradient id="g-scout" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#fab387"/><stop offset="100%" stop-color="#f9e2af"/>
+    </radialGradient>
+    <symbol id="av-driver" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="15" fill="url(#g-driver)"/>
+      <text x="16" y="20.5" text-anchor="middle" font-family="SFMono-Regular,SF Mono,Menlo,monospace" font-size="11" font-weight="700" fill="#11111b" letter-spacing=".5">BZ</text>
+    </symbol>
+    <symbol id="av-coder" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="15" fill="url(#g-coder)"/>
+      <text x="16" y="20.5" text-anchor="middle" font-family="SFMono-Regular,SF Mono,Menlo,monospace" font-size="11" font-weight="700" fill="#11111b" letter-spacing=".5">CO</text>
+    </symbol>
+    <symbol id="av-architect" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="15" fill="url(#g-architect)"/>
+      <text x="16" y="20.5" text-anchor="middle" font-family="SFMono-Regular,SF Mono,Menlo,monospace" font-size="11" font-weight="700" fill="#11111b" letter-spacing=".5">AX</text>
+    </symbol>
+    <symbol id="av-qa" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="15" fill="url(#g-qa)"/>
+      <text x="16" y="20.5" text-anchor="middle" font-family="SFMono-Regular,SF Mono,Menlo,monospace" font-size="11" font-weight="700" fill="#11111b" letter-spacing=".5">QA</text>
+    </symbol>
+    <symbol id="av-scout" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="15" fill="url(#g-scout)"/>
+      <text x="16" y="20.5" text-anchor="middle" font-family="SFMono-Regular,SF Mono,Menlo,monospace" font-size="11" font-weight="700" fill="#11111b" letter-spacing=".5">SC</text>
+    </symbol>
+    <symbol id="av-human" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="15" fill="#f38ba8"/>
+      <text x="16" y="21" text-anchor="middle" font-family="SFMono-Regular,SF Mono,Menlo,monospace" font-size="13" font-weight="700" fill="#11111b">R</text>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="app-window">
+  <div class="toolbar">
+    <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="seg-wrap">
+      <div class="seg" role="tablist" aria-label="Prototype concept">
+        <span class="pill" role="tab" aria-selected="true">Trail Map</span>
+      </div>
+      <span class="seg-caption">Concept 1 of 3</span>
+    </div>
+    <div class="toolbar-right">
+      <button class="mic-btn" data-action="mic" aria-label="Start voice session">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" fill="#11111b"/>
+          <path d="M3 8v.5a5 5 0 0 0 10 0V8M8 13.5v1.5M5.8 15h4.4" stroke="#11111b" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+        </svg>
+      </button>
+      <button class="more-btn" data-action="more" aria-label="More options">&#8943;</button>
+    </div>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="wordmark">
+        <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
+        <b>herdr</b>
+      </div>
+
+      <button class="nav-card" data-action="refit" aria-label="Active work — refit map view">
+        <div class="row1"><b>active work</b><span>4 riding</span></div>
+        <p>Tickets, features, and ideas moving through the Buzz pipeline.</p>
+        <div class="mini-pills">
+          <span class="mini-pill moving">2 moving</span>
+          <span class="mini-pill need">2 need you</span>
+        </div>
+      </button>
+
+      <div class="side-section">
+        <div class="side-head">my work &middot; 5 watching</div>
+        <button class="side-row" data-action="side-fold" data-fold="gh" aria-expanded="true" aria-controls="sub-gh">
+          <span class="lbl"><span class="chev">&#9654;</span>github reviews</span>
+          <span class="count-badge">2</span>
+        </button>
+        <div class="side-sub open" id="sub-gh">
+          <div>
+            <button class="inbox-item" data-action="toast" data-toast="Opening doximity/iOS-Doximity #11,856 on GitHub&hellip;">
+              <span class="repo">doximity/iOS-Doximity &middot; #11,856</span>
+              Add calculator access to the drawer
+            </button>
+            <button class="inbox-item" data-action="toast" data-toast="Opening doximity/agentic-dev #520 on GitHub&hellip;">
+              <span class="repo">doximity/agentic-dev &middot; #520</span>
+              Register managed MCP runtime
+            </button>
+          </div>
+        </div>
+        <button class="side-row" data-action="side-fold" data-fold="jira" aria-expanded="false" aria-controls="sub-jira">
+          <span class="lbl"><span class="chev">&#9654;</span>jira tickets</span>
+          <span class="count-badge">3</span>
+        </button>
+        <div class="side-sub" id="sub-jira">
+          <div>
+            <button class="inbox-item" data-action="toast" data-toast="Opening AGENTIC-575 in Jira&hellip;">
+              <span class="repo">AGENTIC-575 &middot; in progress</span>
+              Mobile API Impact Guard
+            </button>
+            <button class="inbox-item" data-action="toast" data-toast="Opening IOSDOX-27458 in Jira&hellip;">
+              <span class="repo">IOSDOX-27458 &middot; awaiting you</span>
+              Ask Analytics Audit
+            </button>
+            <button class="inbox-item" data-action="toast" data-toast="Opening AGENTIC-472 in Jira&hellip;">
+              <span class="repo">AGENTIC-472 &middot; PR open</span>
+              OpenCode MOA Agent Management
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="side-links">
+        <button class="side-link" data-action="toast" data-toast="Opening the harness console&hellip;">console</button>
+        <button class="side-link" data-action="toast" data-toast="Opening workspaces&hellip;">workspaces</button>
+        <button class="side-link" data-action="toast" data-toast="Spawning a new Pi session&hellip;">new pi session</button>
+      </div>
+
+      <div class="side-foot">
+        board source / 8 buzz-* stages &middot; 4 checkpoints<br>
+        tickets/&lt;KEY&gt;/ carries state
+      </div>
+    </aside>
+
+    <main class="worldwrap" id="worldwrap" aria-label="Buzz pipeline trail map">
+      <svg class="dotgrid" aria-hidden="true">
+        <defs>
+          <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+            <circle cx="1.5" cy="1.5" r="1" fill="rgba(166,173,200,.14)"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#dots)" opacity=".35"/>
+      </svg>
+
+      <svg class="stage-svg" id="stageSvg">
+        <g id="world"></g>
+      </svg>
+
+      <div class="overlay canvas-tools" role="group" aria-label="Camera controls">
+        <button class="tool-btn" data-action="zoom-out" aria-label="Zoom out">&minus;</button>
+        <span class="zoom-read" id="zoomRead">100%</span>
+        <button class="tool-btn" data-action="zoom-in" aria-label="Zoom in">+</button>
+        <button class="tool-btn" data-action="fit" aria-label="Fit map to view" title="Fit (F)">&#9974;</button>
+      </div>
+
+      <div class="overlay dock" id="dock">
+        <div class="dock-head"><span class="dot"></span>needs you &middot; 2</div>
+        <button class="dock-strip" data-action="dock-fly" data-item="work_ask_audit">
+          <span class="key">IOSDOX-27458</span>
+          <span class="what">approve event map</span>
+          <span class="go">&rarr;</span>
+        </button>
+        <button class="dock-strip" data-action="dock-fly" data-item="work_moa_mgmt">
+          <span class="key">AGENTIC-472</span>
+          <span class="what">merge PR #510</span>
+          <span class="go">&rarr;</span>
+        </button>
+      </div>
+
+      <div class="overlay runcards" id="runcards"></div>
+
+      <div class="overlay minimap" id="minimap" aria-label="Minimap — click to jump">
+        <svg id="minimapSvg"></svg>
+      </div>
+
+      <div class="overlay hints" aria-hidden="true">
+        <span class="pair"><span class="key">drag</span> pan</span>
+        <span class="pair"><span class="key">&#8984; scroll</span> zoom</span>
+        <span class="pair"><span class="key">F</span> fit</span>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+/* ================= dataset (inlined verbatim from herdr-active-work-data.js) ================= */
+
+// Canonical sample dataset for the three Active Work prototypes.
+// Field names mirror the real harness projection (herdr_harness/active_work_store.py)
+// so a future wiring to GET /api/v1/active-work is mechanical.
+// All three options inline this same data for apples-to-apples comparison.
+
+const PIPELINE = {
+  id: "pipeline_buzz_feature_work_v1",
+  slug: "buzz-feature-work",
+  title: "Buzz feature work",
+  stages: [
+    { stage_key: "start-ticket",           sequence: 1, phase_key: "open",  title: "Start",        skill_name: "buzz-start-ticket",          checkpoint_kind: "none"  },
+    { stage_key: "plan",                   sequence: 2, phase_key: "open",  title: "Plan",         skill_name: "buzz-plan",                  checkpoint_kind: "human" },
+    { stage_key: "implement",              sequence: 3, phase_key: "build", title: "Implement",    skill_name: "buzz-implement",             checkpoint_kind: "none"  },
+    { stage_key: "architect-code-review",  sequence: 4, phase_key: "build", title: "Agent review", skill_name: "buzz-architect-code-review", checkpoint_kind: "none"  },
+    { stage_key: "proof",                  sequence: 5, phase_key: "prove", title: "Proof",        skill_name: "buzz-proof",                 checkpoint_kind: "human" },
+    { stage_key: "code-review-pre-pr",     sequence: 6, phase_key: "prove", title: "Pre-PR",       skill_name: "buzz-code-review-pre-pr",    checkpoint_kind: "human" },
+    { stage_key: "pr",                     sequence: 7, phase_key: "ship",  title: "PR",           skill_name: "buzz-pr",                    checkpoint_kind: "human" },
+    { stage_key: "pr-triage",              sequence: 8, phase_key: "ship",  title: "Triage",       skill_name: "buzz-pr-triage",             checkpoint_kind: "none"  }
+  ]
+};
+
+// avatar_key maps to the SVG symbol set; hue used for gradient tints.
+const AGENTS = {
+  "ag-driver":    { display_name: "Buzz driver",     kind: "orchestrator", avatar_key: "driver",    status: "working" },
+  "ag-deepseek":  { display_name: "DeepSeek coder",  kind: "coder",        avatar_key: "coder",     status: "working" },
+  "ag-picoder":   { display_name: "Pi coder",        kind: "coder",        avatar_key: "coder",     status: "working" },
+  "ag-architect": { display_name: "Architect iOS",   kind: "reviewer",     avatar_key: "architect", status: "queued"  },
+  "ag-proof":     { display_name: "Proof runner",    kind: "verifier",     avatar_key: "qa",        status: "working" },
+  "ag-scout":     { display_name: "PR Review Scout", kind: "triage",       avatar_key: "scout",     status: "working" },
+  "ag-ronnie":    { display_name: "Ronnie",          kind: "human",        avatar_key: "human",     status: "waiting" }
+};
+
+const WORK_ITEMS = [
+  {
+    id: "work_mobile_guard", key: "AGENTIC-575", title: "Mobile API Impact Guard",
+    kind: "feature", kind_label: "Jira ticket",
+    lifecycle: "active", needs_attention: false, attention_reason: null,
+    current_stage_key: "implement", floor: "local", pane: "w1G:t1", updated_label: "now",
+    progress: { completed: 2, total: 8 },
+    next_action: "Coder produces a scoped diff, then the Buzz driver adds and tags Architect iOS.",
+    continuity: ["state.json", "handoff.md", "context-dump.md", "coder brief"],
+    stages: {
+      "start-ticket": { state: "complete", started: "12:02", completed: "12:05",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2231", title: "Kickoff · scope confirmed", status: "archived", url: "buzz://message?channel=c-guard&id=m-2231" }],
+        pi_sessions: [] },
+      "plan": { state: "complete", checkpoint_state: "approved", started: "12:05", completed: "12:27",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" },
+                 { id: "ag-picoder", link_role: "planner", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2233", title: "Plan review · approved by Ronnie", status: "archived", url: "buzz://message?channel=c-guard&id=m-2233" }],
+        pi_sessions: [{ id: "pi-8f31", title: "Plan drafting", provider: "pi", model: "opus", status: "ended", pane_id: "w1G:t2", tokens: "212k" }] },
+      "implement": { state: "active", attention: "none", started: "12:27",
+        agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "active" },
+                 { id: "ag-driver",  link_role: "driver", link_state: "active" }],
+        buzz_threads: [{ id: "bz-2240", title: "Implement · diff streaming", status: "active", url: "buzz://message?channel=c-guard&id=m-2240" }],
+        pi_sessions: [{ id: "pi-9a02", title: "Coder session · schema integration", provider: "pi", model: "deepseek-v3", status: "running", pane_id: "w1G:t1", tokens: "486k" }],
+        activity: [
+          { t: "13:30", actor: "ag-driver",   message: "Accepted ownership and started execution." },
+          { t: "13:31", actor: "ag-picoder",  message: "Reading schema integration points." },
+          { t: "13:38", actor: "ag-deepseek", message: "Wrote ImpactGuard middleware · 6 files touched." },
+          { t: "13:44", actor: "ag-deepseek", message: "Running scoped tests on api-gateway target." }
+        ] },
+      "architect-code-review": { state: "ready",
+        agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "queued" }],
+        buzz_threads: [], pi_sessions: [] },
+      "proof": { state: "pending" }, "code-review-pre-pr": { state: "pending" },
+      "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+    }
+  },
+  {
+    id: "work_ask_audit", key: "IOSDOX-27458", title: "Ask Analytics Audit",
+    kind: "feature", kind_label: "Feature",
+    lifecycle: "active", needs_attention: true,
+    attention_reason: "Checkpoint pending at Proof — approve the analytics event map.",
+    current_stage_key: "proof", floor: "DevBox", pane: "wX:t1", updated_label: "21m",
+    progress: { completed: 4, total: 8 },
+    next_action: "Approve the event map so Pre-PR can start.",
+    continuity: ["state.json", "handoff.md", "event-map.md"],
+    stages: {
+      "start-ticket": { state: "complete", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "plan": { state: "complete", checkpoint_state: "approved",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2198", title: "Audit scope", status: "archived", url: "buzz://message?channel=c-audit&id=m-2198" }] },
+      "implement": { state: "complete",
+        agents: [{ id: "ag-picoder", link_role: "coder", link_state: "done" }],
+        pi_sessions: [{ id: "pi-7c11", title: "Audit implementation", provider: "pi", model: "opus", status: "ended", pane_id: "wX:t1", tokens: "603k" }],
+        buzz_threads: [{ id: "bz-2204", title: "Implement thread", status: "archived", url: "buzz://message?channel=c-audit&id=m-2204" }] },
+      "architect-code-review": { state: "complete",
+        agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2210", title: "Review notes · 2 fixes applied", status: "archived", url: "buzz://message?channel=c-audit&id=m-2210" }] },
+      "proof": { state: "active", attention: "human", checkpoint_state: "pending", started: "13:23",
+        agents: [{ id: "ag-proof", link_role: "verifier", link_state: "active" },
+                 { id: "ag-ronnie", link_role: "checkpoint", link_state: "waiting" }],
+        buzz_threads: [{ id: "bz-2216", title: "Proof run · event map ready for you", status: "active", url: "buzz://message?channel=c-audit&id=m-2216" }],
+        pi_sessions: [],
+        activity: [{ t: "13:23", actor: "ag-proof", message: "Event map assembled — 41 events, 3 new." }] },
+      "code-review-pre-pr": { state: "pending" }, "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+    }
+  },
+  {
+    id: "work_moa_mgmt", key: "AGENTIC-472", title: "OpenCode MOA Agent Management",
+    kind: "feature", kind_label: "Ticket + PR #510",
+    lifecycle: "active", needs_attention: true,
+    attention_reason: "PR approved by agents — merge decision is yours.",
+    current_stage_key: "pr-triage", floor: "local", pane: "wK:t9", updated_label: "36m",
+    progress: { completed: 7, total: 8 },
+    next_action: "Merge or request changes on PR #510.",
+    continuity: ["state.json", "pr-summary.md"],
+    stages: {
+      "start-ticket": { state: "complete" },
+      "plan": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "implement": { state: "complete",
+        agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "done" }],
+        pi_sessions: [{ id: "pi-5510", title: "MOA management build", provider: "pi", model: "deepseek-v3", status: "ended", pane_id: "wK:t9", tokens: "1.2M" }] },
+      "architect-code-review": { state: "complete", agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }] },
+      "proof": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-proof", link_role: "verifier", link_state: "done" }] },
+      "code-review-pre-pr": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "pr": { state: "complete", checkpoint_state: "approved",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2172", title: "PR #510 · review passed", status: "archived", url: "buzz://message?channel=c-moa&id=m-2172" }] },
+      "pr-triage": { state: "active", attention: "human", started: "13:08",
+        agents: [{ id: "ag-scout", link_role: "triage", link_state: "active" },
+                 { id: "ag-ronnie", link_role: "decision", link_state: "waiting" }],
+        buzz_threads: [{ id: "bz-2229", title: "Merge decision", status: "active", url: "buzz://message?channel=c-moa&id=m-2229" }],
+        pi_sessions: [] }
+    }
+  },
+  {
+    id: "work_review_memory", key: "IDEA-07", title: "Project Review Memory",
+    kind: "idea", kind_label: "Idea",
+    lifecycle: "active", needs_attention: false,
+    current_stage_key: null, floor: "no floor yet", pane: null, updated_label: "forming",
+    progress: { completed: 0, total: 8 },
+    next_action: "Explore first. No worktree until a prototype decision is approved.",
+    note: "Idea intake, before the ticket pipeline.",
+    stages: {},
+    cast_note: "Buzz driver shaping"
+  }
+];
+
+/* ================= helpers ================= */
+
+const NOW = Date.now();
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function ago(at) {
+  const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (s < 5) return "now";
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + " min";
+  return Math.floor(m / 60) + " h";
+}
+
+function clock(at) {
+  const d = new Date(at);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+function agentOf(id) { return AGENTS[id] || { display_name: id, avatar_key: "coder" }; }
+
+function avMark(agentId, size, extraClass) {
+  const a = agentOf(agentId);
+  return '<svg class="avmark ' + (extraClass || "") + '" width="' + size + '" height="' + size +
+    '" viewBox="0 0 32 32" role="img" aria-label="' + esc(a.display_name) + '">' +
+    '<title>' + esc(a.display_name) + '</title>' +
+    '<use href="#av-' + esc(a.avatar_key) + '"></use></svg>';
+}
+
+/* ================= world geometry ================= */
+
+const STAGE_IDX = {};
+PIPELINE.stages.forEach((s, i) => { STAGE_IDX[s.stage_key] = i; });
+
+const REGION_Y = 60, REGION_H = 900;
+const PHASES = [
+  { key: "open",  label: "Open",  x: 476,  w: 460, stations: [590, 820] },
+  { key: "build", label: "Build", x: 972,  w: 460, stations: [1086, 1316] },
+  { key: "prove", label: "Prove", x: 1468, w: 460, stations: [1582, 1812] },
+  { key: "ship",  label: "Ship",  x: 1964, w: 460, stations: [2078, 2308] }
+];
+const IDEA_REGION = { x: 20, w: 420, y: 220, h: 440 };
+const STATION_X = PHASES.flatMap(p => p.stations);
+const LANE_Y = { work_mobile_guard: 320, work_ask_audit: 580, work_moa_mgmt: 840 };
+const WORLD_BOUNDS = { x: -20, y: 30, w: 2480, h: 960 };
+const CARD_W = 400, CARD_H = 128, CAP_W = 460;
+
+// per-item derived layout, filled in during render
+const LAYOUT = {};
+
+function itemStatusKey(it) {
+  if (it.kind === "idea") return "idea";
+  if (it.needs_attention) return "needs";
+  return "working";
+}
+
+function currentIdxOf(it) {
+  return it.current_stage_key == null ? -1 : STAGE_IDX[it.current_stage_key];
+}
+
+/* ================= world render (built once; time mutates, structure doesn't) ================= */
+
+function regionsSvg() {
+  const hotPhases = new Set();
+  WORK_ITEMS.forEach(it => {
+    if (it.needs_attention && it.current_stage_key) {
+      hotPhases.add(PIPELINE.stages[STAGE_IDX[it.current_stage_key]].phase_key);
+    }
+  });
+  let out = "";
+  out += '<rect class="region-rect idea" x="' + IDEA_REGION.x + '" y="' + IDEA_REGION.y +
+         '" width="' + IDEA_REGION.w + '" height="' + IDEA_REGION.h + '" rx="26"/>';
+  out += '<text class="region-label idea" x="' + (IDEA_REGION.x + 30) + '" y="' + (IDEA_REGION.y + 46) + '">Idea intake</text>';
+  PHASES.forEach(p => {
+    out += '<rect class="region-rect' + (hotPhases.has(p.key) ? " hot" : "") + '" x="' + p.x +
+           '" y="' + REGION_Y + '" width="' + p.w + '" height="' + REGION_H + '" rx="26"/>';
+    out += '<text class="region-label" x="' + (p.x + 30) + '" y="' + (REGION_Y + 72) + '">' + esc(p.label) + '</text>';
+    p.stations.forEach(sx => {
+      out += '<line class="station-col" x1="' + sx + '" y1="' + (REGION_Y + 96) + '" x2="' + sx +
+             '" y2="' + (REGION_Y + REGION_H - 24) + '"/>';
+    });
+  });
+  return out;
+}
+
+function laneSvg(it) {
+  const y = LANE_Y[it.id];
+  const cur = currentIdxOf(it);
+  let out = '<g class="lane" data-item="' + esc(it.id) + '">';
+
+  // rails: segment i connects station i -> i+1
+  for (let i = 0; i < 7; i++) {
+    const cls = (i + 1 < cur) ? "rail-done" : (i + 1 === cur) ? "rail-live" : "rail-future";
+    out += '<line class="' + cls + '" x1="' + STATION_X[i] + '" y1="' + y + '" x2="' + STATION_X[i + 1] + '" y2="' + y + '"/>';
+  }
+
+  // stations
+  PIPELINE.stages.forEach((stage, i) => {
+    const sx = STATION_X[i];
+    const st = it.stages[stage.stage_key] || { state: "pending" };
+    const passed = i < cur;
+    const isCur = i === cur;
+    const isGate = stage.checkpoint_kind === "human";
+    const hot = isCur && it.needs_attention;
+    const ringColor = hot ? "var(--alert)" : "var(--working)";
+
+    if (isGate) {
+      const gcls = st.checkpoint_state === "approved" ? "approved"
+        : st.checkpoint_state === "pending" ? "pending" : "future";
+      if (hot) out += '<circle class="st-halo" cx="' + sx + '" cy="' + y + '" r="12" fill="none" stroke="var(--alert)" stroke-width="1.5"/>';
+      out += '<rect class="gate ' + gcls + (gcls === "pending" ? " live-tick" : "") + '" x="' + (sx - 8) + '" y="' + (y - 8) +
+             '" width="16" height="16" rx="3" transform="rotate(45 ' + sx + " " + y + ')"/>';
+      if (gcls === "approved") {
+        out += '<path class="st-passed-check" d="M' + (sx - 3.4) + " " + y + " l2.3 2.4 l4.6 -4.8" +
+               '" transform="translate(0 .6)"/>';
+      }
+    } else if (passed) {
+      out += '<circle class="st-passed" cx="' + sx + '" cy="' + y + '" r="7"/>';
+      out += '<path class="st-passed-check" d="M' + (sx - 3.2) + " " + (y + 0.4) + " l2.2 2.3 l4.4 -4.6" + '"/>';
+    } else if (isCur) {
+      if (hot) out += '<circle class="st-halo" cx="' + sx + '" cy="' + y + '" r="9" fill="none" stroke="var(--alert)" stroke-width="1.5"/>';
+      out += '<circle class="st-current-ring' + (st.state === "active" ? " live-tick" : "") + '" cx="' + sx + '" cy="' + y +
+             '" r="9" stroke="' + ringColor + '"/>';
+    } else {
+      out += '<circle class="st-future" cx="' + sx + '" cy="' + y + '" r="4"/>';
+    }
+
+    // stage tag (visible at zoom >= .7)
+    out += '<text class="stage-tag" x="' + sx + '" y="' + (y + 26) + '">' + esc(stage.title) + '</text>';
+
+    // parked agent marks (active / queued / waiting)
+    const parked = (st.agents || []).filter(a => a.link_state === "active" || a.link_state === "queued" || a.link_state === "waiting");
+    parked.forEach((link, k) => {
+      const ax = sx + (k - (parked.length - 1) / 2) * 24;
+      const ay = y - 27;
+      if (link.link_state === "waiting") {
+        out += '<circle class="live-tick" cx="' + ax + '" cy="' + ay + '" r="12" fill="none" stroke="var(--alert)" stroke-width="1.5"/>';
+      }
+      out += '<g class="agent-mark' + (link.link_state === "queued" ? " queued" : "") + '">' +
+             '<svg x="' + (ax - 10) + '" y="' + (ay - 10) + '" width="20" height="20" viewBox="0 0 32 32">' +
+             '<title>' + esc(agentOf(link.id).display_name + " · " + link.link_role + " · " + link.link_state) + '</title>' +
+             '<use href="#av-' + esc(agentOf(link.id).avatar_key) + '"></use></svg></g>';
+    });
+
+    // invisible hit target: click a station -> open that stage row
+    out += '<circle class="station-hit" cx="' + sx + '" cy="' + y + '" r="16" tabindex="0" role="button" ' +
+           'data-action="station" data-item="' + esc(it.id) + '" data-stage="' + esc(stage.stage_key) + '">' +
+           '<title>' + esc(it.key + " · " + stage.title) + '</title></circle>';
+  });
+
+  out += "</g>";
+  return out;
+}
+
+/* ---- status cluster svg for the card top-right ---- */
+function statusClusterSvg(kind) {
+  let inner = '<circle class="obs-ring" cx="17" cy="17" r="13"/>';
+  if (kind === "needs") {
+    inner += '<circle class="sc-alert-ring live-tick" cx="17" cy="17" r="9"/>' +
+             '<text class="sc-bang" x="17" y="21.5">!</text>';
+  } else if (kind === "near") {
+    inner += '<circle class="sc-done" cx="17" cy="17" r="9"/>' +
+             '<path class="sc-check" d="M13 17.2l2.6 2.7 5-5.4"/>';
+  } else if (kind === "idea") {
+    inner += '<circle cx="17" cy="17" r="9" fill="none" stroke="var(--mauve)" stroke-width="1.5" stroke-dasharray="3 4"/>' +
+             '<circle cx="17" cy="17" r="2.5" fill="var(--mauve)"/>';
+  } else {
+    inner += '<circle class="sc-track" cx="17" cy="17" r="9"/>' +
+             '<circle class="sc-arc" cx="17" cy="17" r="9" stroke-dasharray="16 41"/>';
+  }
+  return '<div class="status-cluster" aria-hidden="true"><svg viewBox="0 0 34 34">' + inner + "</svg></div>";
+}
+
+/* ---- item card + capsule ---- */
+function cardHtml(it) {
+  const cur = currentIdxOf(it);
+  const stage = cur >= 0 ? PIPELINE.stages[cur] : null;
+  const status = itemStatusKey(it);
+  const scKind = status === "needs" ? "needs" : status === "idea" ? "idea"
+    : (it.progress.completed >= it.progress.total - 1 ? "near" : "active");
+  const kicker = esc(it.key) + " &middot; " + esc(stage ? stage.skill_name : "intake");
+  const chips = stage
+    ? ((it.stages[stage.stage_key] || {}).agents || [])
+        .filter(a => a.link_state !== "done")
+        .map(a => avMark(a.id, 18)).join("")
+    : avMark("ag-driver", 18);
+
+  const pctW = Math.round((it.progress.completed / it.progress.total) * 100);
+  const upd = it.id === "work_review_memory"
+    ? '<span class="upd">forming</span>'
+    : '<span class="upd">upd <span class="t-ago" data-at="' + LAYOUT[it.id].updatedAt + '"></span></span>';
+  const meta = stage
+    ? esc(it.progress.completed + " of " + it.progress.total) + ' stages &middot; <span class="stage-now">' + esc(stage.title) + "</span>"
+    : esc(it.kind_label) + ' &middot; <span style="color:var(--mauve)">' + esc(it.floor) + "</span>";
+
+  let pillBadge = "";
+  if (status === "needs") pillBadge = '<span class="needs-pill">needs you</span>';
+  if (status === "idea") pillBadge = '<span class="idea-pill">idea</span>';
+
+  const primary = it.needs_attention
+    ? '<button class="card-primary" data-action="primary" data-item="' + esc(it.id) + '">' +
+      esc(it.id === "work_ask_audit" ? "Review event map" : "Decide on PR #510") + "</button>"
+    : "";
+
+  const obs = '<span class="obs-label" data-obs="' + esc(it.id) + '">Editing <span class="ofile">api/impact_guard.py</span> ' +
+              '&middot; <span class="t-ago" data-at="' + NOW + '"></span></span>';
+
+  const full =
+    '<div class="gcard ' + (status === "needs" ? "needs" : "") + (status === "idea" ? "idea" : "") +
+      '" data-action="card" data-item="' + esc(it.id) + '" tabindex="0" role="button" aria-expanded="false" ' +
+      'aria-label="' + esc(it.key + " — " + it.title) + '">' +
+      '<div class="kicker-row"><span class="kicker">' + kicker + pillBadge + "</span></div>" +
+      statusClusterSvg(scKind) +
+      '<div class="title">' + esc(it.title) + "</div>" +
+      '<div class="meta-row"><span class="meta">' + meta + "</span>" +
+        (it.id === "work_mobile_guard" ? obs : "") + upd + "</div>" +
+      '<div class="bar"><i style="width:' + pctW + '%"></i></div>' +
+      '<div class="foot"><span class="show-stages">' +
+        (status === "idea" ? "SHOW BRIEF &darr;" : "SHOW STAGES &darr;") + "</span>" +
+        '<span style="display:flex;align-items:center;gap:9px">' + primary +
+        '<span class="chip-rail">' + chips + "</span></span></div>" +
+    "</div>";
+
+  const mini =
+    '<div class="gcard-mini ' + (status === "needs" ? "needs" : "") + (status === "idea" ? "idea" : "") +
+      '" data-action="card" data-item="' + esc(it.id) + '" tabindex="0" role="button" ' +
+      'aria-label="' + esc(it.key + " — " + it.title) + '">' +
+      '<div class="plate-row"><span class="plate-sq ' + status + '"></span>' +
+      '<span class="plate-key">' + esc(it.key) + "</span>" +
+      '<span class="plate-marks">' + (stage
+        ? ((it.stages[stage.stage_key] || {}).agents || []).filter(a => a.link_state !== "done").map(a => avMark(a.id, 26)).join("")
+        : avMark("ag-driver", 26)) + "</span></div>" +
+    "</div>";
+
+  return full + mini;
+}
+
+function badgeSvg(rowState, seq, attention) {
+  if (rowState === "complete") {
+    return '<span class="badge" aria-hidden="true"><svg viewBox="0 0 24 24" class="b-done-pop">' +
+      '<circle class="b-done-circle" cx="12" cy="12" r="11"/>' +
+      '<path class="b-done-check" d="M7.4 12.3l3 3.1 6.2-6.7"/></svg></span>';
+  }
+  if (rowState === "active") {
+    const alertCls = attention ? " alert" : "";
+    const numCls = attention ? " al" : " on";
+    return '<span class="badge" aria-hidden="true"><svg viewBox="0 0 24 24">' +
+      '<circle class="b-track" cx="12" cy="12" r="11"/>' +
+      '<circle class="b-live' + alertCls + '" cx="12" cy="12" r="11"/>' +
+      (attention
+        ? '<text class="b-num al" x="12" y="16" style="font-weight:750">!</text>'
+        : '<text class="b-num' + numCls + '" x="12" y="15.5">' + seq + "</text>") +
+      "</svg></span>";
+  }
+  return '<span class="badge" aria-hidden="true"><svg viewBox="0 0 24 24">' +
+    '<circle class="b-hollow" cx="12" cy="12" r="10"/>' +
+    '<text class="b-num" x="12" y="15.5">' + seq + "</text></svg></span>";
+}
+
+function stageDetailHtml(it, stage, st) {
+  const parts = [];
+  const stageIdx = STAGE_IDX[stage.stage_key];
+
+  if (st.started) {
+    parts.push('<div class="d-line"><span class="dmeta">started ' + esc(st.started) +
+      (st.completed ? " &middot; completed " + esc(st.completed) : "") + "</span></div>");
+  }
+
+  if ((st.agents || []).length) {
+    parts.push('<div class="d-section"><div class="d-label">agents</div>' +
+      st.agents.map(link =>
+        '<div class="d-line">' + avMark(link.id, 15) +
+        '<span class="dtitle">' + esc(agentOf(link.id).display_name) + "</span>" +
+        '<span class="dmeta">' + esc(link.link_role) + " &middot; " + esc(link.link_state) + "</span></div>"
+      ).join("") + "</div>");
+  }
+
+  if ((st.buzz_threads || []).length) {
+    parts.push('<div class="d-section"><div class="d-label">buzz threads</div>' +
+      st.buzz_threads.map(th =>
+        '<div class="d-line"><span class="dtitle"># ' + esc(th.title) + "</span>" +
+        '<span class="dmeta">' + esc(th.status) + "</span>" +
+        '<button class="d-link" data-action="open-buzz" data-title="' + esc(th.title) + '">Open in Buzz</button></div>'
+      ).join("") + "</div>");
+  }
+
+  if ((st.pi_sessions || []).length) {
+    parts.push('<div class="d-section"><div class="d-label">pi sessions</div>' +
+      st.pi_sessions.map(pi =>
+        '<div class="d-line"><span class="dtitle">' + esc(pi.title) + "</span>" +
+        '<span class="dmeta">' + esc(pi.model) + " &middot; " + esc(pi.tokens) +
+        (pi.status === "running" ? ' &middot; <span style="color:var(--success)">live</span>' : " &middot; ended") + "</span>" +
+        '<button class="d-link" data-action="open-pane" data-pane="' + esc(pi.pane_id) +
+        '" data-floor="' + esc(it.floor) + '">Open pane ' + esc(pi.pane_id) + "</button></div>"
+      ).join("") + "</div>");
+  }
+
+  if (st.state === "complete" || st.state === "active") {
+    parts.push('<div class="d-section"><div class="d-label">continuity &middot; tickets/' + esc(it.key) + "/</div>" +
+      '<div class="doc-chips">' + it.continuity.map(doc =>
+        '<button class="doc-chip" data-action="open-doc" data-doc="' + esc(doc) +
+        '" data-key="' + esc(it.key) + '">' + esc(doc) + "</button>").join("") +
+      (st.state === "active"
+        ? '<button class="doc-chip" data-action="open-doc" data-doc="handoff.md" data-key="' + esc(it.key) + '" style="color:var(--accent);border-color:rgba(137,180,250,.35)">Open handoff</button>'
+        : "") + "</div></div>");
+  }
+
+  if ((st.activity || []).length) {
+    parts.push('<div class="d-section"><div class="d-label">activity</div>' +
+      '<div class="act-list" data-act-list="' + esc(it.id) + ":" + esc(stage.stage_key) + '">' +
+      st.activity.map((a, i) => {
+        const last = i === st.activity.length - 1;
+        return '<div class="act-line' + (last ? " fresh" : "") + '"><span class="at">' + esc(a.t) + "</span> &middot; " +
+          '<span class="actor">' + esc(agentOf(a.actor).display_name) + "</span> — " + esc(a.message) +
+          (last && it.id === "work_mobile_guard"
+            ? ' <span class="t-ago" data-at="' + NOW + '"></span>' : "") + "</div>";
+      }).join("") + "</div></div>");
+  }
+
+  if (!parts.length) {
+    const prev = stageIdx > 0 ? PIPELINE.stages[stageIdx - 1].title : null;
+    parts.push('<div class="d-empty">Nothing attached yet — <span style="font-family:var(--mono);font-size:10px">' +
+      esc(stage.skill_name) + "</span> runs " + (prev ? "after " + esc(prev) + " clears." : "first.") + "</div>");
+  }
+
+  return parts.join("");
+}
+
+function capsuleHtml(it) {
+  if (it.kind === "idea") {
+    return '<div class="capsule" data-cap="' + esc(it.id) + '">' +
+      '<div class="cap-foot" style="border-top:0;margin-top:0;padding-top:4px;flex-direction:column;align-items:flex-start;gap:8px">' +
+      '<div class="why">' + esc(it.note) + " " + esc(it.next_action) + "</div>" +
+      '<div class="d-line" style="gap:7px">' + avMark("ag-driver", 15) +
+      '<span class="dmeta">' + esc(it.cast_note) + "</span></div>" +
+      '<div style="display:flex;gap:8px">' +
+      '<button class="primary-btn calm" data-action="open-doc" data-doc="intake-note.md" data-key="' + esc(it.key) + '">Open intake note</button>' +
+      "</div></div></div>";
+  }
+
+  const rows = PIPELINE.stages.map((stage, i) => {
+    const st = it.stages[stage.stage_key] || { state: "pending" };
+    const attention = st.attention === "human";
+    const rowState = st.state === "complete" ? "complete" : st.state === "active" ? "active" : "pending";
+    const pills = [];
+    const chips = (st.agents || []).map(a =>
+      avMark(a.id, 15, a.link_state === "queued" ? "queued" : "")).join("");
+
+    if ((st.buzz_threads || []).length) {
+      pills.push('<span class="cap-pill">' + st.buzz_threads.length +
+        (st.buzz_threads.length === 1 ? " thread" : " threads") + "</span>");
+    }
+    if ((st.pi_sessions || []).length) {
+      pills.push('<span class="cap-pill pi">pi &middot; ' + esc(st.pi_sessions[0].tokens) + "</span>");
+    }
+    if (stage.checkpoint_kind === "human") {
+      if (st.checkpoint_state === "approved") pills.push('<span class="cap-pill ok">&check; approved</span>');
+      else if (st.checkpoint_state === "pending") pills.push('<span class="cap-pill wait live-tick">awaiting you</span>');
+      else pills.push('<span class="cap-pill">checkpoint</span>');
+    }
+
+    return '<div class="cap-row' + (rowState === "pending" && !(st.agents || []).length ? " dim" : "") +
+      '" data-cap-row="' + esc(stage.stage_key) + '" style="animation-delay:' + (i * 80) + 'ms">' +
+      '<button class="cap-head" data-action="cap-row" data-item="' + esc(it.id) +
+        '" data-stage="' + esc(stage.stage_key) + '" aria-expanded="false">' +
+      badgeSvg(rowState, stage.sequence, attention) +
+      '<span class="cap-title">' + esc(stage.title) + "</span>" +
+      '<span class="cap-right"><span class="cap-chips">' + chips + "</span>" + pills.join("") +
+      '<span class="cap-chev">&#9654;</span></span></button>' +
+      '<div class="cap-detail"><div><div class="cap-detail-inner">' +
+      stageDetailHtml(it, stage, st) + "</div></div></div></div>";
+  }).join("");
+
+  let foot = "";
+  if (it.needs_attention) {
+    foot = '<div class="cap-foot"><div class="why"><b>Needs you:</b> ' + esc(it.attention_reason) + "</div>" +
+      '<button class="primary-btn" data-action="primary" data-item="' + esc(it.id) + '">' +
+      esc(it.id === "work_ask_audit" ? "Review event map" : "Decide on PR #510") + "</button></div>";
+  } else {
+    foot = '<div class="cap-foot"><div class="why">' + esc(it.next_action) + "</div>" +
+      '<button class="primary-btn calm" data-action="open-pane" data-pane="' + esc(it.pane) +
+      '" data-floor="' + esc(it.floor) + '">Open pane ' + esc(it.pane) + "</button></div>";
+  }
+
+  return '<div class="capsule" data-cap="' + esc(it.id) + '">' + rows + foot + "</div>";
+}
+
+function itemGroupSvg(it) {
+  const isIdea = it.kind === "idea";
+  const cur = currentIdxOf(it);
+  const laneY = isIdea ? null : LANE_Y[it.id];
+  const sx = isIdea ? null : STATION_X[cur];
+  const cardX = isIdea ? 30 : clamp(sx - CARD_W / 2, 36, 2024);
+  const cardY = isIdea ? 360 : laneY - 200;
+
+  LAYOUT[it.id] = Object.assign(LAYOUT[it.id] || {}, {
+    cardX, cardY, laneY, stationX: sx,
+    capX: clamp(cardX - 30, 30, 1964), capY: cardY + CARD_H + 14
+  });
+
+  let out = '<g class="item-group" data-group="' + esc(it.id) + '">';
+  if (!isIdea) {
+    out += '<line class="tether" x1="' + (cardX + CARD_W / 2) + '" y1="' + (cardY + CARD_H) +
+           '" x2="' + sx + '" y2="' + (laneY - 16) + '"/>';
+  }
+  out += '<foreignObject class="fo" x="' + cardX + '" y="' + cardY + '" width="' + (CARD_W + 20) + '" height="150">' +
+         '<div xmlns="http://www.w3.org/1999/xhtml">' + cardHtml(it) + "</div></foreignObject>";
+  out += '<foreignObject class="fo cap-fo" x="' + LAYOUT[it.id].capX + '" y="' + LAYOUT[it.id].capY +
+         '" width="' + (CAP_W + 24) + '" height="1500" style="display:none">' +
+         '<div xmlns="http://www.w3.org/1999/xhtml">' + capsuleHtml(it) + "</div></foreignObject>";
+  out += "</g>";
+  return out;
+}
+
+function buildWorld() {
+  // seed layout timestamps before cardHtml reads them
+  LAYOUT.work_mobile_guard = { updatedAt: NOW };
+  LAYOUT.work_ask_audit = { updatedAt: NOW - 21 * 60000 };
+  LAYOUT.work_moa_mgmt = { updatedAt: NOW - 36 * 60000 };
+  LAYOUT.work_review_memory = { updatedAt: NOW };
+
+  const world = $("#world");
+  world.innerHTML =
+    regionsSvg() +
+    WORK_ITEMS.filter(it => it.kind !== "idea").map(laneSvg).join("") +
+    WORK_ITEMS.map(itemGroupSvg).join("");
+}
+</script>
+<script>
+/* ================= camera ================= */
+
+const wrap = $("#worldwrap");
+const world = $("#world");
+const stageSvg = $("#stageSvg");
+const zoomRead = $("#zoomRead");
+
+const cam = { panX: 0, panY: 0, zoom: 1, lod: "full", openItem: null, lodFolded: null };
+let flightTimer = null;
+
+function vw() { return wrap.clientWidth; }
+function vh() { return wrap.clientHeight; }
+
+function applyCamera() {
+  world.style.transform = "translate(" + cam.panX + "px, " + cam.panY + "px) scale(" + cam.zoom + ")";
+  zoomRead.textContent = Math.round(cam.zoom * 100) + "%";
+  stageSvg.classList.toggle("zoom-labels", cam.zoom >= 0.7);
+  // LOD with hysteresis: collapse < .45, restore >= .55
+  if (cam.zoom < 0.45 && cam.lod === "full") {
+    cam.lod = "mini";
+    wrap.classList.add("lod-mini");
+    if (cam.openItem) { cam.lodFolded = cam.openItem; setItemOpen(cam.openItem, false); }
+  } else if (cam.zoom >= 0.55 && cam.lod === "mini") {
+    cam.lod = "full";
+    wrap.classList.remove("lod-mini");
+    if (cam.lodFolded) { setItemOpen(cam.lodFolded, true); cam.lodFolded = null; }
+  }
+  updateMinimapView();
+}
+
+function stopFlight() {
+  if (flightTimer) { clearTimeout(flightTimer); flightTimer = null; }
+  world.style.transition = "";
+}
+
+function flight(fn) {
+  stopFlight();
+  if (!REDUCED) world.style.transition = "transform 600ms cubic-bezier(.23,1,.32,1)";
+  fn();
+  applyCamera();
+  flightTimer = setTimeout(() => { world.style.transition = ""; flightTimer = null; }, 650);
+}
+
+function flyToWorldPoint(wx, wy, z) {
+  flight(() => {
+    cam.zoom = clamp(z, 0.25, 2.5);
+    cam.panX = vw() / 2 - wx * cam.zoom;
+    cam.panY = vh() / 2 - wy * cam.zoom;
+  });
+}
+
+function fitWorld(animate) {
+  const pad = 70;
+  const z = clamp(Math.min(
+    (vw() - pad * 2) / WORLD_BOUNDS.w,
+    (vh() - pad * 2) / WORLD_BOUNDS.h), 0.25, 2.5);
+  const cx = WORLD_BOUNDS.x + WORLD_BOUNDS.w / 2;
+  const cy = WORLD_BOUNDS.y + WORLD_BOUNDS.h / 2;
+  if (animate) { flyToWorldPoint(cx, cy, z); }
+  else {
+    stopFlight();
+    cam.zoom = z;
+    cam.panX = vw() / 2 - cx * z;
+    cam.panY = vh() / 2 - cy * z;
+    applyCamera();
+  }
+}
+
+function zoomAt(px, py, factor) {
+  const wx = (px - cam.panX) / cam.zoom, wy = (py - cam.panY) / cam.zoom;
+  cam.zoom = clamp(cam.zoom * factor, 0.25, 2.5);
+  cam.panX = px - wx * cam.zoom;
+  cam.panY = py - wy * cam.zoom;
+  applyCamera();
+}
+
+// wheel = pan; cmd/ctrl+wheel = zoom to cursor (world-point invariant)
+wrap.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  stopFlight();
+  const r = wrap.getBoundingClientRect();
+  if (e.metaKey || e.ctrlKey) {
+    zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.002));
+  } else {
+    cam.panX -= e.deltaX;
+    cam.panY -= e.deltaY;
+    applyCamera();
+  }
+}, { passive: false });
+
+// pointer-capture drag pan (skipped when the target is a card / overlay / hit target)
+let drag = null;
+wrap.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  if (e.target.closest(".gcard,.gcard-mini,.capsule,.overlay,.station-hit,.toast")) return;
+  drag = { x: e.clientX, y: e.clientY, moved: false };
+  wrap.setPointerCapture(e.pointerId);
+  stopFlight();
+});
+wrap.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+  drag.moved = true;
+  wrap.classList.add("dragging");
+  cam.panX += dx; cam.panY += dy;
+  drag.x = e.clientX; drag.y = e.clientY;
+  applyCamera();
+});
+function endDrag(e) {
+  if (!drag) return;
+  drag = null;
+  wrap.classList.remove("dragging");
+  if (e && e.pointerId != null && wrap.hasPointerCapture(e.pointerId)) wrap.releasePointerCapture(e.pointerId);
+}
+wrap.addEventListener("pointerup", endDrag);
+wrap.addEventListener("pointercancel", endDrag);
+
+/* ================= minimap ================= */
+
+function buildMinimap() {
+  const svg = $("#minimapSvg");
+  svg.setAttribute("viewBox", WORLD_BOUNDS.x + " " + WORLD_BOUNDS.y + " " + WORLD_BOUNDS.w + " " + WORLD_BOUNDS.h);
+  svg.setAttribute("width", "140");
+  svg.setAttribute("height", Math.round(140 * WORLD_BOUNDS.h / WORLD_BOUNDS.w));
+  let out = '<rect class="mm-region idea" x="' + IDEA_REGION.x + '" y="' + IDEA_REGION.y +
+            '" width="' + IDEA_REGION.w + '" height="' + IDEA_REGION.h + '" rx="26"/>';
+  PHASES.forEach(p => {
+    out += '<rect class="mm-region" x="' + p.x + '" y="' + REGION_Y + '" width="' + p.w +
+           '" height="' + REGION_H + '" rx="26"/>';
+  });
+  WORK_ITEMS.forEach(it => {
+    const L = LAYOUT[it.id];
+    out += '<rect class="mm-item ' + itemStatusKey(it) + '" x="' + L.cardX + '" y="' + L.cardY +
+           '" width="' + CARD_W + '" height="' + CARD_H + '"/>';
+  });
+  out += '<rect class="mm-view" id="mmView" x="0" y="0" width="10" height="10" rx="8"/>';
+  svg.innerHTML = out;
+
+  $("#minimap").addEventListener("click", (e) => {
+    const r = svg.getBoundingClientRect();
+    const wx = WORLD_BOUNDS.x + ((e.clientX - r.left) / r.width) * WORLD_BOUNDS.w;
+    const wy = WORLD_BOUNDS.y + ((e.clientY - r.top) / r.height) * WORLD_BOUNDS.h;
+    flyToWorldPoint(wx, wy, cam.zoom);
+  });
+}
+
+function updateMinimapView() {
+  const view = $("#mmView");
+  if (!view) return;
+  // clamp to WORLD_BOUNDS so at fit zoom the rect hugs the map edge
+  const x1 = clamp((0 - cam.panX) / cam.zoom, WORLD_BOUNDS.x, WORLD_BOUNDS.x + WORLD_BOUNDS.w);
+  const y1 = clamp((0 - cam.panY) / cam.zoom, WORLD_BOUNDS.y, WORLD_BOUNDS.y + WORLD_BOUNDS.h);
+  const x2 = clamp((vw() - cam.panX) / cam.zoom, WORLD_BOUNDS.x, WORLD_BOUNDS.x + WORLD_BOUNDS.w);
+  const y2 = clamp((vh() - cam.panY) / cam.zoom, WORLD_BOUNDS.y, WORLD_BOUNDS.y + WORLD_BOUNDS.h);
+  view.setAttribute("x", x1);
+  view.setAttribute("y", y1);
+  view.setAttribute("width", Math.max(x2 - x1, 0));
+  view.setAttribute("height", Math.max(y2 - y1, 0));
+}
+
+/* ================= toast ================= */
+
+const toastEl = $("#toast");
+function showToast(html) {
+  toastEl.innerHTML = html;
+  toastEl.classList.add("show");
+  if (toastEl._t) clearTimeout(toastEl._t);
+  toastEl._t = setTimeout(() => toastEl.classList.remove("show"), 2600);
+}
+
+/* ================= expansion ================= */
+
+function groupOf(itemId) { return $('[data-group="' + itemId + '"]'); }
+
+function setItemOpen(itemId, open) {
+  const group = groupOf(itemId);
+  if (!group) return;
+  const capFo = group.querySelector(".cap-fo");
+  const card = group.querySelector(".gcard");
+  capFo.style.display = open ? "" : "none";
+  card.classList.toggle("selected", open);
+  card.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    world.appendChild(group); // raise above neighbouring lanes
+    cam.openItem = itemId;
+  } else if (cam.openItem === itemId) {
+    cam.openItem = null;
+  }
+}
+
+function toggleItem(itemId, withFlight) {
+  const wasOpen = cam.openItem === itemId;
+  if (cam.openItem && cam.openItem !== itemId) setItemOpen(cam.openItem, false);
+  setItemOpen(itemId, !wasOpen);
+  if (!wasOpen && withFlight) {
+    const L = LAYOUT[itemId];
+    const isIdea = itemId === "work_review_memory";
+    flyToWorldPoint(L.capX + CAP_W / 2, L.cardY + (isIdea ? 190 : 300), Math.max(cam.zoom, 0.92));
+  }
+}
+
+function openStageRow(itemId, stageKey, exclusive) {
+  if (cam.openItem !== itemId) toggleItem(itemId, false);
+  const group = groupOf(itemId);
+  if (!group) return;
+  if (exclusive) {
+    group.querySelectorAll(".cap-row.open").forEach(r => {
+      r.classList.remove("open");
+      r.querySelector(".cap-head").setAttribute("aria-expanded", "false");
+    });
+  }
+  const row = group.querySelector('[data-cap-row="' + stageKey + '"]');
+  if (row) {
+    row.classList.add("open");
+    row.querySelector(".cap-head").setAttribute("aria-expanded", "true");
+  }
+}
+
+/* ================= run cards ================= */
+
+const RUN = {
+  tool: { tn: "Edit", td: "api/impact_guard.py", at: NOW - 3000 },
+  hist: [
+    { tn: "Bash", td: "pytest api/tests/test_impact_guard.py -q", ms: 6100 },
+    { tn: "Edit", td: "api/impact_guard.py", ms: 900 },
+    { tn: "Read", td: "schema/mobile_v3.graphql", ms: 420 },
+    { tn: "Edit", td: "api/middleware/registry.py", ms: 1300 },
+    { tn: "Read", td: "tickets/AGENTIC-575/handoff.md", ms: 260 }
+  ]
+};
+
+function fmtDur(ms) { return ms > 1200 ? (Math.round(ms / 100) / 10) + "s" : ms + "ms"; }
+
+function histRows(rows) {
+  return rows.map(h =>
+    '<div class="hist-row"><span class="tn">' + esc(h.tn) + '</span><span class="td">' +
+    esc(h.td) + '</span><span class="ta">' + fmtDur(h.ms) + "</span></div>").join("");
+}
+
+function renderRunCards() {
+  const host = $("#runcards");
+  host.innerHTML =
+    // running: pi-9a02 on AGENTIC-575 / Implement
+    '<div class="run-card" data-action="run-card" data-run="pi-9a02" tabindex="0" role="button" aria-expanded="false"' +
+      ' aria-label="Pi session pi-9a02 — DeepSeek coder on AGENTIC-575">' +
+      '<div class="run-head">' + avMark("ag-deepseek", 22) +
+        '<span class="run-name">DeepSeek coder</span><span class="run-proj">AGENTIC-575</span>' +
+        '<span class="run-dot" aria-hidden="true"></span>' +
+        '<span class="run-right"><span class="run-elapsed"><span class="t-ago" data-at="' + (NOW - 84 * 60000) + '"></span></span>' +
+        '<button class="run-in" data-action="run-in" data-item="work_mobile_guard">in Implement</button></span></div>' +
+      '<div class="run-task" id="runTask">Running scoped tests on api-gateway target.</div>' +
+      '<div class="run-tool"><span class="tn" id="runTn">' + esc(RUN.tool.tn) + '</span>' +
+        '<span class="td" id="runTd">' + esc(RUN.tool.td) + '</span>' +
+        '<span class="ta"><span class="t-ago" data-at="' + RUN.tool.at + '"></span></span></div>' +
+      '<div class="run-hist"><div><div class="run-hist-inner" id="runHist">' + histRows(RUN.hist) + "</div></div></div>" +
+    "</div>" +
+    // ended: pi-7c11 on IOSDOX-27458 / Implement — death is a dimming, not a removal
+    '<div class="run-card ended" data-action="run-card" data-run="pi-7c11" tabindex="0" role="button" aria-expanded="false"' +
+      ' aria-label="Pi session pi-7c11 — ended">' +
+      '<div class="run-head">' + avMark("ag-picoder", 22) +
+        '<span class="run-name">Pi coder</span><span class="run-proj">IOSDOX-27458</span>' +
+        '<span class="run-dot" aria-hidden="true"></span>' +
+        '<span class="run-right"><span class="run-elapsed">ended</span>' +
+        '<button class="run-in" data-action="run-in" data-item="work_ask_audit">in Implement</button></span></div>' +
+      '<div class="run-task">Audit implementation wrapped &middot; 603k tokens &middot; opus.</div>' +
+      '<div class="run-tool"><span class="tn">Write</span><span class="td">tickets/IOSDOX-27458/event-map.md</span>' +
+        '<span class="ta">1 h</span></div>' +
+      '<div class="run-hist"><div><div class="run-hist-inner">' + histRows([
+        { tn: "Write", td: "tickets/IOSDOX-27458/event-map.md", ms: 1400 },
+        { tn: "Bash", td: "rake analytics:lint_events", ms: 8200 },
+        { tn: "Edit", td: "Sources/Analytics/AskEvents.swift", ms: 1100 },
+        { tn: "Read", td: "Sources/Analytics/EventCatalog.swift", ms: 380 },
+        { tn: "Read", td: "tickets/IOSDOX-27458/state.json", ms: 210 }
+      ]) + "</div></div></div>" +
+    "</div>";
+}
+
+/* ================= overlay layout (narrow viewport) ================= */
+
+function layoutOverlays() {
+  const narrow = wrap.clientWidth < 700;
+  wrap.classList.toggle("narrow", narrow);
+  const dock = $("#dock"), rc = $("#runcards");
+  dock.style.top = narrow ? (rc.offsetTop + rc.offsetHeight + 10) + "px" : "";
+}
+
+/* ================= actions ================= */
+
+const PRIMARY_TOAST = {
+  work_ask_audit: 'Opening <span class="tmono">event-map.md</span> beside Buzz thread <span class="tmono">bz-2216</span> for approval&hellip;',
+  work_moa_mgmt: 'Opening PR <span class="tmono">#510</span> with the Scout&rsquo;s triage summary &mdash; merge or request changes&hellip;'
+};
+
+function floorName(floor) { return floor === "local" ? "rocketbot" : floor; }
+
+// keep flown-to cards clear of the run-card HUD (340px + 16 right + 16 gap):
+// bias center-x left when the capsule's right edge would land under the stack
+function hudBiasedX(wx, rightWorldX, z) {
+  const screenRight = vw() / 2 + (rightWorldX - wx) * z;
+  return screenRight > vw() - 372 ? wx - 170 : wx;
+}
+
+function handleAction(el) {
+  const act = el.dataset.action;
+  switch (act) {
+    case "card":
+      toggleItem(el.dataset.item, true);
+      break;
+    case "cap-row": {
+      const row = el.closest(".cap-row");
+      const open = row.classList.toggle("open");
+      el.setAttribute("aria-expanded", open ? "true" : "false");
+      break;
+    }
+    case "station": {
+      const item = el.dataset.item, stage = el.dataset.stage;
+      openStageRow(item, stage, true);
+      const L = LAYOUT[item];
+      const z = Math.max(cam.zoom, 0.92);
+      flyToWorldPoint(hudBiasedX(L.capX + CAP_W / 2, L.capX + CAP_W, z), L.cardY + 300, z);
+      break;
+    }
+    case "dock-fly": {
+      const item = el.dataset.item;
+      const it = WORK_ITEMS.find(w => w.id === item);
+      openStageRow(item, it.current_stage_key, true);
+      const L = LAYOUT[item];
+      const z = Math.max(cam.zoom, 0.95);
+      flyToWorldPoint(hudBiasedX(L.capX + CAP_W / 2, L.capX + CAP_W, z), L.cardY + 300, z);
+      break;
+    }
+    case "run-in": {
+      const L = LAYOUT[el.dataset.item];
+      flyToWorldPoint(L.cardX + CARD_W / 2, L.cardY + 140, Math.max(cam.zoom, 0.9));
+      break;
+    }
+    case "run-card": {
+      const open = el.classList.toggle("open");
+      el.setAttribute("aria-expanded", open ? "true" : "false");
+      setTimeout(layoutOverlays, 280); // dock tracks runcards height when narrow
+      break;
+    }
+    case "primary":
+      showToast(PRIMARY_TOAST[el.dataset.item] || "Opening&hellip;");
+      break;
+    case "open-pane":
+      showToast('Opening pane <span class="tmono">' + esc(el.dataset.pane) + "</span> on " +
+        esc(floorName(el.dataset.floor)) + "&hellip;");
+      break;
+    case "open-buzz":
+      showToast('Opening &ldquo;' + esc(el.dataset.title) + '&rdquo; in Buzz&hellip;');
+      break;
+    case "open-doc":
+      showToast('Opening <span class="tmono">tickets/' + esc(el.dataset.key) + "/" +
+        esc(el.dataset.doc) + "</span>&hellip;");
+      break;
+    case "toast":
+      showToast(el.dataset.toast);
+      break;
+    case "side-fold": {
+      const sub = document.getElementById("sub-" + el.dataset.fold);
+      const open = sub.classList.toggle("open");
+      el.setAttribute("aria-expanded", open ? "true" : "false");
+      break;
+    }
+    case "mic":
+      showToast("Listening&hellip; voice loop is stubbed in this prototype.");
+      break;
+    case "more":
+      showToast("Board options are stubbed in this prototype.");
+      break;
+    case "refit":
+      fitWorld(true);
+      break;
+    case "zoom-in":
+      zoomAt(vw() / 2, vh() / 2, 1.25);
+      break;
+    case "zoom-out":
+      zoomAt(vw() / 2, vh() / 2, 0.8);
+      break;
+    case "fit":
+      fitWorld(true);
+      break;
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  // inner actionable elements win over their card/row containers
+  handleAction(el);
+  e.stopPropagation();
+}, true);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    const el = e.target.closest ? e.target.closest("[data-action]") : null;
+    if (el && el.tagName !== "BUTTON") {
+      e.preventDefault();
+      handleAction(el);
+      return;
+    }
+  }
+  if ((e.key === "f" || e.key === "F") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    fitWorld(true);
+  }
+  if (e.key === "Escape") {
+    if (cam.openItem) setItemOpen(cam.openItem, false);
+    else if (cam.lodFolded) cam.lodFolded = null; // folded capsule: dismiss, don't re-expand later
+  }
+});
+
+/* ================= live simulator (AGENTIC-575 · implement) ================= */
+
+let lastActivityAt = NOW;
+const SIM_MSGS = [
+  { actor: "ag-deepseek", tool: "Edit", verb: "Editing", file: "api/impact_guard.py",
+    message: "Patched ImpactGuard middleware — retry budget wired in." },
+  { actor: "ag-deepseek", tool: "Bash", verb: "Running", file: "pytest api/tests/test_impact_guard.py",
+    message: "Scoped tests green — 14 passed in 6.1s." },
+  { actor: "ag-picoder", tool: "Read", verb: "Reading", file: "schema/mobile_v3.graphql",
+    message: "Cross-checked schema diff against mobile v3 clients." },
+  { actor: "ag-driver", tool: "Write", verb: "Writing", file: "tickets/AGENTIC-575/handoff.md",
+    message: "Handoff updated — architect review queued next." }
+];
+let simIdx = 0;
+
+function simTick() {
+  const msg = SIM_MSGS[simIdx % SIM_MSGS.length];
+  simIdx++;
+  const now = Date.now();
+  lastActivityAt = now;
+
+  // 1. mutate the dataset (structure source of truth); keep a rolling window
+  const actArr = WORK_ITEMS[0].stages.implement.activity;
+  actArr.push({ t: clock(now), actor: msg.actor, message: msg.message });
+  if (actArr.length > 12) actArr.shift();
+
+  const group = groupOf("work_mobile_guard");
+  const card = group.querySelector(".gcard");
+
+  // 2. obs label: verb + file + fresh ago
+  const obs = card.querySelector(".obs-label");
+  obs.innerHTML = esc(msg.verb) + ' <span class="ofile">' + esc(msg.file) +
+    '</span> &middot; <span class="t-ago" data-at="' + now + '"></span>';
+
+  // 3. updated stamp
+  const upd = card.querySelector(".upd .t-ago");
+  if (upd) upd.dataset.at = String(now);
+
+  // 4. flash the obs ring
+  card.classList.add("obs-flash");
+  setTimeout(() => card.classList.remove("obs-flash"), 600);
+
+  // 5. run card: retire the previous tool into history, install the new one
+  RUN.hist.unshift({ tn: RUN.tool.tn, td: RUN.tool.td, ms: 300 + Math.round(Math.random() * 5200) });
+  RUN.hist = RUN.hist.slice(0, 5);
+  RUN.tool = { tn: msg.tool, td: msg.file, at: now };
+  $("#runTn").textContent = msg.tool;
+  $("#runTd").textContent = msg.file;
+  $("#runTn").nextElementSibling.nextElementSibling.innerHTML =
+    '<span class="t-ago" data-at="' + now + '"></span>';
+  $("#runHist").innerHTML = histRows(RUN.hist);
+  $("#runTask").textContent = msg.message;
+
+  // 6. append the activity line in the capsule (never rebuild the world for time)
+  const list = document.querySelector('[data-act-list="work_mobile_guard:implement"]');
+  if (list) {
+    const prev = list.querySelector(".act-line.fresh");
+    if (prev) prev.classList.remove("fresh");
+    const line = document.createElement("div");
+    line.className = "act-line fresh enter";
+    line.innerHTML = '<span class="at">' + esc(clock(now)) + "</span> &middot; " +
+      '<span class="actor">' + esc(agentOf(msg.actor).display_name) + "</span> — " +
+      esc(msg.message) + ' <span class="t-ago" data-at="' + now + '"></span>';
+    list.appendChild(line);
+    while (list.children.length > 6) list.removeChild(list.firstChild);
+  }
+}
+
+/* ================= 1s ticker: time mutates, structure doesn't ================= */
+
+function renderTimes() {
+  const now = Date.now();
+  $$(".t-ago").forEach(el => { el.textContent = ago(+el.dataset.at); });
+  const card = document.querySelector('.gcard[data-item="work_mobile_guard"]');
+  if (card) card.classList.toggle("obs-live", now - lastActivityAt < 60000);
+}
+
+/* ================= boot ================= */
+
+buildWorld();
+renderRunCards();
+buildMinimap();
+layoutOverlays();
+fitWorld(false);
+renderTimes();
+setInterval(renderTimes, 1000);
+setInterval(simTick, 7000);
+window.addEventListener("resize", () => { layoutOverlays(); applyCamera(); });
+</script>
+
+<!--
+  MANIFEST — Option A · "Trail Map" (agenttrail-style spatial canvas)
+
+  Implemented interactions:
+  1.  Click / Enter / Space on a work-item card -> expands its stage-capsule list
+      (foreignObject below the card, reveal + 80ms row stagger) with a camera flight;
+      Escape or second click closes; group is raised above neighbouring lanes.
+  2.  Per-stage association: every capsule row is an accordion (0fr->1fr grid) showing
+      that stage's started/completed timestamps, agents (link_role + link_state),
+      Buzz threads, Pi sessions (model/tokens/pane), continuity docs, and activity
+      lines; stations on the rails are click/keyboard targets that fly-open the
+      owning item at that exact stage row.
+  3.  Deep-link affordances everywhere: "Open pane wX:tN", "Open in Buzz",
+      "Open handoff" / continuity doc chips, sidebar inbox + links, mic and "..." —
+      all fire the bottom-center role=status toast (auto-dismiss 2.6s, timer reset).
+  4.  Needs-you: dock strips (top-left) fly the camera to IOSDOX-27458 / AGENTIC-472,
+      auto-expanding the pending stage row; one primary action per item
+      ("Review event map" / "Decide on PR #510") on the card AND capsule footer;
+      alert stroke on hosting phase regions, beacon-pulsing gate + station halo.
+  5.  Live simulator: every 7s appends activity to AGENTIC-575/implement, updates the
+      run-card tool line + history (5 rows, tabular durations), flips the obs-ring
+      ("declared vs observed"), bumps t-ago stamps via the 1s ticker; obs-ring shows
+      only while activity is <60s old.
+  6.  Camera: drag pan (pointer capture, skips cards/overlays), wheel pan,
+      cmd/ctrl+wheel zoom-to-cursor (world-point invariant), - / % / + / fit tools,
+      F shortcut, sidebar "active work" refits, 600ms cubic-bezier flights,
+      minimap (status-colored item rects, live viewport rect clamped to world
+      bounds, click-to-jump), LOD nameplates with .45/.55 hysteresis (capsules
+      fold and restore; Escape while folded dismisses instead of re-expanding);
+      dock-fly / station flights bias left of the run-card HUD; below 700px world
+      width the HUD narrows and the needs-you dock drops beneath it.
+  7.  Accessibility: focusable cards/nameplates/stations/rows/run-cards, Enter/Space activation,
+      aria-expanded on all accordions, focus-visible outlines, role=status toast,
+      all animation behind prefers-reduced-motion: no-preference (plus reduce override).
+-->
+</html>

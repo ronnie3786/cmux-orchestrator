@@ -1,0 +1,22 @@
+{
+  "workflow": "buzz-feature-work",
+  "version": 1,
+  "title": "Buzz Feature Work",
+  "description": "Ship pipeline for ticketed feature work.",
+  "phases": [
+    { "key": "open", "title": "Open" },
+    { "key": "build", "title": "Build" },
+    { "key": "prove", "title": "Prove" },
+    { "key": "ship", "title": "Ship" }
+  ],
+  "stages": [
+    { "key": "start-ticket", "title": "Start Ticket", "phase": "open", "skill": "buzz-start-ticket", "checkpoint": "none" },
+    { "key": "plan", "title": "Plan", "phase": "open", "skill": "buzz-plan", "checkpoint": "human" },
+    { "key": "implement", "title": "Implement", "phase": "build", "skill": "buzz-implement", "checkpoint": "none" },
+    { "key": "architect-code-review", "title": "Architect Code Review", "phase": "build", "skill": "buzz-architect-code-review", "checkpoint": "none" },
+    { "key": "proof", "title": "Proof", "phase": "prove", "skill": "buzz-proof", "checkpoint": "human" },
+    { "key": "code-review-pre-pr", "title": "Code Review Pre PR", "phase": "prove", "skill": "buzz-code-review-pre-pr", "checkpoint": "human" },
+    { "key": "pr", "title": "PR", "phase": "ship", "skill": "buzz-pr", "checkpoint": "human" },
+    { "key": "pr-triage", "title": "PR Triage", "phase": "ship", "skill": "buzz-pr-triage", "checkpoint": "none" }
+  ]
+}

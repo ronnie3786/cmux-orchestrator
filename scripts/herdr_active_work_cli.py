@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, TextIO
 
@@ -41,19 +42,11 @@ ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
 WORK_KINDS = ("feature", "task", "idea")
 WORK_LIFECYCLES = ("active", "blocked", "done", "archived")
-STAGE_KEYS = (
-    "start-ticket",
-    "plan",
-    "implement",
-    "architect-code-review",
-    "proof",
-    "code-review-pre-pr",
-    "pr",
-    "pr-triage",
-)
 STAGE_STATES = ("active", "blocked")
 ATTENTION_STATES = ("none", "agent", "human")
 CHECKPOINT_STATES = ("none", "pending", "approved", "changes_requested")
+
+_WORKFLOW_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 
 _NO_PAYLOAD = object()
 
@@ -116,6 +109,10 @@ class RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _validated_token(value: Any, *, field: str) -> str:
@@ -340,9 +337,14 @@ class ActiveWorkClient:
         method: str,
         path: str,
         payload: Any = _NO_PAYLOAD,
+        *,
+        query: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         if not path.startswith("/") or "?" in path or "#" in path:
             raise CLIError("internal request path is invalid", code="invalid_request")
+        full_path = path
+        if query:
+            full_path = f"{path}?{urllib.parse.urlencode(query)}"
         body: bytes | None = None
         if payload is not _NO_PAYLOAD:
             try:
@@ -364,7 +366,7 @@ class ActiveWorkClient:
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
-            self.base_url + path,
+            self.base_url + full_path,
             data=body,
             headers=headers,
             method=method,
@@ -524,7 +526,12 @@ def json_object(value: str, *, field: str, maximum_bytes: int = 128 * 1024) -> d
 
 
 def _parser(environ: Mapping[str, str]) -> JSONArgumentParser:
-    parser = JSONArgumentParser(description="Manage Herdr Active Work with a machine-readable CLI.")
+    parser = JSONArgumentParser(
+        description=(
+            "Manage Herdr Active Work with a machine-readable CLI. "
+            "Use workflow-show SLUG to discover a workflow's valid stage keys."
+        )
+    )
     parser.add_argument(
         "--base-url",
         default=environ.get("HERDR_ACTIVE_WORK_BASE_URL") or DEFAULT_BASE_URL,
@@ -546,7 +553,7 @@ def _parser(environ: Mapping[str, str]) -> JSONArgumentParser:
         help="Per-request timeout in seconds (env: HERDR_ACTIVE_WORK_TIMEOUT)",
     )
     parser.add_argument("--pretty", action="store_true", help="Indent the JSON response")
-    parser.add_argument("--version", action="version", version="herdr-active-work 1")
+    parser.add_argument("--version", action="version", version="herdr-active-work 2")
     commands = parser.add_subparsers(dest="command", required=True)
 
     candidates = commands.add_parser("candidates", help="List observed Jira setup candidates")
@@ -567,7 +574,8 @@ def _parser(environ: Mapping[str, str]) -> JSONArgumentParser:
     create.add_argument("--title", required=True)
     create.add_argument("--summary")
     create.add_argument("--lifecycle", choices=WORK_LIFECYCLES)
-    create.add_argument("--current-stage", choices=STAGE_KEYS)
+    create.add_argument("--current-stage")
+    create.add_argument("--workflow")
     create.add_argument("--next-action")
     create.add_argument("--metadata-json")
 
@@ -583,7 +591,7 @@ def _parser(environ: Mapping[str, str]) -> JSONArgumentParser:
 
     move = commands.add_parser("move", help="Move an item forward in its pipeline")
     move.add_argument("reference")
-    move.add_argument("--to", required=True, choices=STAGE_KEYS, dest="to_stage")
+    move.add_argument("--to", required=True, dest="to_stage")
     move.add_argument("--state", choices=STAGE_STATES)
     move.add_argument("--attention", choices=ATTENTION_STATES)
     move.add_argument("--checkpoint", choices=CHECKPOINT_STATES)
@@ -592,6 +600,46 @@ def _parser(environ: Mapping[str, str]) -> JSONArgumentParser:
 
     observe = commands.add_parser("observe", help="Merge an idempotent observation into existing work")
     observe.add_argument("--file", required=True, help="Ingestion JSON path, or - for stdin")
+
+    workflow_list = commands.add_parser("workflow-list", help="List stored workflow templates")
+
+    workflow_show = commands.add_parser(
+        "workflow-show", help="Show one workflow's phases, stages, and next"
+    )
+    workflow_show.add_argument("slug")
+    workflow_show.add_argument("--wf-version", type=int, dest="wf_version")
+
+    workflow_apply = commands.add_parser(
+        "workflow-apply", help="Validate and apply one workflow config"
+    )
+    workflow_apply.add_argument("--file", required=True, help="Workflow config JSON path, or - for stdin")
+    workflow_apply.add_argument(
+        "--validate", action="store_true", help="Validate locally only; do not contact Herdr"
+    )
+
+    stage_set = commands.add_parser("stage-set", help="Patch one stage's summary and/or content")
+    stage_set.add_argument("reference")
+    stage_set.add_argument("--stage", required=True, dest="stage_key")
+    stage_set.add_argument("--summary")
+    stage_set.add_argument(
+        "--content-file", help="JSON object file to deep-merge into stage content, or - for stdin"
+    )
+
+    attach_doc = commands.add_parser("attach-doc", help="Attach or update one stage document")
+    attach_doc.add_argument("reference")
+    attach_doc.add_argument("--stage", required=True, dest="stage_key")
+    attach_doc.add_argument("--id", required=True, dest="doc_id")
+    attach_doc.add_argument("--title", required=True)
+    attach_doc.add_argument("--kind", required=True, choices=("html", "json", "md", "other"))
+    attach_doc.add_argument("--skill", required=True)
+    attach_doc.add_argument(
+        "--status",
+        required=True,
+        choices=("approved", "changes_requested", "awaiting-you", "info"),
+    )
+    attach_doc.add_argument("--by")
+    attach_doc.add_argument("--url")
+    attach_doc.add_argument("--at")
     return parser
 
 
@@ -756,6 +804,84 @@ def _read_observation(path_value: str, stdin: TextIO) -> dict[str, Any]:
     return value
 
 
+def _read_json_file(path_value: str, stdin: TextIO) -> Any:
+    """Read one bounded JSON value from stdin or a safely opened regular file."""
+
+    if path_value == "-":
+        stream = getattr(stdin, "buffer", stdin)
+        raw_value = stream.read(MAX_REQUEST_BYTES + 1)
+        raw = raw_value.encode("utf-8") if isinstance(raw_value, str) else raw_value
+    else:
+        path = Path(os.path.abspath(os.path.expanduser(path_value)))
+        try:
+            before = os.lstat(path)
+            if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+                raise CLIError("JSON file must be a regular file", code="invalid_payload")
+            if before.st_size > MAX_REQUEST_BYTES:
+                raise CLIError("JSON file is too large", code="request_too_large")
+            descriptor = os.open(
+                path,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            try:
+                after = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(after.st_mode)
+                    or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+                ):
+                    raise CLIError(
+                        "JSON file changed while it was being opened",
+                        code="invalid_payload",
+                    )
+                with os.fdopen(descriptor, "rb") as handle:
+                    descriptor = -1
+                    raw = handle.read(MAX_REQUEST_BYTES + 1)
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+        except CLIError:
+            raise
+        except OSError as exc:
+            raise CLIError(f"cannot read JSON file: {exc}", code="invalid_payload") from exc
+    if len(raw) > MAX_REQUEST_BYTES:
+        raise CLIError("JSON is too large", code="request_too_large")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CLIError("JSON file must contain valid UTF-8 JSON", code="invalid_payload") from exc
+
+
+def _validate_workflow_config_minimal(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise CLIError("workflow config must be a JSON object", code="workflow_config_invalid")
+    for field in ("workflow", "version", "title", "phases", "stages"):
+        if field not in payload:
+            raise CLIError(f"workflow config is missing {field}", code="workflow_config_invalid")
+    slug = payload.get("workflow")
+    if not isinstance(slug, str) or not _WORKFLOW_SLUG_RE.fullmatch(slug):
+        raise CLIError("workflow slug is invalid", code="workflow_config_invalid")
+    stages = payload.get("stages")
+    if not isinstance(stages, list) or len(stages) < 2:
+        raise CLIError("workflow config needs at least 2 stages", code="workflow_config_invalid")
+    keys: list[str] = []
+    for stage in stages:
+        if not isinstance(stage, dict) or not isinstance(stage.get("key"), str):
+            raise CLIError("each stage needs a string key", code="workflow_config_invalid")
+        keys.append(stage["key"])
+    index_by_key = {key: index for index, key in enumerate(keys)}
+    for index, stage in enumerate(stages):
+        next_values = stage.get("next")
+        if next_values is None:
+            continue
+        if not isinstance(next_values, list):
+            raise CLIError("stage next must be an array", code="workflow_config_invalid")
+        for next_key in next_values:
+            if not isinstance(next_key, str) or index_by_key.get(next_key, -1) <= index:
+                raise CLIError(
+                    "stage next must reference a later stage", code="workflow_config_invalid"
+                )
+
+
 def execute(args: argparse.Namespace, client: ActiveWorkClient, *, stdin: TextIO) -> dict[str, Any]:
     if args.command == "candidates":
         board = _board(client)
@@ -795,6 +921,53 @@ def execute(args: argparse.Namespace, client: ActiveWorkClient, *, stdin: TextIO
         item_id = resolve_reference(client, args.reference)
         return {"item": _detail(client, item_id)}
 
+    if args.command == "workflow-list":
+        response = client.request("GET", "/api/v1/active-work/workflows")
+        workflows = response.get("workflows") if isinstance(response.get("workflows"), list) else []
+        return {"count": len(workflows), "workflows": workflows}
+
+    if args.command == "workflow-show":
+        slug = str(args.slug or "").strip().lower()
+        if not slug:
+            raise CLIError("workflow slug is required", code="invalid_arguments")
+        query = {"version": str(args.wf_version)} if args.wf_version is not None else None
+        response = client.request(
+            "GET",
+            f"/api/v1/active-work/workflows/{urllib.parse.quote(slug, safe='')}",
+            query=query,
+        )
+        workflow = response.get("workflow")
+        if not isinstance(workflow, dict):
+            raise CLIError(
+                "Herdr response is missing a workflow",
+                code="invalid_response",
+                exit_code=3,
+            )
+        return {"workflow": workflow}
+
+    if args.command == "workflow-apply":
+        payload = _read_json_file(args.file, stdin)
+        _validate_workflow_config_minimal(payload)
+        if args.validate:
+            return {
+                "valid": True,
+                "workflow": payload.get("workflow"),
+                "version": payload.get("version"),
+            }
+        response = client.request("POST", "/api/v1/active-work/workflows", payload)
+        workflow = response.get("workflow")
+        if not isinstance(workflow, dict):
+            raise CLIError(
+                "Herdr response is missing a workflow",
+                code="invalid_response",
+                exit_code=3,
+            )
+        return {
+            "applied": response.get("applied"),
+            "reason": response.get("reason"),
+            "workflow": workflow,
+        }
+
     if args.command == "connect":
         key = jira_key(args.jira_key)
         response = client.request(
@@ -823,6 +996,7 @@ def execute(args: argparse.Namespace, client: ActiveWorkClient, *, stdin: TextIO
             (args.summary, "summary"),
             (args.lifecycle, "lifecycle"),
             (args.current_stage, "current_stage_key"),
+            (args.workflow, "workflow"),
             (args.next_action, "next_action"),
         ):
             if option is not None:
@@ -910,6 +1084,62 @@ def execute(args: argparse.Namespace, client: ActiveWorkClient, *, stdin: TextIO
             "stale": response["stale"],
             "receipt_id": receipt_id,
             "item": item_projection,
+        }
+
+    if args.command == "stage-set":
+        item_id = resolve_reference(client, args.reference)
+        payload = {}
+        if args.summary is not None:
+            payload["summary"] = args.summary
+        if args.content_file is not None:
+            content = _read_json_file(args.content_file, stdin)
+            if not isinstance(content, dict):
+                raise CLIError("content file must contain a JSON object", code="invalid_payload")
+            payload["content"] = content
+        if not payload:
+            raise CLIError(
+                "stage-set requires --summary or --content-file",
+                code="invalid_arguments",
+            )
+        stage_key = internal_id(args.stage_key, field="stage key")
+        safe_item = urllib.parse.quote(item_id, safe="")
+        safe_stage = urllib.parse.quote(stage_key, safe="")
+        return {
+            "item": _response_item(
+                client.request(
+                    "PATCH",
+                    f"/api/v1/active-work/items/{safe_item}/stages/{safe_stage}",
+                    payload,
+                )
+            )
+        }
+
+    if args.command == "attach-doc":
+        item_id = resolve_reference(client, args.reference)
+        doc_id = internal_id(args.doc_id, field="document ID")
+        stage_key = internal_id(args.stage_key, field="stage key")
+        document: dict[str, Any] = {
+            "title": args.title,
+            "kind": args.kind,
+            "skill": args.skill,
+            "status": args.status,
+            "at": args.at or _utc_now(),
+        }
+        if args.by is not None:
+            document["by"] = args.by
+        if args.url is not None:
+            document["url"] = args.url
+        payload = {"content": {"documents": {doc_id: document}}}
+        safe_item = urllib.parse.quote(item_id, safe="")
+        safe_stage = urllib.parse.quote(stage_key, safe="")
+        return {
+            "item": _response_item(
+                client.request(
+                    "PATCH",
+                    f"/api/v1/active-work/items/{safe_item}/stages/{safe_stage}",
+                    payload,
+                )
+            )
         }
 
     raise CLIError("unsupported command", code="invalid_arguments")

@@ -436,13 +436,20 @@ app, or CLI lists it. Other management commands are:
 - `list [--full]`: list tracked items, optionally with full projections.
 - `show REF`: resolve an Active Work ID or Jira key.
 - `create --title T`: create a Feature, Task, or Idea, with optional ID, kind,
-  summary, lifecycle, current stage, next action, and JSON metadata.
+  summary, lifecycle, current stage, workflow, next action, and JSON metadata.
 - `update REF`: change mutable fields, preferably with
   `--expected-revision N` after a prior read.
 - `move REF --to STAGE`: move through the pipeline with optional `--state`,
   `--attention`, `--checkpoint`, `--note`, and `--expected-revision`.
 - `observe --file PATH|-`: submit one exact ingestion JSON object from a file
   or stdin.
+- `workflow-list`: list stored workflow templates.
+- `workflow-show SLUG`: show one workflow's phases, stages, and allowed next stages.
+- `workflow-apply --file PATH|- [--validate]`: validate and apply a workflow
+  config, or validate it locally only.
+- `stage-set REF --stage KEY`: patch a stage summary and/or content object.
+- `attach-doc REF --stage KEY --id DOCID ...`: attach or update one stage
+  document with its skill and approval status.
 
 An `observe` payload must contain `source`, `idempotency_key`, `observed_at`,
 and `selector`. Optional item, stage, channel, thread, and activity fields are
@@ -473,6 +480,11 @@ is intentionally public and contains no session data.
 
 - `GET /api/v1/health`, `/network`, `/snapshot`, and `/workspaces`
 - `GET /api/v1/events` for replayable topology and lifecycle SSE
+- The Active Work manage token is also accepted on `GET /api/v1/events`, where
+  it can observe event metadata (IDs and revisions only, never content).
+- `GET /board/` serves the read-only Active Work board page before auth, like
+  `/herdr-web/`. `GET /board` redirects relatively to `board/`; the page's own
+  data calls still require a token.
 - `GET /api/v1/work-inbox` for GitHub review requests and assigned non-Done Jira tickets
 - `GET /api/v1/active-work` for the durable Active Work board, shared by the
   Board and Focus Route presentations, plus explicitly untracked Jira setup
@@ -484,6 +496,12 @@ is intentionally public and contains no session data.
   /api/v1/active-work/items/{id}`, and `POST
   /api/v1/active-work/items/{id}/transitions` for revisioned Feature, Task, and
   Idea management
+- `GET /api/v1/active-work/workflows` and `GET
+  /api/v1/active-work/workflows/{slug}` for stored workflow templates, with
+  optional `?version=` for a specific version
+- `POST /api/v1/active-work/workflows` for idempotent workflow application
+- `PATCH /api/v1/active-work/items/{id}/stages/{stageKey}` to deep-merge a
+  summary or content object into one stage
 - `GET /api/v1/active-work/sync-targets` and `POST
   /api/v1/active-work/ingestions` for an idempotent external Buzz reconciler.
   Configure `HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN` to give that process a

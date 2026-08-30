@@ -1,0 +1,1773 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Herdr Journey Refit</title>
+<style>
+/* ============================================================
+   Option C — Journey Refit · Herdr Active Work prototype
+   Catppuccin Mocha tokens, system fonts, zero external requests
+   ============================================================ */
+:root {
+  --ink:#181825; --graphite:#1e1e2e; --elevated:#313244; --surface:#45475a;
+  --mist:#a6adc8; --muted:#6c7086; --text:#e5eafa; --accent:#89b4fa;
+  --mauve:#cba6f7; --signal:#94e2d5; --success:#a6e3a1; --working:#f9e2af;
+  --alert:#f38ba8; --warning:#fab387; --code:#f5c2e7; --crust:#11111b;
+  --body:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --rounded:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --mono:"SFMono-Regular","SF Mono",Menlo,ui-monospace,monospace;
+  --card-radius:16px; --compact-radius:10px;
+  --hairline:rgba(166,173,200,.18); --hairline-strong:rgba(166,173,200,.22);
+  --divider:rgba(255,255,255,.08);
+  --muted-hi:#7f849c; --mist-dim:#9399b2; /* Mocha overlay1/2 — contrast-safe muted tiers */
+  --ease:cubic-bezier(0.32,0.72,0,1);
+  --ease-out:cubic-bezier(0.23,1,0.32,1);
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+html, body { height:100%; }
+body {
+  background:#050506; color:var(--text);
+  font:13px/1.5 var(--body);
+  display:flex; align-items:center; justify-content:center;
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; text-align:left; }
+button:active { transform:scale(.98); }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+::-webkit-scrollbar { width:8px; height:8px; }
+::-webkit-scrollbar-thumb { background:rgba(166,173,200,.16); border-radius:8px; }
+::-webkit-scrollbar-track { background:transparent; }
+
+/* ---------- keyframes (agenttrail recipes, re-inked) ---------- */
+@keyframes working-pulse { 50% { opacity:.35; } }
+@keyframes breathe { from { opacity:.4; transform:scale(.65);} to { opacity:1; transform:scale(1);} }
+@keyframes reveal { from { opacity:0; transform:translateY(16px); filter:blur(4px);} to { opacity:1; transform:none; filter:blur(0);} }
+@keyframes capsule-pop { from { opacity:0; transform:scale(.95);} to { opacity:1; transform:none;} }
+@keyframes rail-live { from { opacity:.5; } to { opacity:1; } }
+@keyframes halo-working {
+  0%,100% { box-shadow:0 0 0 0 rgba(249,226,175,.34); }
+  50%     { box-shadow:0 0 0 6px rgba(249,226,175,0); }
+}
+@keyframes halo-alert {
+  0%,100% { box-shadow:0 0 0 0 rgba(243,139,168,.38); }
+  50%     { box-shadow:0 0 0 7px rgba(243,139,168,0); }
+}
+@keyframes flash-ping {
+  0% { box-shadow:0 0 0 0 rgba(148,226,213,.55); }
+  100% { box-shadow:0 0 0 10px rgba(148,226,213,0); }
+}
+@keyframes card-flash {
+  0%,100% { box-shadow:0 0 0 0 rgba(243,139,168,0); }
+  35% { box-shadow:0 0 0 3px rgba(243,139,168,.35); }
+}
+@keyframes spin-once { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration:1ms !important; animation-iteration-count:1 !important; transition-duration:1ms !important; }
+}
+
+/* ---------- app window & toolbar ---------- */
+.app-window {
+  width:min(1700px, calc(100vw - 28px));
+  height:min(930px, calc(100vh - 24px));
+  border-radius:28px; border:1px solid rgba(166,173,200,.34);
+  box-shadow:0 30px 90px rgba(0,0,0,.62);
+  background:var(--ink); overflow:hidden;
+  display:flex; flex-direction:column; min-width:900px;
+}
+.toolbar {
+  height:66px; flex:0 0 66px; display:grid; grid-template-columns:270px 1fr 270px;
+  align-items:center; padding:0 22px; border-bottom:1px solid var(--hairline);
+  background:rgba(17,17,27,.4);
+}
+.lights { display:flex; gap:8px; }
+.lights i { width:14px; height:14px; border-radius:50%; display:block; }
+.lights i:nth-child(1){ background:#ff5f57; } .lights i:nth-child(2){ background:#febc2e; }
+.lights i:nth-child(3){ background:#28c840; }
+.seg-wrap { justify-self:center; display:flex; align-items:center; gap:12px; }
+.seg { display:flex; gap:3px; padding:3px; background:var(--crust); border:1px solid var(--hairline); border-radius:11px; }
+.seg-btn {
+  font:650 10.5px var(--mono); letter-spacing:.04em; color:var(--muted);
+  padding:6px 14px; border-radius:8px; transition:color 250ms var(--ease-out), background 250ms var(--ease-out);
+}
+.seg-btn:hover { color:var(--mist); }
+.seg-btn[aria-pressed="true"] { background:var(--elevated); color:var(--text); }
+.seg-cap { font:600 9.5px var(--mono); letter-spacing:.06em; color:var(--muted); }
+.tb-right { justify-self:end; display:flex; gap:10px; align-items:center; }
+.mic-btn {
+  width:40px; height:40px; border-radius:12px; background:var(--accent);
+  display:flex; align-items:center; justify-content:center; transition:filter 250ms var(--ease-out);
+}
+.mic-btn:hover { filter:brightness(1.1); }
+.mic-btn svg { display:block; }
+.more-btn {
+  width:40px; height:40px; border-radius:12px; border:1px solid var(--hairline-strong);
+  color:var(--mist); font:650 15px var(--mono); display:flex; align-items:center; justify-content:center;
+  transition:border-color 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.more-btn:hover { border-color:var(--accent); color:var(--text); }
+
+/* ---------- shell & sidebar ---------- */
+.shell { flex:1; display:grid; grid-template-columns:310px minmax(0,1fr); min-height:0; }
+.sidebar {
+  border-right:1px solid var(--hairline); background:rgba(17,17,27,.5);
+  padding:20px 16px 14px; display:flex; flex-direction:column; gap:16px;
+  overflow-y:auto; min-height:0;
+}
+.wordmark { display:flex; align-items:center; gap:8px; font:750 15px var(--mono); letter-spacing:.02em; padding:0 6px; }
+.wm-bars { display:flex; gap:2.5px; align-items:flex-end; height:14px; }
+.wm-bars i { width:3.5px; border-radius:2px; display:block; }
+.wm-bars i:nth-child(1){ height:8px; background:var(--accent); }
+.wm-bars i:nth-child(2){ height:14px; background:var(--mauve); }
+.wm-bars i:nth-child(3){ height:10px; background:var(--signal); }
+.side-card {
+  display:flex; border-radius:14px; overflow:hidden;
+  background:var(--graphite); border:1px solid var(--hairline);
+}
+.sc-bar { width:3px; flex:0 0 3px; background:linear-gradient(180deg, var(--mauve), var(--accent)); }
+.sc-body { padding:12px 14px; flex:1; }
+.sc-title { font:700 13px var(--body); display:flex; align-items:baseline; gap:8px; }
+.sc-count { font:650 9px var(--mono); color:var(--muted); letter-spacing:.05em; }
+.sc-cap { font-size:11px; color:var(--mist-dim); margin-top:3px; line-height:1.45; }
+.sc-pills { display:flex; gap:6px; margin-top:9px; }
+.mini-pill {
+  font:650 9px var(--mono); letter-spacing:.05em; padding:2.5px 8px; border-radius:999px;
+  color:var(--mist); background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+}
+.mini-pill.alert { color:var(--alert); background:rgba(243,139,168,.09); border-color:rgba(243,139,168,.3); }
+.side-sec { display:flex; flex-direction:column; gap:2px; }
+.side-h { font:650 10px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted); padding:0 6px 6px; }
+.side-hcap { text-transform:none; letter-spacing:.03em; }
+.side-row {
+  display:flex; align-items:center; gap:8px; width:100%;
+  padding:7px 8px; border-radius:9px; font:600 12px var(--body); color:var(--mist);
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.side-row:hover { background:rgba(49,50,68,.4); color:var(--text); }
+.side-row .chev { font-size:9px; color:var(--muted); width:10px; transition:transform 250ms var(--ease-out); display:inline-block; }
+.side-row[aria-expanded="false"] .chev { transform:rotate(-90deg); }
+.side-row .badge {
+  margin-left:auto; font:650 9px var(--mono); color:var(--mist);
+  background:rgba(49,50,68,.7); border:1px solid var(--hairline); border-radius:999px; padding:1px 7px;
+}
+.side-sub { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out); }
+.side-sub.open { grid-template-rows:1fr; opacity:1; }
+.side-sub > div { overflow:hidden; }
+.inbox-item {
+  display:block; width:100%; padding:6px 8px 6px 26px; border-radius:8px;
+  transition:background 250ms var(--ease-out);
+}
+.inbox-item:hover { background:rgba(49,50,68,.35); }
+.inbox-repo { font:650 9px var(--mono); color:var(--muted); letter-spacing:.03em; display:block; }
+.inbox-title { font-size:11px; color:var(--mist); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.side-links { display:flex; flex-direction:column; gap:2px; margin-top:auto; }
+.side-link {
+  display:flex; align-items:center; gap:9px; padding:7px 8px; border-radius:9px;
+  font:600 12px var(--body); color:var(--mist); transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.side-link:hover { background:rgba(49,50,68,.4); color:var(--text); }
+.side-link .glyph { font:650 11px var(--mono); color:var(--accent); width:14px; text-align:center; }
+.side-foot { font:600 9px var(--mono); color:var(--muted); letter-spacing:.03em; line-height:1.7; padding:10px 6px 0; border-top:1px solid var(--divider); }
+
+/* ---------- main / views ---------- */
+.main { min-width:0; min-height:0; position:relative; background:var(--ink); }
+.view { position:absolute; inset:0; overflow-y:auto; }
+.view.hidden { display:none; }
+
+/* ---------- View 1 · Journey rows ---------- */
+.jwrap { width:min(1120px, 100% - 36px); margin:0 auto; padding:26px 0 60px; }
+.jhead { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:18px; }
+.jhead h1 { font:750 30px/1.1 var(--rounded); letter-spacing:-.02em; }
+.jsub { font-size:12.5px; color:var(--mist-dim); margin-top:5px; }
+.headbtns { display:flex; gap:8px; flex:0 0 auto; }
+.ghost-btn {
+  display:flex; align-items:center; gap:6px; font:650 10.5px var(--mono); letter-spacing:.03em;
+  color:var(--mist); border:1px solid var(--hairline-strong); border-radius:9px; padding:7px 12px;
+  transition:border-color 250ms var(--ease-out), color 250ms var(--ease-out), background 250ms var(--ease-out);
+}
+.ghost-btn:hover { border-color:var(--accent); color:var(--text); background:rgba(137,180,250,.06); }
+.ghost-btn .g { display:inline-block; }
+.ghost-btn.spinning .g { animation:spin-once 600ms var(--ease-out); }
+
+.priority {
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  background:var(--graphite); border:1px solid var(--hairline); border-radius:14px;
+  padding:13px 18px; margin-bottom:16px; position:relative; overflow:hidden;
+}
+.priority::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:linear-gradient(180deg, var(--alert), var(--warning));
+}
+.priority.allclear::before { background:linear-gradient(180deg, var(--signal), var(--accent)); }
+.pr-hand { font-size:16px; }
+.pr-sentence { font-size:13px; color:var(--mist); }
+.pr-sentence b { color:var(--text); font-weight:700; }
+.pr-action {
+  font:700 11px var(--body); letter-spacing:.01em; color:var(--crust);
+  background:var(--alert); border-radius:9px; padding:7px 13px;
+  transition:filter 250ms var(--ease-out);
+}
+.pr-action:hover { filter:brightness(1.12); }
+.pr-chip {
+  font:650 9.5px var(--mono); letter-spacing:.03em; color:var(--alert);
+  background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3);
+  border-radius:999px; padding:4px 10px; transition:background 250ms var(--ease-out);
+}
+.pr-chip:hover { background:rgba(243,139,168,.16); }
+.pr-tallies { margin-left:auto; font:600 10px var(--mono); color:var(--muted); letter-spacing:.04em; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.order-cap { font:600 9.5px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:0 2px 10px; }
+
+/* journey cards */
+.jcard {
+  position:relative; background:var(--graphite); border:1px solid var(--hairline);
+  border-radius:18px; padding:18px 20px 16px; margin-bottom:14px; overflow:hidden;
+  transition:border-color 700ms var(--ease), background 700ms var(--ease);
+  cursor:pointer;
+}
+.jcard:hover { border-color:rgba(166,173,200,.3); }
+.jcard.needs { border-color:rgba(243,139,168,.3); background:linear-gradient(180deg, rgba(243,139,168,.035), var(--graphite) 55%); }
+.jcard.needs:hover { border-color:rgba(243,139,168,.45); }
+.jcard.idea { border:1px dashed rgba(203,166,247,.35); background:rgba(203,166,247,.045); }
+.jcard .spine { position:absolute; left:0; top:0; bottom:0; width:3px; background:transparent; }
+.jcard.needs .spine { background:linear-gradient(180deg, var(--alert), rgba(243,139,168,.25)); }
+.jcard.flashing { animation:card-flash 1.4s var(--ease-out) 1; }
+.jhrow { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.kindpill {
+  font:650 9px var(--mono); letter-spacing:.07em; text-transform:uppercase;
+  color:var(--mist); background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+  padding:3px 9px; border-radius:999px; flex:0 0 auto;
+}
+.jcard.idea .kindpill { color:var(--mauve); background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35); }
+.jtitle { min-width:0; }
+.jtitle .key { font:700 13px var(--mono); letter-spacing:.01em; color:var(--text); }
+.jtitle .sep { color:var(--muted); margin:0 4px; }
+.jtitle .name { font:700 14px var(--body); color:var(--text); }
+.jmeta { font:600 9.5px var(--mono); color:var(--muted); letter-spacing:.04em; margin-top:3px; font-variant-numeric:tabular-nums; }
+.jmeta .live-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--signal); margin:0 3px 1px 0; vertical-align:middle; animation:working-pulse 1.6s ease-in-out infinite; }
+.jmeta .live-dot.flash { animation:flash-ping 1.2s var(--ease-out) 1; }
+.jh-spacer { flex:1; }
+.jh-action {
+  font:700 11px var(--body); color:var(--crust); background:var(--alert);
+  border-radius:9px; padding:6px 12px; flex:0 0 auto; transition:filter 250ms var(--ease-out);
+}
+.jh-action:hover { filter:brightness(1.12); }
+.chev-btn {
+  width:26px; height:26px; border-radius:8px; color:var(--muted); font-size:10px;
+  display:flex; align-items:center; justify-content:center; flex:0 0 auto;
+  border:1px solid transparent; transition:color 250ms var(--ease-out), border-color 250ms var(--ease-out), transform 250ms var(--ease-out);
+}
+.chev-btn:hover { color:var(--text); border-color:var(--hairline); }
+.jcard.open .chev-btn { transform:rotate(180deg); color:var(--mist); }
+
+/* status pills */
+.statuspill {
+  font:650 9px var(--mono); letter-spacing:.06em; text-transform:uppercase;
+  padding:4px 10px; border-radius:999px; flex:0 0 auto; white-space:nowrap;
+}
+.sp-working { color:var(--working); background:rgba(249,226,175,.08); border:1px solid rgba(249,226,175,.28); }
+.sp-alert   { color:var(--alert);   background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3); }
+.sp-done    { color:var(--signal);  background:rgba(148,226,213,.08); border:1px solid rgba(148,226,213,.28); }
+.sp-idea    { color:var(--mauve);   background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35); }
+
+/* avatar stacks */
+.stack { display:flex; align-items:center; flex:0 0 auto; }
+.avwrap { position:relative; display:inline-flex; border-radius:50%; }
+.avwrap + .avwrap { margin-left:-8px; }
+.avwrap .av { display:block; border-radius:50%; border:2px solid var(--crust); background:var(--crust); }
+.avwrap .adot {
+  position:absolute; right:-1px; bottom:-1px; width:8px; height:8px; border-radius:50%;
+  border:2px solid var(--graphite);
+}
+.adot.working { background:var(--working); animation:halo-working 1.15s ease-in-out infinite; }
+.adot.waiting { background:var(--alert); animation:halo-alert 1.15s ease-in-out infinite; }
+.stack-more { font:650 9px var(--mono); color:var(--muted); margin-left:6px; }
+
+/* ---------- metro rail ---------- */
+.railpanel {
+  background:rgba(17,17,27,.7); border:1px solid rgba(166,173,200,.1);
+  border-radius:14px; padding:8px 10px 6px; overflow-x:auto;
+}
+.rail { position:relative; min-width:620px; margin:0 34px; height:80px; }
+.rail-track { position:absolute; left:0; right:0; top:36.5px; height:3px; border-radius:2px; background:rgba(166,173,200,.16); }
+.rail-fill {
+  position:absolute; left:0; top:36.5px; height:3px; border-radius:2px; width:0;
+  background:linear-gradient(90deg, rgba(148,226,213,.85), rgba(137,180,250,.85));
+}
+.idea-rail .rail-track { background:repeating-linear-gradient(90deg, rgba(203,166,247,.25) 0 5px, transparent 5px 12px); }
+.idea-rail .rail-fill { display:none; }
+.idea-note { font:600 9px var(--mono); color:var(--mauve); opacity:.75; letter-spacing:.05em; text-align:center; padding:2px 0 4px; }
+.station {
+  position:absolute; top:0; bottom:0; width:78px; transform:translateX(-50%);
+  display:flex; flex-direction:column; align-items:center; padding:0; cursor:pointer;
+}
+.station:active { transform:translateX(-50%) scale(.97); }
+.st-riders { height:26px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:2px; }
+.st-riders .avwrap .av { border-color:#11111b; }
+.st-markbox { height:20px; display:flex; align-items:center; justify-content:center; }
+.st-label { font:600 8px var(--mono); letter-spacing:.05em; color:var(--muted); margin-top:6px; white-space:nowrap; transition:color 250ms var(--ease-out); }
+.st-label.cur { color:var(--text); font-weight:650; }
+.station:hover .st-label { color:var(--mist); }
+.station:hover .st-label.cur { color:var(--text); }
+.st-badges { height:5px; display:flex; gap:3px; margin-top:4px; align-items:center; }
+.b-dot { width:3px; height:3px; border-radius:50%; }
+.b-acc { background:var(--accent); }
+.b-mau { background:var(--mauve); }
+.st-up { opacity:.55; }
+.st-unstarted { opacity:.5; }
+/* markers */
+.mk-dot { position:relative; width:10px; height:10px; border-radius:50%; background:var(--signal); transition:transform 250ms var(--ease-out); }
+.mk-dot .tick { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font:800 6.5px var(--body); color:var(--crust); opacity:0; transition:opacity 250ms var(--ease-out); }
+.station:hover .mk-dot, .station:focus-visible .mk-dot { transform:scale(1.5); }
+.station:hover .mk-dot .tick, .station:focus-visible .mk-dot .tick { opacity:1; }
+.mk-hollow { width:6px; height:6px; border-radius:50%; border:1.5px solid rgba(108,112,134,.85); }
+.mk-hollow.ready { border-color:rgba(166,173,200,.7); }
+.mk-halo { width:16px; height:16px; border-radius:50%; border:2.5px solid var(--working); background:rgba(249,226,175,.1); }
+.mk-halo.working { animation:halo-working 1.15s ease-in-out infinite; }
+.mk-halo.alert { border-color:var(--alert); background:rgba(243,139,168,.1); animation:halo-alert 1.15s ease-in-out infinite; }
+.gate { position:relative; width:11px; height:11px; transform:rotate(45deg); border-radius:2.5px; }
+.g-ok { background:var(--signal); }
+.g-pend { border:2px solid var(--alert); background:rgba(243,139,168,.12); animation:halo-alert 1.6s ease-in-out infinite; }
+.g-cur { border:2px solid var(--working); background:rgba(249,226,175,.12); animation:halo-working 1.15s ease-in-out infinite; }
+.g-up { border:1.5px solid rgba(108,112,134,.7); }
+.g-up .star { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; transform:rotate(-45deg); font-size:6.5px; color:rgba(166,173,200,.5); }
+/* rail sizes */
+.rail--lg { height:96px; margin:0 40px; }
+.rail--lg .st-riders { height:30px; }
+.rail--lg .st-markbox { height:24px; }
+.rail--lg .rail-track, .rail--lg .rail-fill { top:43.5px; }
+.rail--lg .st-label { font-size:9px; margin-top:7px; }
+.rail--lg .station { width:92px; }
+.rail--lg .mk-dot { width:12px; height:12px; }
+.rail--lg .mk-halo { width:18px; height:18px; }
+.rail--lg .gate { width:13px; height:13px; }
+/* cast-hover highlighting (focus hero) */
+.rail.dimmed .station { opacity:.28; transition:opacity 250ms var(--ease-out); }
+.rail.dimmed .station.hi { opacity:1; }
+.rail.dimmed .station.hi .st-label { color:var(--text); }
+
+/* ---------- journey card detail accordion ---------- */
+.jdetail { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out); }
+.jcard.open .jdetail { grid-template-rows:1fr; opacity:1; }
+.jdetail > div { overflow:hidden; }
+.jdetail-inner { border-top:1px solid var(--divider); margin-top:14px; padding-top:14px; }
+.dcols { display:grid; grid-template-columns:1.05fr 1.35fr .85fr; gap:20px; }
+.dtitle { font:650 9px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+.nextmove { font-size:12.5px; color:var(--mist); line-height:1.55; }
+.nextmove .stage-ref { font:650 9.5px var(--mono); color:var(--accent); display:block; margin-top:8px; letter-spacing:.04em; }
+.castrow { display:flex; align-items:center; gap:9px; padding:4px 0; border-radius:8px; }
+.castrow .cname { font:600 11.5px var(--body); color:var(--text); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.castrow .crole { font:600 9px var(--mono); color:var(--muted); letter-spacing:.04em; }
+.strip { display:flex; gap:2px; margin-left:auto; flex:0 0 auto; }
+.strip .cell { width:8px; height:8px; border-radius:2px; background:rgba(166,173,200,.07); }
+.strip .cell.c-done { background:rgba(148,226,213,.55); }
+.strip .cell.c-active { background:rgba(137,180,250,.75); animation:rail-live 1.2s ease-in-out infinite alternate; }
+.strip .cell.c-queued { background:transparent; border:1px dashed rgba(108,112,134,.7); }
+.strip .cell.c-waiting { background:rgba(243,139,168,.6); }
+.chips { display:flex; flex-wrap:wrap; gap:6px; }
+.chip {
+  font:600 9.5px var(--mono); letter-spacing:.02em; color:var(--code);
+  background:rgba(245,194,231,.07); border:1px solid rgba(245,194,231,.22);
+  padding:3px 9px; border-radius:7px; transition:background 250ms var(--ease-out), border-color 250ms var(--ease-out);
+}
+.chip:hover { background:rgba(245,194,231,.14); border-color:rgba(245,194,231,.4); }
+.dloc { font:600 9px var(--mono); color:var(--muted); letter-spacing:.04em; margin-top:10px; line-height:1.8; }
+.preflight {
+  border:1px dashed rgba(203,166,247,.35); background:rgba(203,166,247,.045);
+  border-radius:12px; padding:12px 14px; margin-top:2px;
+}
+.preflight .pf-lab { font:650 9px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--mauve); margin-bottom:6px; }
+.preflight p { font-size:12px; color:var(--mist); line-height:1.55; }
+.pf-row { display:flex; align-items:center; gap:10px; margin-top:10px; }
+.pf-btn {
+  font:650 10px var(--mono); color:var(--mauve); border:1px solid rgba(203,166,247,.35);
+  border-radius:8px; padding:5px 11px; transition:background 250ms var(--ease-out);
+}
+.pf-btn:hover { background:rgba(203,166,247,.1); }
+.pf-cast { font:600 9.5px var(--mono); color:var(--muted); letter-spacing:.04em; display:flex; align-items:center; gap:6px; }
+
+/* ---------- View 2 · Focus route ---------- */
+#view-focus { display:grid; grid-template-columns:255px minmax(0,1fr); overflow:hidden; }
+#view-focus.hidden { display:none; }
+.frail {
+  border-right:1px solid var(--hairline); padding:16px 12px; overflow-y:auto; min-height:0;
+  display:flex; flex-direction:column; gap:8px; background:rgba(17,17,27,.35);
+}
+.frail-h { font:650 9.5px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted); padding:0 6px 2px; }
+.fitem {
+  width:100%; border:1px solid var(--hairline); border-radius:12px; padding:10px 12px;
+  background:rgba(30,30,46,.6); transition:border-color 250ms var(--ease-out), background 250ms var(--ease-out);
+}
+.fitem:hover { border-color:rgba(166,173,200,.32); }
+.fitem.active { border-color:var(--accent); background:linear-gradient(120deg, rgba(137,180,250,.14), rgba(137,180,250,.02)); }
+.fitem-top { display:flex; align-items:center; gap:7px; }
+.fitem-key { font:700 11px var(--mono); letter-spacing:.01em; color:var(--text); }
+.fitem-dot { width:6px; height:6px; border-radius:50%; background:var(--alert); animation:working-pulse 1.6s ease-in-out infinite; }
+.fitem-status { margin-left:auto; font:650 9px var(--mono); letter-spacing:.04em; color:var(--muted); }
+.fitem-status.alert { color:var(--alert); }
+.fitem-status.working { color:var(--working); }
+.fitem-status.idea { color:var(--mauve); }
+.fitem-title { font-size:11px; color:var(--mist); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fitem-stack { margin-top:7px; display:flex; align-items:center; }
+.fmain { overflow-y:auto; min-height:0; padding:22px 24px 60px; }
+.hero {
+  background:var(--graphite); border:1px solid var(--hairline); border-radius:18px;
+  padding:20px 22px 14px; margin-bottom:16px;
+}
+.hero.needs { border-color:rgba(243,139,168,.3); background:linear-gradient(180deg, rgba(243,139,168,.035), var(--graphite) 50%); }
+.hero.idea { border:1px dashed rgba(203,166,247,.35); background:rgba(203,166,247,.045); }
+.hero-row { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+.hero-title { min-width:0; }
+.hero-title h2 { font:750 23px/1.15 var(--rounded); letter-spacing:-.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hero-title h2 .key { color:var(--mist); font-weight:700; }
+.hero-title h2 .sep { color:var(--muted); margin:0 6px; font-weight:400; }
+.fgrid { display:grid; grid-template-columns:1.15fr .9fr; gap:14px; margin-bottom:16px; align-items:start; }
+.panel { background:var(--graphite); border:1px solid var(--hairline); border-radius:16px; padding:14px 16px; }
+.panel-h { display:flex; align-items:baseline; gap:8px; margin-bottom:10px; }
+.panel-h .pl { font:650 9.5px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+.panel-h .pk { font:600 9.5px var(--mono); color:var(--muted); margin-left:auto; letter-spacing:.03em; }
+.panel-h .live-tag { font:650 9px var(--mono); letter-spacing:.06em; color:var(--signal); display:flex; align-items:center; gap:4px; }
+.panel-h .live-tag i { width:5px; height:5px; border-radius:50%; background:var(--signal); animation:working-pulse 1.6s ease-in-out infinite; }
+/* timeline */
+.tl { position:relative; padding-left:22px; max-height:330px; overflow-y:auto; }
+.tl::before { content:""; position:absolute; left:7px; top:6px; bottom:6px; width:2px; background:rgba(166,173,200,.14); border-radius:2px; }
+.tl-ev { position:relative; display:grid; grid-template-columns:44px 1fr; gap:0 8px; padding:5px 0; }
+.tl-ev.revealing { animation:reveal 400ms var(--ease-out); }
+.tl-dot { position:absolute; left:-19px; top:10px; width:8px; height:8px; border-radius:50%; border:2px solid var(--graphite); }
+.tl-gatemark { position:absolute; left:-20px; top:9px; width:8px; height:8px; transform:rotate(45deg); border-radius:2px; border:1.5px solid var(--signal); background:var(--graphite); }
+.tl-t { font:600 10px var(--mono); color:var(--muted); font-variant-numeric:tabular-nums; padding-top:1.5px; }
+.tl-body { font-size:11.5px; color:var(--mist); line-height:1.5; min-width:0; }
+.tl-actor { font-weight:700; color:var(--text); }
+.tl-stage { font:650 10px var(--mono); letter-spacing:.05em; color:var(--signal); text-transform:uppercase; }
+.tl-dim { color:var(--muted); }
+.t-ago { font:600 9.5px var(--mono); color:var(--muted); font-variant-numeric:tabular-nums; }
+.t-ago.live { color:var(--signal); }
+.tl-empty { font-size:11.5px; color:var(--mist-dim); padding:6px 0; }
+/* cast panel */
+.castlist .castrow { padding:6px 4px; cursor:pointer; transition:background 250ms var(--ease-out); }
+.castlist .castrow:hover, .castlist .castrow.pinned { background:rgba(49,50,68,.35); }
+.castrow .cmeta { min-width:0; }
+.cast-note { font-size:11.5px; color:var(--mist-dim); padding:4px 0; }
+/* state pills (shared with dossier) */
+.mpill { font:650 8.5px var(--mono); letter-spacing:.05em; text-transform:uppercase; padding:2px 7px; border-radius:999px; flex:0 0 auto; }
+.mpill.role { color:var(--mist); background:rgba(49,50,68,.52); border:1px solid var(--hairline); text-transform:none; }
+.mpill.st-active  { color:var(--working); background:rgba(249,226,175,.08); border:1px solid rgba(249,226,175,.28); }
+.mpill.st-done    { color:var(--signal); background:rgba(148,226,213,.08); border:1px solid rgba(148,226,213,.28); }
+.mpill.st-queued  { color:var(--muted); background:rgba(49,50,68,.4); border:1px solid var(--hairline); }
+.mpill.st-waiting { color:var(--alert); background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3); }
+.mpill.st-shaping { color:var(--mauve); background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35); }
+.mpill.gate-ok { color:var(--signal); background:rgba(148,226,213,.08); border:1px solid rgba(148,226,213,.28); }
+.mpill.gate-pend { color:var(--alert); background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3); animation:working-pulse 1.6s ease-in-out infinite; }
+.mpill.gate-up { color:var(--muted); background:rgba(49,50,68,.4); border:1px solid var(--hairline); }
+/* checkpoint card */
+.checkpoint {
+  border:1px solid rgba(243,139,168,.3); background:rgba(243,139,168,.05);
+  border-radius:16px; padding:16px 18px; margin-bottom:16px;
+  display:flex; align-items:center; gap:16px;
+}
+.checkpoint.flashing { animation:card-flash 1.4s var(--ease-out) 2; }
+.checkpoint .ck-gate { flex:0 0 auto; width:13px; height:13px; margin:0 4px; }
+.checkpoint h3 { font:750 14px var(--rounded); letter-spacing:-.01em; }
+.checkpoint p { font-size:12px; color:var(--mist); margin-top:2px; line-height:1.5; }
+.ck-actions { margin-left:auto; display:flex; gap:8px; flex:0 0 auto; }
+.btn-approve {
+  font:700 11.5px var(--body); color:var(--crust); background:var(--success);
+  border-radius:9px; padding:8px 16px; transition:filter 250ms var(--ease-out);
+}
+.btn-approve:hover { filter:brightness(1.1); }
+.btn-quiet {
+  font:650 10.5px var(--mono); color:var(--mist); border:1px solid var(--hairline-strong);
+  border-radius:9px; padding:8px 13px; transition:border-color 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.btn-quiet:hover { border-color:var(--alert); color:var(--alert); }
+.checkpoint.done { border-color:rgba(148,226,213,.28); background:rgba(148,226,213,.05); }
+.checkpoint.done .ck-note { font-size:12.5px; color:var(--mist); }
+.checkpoint.done .ck-note b { color:var(--signal); }
+/* stage details disclosure */
+.stagedetails { margin-top:2px; }
+.sd-h { font:650 9.5px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin:0 2px 10px; }
+.srow { border:1px solid rgba(166,173,200,.1); border-radius:12px; background:rgba(17,17,27,.4); margin-bottom:8px; overflow:hidden; }
+.srow-h { display:flex; align-items:center; gap:10px; width:100%; padding:10px 14px; transition:background 250ms var(--ease-out); }
+.srow-h:hover { background:rgba(49,50,68,.25); }
+.srow-seq { font:650 9.5px var(--mono); color:var(--muted); width:16px; text-align:right; font-variant-numeric:tabular-nums; }
+.srow-title { font:700 12px var(--body); color:var(--text); }
+.srow-skill { font:600 9px var(--mono); color:var(--muted); letter-spacing:.03em; }
+.srow-counts { margin-left:auto; font:600 9.5px var(--mono); color:var(--muted); letter-spacing:.03em; font-variant-numeric:tabular-nums; }
+.srow-chev { font-size:9px; color:var(--muted); transition:transform 250ms var(--ease-out); }
+.srow-h[aria-expanded="true"] .srow-chev { transform:rotate(180deg); }
+.srow-body { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out); }
+.srow.open .srow-body { grid-template-rows:1fr; opacity:1; }
+.srow-body > div { overflow:hidden; }
+.srow-inner { padding:2px 14px 12px 40px; border-top:1px solid var(--divider); margin:0 14px 0 0; padding-top:10px; }
+
+/* ---------- popover ---------- */
+#popover {
+  position:fixed; z-index:90; width:352px; display:none; flex-direction:column;
+  background:var(--elevated); border:1px solid var(--hairline-strong); border-radius:13px;
+  box-shadow:0 12px 40px rgba(0,0,0,.6); max-height:440px; overflow:hidden;
+}
+#popover.show { display:flex; animation:capsule-pop 250ms var(--ease-out); }
+.pop-head { padding:12px 15px 9px; border-bottom:1px solid var(--divider); display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+.pop-head .ph-title { font:700 12.5px var(--body); color:var(--text); }
+.pop-head .ph-skill { font:600 9px var(--mono); color:var(--muted); letter-spacing:.03em; }
+.pop-head .ph-time { font:600 9px var(--mono); color:var(--muted); margin-left:auto; font-variant-numeric:tabular-nums; letter-spacing:.03em; }
+.pop-body { padding:6px 15px 13px; overflow-y:auto; }
+.pop-lab { font:650 8.5px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin:9px 0 2px; }
+.pop-empty { color:var(--muted); font-size:11px; padding:3px 0; }
+.pop-note { color:var(--mist); font-size:11.5px; line-height:1.55; padding:6px 0 2px; }
+.prow { display:flex; align-items:center; gap:8px; padding:4.5px 0; }
+.prow-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-weight:600; font-size:11.5px; }
+.prow-sub { font:600 9px var(--mono); color:var(--muted); letter-spacing:.02em; flex:0 0 auto; font-variant-numeric:tabular-nums; }
+.thr-dot { width:7px; height:7px; border-radius:50%; flex:0 0 auto; }
+.thr-dot.active { background:var(--signal); animation:working-pulse 1.6s ease-in-out infinite; }
+.thr-dot.archived { background:var(--muted); opacity:.6; }
+.ses-dot { width:7px; height:7px; border-radius:50%; flex:0 0 auto; }
+.ses-dot.running { background:var(--working); animation:working-pulse 1.6s ease-in-out infinite; }
+.ses-dot.ended { background:var(--muted); opacity:.6; }
+.linkbtn {
+  font:650 9px var(--mono); letter-spacing:.02em; color:var(--accent); flex:0 0 auto;
+  padding:3px 8px; border:1px solid rgba(137,180,250,.3); border-radius:7px;
+  background:rgba(137,180,250,.08); transition:background 250ms var(--ease-out); white-space:nowrap;
+}
+.linkbtn:hover { background:rgba(137,180,250,.18); }
+.pop-act { font-size:11px; color:var(--mist); padding-top:9px; border-top:1px solid var(--divider); margin-top:9px; line-height:1.5; }
+.pop-act .pa-t { font:600 9.5px var(--mono); color:var(--muted); font-variant-numeric:tabular-nums; }
+.pop-act .pa-actor { font-weight:700; color:var(--text); }
+/* elevated-surface contrast overrides — --muted (#6c7086) is 2.57:1 on --elevated, illegible */
+#popover .pop-lab, #popover .prow-sub, #popover .ph-skill, #popover .ph-time,
+#popover .pa-t, #popover .mpill.st-queued { color:var(--muted-hi); }
+#popover .pop-empty { color:var(--mist); }
+
+/* ---------- toast ---------- */
+#toast {
+  position:fixed; z-index:100; left:50%; bottom:26px; transform:translate(-50%, 10px);
+  background:var(--elevated); border:1px solid var(--hairline-strong); border-radius:12px;
+  box-shadow:0 12px 40px rgba(0,0,0,.55); padding:10px 17px; font:600 12px var(--body);
+  color:var(--text); opacity:0; pointer-events:none;
+  transition:transform 250ms var(--ease-out), opacity 250ms var(--ease-out); max-width:520px; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
+}
+#toast.show { transform:translate(-50%, 0); opacity:1; }
+
+@media (max-width:1180px) {
+  .shell { grid-template-columns:260px minmax(0,1fr); }
+  .dcols { grid-template-columns:1fr 1fr; }
+  .fgrid { grid-template-columns:1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- gradient defs for the avatar symbol set (referenced by every inline avatar svg) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="av-driver" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f9e2af"/><stop offset="1" stop-color="#fab387"/>
+    </linearGradient>
+    <linearGradient id="av-coder" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#89b4fa"/><stop offset="1" stop-color="#74c7ec"/>
+    </linearGradient>
+    <linearGradient id="av-architect" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#cba6f7"/><stop offset="1" stop-color="#f5c2e7"/>
+    </linearGradient>
+    <linearGradient id="av-qa" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#94e2d5"/><stop offset="1" stop-color="#a6e3a1"/>
+    </linearGradient>
+    <linearGradient id="av-scout" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fab387"/><stop offset="1" stop-color="#f9e2af"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="app-window">
+  <div class="toolbar">
+    <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="seg-wrap">
+      <div class="seg" role="group" aria-label="Board view">
+        <button class="seg-btn" id="segJourney" data-act="view" data-view="journey" aria-pressed="true">Journey rows</button>
+        <button class="seg-btn" id="segFocus" data-act="view" data-view="focus" aria-pressed="false">Focus route</button>
+      </div>
+      <span class="seg-cap">Journey Refit · Concept 3 of 3</span>
+    </div>
+    <div class="tb-right">
+      <button class="mic-btn" data-act="link" data-msg="Listening — say a work item, a stage, or a command." aria-label="Voice command">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="#11111b"/>
+          <path d="M3.5 7.5c0 2.5 2 4.2 4.5 4.2s4.5-1.7 4.5-4.2M8 11.7v2.3M5.7 14h4.6" stroke="#11111b" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button class="more-btn" data-act="link" data-msg="Board options — pin, export route map, notification rules." aria-label="More options">⋯</button>
+    </div>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="wordmark"><span class="wm-bars" aria-hidden="true"><i></i><i></i><i></i></span>herdr</div>
+
+      <div class="side-card">
+        <div class="sc-bar" aria-hidden="true"></div>
+        <div class="sc-body">
+          <div class="sc-title">active work <span class="sc-count">4 riding</span></div>
+          <p class="sc-cap">Tickets, features, and ideas moving through the Buzz pipeline.</p>
+          <div class="sc-pills">
+            <span class="mini-pill" id="pillMoving">2 moving</span>
+            <span class="mini-pill alert" id="pillNeeds">2 need you</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="side-sec">
+        <div class="side-h">my work <span class="side-hcap">· 5 watching</span></div>
+        <button class="side-row" data-act="sidecollapse" data-target="ghRows" aria-expanded="true" aria-controls="ghRows">
+          <span class="chev" aria-hidden="true">▾</span>github reviews<span class="badge">2</span>
+        </button>
+        <div class="side-sub open" id="ghRows"><div>
+          <button class="inbox-item" data-act="link" data-msg="Opening doximity/iOS-Doximity #11,856 on GitHub…">
+            <span class="inbox-repo">doximity/iOS-Doximity · #11,856</span>
+            <span class="inbox-title">Add calculator access to the drawer</span>
+          </button>
+          <button class="inbox-item" data-act="link" data-msg="Opening doximity/agentic-dev #520 on GitHub…">
+            <span class="inbox-repo">doximity/agentic-dev · #520</span>
+            <span class="inbox-title">Register managed MCP runtime</span>
+          </button>
+        </div></div>
+        <button class="side-row" data-act="sidecollapse" data-target="jiraRows" aria-expanded="false" aria-controls="jiraRows">
+          <span class="chev" aria-hidden="true">▾</span>jira tickets<span class="badge">3</span>
+        </button>
+        <div class="side-sub" id="jiraRows"><div>
+          <button class="inbox-item" data-act="link" data-msg="Opening IOSDOX-27430 in Jira…">
+            <span class="inbox-repo">IOSDOX-27430</span>
+            <span class="inbox-title">Colleagues tab deep link regression</span>
+          </button>
+          <button class="inbox-item" data-act="link" data-msg="Opening IOSDOX-27102 in Jira…">
+            <span class="inbox-repo">IOSDOX-27102</span>
+            <span class="inbox-title">Amion SSO token refresh</span>
+          </button>
+          <button class="inbox-item" data-act="link" data-msg="Opening AGENTIC-563 in Jira…">
+            <span class="inbox-repo">AGENTIC-563</span>
+            <span class="inbox-title">Harness alert dedupe window</span>
+          </button>
+        </div></div>
+      </div>
+
+      <div class="side-links">
+        <button class="side-link" data-act="link" data-msg="Opening the harness console…"><span class="glyph" aria-hidden="true">›_</span>console</button>
+        <button class="side-link" data-act="link" data-msg="Opening workspaces — 3 worktrees active…"><span class="glyph" aria-hidden="true">⌸</span>workspaces</button>
+        <button class="side-link" data-act="link" data-msg="Starting a new Pi session on rocketbot…"><span class="glyph" aria-hidden="true">+</span>new pi session</button>
+      </div>
+
+      <div class="side-foot">board source / 8 buzz-* stages · 4 checkpoints / tickets/&lt;KEY&gt;/ carries state</div>
+    </aside>
+
+    <main class="main">
+      <section id="view-journey" class="view" aria-label="Journey rows">
+        <div class="jwrap">
+          <header class="jhead">
+            <div>
+              <h1>Active work</h1>
+              <p class="jsub">Tickets, features, and ideas riding the Buzz line — click any station for its dossier.</p>
+            </div>
+            <div class="headbtns">
+              <button class="ghost-btn" id="refreshBtn" data-act="refresh"><span class="g" aria-hidden="true">↻</span>Refresh</button>
+              <button class="ghost-btn" data-act="link" data-msg="Ask board — voice prompt armed, speak after the chime."><span class="g" aria-hidden="true">⌁</span>Ask board</button>
+            </div>
+          </header>
+          <div id="priorityLine"></div>
+          <div class="order-cap">ordered by next intervention</div>
+          <div id="journeyList"></div>
+        </div>
+      </section>
+
+      <section id="view-focus" class="view hidden" aria-label="Focus route">
+        <nav class="frail" id="focusRail" aria-label="Work items"></nav>
+        <div class="fmain" id="focusMain"></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div id="popover" role="dialog" aria-label="Stage dossier">
+  <div class="pop-head" id="popHead"></div>
+  <div class="pop-body" id="popBody"></div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ================= dataset (herdr-active-work-data.js, verbatim) ================= */
+
+// Canonical sample dataset for the three Active Work prototypes.
+// Field names mirror the real harness projection (herdr_harness/active_work_store.py)
+// so a future wiring to GET /api/v1/active-work is mechanical.
+// All three options inline this same data for apples-to-apples comparison.
+
+const PIPELINE = {
+  id: "pipeline_buzz_feature_work_v1",
+  slug: "buzz-feature-work",
+  title: "Buzz feature work",
+  stages: [
+    { stage_key: "start-ticket",           sequence: 1, phase_key: "open",  title: "Start",        skill_name: "buzz-start-ticket",          checkpoint_kind: "none"  },
+    { stage_key: "plan",                   sequence: 2, phase_key: "open",  title: "Plan",         skill_name: "buzz-plan",                  checkpoint_kind: "human" },
+    { stage_key: "implement",              sequence: 3, phase_key: "build", title: "Implement",    skill_name: "buzz-implement",             checkpoint_kind: "none"  },
+    { stage_key: "architect-code-review",  sequence: 4, phase_key: "build", title: "Agent review", skill_name: "buzz-architect-code-review", checkpoint_kind: "none"  },
+    { stage_key: "proof",                  sequence: 5, phase_key: "prove", title: "Proof",        skill_name: "buzz-proof",                 checkpoint_kind: "human" },
+    { stage_key: "code-review-pre-pr",     sequence: 6, phase_key: "prove", title: "Pre-PR",       skill_name: "buzz-code-review-pre-pr",    checkpoint_kind: "human" },
+    { stage_key: "pr",                     sequence: 7, phase_key: "ship",  title: "PR",           skill_name: "buzz-pr",                    checkpoint_kind: "human" },
+    { stage_key: "pr-triage",              sequence: 8, phase_key: "ship",  title: "Triage",       skill_name: "buzz-pr-triage",             checkpoint_kind: "none"  }
+  ]
+};
+
+// avatar_key maps to the SVG symbol set; hue used for gradient tints.
+const AGENTS = {
+  "ag-driver":    { display_name: "Buzz driver",     kind: "orchestrator", avatar_key: "driver",    status: "working" },
+  "ag-deepseek":  { display_name: "DeepSeek coder",  kind: "coder",        avatar_key: "coder",     status: "working" },
+  "ag-picoder":   { display_name: "Pi coder",        kind: "coder",        avatar_key: "coder",     status: "working" },
+  "ag-architect": { display_name: "Architect iOS",   kind: "reviewer",     avatar_key: "architect", status: "queued"  },
+  "ag-proof":     { display_name: "Proof runner",    kind: "verifier",     avatar_key: "qa",        status: "working" },
+  "ag-scout":     { display_name: "PR Review Scout", kind: "triage",       avatar_key: "scout",     status: "working" },
+  "ag-ronnie":    { display_name: "Ronnie",          kind: "human",        avatar_key: "human",     status: "waiting" }
+};
+
+const WORK_ITEMS = [
+  {
+    id: "work_mobile_guard", key: "AGENTIC-575", title: "Mobile API Impact Guard",
+    kind: "feature", kind_label: "Jira ticket",
+    lifecycle: "active", needs_attention: false, attention_reason: null,
+    current_stage_key: "implement", floor: "local", pane: "w1G:t1", updated_label: "now",
+    progress: { completed: 2, total: 8 },
+    next_action: "Coder produces a scoped diff, then the Buzz driver adds and tags Architect iOS.",
+    continuity: ["state.json", "handoff.md", "context-dump.md", "coder brief"],
+    stages: {
+      "start-ticket": { state: "complete", started: "12:02", completed: "12:05",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2231", title: "Kickoff · scope confirmed", status: "archived", url: "buzz://message?channel=c-guard&id=m-2231" }],
+        pi_sessions: [] },
+      "plan": { state: "complete", checkpoint_state: "approved", started: "12:05", completed: "12:27",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" },
+                 { id: "ag-picoder", link_role: "planner", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2233", title: "Plan review · approved by Ronnie", status: "archived", url: "buzz://message?channel=c-guard&id=m-2233" }],
+        pi_sessions: [{ id: "pi-8f31", title: "Plan drafting", provider: "pi", model: "opus", status: "ended", pane_id: "w1G:t2", tokens: "212k" }] },
+      "implement": { state: "active", attention: "none", started: "12:27",
+        agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "active" },
+                 { id: "ag-driver",  link_role: "driver", link_state: "active" }],
+        buzz_threads: [{ id: "bz-2240", title: "Implement · diff streaming", status: "active", url: "buzz://message?channel=c-guard&id=m-2240" }],
+        pi_sessions: [{ id: "pi-9a02", title: "Coder session · schema integration", provider: "pi", model: "deepseek-v3", status: "running", pane_id: "w1G:t1", tokens: "486k" }],
+        activity: [
+          { t: "13:30", actor: "ag-driver",   message: "Accepted ownership and started execution." },
+          { t: "13:31", actor: "ag-picoder",  message: "Reading schema integration points." },
+          { t: "13:38", actor: "ag-deepseek", message: "Wrote ImpactGuard middleware · 6 files touched." },
+          { t: "13:44", actor: "ag-deepseek", message: "Running scoped tests on api-gateway target." }
+        ] },
+      "architect-code-review": { state: "ready",
+        agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "queued" }],
+        buzz_threads: [], pi_sessions: [] },
+      "proof": { state: "pending" }, "code-review-pre-pr": { state: "pending" },
+      "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+    }
+  },
+  {
+    id: "work_ask_audit", key: "IOSDOX-27458", title: "Ask Analytics Audit",
+    kind: "feature", kind_label: "Feature",
+    lifecycle: "active", needs_attention: true,
+    attention_reason: "Checkpoint pending at Proof — approve the analytics event map.",
+    current_stage_key: "proof", floor: "DevBox", pane: "wX:t1", updated_label: "21m",
+    progress: { completed: 4, total: 8 },
+    next_action: "Approve the event map so Pre-PR can start.",
+    continuity: ["state.json", "handoff.md", "event-map.md"],
+    stages: {
+      "start-ticket": { state: "complete", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "plan": { state: "complete", checkpoint_state: "approved",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2198", title: "Audit scope", status: "archived", url: "buzz://message?channel=c-audit&id=m-2198" }] },
+      "implement": { state: "complete",
+        agents: [{ id: "ag-picoder", link_role: "coder", link_state: "done" }],
+        pi_sessions: [{ id: "pi-7c11", title: "Audit implementation", provider: "pi", model: "opus", status: "ended", pane_id: "wX:t1", tokens: "603k" }],
+        buzz_threads: [{ id: "bz-2204", title: "Implement thread", status: "archived", url: "buzz://message?channel=c-audit&id=m-2204" }] },
+      "architect-code-review": { state: "complete",
+        agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2210", title: "Review notes · 2 fixes applied", status: "archived", url: "buzz://message?channel=c-audit&id=m-2210" }] },
+      "proof": { state: "active", attention: "human", checkpoint_state: "pending", started: "13:23",
+        agents: [{ id: "ag-proof", link_role: "verifier", link_state: "active" },
+                 { id: "ag-ronnie", link_role: "checkpoint", link_state: "waiting" }],
+        buzz_threads: [{ id: "bz-2216", title: "Proof run · event map ready for you", status: "active", url: "buzz://message?channel=c-audit&id=m-2216" }],
+        pi_sessions: [],
+        activity: [{ t: "13:23", actor: "ag-proof", message: "Event map assembled — 41 events, 3 new." }] },
+      "code-review-pre-pr": { state: "pending" }, "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+    }
+  },
+  {
+    id: "work_moa_mgmt", key: "AGENTIC-472", title: "OpenCode MOA Agent Management",
+    kind: "feature", kind_label: "Ticket + PR #510",
+    lifecycle: "active", needs_attention: true,
+    attention_reason: "PR approved by agents — merge decision is yours.",
+    current_stage_key: "pr-triage", floor: "local", pane: "wK:t9", updated_label: "36m",
+    progress: { completed: 7, total: 8 },
+    next_action: "Merge or request changes on PR #510.",
+    continuity: ["state.json", "pr-summary.md"],
+    stages: {
+      "start-ticket": { state: "complete" },
+      "plan": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "implement": { state: "complete",
+        agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "done" }],
+        pi_sessions: [{ id: "pi-5510", title: "MOA management build", provider: "pi", model: "deepseek-v3", status: "ended", pane_id: "wK:t9", tokens: "1.2M" }] },
+      "architect-code-review": { state: "complete", agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }] },
+      "proof": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-proof", link_role: "verifier", link_state: "done" }] },
+      "code-review-pre-pr": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "pr": { state: "complete", checkpoint_state: "approved",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2172", title: "PR #510 · review passed", status: "archived", url: "buzz://message?channel=c-moa&id=m-2172" }] },
+      "pr-triage": { state: "active", attention: "human", started: "13:08",
+        agents: [{ id: "ag-scout", link_role: "triage", link_state: "active" },
+                 { id: "ag-ronnie", link_role: "decision", link_state: "waiting" }],
+        buzz_threads: [{ id: "bz-2229", title: "Merge decision", status: "active", url: "buzz://message?channel=c-moa&id=m-2229" }],
+        pi_sessions: [] }
+    }
+  },
+  {
+    id: "work_review_memory", key: "IDEA-07", title: "Project Review Memory",
+    kind: "idea", kind_label: "Idea",
+    lifecycle: "active", needs_attention: false,
+    current_stage_key: null, floor: "no floor yet", pane: null, updated_label: "forming",
+    progress: { completed: 0, total: 8 },
+    next_action: "Explore first. No worktree until a prototype decision is approved.",
+    note: "Idea intake, before the ticket pipeline.",
+    stages: {},
+    cast_note: "Buzz driver shaping"
+  }
+];
+
+/* ================= helpers ================= */
+
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+));
+const byId = (id) => WORK_ITEMS.find((w) => w.id === id);
+const STAGE_KEYS = PIPELINE.stages.map((s) => s.stage_key);
+const stageMeta = (key) => PIPELINE.stages.find((s) => s.stage_key === key);
+const currentIdx = (it) => (it.current_stage_key ? STAGE_KEYS.indexOf(it.current_stage_key) : -1);
+
+/* --- story clock: the sample data's "now" is 13:44; anchor it to real time
+       so every t-ago label breathes without lying about the narrative --- */
+const T0 = Date.now();
+const STORY_NOW = 13 * 60 + 44;
+let simClock = STORY_NOW;
+const hmToMin = (hm) => { const p = hm.split(":"); return (+p[0]) * 60 + (+p[1]); };
+const minToHM = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+const atFor = (hm) => T0 - (STORY_NOW - hmToMin(hm)) * 60000;
+function ago(at) {
+  const d = Math.max(0, Date.now() - at);
+  const s = Math.floor(d / 1000);
+  if (s < 10) return "now";
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m";
+  return Math.floor(m / 60) + "h";
+}
+// seed updatedAt from the dataset's updated_label ("now" | "21m" | "36m" | "forming")
+WORK_ITEMS.forEach((w) => {
+  const m = /^(\d+)m$/.exec(w.updated_label || "");
+  w.updatedAt = w.updated_label === "now" ? T0 : m ? T0 - (+m[1]) * 60000 : null;
+});
+
+/* ================= avatars ================= */
+
+const GLYPHS = {
+  "ag-driver": "Bz", "ag-deepseek": "DS", "ag-picoder": "Pi",
+  "ag-architect": "Ar", "ag-proof": "Pf", "ag-scout": "Sc", "ag-ronnie": "R"
+};
+const AGENT_HUES = {
+  driver: "#f9e2af", coder: "#89b4fa", architect: "#cba6f7",
+  qa: "#94e2d5", scout: "#fab387", human: "#f38ba8"
+};
+const agentColor = (agentId) => AGENT_HUES[(AGENTS[agentId] || {}).avatar_key] || "#a6adc8";
+
+function avatarSVG(agentId, size) {
+  const a = AGENTS[agentId];
+  if (!a) return "";
+  const glyph = GLYPHS[agentId] || "·";
+  const fill = a.avatar_key === "human" ? "#f38ba8" : "url(#av-" + a.avatar_key + ")";
+  const fs = glyph.length === 1 ? 15 : 12.5;
+  return '<svg class="av" width="' + size + '" height="' + size + '" viewBox="0 0 32 32" role="img"' +
+    ' aria-label="' + esc(a.display_name) + '">' +
+    '<circle cx="16" cy="16" r="15.5" fill="' + fill + '"/>' +
+    '<circle cx="16" cy="16" r="15" fill="none" stroke="rgba(17,17,27,.35)" stroke-width="1"/>' +
+    '<text x="16" y="17" text-anchor="middle" dominant-baseline="central"' +
+    ' style="font:650 ' + fs + 'px var(--mono)" fill="#11111b">' + esc(glyph) + "</text></svg>";
+}
+// dot: "working" (breathing) | "waiting" (alert) | null
+function avatarWrap(agentId, size, dot) {
+  const a = AGENTS[agentId];
+  if (!a) return "";
+  return '<span class="avwrap" title="' + esc(a.display_name) + '">' + avatarSVG(agentId, size) +
+    (dot ? '<span class="adot ' + dot + '"></span>' : "") + "</span>";
+}
+
+/* ================= derived data ================= */
+
+function castOf(it) {
+  const map = new Map();
+  const rank = { active: 4, waiting: 4, queued: 2, done: 1 };
+  for (const key of STAGE_KEYS) {
+    const sd = it.stages[key];
+    if (!sd || !sd.agents) continue;
+    for (const l of sd.agents) {
+      if (!map.has(l.id)) map.set(l.id, { id: l.id, stages: {}, role: l.link_role, state: l.link_state });
+      const e = map.get(l.id);
+      e.stages[key] = l.link_state;
+      if ((rank[l.link_state] || 0) >= (rank[e.state] || 0)) { e.state = l.link_state; e.role = l.link_role; }
+    }
+  }
+  if (it.kind === "idea") map.set("ag-driver", { id: "ag-driver", stages: {}, role: "shaping", state: "shaping" });
+  return Array.from(map.values());
+}
+
+function itemStatus(it) {
+  if (it.kind === "idea") return { cls: "sp-idea", short: "idea", label: "idea · forming" };
+  const cur = stageMeta(it.current_stage_key);
+  const stage = cur ? cur.title.toLowerCase() : "";
+  if (it.needs_attention) return { cls: "sp-alert", short: "needs you", label: "needs you · " + stage };
+  return { cls: "sp-working", short: "working", label: "working · " + stage };
+}
+
+function dotFor(linkState) {
+  if (linkState === "active") return "working";
+  if (linkState === "waiting") return "waiting";
+  return null;
+}
+
+function orderedItems() {
+  // needs-you first; within needs-you, pending-checkpoint first (same comparator as
+  // priorityQueue, so the top card always matches the priority sentence); then
+  // later-stage-first for everything else.
+  const ck = (it) => {
+    const sd = it.stages[it.current_stage_key];
+    return sd && sd.checkpoint_state === "pending" ? 1 : 0;
+  };
+  return WORK_ITEMS.slice().sort((a, b) => {
+    if (a.needs_attention !== b.needs_attention) return a.needs_attention ? -1 : 1;
+    if (a.needs_attention && ck(a) !== ck(b)) return ck(b) - ck(a);
+    return currentIdx(b) - currentIdx(a);
+  });
+}
+
+function priorityQueue() {
+  const need = WORK_ITEMS.filter((w) => w.needs_attention);
+  const ck = (w) => {
+    const sd = w.stages[w.current_stage_key];
+    return sd && sd.checkpoint_state === "pending" ? 1 : 0;
+  };
+  return need.sort((a, b) => ck(b) - ck(a));
+}
+
+// one primary action per needs-you item (config, not markup)
+const PRIMARY_ACTIONS = {
+  work_ask_audit: { label: "Review event map", act: "focus-flight" },
+  work_moa_mgmt: { label: "Decide on PR #510", act: "link", msg: "Opening PR #510 — merge decision on GitHub…" }
+};
+function primaryAction(it) { return it.needs_attention ? PRIMARY_ACTIONS[it.id] || null : null; }
+
+function talliesText() {
+  let att = 0, live = 0;
+  for (const w of WORK_ITEMS) for (const k of STAGE_KEYS) {
+    const sd = w.stages[k];
+    if (!sd) continue;
+    att += (sd.buzz_threads || []).length + (sd.pi_sessions || []).length;
+    for (const s of (sd.pi_sessions || [])) if (s.status === "running") live++;
+  }
+  return WORK_ITEMS.length + " items · " + att + " attachments · " + live + " live session" + (live === 1 ? "" : "s");
+}
+
+/* ================= shared render: stacks, strips, rails ================= */
+
+function stackHTML(it, size, max) {
+  const cast = castOf(it);
+  const shown = cast.slice(0, max);
+  const extra = cast.length - shown.length;
+  return '<span class="stack" aria-label="Traveling cast">' +
+    shown.map((c) => avatarWrap(c.id, size, dotFor(c.state))).join("") +
+    (extra > 0 ? '<span class="stack-more">+' + extra + "</span>" : "") + "</span>";
+}
+
+function stripHTML(it, agentId) {
+  const cast = castOf(it).find((c) => c.id === agentId);
+  return '<span class="strip" aria-hidden="true">' + STAGE_KEYS.map((k) => {
+    const st = cast && cast.stages[k];
+    const cls = st === "done" ? "c-done" : st === "active" ? "c-active" : st === "queued" ? "c-queued" : st === "waiting" ? "c-waiting" : "";
+    return '<span class="cell ' + cls + '"></span>';
+  }).join("") + "</span>";
+}
+
+function stationMarker(it, sg, sd, isCur) {
+  const gate = sg.checkpoint_kind === "human";
+  if (gate) {
+    if (sd && sd.checkpoint_state === "approved") return '<span class="gate g-ok"></span>';
+    if (sd && sd.checkpoint_state === "pending") return '<span class="gate g-pend"></span>';
+    if (isCur) return '<span class="gate g-cur"></span>';
+    return '<span class="gate g-up"><span class="star" aria-hidden="true">★</span></span>';
+  }
+  if (sd && sd.state === "complete") return '<span class="mk-dot"><span class="tick" aria-hidden="true">✓</span></span>';
+  if (isCur) return '<span class="mk-halo ' + (it.needs_attention ? "alert" : "working") + '"></span>';
+  if (sd && sd.state === "ready") return '<span class="mk-hollow ready"></span>';
+  return '<span class="mk-hollow"></span>';
+}
+
+function railHTML(it, opts) {
+  opts = opts || {};
+  const size = opts.size || "sm";
+  const riderSize = size === "lg" ? 22 : 18;
+  const cur = currentIdx(it);
+  const n = STAGE_KEYS.length;
+  const toFrac = cur >= 0 ? cur / (n - 1) : 0;
+  const fromFrac = opts.from != null ? opts.from : 0;
+  let stations = "";
+  PIPELINE.stages.forEach((sg, i) => {
+    const sd = it.stages[sg.stage_key] || null;
+    const isCur = sg.stage_key === it.current_stage_key;
+    const frac = (i / (n - 1)) * 100;
+    const upcoming = cur >= 0 ? i > cur : true;
+    const dimCls = !it.current_stage_key ? " st-unstarted" : upcoming ? " st-up" : "";
+    let riders = "";
+    if (isCur && sd && sd.agents) {
+      riders = sd.agents
+        .filter((l) => l.link_state === "active" || l.link_state === "waiting")
+        .map((l) => avatarWrap(l.id, riderSize, dotFor(l.link_state))).join("");
+    }
+    const agentIds = sd && sd.agents ? sd.agents.map((l) => l.id).join(" ") : "";
+    const badges =
+      (sd && (sd.pi_sessions || []).length ? '<span class="b-dot b-acc" title="has Pi sessions"></span>' : "") +
+      (sd && (sd.buzz_threads || []).length ? '<span class="b-dot b-mau" title="has Buzz threads"></span>' : "");
+    stations +=
+      '<button class="station' + dimCls + '" style="left:' + frac + '%" data-act="station"' +
+      ' data-item="' + it.id + '" data-stage="' + sg.stage_key + '" data-agents="' + esc(agentIds) + '"' +
+      ' title="' + esc(sg.title + " · " + sg.skill_name) + '" aria-haspopup="dialog" aria-expanded="false"' +
+      ' aria-label="' + esc(sg.title + " stage — open dossier") + '">' +
+      '<span class="st-riders">' + riders + "</span>" +
+      '<span class="st-markbox">' + stationMarker(it, sg, sd, isCur) + "</span>" +
+      '<span class="st-label' + (isCur ? " cur" : "") + '">' + esc(sg.title) + "</span>" +
+      '<span class="st-badges">' + badges + "</span></button>";
+  });
+  return '<div class="railpanel' + (it.kind === "idea" ? " idea-rail" : "") + '">' +
+    '<div class="rail rail--' + size + '" data-railitem="' + it.id + '">' +
+    '<div class="rail-track"></div>' +
+    '<div class="rail-fill" data-anim="1" data-from="' + fromFrac + '" data-to="' + toFrac + '"></div>' +
+    stations + "</div>" +
+    (it.kind === "idea" ? '<div class="idea-note">route not started — no worktree until a prototype decision is approved</div>' : "") +
+    "</div>";
+}
+
+function armRails(root) {
+  $$(".rail-fill[data-anim='1']", root).forEach((f) => {
+    const from = parseFloat(f.dataset.from || "0");
+    const to = parseFloat(f.dataset.to || "0");
+    f.dataset.anim = "0";
+    f.style.transition = "none";
+    f.style.width = from * 100 + "%";
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      f.style.transition = "width 600ms cubic-bezier(0.23,1,0.32,1)";
+      f.style.width = to * 100 + "%";
+    }));
+  });
+}
+
+/* ================= shared render: stage dossier ================= */
+
+function gatePillHTML(sg, sd) {
+  if (sg.checkpoint_kind !== "human") return "";
+  if (sd && sd.checkpoint_state === "approved") return '<span class="mpill gate-ok">gate · approved</span>';
+  if (sd && sd.checkpoint_state === "pending") return '<span class="mpill gate-pend">gate · needs you</span>';
+  return '<span class="mpill gate-up">gate ★</span>';
+}
+
+function channelOf(url) {
+  const m = /channel=([a-z0-9-]+)/.exec(url || "");
+  return m ? m[1] : "buzz";
+}
+
+function dossierHTML(it, key) {
+  const sg = stageMeta(key);
+  if (it.kind === "idea" || !it.current_stage_key) {
+    return '<div class="pop-note">' + esc(it.key) + " hasn’t boarded the line — no stage state yet. " +
+      "Approve a prototype decision to cut a worktree and open the route.</div>";
+  }
+  const sd = it.stages[key];
+  const agents = (sd && sd.agents) || [];
+  const threads = (sd && sd.buzz_threads) || [];
+  const sessions = (sd && sd.pi_sessions) || [];
+  const activity = (sd && sd.activity) || [];
+  const bare = !agents.length && !threads.length && !sessions.length && !activity.length;
+  if (bare) {
+    if (sd && sd.state === "complete") {
+      return '<div class="pop-note">Cleared — nothing was attached at this stage.</div>';
+    }
+    const idx = STAGE_KEYS.indexOf(key);
+    const prev = idx > 0 ? stageMeta(STAGE_KEYS[idx - 1]).title : null;
+    return '<div class="pop-note">Queued — no cast, threads, or sessions yet' +
+      (prev ? ". Boards when <b>" + esc(prev) + "</b> clears." : ".") + "</div>";
+  }
+  let html = "";
+  html += '<div class="pop-lab">cast</div>';
+  html += agents.length
+    ? agents.map((l) => {
+        const a = AGENTS[l.id];
+        return '<div class="prow">' + avatarWrap(l.id, 20, dotFor(l.link_state)) +
+          '<span class="prow-name">' + esc(a.display_name) + "</span>" +
+          '<span class="mpill role">' + esc(l.link_role) + "</span>" +
+          '<span class="mpill st-' + esc(l.link_state) + '">' + esc(l.link_state) + "</span></div>";
+      }).join("")
+    : '<div class="pop-empty">No agents attached to this stage yet.</div>';
+  html += '<div class="pop-lab">threads</div>';
+  html += threads.length
+    ? threads.map((t) =>
+        '<div class="prow"><span class="thr-dot ' + esc(t.status) + '"></span>' +
+        '<span class="prow-name">' + esc(t.title) + "</span>" +
+        '<button class="linkbtn" data-act="link" data-msg="Opening thread ' + esc(t.id) +
+        " in Buzz (" + esc(channelOf(t.url)) + ')…">Open in Buzz</button></div>'
+      ).join("")
+    : '<div class="pop-empty">No Buzz threads on this stage.</div>';
+  html += '<div class="pop-lab">pi sessions</div>';
+  html += sessions.length
+    ? sessions.map((s) =>
+        '<div class="prow"><span class="ses-dot ' + esc(s.status) + '"></span>' +
+        '<span class="prow-name">' + esc(s.title) + "</span>" +
+        '<span class="prow-sub">' + esc(s.model) + " · " + esc(s.tokens) + "</span>" +
+        '<button class="linkbtn" data-act="link" data-msg="Opening pane ' + esc(s.pane_id) +
+        ' on rocketbot…">Open pane ' + esc(s.pane_id) + "</button></div>"
+      ).join("")
+    : '<div class="pop-empty">No Pi sessions for this stage.</div>';
+  if (sd && sd.state === "active" && (it.continuity || []).length) {
+    html += '<div class="pop-lab">continuity</div><div class="chips">' +
+      it.continuity.map((c) =>
+        '<button class="chip" data-act="link" data-msg="Opening ' + esc(c) +
+        " from tickets/" + esc(it.key) + '/…">' + esc(c) + "</button>"
+      ).join("") + "</div>";
+  }
+  if (activity.length) {
+    const a = activity[activity.length - 1];
+    const at = a.at != null ? a.at : atFor(a.t);
+    html += '<div class="pop-act"><span class="pa-t">' + esc(a.t) + "</span> · " +
+      '<span class="pa-actor">' + esc(AGENTS[a.actor].display_name) + "</span> — " +
+      esc(a.message) + ' <span class="t-ago live" data-at="' + at + '"></span></div>';
+  }
+  return html;
+}
+
+function stageCounts(it, key) {
+  if (it.kind === "idea" || !it.current_stage_key) return "not started";
+  const sd = it.stages[key];
+  if (!sd || sd.state === "pending") return "queued";
+  const parts = [];
+  const a = (sd.agents || []).length, t = (sd.buzz_threads || []).length, s = (sd.pi_sessions || []).length;
+  if (a) parts.push(a + " agent" + (a === 1 ? "" : "s"));
+  if (t) parts.push(t + " thread" + (t === 1 ? "" : "s"));
+  if (s) parts.push(s + " session" + (s === 1 ? "" : "s"));
+  return parts.length ? parts.join(" · ") : "no attachments";
+}
+
+/* ================= View 1 · Journey rows ================= */
+
+const openCards = new Set();
+let prevFillFrac = {}; // itemId -> last rendered fill fraction (for approve animation)
+
+function metaLineHTML(it) {
+  const hasLive = STAGE_KEYS.some((k) => ((it.stages[k] || {}).pi_sessions || []).some((s) => s.status === "running"));
+  const upd = it.updatedAt != null
+    ? 'updated <span class="t-ago" data-at="' + it.updatedAt + '" data-live-for="' + it.id + '"></span>'
+    : esc(it.updated_label);
+  return '<div class="jmeta">' +
+    (hasLive ? '<span class="live-dot" data-liveflash="' + it.id + '"></span>' : "") +
+    "floor " + esc(it.floor) + " · " + (it.pane ? "pane " + esc(it.pane) : "no pane") +
+    " · " + it.progress.completed + "/" + it.progress.total + " stages · " + upd + "</div>";
+}
+
+function journeyDetailHTML(it) {
+  const cast = castOf(it);
+  const castRows = cast.length
+    ? cast.map((c) =>
+        '<div class="castrow">' + avatarWrap(c.id, 25, dotFor(c.state)) +
+        '<span class="cmeta"><span class="cname">' + esc(AGENTS[c.id].display_name) + "</span>" +
+        ' <span class="crole">' + esc(c.role) + "</span></span>" +
+        stripHTML(it, c.id) + "</div>"
+      ).join("")
+    : '<div class="cast-note">' + esc(it.cast_note || "No cast yet.") + "</div>";
+  const chips = (it.continuity || []).map((c) =>
+    '<button class="chip" data-act="link" data-msg="Opening ' + esc(c) + " from tickets/" + esc(it.key) + '/…">' +
+    esc(c) + "</button>"
+  ).join("");
+  const cur = stageMeta(it.current_stage_key);
+  return '<div class="jdetail"><div><div class="jdetail-inner"><div class="dcols">' +
+    '<div><div class="dtitle">next movement</div><p class="nextmove">' + esc(it.next_action) +
+    (cur ? '<span class="stage-ref">current · ' + esc(cur.title) + " · " + esc(cur.skill_name) + "</span>" : "") +
+    "</p></div>" +
+    '<div><div class="dtitle">traveling cast</div>' + castRows + "</div>" +
+    '<div><div class="dtitle">continuity</div>' +
+    (chips ? '<div class="chips">' + chips + "</div>" : '<div class="cast-note">Nothing carried yet.</div>') +
+    '<div class="dloc">tickets/' + esc(it.key) + "/ · " + esc(it.floor) + (it.pane ? " · " + esc(it.pane) : "") + "</div>" +
+    "</div></div></div></div></div>";
+}
+
+function journeyCardHTML(it, fillFrom) {
+  const st = itemStatus(it);
+  const act = primaryAction(it);
+  const open = openCards.has(it.id);
+  const cls = "jcard" + (it.needs_attention ? " needs" : "") + (it.kind === "idea" ? " idea" : "") + (open ? " open" : "");
+  let actBtn = "";
+  if (act) {
+    actBtn = act.act === "focus-flight"
+      ? '<button class="jh-action" data-act="focus-flight" data-item="' + it.id + '">' + esc(act.label) + "</button>"
+      : '<button class="jh-action" data-act="link" data-msg="' + esc(act.msg) + '">' + esc(act.label) + "</button>";
+  }
+  const preflight = it.kind === "idea"
+    ? '<div class="preflight"><div class="pf-lab">preflight</div><p>' + esc(it.note) + " " + esc(it.next_action) + "</p>" +
+      '<div class="pf-row"><button class="pf-btn" data-act="link" data-msg="Drafting an exploration brief for IDEA-07…">Draft exploration brief</button>' +
+      '<span class="pf-cast">' + avatarWrap("ag-driver", 18, null) + esc(it.cast_note) + "</span></div></div>"
+    : "";
+  return '<article class="' + cls + '" data-item="' + it.id + '" id="card-' + it.id + '" tabindex="0">' +
+    '<span class="spine" aria-hidden="true"></span>' +
+    '<div class="jhrow">' +
+    '<span class="kindpill">' + esc(it.kind_label) + "</span>" +
+    '<div class="jtitle"><span class="key">' + esc(it.key) + '</span><span class="sep">·</span>' +
+    '<span class="name">' + esc(it.title) + "</span>" + metaLineHTML(it) + "</div>" +
+    '<span class="jh-spacer"></span>' + stackHTML(it, 30, 4) + actBtn +
+    '<span class="statuspill ' + st.cls + '">' + esc(st.label) + "</span>" +
+    '<button class="chev-btn" data-act="togglecard" data-item="' + it.id + '" aria-expanded="' + open + '"' +
+    ' aria-label="Toggle details for ' + esc(it.key) + '">▾</button>' +
+    "</div>" +
+    railHTML(it, { size: "sm", from: fillFrom != null ? fillFrom : 0 }) +
+    preflight + journeyDetailHTML(it) + "</article>";
+}
+
+function priorityHTML() {
+  const queue = priorityQueue();
+  if (!queue.length) {
+    return '<div class="priority allclear"><span class="pr-hand">✓</span>' +
+      '<span class="pr-sentence">All journeys moving — <b>nothing needs your hands</b> right now.</span>' +
+      '<span class="pr-tallies">' + esc(talliesText()) + "</span></div>";
+  }
+  const top = queue[0];
+  const topAct = primaryAction(top);
+  const sd = top.stages[top.current_stage_key];
+  const isCk = sd && sd.checkpoint_state === "pending";
+  const sentence = isCk
+    ? "<b>" + esc(top.key) + "</b> is waiting on your <b>" + esc(stageMeta(top.current_stage_key).title) + "</b> approval"
+    : "<b>" + esc(top.key) + "</b> — " + esc(top.attention_reason || "needs your decision");
+  const actBtn = topAct
+    ? (topAct.act === "focus-flight"
+        ? '<button class="pr-action" data-act="focus-flight" data-item="' + top.id + '">' + esc(topAct.label) + "</button>"
+        : '<button class="pr-action" data-act="link" data-msg="' + esc(topAct.msg) + '">' + esc(topAct.label) + "</button>")
+    : "";
+  const chips = queue.slice(1).map((w) =>
+    '<button class="pr-chip" data-act="focus-flight" data-item="' + w.id + '">' +
+    esc(w.key) + " · " + esc(itemStatus(w).label.replace("needs you · ", "")) + " decision</button>"
+  ).join("");
+  return '<div class="priority"><span class="pr-hand" aria-hidden="true">✋</span>' +
+    '<span class="pr-sentence">' + sentence + "</span>" + actBtn + chips +
+    '<span class="pr-tallies">' + esc(talliesText()) + "</span></div>";
+}
+
+function renderJourney(opts) {
+  opts = opts || {};
+  $("#priorityLine").innerHTML = priorityHTML();
+  const list = $("#journeyList");
+  list.innerHTML = orderedItems().map((it) => {
+    const to = currentIdx(it) >= 0 ? currentIdx(it) / (STAGE_KEYS.length - 1) : 0;
+    let from = 0;
+    if (!opts.initial) from = opts.animItem === it.id ? (prevFillFrac[it.id] || 0) : to;
+    prevFillFrac[it.id] = to;
+    return journeyCardHTML(it, from);
+  }).join("");
+  armRails(list);
+  updateSidebar();
+}
+
+function updateSidebar() {
+  const needs = WORK_ITEMS.filter((w) => w.needs_attention).length;
+  $("#pillMoving").textContent = (WORK_ITEMS.length - needs) + " moving";
+  $("#pillNeeds").textContent = needs + " need you";
+  $("#pillNeeds").style.display = needs ? "" : "none";
+}
+
+/* ================= View 2 · Focus route ================= */
+
+let selectedFocusId = "work_ask_audit";
+
+function focusRailHTML() {
+  const pinned = WORK_ITEMS.filter((w) => w.needs_attention);
+  const rest = orderedItems().filter((w) => !w.needs_attention);
+  const row = (it) => {
+    const st = itemStatus(it);
+    const scls = st.cls === "sp-alert" ? "alert" : st.cls === "sp-idea" ? "idea" : "working";
+    return '<button class="fitem' + (it.id === selectedFocusId ? " active" : "") + '" data-act="focusitem"' +
+      ' data-item="' + it.id + '" aria-pressed="' + (it.id === selectedFocusId) + '">' +
+      '<span class="fitem-top">' +
+      (it.needs_attention ? '<span class="fitem-dot" aria-hidden="true"></span>' : "") +
+      '<span class="fitem-key">' + esc(it.key) + "</span>" +
+      '<span class="fitem-status ' + scls + '">' + esc(st.short) + "</span></span>" +
+      '<span class="fitem-title">' + esc(it.title) + "</span>" +
+      '<span class="fitem-stack">' + stackHTML(it, 22, 5) + "</span></button>";
+  };
+  return '<div class="frail-h">needs you</div>' +
+    (pinned.length ? pinned.map(row).join("") : '<div class="cast-note" style="padding:0 6px 4px">nothing pending</div>') +
+    '<div class="frail-h" style="margin-top:8px">riding</div>' + rest.map(row).join("");
+}
+
+function timelineEvents(it) {
+  const evs = [];
+  PIPELINE.stages.forEach((sg) => {
+    const sd = it.stages[sg.stage_key];
+    if (!sd) return;
+    if (sd.started) evs.push({ type: "gate", t: sd.started, title: sg.title });
+    (sd.activity || []).forEach((a) => evs.push({ type: "act", t: a.t, actor: a.actor, message: a.message, at: a.at }));
+  });
+  evs.sort((a, b) => hmToMin(a.t) - hmToMin(b.t));
+  return evs.reverse(); // newest first
+}
+
+function tlEventHTML(ev, isNewest, revealing) {
+  const cls = "tl-ev" + (revealing ? " revealing" : "");
+  if (ev.type === "gate") {
+    return '<div class="' + cls + '"><span class="tl-gatemark" aria-hidden="true"></span>' +
+      '<span class="tl-t">' + esc(ev.t) + "</span>" +
+      '<span class="tl-body"><span class="tl-stage">' + esc(ev.title) + "</span> " +
+      '<span class="tl-dim">· stage entered</span></span></div>';
+  }
+  const at = ev.at != null ? ev.at : atFor(ev.t);
+  return '<div class="' + cls + '"><span class="tl-dot" style="background:' + agentColor(ev.actor) + '" aria-hidden="true"></span>' +
+    '<span class="tl-t">' + esc(ev.t) + "</span>" +
+    '<span class="tl-body"><span class="tl-actor">' + esc(AGENTS[ev.actor].display_name) + "</span> — " +
+    esc(ev.message) + (isNewest ? ' <span class="t-ago live" data-at="' + at + '"></span>' : "") + "</span></div>";
+}
+
+function timelineHTML(it) {
+  const evs = timelineEvents(it);
+  if (!evs.length) {
+    return '<div class="tl-empty">' +
+      (it.kind === "idea" ? "Nothing on the wire yet — the idea is still forming." : "Only route metadata so far — no recorded events.") +
+      "</div>";
+  }
+  let html = evs.map((ev, i) => tlEventHTML(ev, i === 0, false)).join("");
+  if (evs.length < 2) html += '<div class="tl-empty">Only route transitions recorded for this item.</div>';
+  return html;
+}
+
+function castPanelHTML(it) {
+  const cast = castOf(it);
+  if (!cast.length) return '<div class="cast-note">No cast yet.</div>';
+  return '<div class="castlist">' + cast.map((c) =>
+    '<div class="castrow" data-agent="' + c.id + '" tabindex="0" role="button"' +
+    ' aria-label="Highlight ' + esc(AGENTS[c.id].display_name) + " on the route" + '">' +
+    avatarWrap(c.id, 25, dotFor(c.state)) +
+    '<span class="cmeta"><span class="cname">' + esc(AGENTS[c.id].display_name) + "</span>" +
+    ' <span class="crole">' + esc(c.role) + "</span></span>" +
+    stripHTML(it, c.id) +
+    '<span class="mpill st-' + esc(c.state) + '">' + esc(c.state) + "</span></div>"
+  ).join("") + "</div>";
+}
+
+function checkpointHTML(it) {
+  const sd = it.stages[it.current_stage_key];
+  if (it.approvedNote) {
+    return '<section class="checkpoint done"><span class="ck-gate gate g-ok" aria-hidden="true"></span>' +
+      '<span class="ck-note"><b>Proof gate approved</b> at ' + esc(it.approvedNote) + " — Pre-PR review running.</span></section>";
+  }
+  if (!sd || sd.checkpoint_state !== "pending") return "";
+  const sg = stageMeta(it.current_stage_key);
+  return '<section class="checkpoint" id="checkpointCard">' +
+    '<span class="ck-gate gate g-pend" aria-hidden="true"></span>' +
+    "<div><h3>" + esc(sg.title) + " checkpoint</h3><p>" + esc(it.attention_reason) +
+    " 41 events mapped, 3 new — Proof runner is holding until you sign.</p></div>" +
+    '<div class="ck-actions">' +
+    '<button class="btn-approve" data-act="approve" data-item="' + it.id + '">Approve</button>' +
+    '<button class="btn-quiet" data-act="reqchanges" data-item="' + it.id + '">Request changes</button>' +
+    "</div></section>";
+}
+
+function stageRowsHTML(it) {
+  return PIPELINE.stages.map((sg, i) => {
+    const sd = it.stages[sg.stage_key];
+    return '<div class="srow" data-stage="' + sg.stage_key + '">' +
+      '<button class="srow-h" data-act="stagerow" data-item="' + it.id + '" data-stage="' + sg.stage_key + '" aria-expanded="false">' +
+      '<span class="srow-seq">' + (i + 1) + "</span>" +
+      '<span class="srow-title">' + esc(sg.title) + "</span>" +
+      '<span class="srow-skill">' + esc(sg.skill_name) + "</span>" +
+      gatePillHTML(sg, sd) +
+      '<span class="srow-counts">' + esc(stageCounts(it, sg.stage_key)) + "</span>" +
+      '<span class="srow-chev" aria-hidden="true">▾</span></button>' +
+      '<div class="srow-body"><div><div class="srow-inner">' + dossierHTML(it, sg.stage_key) + "</div></div></div></div>";
+  }).join("");
+}
+
+function renderFocus(opts) {
+  opts = opts || {};
+  const it = byId(selectedFocusId);
+  $("#focusRail").innerHTML = focusRailHTML();
+  const st = itemStatus(it);
+  const act = primaryAction(it);
+  const heroCls = "hero" + (it.needs_attention ? " needs" : "") + (it.kind === "idea" ? " idea" : "");
+  const to = currentIdx(it) >= 0 ? currentIdx(it) / (STAGE_KEYS.length - 1) : 0;
+  const from = opts.animFrom != null ? opts.animFrom : to;
+  let actBtn = "";
+  if (act && act.act === "link") actBtn = '<button class="jh-action" data-act="link" data-msg="' + esc(act.msg) + '">' + esc(act.label) + "</button>";
+  const hasLive = STAGE_KEYS.some((k) => ((it.stages[k] || {}).pi_sessions || []).some((s) => s.status === "running"));
+  $("#focusMain").innerHTML =
+    '<section class="' + heroCls + '" id="focusHero">' +
+    '<div class="hero-row">' +
+    '<span class="kindpill">' + esc(it.kind_label) + "</span>" +
+    '<div class="hero-title"><h2><span class="key">' + esc(it.key) + '</span><span class="sep">·</span>' + esc(it.title) + "</h2>" +
+    metaLineHTML(it) + "</div>" +
+    '<span class="jh-spacer"></span>' + stackHTML(it, 30, 5) + actBtn +
+    '<span class="statuspill ' + st.cls + '">' + esc(st.label) + "</span></div>" +
+    railHTML(it, { size: "lg", from: from }) +
+    "</section>" +
+    checkpointHTML(it) +
+    '<div class="fgrid">' +
+    '<div class="panel"><div class="panel-h"><span class="pl">route activity</span>' +
+    (hasLive ? '<span class="live-tag"><i></i>live</span>' : "") +
+    '<span class="pk">' + esc(it.key) + '</span></div><div class="tl" id="tlList">' + timelineHTML(it) + "</div></div>" +
+    '<div class="panel"><div class="panel-h"><span class="pl">traveling cast</span>' +
+    '<span class="pk">' + castOf(it).length + " aboard</span></div>" + castPanelHTML(it) + "</div>" +
+    "</div>" +
+    '<div class="stagedetails"><div class="sd-h">stage details</div>' + stageRowsHTML(it) + "</div>";
+  armRails($("#focusMain"));
+  renderTimes();
+}
+
+/* cast-row hover → highlight that agent's stations on the hero rail */
+function setAgentHighlight(agentId, on) {
+  const rail = $("#focusHero .rail");
+  if (!rail) return;
+  rail.classList.toggle("dimmed", on);
+  $$(".station", rail).forEach((s) => {
+    s.classList.toggle("hi", on && (" " + (s.dataset.agents || "") + " ").indexOf(" " + agentId + " ") >= 0);
+  });
+}
+
+/* ================= popover ================= */
+
+const popEl = $("#popover");
+let popState = null; // { itemId, stageKey, anchor }
+
+function openStationPopover(itemId, stageKey, anchor) {
+  if (popState && popState.anchor) popState.anchor.setAttribute("aria-expanded", "false");
+  const it = byId(itemId);
+  const sg = stageMeta(stageKey);
+  const sd = it.stages[stageKey];
+  let time = "";
+  if (sd && sd.started && sd.completed) time = sd.started + " → " + sd.completed;
+  else if (sd && sd.started) time = "started " + sd.started;
+  $("#popHead").innerHTML =
+    '<span class="ph-title">' + esc(sg.title) + "</span>" +
+    '<span class="ph-skill">' + esc(sg.skill_name) + "</span>" +
+    gatePillHTML(sg, sd) +
+    (time ? '<span class="ph-time">' + esc(time) + "</span>" : "");
+  $("#popBody").innerHTML = dossierHTML(it, stageKey);
+  popEl.classList.add("show");
+  anchor.setAttribute("aria-expanded", "true");
+  popState = { itemId: itemId, stageKey: stageKey, anchor: anchor };
+  positionPopover(anchor);
+  renderTimes();
+}
+
+function positionPopover(anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = 352;
+  const left = Math.min(Math.max(10, r.left + r.width / 2 - w / 2), window.innerWidth - w - 10);
+  popEl.style.left = left + "px";
+  popEl.style.top = "0px"; // measure first
+  const h = popEl.offsetHeight;
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 12) top = Math.max(10, r.top - h - 10);
+  popEl.style.top = top + "px";
+}
+
+function closePopover(restoreFocus) {
+  if (!popState) return;
+  popEl.classList.remove("show");
+  popState.anchor.setAttribute("aria-expanded", "false");
+  if (restoreFocus) popState.anchor.focus();
+  popState = null;
+}
+
+/* ================= toast ================= */
+
+const toastEl = $("#toast");
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  if (toastEl._t) clearTimeout(toastEl._t);
+  toastEl._t = setTimeout(() => toastEl.classList.remove("show"), 2600);
+}
+
+/* ================= interactions ================= */
+
+function setView(view) {
+  $("#view-journey").classList.toggle("hidden", view !== "journey");
+  $("#view-focus").classList.toggle("hidden", view !== "focus");
+  $("#segJourney").setAttribute("aria-pressed", String(view === "journey"));
+  $("#segFocus").setAttribute("aria-pressed", String(view === "focus"));
+  closePopover(false);
+}
+
+function toggleCard(itemId) {
+  const card = $("#card-" + itemId);
+  if (!card) return;
+  const open = openCards.has(itemId);
+  if (open) openCards.delete(itemId); else openCards.add(itemId);
+  card.classList.toggle("open", !open);
+  const chev = $(".chev-btn", card);
+  if (chev) chev.setAttribute("aria-expanded", String(!open));
+}
+
+const PRM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function focusFlight(itemId) {
+  selectedFocusId = itemId;
+  setView("focus");
+  renderFocus();
+  const target = $("#checkpointCard") || $("#focusHero");
+  if (target) {
+    target.scrollIntoView({ behavior: PRM ? "auto" : "smooth", block: "center" });
+    target.classList.remove("flashing");
+    void target.offsetWidth;
+    target.classList.add("flashing");
+  }
+}
+
+function approveCheckpoint(itemId) {
+  const it = byId(itemId);
+  const key = it.current_stage_key;
+  const sd = it.stages[key];
+  if (!sd || sd.checkpoint_state !== "pending") return;
+  const prevFrac = currentIdx(it) / (STAGE_KEYS.length - 1);
+  simClock += 1;
+  const now = minToHM(simClock);
+  sd.state = "complete";
+  sd.checkpoint_state = "approved";
+  sd.completed = now;
+  (sd.agents || []).forEach((l) => { l.link_state = "done"; });
+  sd.activity = sd.activity || [];
+  sd.activity.push({ t: now, actor: "ag-ronnie", message: "Approved the analytics event map — gate opened.", at: Date.now() });
+  const nextKey = STAGE_KEYS[STAGE_KEYS.indexOf(key) + 1];
+  it.stages[nextKey] = {
+    state: "active", started: now,
+    agents: [{ id: "ag-driver", link_role: "reviewer", link_state: "active" }],
+    buzz_threads: [], pi_sessions: [],
+    activity: [{ t: now, actor: "ag-driver", message: "Pre-PR review sweep started on the audit diff.", at: Date.now() }]
+  };
+  it.current_stage_key = nextKey;
+  it.needs_attention = false;
+  it.attention_reason = null;
+  it.progress.completed += 1;
+  it.next_action = "Driver runs the pre-PR review sweep; expect a diff digest in ~20m.";
+  it.updatedAt = Date.now();
+  it.approvedNote = now;
+  closePopover(false);
+  renderJourney({ animItem: it.id });
+  renderFocus({ animFrom: prevFrac });
+  const hero = $("#focusHero");
+  if (hero) hero.scrollIntoView({ behavior: PRM ? "auto" : "smooth", block: "start" });
+  toast("Approved — Proof gate opened, Pre-PR review starting on " + it.key + ".");
+}
+
+function handleAct(el) {
+  const act = el.dataset.act;
+  switch (act) {
+    case "view": setView(el.dataset.view); break;
+    case "link": closeIfOutsidePopover(el); toast(el.dataset.msg); break;
+    case "station": {
+      if (popState && popState.anchor === el) { closePopover(false); break; }
+      openStationPopover(el.dataset.item, el.dataset.stage, el);
+      break;
+    }
+    case "togglecard": closePopover(false); toggleCard(el.dataset.item); break;
+    case "focusitem":
+      selectedFocusId = el.dataset.item;
+      closePopover(false);
+      renderFocus();
+      break;
+    case "focus-flight": focusFlight(el.dataset.item); break;
+    case "approve": approveCheckpoint(el.dataset.item); break;
+    case "reqchanges":
+      toast("Change request drafted in Buzz thread bz-2216 — Proof runner notified.");
+      break;
+    case "stagerow": {
+      const row = el.closest(".srow");
+      const open = row.classList.toggle("open");
+      el.setAttribute("aria-expanded", String(open));
+      break;
+    }
+    case "sidecollapse": {
+      const sub = document.getElementById(el.dataset.target);
+      const open = sub.classList.toggle("open");
+      el.setAttribute("aria-expanded", String(open));
+      break;
+    }
+    case "refresh": {
+      closePopover(false);
+      const btn = $("#refreshBtn");
+      btn.classList.remove("spinning");
+      void btn.offsetWidth;
+      btn.classList.add("spinning");
+      renderJourney({});
+      toast("Board refreshed — no state changes upstream.");
+      break;
+    }
+  }
+}
+function closeIfOutsidePopover(el) {
+  if (popState && !popEl.contains(el)) closePopover(false);
+}
+
+document.addEventListener("click", (e) => {
+  const actEl = e.target.closest("[data-act]");
+  if (actEl) { handleAct(actEl); return; }
+  if (popState && !e.target.closest("#popover")) closePopover(false);
+  const card = e.target.closest(".jcard");
+  if (card && !e.target.closest("button, a, .station, .chip")) toggleCard(card.dataset.item);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && popState) { closePopover(true); return; }
+  if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("jcard")) {
+    e.preventDefault();
+    toggleCard(e.target.dataset.item);
+    return;
+  }
+  if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("castrow")) {
+    e.preventDefault();
+    const pinned = e.target.classList.toggle("pinned");
+    setAgentHighlight(e.target.dataset.agent, pinned);
+  }
+});
+document.addEventListener("mouseover", (e) => {
+  const row = e.target.closest(".castrow[data-agent]");
+  if (row) setAgentHighlight(row.dataset.agent, true);
+});
+document.addEventListener("mouseout", (e) => {
+  const row = e.target.closest(".castrow[data-agent]");
+  if (row && !row.classList.contains("pinned")) setAgentHighlight(row.dataset.agent, false);
+});
+document.addEventListener("focusin", (e) => {
+  if (e.target.classList && e.target.classList.contains("castrow")) setAgentHighlight(e.target.dataset.agent, true);
+});
+document.addEventListener("focusout", (e) => {
+  if (e.target.classList && e.target.classList.contains("castrow") && !e.target.classList.contains("pinned"))
+    setAgentHighlight(e.target.dataset.agent, false);
+});
+// popover follows nothing — close on any outer scroll so it never floats detached
+document.addEventListener("scroll", (e) => {
+  if (popState && !(e.target === popEl || (e.target.closest && e.target.closest("#popover")))) closePopover(false);
+}, true);
+window.addEventListener("resize", () => closePopover(false));
+
+/* ================= live simulator (AGENTIC-575 · implement) ================= */
+
+const SIM_MSGS = [
+  { actor: "ag-deepseek", message: "Scoped tests green — 14 passing on api-gateway target." },
+  { actor: "ag-driver",   message: "Posted diff summary to Buzz thread bz-2240." },
+  { actor: "ag-deepseek", message: "Extended ImpactGuard fallback path · guard_middleware.py +64." },
+  { actor: "ag-picoder",  message: "Cross-checked schema fixtures against the staging contract." }
+];
+let simIdx = 0;
+
+function simTick() {
+  const it = byId("work_mobile_guard");
+  const sd = it.stages["implement"];
+  if (!sd || sd.state !== "active") return;
+  simClock += 1 + (simIdx % 2);
+  const msg = SIM_MSGS[simIdx % SIM_MSGS.length];
+  simIdx++;
+  const ev = { t: minToHM(simClock), actor: msg.actor, message: msg.message, at: Date.now() };
+  sd.activity.push(ev);
+  it.updatedAt = Date.now();
+  // bump the running session's token counter (alive, cheaply)
+  const ses = (sd.pi_sessions || [])[0];
+  if (ses && /^\d+k$/.test(ses.tokens)) ses.tokens = (parseInt(ses.tokens, 10) + 6 + (simIdx % 4)) + "k";
+  // patch time stamps + pulse the live dots (no rebuilds for volatile time)
+  $$("[data-live-for='work_mobile_guard']").forEach((el) => { el.dataset.at = String(Date.now()); });
+  $$("[data-liveflash='work_mobile_guard']").forEach((el) => {
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+  });
+  // if the implement popover is open, refresh its dossier in place
+  if (popState && popState.itemId === it.id && popState.stageKey === "implement") {
+    $("#popBody").innerHTML = dossierHTML(it, "implement");
+  }
+  // if the focus route is showing this item, slide the event into the timeline
+  if (selectedFocusId === it.id) {
+    const tl = $("#tlList");
+    if (tl) {
+      $$(".t-ago.live", tl).forEach((el) => el.remove()); // only the newest event stays live
+      tl.insertAdjacentHTML("afterbegin", tlEventHTML(ev, true, true));
+      while (tl.children.length > 40) tl.removeChild(tl.lastElementChild); // bound growth
+    }
+  }
+  renderTimes();
+}
+setInterval(simTick, 7000);
+
+/* ================= 1s time patcher (structure rebuilds, time mutates) ================= */
+
+function renderTimes() {
+  $$(".t-ago[data-at]").forEach((el) => { el.textContent = ago(+el.dataset.at); });
+}
+setInterval(renderTimes, 1000);
+
+/* ================= boot ================= */
+
+renderJourney({ initial: true });
+renderFocus();
+renderTimes();
+</script>
+</body>
+</html>
+<!--
+  Option C — "Journey Refit" · implemented interactions manifest
+  ══════════════════════════════════════════════════════════════
+  · Segmented control toggles Journey rows ⇄ Focus route (state preserved, aria-pressed)
+  · Journey cards: click body, chevron (aria-expanded), or Enter/Space on the focused
+    card (tabindex=0) → 250ms 0fr/1fr accordion with next movement · traveling cast
+    (per-agent 8-cell stage-strips) · continuity chips; needs-you cards ordered
+    pending-checkpoint-first so the top card matches the priority sentence
+  · Metro rail: one-time 600ms fill animation on load; done/current/upcoming stations,
+    rotated-square checkpoint GATES (approved/pending-pulse/upcoming ★), riders above
+    the current station, mono stage labels, accent/mauve density dot-badges
+  · Station popovers (headline): every station is a button (Enter/Space native,
+    aria-haspopup/aria-expanded) → anchored fixed popover with cast (link_role +
+    link_state pills), Buzz threads, Pi sessions, continuity chips, newest activity
+    with live t-ago; honest empty states; closes on Esc (focus restored), outside
+    click, scroll, resize; flips above when near the bottom edge
+  · Deep links everywhere → toast (bottom-center, role=status, 2.6s auto-dismiss,
+    timeout handle stored): Open in Buzz, Open pane wX:tN, continuity docs, sidebar
+    inbox/links, mic, ⋯, Ask board, Refresh (with glyph spin)
+  · Priority line: single most-urgent sentence + primary action, second needs-you item
+    as chip (both fly to Focus route + flash target), quiet computed tallies
+  · Needs-you cards: alert spine + tinted border + one primary action in the header
+    ("Review event map" flies to the Focus checkpoint; "Decide on PR #510" toasts)
+  · Focus route: left rail with pinned needs-you items (alert dot) + active gradient
+    wash; hero dossier with big rail sharing the SAME popovers; route activity
+    timeline (gate markers for stage transitions, actor-colored dots, newest event
+    live t-ago); traveling cast panel with hover/focus/pin highlighting of that
+    agent's stations on the hero rail; stage-details disclosure (8 accordion rows
+    reusing the shared dossier renderer)
+  · Interactive Approve flow: checkpoint card (only while checkpoint_state=pending) —
+    Approve mutates the demo state: Proof gate fills signal, rail fill animates one
+    station forward in BOTH views, status pill flips to working, priority line and
+    sidebar tallies recompute, timeline gains Ronnie's approval + Pre-PR start events,
+    confirmation note replaces the card, toast confirms; Request changes toasts
+  · Live simulator: every 7s appends a rotating activity line to AGENTIC-575's
+    implement stage, advances the story clock, bumps session tokens, updates the
+    "updated" t-ago, pulses live dots, refreshes an open implement popover, and
+    slides the event into the Focus timeline (reveal animation; only the newest
+    event keeps a live t-ago, list capped at 40 rows); Refresh closes any open
+    station popover before rebuilding the board
+  · Every visible relative timestamp is a .t-ago[data-at] span patched by a 1s
+    interval — time never triggers rebuilds
+  · Working dots breathe (1.15s halo pulse); pending gates pulse in alert; all motion
+    neutered under prefers-reduced-motion: reduce (smooth scrolls fall back to auto)
+  · Accessibility floor: :focus-visible 2px accent outlines, native buttons for every
+    interactive element, focusable journey cards, aria-expanded on accordions/stations,
+    role=status toast, keyboard pinning of cast highlights, focus restored on popover
+    Esc; contrast-safe muted tiers (--muted-hi / --mist-dim) on elevated surfaces and
+    body-size secondary prose
+-->

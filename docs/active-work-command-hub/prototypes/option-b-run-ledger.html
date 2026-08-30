@@ -1,0 +1,1692 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Herdr Run Ledger</title>
+<style>
+/* ============================================================
+   Option B — "Run Ledger"
+   Herdr Active Work prototype · Catppuccin Mocha · system faces
+   ============================================================ */
+
+:root {
+  --ink:#181825; --graphite:#1e1e2e; --elevated:#313244; --surface:#45475a;
+  --mist:#a6adc8; --muted:#6c7086; --text:#e5eafa; --accent:#89b4fa;
+  --mauve:#cba6f7; --signal:#94e2d5; --success:#a6e3a1; --working:#f9e2af;
+  --alert:#f38ba8; --warning:#fab387; --code:#f5c2e7; --crust:#11111b;
+  --body:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --rounded:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --mono:"SFMono-Regular","SF Mono",Menlo,ui-monospace,monospace;
+  --card-radius:16px; --compact-radius:10px;
+  --hairline:rgba(166,173,200,.18);
+  --hairline-strong:rgba(166,173,200,.22);
+  --divider:rgba(255,255,255,.08);
+  --ease:cubic-bezier(0.32,0.72,0,1);        /* 700ms ambient */
+  --ease-out:cubic-bezier(0.23,1,0.32,1);    /* 250ms small controls */
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+html, body { height:100%; }
+
+body {
+  background:#050506;
+  color:var(--text);
+  font-family:var(--body);
+  font-size:13px;
+  line-height:1.5;
+  display:flex; align-items:center; justify-content:center;
+  min-width:900px;
+  overflow-x:auto;
+  -webkit-font-smoothing:antialiased;
+}
+
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+button { font:inherit; color:inherit; background:none; border:none; }
+button:not(:disabled) { cursor:pointer; }
+
+/* ---- grain + ambient ---- */
+.grain {
+  position:fixed; inset:0; z-index:60; pointer-events:none; opacity:.025;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ============================================================
+   App window chrome (shared across the three concepts)
+   ============================================================ */
+.app-window {
+  width:min(1700px,calc(100vw - 28px));
+  height:min(930px,calc(100vh - 24px));
+  border-radius:28px;
+  border:1px solid rgba(166,173,200,.34);
+  box-shadow:0 30px 90px rgba(0,0,0,.62);
+  background:var(--ink);
+  overflow:hidden;
+  display:flex; flex-direction:column;
+}
+
+.toolbar {
+  height:66px; flex:none;
+  display:grid; grid-template-columns:270px 1fr 270px; align-items:center;
+  padding:0 22px;
+  border-bottom:1px solid var(--hairline);
+  background:linear-gradient(180deg, rgba(30,30,46,.6), rgba(24,24,37,0));
+}
+.lights { display:flex; gap:8px; }
+.lights span { width:14px; height:14px; border-radius:50%; box-shadow:inset 0 0 0 .5px rgba(0,0,0,.25); }
+.lights .l-r { background:#ff5f57; } .lights .l-y { background:#febc2e; } .lights .l-g { background:#28c840; }
+
+.seg-wrap { display:flex; align-items:center; justify-content:center; gap:12px; }
+.segmented {
+  display:flex; padding:3px; border-radius:11px;
+  background:rgba(17,17,27,.7); border:1px solid var(--hairline);
+}
+.seg-pill {
+  font-family:var(--mono); font-size:11px; font-weight:650; letter-spacing:.02em;
+  color:var(--text); padding:6px 18px; border-radius:8px;
+  background:var(--elevated); border:1px solid rgba(166,173,200,.24);
+  transition:background 250ms var(--ease-out);
+}
+.seg-pill:active { transform:scale(.98); }
+.seg-caption { font-family:var(--mono); font-size:9.5px; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; }
+
+.toolbar-right { display:flex; gap:10px; justify-content:flex-end; align-items:center; }
+.mic-btn {
+  width:40px; height:40px; border-radius:12px; background:var(--accent);
+  display:flex; align-items:center; justify-content:center;
+  transition:filter 250ms var(--ease-out);
+}
+.mic-btn:hover { filter:brightness(1.08); }
+.mic-btn:active { transform:scale(.96); }
+.mic-btn svg { display:block; }
+.more-btn {
+  width:40px; height:40px; border-radius:12px;
+  border:1px solid var(--hairline-strong); color:var(--mist);
+  font-size:17px; line-height:1; letter-spacing:.05em;
+  display:flex; align-items:center; justify-content:center;
+  transition:border-color 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.more-btn:hover { border-color:rgba(166,173,200,.4); color:var(--text); }
+.more-btn:active { transform:scale(.96); }
+
+/* ============================================================
+   Shell: sidebar + main
+   ============================================================ */
+.shell { flex:1; min-height:0; display:grid; grid-template-columns:310px minmax(0,1fr); }
+
+.sidebar {
+  border-right:1px solid var(--hairline);
+  padding:22px 18px 16px;
+  display:flex; flex-direction:column; gap:18px;
+  min-height:0; overflow-y:auto;
+  background:linear-gradient(180deg, rgba(17,17,27,.35), rgba(17,17,27,0) 200px);
+}
+.wordmark { display:flex; align-items:center; gap:9px; padding:0 6px; }
+.wordmark .bars { display:flex; gap:2.5px; align-items:flex-end; height:14px; }
+.wordmark .bars i { width:3px; border-radius:2px; display:block; }
+.wordmark .bars i:nth-child(1) { height:14px; background:var(--accent); }
+.wordmark .bars i:nth-child(2) { height:10px; background:var(--mauve); }
+.wordmark .bars i:nth-child(3) { height:6px;  background:var(--signal); }
+.wordmark b { font-family:var(--mono); font-weight:750; font-size:15px; letter-spacing:-.01em; }
+
+.side-card {
+  position:relative; border-radius:var(--compact-radius);
+  background:rgba(30,30,46,.85); border:1px solid var(--hairline);
+  padding:13px 14px 12px 18px; overflow:hidden;
+}
+.side-card::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:linear-gradient(180deg,var(--mauve),var(--accent));
+}
+.side-card .row1 { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+.side-card .row1 b { font-family:var(--rounded); font-weight:700; font-size:13.5px; }
+.side-card .row1 span { font-family:var(--mono); font-size:9px; color:var(--mist); letter-spacing:.05em; }
+.side-card p { font-size:11px; color:var(--mist); margin-top:4px; line-height:1.45; }
+.mini-pills { display:flex; gap:6px; margin-top:9px; }
+.mini-pill {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.04em;
+  padding:2.5px 8px; border-radius:99px;
+}
+.mini-pill.moving { color:var(--working); background:rgba(249,226,175,.08); border:1px solid rgba(249,226,175,.28); }
+.mini-pill.needy  { color:var(--alert);   background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3); }
+
+.side-section-label {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted); padding:0 6px;
+}
+.side-rows { display:flex; flex-direction:column; gap:2px; }
+.side-row {
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:7px 8px; border-radius:8px; color:var(--mist); font-size:12px;
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.side-row:hover { background:rgba(49,50,68,.5); color:var(--text); }
+.side-row:active { transform:scale(.99); }
+.side-row .chev { font-family:var(--mono); font-size:9px; color:var(--muted); transition:transform 250ms var(--ease-out); width:10px; }
+.side-row[aria-expanded="true"] .chev { transform:rotate(90deg); }
+.side-row .count {
+  margin-left:auto; font-family:var(--mono); font-size:9px; font-weight:650;
+  color:var(--mist); background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+  padding:1.5px 7px; border-radius:99px;
+}
+.side-sub {
+  display:grid; grid-template-rows:0fr; opacity:0;
+  transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out);
+}
+.side-sub.open { grid-template-rows:1fr; opacity:1; }
+.side-sub > div { overflow:hidden; }
+.inbox-item {
+  display:block; width:100%; text-align:left;
+  padding:5px 8px 5px 26px; border-radius:7px; color:var(--mist);
+  font-size:11px; line-height:1.4;
+  transition:color 250ms var(--ease-out), background 250ms var(--ease-out);
+}
+.inbox-item:hover { color:var(--text); background:rgba(49,50,68,.35); }
+.inbox-item .repo { font-family:var(--mono); font-size:9px; letter-spacing:.02em; display:block; color:var(--muted); }
+
+.side-links { display:flex; flex-direction:column; gap:2px; margin-top:2px; }
+.side-link {
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:6px 8px; border-radius:8px; font-size:12px; color:var(--mist);
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.side-link:hover { background:rgba(49,50,68,.5); color:var(--accent); }
+.side-link:active { transform:scale(.99); }
+.side-link .glyph { font-family:var(--mono); font-size:11px; color:var(--muted); width:14px; text-align:center; }
+.side-link:hover .glyph { color:var(--accent); }
+
+.side-footer {
+  margin-top:auto; padding:10px 6px 0; border-top:1px solid var(--divider);
+  font-family:var(--mono); font-size:9px; color:var(--muted); line-height:1.7; letter-spacing:.02em;
+}
+
+/* ============================================================
+   Main column
+   ============================================================ */
+.main { min-width:0; min-height:0; overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; scrollbar-color:rgba(108,112,134,.5) transparent; }
+.main::-webkit-scrollbar { width:9px; }
+.main::-webkit-scrollbar-thumb { background:rgba(108,112,134,.4); border-radius:99px; border:2px solid var(--ink); }
+.main::-webkit-scrollbar-track { background:transparent; }
+
+.content {
+  width:min(1180px, 100% - 36px);
+  margin:0 auto; padding:26px 0 46px;
+  display:flex; flex-direction:column; gap:16px;
+}
+
+/* ---- board head ---- */
+.board-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; }
+.board-head h1 {
+  font-family:var(--rounded); font-weight:750; font-size:30px; letter-spacing:-.02em; line-height:1.1;
+}
+.board-head .sub { color:var(--mist); font-size:12.5px; margin-top:5px; }
+.board-actions { display:flex; gap:8px; }
+.btn {
+  font-family:var(--mono); font-size:10px; font-weight:650; letter-spacing:.03em;
+  padding:7px 13px; border-radius:9px;
+  color:var(--mist); background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+  transition:color 250ms var(--ease-out), border-color 250ms var(--ease-out), background 250ms var(--ease-out);
+  white-space:nowrap;
+}
+.btn:hover { color:var(--text); border-color:rgba(166,173,200,.36); background:rgba(49,50,68,.8); }
+.btn:active { transform:scale(.98); }
+.btn.accent { color:var(--accent); border-color:rgba(137,180,250,.32); background:rgba(137,180,250,.08); }
+.btn.accent:hover { background:rgba(137,180,250,.14); color:#a5c8ff; }
+.btn .spin-glyph { display:inline-block; }
+.btn.spinning .spin-glyph { animation:capsule-spin 700ms var(--ease-out); }
+
+/* ---- needs-you dock ---- */
+.dock { display:flex; flex-direction:column; gap:8px; }
+.dock-banner {
+  position:relative; overflow:hidden;
+  display:flex; align-items:center; gap:14px;
+  border-radius:13px; padding:12px 14px 12px 18px;
+  background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3);
+}
+.dock-banner::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--alert);
+}
+.dock-banner .dot {
+  width:7px; height:7px; border-radius:50%; background:var(--alert); flex:none;
+  box-shadow:0 0 0 4px rgba(243,139,168,.14);
+}
+.dock-banner .dkey { font-family:var(--mono); font-size:10px; font-weight:650; letter-spacing:.04em; color:var(--alert); flex:none; }
+.dock-banner .dreason { font-size:12.5px; color:var(--text); min-width:0; flex:1; }
+.dock-banner .primary-act {
+  font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.03em;
+  color:var(--crust); background:var(--alert); border-radius:9px; padding:8px 14px;
+  flex:none; transition:filter 250ms var(--ease-out);
+}
+.dock-banner .primary-act:hover { filter:brightness(1.08); }
+.dock-banner .primary-act:active { transform:scale(.98); }
+.dock-banner .jump {
+  font-family:var(--mono); font-size:9.5px; color:var(--mist); flex:none;
+  padding:6px 8px; border-radius:7px;
+  transition:color 250ms var(--ease-out);
+}
+.dock-banner .jump:hover { color:var(--text); }
+
+/* ---- summary strip ---- */
+.summary {
+  display:grid; grid-template-columns:repeat(4,1fr);
+  background:var(--graphite); border:1px solid var(--hairline); border-radius:13px;
+  overflow:hidden;
+}
+.metric { padding:12px 18px; display:flex; flex-direction:column; gap:1px; }
+.metric + .metric { border-left:1px solid var(--divider); }
+.metric .num { font-family:var(--rounded); font-weight:750; font-size:21px; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
+.metric .lbl { font-family:var(--mono); font-size:9px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+.metric.alert .num { color:var(--alert); }
+.metric.alert .lbl { color:rgba(243,139,168,.75); }
+
+/* ============================================================
+   Run strips
+   ============================================================ */
+.strips { display:grid; gap:14px; }
+
+.run-strip {
+  position:relative; overflow:hidden;
+  border-radius:18px; background:rgba(30,30,46,.78);
+  border:1px solid var(--hairline);
+  padding:16px 18px 0 22px;
+  transition:border-color 700ms var(--ease), box-shadow 700ms var(--ease);
+}
+.run-strip::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--surface);
+}
+.run-strip.st-working::before { background:var(--working); }
+.run-strip.st-alert::before   { background:var(--alert); }
+.run-strip.st-done::before    { background:var(--signal); }
+.run-strip.hot { border-color:rgba(137,180,250,.4); box-shadow:0 0 0 1px rgba(137,180,250,.18), 0 14px 44px rgba(0,0,0,.35); }
+.run-strip.flash { animation:strip-flash 1.4s var(--ease-out); }
+@keyframes strip-flash {
+  0%,60% { box-shadow:0 0 0 2px rgba(137,180,250,.55), 0 14px 44px rgba(0,0,0,.4); border-color:rgba(137,180,250,.7); }
+  100%   { box-shadow:none; }
+}
+
+/* header row */
+.strip-head {
+  display:flex; align-items:center; gap:14px; flex-wrap:nowrap;
+  padding-bottom:13px;
+}
+.strip-id { min-width:0; flex:1; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.kind-pill, .skill-pill {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.05em;
+  padding:2.5px 8px; border-radius:99px; white-space:nowrap;
+}
+.kind-pill { color:var(--mist); background:rgba(49,50,68,.52); border:1px solid var(--hairline); }
+.kind-pill.idea { color:var(--mauve); background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35); }
+.skill-pill { color:var(--code); background:rgba(245,194,231,.06); border:1px solid rgba(245,194,231,.2); }
+.strip-key {
+  font-family:var(--mono); font-size:10px; font-weight:650; letter-spacing:.04em; color:var(--mist); white-space:nowrap;
+}
+.strip-title { font-size:15px; font-weight:700; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.strip-meta {
+  font-family:var(--mono); font-size:9.5px; color:var(--muted); letter-spacing:.03em;
+  white-space:nowrap; font-variant-numeric:tabular-nums;
+}
+.strip-meta .sep { opacity:.55; padding:0 3px; }
+.strip-meta .t-ago { color:var(--mist); }
+
+.strip-right { display:flex; align-items:center; gap:12px; flex:none; }
+.agent-stack { display:flex; }
+.agent-stack .stacked { position:relative; width:28px; height:28px; border-radius:50%; margin-left:-8px; box-shadow:0 0 0 2px var(--graphite); }
+.agent-stack .stacked:first-child { margin-left:0; }
+.agent-stack .stacked svg { display:block; }
+.agent-stack .live-dot {
+  position:absolute; right:-1px; bottom:-1px; width:8px; height:8px; border-radius:50%;
+  background:var(--working); border:2px solid var(--graphite);
+  animation:working-pulse 1.6s ease-in-out infinite;
+}
+.agent-stack .live-dot.waiting { background:var(--alert); }
+
+.status-pill {
+  font-family:var(--mono); font-size:9.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  padding:4px 11px; border-radius:99px; white-space:nowrap;
+}
+.status-pill.working { color:var(--working); background:rgba(249,226,175,.08); border:1px solid rgba(249,226,175,.28); }
+.status-pill.needs   { color:var(--alert);   background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3); }
+.status-pill.donep   { color:var(--signal);  background:rgba(148,226,213,.08); border:1px solid rgba(148,226,213,.28); }
+.status-pill.shaping { color:var(--mauve);   background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35); }
+
+.elapsed {
+  font-family:var(--mono); font-size:10px; color:var(--mist); font-variant-numeric:tabular-nums;
+  letter-spacing:.02em; white-space:nowrap;
+}
+.elapsed .clock-glyph { opacity:.7; margin-right:2px; }
+
+/* ---- trail spine ---- */
+.trail { position:relative; height:56px; margin:2px 2px 10px; }
+.trail .track, .trail .fill {
+  position:absolute; top:11px; height:3px; border-radius:2px;
+}
+.trail .track { left:6.25%; right:6.25%; background:var(--surface); }
+.trail .fill  { left:6.25%; background:var(--signal); }
+.trail .ants { position:absolute; inset:0 0 auto 0; height:26px; width:100%; overflow:visible; pointer-events:none; }
+.trail .ants line {
+  stroke:var(--accent); stroke-width:3; stroke-linecap:round;
+  stroke-dasharray:5 8; vector-effect:non-scaling-stroke;
+}
+.stop {
+  position:absolute; top:12.5px; transform:translate(-50%,-50%);
+  width:9px; height:9px; border-radius:50%;
+  background:var(--ink); border:2px solid var(--muted);
+  padding:0; transition:transform 250ms var(--ease-out);
+}
+.stop:hover { transform:translate(-50%,-50%) scale(1.25); }
+.stop .check {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:7px; font-weight:800; color:var(--crust); opacity:0; transition:opacity 250ms var(--ease-out);
+}
+.stop.gate { border-radius:2.5px; transform:translate(-50%,-50%) rotate(45deg); }
+.stop.gate:hover { transform:translate(-50%,-50%) rotate(45deg) scale(1.25); }
+.stop.gate .check { transform:rotate(-45deg); }
+.stop.s-done { background:var(--signal); border-color:var(--signal); }
+.stop.s-done:hover .check { opacity:1; }
+.stop.s-ready { border-color:var(--mist); background:var(--ink); }
+.stop.s-pending { border-color:var(--muted); opacity:.48; }
+.stop.s-current {
+  width:15px; height:15px; background:var(--ink); border:3px solid var(--accent);
+  box-shadow:0 0 0 5px rgba(137,180,250,.14);
+}
+.stop.s-current.halo { animation:stop-halo 1.6s ease-in-out infinite; }
+@keyframes stop-halo {
+  0%,100% { box-shadow:0 0 0 4px rgba(137,180,250,.1); }
+  50%     { box-shadow:0 0 0 7px rgba(137,180,250,.22); }
+}
+.stop.s-current.needsyou { border-color:var(--alert); box-shadow:0 0 0 5px rgba(243,139,168,.14); }
+.stop.s-current.needsyou.halo { animation:stop-halo-alert 1.6s ease-in-out infinite; }
+@keyframes stop-halo-alert {
+  0%,100% { box-shadow:0 0 0 4px rgba(243,139,168,.1); }
+  50%     { box-shadow:0 0 0 7px rgba(243,139,168,.24); }
+}
+.stop.gate.g-approved { background:var(--signal); border-color:var(--signal); }
+.stop.gate.g-pending  { background:var(--ink); border-color:var(--alert); animation:gate-pulse 1.6s ease-in-out infinite; }
+@keyframes gate-pulse { 50% { box-shadow:0 0 0 4px rgba(243,139,168,.22); } }
+.stop.gate.g-future   { background:var(--ink); border-color:var(--muted); }
+
+.trail-titles {
+  position:absolute; left:0; right:0; top:28px;
+  display:grid; grid-template-columns:repeat(8,1fr);
+}
+.trail-titles span {
+  font-family:var(--mono); font-size:8px; font-weight:650; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--muted); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 2px;
+}
+.trail-titles span.cur { color:var(--text); }
+.trail-titles span.cur-alert { color:var(--alert); }
+
+/* ---- cast ledger ---- */
+.ledger-panel {
+  background:rgba(17,17,27,.7); border:1px solid var(--divider); border-radius:14px;
+  margin-bottom:12px; overflow:hidden;
+}
+.ledger-scroll { overflow-x:auto; }
+.ledger {
+  display:grid; grid-template-columns:170px repeat(8,minmax(56px,1fr));
+  min-width:640px; padding:4px 10px 8px 8px;
+}
+.lg-cell { position:relative; min-height:30px; display:flex; align-items:center; }
+.lg-cell.col-cur   { background:rgba(137,180,250,.1); }
+.lg-cell.col-alert { background:rgba(243,139,168,.08); }
+.lg-cell.col-first { border-radius:8px 8px 0 0; }
+.lg-cell.col-last  { border-radius:0 0 8px 8px; }
+
+/* header row of the ledger */
+.lg-head { min-height:34px; }
+.lg-corner {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); padding-left:8px;
+}
+.stage-btn {
+  width:100%; height:100%; min-height:34px;
+  display:flex; align-items:center; justify-content:center; gap:4px;
+  font-family:var(--mono); font-size:10px; font-weight:650; letter-spacing:.04em;
+  color:var(--muted); font-variant-numeric:tabular-nums;
+  border-radius:7px;
+  transition:color 250ms var(--ease-out), background 250ms var(--ease-out);
+}
+.stage-btn:hover { color:var(--text); background:rgba(69,71,90,.35); }
+.stage-btn:active { transform:scale(.96); }
+.stage-btn .caret { font-size:7px; transition:transform 250ms var(--ease-out); opacity:.7; }
+.stage-btn[aria-expanded="true"] { color:var(--accent); }
+.stage-btn[aria-expanded="true"] .caret { transform:rotate(180deg); }
+.stage-btn .att-tick { width:3px; height:3px; border-radius:50%; background:var(--mist); opacity:.7; }
+.stage-btn.hollow .att-tick { visibility:hidden; }
+
+/* agent row: name cell */
+.lg-name { gap:8px; padding:3px 8px 3px 8px; }
+.lg-name .avatar { flex:none; }
+.lg-name .who { min-width:0; line-height:1.15; }
+.lg-name .who b { display:block; font-size:11px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lg-name .who i { display:block; font-style:normal; font-family:var(--mono); font-size:9px; color:var(--muted); letter-spacing:.03em; }
+
+/* attachment bars */
+.lg-cell .empty-dot {
+  width:3px; height:3px; border-radius:50%; background:rgba(166,173,200,.16); margin:0 auto;
+}
+.att-bar { height:6px; border-radius:3px; width:calc(100% - 12px); margin:0 auto; }
+.att-bar.run-start { width:calc(100% - 6px); margin-right:0; border-top-right-radius:0; border-bottom-right-radius:0; }
+.att-bar.run-mid   { width:100%; border-radius:0; }
+.att-bar.run-end   { width:calc(100% - 6px); margin-left:0; border-top-left-radius:0; border-bottom-left-radius:0; }
+.att-bar.b-done    { background:rgba(148,226,213,.45); }
+.att-bar.b-active  { background:var(--accent); animation:rail-live 900ms ease-in-out infinite alternate; }
+.att-bar.b-queued  { background:transparent; border:1px dashed var(--muted); height:6px; }
+.att-bar.b-waiting { background:var(--alert); animation:working-pulse 1.6s ease-in-out infinite; }
+.lg-cell.has-bar { cursor:pointer; }
+.lg-cell.has-bar:hover .att-bar.b-done { background:rgba(148,226,213,.7); }
+.lg-cell.has-bar:hover .att-bar.b-queued { border-color:var(--mist); }
+
+/* observed line (declared vs observed honesty channel) */
+.obs-row {
+  grid-column:1 / -1; display:flex; align-items:center; gap:7px;
+  font-family:var(--mono); font-size:10px; color:var(--accent);
+  padding:1px 8px 5px 46px; min-height:18px;
+}
+/* fade the content, not the row — its background continues the column tint */
+.obs-row > * { opacity:0; transition:opacity 400ms var(--ease-out); }
+.obs-row.obs-live > * { opacity:1; }
+.obs-row .obs-ring { flex:none; }
+.obs-row .obs-ring circle.arc {
+  stroke:var(--accent); stroke-dasharray:23 59; fill:none;
+  transform-box:fill-box; transform-origin:center;
+  animation:capsule-spin 1300ms linear infinite;
+}
+.obs-row .obs-verb { font-weight:700; }
+.obs-row .obs-target { color:var(--mist); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.obs-row .obs-count { color:var(--muted); }
+.obs-row .t-ago { color:var(--muted); font-variant-numeric:tabular-nums; }
+
+/* ---- stage dossier accordion ---- */
+.dossier {
+  display:grid; grid-template-rows:0fr; opacity:0;
+  transition:grid-template-rows 250ms var(--ease-out), opacity 250ms var(--ease-out);
+}
+.dossier.open { grid-template-rows:1fr; opacity:1; }
+.dossier > .dossier-clip { overflow:hidden; }
+.dossier-inner { border-top:1px solid var(--divider); padding:12px 16px 14px; }
+.dossier-inner.pop { animation:capsule-pop 250ms var(--ease-out); }
+.dossier-title {
+  display:flex; align-items:center; gap:9px; margin-bottom:10px;
+}
+.dossier-title .dnum { font-family:var(--mono); font-size:10px; font-weight:700; color:var(--accent); font-variant-numeric:tabular-nums; }
+.dossier-title .dname { font-size:12.5px; font-weight:700; letter-spacing:-.01em; }
+.dossier-title .dskill { font-family:var(--mono); font-size:9px; color:var(--code); background:rgba(245,194,231,.06); border:1px solid rgba(245,194,231,.2); padding:2px 7px; border-radius:99px; }
+.dossier-title .dclose {
+  margin-left:auto; width:22px; height:22px; border-radius:6px; color:var(--muted);
+  display:flex; align-items:center; justify-content:center; font-size:12px;
+  transition:color 250ms var(--ease-out), background 250ms var(--ease-out);
+}
+.dossier-title .dclose:hover { color:var(--text); background:rgba(69,71,90,.4); }
+.dossier-cols { display:grid; grid-template-columns:1.05fr 1.05fr 1.3fr; gap:16px; }
+@media (max-width:1150px) { .dossier-cols { grid-template-columns:1fr 1fr; } }
+.dcol-head {
+  font-family:var(--mono); font-size:9px; font-weight:650; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); margin-bottom:7px; display:flex; align-items:center; gap:6px;
+}
+.dcol-head .cnt { color:var(--mist); }
+.dcol { min-width:0; }
+.d-empty { font-size:11px; color:var(--mist); font-style:italic; line-height:1.5; }
+
+.thread-row, .pi-row {
+  display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:8px;
+  border:1px solid var(--divider); background:rgba(30,30,46,.5); margin-bottom:6px;
+}
+.thread-row.faded, .pi-row.faded { opacity:.55; }
+.status-dot { width:6px; height:6px; border-radius:50%; flex:none; }
+.status-dot.live { background:var(--signal); animation:working-pulse 1.6s ease-in-out infinite; }
+.status-dot.gone { background:var(--muted); }
+.thread-row .tid { font-family:var(--mono); font-size:9px; color:var(--muted); flex:none; }
+.thread-row .ttitle { font-size:11px; color:var(--text); min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pi-row .ptitle { font-size:11px; color:var(--text); min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pi-row .pmeta { font-family:var(--mono); font-size:9px; color:var(--muted); flex:none; font-variant-numeric:tabular-nums; }
+.open-btn {
+  font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.03em; white-space:nowrap;
+  color:var(--accent); background:rgba(137,180,250,.08); border:1px solid rgba(137,180,250,.28);
+  padding:3.5px 9px; border-radius:7px; flex:none;
+  transition:background 250ms var(--ease-out), color 250ms var(--ease-out);
+}
+.open-btn:hover { background:rgba(137,180,250,.16); color:#a5c8ff; }
+.open-btn:active { transform:scale(.98); }
+
+.rec-line { display:flex; align-items:baseline; gap:7px; font-size:11px; color:var(--mist); padding:2.5px 0; min-width:0; }
+.rec-line .rk { font-family:var(--mono); font-size:9px; color:var(--muted); letter-spacing:.05em; flex:none; width:62px; text-transform:uppercase; }
+.rec-line .t-ago { font-family:var(--mono); font-size:9.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.gate-chip {
+  display:inline-flex; align-items:center; gap:5px;
+  font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.04em;
+  padding:2.5px 9px; border-radius:99px;
+  animation:capsule-pop 250ms var(--ease-out);
+}
+.gate-chip.approved { color:var(--signal); background:rgba(148,226,213,.08); border:1px solid rgba(148,226,213,.28); }
+.gate-chip.pending  { color:var(--alert);  background:rgba(243,139,168,.09); border:1px solid rgba(243,139,168,.3); }
+.gate-chip.none     { color:var(--muted);  background:rgba(49,50,68,.4); border:1px solid var(--divider); }
+.doc-chips { display:flex; flex-wrap:wrap; gap:5px; }
+.doc-chip {
+  font-family:var(--mono); font-size:9px; color:var(--mist);
+  background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+  padding:2.5px 9px; border-radius:99px;
+  transition:color 250ms var(--ease-out), border-color 250ms var(--ease-out);
+}
+.doc-chip:hover { color:var(--accent); border-color:rgba(137,180,250,.35); }
+.doc-chip:active { transform:scale(.98); }
+
+.act-list { margin-top:7px; border-top:1px solid var(--divider); padding-top:7px; display:flex; flex-direction:column; gap:4px; }
+.act-line { display:flex; align-items:baseline; gap:7px; font-size:11px; min-width:0; }
+.act-line.fresh { animation:capsule-pop 300ms var(--ease-out); }
+.act-line .actor { font-family:var(--mono); font-size:9px; font-weight:650; color:var(--mist); flex:none; }
+.act-line .msg { color:var(--mist); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.act-line .t-ago { font-family:var(--mono); font-size:9px; color:var(--muted); margin-left:auto; flex:none; font-variant-numeric:tabular-nums; }
+
+/* ---- strip footer ---- */
+.strip-foot {
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  border-top:1px solid var(--hairline);
+  margin:0 -18px 0 -22px; padding:9px 18px 10px 22px;
+}
+.next-action { font-family:var(--mono); font-size:10px; color:var(--mist); letter-spacing:.01em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.next-action .na-key { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-size:8.5px; margin-right:6px; }
+.tool-line { font-family:var(--mono); font-size:10px; display:flex; align-items:center; gap:6px; flex:none; font-variant-numeric:tabular-nums; }
+.tool-line .tn { color:var(--accent); font-weight:700; }
+.tool-line .td { color:var(--mist); max-width:270px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tool-line .ta { color:var(--muted); }
+.tool-line.idle { color:var(--muted); }
+
+/* ---- idea capsule ---- */
+.idea-capsule {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  border-radius:16px; padding:13px 18px;
+  background:rgba(203,166,247,.045); border:1px dashed rgba(203,166,247,.35);
+  transition:border-color 700ms var(--ease);
+}
+.idea-capsule:hover { border-color:rgba(203,166,247,.55); }
+.idea-capsule[role="button"] { cursor:pointer; }
+.idea-capsule .ititle { font-size:14px; font-weight:700; letter-spacing:-.01em; }
+.idea-capsule .ikey { font-family:var(--mono); font-size:10px; font-weight:650; color:var(--mauve); }
+.idea-capsule .inote { font-size:11.5px; color:var(--mist); flex:1 1 260px; min-width:0; }
+.idea-capsule .driver-chip {
+  display:flex; align-items:center; gap:7px;
+  font-family:var(--mono); font-size:9.5px; font-weight:650; color:var(--mist);
+  background:rgba(49,50,68,.52); border:1px solid var(--hairline);
+  border-radius:99px; padding:3px 11px 3px 4px;
+  transition:color 250ms var(--ease-out), border-color 250ms var(--ease-out);
+}
+.idea-capsule .driver-chip:hover { color:var(--text); border-color:rgba(166,173,200,.4); }
+.idea-capsule .driver-chip:active { transform:scale(.98); }
+
+/* ---- toast ---- */
+#toast-root { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:100; pointer-events:none; }
+.toast {
+  background:var(--elevated); color:var(--text);
+  border:1px solid rgba(166,173,200,.28); border-radius:12px;
+  box-shadow:0 12px 40px rgba(0,0,0,.8);
+  padding:10px 18px; font-size:12px; font-family:var(--body); white-space:nowrap;
+  opacity:0; transform:translateY(8px);
+  transition:opacity 250ms var(--ease-out), transform 250ms var(--ease-out);
+}
+.toast.show { opacity:1; transform:translateY(0); }
+
+/* ---- keyframes (agenttrail cookbook, re-inked) ---- */
+@keyframes working-pulse { 50% { opacity:.35; } }
+@keyframes breathe { from { opacity:.4; transform:scale(.65); } to { opacity:1; transform:scale(1); } }
+@keyframes reveal {
+  from { opacity:0; transform:translateY(16px); filter:blur(4px); }
+  to   { opacity:1; transform:none; filter:blur(0); }
+}
+@keyframes travel { to { stroke-dashoffset:-26; } }
+@keyframes capsule-spin { to { transform:rotate(360deg); } }
+@keyframes capsule-pop { from { opacity:0; transform:scale(.95); } to { opacity:1; transform:none; } }
+@keyframes rail-live { from { opacity:.5; } to { opacity:1; } }
+
+@media (prefers-reduced-motion: no-preference) {
+  .reveal { animation:reveal 600ms var(--ease-out) both; }
+  .trail .ants line { animation:travel 900ms linear infinite; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration:1ms !important; animation-iteration-count:1 !important; transition-duration:1ms !important; }
+}
+</style>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<!-- Avatar gradient symbol set — referenced by every mark on the page -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <radialGradient id="av-driver" cx="32%" cy="28%" r="85%">
+      <stop offset="0%" stop-color="#f9e2af"/><stop offset="100%" stop-color="#fab387"/>
+    </radialGradient>
+    <radialGradient id="av-coder" cx="32%" cy="28%" r="85%">
+      <stop offset="0%" stop-color="#89b4fa"/><stop offset="100%" stop-color="#74c7ec"/>
+    </radialGradient>
+    <radialGradient id="av-architect" cx="32%" cy="28%" r="85%">
+      <stop offset="0%" stop-color="#cba6f7"/><stop offset="100%" stop-color="#f5c2e7"/>
+    </radialGradient>
+    <radialGradient id="av-qa" cx="32%" cy="28%" r="85%">
+      <stop offset="0%" stop-color="#94e2d5"/><stop offset="100%" stop-color="#a6e3a1"/>
+    </radialGradient>
+    <radialGradient id="av-scout" cx="32%" cy="28%" r="85%">
+      <stop offset="0%" stop-color="#fab387"/><stop offset="100%" stop-color="#f9e2af"/>
+    </radialGradient>
+  </defs>
+</svg>
+
+<div class="app-window">
+
+  <!-- ======================= toolbar ======================= -->
+  <header class="toolbar">
+    <div class="lights" aria-hidden="true"><span class="l-r"></span><span class="l-y"></span><span class="l-g"></span></div>
+    <div class="seg-wrap">
+      <div class="segmented">
+        <button class="seg-pill" id="seg-pill" aria-pressed="true">Run Ledger</button>
+      </div>
+      <span class="seg-caption">Concept 2 of 3</span>
+    </div>
+    <div class="toolbar-right">
+      <button class="mic-btn" id="mic-btn" aria-label="Voice control">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="#11111b"/>
+          <path d="M3.5 7.5v.5a4.5 4.5 0 0 0 9 0v-.5" stroke="#11111b" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M8 12.5v2" stroke="#11111b" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button class="more-btn" id="more-btn" aria-label="Board options">⋯</button>
+    </div>
+  </header>
+
+  <div class="shell">
+
+    <!-- ======================= sidebar ======================= -->
+    <nav class="sidebar" aria-label="Herdr navigation">
+      <div class="wordmark">
+        <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
+        <b>herdr</b>
+      </div>
+
+      <div class="side-card" aria-current="page">
+        <div class="row1"><b>active work</b><span>4 riding</span></div>
+        <p>Tickets, features, and ideas moving through the Buzz pipeline.</p>
+        <div class="mini-pills">
+          <span class="mini-pill moving">2 moving</span>
+          <span class="mini-pill needy">2 need you</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="side-section-label" style="margin-bottom:6px">my work · 5 watching</div>
+        <div class="side-rows">
+          <button class="side-row" id="row-gh" aria-expanded="true" aria-controls="sub-gh">
+            <span class="chev">▶</span> github reviews <span class="count">2</span>
+          </button>
+          <div class="side-sub open" id="sub-gh">
+            <div>
+              <button class="inbox-item">
+                <span class="repo">doximity/iOS-Doximity #11,856</span>
+                Add calculator access to the drawer
+              </button>
+              <button class="inbox-item">
+                <span class="repo">doximity/agentic-dev #520</span>
+                Register managed MCP runtime
+              </button>
+            </div>
+          </div>
+          <button class="side-row" id="row-jira" aria-expanded="false" aria-controls="sub-jira">
+            <span class="chev">▶</span> jira tickets <span class="count">3</span>
+          </button>
+          <div class="side-sub" id="sub-jira">
+            <div>
+              <button class="inbox-item"><span class="repo">AGENTIC-581</span> Harness telemetry rollup</button>
+              <button class="inbox-item"><span class="repo">AGENTIC-568</span> Buzz thread archival policy</button>
+              <button class="inbox-item"><span class="repo">IOSDOX-27102</span> Drawer deep-link registry</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="side-links">
+        <button class="side-link" data-toast="Opening console — fleet log tail across 3 machines…"><span class="glyph">❯_</span> console</button>
+        <button class="side-link" data-toast="Opening workspaces — 6 worktrees on 2 floors…"><span class="glyph">⌸</span> workspaces</button>
+        <button class="side-link" data-toast="Starting a new Pi session on rocketbot…"><span class="glyph">✦</span> new pi session</button>
+      </div>
+
+      <div class="side-footer">
+        board source<br>
+        8 buzz-* stages · 4 checkpoints<br>
+        tickets/&lt;KEY&gt;/ carries state
+      </div>
+    </nav>
+
+    <!-- ======================= main ======================= -->
+    <main class="main">
+      <div class="content">
+
+        <div class="board-head reveal" style="animation-delay:0ms">
+          <div>
+            <h1>Active work</h1>
+            <div class="sub">Every journey, its cast, and what each stage produced.</div>
+          </div>
+          <div class="board-actions">
+            <button class="btn" id="refresh-btn"><span class="spin-glyph">↻</span> Refresh</button>
+            <button class="btn accent" id="askboard-btn">⌁ Ask board</button>
+          </div>
+        </div>
+
+        <div class="dock reveal" id="dock" style="animation-delay:80ms"></div>
+
+        <div class="summary reveal" id="summary" style="animation-delay:160ms"></div>
+
+        <div class="strips" id="strips"></div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="toast-root"></div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Dataset — inlined verbatim from herdr-active-work-data.js
+   ============================================================ */
+
+// Canonical sample dataset for the three Active Work prototypes.
+// Field names mirror the real harness projection (herdr_harness/active_work_store.py)
+// so a future wiring to GET /api/v1/active-work is mechanical.
+// All three options inline this same data for apples-to-apples comparison.
+
+const PIPELINE = {
+  id: "pipeline_buzz_feature_work_v1",
+  slug: "buzz-feature-work",
+  title: "Buzz feature work",
+  stages: [
+    { stage_key: "start-ticket",           sequence: 1, phase_key: "open",  title: "Start",        skill_name: "buzz-start-ticket",          checkpoint_kind: "none"  },
+    { stage_key: "plan",                   sequence: 2, phase_key: "open",  title: "Plan",         skill_name: "buzz-plan",                  checkpoint_kind: "human" },
+    { stage_key: "implement",              sequence: 3, phase_key: "build", title: "Implement",    skill_name: "buzz-implement",             checkpoint_kind: "none"  },
+    { stage_key: "architect-code-review",  sequence: 4, phase_key: "build", title: "Agent review", skill_name: "buzz-architect-code-review", checkpoint_kind: "none"  },
+    { stage_key: "proof",                  sequence: 5, phase_key: "prove", title: "Proof",        skill_name: "buzz-proof",                 checkpoint_kind: "human" },
+    { stage_key: "code-review-pre-pr",     sequence: 6, phase_key: "prove", title: "Pre-PR",       skill_name: "buzz-code-review-pre-pr",    checkpoint_kind: "human" },
+    { stage_key: "pr",                     sequence: 7, phase_key: "ship",  title: "PR",           skill_name: "buzz-pr",                    checkpoint_kind: "human" },
+    { stage_key: "pr-triage",              sequence: 8, phase_key: "ship",  title: "Triage",       skill_name: "buzz-pr-triage",             checkpoint_kind: "none"  }
+  ]
+};
+
+// avatar_key maps to the SVG symbol set; hue used for gradient tints.
+const AGENTS = {
+  "ag-driver":    { display_name: "Buzz driver",     kind: "orchestrator", avatar_key: "driver",    status: "working" },
+  "ag-deepseek":  { display_name: "DeepSeek coder",  kind: "coder",        avatar_key: "coder",     status: "working" },
+  "ag-picoder":   { display_name: "Pi coder",        kind: "coder",        avatar_key: "coder",     status: "working" },
+  "ag-architect": { display_name: "Architect iOS",   kind: "reviewer",     avatar_key: "architect", status: "queued"  },
+  "ag-proof":     { display_name: "Proof runner",    kind: "verifier",     avatar_key: "qa",        status: "working" },
+  "ag-scout":     { display_name: "PR Review Scout", kind: "triage",       avatar_key: "scout",     status: "working" },
+  "ag-ronnie":    { display_name: "Ronnie",          kind: "human",        avatar_key: "human",     status: "waiting" }
+};
+
+const WORK_ITEMS = [
+  {
+    id: "work_mobile_guard", key: "AGENTIC-575", title: "Mobile API Impact Guard",
+    kind: "feature", kind_label: "Jira ticket",
+    lifecycle: "active", needs_attention: false, attention_reason: null,
+    current_stage_key: "implement", floor: "local", pane: "w1G:t1", updated_label: "now",
+    progress: { completed: 2, total: 8 },
+    next_action: "Coder produces a scoped diff, then the Buzz driver adds and tags Architect iOS.",
+    continuity: ["state.json", "handoff.md", "context-dump.md", "coder brief"],
+    stages: {
+      "start-ticket": { state: "complete", started: "12:02", completed: "12:05",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2231", title: "Kickoff · scope confirmed", status: "archived", url: "buzz://message?channel=c-guard&id=m-2231" }],
+        pi_sessions: [] },
+      "plan": { state: "complete", checkpoint_state: "approved", started: "12:05", completed: "12:27",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" },
+                 { id: "ag-picoder", link_role: "planner", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2233", title: "Plan review · approved by Ronnie", status: "archived", url: "buzz://message?channel=c-guard&id=m-2233" }],
+        pi_sessions: [{ id: "pi-8f31", title: "Plan drafting", provider: "pi", model: "opus", status: "ended", pane_id: "w1G:t2", tokens: "212k" }] },
+      "implement": { state: "active", attention: "none", started: "12:27",
+        agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "active" },
+                 { id: "ag-driver",  link_role: "driver", link_state: "active" }],
+        buzz_threads: [{ id: "bz-2240", title: "Implement · diff streaming", status: "active", url: "buzz://message?channel=c-guard&id=m-2240" }],
+        pi_sessions: [{ id: "pi-9a02", title: "Coder session · schema integration", provider: "pi", model: "deepseek-v3", status: "running", pane_id: "w1G:t1", tokens: "486k" }],
+        activity: [
+          { t: "13:30", actor: "ag-driver",   message: "Accepted ownership and started execution." },
+          { t: "13:31", actor: "ag-picoder",  message: "Reading schema integration points." },
+          { t: "13:38", actor: "ag-deepseek", message: "Wrote ImpactGuard middleware · 6 files touched." },
+          { t: "13:44", actor: "ag-deepseek", message: "Running scoped tests on api-gateway target." }
+        ] },
+      "architect-code-review": { state: "ready",
+        agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "queued" }],
+        buzz_threads: [], pi_sessions: [] },
+      "proof": { state: "pending" }, "code-review-pre-pr": { state: "pending" },
+      "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+    }
+  },
+  {
+    id: "work_ask_audit", key: "IOSDOX-27458", title: "Ask Analytics Audit",
+    kind: "feature", kind_label: "Feature",
+    lifecycle: "active", needs_attention: true,
+    attention_reason: "Checkpoint pending at Proof — approve the analytics event map.",
+    current_stage_key: "proof", floor: "DevBox", pane: "wX:t1", updated_label: "21m",
+    progress: { completed: 4, total: 8 },
+    next_action: "Approve the event map so Pre-PR can start.",
+    continuity: ["state.json", "handoff.md", "event-map.md"],
+    stages: {
+      "start-ticket": { state: "complete", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "plan": { state: "complete", checkpoint_state: "approved",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2198", title: "Audit scope", status: "archived", url: "buzz://message?channel=c-audit&id=m-2198" }] },
+      "implement": { state: "complete",
+        agents: [{ id: "ag-picoder", link_role: "coder", link_state: "done" }],
+        pi_sessions: [{ id: "pi-7c11", title: "Audit implementation", provider: "pi", model: "opus", status: "ended", pane_id: "wX:t1", tokens: "603k" }],
+        buzz_threads: [{ id: "bz-2204", title: "Implement thread", status: "archived", url: "buzz://message?channel=c-audit&id=m-2204" }] },
+      "architect-code-review": { state: "complete",
+        agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2210", title: "Review notes · 2 fixes applied", status: "archived", url: "buzz://message?channel=c-audit&id=m-2210" }] },
+      "proof": { state: "active", attention: "human", checkpoint_state: "pending", started: "13:23",
+        agents: [{ id: "ag-proof", link_role: "verifier", link_state: "active" },
+                 { id: "ag-ronnie", link_role: "checkpoint", link_state: "waiting" }],
+        buzz_threads: [{ id: "bz-2216", title: "Proof run · event map ready for you", status: "active", url: "buzz://message?channel=c-audit&id=m-2216" }],
+        pi_sessions: [],
+        activity: [{ t: "13:23", actor: "ag-proof", message: "Event map assembled — 41 events, 3 new." }] },
+      "code-review-pre-pr": { state: "pending" }, "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+    }
+  },
+  {
+    id: "work_moa_mgmt", key: "AGENTIC-472", title: "OpenCode MOA Agent Management",
+    kind: "feature", kind_label: "Ticket + PR #510",
+    lifecycle: "active", needs_attention: true,
+    attention_reason: "PR approved by agents — merge decision is yours.",
+    current_stage_key: "pr-triage", floor: "local", pane: "wK:t9", updated_label: "36m",
+    progress: { completed: 7, total: 8 },
+    next_action: "Merge or request changes on PR #510.",
+    continuity: ["state.json", "pr-summary.md"],
+    stages: {
+      "start-ticket": { state: "complete" },
+      "plan": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "implement": { state: "complete",
+        agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "done" }],
+        pi_sessions: [{ id: "pi-5510", title: "MOA management build", provider: "pi", model: "deepseek-v3", status: "ended", pane_id: "wK:t9", tokens: "1.2M" }] },
+      "architect-code-review": { state: "complete", agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }] },
+      "proof": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-proof", link_role: "verifier", link_state: "done" }] },
+      "code-review-pre-pr": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+      "pr": { state: "complete", checkpoint_state: "approved",
+        agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+        buzz_threads: [{ id: "bz-2172", title: "PR #510 · review passed", status: "archived", url: "buzz://message?channel=c-moa&id=m-2172" }] },
+      "pr-triage": { state: "active", attention: "human", started: "13:08",
+        agents: [{ id: "ag-scout", link_role: "triage", link_state: "active" },
+                 { id: "ag-ronnie", link_role: "decision", link_state: "waiting" }],
+        buzz_threads: [{ id: "bz-2229", title: "Merge decision", status: "active", url: "buzz://message?channel=c-moa&id=m-2229" }],
+        pi_sessions: [] }
+    }
+  },
+  {
+    id: "work_review_memory", key: "IDEA-07", title: "Project Review Memory",
+    kind: "idea", kind_label: "Idea",
+    lifecycle: "active", needs_attention: false,
+    current_stage_key: null, floor: "no floor yet", pane: null, updated_label: "forming",
+    progress: { completed: 0, total: 8 },
+    next_action: "Explore first. No worktree until a prototype decision is approved.",
+    note: "Idea intake, before the ticket pipeline.",
+    stages: {},
+    cast_note: "Buzz driver shaping"
+  }
+];
+
+/* ============================================================
+   Prototype-local constants & helpers
+   ============================================================ */
+
+// 2-char glyphs layered over the avatar gradients.
+const AVATAR_GLYPHS = {
+  "ag-driver": "BZ", "ag-deepseek": "DS", "ag-picoder": "PI",
+  "ag-architect": "AR", "ag-proof": "QA", "ag-scout": "SC", "ag-ronnie": "R"
+};
+
+// The dataset's clock strings are anchored to a fictional wall clock.
+// We treat "13:49" as the moment the page loaded, so every t-ago is honest.
+const LOAD_AT = Date.now();
+const NOW_CLOCK_MIN = 13 * 60 + 49;
+
+function clockToAt(clock) {
+  const [h, m] = clock.split(":").map(Number);
+  return LOAD_AT - (NOW_CLOCK_MIN - (h * 60 + m)) * 60000;
+}
+function clockNow() {
+  const total = NOW_CLOCK_MIN + Math.floor((Date.now() - LOAD_AT) / 60000);
+  const h = Math.floor(total / 60) % 24, m = total % 60;
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+function ago(at) {
+  const d = Math.max(0, Date.now() - at);
+  const s = Math.floor(d / 1000);
+  if (s < 3) return "now";
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h " + (m % 60) + "m";
+  return Math.floor(h / 24) + "d";
+}
+
+function tAgo(at, extraClass) {
+  return `<span class="t-ago ${extraClass || ""}" data-at="${at}"></span>`;
+}
+
+function elapsedText(at, withSeconds) {
+  const d = Math.max(0, Date.now() - at);
+  const s = Math.floor(d / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  if (withSeconds) {
+    return (h ? h + "h " : "") + String(m).padStart(2, "0") + "m " + String(ss).padStart(2, "0") + "s";
+  }
+  return (h ? h + "h " : "") + m + "m";
+}
+
+// Avatar mark: gradient circle (or flat alert for the human) + glyph overlay.
+function avatarSVG(agentId, size) {
+  const agent = AGENTS[agentId];
+  if (!agent) return "";
+  const glyph = AVATAR_GLYPHS[agentId] || "??";
+  const isHuman = agent.avatar_key === "human";
+  const fill = isHuman ? "#f38ba8" : `url(#av-${agent.avatar_key})`;
+  const fontSize = glyph.length === 1 ? size * 0.46 : size * 0.36;
+  return `<svg class="avatar" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="${esc(agent.display_name)}">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="${fill}"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 0.5}" fill="none" stroke="rgba(17,17,27,.35)" stroke-width="1"/>
+    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle"
+      font-family="SFMono-Regular,'SF Mono',Menlo,ui-monospace,monospace" font-weight="700"
+      font-size="${fontSize}" fill="#181825">${esc(glyph)}</text>
+  </svg>`;
+}
+
+/* ---- toast (single card, rapid toasts reset cleanly) ---- */
+function toast(message) {
+  const root = document.getElementById("toast-root");
+  let card = root.querySelector(".toast");
+  if (!card) {
+    card = document.createElement("div");
+    card.className = "toast";
+    card.setAttribute("role", "status");
+    root.appendChild(card);
+  }
+  card.textContent = message;
+  clearTimeout(card._hideT);
+  clearTimeout(card._killT);
+  requestAnimationFrame(() => card.classList.add("show"));
+  card._hideT = setTimeout(() => {
+    card.classList.remove("show");
+    card._killT = setTimeout(() => card.remove(), 300);
+  }, 2600);
+}
+</script>
+<script>
+"use strict";
+
+/* ============================================================
+   Derived indexes & runtime state
+   ============================================================ */
+
+const STAGE_KEYS = PIPELINE.stages.map(s => s.stage_key);
+const STAGE_BY_KEY = Object.fromEntries(PIPELINE.stages.map(s => [s.stage_key, s]));
+
+// Per-item runtime (never mutates the dataset shape the API would send).
+const RT = {};
+for (const item of WORK_ITEMS) {
+  const minutesAgo = { now: 0, "21m": 21, "36m": 36 }[item.updated_label];
+  RT[item.id] = {
+    updatedAt: minutesAgo == null ? null : LOAD_AT - minutesAgo * 60000,
+    openStage: null,
+    focusCol: item.current_stage_key ? STAGE_KEYS.indexOf(item.current_stage_key) : 0
+  };
+  // Normalize activity clocks into real timestamps once.
+  for (const key of Object.keys(item.stages || {})) {
+    const st = item.stages[key];
+    if (st.activity) for (const a of st.activity) a.at = clockToAt(a.t);
+  }
+}
+
+const LIVE_ITEM = WORK_ITEMS[0];           // AGENTIC-575 — the simulator's subject
+let lastSimAt = LOAD_AT;                   // drives obs-live + hot decay
+let obsState = { verb: "Editing", target: "api/impact_guard.py", count: 3, at: LOAD_AT };
+
+const PRIMARY_ACTIONS = {
+  work_ask_audit: { label: "Review event map", msg: "Opening event-map.md — 41 events, 3 new, awaiting your approval…" },
+  work_moa_mgmt:  { label: "Decide on PR #510", msg: "Opening PR #510 on doximity/agentic-dev — agents approve, merge is yours…" }
+};
+
+function stageHasContent(st) {
+  return !!(st && ((st.agents && st.agents.length) || (st.buzz_threads && st.buzz_threads.length) ||
+    (st.pi_sessions && st.pi_sessions.length) || (st.activity && st.activity.length)));
+}
+
+function agentRowsFor(item) {
+  const seen = new Map(); // agentId -> { links: {stageIdx: link}, firstIdx }
+  STAGE_KEYS.forEach((key, idx) => {
+    const st = item.stages[key];
+    if (!st || !st.agents) return;
+    for (const link of st.agents) {
+      if (!seen.has(link.id)) seen.set(link.id, { links: {}, firstIdx: idx });
+      seen.get(link.id).links[idx] = link;
+    }
+  });
+  return [...seen.entries()]
+    .map(([id, v]) => ({ id, ...v }))
+    .sort((a, b) => a.firstIdx - b.firstIdx);
+}
+
+/* ============================================================
+   Needs-you dock + summary strip
+   ============================================================ */
+
+function renderDock() {
+  const host = document.getElementById("dock");
+  host.innerHTML = WORK_ITEMS.filter(w => w.needs_attention).map(item => {
+    const act = PRIMARY_ACTIONS[item.id];
+    return `<div class="dock-banner">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="dkey">${esc(item.key)}</span>
+      <span class="dreason">${esc(item.attention_reason)}</span>
+      <button class="primary-act" data-item="${esc(item.id)}">${esc(act.label)}</button>
+      <button class="jump" data-jump="${esc(item.id)}">jump to strip ↓</button>
+    </div>`;
+  }).join("");
+
+  host.querySelectorAll(".primary-act").forEach(btn =>
+    btn.addEventListener("click", () => toast(PRIMARY_ACTIONS[btn.dataset.item].msg)));
+  host.querySelectorAll(".jump").forEach(btn =>
+    btn.addEventListener("click", () => {
+      const strip = document.getElementById("strip-" + btn.dataset.jump);
+      strip.scrollIntoView({ behavior: "smooth", block: "center" });
+      strip.classList.remove("flash");
+      requestAnimationFrame(() => strip.classList.add("flash"));
+      setTimeout(() => strip.classList.remove("flash"), 1500);
+    }));
+}
+
+function renderSummary() {
+  let attachments = 0, liveSessions = 0;
+  for (const item of WORK_ITEMS) {
+    attachments += agentRowsFor(item).length;
+    for (const key of Object.keys(item.stages || {})) {
+      const st = item.stages[key];
+      if (st.pi_sessions) liveSessions += st.pi_sessions.filter(p => p.status === "running").length;
+    }
+  }
+  const needy = WORK_ITEMS.filter(w => w.needs_attention).length;
+  document.getElementById("summary").innerHTML = `
+    <div class="metric"><span class="num">${WORK_ITEMS.length}</span><span class="lbl">work items</span></div>
+    <div class="metric"><span class="num">${attachments}</span><span class="lbl">agent attachments</span></div>
+    <div class="metric"><span class="num">${liveSessions}</span><span class="lbl">live pi sessions</span></div>
+    <div class="metric alert"><span class="num">${needy}</span><span class="lbl">need you</span></div>`;
+}
+
+/* ============================================================
+   Run strip renderer
+   ============================================================ */
+
+function stopMarkup(item, idx) {
+  const key = STAGE_KEYS[idx];
+  const def = PIPELINE.stages[idx];
+  const st = item.stages[key] || { state: "pending" };
+  const isGate = def.checkpoint_kind === "human";
+  const cls = ["stop"];
+  if (isGate) {
+    cls.push("gate");
+    if (st.checkpoint_state === "approved") cls.push("g-approved");
+    else if (st.checkpoint_state === "pending") cls.push("g-pending");
+    else cls.push("g-future");
+  }
+  if (st.state === "complete") cls.push("s-done");
+  else if (st.state === "active") {
+    cls.push("s-current", "halo");
+    if (item.needs_attention) cls.push("needsyou");
+  }
+  else if (st.state === "ready") cls.push("s-ready");
+  else cls.push("s-pending");
+  const left = ((idx + 0.5) * 12.5).toFixed(2);
+  const gateNote = isGate ? " · human checkpoint" : "";
+  return `<button class="${cls.join(" ")}" style="left:${left}%" tabindex="-1"
+    data-stage="${esc(key)}" title="Stage ${def.sequence} · ${esc(def.title)}${gateNote}"
+    aria-label="Open ${esc(def.title)} dossier"><span class="check">✓</span></button>`;
+}
+
+function trailMarkup(item) {
+  const curIdx = STAGE_KEYS.indexOf(item.current_stage_key);
+  let lastDone = -1;
+  STAGE_KEYS.forEach((k, i) => { if ((item.stages[k] || {}).state === "complete") lastDone = i; });
+  const fillW = lastDone > 0 ? (lastDone * 12.5) : 0;
+  const antsX1 = ((Math.max(lastDone, 0) + 0.5) * 12.5).toFixed(2);
+  const antsX2 = ((curIdx + 0.5) * 12.5).toFixed(2);
+  const titles = PIPELINE.stages.map((s, i) => {
+    let cls = "";
+    if (i === curIdx) cls = item.needs_attention ? "cur-alert" : "cur";
+    return `<span class="${cls}">${esc(s.title)}</span>`;
+  }).join("");
+  return `<div class="trail" aria-hidden="false">
+    <div class="track"></div>
+    ${fillW > 0 ? `<div class="fill" style="width:${fillW}%"></div>` : ""}
+    ${curIdx > lastDone ? `<svg class="ants" preserveAspectRatio="none">
+      <line x1="${antsX1}%" y1="12.5" x2="${antsX2}%" y2="12.5"/></svg>` : ""}
+    ${PIPELINE.stages.map((_, i) => stopMarkup(item, i)).join("")}
+    <div class="trail-titles">${titles}</div>
+  </div>`;
+}
+
+function barCell(item, row, idx, colClass, isLastRow) {
+  const link = row.links[idx];
+  const classes = ["lg-cell", colClass[idx] || ""];
+  if (isLastRow && colClass[idx]) classes.push("col-last");
+  if (!link) {
+    return `<div class="${classes.join(" ")}"><span class="empty-dot"></span></div>`;
+  }
+  classes.push("has-bar");
+  const prev = !!row.links[idx - 1], next = !!row.links[idx + 1];
+  const run = prev && next ? "run-mid" : prev ? "run-end" : next ? "run-start" : "run-solo";
+  const stateCls = { done: "b-done", active: "b-active", queued: "b-queued", waiting: "b-waiting" }[link.link_state] || "b-done";
+  const st = item.stages[STAGE_KEYS[idx]] || {};
+  const from = st.started || "—";
+  const to = (link.link_state === "active" || link.link_state === "waiting") ? "now" : (st.completed || "done");
+  const tip = `attached ${from} → ${to} · ${link.link_role}`;
+  return `<div class="${classes.join(" ")}" data-stage="${esc(STAGE_KEYS[idx])}" title="${esc(tip)}">
+    <span class="att-bar ${stateCls} ${run}"></span></div>`;
+}
+
+function ledgerMarkup(item) {
+  const curIdx = STAGE_KEYS.indexOf(item.current_stage_key);
+  const colClass = {};
+  if (curIdx >= 0) colClass[curIdx] = item.needs_attention ? "col-alert" : "col-cur";
+  const rows = agentRowsFor(item);
+
+  const head = `<div class="lg-cell lg-head"><span class="lg-corner">cast · ${rows.length}</span></div>` +
+    PIPELINE.stages.map((s, i) => {
+      const st = item.stages[s.stage_key];
+      const hollow = stageHasContent(st) ? "" : "hollow";
+      return `<div class="lg-cell lg-head ${colClass[i] || ""} ${colClass[i] ? "col-first" : ""}">
+        <button class="stage-btn ${hollow}" data-stage="${esc(s.stage_key)}" aria-expanded="false"
+          aria-label="Stage ${s.sequence} · ${esc(s.title)} — toggle dossier" tabindex="-1">
+          <span class="att-tick" aria-hidden="true"></span>${String(s.sequence).padStart(2, "0")}
+          <span class="caret" aria-hidden="true">▾</span>
+        </button></div>`;
+    }).join("");
+
+  const body = rows.map((row, r) => {
+    const agent = AGENTS[row.id];
+    const latestIdx = Math.max(...Object.keys(row.links).map(Number));
+    const role = row.links[latestIdx].link_role;
+    const isLast = r === rows.length - 1;
+    const cells = PIPELINE.stages.map((_, i) => barCell(item, row, i, colClass, isLast)).join("");
+    let obs = "";
+    if (item.id === LIVE_ITEM.id && row.id === "ag-deepseek") {
+      // Continue the current-column tint through the full-span observed row so the
+      // tinted column reads unbroken (spec: full-height tint + line under active agent).
+      let obsTint = "";
+      if (colClass[curIdx]) {
+        const tint = item.needs_attention ? "rgba(243,139,168,.08)" : "rgba(137,180,250,.1)";
+        const L = `calc(170px + (100% - 170px)*${curIdx}/8)`;
+        const R = `calc(170px + (100% - 170px)*${curIdx + 1}/8)`;
+        obsTint = ` style="background:linear-gradient(90deg,transparent ${L},${tint} ${L},${tint} ${R},transparent ${R})"`;
+      }
+      obs = `<div class="obs-row obs-live" id="obs-live-row"${obsTint}>
+        <svg class="obs-ring" width="16" height="16" viewBox="0 0 30 30" aria-hidden="true">
+          <circle cx="15" cy="15" r="13" stroke="rgba(166,173,200,.18)" stroke-width="2.5" fill="none"/>
+          <circle class="arc" cx="15" cy="15" r="13" stroke-width="2.5"/>
+        </svg>
+        <span class="obs-verb" id="obs-verb">${esc(obsState.verb)}</span>
+        <span aria-hidden="true">·</span>
+        <span class="obs-target" id="obs-target">${esc(obsState.target)}</span>
+        <span class="obs-count" id="obs-count">×${obsState.count}</span>
+        <span aria-hidden="true">·</span>
+        ${tAgo(obsState.at, "obs-ago")}
+      </div>`;
+    }
+    return `<div class="lg-cell lg-name">
+        ${avatarSVG(row.id, 18)}
+        <span class="who"><b>${esc(agent.display_name)}</b><i>${esc(role)}</i></span>
+      </div>${cells}${obs}`;
+  }).join("");
+
+  return `<div class="ledger-panel">
+    <div class="ledger-scroll"><div class="ledger">${head}${body}</div></div>
+    <div class="dossier" id="dossier-${esc(item.id)}">
+      <div class="dossier-clip"><div class="dossier-inner" id="dossier-inner-${esc(item.id)}"></div></div>
+    </div>
+  </div>`;
+}
+
+/* ---- dossier content ---- */
+
+function threadRow(th) {
+  const live = th.status === "active";
+  return `<div class="thread-row ${live ? "" : "faded"}">
+    <span class="status-dot ${live ? "live" : "gone"}" aria-hidden="true"></span>
+    <span class="tid">#${esc(th.id)}</span>
+    <span class="ttitle" title="${esc(th.title)}">${esc(th.title)}</span>
+    <button class="open-btn" data-toast="Opening ${esc(th.id)} in Buzz — ${esc(th.title)}…">Open in Buzz</button>
+  </div>`;
+}
+
+function piRow(pi) {
+  const live = pi.status === "running";
+  return `<div class="pi-row ${live ? "" : "faded"}">
+    <span class="status-dot ${live ? "live" : "gone"}" aria-hidden="true"></span>
+    <span class="ptitle" title="${esc(pi.title)}">${esc(pi.title)}</span>
+    <span class="pmeta">${esc(pi.model)} · ${esc(pi.tokens)}</span>
+    <button class="open-btn" data-toast="Opening pane ${esc(pi.pane_id)} on ${live ? "rocketbot" : "its floor"}…">Open pane ${esc(pi.pane_id)}</button>
+  </div>`;
+}
+
+function emptyStageLine(item, stageKey) {
+  const def = STAGE_BY_KEY[stageKey];
+  if (stageKey === "proof") {
+    return `Nothing attached at Proof yet — Proof runner joins after Agent review.`;
+  }
+  const prev = PIPELINE.stages[STAGE_KEYS.indexOf(stageKey) - 1];
+  return `Nothing attached at ${esc(def.title)} yet — this stage opens after ${esc(prev ? prev.title : "kickoff")}.`;
+}
+
+function dossierHTML(item, stageKey) {
+  const def = STAGE_BY_KEY[stageKey];
+  const st = item.stages[stageKey] || { state: "pending" };
+  const num = String(def.sequence).padStart(2, "0");
+
+  const title = `<div class="dossier-title">
+    <span class="dnum">${num}</span>
+    <span class="dname">${esc(def.title)}</span>
+    <span class="dskill">${esc(def.skill_name)}</span>
+    <button class="dclose" data-close="1" aria-label="Close dossier">✕</button>
+  </div>`;
+
+  if (!stageHasContent(st) && st.state === "pending") {
+    return `${title}<div class="d-empty">${emptyStageLine(item, stageKey)}</div>`;
+  }
+
+  const threads = (st.buzz_threads || []);
+  const pis = (st.pi_sessions || []);
+
+  // record column
+  let rec = "";
+  if (def.checkpoint_kind === "human") {
+    const cs = st.checkpoint_state;
+    const chip = cs === "approved"
+      ? `<span class="gate-chip approved">◆ approved</span>`
+      : cs === "pending"
+        ? `<span class="gate-chip pending">◆ pending — waiting on you</span>`
+        : `<span class="gate-chip none">◇ future gate</span>`;
+    rec += `<div class="rec-line"><span class="rk">checkpoint</span>${chip}</div>`;
+  } else {
+    rec += `<div class="rec-line"><span class="rk">checkpoint</span><span class="gate-chip none">no gate</span></div>`;
+  }
+  if (st.started) {
+    rec += `<div class="rec-line"><span class="rk">started</span><span>${esc(st.started)}</span>${tAgo(clockToAt(st.started))}</div>`;
+  }
+  if (st.completed) {
+    rec += `<div class="rec-line"><span class="rk">completed</span><span>${esc(st.completed)}</span>${tAgo(clockToAt(st.completed))}</div>`;
+  }
+  if (!st.started && !st.completed) {
+    rec += `<div class="rec-line"><span class="rk">state</span><span>${esc(st.state)}</span></div>`;
+  }
+  if (stageKey === item.current_stage_key && item.continuity) {
+    rec += `<div class="rec-line" style="align-items:flex-start"><span class="rk">continuity</span>
+      <span class="doc-chips">${item.continuity.map(d =>
+        `<button class="doc-chip" data-toast="Opening ${esc(d)} from tickets/${esc(item.key)}/…">${esc(d)}</button>`).join("")}</span></div>`;
+  }
+  if (st.activity && st.activity.length) {
+    rec += `<div class="act-list" id="act-${esc(item.id)}-${esc(stageKey)}">` +
+      st.activity.map(a => `<div class="act-line">
+        <span class="actor">${esc(AGENTS[a.actor] ? AGENTS[a.actor].display_name : a.actor)}</span>
+        <span class="msg" title="${esc(a.message)}">${esc(a.message)}</span>
+        ${tAgo(a.at)}
+      </div>`).join("") + `</div>`;
+  }
+
+  return `${title}<div class="dossier-cols">
+    <div class="dcol"><div class="dcol-head">threads <span class="cnt">${threads.length}</span></div>
+      ${threads.length ? threads.map(threadRow).join("") : `<div class="d-empty">No Buzz threads at ${esc(def.title)}.</div>`}</div>
+    <div class="dcol"><div class="dcol-head">pi sessions <span class="cnt">${pis.length}</span></div>
+      ${pis.length ? pis.map(piRow).join("") : `<div class="d-empty">No Pi sessions at ${esc(def.title)}.</div>`}</div>
+    <div class="dcol"><div class="dcol-head">record</div>${rec}</div>
+  </div>`;
+}
+
+/* ---- full strip ---- */
+
+function stripMarkup(item, revealIdx) {
+  const rt = RT[item.id];
+  const curDef = STAGE_BY_KEY[item.current_stage_key];
+  const curStage = item.stages[item.current_stage_key] || {};
+  const statusCls = item.needs_attention ? "st-alert" : "st-working";
+  const statusPill = item.needs_attention
+    ? `<span class="status-pill needs">needs you</span>`
+    : `<span class="status-pill working">working</span>`;
+
+  // agents currently attached (active / waiting) for the header stack
+  const liveAgents = (curStage.agents || []).filter(a => a.link_state === "active" || a.link_state === "waiting");
+  const stack = liveAgents.map(a => `<span class="stacked" title="${esc(AGENTS[a.id].display_name)} · ${esc(a.link_role)}">
+      ${avatarSVG(a.id, 28)}<span class="live-dot ${a.link_state === "waiting" ? "waiting" : ""}"></span></span>`).join("");
+
+  const startedAt = curStage.started ? clockToAt(curStage.started) : null;
+  const isLive = item.id === LIVE_ITEM.id;
+  const elapsed = startedAt
+    ? `<span class="elapsed" title="Time in ${esc(curDef.title)}"><span class="clock-glyph">⏱</span>
+        <span class="elapsed-val" data-at="${startedAt}" data-live="${isLive ? 1 : 0}">${elapsedText(startedAt, isLive)}</span></span>`
+    : "";
+
+  const foot = isLive
+    ? `<span class="tool-line" id="tool-line-live">
+        <span class="tn" id="tool-tn">Edit</span>
+        <span class="td" id="tool-td">api/impact_guard.py</span>
+        <span class="ta">${tAgo(LOAD_AT, "tool-ta")}</span>
+      </span>`
+    : `<span class="tool-line idle">idle — waiting for you</span>`;
+
+  return `<article class="run-strip reveal ${statusCls} ${isLive ? "hot" : ""}" id="strip-${esc(item.id)}"
+    style="animation-delay:${240 + revealIdx * 80}ms" tabindex="0"
+    aria-label="${esc(item.key)} · ${esc(item.title)} · ${item.needs_attention ? "needs you" : "working"}">
+    <div class="strip-head">
+      <div class="strip-id">
+        <span class="kind-pill">${esc(item.kind_label)}</span>
+        <span class="skill-pill">${esc(curDef.skill_name)}</span>
+        <span class="strip-key">${esc(item.key)}</span>
+        <span class="strip-title">${esc(item.title)}</span>
+        <span class="strip-meta">${esc(item.floor)}<span class="sep">·</span>${esc(item.pane || "—")}<span class="sep">·</span>updated ${tAgo(rt.updatedAt, "updated-ago")}</span>
+      </div>
+      <div class="strip-right">
+        <span class="agent-stack">${stack}</span>
+        ${statusPill}
+        ${elapsed}
+      </div>
+    </div>
+    ${trailMarkup(item)}
+    ${ledgerMarkup(item)}
+    <div class="strip-foot">
+      <span class="next-action" title="${esc(item.next_action)}"><span class="na-key">next</span>${esc(item.next_action)}</span>
+      ${foot}
+    </div>
+  </article>`;
+}
+
+function ideaMarkup(item, revealIdx) {
+  return `<div class="idea-capsule reveal" id="strip-${esc(item.id)}" role="button" tabindex="0"
+    style="animation-delay:${240 + revealIdx * 80}ms"
+    aria-label="${esc(item.key)} · ${esc(item.title)} · idea, shaping">
+    <span class="kind-pill idea">${esc(item.kind_label)}</span>
+    <span class="ikey">${esc(item.key)}</span>
+    <span class="ititle">${esc(item.title)}</span>
+    <span class="inote">${esc(item.next_action)}</span>
+    <button class="driver-chip" data-toast="Opening shaping thread with Buzz driver in Buzz…">
+      ${avatarSVG("ag-driver", 20)} Buzz driver</button>
+    <span class="status-pill shaping">shaping</span>
+  </div>`;
+}
+
+/* ============================================================
+   Dossier open/close + wiring
+   ============================================================ */
+
+function setDossier(item, stageKey, opts) {
+  const rt = RT[item.id];
+  const strip = document.getElementById("strip-" + item.id);
+  const dossier = document.getElementById("dossier-" + item.id);
+  const inner = document.getElementById("dossier-inner-" + item.id);
+  const toggleOff = rt.openStage === stageKey && !(opts && opts.forceOpen);
+
+  rt.openStage = toggleOff ? null : stageKey;
+
+  // aria-expanded across the strip's stage buttons
+  strip.querySelectorAll(".stage-btn").forEach(btn =>
+    btn.setAttribute("aria-expanded", String(btn.dataset.stage === rt.openStage)));
+
+  if (toggleOff) { dossier.classList.remove("open"); return; }
+
+  inner.innerHTML = dossierHTML(item, stageKey);
+  inner.classList.remove("pop");
+  requestAnimationFrame(() => inner.classList.add("pop"));
+  dossier.classList.add("open");
+
+  inner.querySelector(".dclose").addEventListener("click", () => setDossier(item, stageKey));
+  inner.querySelectorAll("[data-toast]").forEach(el =>
+    el.addEventListener("click", () => toast(el.dataset.toast)));
+}
+
+function wireStrip(item) {
+  const strip = document.getElementById("strip-" + item.id);
+  const rt = RT[item.id];
+  const headerBtns = [...strip.querySelectorAll(".stage-btn")];
+
+  // roving tabindex among the 8 column headers; start on the current stage
+  function setFocusCol(idx, focus) {
+    rt.focusCol = Math.max(0, Math.min(headerBtns.length - 1, idx));
+    headerBtns.forEach((b, i) => b.tabIndex = i === rt.focusCol ? 0 : -1);
+    if (focus) headerBtns[rt.focusCol].focus();
+  }
+  setFocusCol(rt.focusCol, false);
+
+  headerBtns.forEach((btn, i) => {
+    btn.addEventListener("click", () => { setFocusCol(i, false); setDossier(item, btn.dataset.stage); });
+    btn.addEventListener("keydown", e => {
+      if (e.key === "ArrowRight") { e.preventDefault(); setFocusCol(i + 1, true); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); setFocusCol(i - 1, true); }
+    });
+  });
+
+  // trail stops + attachment bar cells open the same dossier
+  strip.querySelectorAll(".stop[data-stage], .lg-cell.has-bar[data-stage]").forEach(el =>
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      setDossier(item, el.dataset.stage, { forceOpen: rt.openStage !== el.dataset.stage });
+    }));
+
+  // Enter / Space on the strip itself toggles the current stage's dossier
+  strip.addEventListener("keydown", e => {
+    if ((e.key === "Enter" || e.key === " ") && e.target === strip) {
+      e.preventDefault();
+      setDossier(item, item.current_stage_key || STAGE_KEYS[0]);
+    }
+  });
+}
+
+function renderStrips() {
+  const host = document.getElementById("strips");
+  let revealIdx = 0;
+  host.innerHTML = WORK_ITEMS.map(item =>
+    item.kind === "idea" ? ideaMarkup(item, revealIdx++) : stripMarkup(item, revealIdx++)
+  ).join("");
+
+  for (const item of WORK_ITEMS) {
+    if (item.kind === "idea") {
+      const cap = document.getElementById("strip-" + item.id);
+      const chip = cap.querySelector(".driver-chip");
+      chip.addEventListener("click", e => { e.stopPropagation(); toast(chip.dataset.toast); });
+      const capToast = () => toast("IDEA-07 is still forming — no worktree until a prototype decision is approved.");
+      cap.addEventListener("click", capToast);
+      cap.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); capToast(); }
+      });
+      continue;
+    }
+    wireStrip(item);
+  }
+
+  // The active stage's dossier is pre-opened on the first strip.
+  setDossier(LIVE_ITEM, LIVE_ITEM.current_stage_key, { forceOpen: true });
+}
+
+/* ============================================================
+   Chrome wiring (toolbar + sidebar)
+   ============================================================ */
+
+function wireChrome() {
+  document.getElementById("seg-pill").addEventListener("click", () =>
+    toast("You're viewing Run Ledger — concept 2 of 3."));
+  document.getElementById("mic-btn").addEventListener("click", () =>
+    toast("Voice: listening… say a ticket key or “what needs me?”"));
+  document.getElementById("more-btn").addEventListener("click", () =>
+    toast("Board options — refresh cadence, stage visibility, floors."));
+  const refresh = document.getElementById("refresh-btn");
+  refresh.addEventListener("click", () => {
+    refresh.classList.remove("spinning");
+    requestAnimationFrame(() => refresh.classList.add("spinning"));
+    toast("Refreshed from the harness — no changes upstream.");
+  });
+  document.getElementById("askboard-btn").addEventListener("click", () =>
+    toast("Ask board: 4 journeys, 2 waiting on you — Proof gate and PR #510."));
+
+  // collapsible sidebar sections
+  for (const [rowId, subId] of [["row-gh", "sub-gh"], ["row-jira", "sub-jira"]]) {
+    const row = document.getElementById(rowId), sub = document.getElementById(subId);
+    row.addEventListener("click", () => {
+      const open = sub.classList.toggle("open");
+      row.setAttribute("aria-expanded", String(open));
+    });
+  }
+  document.querySelectorAll(".inbox-item").forEach(el => {
+    const repo = el.querySelector(".repo").textContent.trim();
+    el.addEventListener("click", () => toast(`Opening ${repo} — ${el.textContent.replace(repo, "").trim()}…`));
+  });
+  document.querySelectorAll(".side-link").forEach(el =>
+    el.addEventListener("click", () => toast(el.dataset.toast)));
+}
+
+/* ============================================================
+   Live simulator — AGENTIC-575's implement stage keeps moving
+   ============================================================ */
+
+const SIM_TICKS = [
+  { actor: "ag-deepseek", message: "Scoped tests green · 14 passed on api-gateway.",
+    tool: { tn: "Bash", td: "pytest -k impact_guard" }, verb: "Testing", target: "tests/test_impact_guard.py", edits: 0 },
+  { actor: "ag-deepseek", message: "Refactoring guard config · thresholds to impact_rules.yml.",
+    tool: { tn: "Edit", td: "api/impact_rules.yml" }, verb: "Editing", target: "api/impact_rules.yml", edits: 1 },
+  { actor: "ag-driver", message: "Diff staged · 6 files, +412 −38 — pinging Architect iOS next.",
+    tool: { tn: "Read", td: "api/impact_guard.py" }, verb: "Revising", target: "api/impact_guard.py", edits: 0 },
+  { actor: "ag-deepseek", message: "Hardened rate-limit path · retries now jittered.",
+    tool: { tn: "Edit", td: "api/impact_guard.py" }, verb: "Editing", target: "api/impact_guard.py", edits: 1 }
+];
+let simIdx = 0;
+
+function simTick() {
+  const tick = SIM_TICKS[simIdx % SIM_TICKS.length];
+  simIdx++;
+  const now = Date.now();
+  lastSimAt = now;
+  RT[LIVE_ITEM.id].updatedAt = now;
+
+  // 1) data first — the DOM is a projection
+  const stage = LIVE_ITEM.stages.implement;
+  stage.activity.push({ t: clockNow(), actor: tick.actor, message: tick.message, at: now });
+  while (stage.activity.length > 6) stage.activity.shift();
+
+  // 2) if the implement dossier is open on the live strip, slide the line in
+  if (RT[LIVE_ITEM.id].openStage === "implement") {
+    const list = document.getElementById(`act-${LIVE_ITEM.id}-implement`);
+    if (list) {
+      const line = document.createElement("div");
+      line.className = "act-line fresh";
+      line.innerHTML = `<span class="actor">${esc(AGENTS[tick.actor].display_name)}</span>
+        <span class="msg" title="${esc(tick.message)}">${esc(tick.message)}</span>
+        ${tAgo(now)}`;
+      list.appendChild(line);
+      while (list.children.length > 6) list.removeChild(list.firstChild);
+    }
+  }
+
+  // 3) observed channel + footer tool line + updated stamp
+  obsState = { verb: tick.verb, target: tick.target, count: obsState.count + tick.edits, at: now };
+  const verbEl = document.getElementById("obs-verb");
+  if (verbEl) {
+    verbEl.textContent = obsState.verb;
+    document.getElementById("obs-target").textContent = obsState.target;
+    document.getElementById("obs-count").textContent = "×" + obsState.count;
+    const obsAgo = document.querySelector("#obs-live-row .t-ago");
+    if (obsAgo) obsAgo.dataset.at = String(now);
+  }
+  const tn = document.getElementById("tool-tn");
+  if (tn) {
+    tn.textContent = tick.tool.tn;
+    document.getElementById("tool-td").textContent = tick.tool.td;
+    const ta = document.querySelector("#tool-line-live .t-ago");
+    if (ta) ta.dataset.at = String(now);
+  }
+  const strip = document.getElementById("strip-" + LIVE_ITEM.id);
+  const upd = strip.querySelector(".updated-ago");
+  if (upd) upd.dataset.at = String(now);
+
+  // paint fresh t-ago stamps now rather than waiting up to 1s for the next tick
+  renderTimes();
+}
+
+/* ============================================================
+   1s tick — time mutates, structure never rebuilds
+   ============================================================ */
+
+function renderTimes() {
+  const now = Date.now();
+  document.querySelectorAll(".t-ago").forEach(el => {
+    const at = Number(el.dataset.at);
+    if (!Number.isNaN(at)) el.textContent = ago(at);
+  });
+  document.querySelectorAll(".elapsed-val").forEach(el => {
+    el.textContent = elapsedText(Number(el.dataset.at), el.dataset.live === "1");
+  });
+  // observed line lights only while activity is fresh (<60s)
+  const obsRow = document.getElementById("obs-live-row");
+  if (obsRow) obsRow.classList.toggle("obs-live", now - lastSimAt < 60000);
+  // recency glow decays on the same window
+  for (const item of WORK_ITEMS) {
+    if (item.kind === "idea") continue;
+    const strip = document.getElementById("strip-" + item.id);
+    const at = RT[item.id].updatedAt;
+    if (strip && at != null) strip.classList.toggle("hot", now - at < 60000);
+  }
+}
+
+/* ============================================================
+   Boot
+   ============================================================ */
+
+renderDock();
+renderSummary();
+renderStrips();
+wireChrome();
+renderTimes();
+setInterval(renderTimes, 1000);
+setInterval(simTick, 7000);
+</script>
+
+<!--
+  MANIFEST · Option B — "Run Ledger" (Herdr Active Work concept 2 of 3)
+  Implemented interactions:
+  · Needs-you dock: one primary action per item ("Review event map", "Decide on PR #510")
+    firing descriptive toasts, plus "jump to strip" smooth-scroll + accent flash.
+  · Run strips: status spine, kind/skill pills, live agent stack with breathing dots,
+    ticking elapsed-in-stage for the active item, mono meta with live t-ago stamps.
+  · Trail spine: 8 stops with done/ready/pending/current states, human-checkpoint gates
+    (approved / pulsing-pending / future), signal fill, marching-ants segment into the
+    current stop; every stop clickable → opens that stage's dossier.
+  · Cast ledger (signature): agents × stages attachment bars (done/active/queued/waiting
+    grammar, contiguous-run merging, hover tooltips "attached 12:27 → now · coder"),
+    tinted current/needs-you column, empty-cell dots, clickable bars → stage dossier,
+    observed line (declared-vs-observed) that lights only while activity < 60s old.
+  · Stage dossiers: column-header accordion (0fr→1fr, 250ms, aria-expanded, one open per
+    strip, pre-opened on the live strip), three mini-columns (threads / pi sessions /
+    record) with "Open in Buzz" / "Open pane wX:tN" deep-link toasts, checkpoint chips,
+    started/completed t-ago, continuity doc chips, activity feed, honest empty states.
+  · Live simulator: every ~7s appends an activity line to AGENTIC-575's implement stage
+    (slide-in when the dossier is open), rotates the footer streaming tool line, updates
+    the observed verb/target/count, refreshes "updated" stamps, and sustains the strip's
+    recency glow; all timestamps patched by a 1s t-ago interval — no full re-renders.
+  · Keyboard: strips focusable (Enter/Space toggles the current dossier), roving
+    tabindex + ArrowLeft/Right across each strip's stage headers, focus-visible rings,
+    reduced-motion guard, role=status toast.
+  · Chrome: segmented pill, mic, "⋯", Refresh (spin), Ask board, collapsible sidebar
+    sections, inbox items and quick links — every clickable responds; zero dead pixels.
+-->
+</body>
+</html>

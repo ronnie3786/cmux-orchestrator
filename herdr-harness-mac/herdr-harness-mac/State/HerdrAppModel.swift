@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import os
@@ -70,6 +71,7 @@ final class HerdrAppModel {
     var apiToken: String
     var isDemoMode: Bool
     var hasCompletedSetup: Bool
+    let activeWorkLegacyUI: Bool
     var smartAlertsEnabled: Bool
     var preferPrivateTranscription: Bool
     var showSessionTitles: Bool
@@ -164,6 +166,8 @@ final class HerdrAppModel {
         apiToken = storedToken
         isDemoMode = uiTestServerURL == nil && (forcedDemo || defaults.bool(forKey: "herdr.demoMode"))
         hasCompletedSetup = forcedDemo || uiTestServerURL != nil || defaults.bool(forKey: "herdr.completedSetup")
+        activeWorkLegacyUI = arguments.contains("-HerdrActiveWorkLegacy")
+            || (defaults.object(forKey: "herdr.activeWork.legacy") as? Bool ?? false)
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
         showSessionTitles = defaults.object(forKey: "herdr.herdPulse.showSessionTitles") as? Bool ?? true
@@ -1885,6 +1889,31 @@ final class HerdrAppModel {
             return
         }
         route(to: pane)
+    }
+
+    /// Resolves a pane the same way `openPane(id:)` does for an already-scoped
+    /// id, but starting from a *raw* (unscoped) pane id plus an optional
+    /// machine id — the shape the JS board bridge and the legacy Active Work
+    /// tracked-session cards both hand back. An empty-string machine id (the
+    /// JS side's "no machine" convention) is treated the same as `nil`.
+    func openPane(rawPaneID: String, machineID: String?) {
+        let normalizedMachineID = (machineID?.isEmpty == false) ? machineID : nil
+        let resolved: HerdrPane?
+        if let normalizedMachineID {
+            resolved = pane(id: MachineScopedID.compose(machineID: normalizedMachineID, rawID: rawPaneID))
+        } else {
+            resolved = resolveRawPane(id: rawPaneID)
+        }
+        guard let resolved else {
+            toastMessage = "That pane is no longer available in the connected fleet"
+            return
+        }
+        openPane(id: resolved.id)
+    }
+
+    func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// Acknowledges a pane only when this client currently knows about an

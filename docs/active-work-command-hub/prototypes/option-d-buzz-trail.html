@@ -1,0 +1,4620 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="agenttrail, pointed at the Buzz ticket pipeline — a live map of work items riding the eight stages."
+    />
+    <title>Herdr Buzz Trail</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23181818'/%3E%3Crect x='6' y='8' width='20' height='4' rx='2' fill='%23e9a23b'/%3E%3Crect x='6' y='14' width='14' height='4' rx='2' fill='%23d1d1d1'/%3E%3Crect x='6' y='20' width='17' height='4' rx='2' fill='%239b9b9b'/%3E%3C/svg%3E"
+    />
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("herdr-trail-theme") === "light"
+            ? "light"
+            : "dark";
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #000;
+        --surface: #181818;
+        --raised: #1f1f1f;
+        --hover: #272727;
+        --line: #313131;
+        --text: #fff;
+        --soft: #d1d1d1;
+        --dim: #9b9b9b;
+        --faint: #686868;
+        --accent: #e9a23b;
+        --accent-bg: #2e220f;
+        --danger: #db6b67;
+        --success: #7aa36a;
+        --complete-text: #70a784;
+        --complete-bg: rgba(63, 127, 87, 0.18);
+        --complete-weight: 500;
+        --done-agent-opacity: 0.45;
+        --working-border: #1d2b22;
+        --working-bg: #141f18;
+        --watch-ring: #172015;
+        --region: rgba(24, 24, 24, 0.5);
+        --minimap-bg: rgba(24, 24, 24, 0.92);
+        --overlay: #181818;
+        --grid: #313131;
+        --shadow-soft: rgba(0, 0, 0, 0.24);
+        --shadow-strong: #000;
+        --gate-pink: #e08bb8;
+        --font: "Geist", "Manrope", -apple-system, system-ui, sans-serif;
+        --mono: "Geist Mono", "SF Mono", ui-monospace, monospace;
+        --ease: cubic-bezier(0.32, 0.72, 0, 1);
+        --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #fff;
+        --surface: rgb(0 0 0 / 0.025);
+        --raised: rgb(0 0 0 / 0.05);
+        --hover: rgb(0 0 0 / 0.07);
+        --line: rgb(0 0 0 / 0.14);
+        --text: #000;
+        --soft: rgb(0 0 0 / 0.78);
+        --dim: #666;
+        --faint: rgb(0 0 0 / 0.48);
+        --accent: color-mix(in srgb, #e9a23b 64%, #000);
+        --accent-bg: rgb(233 162 59 / 0.16);
+        --danger: #c4524e;
+        --success: #3f7f57;
+        --complete-text: #3f7f57;
+        --complete-bg: rgb(63 127 87 / 0.18);
+        --complete-weight: 600;
+        --done-agent-opacity: 0.72;
+        --working-border: rgb(63 127 87 / 0.24);
+        --working-bg: rgb(63 127 87 / 0.1);
+        --watch-ring: rgb(63 127 87 / 0.14);
+        --region: rgb(0 0 0 / 0.015);
+        --minimap-bg: rgb(255 255 255 / 0.94);
+        --overlay: #fbfaf8;
+        --grid: rgb(0 0 0 / 0.16);
+        --shadow-soft: rgb(0 0 0 / 0.1);
+        --shadow-strong: rgb(0 0 0 / 0.14);
+        --gate-pink: #b3568c;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html {
+        background: var(--bg);
+        scroll-behavior: smooth;
+      }
+      body {
+        min-width: 320px;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font: 400 14px/20px var(--font);
+        letter-spacing: -0.01em;
+        overflow-x: hidden;
+      }
+      body:before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.025;
+        z-index: 4;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
+      }
+      button {
+        font: inherit;
+      }
+      button,
+      [role="button"] {
+        -webkit-tap-highlight-color: transparent;
+      }
+      button:focus-visible,
+      [role="button"]:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .skip {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        z-index: 5;
+        transform: translateY(-160%);
+        padding: 8px 12px;
+        color: var(--text);
+        background: var(--raised);
+        border-radius: 8px;
+        transition: transform 700ms var(--ease);
+      }
+      .skip:focus {
+        transform: none;
+      }
+      .app {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        height: 100dvh;
+        min-height: 100dvh;
+      }
+      .topbar {
+        position: relative;
+        z-index: 3;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 24px;
+        min-height: 64px;
+        padding: 12px 24px;
+        background: var(--bg);
+        border-bottom: 1px solid var(--hover);
+      }
+      .brand,
+      .status,
+      .project {
+        min-width: 0;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .herdr-glyph {
+        display: block;
+        flex: none;
+        width: 28px;
+        height: 28px;
+      }
+      .project-name,
+      .file-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .project-name {
+        font-weight: 600;
+        font-size: 15px;
+        line-height: 20px;
+      }
+      .file-name {
+        color: var(--dim);
+        font: 400 11px/16px var(--mono);
+        letter-spacing: 0;
+      }
+      .status,
+      #state,
+      .theme-toggle {
+        display: flex;
+        align-items: center;
+      }
+      .status {
+        justify-self: end;
+        gap: 12px;
+      }
+      #state {
+        gap: 8px;
+      }
+      .theme-toggle {
+        gap: 8px;
+        min-height: 32px;
+        padding: 4px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--dim);
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 500;
+        transition:
+          color 250ms var(--ease-out),
+          background 250ms var(--ease-out),
+          border-color 250ms var(--ease-out),
+          transform 250ms var(--ease-out);
+      }
+      .theme-toggle:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .theme-toggle:active {
+        transform: scale(0.98);
+      }
+      .theme-track {
+        position: relative;
+        width: 32px;
+        height: 16px;
+        border-radius: 8px;
+        background: var(--hover);
+        box-shadow: inset 0 0 0 1px var(--line);
+        transition: background 250ms var(--ease-out);
+      }
+      .theme-thumb {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 12px;
+        height: 12px;
+        border-radius: 4px;
+        background: var(--dim);
+        transition:
+          transform 250ms var(--ease-out),
+          background 250ms var(--ease-out);
+      }
+      :root[data-theme="light"] .theme-track {
+        background: var(--accent-bg);
+      }
+      :root[data-theme="light"] .theme-thumb {
+        transform: translateX(16px);
+        background: var(--accent);
+      }
+      .badge {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--dim);
+        white-space: nowrap;
+        font-size: 12px;
+        line-height: 16px;
+      }
+      .badge.working {
+        border-color: var(--working-border);
+        color: var(--success);
+        background: var(--working-bg);
+      }
+      .badge.working .dot {
+        background: var(--success);
+        animation: working-pulse 1.6s ease-in-out infinite;
+      }
+      .badge.alert {
+        border-color: rgba(219, 107, 103, 0.35);
+        color: var(--danger);
+        background: rgba(219, 107, 103, 0.1);
+        cursor: pointer;
+        font-weight: 500;
+        transition: background 250ms var(--ease-out);
+      }
+      .badge.alert:hover {
+        background: rgba(219, 107, 103, 0.18);
+      }
+      .badge.alert:active {
+        transform: scale(0.98);
+      }
+      .badge.alert .dot {
+        background: var(--danger);
+      }
+      :root[data-theme="light"] .badge.alert {
+        border-color: rgb(196 82 78 / 0.34);
+        background: rgb(196 82 78 / 0.08);
+      }
+      :root[data-theme="light"] .badge.alert:hover {
+        background: rgb(196 82 78 / 0.14);
+      }
+      @keyframes working-pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--faint);
+      }
+      .watching {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--faint);
+        font-size: 12px;
+      }
+      .watching:before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 0 4px var(--watch-ring);
+      }
+      .workspace {
+        position: relative;
+        display: grid;
+        grid-template-columns: 272px minmax(0, 1fr);
+        min-height: 0;
+        height: auto;
+        overflow: hidden;
+      }
+      .sidebar {
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        padding: 12px 0 0;
+        background: var(--surface);
+        border-right: 1px solid var(--hover);
+      }
+      .tree-head {
+        padding: 4px 16px 10px;
+        color: var(--faint);
+        font-size: 11px;
+        line-height: 16px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .tree-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        min-height: 24px;
+        padding-right: 12px;
+        border: 0;
+        background: transparent;
+        color: var(--soft);
+        cursor: pointer;
+        text-align: left;
+        font-size: 12.5px;
+        line-height: 16px;
+        white-space: nowrap;
+        transition:
+          background 250ms var(--ease-out),
+          color 250ms var(--ease-out);
+      }
+      .tree-row.file {
+        color: var(--dim);
+        cursor: default;
+      }
+      .tree-row.dir:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      .tree-chev {
+        display: grid;
+        flex: none;
+        place-items: center;
+        width: 14px;
+        height: 14px;
+        color: var(--faint);
+      }
+      .tree-chev svg {
+        width: 12px;
+        height: 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        transition: transform 250ms var(--ease-out);
+      }
+      .tree-row.dir.open .tree-chev svg {
+        transform: rotate(90deg);
+      }
+      .tree-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .tree-row.hot .tree-name {
+        color: var(--accent);
+      }
+      .tree-ago {
+        margin-left: auto;
+        color: var(--accent);
+        font: 400 10px/16px var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      :root[data-theme="light"] .tree-row.hot {
+        background: var(--accent-bg);
+        box-shadow: inset 2px 0 #e9a23b;
+      }
+      :root[data-theme="light"] .tree-row.hot .tree-name,
+      :root[data-theme="light"] .tree-row.hot .tree-ago {
+        font-weight: 600;
+      }
+      /* Ticket selector rows (the tree is a filter now, not a file browser) */
+      .tree-row.ticket {
+        padding-left: 16px;
+        color: var(--dim);
+      }
+      .tree-row.ticket:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      .tree-row.ticket.on {
+        background: var(--hover);
+        color: var(--text);
+        box-shadow: inset 2px 0 var(--accent);
+      }
+      .tree-row.ticket .tree-name {
+        font: 500 11.5px/24px var(--mono);
+        letter-spacing: 0.02em;
+      }
+      .tree-row.ticket.overview .tree-name {
+        font: 500 12.5px/24px var(--font);
+        letter-spacing: 0;
+      }
+      .sel-swatch {
+        flex: none;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+      }
+      .sel-swatch.overview {
+        width: 7px;
+        height: 7px;
+        border: 2px solid var(--faint);
+        background: transparent;
+      }
+      .sel-swatch.forming {
+        border: 1.5px dashed var(--faint);
+        background: transparent;
+      }
+      .sel-state {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        gap: 5px;
+        margin-left: auto;
+        color: var(--faint);
+        font: 500 9.5px var(--mono);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .sel-state.gate {
+        color: var(--danger);
+      }
+      .tree-row.ticket .tree-ago {
+        margin-left: auto;
+      }
+      .tree-row.ticket .tree-ago + .sel-state {
+        margin-left: 8px;
+      }
+      .tree-row.ticket.done {
+        opacity: 0.55;
+      }
+      .tree-legend {
+        position: sticky;
+        bottom: 0;
+        margin-top: auto;
+        padding: 8px 16px;
+        background: var(--surface);
+        border-top: 1px solid var(--hover);
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--accent);
+        opacity: 0.72;
+        font-size: 11px;
+        line-height: 15px;
+      }
+      .tree-legend-dot {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        z-index: 9;
+        transform: translate(-50%, 8px);
+        max-width: 520px;
+        padding: 8px 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--raised);
+        color: var(--soft);
+        font-size: 12px;
+        opacity: 0;
+        pointer-events: none;
+        transition:
+          opacity 700ms var(--ease),
+          transform 700ms var(--ease);
+      }
+      .toast.show {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+      .minimap {
+        position: absolute;
+        right: 24px;
+        bottom: 24px;
+        z-index: 2;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--minimap-bg);
+        box-shadow: 0 12px 40px var(--shadow-strong);
+        cursor: pointer;
+      }
+      .minimap svg {
+        display: block;
+      }
+      .mm-node {
+        fill: var(--faint);
+      }
+      .mm-node.active {
+        fill: var(--accent);
+      }
+      .mm-node.blocked {
+        fill: var(--danger);
+      }
+      .mm-node.done {
+        fill: #3f7f57;
+      }
+      .mm-view {
+        fill: none;
+        stroke: var(--soft);
+        stroke-width: 1.2;
+        opacity: 0.8;
+      }
+      /* Ticket flow — the only lines on the board: each ticket's traveled
+         path in the old edge language (card-edge ports, bowed béziers that
+         route around the cards), marching in its direction of travel.
+         Finished tickets settle into a static bead-chain ghost. */
+      .trailflow {
+        opacity: 0.9;
+      }
+      .trailflow.ended {
+        opacity: 0.28;
+      }
+      .trail-path {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2.5;
+        stroke-linecap: round;
+        vector-effect: non-scaling-stroke;
+      }
+      /* Only the hop still in transition marches; completed hops are solid */
+      .trail-path.live {
+        stroke-dasharray: 5 8;
+        animation: travel 1800ms linear infinite;
+      }
+      .runs {
+        position: absolute;
+        right: 24px;
+        top: 24px;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        width: 340px;
+        max-width: 44vw;
+      }
+      .run-card {
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--overlay);
+        box-shadow: 0 12px 40px var(--shadow-strong);
+        cursor: pointer;
+        animation: reveal 500ms var(--ease) both;
+      }
+      .run-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .run-agent {
+        display: inline-flex;
+        flex: none;
+        width: 16px;
+        height: 16px;
+      }
+      .run-agent svg {
+        width: 16px;
+        height: 16px;
+        display: block;
+      }
+      .run-name {
+        font-weight: 600;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .run-sub {
+        overflow: hidden;
+        color: var(--faint);
+        font-size: 11.5px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .run-elapsed {
+        margin-left: auto;
+        color: var(--faint);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .run-elapsed a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .run-live-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--success);
+        animation: working-pulse 1.6s ease-in-out infinite;
+        flex: none;
+      }
+      .run-card.ended .run-live-dot {
+        background: var(--faint);
+        animation: none;
+      }
+      .run-card.ended {
+        opacity: 0.62;
+      }
+      .run-task {
+        margin-top: 6px;
+        color: var(--text);
+        font-size: 12.5px;
+        line-height: 17px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .run-task.idle {
+        color: var(--dim);
+      }
+      .run-tool {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        margin-top: 5px;
+        color: var(--dim);
+        font: 400 11.5px/16px var(--mono);
+        overflow: hidden;
+        white-space: nowrap;
+      }
+      .run-tool .tn {
+        color: var(--accent);
+        flex: none;
+      }
+      .run-tool .td {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .run-tool .ta {
+        margin-left: auto;
+        color: var(--faint);
+        flex: none;
+        font-variant-numeric: tabular-nums;
+      }
+      .run-detail {
+        margin-top: 8px;
+        border-top: 1px solid var(--hover);
+        padding-top: 8px;
+        display: none;
+      }
+      .run-card.open .run-detail {
+        display: block;
+      }
+      .run-todo {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        min-height: 20px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+      .run-todo.in_progress {
+        color: var(--text);
+      }
+      .run-todo.completed {
+        color: var(--faint);
+        text-decoration: line-through;
+      }
+      .run-todo .box {
+        width: 10px;
+        height: 10px;
+      }
+      .run-hist {
+        margin-top: 6px;
+        color: var(--faint);
+        font: 400 11px/16px var(--mono);
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .run-hist .hd {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .box {
+        position: relative;
+        z-index: 1;
+        width: 12px;
+        height: 12px;
+        border: 1px solid var(--faint);
+        border-radius: 50%;
+        background: var(--surface);
+        flex: none;
+      }
+      .box.done {
+        border-color: var(--soft);
+        background: var(--soft);
+      }
+      .box.active {
+        border-color: var(--accent);
+        background: var(--surface);
+      }
+      .box.active:after {
+        content: "";
+        position: absolute;
+        inset: 2px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: breathe 1800ms var(--ease-out) infinite alternate;
+      }
+      @keyframes breathe {
+        from {
+          opacity: 0.4;
+          transform: scale(0.65);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      @keyframes reveal {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+          filter: blur(4px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+          filter: blur(0);
+        }
+      }
+      .primary {
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+      }
+      .graph-view {
+        position: relative;
+        overflow: hidden;
+        background: var(--bg);
+        touch-action: none;
+      }
+      .graph-grid {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        opacity: 0.35;
+      }
+      .graph-stage {
+        position: absolute;
+        inset: 0;
+        cursor: grab;
+      }
+      .graph-stage.dragging {
+        cursor: grabbing;
+      }
+      .graph-svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+      .world {
+        transform-origin: 0 0;
+      }
+      @keyframes travel {
+        to {
+          stroke-dashoffset: -26;
+        }
+      }
+      .region-name {
+        fill: var(--faint);
+        font: 600 15px var(--mono);
+        letter-spacing: 0.08em;
+      }
+      .plate-name {
+        fill: var(--text);
+        font: 650 44px var(--font);
+        letter-spacing: -1px;
+      }
+      .plate-sub {
+        fill: var(--faint);
+        font: 400 16px var(--font);
+      }
+      .gnode {
+        cursor: pointer;
+      }
+      .gnode .node-box {
+        fill: var(--surface);
+        stroke: var(--line);
+        stroke-width: 1;
+        transition:
+          fill 700ms var(--ease),
+          stroke 700ms var(--ease);
+      }
+      .gnode:hover .node-box {
+        fill: var(--raised);
+        stroke: var(--faint);
+      }
+      .gnode.selected .node-box,
+      .gnode.active .node-box {
+        stroke: var(--accent);
+        stroke-width: 1.5;
+      }
+      /* A stage every selected ticket has cleared reads as passed ground */
+      .gnode.done .node-box {
+        fill: rgba(63, 127, 87, 0.09);
+        stroke: rgba(63, 127, 87, 0.38);
+      }
+      .gnode.blocked .node-box {
+        stroke: var(--danger);
+        stroke-width: 1.5;
+      }
+      .node-spin {
+        animation: capsule-spin 1100ms linear infinite;
+        transform-box: fill-box;
+        transform-origin: center;
+      }
+      .obs-ring,
+      .obs-label {
+        opacity: 0;
+        transition: opacity 400ms var(--ease-out);
+      }
+      .gnode.obs-live .obs-ring {
+        opacity: 1;
+        animation: capsule-spin 1300ms linear infinite;
+        transform-box: fill-box;
+        transform-origin: center;
+      }
+      .gnode.obs-live .obs-label {
+        opacity: 1;
+      }
+      :root[data-theme="light"] .gnode.obs-live .node-box {
+        fill: var(--accent-bg);
+        stroke: var(--accent);
+        stroke-width: 2;
+      }
+      :root[data-theme="light"] .gnode.obs-live .obs-label {
+        font-weight: 700;
+      }
+      :root[data-theme="light"] .gnode.active {
+        filter: drop-shadow(0 8px 12px var(--accent-bg));
+      }
+      :root[data-theme="light"] .gnode.active .node-box {
+        fill: var(--accent-bg);
+        stroke: var(--accent);
+        stroke-width: 2;
+      }
+      .gnode .kicker {
+        fill: var(--faint);
+        font: 500 11px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      .gnode .node-title {
+        fill: var(--text);
+        font: 600 15px var(--font);
+      }
+      .gnode .node-meta {
+        fill: var(--dim);
+        font: 400 12px var(--font);
+        font-variant-numeric: tabular-nums;
+      }
+      .gnode .progress-bg {
+        fill: var(--hover);
+      }
+      .gnode .progress {
+        fill: var(--soft);
+      }
+      .gnode.active .progress {
+        fill: var(--accent);
+      }
+      .gnode .node-action {
+        fill: var(--faint);
+        font: 500 11px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      .gnode:hover .node-action,
+      .gnode.selected .node-action {
+        fill: var(--accent);
+      }
+      .gate-tag {
+        fill: var(--gate-pink);
+        font: 700 10px var(--mono);
+        letter-spacing: 0.06em;
+      }
+      .obs-file-label {
+        fill: var(--accent);
+        font: 400 11px var(--mono);
+      }
+      .obs-verb {
+        fill: var(--accent);
+        font: 600 11px var(--font);
+      }
+      .detail-tether {
+        fill: none;
+        stroke: var(--faint);
+        stroke-width: 1;
+        stroke-dasharray: 3 4;
+        vector-effect: non-scaling-stroke;
+      }
+      .graph-task-card {
+        width: 100%;
+        height: 100%;
+      }
+      .graph-task-card .task-capsules {
+        width: 100%;
+        margin: 0;
+      }
+      /* HTML overlay world — mirrors the SVG world transform. Safari does not
+         reliably paint foreignObject inside a transformed <g>, so capsule
+         lists and intake cards render here instead. */
+      .html-world {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 0;
+        height: 0;
+        overflow: visible;
+        transform-origin: 0 0;
+        pointer-events: none;
+      }
+      .html-world .html-card {
+        position: absolute;
+        pointer-events: auto;
+      }
+      .html-world .graph-task-card {
+        width: auto;
+        height: auto;
+      }
+      .html-world .intake-card {
+        height: auto;
+      }
+      .task-capsules {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .task-capsules.list {
+        gap: 0;
+        overflow: hidden;
+        border-radius: 16px;
+        background: var(--surface);
+        box-shadow: 0 2px 12px var(--shadow-soft);
+      }
+      .task-capsule {
+        align-self: stretch;
+        overflow: hidden;
+        border-radius: 22px;
+        background: var(--surface);
+        box-shadow: 0 2px 12px var(--shadow-soft);
+        animation: capsule-enter 450ms var(--ease-out) both;
+        transition:
+          border-radius 250ms var(--ease-out),
+          background-color 250ms var(--ease-out);
+      }
+      .task-capsules.list .task-capsule,
+      .task-capsules.list .task-capsule.open {
+        border-bottom: 1px solid var(--line);
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+      .task-capsules.list .task-capsule:last-child {
+        border-bottom: 0;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        .task-capsule:hover {
+          background: var(--hover);
+        }
+      }
+      .task-capsule-button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        height: 44px;
+        padding: 0 8px;
+        border: 0;
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+        cursor: pointer;
+      }
+      .task-capsule-button:active {
+        transform: translateY(1px);
+      }
+      .task-capsule-marker-wrap {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+      }
+      .task-capsule-marker {
+        position: relative;
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        color: var(--text);
+        font-size: 10px;
+        line-height: 16px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .task-capsule-marker svg {
+        position: absolute;
+        inset: 0;
+        display: block;
+        width: 24px;
+        height: 24px;
+        fill: none;
+      }
+      .task-capsule-marker .ring-track {
+        stroke: var(--line);
+        stroke-width: 2;
+      }
+      .task-capsule-marker .ring-live {
+        visibility: hidden;
+        stroke: var(--accent);
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-dasharray: 19.35 49.76;
+        animation: capsule-spin 1100ms linear infinite;
+      }
+      .task-capsule.active .task-capsule-marker .ring-live {
+        visibility: visible;
+      }
+      .task-capsule-badge {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        color: #fff;
+        background: #3f7f57;
+        animation: capsule-pop 300ms var(--ease-out) both;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .task-capsule-badge svg {
+        width: 13px;
+        height: 13px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 3.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .task-capsule-badge.blocked {
+        background: var(--danger);
+      }
+      .task-capsule-copy {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 500;
+      }
+      .task-capsule.active .task-capsule-copy {
+        color: var(--text);
+      }
+      .task-capsule.done .task-capsule-copy {
+        color: var(--dim);
+      }
+      .task-capsule-amount {
+        flex: none;
+        color: var(--dim);
+        font-size: 12px;
+        line-height: 16px;
+        font-variant-numeric: tabular-nums;
+      }
+      .task-capsule-pill {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        color: var(--complete-text);
+        background: var(--complete-bg);
+        font-size: 11px;
+        line-height: 16px;
+        font-weight: var(--complete-weight);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .task-capsule-pill.revised {
+        color: var(--accent);
+        background: var(--accent-bg);
+      }
+      .task-capsule-pill.blocked {
+        color: #e79490;
+        background: rgba(219, 107, 103, 0.16);
+      }
+      :root[data-theme="light"] .task-capsule-pill.blocked {
+        color: #a83c38;
+        background: rgb(196 82 78 / 0.14);
+        font-weight: 600;
+      }
+      .task-capsule-pill.backlog {
+        color: var(--faint);
+        background: var(--hover);
+      }
+      .agent-chip {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+      }
+      .agent-chip svg {
+        display: block;
+        width: 16px;
+        height: 16px;
+      }
+      .agent-chip.faded {
+        opacity: var(--done-agent-opacity);
+      }
+      .task-capsule-chevron {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        margin-left: -8px;
+        border-radius: 50%;
+        color: var(--faint);
+      }
+      .task-capsule-chevron svg {
+        width: 15px;
+        height: 15px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2.2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        transition: transform 250ms var(--ease-out);
+      }
+      .task-capsule.open .task-capsule-chevron svg {
+        transform: rotate(180deg);
+      }
+      .task-capsule-detail {
+        display: grid;
+        grid-template-rows: 0fr;
+        opacity: 0;
+        transition:
+          grid-template-rows 250ms var(--ease-out),
+          opacity 200ms var(--ease-out);
+      }
+      .task-capsule.open .task-capsule-detail {
+        grid-template-rows: 1fr;
+        opacity: 1;
+      }
+      .task-capsule-detail-clip {
+        overflow: hidden;
+      }
+      .task-capsule-detail-grid {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+        padding: 0 8px;
+      }
+      .task-capsule-detail-line {
+        width: 1px;
+        height: 100%;
+        margin: auto;
+        background: var(--line);
+      }
+      .task-capsule-detail-list {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .task-capsule-detail-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 20px;
+        color: var(--dim);
+        font-size: 12px;
+        line-height: 16px;
+        animation: capsule-detail-enter 300ms var(--ease-out) both;
+      }
+      .task-capsule-detail-row > span:first-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .task-capsule-detail-meta {
+        overflow: hidden;
+        color: var(--faint);
+        font: 400 11px/16px var(--mono);
+        font-variant-numeric: tabular-nums;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: none;
+      }
+      .cap-link {
+        color: var(--accent);
+        cursor: pointer;
+        white-space: nowrap;
+        font-weight: 500;
+        flex: none;
+      }
+      .cap-link:hover {
+        text-decoration: underline;
+      }
+      .cap-approved {
+        color: var(--complete-text);
+        font-weight: var(--complete-weight);
+      }
+      @keyframes capsule-enter {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes capsule-detail-enter {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes capsule-pop {
+        from {
+          opacity: 0;
+          transform: scale(0.95);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes capsule-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .canvas-tools {
+        position: absolute;
+        left: 24px;
+        bottom: 60px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--overlay);
+        box-shadow: 0 12px 40px var(--shadow-strong);
+      }
+      .icon {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--dim);
+        cursor: pointer;
+        transition:
+          color 700ms var(--ease),
+          background 700ms var(--ease),
+          transform 700ms var(--ease);
+      }
+      .icon:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .icon:active {
+        transform: scale(0.96);
+      }
+      .icon svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .zoom {
+        min-width: 48px;
+        color: var(--dim);
+        text-align: center;
+        font: 500 12px var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      .divider {
+        width: 1px;
+        height: 20px;
+        margin: 0 4px;
+        background: var(--line);
+      }
+      .canvas-hint {
+        position: absolute;
+        left: 24px;
+        bottom: 24px;
+        display: flex;
+        gap: 16px;
+        color: var(--faint);
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .hint {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .key {
+        display: grid;
+        place-items: center;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 4px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--surface);
+        color: var(--dim);
+        font: 500 11px var(--mono);
+      }
+      .graph-task-empty {
+        display: grid;
+        place-items: center;
+        min-height: 64px;
+        padding: 16px;
+        border-radius: 16px;
+        background: var(--surface);
+        color: var(--dim);
+        font-size: 12.5px;
+      }
+      /* ---- v2: topbar ask toggle ---- */
+      .badge.ask-toggle {
+        min-width: 32px;
+        justify-content: center;
+        padding: 4px 8px;
+        color: var(--dim);
+        font-size: 14px;
+        line-height: 16px;
+        cursor: pointer;
+        transition:
+          color 250ms var(--ease-out),
+          background 250ms var(--ease-out);
+      }
+      .badge.ask-toggle:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      /* ---- v2: sidebar sections (agents roster + jira candidates) ---- */
+      .tree-head.sect {
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--hover);
+      }
+      .tree-row.done {
+        opacity: 0.45;
+      }
+      .tree-row.logrow {
+        cursor: pointer;
+      }
+      .tree-row.logrow:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      .tree-row.agent,
+      .tree-row.cand,
+      .tree-row.action {
+        padding-left: 16px;
+        min-height: 26px;
+        gap: 8px;
+      }
+      .tree-row.agent:hover,
+      .tree-row.cand:hover,
+      .tree-row.action:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      .tree-row.action {
+        color: var(--faint);
+        font: 500 11px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      .tree-row.action:hover {
+        color: var(--accent);
+      }
+      .agent-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-left: auto;
+      }
+      .status-word {
+        color: var(--faint);
+        font: 400 10px/16px var(--mono);
+      }
+      .status-dot {
+        position: relative;
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+      .status-dot.working {
+        background: var(--success);
+        animation: working-pulse 1.6s ease-in-out infinite;
+      }
+      .status-dot.idle {
+        background: var(--faint);
+      }
+      .status-dot.queued {
+        background: transparent;
+        box-shadow: inset 0 0 0 1px var(--dim);
+      }
+      .status-dot.waiting {
+        background: var(--accent);
+      }
+      .status-dot.offline {
+        background: transparent;
+        box-shadow: inset 0 0 0 1px var(--faint);
+        opacity: 0.7;
+      }
+      .status-dot.offline:after {
+        content: "";
+        position: absolute;
+        left: -2px;
+        right: -2px;
+        top: 50%;
+        height: 1px;
+        background: var(--faint);
+        transform: rotate(-45deg);
+      }
+      .cand-act {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: auto;
+        color: var(--faint);
+        font: 500 11px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      .tree-row.cand:hover .cand-act {
+        color: var(--accent);
+      }
+      .cand-act.busy {
+        color: var(--accent);
+      }
+      .cand-spin {
+        width: 12px;
+        height: 12px;
+        animation: capsule-spin 1100ms linear infinite;
+      }
+      /* ---- v2: machine chip, thread new-dot, handoff + channel rows ---- */
+      .mach-chip {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        height: 16px;
+        padding: 0 5px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--faint);
+        font: 500 9.5px var(--mono);
+        letter-spacing: 0.02em;
+      }
+      .new-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        margin-left: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        vertical-align: 1px;
+        animation: working-pulse 1.6s ease-in-out infinite;
+      }
+      .handoff-cmd {
+        overflow: hidden;
+        color: var(--faint);
+        font: 400 11px/16px var(--mono);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .copy-btn {
+        display: grid;
+        flex: none;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--faint);
+        cursor: pointer;
+        transition:
+          color 250ms var(--ease-out),
+          background 250ms var(--ease-out);
+      }
+      .copy-btn:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .copy-btn svg {
+        width: 12px;
+        height: 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .handoff-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--hover);
+      }
+      .chan-name {
+        color: var(--dim);
+        font: 400 11px/16px var(--mono);
+      }
+      .unscoped {
+        color: var(--faint);
+      }
+      .task-capsule.lifecycle-done {
+        opacity: 0.55;
+      }
+      .task-capsule.lifecycle-done .task-capsule-copy {
+        color: var(--faint);
+      }
+      /* ---- v2: INTAKE mini-cards (quieter than gnodes) ---- */
+      .intake-card {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        height: 100%;
+        padding: 14px 16px;
+        border: 1px solid var(--hover);
+        border-radius: 12px;
+        background: var(--raised);
+        animation: capsule-enter 450ms var(--ease-out) both;
+      }
+      .intake-kicker {
+        color: var(--faint);
+        font: 500 11px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      .intake-title {
+        overflow: hidden;
+        font-weight: 600;
+        font-size: 13.5px;
+        line-height: 18px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .intake-chan {
+        color: var(--faint);
+        font: 400 11px/15px var(--mono);
+      }
+      .intake-note {
+        display: -webkit-box;
+        overflow: hidden;
+        color: var(--dim);
+        font-size: 12px;
+        line-height: 16px;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+      .intake-action {
+        align-self: flex-start;
+        margin-top: auto;
+        padding: 2px 0;
+        border: 0;
+        background: transparent;
+        color: var(--faint);
+        cursor: pointer;
+        font: 500 11px var(--mono);
+        letter-spacing: 0.04em;
+        transition: color 250ms var(--ease-out);
+      }
+      .intake-action:hover {
+        color: var(--accent);
+      }
+      /* ---- DONE region: merged tickets + cleanup actions ---- */
+      .done-card {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        padding: 14px 16px;
+        border: 1px solid rgba(63, 127, 87, 0.4);
+        border-radius: 12px;
+        background: rgba(63, 127, 87, 0.07);
+        animation: capsule-enter 450ms var(--ease-out) both;
+      }
+      .done-card .done-kicker {
+        color: var(--complete-text);
+      }
+      .done-actions {
+        display: flex;
+        gap: 14px;
+        margin-top: auto;
+      }
+      .done-actions .intake-action {
+        margin-top: 0;
+      }
+      .done-actions .intake-action:first-child {
+        color: var(--complete-text);
+      }
+      .done-actions .intake-action:first-child:hover,
+      .intake-action.quiet:hover {
+        color: var(--text);
+      }
+      .region-sub {
+        fill: var(--faint);
+        font: 500 13px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      /* ---- Review documents (human-gate artifacts) in capsule details ---- */
+      .doc-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+      .doc-ic {
+        flex: none;
+        width: 12px;
+        height: 12px;
+        fill: none;
+        stroke: var(--dim);
+        stroke-width: 1.8;
+        stroke-linejoin: round;
+      }
+      .doc-kind {
+        padding: 1px 5px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--faint);
+        font: 600 8.5px var(--mono);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .doc-meta {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        gap: 8px;
+      }
+      .doc-dec {
+        color: var(--faint);
+        font: 500 9.5px var(--mono);
+        letter-spacing: 0.03em;
+      }
+      .doc-dec.ok {
+        color: var(--complete-text);
+      }
+      .doc-dec.bad {
+        color: var(--danger);
+      }
+      .doc-dec.wait {
+        color: var(--accent);
+      }
+      /* ---- Pulsing marks for agents actively working right now ---- */
+      .mark-pulse {
+        animation: markpulse 1.8s ease-in-out infinite;
+        transform-box: fill-box;
+        transform-origin: center;
+        pointer-events: none;
+      }
+      @keyframes markpulse {
+        0%,
+        100% {
+          opacity: 0.12;
+          transform: scale(0.85);
+        }
+        50% {
+          opacity: 0.65;
+          transform: scale(1.12);
+        }
+      }
+      .agent-chip svg,
+      .run-agent svg {
+        overflow: visible;
+      }
+      /* ---- v2: overlay system (agenttrail overlay surface + shadow) ---- */
+      .ov-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 7;
+      }
+      .overlay-card {
+        position: fixed;
+        z-index: 8;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--overlay);
+        box-shadow: 0 12px 40px var(--shadow-strong);
+        outline: none;
+      }
+      .overlay-card:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .ov-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 2px 8px 8px;
+        color: var(--faint);
+        font: 500 11px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      .ov-empty {
+        padding: 10px 8px;
+        color: var(--faint);
+        font-size: 12px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 32px;
+        padding: 4px 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--soft);
+        cursor: pointer;
+        font-weight: 500;
+        transition:
+          color 700ms var(--ease),
+          background 700ms var(--ease),
+          border-color 700ms var(--ease),
+          transform 700ms var(--ease);
+      }
+      .btn:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .btn:active {
+        transform: scale(0.98);
+      }
+      .btn.accent {
+        border-color: var(--accent-bg);
+        color: var(--accent);
+        background: var(--accent-bg);
+      }
+      .btn.accent:hover {
+        color: var(--text);
+        background: var(--accent-bg);
+      }
+      .needs-panel {
+        top: 64px;
+        right: 24px;
+        width: 420px;
+        max-width: calc(100vw - 48px);
+        padding: 10px;
+        animation: reveal 250ms var(--ease-out) both;
+      }
+      .needs-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .needs-row.acked {
+        opacity: 0.45;
+      }
+      .needs-row.acked .needs-dot {
+        background: transparent;
+        box-shadow: inset 0 0 0 1px var(--danger);
+      }
+      .needs-jump {
+        display: flex;
+        flex: 1;
+        min-width: 0;
+        align-items: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 4px 8px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--soft);
+        cursor: pointer;
+        text-align: left;
+        font-size: 12.5px;
+        line-height: 16px;
+      }
+      .needs-jump:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      .needs-dot {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--danger);
+      }
+      .needs-key {
+        flex: none;
+        font: 500 11px var(--mono);
+      }
+      .needs-reason {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        color: var(--dim);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .needs-ago {
+        flex: none;
+        color: var(--faint);
+        font: 400 10px/16px var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      .ack-btn {
+        cursor: pointer;
+        transition:
+          color 250ms var(--ease-out),
+          background 250ms var(--ease-out);
+      }
+      .ack-btn:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .confirm-card {
+        /* margin-centered — the reveal animation ends at transform:none,
+           so transform-based centering would be overridden by its fill */
+        top: 26%;
+        left: 50%;
+        width: 440px;
+        max-width: calc(100vw - 48px);
+        margin-left: max(-220px, calc(24px - 50vw));
+        padding: 18px 20px;
+        animation: reveal 250ms var(--ease-out) both;
+      }
+      .confirm-kicker {
+        color: var(--gate-pink);
+        font: 700 10px var(--mono);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .confirm-title {
+        margin-top: 8px;
+        font-weight: 600;
+        font-size: 15px;
+      }
+      .confirm-body {
+        margin-top: 6px;
+        color: var(--dim);
+        font-size: 12.5px;
+        line-height: 18px;
+      }
+      .confirm-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .log-panel {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        width: 420px;
+        max-width: 92vw;
+        border: 0;
+        border-left: 1px solid var(--line);
+        border-radius: 0;
+        transform: translateX(100%);
+        transition: transform 250ms var(--ease-out);
+      }
+      .log-panel.in {
+        transform: none;
+      }
+      .log-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 16px 10px;
+        border-bottom: 1px solid var(--hover);
+      }
+      .log-title {
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .log-sub {
+        color: var(--faint);
+        font-size: 11px;
+      }
+      .log-head .icon {
+        margin-left: auto;
+      }
+      .log-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--hover);
+      }
+      .log-chip {
+        padding: 2px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--dim);
+        cursor: pointer;
+        font: 500 11px var(--mono);
+        transition:
+          color 250ms var(--ease-out),
+          background 250ms var(--ease-out);
+      }
+      .log-chip:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .log-chip.on {
+        border-color: var(--accent-bg);
+        color: var(--accent);
+        background: var(--accent-bg);
+      }
+      .log-body {
+        flex: 1;
+        padding: 8px 12px 16px;
+        overflow: auto;
+      }
+      .log-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 28px;
+        border-bottom: 1px solid var(--hover);
+        color: var(--dim);
+        font: 400 11px/15px var(--mono);
+      }
+      .log-row:last-child {
+        border-bottom: 0;
+      }
+      .log-row .lt {
+        flex: none;
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .log-row .li {
+        flex: none;
+        color: var(--soft);
+        white-space: nowrap;
+      }
+      .log-row .lk {
+        flex: none;
+        color: var(--faint);
+        white-space: nowrap;
+      }
+      .log-row .lm {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .log-row .la {
+        flex: none;
+        margin-left: auto;
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .log-row .agent-chip,
+      .log-row .agent-chip svg {
+        width: 14px;
+        height: 14px;
+      }
+      .ask-panel {
+        top: 64px;
+        right: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: 440px;
+        max-width: calc(100vw - 48px);
+        padding: 12px;
+        animation: reveal 250ms var(--ease-out) both;
+      }
+      .ask-q {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 34px;
+        padding: 4px 10px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--soft);
+        cursor: pointer;
+        text-align: left;
+        font-size: 13px;
+      }
+      .ask-q:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      .ask-answer {
+        margin-top: 4px;
+        padding: 10px 10px 4px;
+        border-top: 1px solid var(--hover);
+        color: var(--dim);
+        font: 400 12px/20px var(--mono);
+      }
+      .ask-answer:empty {
+        display: none;
+      }
+      .ask-answer .agent-chip,
+      .ask-answer .agent-chip svg {
+        width: 14px;
+        height: 14px;
+        vertical-align: -2px;
+      }
+      .ask-answer b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .ask-thinking {
+        color: var(--faint);
+      }
+      .mic {
+        width: 14px;
+        height: 14px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .mic.rec {
+        color: var(--danger);
+        animation: mic-pulse 450ms ease-in-out infinite alternate;
+      }
+      @keyframes mic-pulse {
+        from {
+          opacity: 0.4;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @media (max-width: 960px) {
+        .watching {
+          display: none;
+        }
+        .runs {
+          width: 300px;
+        }
+        .canvas-hint {
+          display: none;
+        }
+        .canvas-tools {
+          bottom: 24px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *:before,
+        *:after {
+          scroll-behavior: auto !important;
+          animation-duration: 1ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 1ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#graph">Skip to the board</a>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <svg class="herdr-glyph" viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="4" y="7" width="24" height="4.5" rx="2.25" fill="#e9a23b" />
+            <rect
+              x="4"
+              y="13.75"
+              width="17"
+              height="4.5"
+              rx="2.25"
+              fill="var(--soft)"
+            />
+            <rect
+              x="4"
+              y="20.5"
+              width="21"
+              height="4.5"
+              rx="2.25"
+              fill="var(--dim)"
+            />
+          </svg>
+          <div class="project">
+            <div class="project-name">herdr</div>
+            <div class="file-name">workspace / buzz-feature-work</div>
+          </div>
+        </div>
+        <div class="status">
+          <button
+            class="theme-toggle"
+            id="theme-toggle"
+            type="button"
+            role="switch"
+            aria-checked="false"
+            aria-label="Use light theme"
+            onclick="toggleTheme()"
+          >
+            <span id="theme-toggle-label">Light</span
+            ><span class="theme-track" aria-hidden="true"
+              ><span class="theme-thumb"></span
+            ></span>
+          </button>
+          <span id="state"></span>
+          <button
+            class="badge alert"
+            id="need-you"
+            type="button"
+            title="Everything waiting on you"
+            aria-haspopup="dialog"
+            onclick="toggleNeedsPanel(this)"
+          >
+            <span class="dot"></span>need you
+          </button>
+          <button
+            class="badge ask-toggle"
+            id="ask-btn"
+            type="button"
+            title="Ask the board"
+            aria-haspopup="dialog"
+            aria-label="Ask the board"
+            onclick="toggleAskPanel(this)"
+          >
+            ⌁
+          </button>
+          <span class="watching">watching</span>
+        </div>
+      </header>
+      <div class="workspace">
+        <aside class="sidebar" id="tree" aria-label="Ticket selector"></aside>
+        <section
+          class="primary graph-view"
+          id="graph"
+          aria-label="Buzz pipeline board"
+          tabindex="-1"
+        ></section>
+        <div class="runs" id="runs"></div>
+        <div class="minimap" id="minimap" title="Jump around the board"></div>
+      </div>
+    </div>
+    <div id="overlay-root"></div>
+    <div class="toast" id="toast" role="status"></div>
+    <script>
+      // ---------------------------------------------------------------------
+      // Dataset — herdr-active-work-data-v2.js, inlined verbatim.
+      // ---------------------------------------------------------------------
+      // Buzz Trail v2 dataset — fleshed out to exercise the full harness model:
+      // machines/floors, setup states, jira candidates, all four checkpoint states,
+      // a done item, the full agent roster, channels + unscoped threads, handoff
+      // commands. Field names still mirror herdr_harness/active_work_store.py.
+
+      const PIPELINE = {
+        id: "pipeline_buzz_feature_work_v1",
+        slug: "buzz-feature-work",
+        title: "Buzz feature work",
+        stages: [
+          { stage_key: "start-ticket",          sequence: 1, phase_key: "open",  title: "Start",        skill_name: "buzz-start-ticket",          checkpoint_kind: "none"  },
+          { stage_key: "plan",                  sequence: 2, phase_key: "open",  title: "Plan",         skill_name: "buzz-plan",                  checkpoint_kind: "human" },
+          { stage_key: "implement",             sequence: 3, phase_key: "build", title: "Implement",    skill_name: "buzz-implement",             checkpoint_kind: "none"  },
+          { stage_key: "architect-code-review", sequence: 4, phase_key: "build", title: "Agent review", skill_name: "buzz-architect-code-review", checkpoint_kind: "none"  },
+          { stage_key: "proof",                 sequence: 5, phase_key: "prove", title: "Proof",        skill_name: "buzz-proof",                 checkpoint_kind: "human" },
+          { stage_key: "code-review-pre-pr",    sequence: 6, phase_key: "prove", title: "Pre-PR",       skill_name: "buzz-code-review-pre-pr",    checkpoint_kind: "human" },
+          { stage_key: "pr",                    sequence: 7, phase_key: "ship",  title: "PR",           skill_name: "buzz-pr",                    checkpoint_kind: "human" },
+          { stage_key: "pr-triage",             sequence: 8, phase_key: "ship",  title: "Triage",       skill_name: "buzz-pr-triage",             checkpoint_kind: "none"  }
+        ]
+      };
+
+      const MACHINES = {
+        "rocketbot": { name: "rocketbot", label: "local",  status: "online" },
+        "devbox":    { name: "devbox",    label: "DevBox", status: "online" }
+      };
+
+      // The full roster. status ∈ working|idle|queued|waiting|offline (AGENT_STATUSES).
+      const AGENTS = {
+        "ag-driver":    { display_name: "Buzz driver",     kind: "orchestrator", glyph: "Bz", color: "#e9a23b", status: "working" },
+        "ag-deepseek":  { display_name: "DeepSeek coder",  kind: "coder",        glyph: "Ds", color: "#5b7fd6", status: "working" },
+        "ag-picoder":   { display_name: "Pi coder",        kind: "coder",        glyph: "π",  color: "#8b8fd6", status: "idle"    },
+        "ag-architect": { display_name: "Architect iOS",   kind: "reviewer",     glyph: "Ai", color: "#b07fd6", status: "queued"  },
+        "ag-kimi":      { display_name: "Kimi reviewer",   kind: "reviewer",     glyph: "Ki", color: "#d65b8f", status: "working" },
+        "ag-qa":        { display_name: "iOS QA",          kind: "verifier",     glyph: "Qa", color: "#4fa8a0", status: "idle"    },
+        "ag-proof":     { display_name: "Proof runner",    kind: "verifier",     glyph: "Pr", color: "#7aa36a", status: "waiting" },
+        "ag-scout":     { display_name: "PR Review Scout", kind: "triage",       glyph: "Sc", color: "#d68f5b", status: "working" },
+        "ag-research":  { display_name: "Research Scout",  kind: "research",     glyph: "Rs", color: "#9b8fb8", status: "offline" },
+        "ag-ronnie":    { display_name: "Ronnie",          kind: "human",        glyph: "R",  color: "#8b8b93", status: "waiting" }
+      };
+
+      const WORK_ITEMS = [
+        {
+          id: "work_mobile_guard", key: "AGENTIC-575", title: "Mobile API Impact Guard",
+          kind: "feature", lifecycle: "active", trail_color: "#5b7fd6",
+          machine_id: "rocketbot", floor: "local", pane: "w1G:t1", updated_label: "now",
+          setup_state: "ready", needs_attention: false, attention_reason: null,
+          current_stage_key: "implement",
+          channel: { name: "#agentic-575-guard", external_id: "c-guard" },
+          jira: { issue_key: "AGENTIC-575", issue_type: "Story", priority: "P2", url: "https://doximity.atlassian.net/browse/AGENTIC-575" },
+          next_action: "Coder lands a scoped diff, then the driver tags Architect iOS.",
+          continuity: ["state.json", "handoff.md", "context-dump.md", "coder-brief.md"],
+          handoff_cmd: "herdr pi handoff --pane w1G:t1",
+          unscoped_threads: [{ id: "bz-2226", title: "Scope note · gateway only, no client SDK", status: "archived", url: "buzz://message?channel=c-guard&id=m-2226" }],
+          stages: {
+            "start-ticket": { state: "complete", started: "12:02", completed: "12:05",
+              agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+              buzz_threads: [{ id: "bz-2231", title: "Kickoff · scope confirmed", status: "archived", url: "buzz://message?channel=c-guard&id=m-2231" }] },
+            "plan": { state: "complete", checkpoint_state: "approved", started: "12:05", completed: "12:27",
+              agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" },
+                       { id: "ag-picoder", link_role: "planner", link_state: "done" }],
+              buzz_threads: [{ id: "bz-2233", title: "Plan review · approved by Ronnie", status: "archived", url: "buzz://message?channel=c-guard&id=m-2233" }],
+              pi_sessions: [{ id: "pi-8f31", title: "Plan drafting", provider: "pi", model: "opus", status: "ended", machine_id: "rocketbot", pane_id: "w1G:t2", tokens: "212k" }],
+        documents: [{ title: "plan-approval.html", kind: "html", skill: "buzz-plan", status: "approved", by: "Ronnie", at: "12:27" }] },
+            "implement": { state: "active", started: "12:27",
+              agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "active" },
+                       { id: "ag-driver",  link_role: "driver", link_state: "active" }],
+              buzz_threads: [{ id: "bz-2240", title: "Implement · diff streaming", status: "active", url: "buzz://message?channel=c-guard&id=m-2240" }],
+              pi_sessions: [{ id: "pi-9a02", title: "Coder session · schema integration", provider: "pi", model: "deepseek-v3", status: "running", machine_id: "rocketbot", pane_id: "w1G:t1", tokens: "486k" }],
+              activity: [
+                { t: "13:30", actor: "ag-driver",   message: "Accepted ownership and started execution." },
+                { t: "13:31", actor: "ag-picoder",  message: "Reading schema integration points." },
+                { t: "13:38", actor: "ag-deepseek", message: "Wrote ImpactGuard middleware · 6 files touched." },
+                { t: "13:44", actor: "ag-deepseek", message: "Running scoped tests on api-gateway target." }
+              ] },
+            "architect-code-review": { state: "ready",
+              agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "queued" }] },
+            "proof": { state: "pending" }, "code-review-pre-pr": { state: "pending" },
+            "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+          }
+        },
+        {
+          id: "work_ask_audit", key: "IOSDOX-27458", title: "Ask Analytics Audit",
+          kind: "feature", lifecycle: "active", trail_color: "#e08bb8",
+          machine_id: "devbox", floor: "DevBox", pane: "wX:t1", updated_label: "21m",
+          setup_state: "ready", needs_attention: true,
+          attention_reason: "Checkpoint pending at Proof — approve the analytics event map.",
+          current_stage_key: "proof",
+          channel: { name: "#iosdox-ask-audit", external_id: "c-audit" },
+          jira: { issue_key: "IOSDOX-27458", issue_type: "Story", priority: "P1", url: "https://doximity.atlassian.net/browse/IOSDOX-27458" },
+          next_action: "Approve the event map so Pre-PR can start.",
+          continuity: ["state.json", "handoff.md", "event-map.md"],
+          handoff_cmd: "herdr pi handoff --pane wX:t1 --machine devbox",
+          gate_action: { label: "Review event map", kind: "approve", to_stage_key: "code-review-pre-pr" },
+          stages: {
+            "start-ticket": { state: "complete", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+            "plan": { state: "complete", checkpoint_state: "approved",
+              agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+              buzz_threads: [{ id: "bz-2198", title: "Audit scope", status: "archived", url: "buzz://message?channel=c-audit&id=m-2198" }] },
+            "implement": { state: "complete",
+              agents: [{ id: "ag-picoder", link_role: "coder", link_state: "done" }],
+              pi_sessions: [{ id: "pi-7c11", title: "Audit implementation", provider: "pi", model: "opus", status: "ended", machine_id: "devbox", pane_id: "wX:t1", tokens: "603k" }],
+              buzz_threads: [{ id: "bz-2204", title: "Implement thread", status: "archived", url: "buzz://message?channel=c-audit&id=m-2204" }] },
+            "architect-code-review": { state: "complete",
+              agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }],
+              buzz_threads: [{ id: "bz-2210", title: "Review notes · 2 fixes applied", status: "archived", url: "buzz://message?channel=c-audit&id=m-2210" }] },
+            "proof": { state: "active", attention: "human", checkpoint_state: "pending", started: "13:23",
+              agents: [{ id: "ag-proof", link_role: "verifier", link_state: "active" },
+                       { id: "ag-ronnie", link_role: "checkpoint", link_state: "waiting" }],
+              buzz_threads: [{ id: "bz-2216", title: "Proof run · event map ready for you", status: "active", url: "buzz://message?channel=c-audit&id=m-2216" }],
+        documents: [{ title: "event-map.html", kind: "html", skill: "buzz-proof", status: "awaiting-you" },
+                    { title: "event-map.json", kind: "json", skill: "buzz-proof", status: "info" }],
+              activity: [{ t: "13:23", actor: "ag-proof", message: "Event map assembled — 41 events, 3 new." }] },
+            "code-review-pre-pr": { state: "pending" }, "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+          }
+        },
+        {
+          id: "work_moa_mgmt", key: "AGENTIC-472", title: "OpenCode MOA Agent Management",
+          kind: "feature", lifecycle: "active", trail_color: "#7aa36a",
+          machine_id: "rocketbot", floor: "local", pane: "wK:t9", updated_label: "36m",
+          setup_state: "ready", needs_attention: true,
+          attention_reason: "PR approved by agents — merge decision is yours.",
+          current_stage_key: "pr-triage",
+          channel: { name: "#agentic-moa", external_id: "c-moa" },
+          jira: { issue_key: "AGENTIC-472", issue_type: "Task", priority: "P2", url: "https://doximity.atlassian.net/browse/AGENTIC-472" },
+          pr: { number: 510, url: "https://github.com/doximity/agentic-dev/pull/510" },
+          next_action: "Merge or request changes on PR #510.",
+          continuity: ["state.json", "pr-summary.md"],
+          handoff_cmd: "herdr pi handoff --pane wK:t9",
+          gate_action: { label: "Merge PR #510", kind: "complete", to_stage_key: null },
+          stages: {
+            "start-ticket": { state: "complete" },
+            "plan": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+            "implement": { state: "complete",
+              agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "done" }],
+              pi_sessions: [{ id: "pi-5510", title: "MOA management build", provider: "pi", model: "deepseek-v3", status: "ended", machine_id: "rocketbot", pane_id: "wK:t9", tokens: "1.2M" }] },
+            "architect-code-review": { state: "complete", agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }] },
+            "proof": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-proof", link_role: "verifier", link_state: "done" }],
+              documents: [{ title: "proof-report.html", kind: "html", skill: "buzz-proof", status: "approved", by: "Ronnie", at: "12:58" }] },
+            "code-review-pre-pr": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+              documents: [{ title: "pre-pr-review.html", kind: "html", skill: "buzz-code-review-pre-pr", status: "approved", by: "Ronnie", at: "13:02" }] },
+            "pr": { state: "complete", checkpoint_state: "approved",
+              agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }],
+              buzz_threads: [{ id: "bz-2172", title: "PR #510 · review passed", status: "archived", url: "buzz://message?channel=c-moa&id=m-2172" }],
+        documents: [{ title: "pr-summary.html", kind: "html", skill: "buzz-pr", status: "approved", by: "Ronnie", at: "13:05" }] },
+            "pr-triage": { state: "active", attention: "human", started: "13:08",
+              agents: [{ id: "ag-scout", link_role: "triage", link_state: "active" },
+                       { id: "ag-ronnie", link_role: "decision", link_state: "waiting" }],
+              buzz_threads: [{ id: "bz-2229", title: "Merge decision", status: "active", url: "buzz://message?channel=c-moa&id=m-2229" }],
+              documents: [{ title: "triage-decision.html", kind: "html", skill: "buzz-pr-triage", status: "awaiting-you" }] }
+          }
+        },
+        {
+          id: "work_mcp_runtime", key: "AGENTIC-512", title: "Managed MCP Runtime",
+          kind: "feature", lifecycle: "blocked", trail_color: "#c7a24f",
+          machine_id: "rocketbot", floor: "local", pane: "w2A:t4", updated_label: "54m",
+          setup_state: "ready", needs_attention: true,
+          attention_reason: "Plan changes requested — scope note needs a revision before work starts.",
+          current_stage_key: "plan",
+          channel: { name: "#agentic-mcp-runtime", external_id: "c-mcp" },
+          jira: { issue_key: "AGENTIC-512", issue_type: "Story", priority: "P2", url: "https://doximity.atlassian.net/browse/AGENTIC-512" },
+          next_action: "Driver revises the plan scope note, then re-requests your approval.",
+          continuity: ["state.json", "plan.md"],
+          handoff_cmd: "herdr pi handoff --pane w2A:t4",
+          gate_action: { label: "Reopen plan review", kind: "toast", to_stage_key: null },
+          stages: {
+            "start-ticket": { state: "complete", agents: [{ id: "ag-research", link_role: "research", link_state: "done" }],
+              buzz_threads: [{ id: "bz-2183", title: "Runtime survey · 3 candidates", status: "archived", url: "buzz://message?channel=c-mcp&id=m-2183" }] },
+            "plan": { state: "blocked", attention: "human", checkpoint_state: "changes_requested", started: "12:48",
+              agents: [{ id: "ag-driver", link_role: "driver", link_state: "active" },
+                       { id: "ag-ronnie", link_role: "checkpoint", link_state: "waiting" }],
+              buzz_threads: [{ id: "bz-2221", title: "Plan v2 · you asked to drop the sandbox scope", status: "active", url: "buzz://message?channel=c-mcp&id=m-2221" }],
+        documents: [{ title: "plan-v2.html", kind: "html", skill: "buzz-plan", status: "changes_requested", by: "Ronnie", at: "12:52" }],
+              activity: [{ t: "12:52", actor: "ag-ronnie", message: "Requested changes — sandbox scope is a separate ticket." }] },
+            "implement": { state: "pending" }, "architect-code-review": { state: "pending" },
+            "proof": { state: "pending" }, "code-review-pre-pr": { state: "pending" },
+            "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+          }
+        },
+        {
+          id: "work_hud_polish", key: "HUD-441", title: "HUD Act-Mode Polish",
+          kind: "task", lifecycle: "active", trail_color: "#d65b8f",
+          machine_id: "devbox", floor: "DevBox", pane: "wA:t3", updated_label: "4m",
+          setup_state: "ready", needs_attention: false,
+          current_stage_key: "architect-code-review",
+          channel: { name: "#hud-polish", external_id: "c-hud" },
+          jira: { issue_key: "HUD-441", issue_type: "Task", priority: "P3", url: "https://doximity.atlassian.net/browse/HUD-441" },
+          next_action: "Kimi finishes the review pass, then straight to Proof.",
+          continuity: ["state.json", "handoff.md"],
+          handoff_cmd: "herdr pi handoff --pane wA:t3 --machine devbox",
+          stages: {
+            "start-ticket": { state: "complete" },
+            "plan": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-driver", link_role: "driver", link_state: "done" }] },
+            "implement": { state: "complete", started: "11:02", completed: "12:58",
+              agents: [{ id: "ag-deepseek", link_role: "coder", link_state: "done" }],
+              pi_sessions: [{ id: "pi-3e77", title: "HUD polish build", provider: "pi", model: "deepseek-v3", status: "ended", machine_id: "devbox", pane_id: "wA:t3", tokens: "348k" }],
+              buzz_threads: [{ id: "bz-2237", title: "Panel focus + hotkey fixes", status: "archived", url: "buzz://message?channel=c-hud&id=m-2237" }] },
+            "architect-code-review": { state: "active", started: "13:21",
+              agents: [{ id: "ag-kimi", link_role: "reviewer", link_state: "active" }],
+              pi_sessions: [{ id: "pi-4b19", title: "Review pass · NSPanel focus", provider: "pi", model: "kimi-k2", status: "running", machine_id: "devbox", pane_id: "wA:t5", tokens: "97k" }],
+              buzz_threads: [{ id: "bz-2243", title: "Review thread · 1 nit so far", status: "active", url: "buzz://message?channel=c-hud&id=m-2243" }],
+              activity: [{ t: "13:36", actor: "ag-kimi", message: "Flagged retain cycle risk in panel controller — checking." }] },
+            "proof": { state: "pending" }, "code-review-pre-pr": { state: "pending" },
+            "pr": { state: "pending" }, "pr-triage": { state: "pending" }
+          }
+        },
+        {
+          id: "work_drawer_calc", key: "IOSDOX-27102", title: "Drawer Calculator Access",
+          kind: "feature", lifecycle: "done", trail_color: "#6a7a8f",
+          machine_id: "devbox", floor: "DevBox", pane: null, updated_label: "3h",
+          setup_state: "ready", needs_attention: false,
+          current_stage_key: null, done_label: "merged this morning · monitoring",
+          channel: { name: "#iosdox-drawer-calc", external_id: "c-calc" },
+          jira: { issue_key: "IOSDOX-27102", issue_type: "Story", priority: "P2", url: "https://doximity.atlassian.net/browse/IOSDOX-27102" },
+          pr: { number: 11856, url: "https://github.com/doximity/iOS-Doximity/pull/11856" },
+          continuity: ["state.json", "pr-summary.md"],
+          stages: {
+            "start-ticket": { state: "complete" }, "plan": { state: "complete", checkpoint_state: "approved" },
+            "implement": { state: "complete", agents: [{ id: "ag-picoder", link_role: "coder", link_state: "done" }] },
+            "architect-code-review": { state: "complete", agents: [{ id: "ag-architect", link_role: "reviewer", link_state: "done" }] },
+            "proof": { state: "complete", checkpoint_state: "approved", agents: [{ id: "ag-qa", link_role: "verifier", link_state: "done" }] },
+            "code-review-pre-pr": { state: "complete", checkpoint_state: "approved" },
+            "pr": { state: "complete", checkpoint_state: "approved" },
+            "pr-triage": { state: "complete", completed: "10:41", agents: [{ id: "ag-scout", link_role: "triage", link_state: "done" }] }
+          }
+        }
+      ];
+
+      // Pre-pipeline intake: ideas + tickets mid-setup (setup_state machine:
+      // board_created → channel_linked → ready).
+      const INTAKE = [
+        {
+          id: "work_review_memory", key: "IDEA-07", title: "Project Review Memory",
+          kind: "idea", setup_state: "board_created", updated_label: "forming",
+          note: "Explore first. No worktree until a prototype decision is approved.",
+          cast: ["ag-driver"], next_setup: "Link a Buzz channel"
+        },
+        {
+          id: "work_ask_deflection", key: "IOSDOX-27655", title: "Ask Deflection Metrics",
+          kind: "feature", setup_state: "channel_linked", updated_label: "12m",
+          channel: { name: "#ask-deflection", external_id: "c-defl" },
+          jira: { issue_key: "IOSDOX-27655", issue_type: "Story", priority: "P2" },
+          note: "Channel linked. No driver attached yet — attach one to start the line.",
+          next_setup: "Attach driver"
+        }
+      ];
+
+      // Jira candidates rail (from GET /api/v1/active-work jira_candidates).
+      const JIRA_CANDIDATES = [
+        { issue_key: "IOSDOX-27710", title: "Colleague Connect prompts", issue_type: "Story", priority: "P3", status: "To Do" },
+        { issue_key: "AGENTIC-529",  title: "OpenCode replay harness",   issue_type: "Task",  priority: "P2", status: "To Do" }
+      ];
+
+
+      // ---------------------------------------------------------------------
+      // Derived model + helpers
+      // ---------------------------------------------------------------------
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) =>
+        String(s ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      const ago = (ms) => {
+        const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+        return s < 60
+          ? `${s}s`
+          : s < 3600
+            ? `${Math.round(s / 60)} min`
+            : `${Math.round(s / 3600)} h`;
+      };
+
+      const ORDER = [...PIPELINE.stages].sort((a, b) => a.sequence - b.sequence);
+      const STAGE = Object.fromEntries(ORDER.map((s) => [s.stage_key, s]));
+      const PHASES = [
+        { key: "open", name: "OPEN" },
+        { key: "build", name: "BUILD" },
+        { key: "prove", name: "PROVE" },
+        { key: "ship", name: "SHIP" },
+      ];
+      const REAL_ITEMS = WORK_ITEMS.filter(
+        (w) => Object.keys(w.stages || {}).length,
+      );
+      const itemByKey = (key) => WORK_ITEMS.find((w) => w.key === key);
+      const machineName = (id) => (MACHINES[id] ? MACHINES[id].name : id);
+      // -----------------------------------------------------------------
+      // Board filter — the sidebar ticket selector. Empty = overview (all).
+      // Click selects one ticket; ⌘/ctrl/shift-click compares several;
+      // clicking the only selected ticket returns to the overview.
+      // -----------------------------------------------------------------
+      const SEL = new Set();
+      const keyInFilter = (k) => !SEL.size || SEL.has(k);
+      const inFilter = (it) => keyInFilter(it.key);
+      const boardItems = () => REAL_ITEMS.filter(inFilter);
+      // Selecting one ticket is asking for its detail view: open every stage
+      // it has touched and its capsule inside each, so the whole journey —
+      // threads, sessions, review docs, decisions — reads without clicking.
+      function applyAutoExpand() {
+        if (SEL.size === 1) {
+          const it = itemByKey([...SEL][0]);
+          if (it && Object.keys(it.stages || {}).length) {
+            openDetails.clear();
+            closedCaps.clear();
+            for (const s of ORDER) {
+              const rec = recOf(it, s.stage_key);
+              if (rec && rec.state !== "pending") {
+                openDetails.add(s.stage_key);
+                openCaps.add(s.stage_key + ":" + it.key);
+              }
+            }
+            return;
+          }
+        }
+        if (!SEL.size) {
+          openDetails.clear();
+          openCaps.clear();
+          closedCaps.clear();
+        } else {
+          openDetails.clear();
+          for (const k of SEL) {
+            const it = itemByKey(k);
+            if (!it) continue;
+            for (const s of ORDER) {
+              const rec = recOf(it, s.stage_key);
+              if (rec && rec.state !== "pending")
+                openDetails.add(s.stage_key);
+            }
+          }
+        }
+      }
+      function refreshBoardFilter() {
+        applyAutoExpand();
+        renderTree();
+        renderGraph();
+        renderRuns();
+        renderTimes();
+      }
+      function selectTicket(key, ev) {
+        const additive = !!(ev && (ev.metaKey || ev.ctrlKey || ev.shiftKey));
+        if (additive) {
+          SEL.has(key) ? SEL.delete(key) : SEL.add(key);
+        } else if (SEL.size === 1 && SEL.has(key)) {
+          SEL.clear();
+        } else {
+          SEL.clear();
+          SEL.add(key);
+        }
+        refreshBoardFilter();
+        if (SEL.size === 1) fitBoard(0.6); // frame the whole expanded journey
+      }
+      function clearSelection() {
+        if (!SEL.size) return;
+        SEL.clear();
+        refreshBoardFilter();
+      }
+      // Jumps that land on a filtered-out ticket pull it into the filter
+      // instead of flying to an empty card.
+      function revealItem(key) {
+        if (SEL.size && !SEL.has(key)) {
+          SEL.add(key);
+          refreshBoardFilter();
+        }
+      }
+      // Glyph-in-circle marks — agenttrail's mark-system spirit at chip scale,
+      // derived from the roster's glyph + color (text tint by luminance).
+      function markTint(hex) {
+        const n = parseInt(String(hex).slice(1), 16);
+        const lum =
+          (((n >> 16) & 255) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) /
+          1000;
+        return lum > 150 ? "#241a06" : "#fff";
+      }
+      function markInner(id, cx, cy, r, live) {
+        const a = AGENTS[id] || { glyph: "?", color: "#8b8b93" };
+        const g = a.glyph,
+          c = a.color,
+          t = markTint(c);
+        const fs = g.length > 1 ? r * 0.82 : r * 0.95;
+        const pulse = live
+          ? `<circle class="mark-pulse" cx="${cx}" cy="${cy}" r="${r + 2.5}" fill="none" stroke="${c}" stroke-width="2"/>`
+          : "";
+        return `${pulse}<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c}"/><text x="${cx}" y="${cy + fs * 0.36}" text-anchor="middle" font-size="${fs}" font-weight="700" font-family="var(--font)" fill="${t}">${g}</text>`;
+      }
+      function chipHtml(id, faded, live) {
+        const name = AGENTS[id] ? AGENTS[id].display_name : id;
+        return `<span class="agent-chip${faded ? " faded" : ""}" title="${esc(name)}${live ? " · working now" : ""}"><svg viewBox="0 0 24 24" aria-label="${esc(name)}" role="img">${markInner(id, 12, 12, 11, live)}</svg></span>`;
+      }
+      function markChipSvg(id, cx, cy, live) {
+        const name = AGENTS[id] ? AGENTS[id].display_name : id;
+        return `<g>${markInner(id, cx, cy, 8, live)}<title>${esc(name)}${live ? " · working now" : ""}</title></g>`;
+      }
+
+      const recOf = (item, key) => (item.stages || {})[key];
+      function capState(rec) {
+        if (!rec) return null;
+        if (rec.state === "complete") return "cleared";
+        if (rec.state === "blocked") return "gate";
+        if (rec.state === "active")
+          return rec.attention === "human" ? "gate" : "riding";
+        if (rec.state === "ready") return "queued";
+        return null;
+      }
+      const CAP_ORDER = { riding: 0, gate: 1, cleared: 2, queued: 3 };
+      // Done-lifecycle items sink below live cleared rows — no loud presence.
+      const capRank = (c) =>
+        CAP_ORDER[c.state] + (c.item.lifecycle === "done" ? 0.5 : 0);
+      function capsulesFor(key) {
+        return boardItems().map((item) => ({
+          item,
+          rec: recOf(item, key),
+          state: capState(recOf(item, key)),
+        }))
+          .filter((c) => c.state)
+          .sort((a, b) => capRank(a) - capRank(b));
+      }
+      // Items currently waiting on Ronnie (drives the badge + needs-you panel).
+      function needyItems() {
+        return REAL_ITEMS.filter(
+          (w) => w.needs_attention && w.lifecycle !== "done",
+        );
+      }
+      // Where an agent is attached right now: first non-complete stage record
+      // carrying a not-done link for it. null when unattached.
+      function agentAttachment(id) {
+        for (const item of REAL_ITEMS) {
+          if (item.lifecycle === "done") continue;
+          for (const s of ORDER) {
+            const rec = recOf(item, s.stage_key);
+            if (!rec || rec.state === "complete" || rec.state === "pending")
+              continue;
+            const link = (rec.agents || []).find(
+              (a) => a.id === id && a.link_state !== "done",
+            );
+            if (link) return { item, stageKey: s.stage_key, link };
+          }
+        }
+        return null;
+      }
+      // Effective roster status — the roster's word at boot, downgraded to
+      // idle once an agent's live attachment disappears (post-transition),
+      // upgraded by the attachment's own link_state where it is stronger.
+      function effStatus(id) {
+        const base = (AGENTS[id] || {}).status;
+        if (base === "offline") return "offline";
+        const att = agentAttachment(id);
+        if (!att)
+          return base === "working" || base === "waiting" || base === "queued"
+            ? "idle"
+            : base;
+        if (att.link.link_state === "queued") return "queued";
+        if (att.link.link_state === "waiting") return "waiting";
+        return base === "waiting" ? "waiting" : "working";
+      }
+      function stageStatus(key) {
+        const states = capsulesFor(key).map((c) => c.state);
+        if (states.includes("gate")) return "blocked";
+        if (states.includes("riding")) return "active";
+        const n = boardItems().length;
+        if (n && states.filter((s) => s === "cleared").length === n)
+          return "done";
+        return "pending";
+      }
+      function stageMeta(key) {
+        const states = capsulesFor(key).map((c) => c.state);
+        if (!states.length && SEL.size) return "—";
+        const n = (s) => states.filter((x) => x === s).length;
+        const parts = [];
+        if (n("cleared")) parts.push(`${n("cleared")} cleared`);
+        if (n("riding")) parts.push(`${n("riding")} riding`);
+        if (n("gate")) parts.push(`${n("gate")} gate`);
+        if (n("queued")) parts.push(`${n("queued")} queued`);
+        return parts.length ? parts.join(" · ") : "0 cleared";
+      }
+      function stageChips(key) {
+        const seen = new Set(),
+          out = [];
+        for (const c of capsulesFor(key)) {
+          if (c.state === "cleared") continue;
+          for (const a of c.rec.agents || [])
+            if (a.link_state !== "done" && !seen.has(a.id)) {
+              seen.add(a.id);
+              out.push({
+                id: a.id,
+                live:
+                  a.link_state === "active" && effStatus(a.id) === "working",
+              });
+            }
+        }
+        return out.slice(0, 3);
+      }
+
+      // ---------------------------------------------------------------------
+      // Live board state (seeded from the dataset, advanced by the simulator)
+      // ---------------------------------------------------------------------
+      const BOOT = Date.now();
+      const LIVE = {
+        activityAt: BOOT - 4000,
+        obs: {
+          stage: "implement",
+          item: "AGENTIC-575",
+          file: "context-dump.md",
+          at: BOOT - 9000,
+        },
+        hot: {
+          "tickets/AGENTIC-575/context-dump.md": BOOT - 9000,
+          "tickets/AGENTIC-575/state.json": BOOT - 16000,
+          "tickets/IOSDOX-27458/event-map.md": BOOT - 21 * 60000,
+          "tickets/AGENTIC-472/pr-summary.md": BOOT - 36 * 60000,
+        },
+        feed: [
+          { at: BOOT - 90 * 1000, actor: "ag-deepseek", message: "Running scoped tests on api-gateway target." },
+          { at: BOOT - 6 * 60000, actor: "ag-deepseek", message: "Wrote ImpactGuard middleware · 6 files touched." },
+          { at: BOOT - 13 * 60000, actor: "ag-picoder", message: "Reading schema integration points." },
+          { at: BOOT - 15 * 60000, actor: "ag-driver", message: "Accepted ownership and started execution." },
+        ],
+        feedKey: 0,
+        tool: { name: "Bash", detail: "pytest tests/api_gateway -q", at: BOOT - 4000 },
+        toolHist: [
+          { name: "Edit", detail: "guard/impact_middleware.py", ms: 640 },
+          { name: "Read", detail: "schemas/mobile_v3.json", ms: 210 },
+          { name: "Edit", detail: "tickets/AGENTIC-575/context-dump.md", ms: 380 },
+          { name: "Write", detail: "tickets/AGENTIC-575/state.json", ms: 150 },
+          { name: "Bash", detail: "rg ImpactGuard -l", ms: 1900 },
+        ],
+        runStart: BOOT - 47 * 60000,
+        endedStart: BOOT - 96 * 60000,
+        obs2: null, // transient observed activity on a second stage (Kimi)
+        threadNew: null, // buzz thread id wearing a "new" dot until its detail opens
+      };
+      const RUN_TODOS = [
+        { content: "Read schema integration points", status: "completed" },
+        { content: "Write ImpactGuard middleware", status: "completed" },
+        { content: "Run scoped tests on api-gateway", status: "in_progress" },
+        { content: "Package diff for Architect review", status: "pending" },
+      ];
+      // Dataset activity clock strings ("13:23") -> epochs relative to BOOT so
+      // capsule activity metas render as live agos like every other timestamp.
+      // Anchor: the newest activity line in the dataset corresponds to the
+      // newest seeded feed entry (BOOT - 90s); earlier lines keep their
+      // clock-time offsets from it. The anchor is kept so transitions and the
+      // buzz.log console can render demo-consistent HH:MM clocks both ways.
+      const clockMin = (t) => {
+        const [h, m] = String(t).split(":").map(Number);
+        return h * 60 + m;
+      };
+      const CLOCK = { anchorEpoch: BOOT - 90 * 1000, newestMin: -Infinity };
+      {
+        for (const w of WORK_ITEMS)
+          for (const rec of Object.values(w.stages || {}))
+            for (const a of rec.activity || [])
+              CLOCK.newestMin = Math.max(CLOCK.newestMin, clockMin(a.t));
+        for (const w of WORK_ITEMS)
+          for (const rec of Object.values(w.stages || {}))
+            for (const a of rec.activity || [])
+              a.at =
+                CLOCK.anchorEpoch - (CLOCK.newestMin - clockMin(a.t)) * 60000;
+      }
+      const clockToEpoch = (t) =>
+        CLOCK.anchorEpoch - (CLOCK.newestMin - clockMin(t)) * 60000;
+      const demoClock = (epoch) => {
+        const min = Math.round(
+          CLOCK.newestMin + (epoch - CLOCK.anchorEpoch) / 60000,
+        );
+        const h = Math.floor(min / 60) % 24,
+          m = ((min % 60) + 60) % 60;
+        return `${h}:${String(m).padStart(2, "0")}`;
+      };
+      // updated_label strings ("21m", "3h", "now") -> epochs so needs-you rows
+      // and intake cards carry live agos instead of frozen labels.
+      const parseUpdated = (label) => {
+        if (label === "now") return BOOT;
+        let m = /^(\d+)m$/.exec(label || "");
+        if (m) return BOOT - +m[1] * 60000;
+        m = /^(\d+)h$/.exec(label || "");
+        if (m) return BOOT - +m[1] * 3600000;
+        return null;
+      };
+      for (const w of WORK_ITEMS) w._updatedAt = parseUpdated(w.updated_label);
+      for (const e of INTAKE) e._updatedAt = parseUpdated(e.updated_label);
+      // Session token counts as numbers (in thousands) so the simulator can
+      // bump them in place; the display string is re-derived from these.
+      const parseTok = (t) => {
+        const m = /^([\d.]+)(k|M)$/.exec(t || "");
+        return m ? +m[1] * (m[2] === "M" ? 1000 : 1) : null;
+      };
+      const fmtTok = (n) =>
+        n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}M` : `${Math.round(n)}k`;
+      const RUNNING_SESSIONS = [];
+      for (const w of WORK_ITEMS)
+        for (const [sk, rec] of Object.entries(w.stages || {}))
+          for (const s of rec.pi_sessions || []) {
+            s._tok = parseTok(s.tokens);
+            if (s.status === "running")
+              RUNNING_SESSIONS.push({ session: s, item: w, stageKey: sk });
+          }
+
+      // ---------------------------------------------------------------------
+      // buzz.log — the merged activity stream across ALL items, newest first.
+      // Seeded from every stage record's activity (AGENTIC-575's implement
+      // lines live in LIVE.feed, the simulator's write path). Capped.
+      // ---------------------------------------------------------------------
+      const BUZZLOG = [];
+      function logAppend(entry, opts) {
+        BUZZLOG.unshift(entry);
+        BUZZLOG.length = Math.min(BUZZLOG.length, 40);
+        if (typeof patchLogPanel === "function") patchLogPanel(entry, opts);
+      }
+      {
+        for (const w of WORK_ITEMS)
+          for (const [sk, rec] of Object.entries(w.stages || {}))
+            for (const a of rec.activity || [])
+              if (!(w.key === "AGENTIC-575" && sk === "implement"))
+                BUZZLOG.push({
+                  at: a.at,
+                  actor: a.actor,
+                  item: w.key,
+                  message: a.message,
+                });
+        for (const f of LIVE.feed)
+          BUZZLOG.push({
+            at: f.at,
+            actor: f.actor,
+            item: "AGENTIC-575",
+            message: f.message,
+          });
+        BUZZLOG.sort((a, b) => b.at - a.at);
+      }
+
+      // ---------------------------------------------------------------------
+      // Theme toggle (storage key herdr-trail-theme)
+      // ---------------------------------------------------------------------
+      function syncTheme() {
+        const light = document.documentElement.dataset.theme === "light",
+          toggle = $("theme-toggle"),
+          label = $("theme-toggle-label");
+        if (toggle) {
+          toggle.setAttribute("aria-checked", String(light));
+          toggle.setAttribute(
+            "aria-label",
+            light ? "Use dark theme" : "Use light theme",
+          );
+        }
+        if (label) label.textContent = light ? "Dark" : "Light";
+        document
+          .querySelector('meta[name="theme-color"]')
+          ?.setAttribute("content", light ? "#fff" : "#000");
+      }
+      function toggleTheme() {
+        const next =
+          document.documentElement.dataset.theme === "light" ? "dark" : "light";
+        document.documentElement.dataset.theme = next;
+        try {
+          localStorage.setItem("herdr-trail-theme", next);
+        } catch {}
+        syncTheme();
+      }
+
+      // ---------------------------------------------------------------------
+      // Toast
+      // ---------------------------------------------------------------------
+      function toast(msg) {
+        const t = $("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        clearTimeout(t._h);
+        t._h = setTimeout(() => t.classList.remove("show"), 2600);
+      }
+      function openBuzz(id) {
+        // Handlers take identifiers, never display strings — titles with
+        // quotes/apostrophes can't break the inline onclick attributes.
+        let title = id;
+        for (const w of WORK_ITEMS) {
+          for (const th of w.unscoped_threads || [])
+            if (th.id === id) title = th.title;
+          for (const rec of Object.values(w.stages || {}))
+            for (const th of rec.buzz_threads || [])
+              if (th.id === id) title = th.title;
+        }
+        toast(`Opening ${title} in Buzz — wired to buzz:// in the real build`);
+      }
+      function openPane(pane) {
+        toast(`Focusing pane ${pane} — hands off to the Mac app in the real build`);
+      }
+      function openJira(itemKey) {
+        toast(`Opening ${itemKey} in Jira — wired to the real URL in the build`);
+      }
+      function openPR(itemKey) {
+        const item = itemByKey(itemKey);
+        toast(
+          `Opening PR #${item && item.pr ? item.pr.number : "?"} on GitHub — wired to the real URL in the build`,
+        );
+      }
+      function copyHandoff(cmd) {
+        const ok = () => toast("Handoff command copied");
+        // execCommand first — it is synchronous, so it still holds the click's
+        // user activation; the async clipboard API is the fallback (its
+        // permission rejection would otherwise consume the activation before
+        // execCommand could run).
+        let did = false;
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = cmd;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          did = document.execCommand("copy");
+          ta.remove();
+        } catch {}
+        if (did) return ok();
+        if (navigator.clipboard && navigator.clipboard.writeText)
+          navigator.clipboard.writeText(cmd).then(ok, () =>
+            toast("Copy blocked — select the command manually"),
+          );
+        else toast("Copy blocked — select the command manually");
+      }
+
+      // ---------------------------------------------------------------------
+      // Gate transitions — models POST /transitions. Every mutation lands in
+      // the demo dataset, then rederive() rebuilds all derived surfaces
+      // (stage cards, capsules, trails, badges, tree, runs, buzz.log, Ask).
+      // ---------------------------------------------------------------------
+      function rederive() {
+        renderTree();
+        renderRuns();
+        renderGraph();
+        renderTimes();
+      }
+      function gateAct(itemKey, opener) {
+        const item = itemByKey(itemKey);
+        const ga = item && item.gate_action;
+        if (!ga) return;
+        if (ga.kind === "toast") {
+          toast(
+            `${ga.label} — the driver is still revising; it pings you when the plan is back`,
+          );
+          return;
+        }
+        openGateConfirm(item, opener);
+      }
+      function applyApprove(item) {
+        const now = Date.now(),
+          fromKey = item.current_stage_key,
+          toKey = item.gate_action.to_stage_key;
+        const rec = recOf(item, fromKey);
+        rec.state = "complete";
+        rec.attention = "none";
+        rec.checkpoint_state = "approved";
+        rec.completed = demoClock(now);
+        for (const a of rec.agents || []) a.link_state = "done";
+        const toRec = item.stages[toKey] || (item.stages[toKey] = {});
+        toRec.state = "active";
+        toRec.started = demoClock(now);
+        toRec.agents = [
+          { id: "ag-driver", link_role: "driver", link_state: "active" },
+        ];
+        toRec.activity = toRec.activity || [];
+        item.current_stage_key = toKey;
+        item.needs_attention = false;
+        item.attention_reason = null;
+        item.gate_action = null;
+        item.next_action = `${STAGE[toKey].title} runs agent-side — the next gate comes back to you.`;
+        item._updatedAt = now;
+        item.updated_label = "now";
+        const cleared = {
+          at: now,
+          actor: "ag-ronnie",
+          message: `Approved the ${STAGE[fromKey].title} gate.`,
+        };
+        (rec.activity = rec.activity || []).push({ t: demoClock(now), ...cleared });
+        logAppend({ ...cleared, item: item.key });
+        const started = {
+          at: now,
+          actor: "ag-driver",
+          message: `${STAGE[toKey].title} started.`,
+        };
+        toRec.activity.push({ t: demoClock(now), ...started });
+        logAppend({ ...started, item: item.key });
+        LIVE.activityAt = now;
+        openDetails.add(toKey);
+        rederive();
+        toast(
+          `${item.key} cleared ${STAGE[fromKey].title} — ${STAGE[toKey].title} started`,
+        );
+      }
+      function applyChanges(item) {
+        const now = Date.now(),
+          key = item.current_stage_key;
+        const rec = recOf(item, key);
+        rec.checkpoint_state = "changes_requested";
+        item.attention_reason = `Changes requested at ${STAGE[key].title} — driver revises, then re-requests your approval.`;
+        item._updatedAt = now;
+        item.updated_label = "now";
+        const line = {
+          at: now,
+          actor: "ag-ronnie",
+          message: `Requested changes at ${STAGE[key].title}.`,
+        };
+        (rec.activity = rec.activity || []).push({ t: demoClock(now), ...line });
+        logAppend({ ...line, item: item.key });
+        LIVE.activityAt = now;
+        rederive();
+        toast(`Changes requested on ${item.key} — the driver is on it`);
+      }
+      function applyComplete(item) {
+        const now = Date.now(),
+          key = item.current_stage_key;
+        const rec = recOf(item, key);
+        rec.state = "complete";
+        rec.attention = "none";
+        rec.completed = demoClock(now);
+        for (const a of rec.agents || []) a.link_state = "done";
+        item.lifecycle = "done";
+        item.needs_attention = false;
+        item.attention_reason = null;
+        item.current_stage_key = null;
+        item.done_label = "merged just now · monitoring";
+        item.gate_action = null;
+        item._updatedAt = now;
+        item.updated_label = "now";
+        const line = {
+          at: now,
+          actor: "ag-ronnie",
+          message: `Merged PR #${item.pr ? item.pr.number : "?"} — monitoring.`,
+        };
+        (rec.activity = rec.activity || []).push({ t: demoClock(now), ...line });
+        logAppend({ ...line, item: item.key });
+        LIVE.activityAt = now;
+        rederive();
+        toast(
+          `PR #${item.pr ? item.pr.number : "?"} merged — ${item.key} is done · monitoring`,
+        );
+      }
+      function confirmGate(itemKey, verdict) {
+        const item = itemByKey(itemKey);
+        closeOverlay(false);
+        $("graph")?.focus?.();
+        if (!item || !item.gate_action) return;
+        if (verdict === "changes") applyChanges(item);
+        else if (item.gate_action.kind === "complete") applyComplete(item);
+        else applyApprove(item);
+      }
+
+      // ---------------------------------------------------------------------
+      // Topbar badges — Working (simulator window) + N need you (derived)
+      // ---------------------------------------------------------------------
+      function renderBadge() {
+        const working = Date.now() - LIVE.activityAt < 60000;
+        $("state").innerHTML = working
+          ? `<span class="badge working"><span class="dot"></span>Working · <span class="t-ago" data-at="${LIVE.activityAt}"></span> ago</span>`
+          : `<span class="badge"><span class="dot"></span>Board is live</span>`;
+        const b = $("need-you");
+        if (b) {
+          const n = needyItems().length;
+          const label = n === 1 ? "1 needs you" : `${n} need you`;
+          b.style.display = n ? "" : "none";
+          if (b._label !== label) {
+            b._label = label;
+            b.innerHTML = `<span class="dot"></span>${label}`;
+          }
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // Ticket selector (replaces the file tree): overview / single ticket /
+      // ⌘-click comparison. Item details stay in the pipeline drill-downs.
+      // Below it: the agents roster and the jira-candidates rail.
+      // ---------------------------------------------------------------------
+      // Latest write for an item's carried state files (drives the amber
+      // "touched just now" stamp on its selector row).
+      function itemHotAt(key) {
+        let at = 0;
+        for (const [p, t] of Object.entries(LIVE.hot))
+          if (p.startsWith(`tickets/${key}/`) && t > at) at = t;
+        return at || null;
+      }
+      function selectorStatus(w) {
+        if (w.lifecycle === "done")
+          return `<span class="sel-state done">done</span>`;
+        if (w.needs_attention)
+          return `<span class="sel-state gate"><span class="needs-dot"></span>gate</span>`;
+        const st = STAGE[w.current_stage_key];
+        return `<span class="sel-state">${st ? esc(st.title.toLowerCase()) : ""}</span>`;
+      }
+      function renderTree() {
+        const rows = [];
+        rows.push(
+          `<button class="tree-row ticket overview${SEL.size ? "" : " on"}" type="button" aria-pressed="${!SEL.size}" onclick="clearSelection()"><span class="sel-swatch overview"></span><span class="tree-name">Overview — everything</span><span class="sel-state">${REAL_ITEMS.length}</span></button>`,
+        );
+        for (const w of REAL_ITEMS) {
+          const on = SEL.has(w.key);
+          const at = itemHotAt(w.key);
+          const fresh = at && Date.now() - at < 90000;
+          rows.push(
+            `<button class="tree-row ticket${on ? " on" : ""}${fresh ? " hot" : ""}${w.lifecycle === "done" ? " done" : ""}" type="button" data-sel-key="${esc(w.key)}" aria-pressed="${on}" title="${esc(w.title)} — click to focus · ⌘ click to compare" onclick="selectTicket('${esc(w.key)}', event)"><span class="sel-swatch" style="background:${esc(w.trail_color)}"></span><span class="tree-name">${esc(w.key)}</span>${at ? `<span class="tree-ago"><span class="t-ago" data-at="${at}"></span></span>` : ""}${selectorStatus(w)}</button>`,
+          );
+        }
+        for (const e of INTAKE) {
+          const on = SEL.has(e.key);
+          rows.push(
+            `<button class="tree-row ticket forming${on ? " on" : ""}" type="button" data-sel-key="${esc(e.key)}" aria-pressed="${on}" title="${esc(e.title)} — ${esc(e.setup_state)}" onclick="selectTicket('${esc(e.key)}', event)"><span class="sel-swatch forming"></span><span class="tree-name">${esc(e.key)}</span><span class="sel-state">forming</span></button>`,
+          );
+        }
+        rows.push(
+          `<button class="tree-row file logrow" type="button" style="padding-left:16px" onclick="openLogPanel(this)" aria-haspopup="dialog"><span class="tree-name">buzz.log</span><span class="tree-ago" style="color:var(--faint)">${BUZZLOG.length}</span></button>`,
+        );
+        // agents roster — status derived from live attachments (effStatus)
+        const agentRows = Object.keys(AGENTS)
+          .map((id) => {
+            const a = AGENTS[id],
+              st = effStatus(id);
+            return `<button class="tree-row agent" type="button" onclick="agentJump('${id}')" title="${esc(a.display_name)} · ${esc(a.kind)}">${chipHtml(id, st === "offline", st === "working")}<span class="tree-name">${esc(a.display_name)}</span><span class="agent-status"><span class="status-dot ${st}"></span><span class="status-word">${st}</span></span></button>`;
+          })
+          .join("");
+        // jira candidates rail — `set up →` runs the intake bootstrap
+        const candRows = JIRA_CANDIDATES.length
+          ? JIRA_CANDIDATES.map((c) => {
+              const busy = c._setup === "pending";
+              const act = busy
+                ? `<span class="cand-act busy"><svg class="cand-spin" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="var(--line)" stroke-width="2.5" fill="none"/><circle cx="12" cy="12" r="9" stroke="var(--accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-dasharray="16 41"/></svg>setting up…</span>`
+                : `<span class="cand-act">set up →</span>`;
+              return `<button class="tree-row cand" type="button" ${busy ? 'aria-disabled="true"' : ""} onclick="setupCandidate('${esc(c.issue_key)}')" title="${esc(c.title)} · ${esc(c.issue_type)} · ${esc(c.status)}"><span class="tree-name">${esc(c.issue_key)} · ${esc(c.priority)}</span>${act}</button>`;
+            }).join("")
+          : `<div class="tree-row file" style="padding-left:16px"><span class="tree-name" style="color:var(--faint)">none queued</span></div>`;
+        $("tree").innerHTML =
+          `<div class="tree-head">Buzz tickets</div>` +
+          rows.join("") +
+          `<div class="tree-head sect">agents</div>` +
+          agentRows +
+          `<button class="tree-row action" type="button" onclick="toast('New Pi session — the harness picks a pane and boots it in the real build')"><span class="tree-name">+ new pi session</span></button>` +
+          `<div class="tree-head sect">jira candidates</div>` +
+          candRows +
+          `<div class="tree-legend"><span class="tree-legend-dot"></span>amber = touched just now · <span class="key" style="min-width:auto;padding:0 4px">⌘</span> click compares</div>`;
+      }
+      function agentJump(id) {
+        const a = AGENTS[id],
+          att = agentAttachment(id);
+        if (!att) {
+          const st = effStatus(id);
+          toast(
+            `${a.display_name} is ${st === "offline" ? "offline" : "idle"} — no attachment`,
+          );
+          return;
+        }
+        revealItem(att.item.key);
+        flyToStage(att.stageKey, true);
+        toast(
+          `${a.display_name} — ${att.link.link_role} on ${att.item.key} at ${STAGE[att.stageKey].title}`,
+        );
+      }
+      function setupCandidate(issueKey) {
+        const c = JIRA_CANDIDATES.find((x) => x.issue_key === issueKey);
+        if (!c || c._setup) return;
+        c._setup = "pending";
+        renderTree();
+        renderTimes();
+        setTimeout(() => {
+          const i = JIRA_CANDIDATES.indexOf(c);
+          if (i >= 0) JIRA_CANDIDATES.splice(i, 1);
+          const slug = (
+            c.issue_key +
+            "-" +
+            c.title.split(/\s+/)[0]
+          ).toLowerCase();
+          INTAKE.push({
+            id: "work_" + c.issue_key.toLowerCase().replace(/-/g, "_"),
+            key: c.issue_key,
+            title: c.title,
+            kind: "feature",
+            setup_state: "channel_linked",
+            updated_label: "now",
+            _updatedAt: Date.now(),
+            channel: {
+              name: "#" + slug,
+              external_id: "c-" + c.issue_key.toLowerCase(),
+            },
+            jira: {
+              issue_key: c.issue_key,
+              issue_type: c.issue_type,
+              priority: c.priority,
+            },
+            note: "Channel linked. No driver attached yet — attach one to start the line.",
+            next_setup: "Attach driver",
+          });
+          rederive();
+          toast(`${c.issue_key} set up — #${slug} linked, needs a driver`);
+        }, 1400);
+      }
+      function intakeAct(key) {
+        const e = INTAKE.find((x) => x.key === key);
+        if (!e) return;
+        toast(
+          e.setup_state === "board_created"
+            ? `Link a Buzz channel for ${e.key} — the channel picker opens in the real build`
+            : `Attach a driver to ${e.key} — the roster picker opens in the real build`,
+        );
+      }
+      // Simulator ticks patch selector rows in place — no innerHTML swap, so a
+      // mid-click on a row is never swallowed. Falls back to a full
+      // renderTree() only when the hot touch newly reveals a folder that is
+      // not yet rendered open in the DOM.
+      function patchTreeHot(path, at) {
+        // Selector rows carry the item-level stamp now: tickets/KEY/... → KEY.
+        const m = /^tickets\/([^/]+)\//.exec(path);
+        if (!m) return;
+        const row = document.querySelector(
+          `#tree .tree-row.ticket[data-sel-key="${m[1]}"]`,
+        );
+        if (!row) return;
+        row.classList.add("hot");
+        let stamp = row.querySelector(".t-ago");
+        if (!stamp) {
+          const wrap = document.createElement("span");
+          wrap.className = "tree-ago";
+          wrap.innerHTML = '<span class="t-ago"></span>';
+          row.querySelector(".tree-name").after(wrap);
+          stamp = wrap.querySelector(".t-ago");
+        }
+        stamp.dataset.at = String(at);
+      }
+
+      // ---------------------------------------------------------------------
+      // Run cards (agenttrail run-card anatomy)
+      // ---------------------------------------------------------------------
+      const openRuns = new Set();
+      // The Pi handoff recipe for a session — pane plus machine when it is
+      // not the local floor (mirrors the dataset's handoff_cmd strings).
+      function sessionHandoff(s) {
+        return `herdr pi handoff --pane ${s.pane_id}${
+          s.machine_id && MACHINES[s.machine_id] && MACHINES[s.machine_id].label !== "local"
+            ? " --machine " + s.machine_id
+            : ""
+        }`;
+      }
+      function handoffRow(cmd) {
+        return `<div class="handoff-row"><span class="handoff-cmd">${esc(cmd)}</span><button class="copy-btn" type="button" aria-label="Copy handoff command" onclick="event.stopPropagation();copyHandoff('${esc(cmd)}')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button></div>`;
+      }
+      function sessionAgent(s, rec) {
+        const active = (rec.agents || []).find((a) => a.link_state === "active");
+        return active ? active.id : "ag-picoder";
+      }
+      function renderRuns() {
+        const cards = [];
+        for (const { session: s, item, stageKey } of RUNNING_SESSIONS) {
+          if (!inFilter(item)) continue;
+          const rec = recOf(item, stageKey);
+          const isCoder = item.key === "AGENTIC-575" && stageKey === "implement";
+          const open = openRuns.has(s.id);
+          const startAt = isCoder
+            ? LIVE.runStart
+            : rec.started
+              ? clockToEpoch(rec.started)
+              : CLOCK.anchorEpoch - 20 * 60000;
+          const mach = machineName(s.machine_id);
+          const head = `<div class="run-head"><span class="run-agent"><svg viewBox="0 0 24 24">${markInner(sessionAgent(s, rec), 12, 12, 11, true)}</svg></span><span class="run-name">${esc(s.id)}</span><span class="run-sub">· ${esc(s.model)} · ${esc(mach)} · <span data-run-tok="${esc(s.id)}">${esc(fmtTok(s._tok))}</span></span><span class="run-live-dot"></span><span class="run-elapsed"><span class="t-ago" data-at="${startAt}"></span> · in <a href="#" onclick="event.preventDefault();event.stopPropagation();flyToStage('${stageKey}')">${esc(STAGE[stageKey].title)}</a></span></div>`;
+          if (isCoder) {
+            const cur = RUN_TODOS.find((t) => t.status === "in_progress");
+            const todos = RUN_TODOS.map(
+              (t) =>
+                `<div class="run-todo ${t.status}"><span class="box ${t.status === "completed" ? "done" : t.status === "in_progress" ? "active" : ""}"></span><span>${esc(t.content)}</span></div>`,
+            ).join("");
+            const hist = LIVE.toolHist
+              .slice(0, 5)
+              .map(
+                (t) =>
+                  `<div class="run-hist"><span class="hd">${esc(t.name)} · ${esc(t.detail)}</span><span>${t.ms > 1200 ? Math.round(t.ms / 1000) + "s" : t.ms + "ms"}</span></div>`,
+              )
+              .join("");
+            cards.push(`<div class="run-card ${open ? "open" : ""}" data-run="${esc(s.id)}">
+        ${head}
+        <div class="run-task">${esc(cur ? cur.content : s.title)}</div>
+        <div class="run-tool" data-run-tool><span class="tn">${esc(LIVE.tool.name)}</span><span class="td">${esc(LIVE.tool.detail)}</span><span class="ta t-ago" data-at="${LIVE.tool.at}"></span></div>
+        <div class="run-detail">${todos}<div style="margin-top:8px" data-hist>${hist}</div>${handoffRow(sessionHandoff(s))}</div>
+      </div>`);
+          } else {
+            const acts = (rec.activity || [])
+              .slice(-3)
+              .reverse()
+              .map(
+                (a) =>
+                  `<div class="run-hist"><span class="hd">${esc(a.message)}</span><span class="t-ago" data-at="${a.at}"></span></div>`,
+              )
+              .join("");
+            cards.push(`<div class="run-card ${open ? "open" : ""}" data-run="${esc(s.id)}" data-run-stage="${esc(stageKey)}">
+        ${head}
+        <div class="run-task">${esc(s.title)} · ${esc(item.key)}</div>
+        <div class="run-detail">${acts || `<div class="run-hist"><span class="hd">No tool activity yet</span><span></span></div>`}${handoffRow(sessionHandoff(s))}</div>
+      </div>`);
+          }
+        }
+        // Ended card: the freshest ended session on an item parked at a human
+        // gate — the "Idle — waiting for you" surface.
+        for (const item of needyItems()) {
+          if (!inFilter(item)) continue;
+          let best = null;
+          for (const rec of Object.values(item.stages || {}))
+            for (const s of rec.pi_sessions || [])
+              if (s.status === "ended" && (!best || s.id > best.id)) best = s;
+          if (!best) continue;
+          const open = openRuns.has(best.id);
+          cards.push(`<div class="run-card ended ${open ? "open" : ""}" data-run="${esc(best.id)}">
+        <div class="run-head"><span class="run-agent"><svg viewBox="0 0 24 24">${markInner("ag-picoder", 12, 12, 11)}</svg></span><span class="run-name">${esc(best.id)}</span><span class="run-sub">· ${esc(best.model)} · ${esc(machineName(best.machine_id))}</span><span class="run-live-dot"></span><span class="run-elapsed"><span class="t-ago" data-at="${LIVE.endedStart}"></span> · ${esc(item.key)}</span></div>
+        <div class="run-task idle">Idle — waiting for you</div>
+        <div class="run-detail">
+          <div class="run-hist"><span class="hd">Session ended · ${esc(best.tokens)} tokens</span><span>ended</span></div>
+          <div class="run-hist"><span class="hd">${esc(item.attention_reason || item.next_action || "Waiting on your checkpoint")}</span><span></span></div>
+          ${best.pane_id ? handoffRow(sessionHandoff(best)) : ""}
+        </div>
+      </div>`);
+          break; // one ended card keeps the stack quiet, like v1
+        }
+        $("runs").innerHTML = cards.join("");
+      }
+      $("runs").addEventListener("click", (e) => {
+        if (e.target.closest("a")) return;
+        const c = e.target.closest(".run-card");
+        if (!c) return;
+        const id = c.dataset.run;
+        openRuns.has(id) ? openRuns.delete(id) : openRuns.add(id);
+        renderRuns();
+        renderTimes();
+      });
+      function updateRunLive() {
+        const tool = document.querySelector('[data-run-tool]');
+        if (tool) {
+          tool.querySelector(".tn").textContent = LIVE.tool.name;
+          tool.querySelector(".td").textContent = LIVE.tool.detail;
+          const ta = tool.querySelector(".ta");
+          ta.dataset.at = LIVE.tool.at;
+          ta.textContent = ago(LIVE.tool.at);
+        }
+        const hist = document.querySelector("[data-hist]");
+        if (hist)
+          hist.innerHTML = LIVE.toolHist
+            .slice(0, 5)
+            .map(
+              (t) =>
+                `<div class="run-hist"><span class="hd">${esc(t.name)} · ${esc(t.detail)}</span><span>${t.ms > 1200 ? Math.round(t.ms / 1000) + "s" : t.ms + "ms"}</span></div>`,
+            )
+            .join("");
+      }
+      // ---------------------------------------------------------------------
+      // World layout — four phase regions in a row, two stage gnodes each.
+      // Column positions never reshuffle; expansion only grows heights.
+      // ---------------------------------------------------------------------
+      const CARD_W = 400,
+        CARD_H = 128,
+        GY = 48,
+        RPAD = 40,
+        RTOP = 92,
+        GAPX = 120,
+        OUTER = 80;
+      const openDetails = new Set(["implement"]);
+      const openCaps = new Set(),
+        closedCaps = new Set();
+      let zoom = 1,
+        pan = { x: 0, y: 0 },
+        worldSize = { w: 0, h: 0 },
+        minZoom = 0.15,
+        panG = null,
+        booted = false,
+        cardMode = false,
+        zoomUnfolded = false,
+        lastPos = {},
+        lastIntake = [];
+      const obsFresh = () => Date.now() - LIVE.obs.at < 60000;
+
+      function capIsOpen(key, c) {
+        const id = key + ":" + c.item.key;
+        if (openCaps.has(id)) return true;
+        if (closedCaps.has(id)) return false;
+        return c.state === "riding";
+      }
+      function feedRows() {
+        return LIVE.feed
+          .slice(0, 4)
+          .map(
+            (f) =>
+              `<div class="task-capsule-detail-row" style="animation:none"><span>${esc(f.message)}</span><span class="task-capsule-detail-meta"><span class="t-ago" data-at="${f.at}"></span></span></div>`,
+          )
+          .join("");
+      }
+      function capDetail(key, c) {
+        const rec = c.rec,
+          item = c.item;
+        const parts = [];
+        let n = 0,
+          delay = 0;
+        const row = (inner) => {
+          parts.push(
+            `<div class="task-capsule-detail-row" style="animation-delay:${120 + delay * 80}ms">${inner}</div>`,
+          );
+          n++;
+          delay++;
+        };
+        const kd = (fn) =>
+          `onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();${fn}}"`;
+        // Review documents — the artifacts a buzz-* skill produced for HUMAN
+        // review at this stage. The decision made on each rides with it, so
+        // the path of judgments stays walkable after the fact.
+        for (const doc of rec.documents || []) {
+          const dec =
+            doc.status === "approved"
+              ? `<span class="doc-dec ok">approved${doc.by ? " · " + esc(doc.by) : ""}${doc.at ? " " + esc(doc.at) : ""}</span>`
+              : doc.status === "changes_requested"
+                ? `<span class="doc-dec bad">changes requested${doc.by ? " · " + esc(doc.by) : ""}${doc.at ? " " + esc(doc.at) : ""}</span>`
+                : doc.status === "awaiting-you"
+                  ? `<span class="doc-dec wait">awaiting you</span>`
+                  : `<span class="doc-dec">artifact</span>`;
+          row(
+            `<span class="doc-row"><svg class="doc-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/></svg>${esc(doc.title)}<span class="doc-kind">${esc(doc.kind)}</span></span><span class="doc-meta">${dec}<span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openDoc('${esc(doc.title)}','${esc(doc.skill)}')" ${kd(`openDoc('${esc(doc.title)}','${esc(doc.skill)}')`)}>Open</span></span>`,
+          );
+        }
+        for (const th of rec.buzz_threads || [])
+          row(
+            `<span data-thread="${th.id}"># ${esc(th.title)}${LIVE.threadNew === th.id ? '<span class="new-dot" data-new-dot title="new activity"></span>' : ""}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openBuzz('${th.id}')" ${kd(`openBuzz('${th.id}')`)}>Open in Buzz</span>`,
+          );
+        for (const s of rec.pi_sessions || []) {
+          row(
+            `<span>${esc(s.id)} · ${esc(s.model)} · <span data-tokens="${esc(s.id)}">${esc(s.tokens)}</span></span>` +
+              (s.pane_id
+                ? `<span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openPane('${s.pane_id}')" ${kd(`openPane('${s.pane_id}')`)}>${esc(machineName(s.machine_id))} · ${esc(s.pane_id)}</span>`
+                : `<span class="task-capsule-detail-meta">${esc(s.status)}</span>`),
+          );
+          // Pi handoff recipe — one per live/ended session (real Herdr affordance)
+          if (s.pane_id) {
+            const cmd = sessionHandoff(s);
+            row(
+              `<span class="handoff-cmd">${esc(cmd)}</span><button class="copy-btn" type="button" aria-label="Copy handoff command" onclick="event.stopPropagation();copyHandoff('${esc(cmd)}')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>`,
+            );
+          }
+        }
+        if (rec.checkpoint_state === "approved")
+          row(
+            `<span class="cap-approved">gate approved${rec.completed ? " " + esc(rec.completed) : ""}</span><span class="task-capsule-detail-meta">human gate</span>`,
+          );
+        else if (rec.attention === "human") {
+          const ga = item.gate_action;
+          const changed = rec.checkpoint_state === "changes_requested";
+          if (ga)
+            row(
+              `<span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();gateAct('${item.key}', this)" ${kd(`gateAct('${item.key}', this)`)}>${esc(ga.label)} →</span><span class="task-capsule-detail-meta">${changed ? "changes requested" : "waiting on you"}</span>`,
+            );
+          else
+            row(
+              `<span>Checkpoint ${esc(rec.checkpoint_state || "pending")}</span><span class="task-capsule-detail-meta">waiting on you</span>`,
+            );
+        }
+        if (item.lifecycle === "done" && item.done_label)
+          row(
+            `<span class="cap-approved">${esc(item.done_label)}</span><span class="task-capsule-detail-meta">done</span>`,
+          );
+        // Identity rows ride the item's current capsule (last stage once done):
+        // jira, PR, channel + unscoped threads.
+        if (key === (item.current_stage_key || "pr-triage")) {
+          if (item.jira)
+            row(
+              `<span>${esc(item.jira.priority)} · ${esc(item.jira.issue_type)}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openJira('${esc(item.jira.issue_key)}')" ${kd(`openJira('${esc(item.jira.issue_key)}')`)}>Open ${esc(item.jira.issue_key)} in Jira</span>`,
+            );
+          if (item.pr)
+            row(
+              `<span>PR #${item.pr.number}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openPR('${esc(item.key)}')" ${kd(`openPR('${esc(item.key)}')`)}>Open PR #${item.pr.number} →</span>`,
+            );
+          if (item.channel) {
+            row(
+              `<span class="chan-name">${esc(item.channel.name)}</span><span class="task-capsule-detail-meta">channel${(item.unscoped_threads || []).length ? ` · ${item.unscoped_threads.length} unscoped` : ""}</span>`,
+            );
+            for (const th of item.unscoped_threads || [])
+              row(
+                `<span class="unscoped">↳ ${esc(th.title)}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openBuzz('${th.id}')" ${kd(`openBuzz('${th.id}')`)}>Open in Buzz</span>`,
+              );
+          }
+        }
+        if (key === "implement" && item.key === "AGENTIC-575") {
+          parts.push(
+            `<div style="display:contents" data-feed-575>${feedRows()}</div>`,
+          );
+          n += Math.min(LIVE.feed.length, 4);
+        } else
+          for (const a of (rec.activity || []).slice(-3).reverse())
+            row(
+              `<span>${esc(a.message)}</span><span class="task-capsule-detail-meta"><span class="t-ago" data-at="${a.at}"></span></span>`,
+            );
+        if (!n)
+          row(
+            `<span>No activity recorded yet</span><span class="task-capsule-detail-meta"></span>`,
+          );
+        return { html: parts.join(""), count: n };
+      }
+      function capsuleRow(key, c, idx) {
+        const seq = STAGE[key].sequence;
+        const open = capIsOpen(key, c);
+        const stateCls =
+          c.state === "riding"
+            ? "active"
+            : c.state === "gate"
+              ? "blocked"
+              : c.state === "cleared"
+                ? "done"
+                : "queued";
+        let marker;
+        if (c.state === "cleared")
+          marker = `<span class="task-capsule-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>`;
+        else if (c.state === "gate")
+          marker = `<span class="task-capsule-badge blocked" aria-hidden="true">!</span>`;
+        else
+          marker = `<span class="task-capsule-marker" aria-hidden="true"><svg viewBox="0 0 24 24"><circle class="ring-track" cx="12" cy="12" r="11"/><circle class="ring-live" cx="12" cy="12" r="11"/></svg><span>${seq}</span></span>`;
+        const isDone = c.item.lifecycle === "done";
+        const changed = c.rec.checkpoint_state === "changes_requested";
+        const pill =
+          c.state === "riding"
+            ? `<span class="task-capsule-pill revised">Riding</span>`
+            : c.state === "gate"
+              ? `<span class="task-capsule-pill blocked">${changed ? "Changes requested" : "Your gate"}</span>`
+              : c.state === "cleared"
+                ? isDone
+                  ? `<span class="task-capsule-pill">Done</span>`
+                  : `<span class="task-capsule-pill">Cleared${c.rec.completed ? " " + esc(c.rec.completed) : ""}</span>`
+                : `<span class="task-capsule-pill backlog">Queued</span>`;
+        const chips = (c.rec.agents || [])
+          .map((a) =>
+            chipHtml(
+              a.id,
+              c.state === "cleared",
+              c.state !== "cleared" &&
+                a.link_state === "active" &&
+                effStatus(a.id) === "working",
+            ),
+          )
+          .join("");
+        const mach =
+          !isDone &&
+          MACHINES[c.item.machine_id] &&
+          MACHINES[c.item.machine_id].label !== "local"
+            ? `<span class="mach-chip">${esc(MACHINES[c.item.machine_id].label)}</span>`
+            : "";
+        const amount =
+          c.state === "riding" && key === LIVE.obs.stage && obsFresh()
+            ? `<span class="task-capsule-amount">Editing now</span>`
+            : "";
+        const d = capDetail(key, c);
+        return `<div class="task-capsule ${stateCls} ${open ? "open" : ""}${isDone ? " lifecycle-done" : ""}" role="listitem" style="animation-delay:${idx * 80}ms"><button class="task-capsule-button" type="button" aria-expanded="${open}" onclick="toggleCap('${key}','${c.item.key}',event)"><span class="task-capsule-marker-wrap">${marker}</span><span class="task-capsule-copy">${esc(c.item.key)} — ${esc(c.item.title)}</span>${mach}${chips}${amount}${pill}<span class="task-capsule-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span></button><div class="task-capsule-detail"><div class="task-capsule-detail-clip"><div class="task-capsule-detail-grid"><span class="task-capsule-detail-line" aria-hidden="true"></span><div class="task-capsule-detail-list">${d.html}</div></div></div></div></div>`;
+      }
+      function detailHeight(key) {
+        const caps = capsulesFor(key);
+        if (!caps.length) return 64;
+        let h = caps.length * 45;
+        for (const c of caps)
+          if (capIsOpen(key, c)) h += 16 + capDetail(key, c).count * 24 + 8;
+        return h + 4;
+      }
+      const IN_W = 300,
+        IN_H = 148,
+        IN_GAP = 24;
+      function layout() {
+        const pos = {};
+        const regionRects = [];
+        let x = OUTER,
+          maxH = 0;
+        // INTAKE — pre-pipeline setup states, dashed region left of OPEN
+        const intake = [];
+        {
+          const rw = IN_W + RPAD * 2;
+          let y = OUTER + RTOP;
+          for (const e of INTAKE) {
+            intake.push({ x: x + RPAD, y, w: IN_W, h: IN_H, entry: e });
+            y += IN_H + IN_GAP;
+          }
+          const rh = Math.max(y - IN_GAP + RPAD - OUTER, 280);
+          regionRects.push({
+            x,
+            y: OUTER,
+            w: rw,
+            h: rh,
+            name: "INTAKE",
+            key: "intake",
+            stages: [],
+            intake: true,
+          });
+          maxH = Math.max(maxH, rh);
+          x += rw + GAPX;
+        }
+        for (const ph of PHASES) {
+          const stages = ORDER.filter((s) => s.phase_key === ph.key);
+          const rw = CARD_W + RPAD * 2;
+          let y = OUTER + RTOP;
+          for (const s of stages) {
+            const open = openDetails.has(s.stage_key) && !cardMode;
+            const dH = open ? detailHeight(s.stage_key) : 0;
+            const h = CARD_H + (open ? 24 + dH : 0);
+            pos[s.stage_key] = {
+              nodeX: x + RPAD,
+              nodeY: y,
+              w: CARD_W,
+              h,
+              detailH: dH,
+              open,
+            };
+            y += h + GY;
+          }
+          const rh = y - GY + RPAD - OUTER;
+          regionRects.push({
+            x,
+            y: OUTER,
+            w: rw,
+            h: rh,
+            name: ph.name,
+            key: ph.key,
+            stages,
+          });
+          maxH = Math.max(maxH, rh);
+          x += rw + GAPX;
+        }
+        // DONE — merged tickets land here after Triage; cleanup lives on the
+        // card. The region is always drawn so the end of the pipe is visible.
+        const done = [];
+        {
+          const doneItems = REAL_ITEMS.filter((w) => w.lifecycle === "done");
+          const rw = IN_W + RPAD * 2;
+          let y = OUTER + RTOP;
+          for (const w of doneItems) {
+            done.push({ x: x + RPAD, y, w: IN_W, h: IN_H, item: w });
+            y += IN_H + IN_GAP;
+          }
+          const rh = Math.max(y - IN_GAP + RPAD - OUTER, 280);
+          regionRects.push({
+            x,
+            y: OUTER,
+            w: rw,
+            h: rh,
+            name: "DONE",
+            key: "done",
+            stages: [],
+            doneRegion: true,
+          });
+          maxH = Math.max(maxH, rh);
+          x += rw + GAPX;
+        }
+        return {
+          pos,
+          intake,
+          done,
+          regionRects,
+          width: x - GAPX + OUTER,
+          height: OUTER * 2 + maxH,
+        };
+      }
+
+      // ---------------------------------------------------------------------
+      // World render — regions, trails, edges, gnodes
+      // ---------------------------------------------------------------------
+      function nodeStatusIcon(st, w) {
+        const cx = w - 26,
+          cy = 26;
+        if (st === "done")
+          return `<g><circle cx="${cx}" cy="${cy}" r="9" fill="#3f7f57"/><path d="M${cx - 4.5} ${cy} l3.2 3.2 l6-6.5" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g>`;
+        if (st === "active")
+          return `<g><circle cx="${cx}" cy="${cy}" r="9" fill="none" stroke="var(--line)" stroke-width="2"/><circle class="node-spin" cx="${cx}" cy="${cy}" r="9" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-dasharray="16 41"/></g>`;
+        if (st === "blocked")
+          return `<g><circle cx="${cx}" cy="${cy}" r="9" fill="var(--danger)"/><text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="#fff" font-size="12" font-weight="700" font-family="var(--font)">!</text></g>`;
+        return `<circle cx="${cx}" cy="${cy}" r="9" fill="none" stroke="var(--faint)" stroke-width="2"/>`;
+      }
+      function plateHtml(r) {
+        const cy = r.h / 2;
+        const sq = r.stages
+          .map((s, i) => {
+            const st = stageStatus(s.stage_key);
+            return `<rect x="${40 + i * 30}" y="${cy + 8}" width="20" height="20" rx="5" fill="${st === "done" ? "#3f7f57" : st === "blocked" ? "var(--danger)" : "none"}" stroke="${st === "active" ? "var(--accent)" : st === "done" || st === "blocked" ? "transparent" : "var(--faint)"}" stroke-width="2.5"/>`;
+          })
+          .join("");
+        const riding = r.stages.reduce(
+          (a, s) =>
+            a +
+            capsulesFor(s.stage_key).filter(
+              (c) => c.state === "riding" || c.state === "gate",
+            ).length,
+          0,
+        );
+        return `<text class="plate-name" x="40" y="${cy - 12}">${r.name}</text>${sq}${riding ? `<text class="plate-sub" x="${r.w - 40}" y="${cy - 12}" text-anchor="end">${riding} here</text>` : ""}`;
+      }
+      function trailsHtml(pos, doneCards) {
+        const n = REAL_ITEMS.length;
+        return REAL_ITEMS.map((item, i) => {
+          if (!inFilter(item)) return ""; // dy keeps its overview lane — geography stays stable
+          const dy = (i - (n - 1) / 2) * 8;
+          const stops = ORDER.filter((s) => {
+            const st = capState(recOf(item, s.stage_key));
+            return st === "cleared" || st === "riding" || st === "gate";
+          }).map((s) => ({ s, q: pos[s.stage_key] }));
+          const dc = (doneCards || []).find((d) => d.item === item);
+          if (stops.length < 2 && !dc) return "";
+          let g = `<g class="trailflow${item.lifecycle === "done" ? " ended" : ""}" style="color:${item.trail_color}"><title>${esc(item.key)} — ${esc(item.title)} · the flow it has taken</title>`;
+          const bow = 48 + i * 6; // parallel tickets bow on parallel tracks
+          for (let k = 0; k < stops.length - 1; k++) {
+            // completed hops are solid; only the hop still in transition marches
+            const live =
+              item.lifecycle !== "done" && k === stops.length - 2;
+            g += `<path class="trail-path${live ? " live" : ""}" d="${trailPathD(stops[k], stops[k + 1], dy, bow)}"/>`;
+          }
+          if (dc && stops.length) {
+            // merged: one last solid hop from Triage into its DONE card
+            const A = stops[stops.length - 1].q;
+            const x1 = A.nodeX + CARD_W,
+              y1 = A.nodeY + 64 + dy,
+              x2 = dc.x,
+              y2 = dc.y + dc.h / 2;
+            const bend = Math.max(48, (x2 - x1) / 2);
+            g += `<path class="trail-path" d="M${x1} ${y1}C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}"/>`;
+          }
+          g += `</g>`;
+          return g;
+        }).join("");
+      }
+      // The old edge routing, per ticket: same-phase hops bow out the left
+      // side clear of both cards; region-crossing hops leave the right edge
+      // and land on the next card's left edge through the gap.
+      function trailPathD(a, b, dy, bow) {
+        const A = a.q,
+          B = b.q;
+        if (a.s.phase_key === b.s.phase_key) {
+          const x = A.nodeX,
+            y1 = A.nodeY + 64 + dy,
+            y2 = B.nodeY + 64 + dy,
+            bx = x - bow;
+          return `M${x} ${y1}C${bx} ${y1} ${bx} ${y2} ${x} ${y2}`;
+        }
+        const x1 = A.nodeX + CARD_W,
+          y1 = A.nodeY + 64 + dy,
+          x2 = B.nodeX,
+          y2 = B.nodeY + 64 + dy;
+        const bend = Math.max(48, (x2 - x1) / 2);
+        return `M${x1} ${y1}C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`;
+      }
+      function gnodeHtml(s, q) {
+        const key = s.stage_key,
+          st = stageStatus(key),
+          open = q.open;
+        const caps = capsulesFor(key);
+        const cleared = caps.filter((c) => c.state === "cleared").length;
+        const chips = stageChips(key);
+        const w = CARD_W,
+          h = CARD_H;
+        const progress = boardItems().length
+          ? cleared / boardItems().length
+          : 0;
+        const chipSvgs = chips
+          .map((c, i) => markChipSvg(c.id, w - 26 - 24 * (i + 1), 26, c.live))
+          .join("");
+        const obsX = w - 44 - 24 * Math.min(chips.length, 3);
+        let g = `<g class="gnode ${st}${open ? " selected" : ""}" data-stage="${key}" transform="translate(${q.nodeX} ${q.nodeY})" role="button" tabindex="0" aria-expanded="${open}" aria-label="${open ? "Hide" : "Show"} tickets at ${esc(s.title)}" onclick="toggleStage('${key}',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStage('${key}',event)}">`;
+        g += `<rect class="node-box" width="${w}" height="${h}" rx="12"/>`;
+        g += `<text class="kicker" x="16" y="24">${esc(s.skill_name)}</text>`;
+        g += nodeStatusIcon(st, w);
+        g += `<circle class="obs-ring" cx="${w - 26}" cy="26" r="13" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-dasharray="23 59"/>`;
+        g += `<text class="obs-label obs-verb" x="${obsX}" y="30" text-anchor="end">Editing</text>`;
+        g += chipSvgs;
+        g += `<text class="node-title" x="16" y="52">${esc(s.title)}</text>`;
+        g += `<text class="node-meta" x="16" y="76">${esc(stageMeta(key))}</text>`;
+        g += `<text class="obs-label obs-file-label" x="${w - 16}" y="76" text-anchor="end" data-obs-file="${key}"></text>`;
+        g += `<rect class="progress-bg" x="16" y="92" width="${w - 32}" height="4" rx="2"/><rect class="progress" x="16" y="92" width="${(w - 32) * progress}" height="4" rx="2"/>`;
+        g += `<text class="node-action" x="16" y="116">${open ? "HIDE TICKETS ↑" : "SHOW TICKETS ↓"}</text>`;
+        if (s.checkpoint_kind === "human")
+          g += `<text class="gate-tag" x="${w - 16}" y="116" text-anchor="end">HUMAN GATE</text>`;
+        g += `</g>`;
+        if (open) {
+          const detailY = q.nodeY + h + 24,
+            cx = q.nodeX + w / 2;
+          const list = caps.length
+            ? `<div class="task-capsules list" role="list" aria-label="Tickets at ${esc(s.title)}">${caps.map((c, i) => capsuleRow(key, c, i)).join("")}</div>`
+            : `<div class="graph-task-empty">No tickets at this stage.</div>`;
+          g += `<path class="detail-tether" d="M${cx} ${q.nodeY + h}V${detailY}"/>`;
+          htmlOut += `<div class="graph-task-card html-card" style="left:${q.nodeX}px;top:${detailY}px;width:${w}px">${list}</div>`;
+        }
+        return g;
+      }
+      function intakeCardHtml(q) {
+        const e = q.entry;
+        const kicker =
+          e.kind === "idea" ? "idea intake" : `setup · ${e.setup_state}`;
+        return `<div class="intake-card html-card" style="left:${q.x}px;top:${q.y}px;width:${q.w}px;min-height:${q.h}px"><div class="intake-kicker">${esc(kicker)}</div><div class="intake-title">${esc(e.key)} — ${esc(e.title)}</div>${e.channel ? `<div class="intake-chan">${esc(e.channel.name)}</div>` : ""}<div class="intake-note">${esc(e.note || "")}</div><button class="intake-action" type="button" onclick="intakeAct('${esc(e.key)}')">${esc(e.next_setup)} →</button></div>`;
+      }
+      function intakePlate(r) {
+        const cy = r.h / 2;
+        return `<text class="plate-name" x="40" y="${cy - 12}">INTAKE</text><text class="plate-sub" x="40" y="${cy + 16}">${INTAKE.length} forming</text>`;
+      }
+      function donePlate(r) {
+        const cy = r.h / 2,
+          n = REAL_ITEMS.filter((w) => w.lifecycle === "done").length;
+        return `<text class="plate-name" x="40" y="${cy - 12}">DONE</text><text class="plate-sub" x="40" y="${cy + 16}">${n} merged</text>`;
+      }
+      function doneCardHtml(d) {
+        const w = d.item;
+        return `<div class="done-card html-card" style="left:${d.x}px;top:${d.y}px;width:${d.w}px;min-height:${d.h}px"><div class="intake-kicker done-kicker">merged · monitoring</div><div class="intake-title">${esc(w.key)} — ${esc(w.title)}</div><div class="intake-note">${esc(w.done_label || "merged")}${w.pr ? ` · PR #${w.pr.number}` : ""}</div><div class="done-actions"><button class="intake-action" type="button" onclick="cleanupAct('${esc(w.key)}')">Cleanup →</button><button class="intake-action quiet" type="button" onclick="archiveAct('${esc(w.key)}')">Archive</button></div></div>`;
+      }
+      function cleanupAct(key) {
+        const w = itemByKey(key);
+        toast(
+          `Cleanup ${key} — would remove its worktree, archive the Pi sessions and ${w && w.channel ? w.channel.name : "its Buzz channel"}, and release its agents. Wiring comes later.`,
+        );
+      }
+      function archiveAct(key) {
+        toast(`${key} would archive off the board — it stays in buzz.log history.`);
+      }
+      function openDoc(title, skill) {
+        toast(`Opening ${title} — the ${skill} review artifact, as saved at decision time`);
+      }
+      function graphContent(L) {
+        htmlOut = "";
+        let out = "";
+        const intakeShown = L.intake.filter((q) => inFilter(q.entry));
+        const doneShown = L.done.filter((d) => inFilter(d.item));
+        for (const r of L.regionRects) {
+          const hot =
+            !r.intake &&
+            !r.doneRegion &&
+            obsFresh() &&
+            keyInFilter(LIVE.obs.item) &&
+            r.stages.some((s) => s.stage_key === LIVE.obs.stage);
+          const dim =
+            (r.intake && SEL.size && !intakeShown.length) ||
+            (r.doneRegion && SEL.size && !doneShown.length);
+          out += `<g transform="translate(${r.x} ${r.y})"${dim ? ' opacity=".22"' : ""}><rect width="${r.w}" height="${r.h}" rx="26" fill="var(--region)" stroke="${hot ? "rgba(233,162,59,.5)" : "var(--line)"}" stroke-width="1.5"${r.intake ? ' stroke-dasharray="4 6"' : ""}/><text class="region-name" x="28" y="38">${r.name}</text>${r.doneRegion && !L.done.length && !cardMode ? `<text class="region-sub" x="28" y="66">merged tickets land here</text>` : ""}${cardMode ? (r.intake ? intakePlate(r) : r.doneRegion ? donePlate(r) : plateHtml(r)) : ""}</g>`;
+        }
+        if (cardMode) return out;
+        out += trailsHtml(L.pos, L.done);
+        for (const q of intakeShown) htmlOut += intakeCardHtml(q);
+        for (const d of doneShown) htmlOut += doneCardHtml(d);
+        for (const s of ORDER) out += gnodeHtml(s, L.pos[s.stage_key]);
+        return out;
+      }
+      let htmlOut = "";
+      function renderGraph() {
+        const L = layout();
+        worldSize = { w: L.width, h: L.height };
+        lastPos = L.pos;
+        lastIntake = L.intake;
+        minZoom = Math.max(
+          0.06,
+          Math.min(920 / L.width, 700 / L.height) * 0.75,
+        );
+        $("graph").innerHTML =
+          `<svg class="graph-grid"><defs><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="var(--grid)"/></pattern></defs><rect width="100%" height="100%" fill="url(#grid)"/></svg>` +
+          `<div class="graph-stage" id="graph-stage" onpointerdown="startPan(event)" onpointermove="movePan(event)" onpointerup="endPan(event)" onpointercancel="endPan(event)"><svg class="graph-svg"><title>Buzz pipeline board</title><g class="world" id="world" transform="translate(${pan.x} ${pan.y}) scale(${zoom})">${graphContent(L)}</g></svg><div class="html-world" id="html-world" style="transform:translate(${pan.x}px, ${pan.y}px) scale(${zoom})">${htmlOut}</div></div>` +
+          `<div class="canvas-tools"><button class="icon" aria-label="Zoom out" onclick="zoomBy(.85)"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button><span class="zoom" id="zoom">${Math.round(zoom * 100)}%</span><button class="icon" aria-label="Zoom in" onclick="zoomBy(1.18)"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button><span class="divider"></span><button class="icon" aria-label="Fit board" title="Fit the board (F)" onclick="fitBoard()"><svg viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5"/></svg></button></div>` +
+          `<div class="canvas-hint"><span class="hint"><span class="key">drag</span>pan</span><span class="hint"><span class="key">⌘</span>scroll to zoom</span><span class="hint"><span class="key">F</span>fit board</span></div>`;
+        $("graph-stage").addEventListener("wheel", onWheel, {
+          passive: false,
+        });
+        renderMinimap();
+        if (!booted) {
+          booted = true;
+          let bootFitted = false;
+          const bootFit = () => {
+            if (bootFitted) return;
+            bootFitted = true;
+            // Open at 100%, anchored on the head of the line (INTAKE/OPEN
+            // with a small margin); F still fits the whole board.
+            zoom = 1;
+            pan = { x: -OUTER + 32, y: -OUTER + 24 };
+            updateTransform();
+          };
+          requestAnimationFrame(bootFit);
+          setTimeout(bootFit, 120); // rAF never fires in a hidden tab
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // Camera — drag pan, wheel pan, cmd/ctrl+wheel zoom-to-cursor, F fit,
+      // altitude hysteresis (plates < .45 / > .55; unfold >= 1.05 / <= .85)
+      // ---------------------------------------------------------------------
+      function updateTransform() {
+        const world = $("world");
+        if (world)
+          world.setAttribute(
+            "transform",
+            `translate(${pan.x} ${pan.y}) scale(${zoom})`,
+          );
+        const hw = $("html-world");
+        if (hw)
+          hw.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
+        if ($("zoom")) $("zoom").textContent = `${Math.round(zoom * 100)}%`;
+        let dirty = false;
+        if (!zoomUnfolded && zoom >= 1.05) {
+          zoomUnfolded = true;
+          for (const s of ORDER) openDetails.add(s.stage_key);
+          dirty = true;
+        } else if (zoomUnfolded && zoom <= 0.85) {
+          zoomUnfolded = false;
+          openDetails.clear();
+          dirty = true;
+        }
+        if (!cardMode && zoom < 0.45) {
+          cardMode = true;
+          dirty = true;
+        } else if (cardMode && zoom > 0.55) {
+          cardMode = false;
+          dirty = true;
+        }
+        if (dirty) {
+          renderGraph();
+          renderTimes();
+        }
+        renderMinimapViewport();
+      }
+      function fitBoard(minZ) {
+        const stage = $("graph-stage");
+        if (!stage || !worldSize.w) return;
+        const box = stage.getBoundingClientRect();
+        let z = Math.min(
+          (box.width - 80) / worldSize.w,
+          (box.height - 80) / worldSize.h,
+        );
+        // Boot passes minZ = 0.6 (real cards, never LOD plates); F / the ⛶
+        // button pass nothing and get a true whole-board fit down to minZoom.
+        z = Math.max(minZ ?? minZoom, Math.min(1, z));
+        zoom = z;
+        pan = {
+          x:
+            worldSize.w * z <= box.width - 40
+              ? (box.width - worldSize.w * z) / 2
+              : 24,
+          y:
+            worldSize.h * z <= box.height - 40
+              ? (box.height - worldSize.h * z) / 2
+              : 24,
+        };
+        updateTransform();
+      }
+      function zoomBy(factor, origin) {
+        const stage = $("graph-stage");
+        if (!stage) return;
+        const box = stage.getBoundingClientRect(),
+          point = origin || { x: box.width / 2, y: box.height / 2 },
+          next = Math.max(minZoom, Math.min(1.8, zoom * factor)),
+          wx = (point.x - pan.x) / zoom,
+          wy = (point.y - pan.y) / zoom;
+        pan = { x: point.x - wx * next, y: point.y - wy * next };
+        zoom = next;
+        updateTransform();
+      }
+      function onWheel(e) {
+        e.preventDefault();
+        const box = e.currentTarget.getBoundingClientRect();
+        if (e.metaKey || e.ctrlKey)
+          zoomBy(e.deltaY < 0 ? 1.08 : 0.92, {
+            x: e.clientX - box.left,
+            y: e.clientY - box.top,
+          });
+        else {
+          pan.x -= e.deltaX;
+          pan.y -= e.deltaY;
+          updateTransform();
+        }
+      }
+      function startPan(e) {
+        if (e.target.closest(".gnode,.html-card")) return;
+        const stage = $("graph-stage");
+        stage.setPointerCapture(e.pointerId);
+        stage.classList.add("dragging");
+        panG = {
+          id: e.pointerId,
+          x: e.clientX,
+          y: e.clientY,
+          panX: pan.x,
+          panY: pan.y,
+        };
+      }
+      function movePan(e) {
+        if (!panG || panG.id !== e.pointerId) return;
+        pan = {
+          x: panG.panX + e.clientX - panG.x,
+          y: panG.panY + e.clientY - panG.y,
+        };
+        updateTransform();
+      }
+      function endPan(e) {
+        if (!panG || panG.id !== e.pointerId) return;
+        $("graph-stage")?.classList.remove("dragging");
+        panG = null;
+      }
+      function flyToStage(key, expand) {
+        if (expand) {
+          let dirty = false;
+          if (!openDetails.has(key)) {
+            openDetails.add(key);
+            dirty = true;
+          }
+          // Always surface the gate capsule(s) — the flight's promise is the
+          // one loud action, even when the stage is already expanded.
+          for (const c of capsulesFor(key))
+            if (c.state === "gate") {
+              const id = key + ":" + c.item.key;
+              if (!capIsOpen(key, c)) dirty = true;
+              closedCaps.delete(id);
+              openCaps.add(id);
+            }
+          if (dirty) {
+            renderGraph();
+            renderTimes();
+          }
+        }
+        const q = lastPos[key],
+          stage = $("graph-stage");
+        if (!q || !stage) return;
+        const box = stage.getBoundingClientRect();
+        const world = $("world");
+        const hw = $("html-world");
+        if (world) {
+          world.style.transition = "transform 600ms cubic-bezier(.23,1,.32,1)";
+          if (hw)
+            hw.style.transition = "transform 600ms cubic-bezier(.23,1,.32,1)";
+          setTimeout(() => {
+            if (world) world.style.transition = "";
+            if (hw) hw.style.transition = "";
+          }, 650);
+        }
+        zoom = Math.min(Math.max(zoom, 0.9), 1);
+        pan = {
+          x: box.width / 2 - (q.nodeX + CARD_W / 2) * zoom,
+          y: box.height / 2 - (q.nodeY + Math.min(q.h, 300) / 2) * zoom,
+        };
+        updateTransform();
+      }
+      function flyToItemGate(itemKey) {
+        const item = itemByKey(itemKey);
+        if (!item || !item.current_stage_key) return;
+        flyToStage(item.current_stage_key, true);
+      }
+      function toggleStage(key, event) {
+        event?.stopPropagation();
+        openDetails.has(key) ? openDetails.delete(key) : openDetails.add(key);
+        renderGraph();
+        renderTimes();
+      }
+      function toggleCap(key, itemKey, event) {
+        event?.stopPropagation();
+        const id = key + ":" + itemKey;
+        const c = capsulesFor(key).find((x) => x.item.key === itemKey);
+        if (!c) return;
+        if (capIsOpen(key, c)) {
+          openCaps.delete(id);
+          closedCaps.add(id);
+        } else {
+          closedCaps.delete(id);
+          openCaps.add(id);
+          // opening the detail clears the thread's "new" dot (simulator v2)
+          if (
+            LIVE.threadNew &&
+            (c.rec.buzz_threads || []).some((th) => th.id === LIVE.threadNew)
+          )
+            LIVE.threadNew = null;
+        }
+        renderGraph();
+        renderTimes();
+      }
+
+      // ---------------------------------------------------------------------
+      // Minimap
+      // ---------------------------------------------------------------------
+      const MM_W = 150;
+      function renderMinimap() {
+        const mm = $("minimap");
+        if (!mm || !worldSize.w) return;
+        const sc = MM_W / worldSize.w,
+          h = Math.max(40, Math.round(worldSize.h * sc));
+        const nodes = ORDER.map((s) => {
+          const q = lastPos[s.stage_key];
+          if (!q) return "";
+          return `<rect class="mm-node ${stageStatus(s.stage_key)}" x="${q.nodeX * sc}" y="${q.nodeY * sc}" width="${q.w * sc}" height="${Math.max(3, q.h * sc)}" rx="1.5"/>`;
+        }).join("");
+        const intakeRects = lastIntake
+          .map(
+            (q) =>
+              `<rect class="mm-node" x="${q.x * sc}" y="${q.y * sc}" width="${q.w * sc}" height="${Math.max(3, q.h * sc)}" rx="1.5" opacity=".45"/>`,
+          )
+          .join("");
+        mm.innerHTML = `<svg width="${MM_W}" height="${h}" viewBox="0 0 ${MM_W} ${h}">${intakeRects}${nodes}<rect class="mm-view" id="mm-view" x="0" y="0" width="10" height="10"/></svg>`;
+        mm.onclick = (e) => {
+          const r = mm.getBoundingClientRect(),
+            wx = (e.clientX - r.left) / sc,
+            wy = (e.clientY - r.top) / sc;
+          const stage = $("graph-stage");
+          if (!stage) return;
+          const box = stage.getBoundingClientRect();
+          pan = {
+            x: box.width / 2 - wx * zoom,
+            y: box.height / 2 - wy * zoom,
+          };
+          updateTransform();
+        };
+        renderMinimapViewport();
+      }
+      function renderMinimapViewport() {
+        const v = $("mm-view");
+        if (!v || !worldSize.w) return;
+        const stage = $("graph-stage");
+        if (!stage) return;
+        const box = stage.getBoundingClientRect(),
+          sc = MM_W / worldSize.w;
+        v.setAttribute("x", (-pan.x / zoom) * sc);
+        v.setAttribute("y", (-pan.y / zoom) * sc);
+        v.setAttribute("width", (box.width / zoom) * sc);
+        v.setAttribute("height", (box.height / zoom) * sc);
+      }
+
+      // ---------------------------------------------------------------------
+      // Overlays — needs-you dropdown (ack projection), gate confirms,
+      // buzz.log console, Ask board. One overlay at a time; Esc closes;
+      // focus returns to the opener. All use the agenttrail overlay surface.
+      // ---------------------------------------------------------------------
+      let overlay = null;
+      const ACKED = new Set(); // ack = a viewing aid, never state (harness ack projection)
+      function closeOverlay(focusBack = true) {
+        if (!overlay) return;
+        const op = overlay.opener;
+        overlay = null;
+        $("overlay-root").innerHTML = "";
+        renderBadge();
+        if (focusBack && op && op.isConnected) op.focus();
+      }
+      function openOverlay(name, html, opener) {
+        const toggleOff = overlay && overlay.name === name;
+        closeOverlay(false);
+        if (toggleOff) {
+          if (opener && opener.isConnected) opener.focus();
+          return false;
+        }
+        overlay = { name, opener: opener || null };
+        $("overlay-root").innerHTML =
+          `<div class="ov-backdrop" onclick="closeOverlay()"></div>` + html;
+        document.querySelector("#overlay-root .overlay-card")?.focus();
+        renderTimes();
+        return true;
+      }
+      // --- b. needs-you dropdown -------------------------------------------
+      function toggleNeedsPanel(opener) {
+        const needy = needyItems();
+        const rows = needy
+          .map((w) => {
+            const acked = ACKED.has(w.key);
+            return `<div class="needs-row${acked ? " acked" : ""}" data-needs="${esc(w.key)}"><button class="needs-jump" type="button" onclick="closeOverlay(false);revealItem('${esc(w.key)}');flyToItemGate('${esc(w.key)}')"><span class="needs-dot" aria-hidden="true"></span><span class="needs-key">${esc(w.key)}</span><span class="needs-reason">${esc(w.attention_reason || "")}</span><span class="needs-ago">${w._updatedAt ? `<span class="t-ago" data-at="${w._updatedAt}"></span>` : esc(w.updated_label || "")}</span></button><button class="key ack-btn" type="button" aria-pressed="${acked}" title="Acknowledge — dims the row; the badge count is real state" onclick="ackNeed('${esc(w.key)}')">ack</button></div>`;
+          })
+          .join("");
+        openOverlay(
+          "needs",
+          `<div class="overlay-card needs-panel" role="dialog" aria-label="Waiting on you" tabindex="-1"><div class="ov-head">waiting on you · ${needy.length}</div>${rows || '<div class="ov-empty">Nothing needs you — the fleet is running clean.</div>'}</div>`,
+          opener,
+        );
+      }
+      function ackNeed(key) {
+        ACKED.has(key) ? ACKED.delete(key) : ACKED.add(key);
+        const row = document.querySelector(`.needs-row[data-needs="${key}"]`);
+        if (row) {
+          row.classList.toggle("acked", ACKED.has(key));
+          const b = row.querySelector(".ack-btn");
+          if (b) b.setAttribute("aria-pressed", String(ACKED.has(key)));
+        }
+      }
+      // --- a. gate confirm (models POST /transitions) ----------------------
+      function openGateConfirm(item, opener) {
+        const ga = item.gate_action,
+          stage = STAGE[item.current_stage_key];
+        const isMerge = ga.kind === "complete";
+        const actions = isMerge
+          ? `<button class="btn accent" type="button" onclick="confirmGate('${esc(item.key)}','yes')">Merge PR #${item.pr ? item.pr.number : "?"}</button><button class="btn" type="button" onclick="closeOverlay()">Not yet</button>`
+          : `<button class="btn accent" type="button" onclick="confirmGate('${esc(item.key)}','yes')">Approve</button><button class="btn" type="button" onclick="confirmGate('${esc(item.key)}','changes')">Request changes</button>`;
+        openOverlay(
+          "confirm",
+          `<div class="overlay-card confirm-card" role="dialog" aria-modal="true" aria-label="${esc(ga.label)}" tabindex="-1"><div class="confirm-kicker">human gate · ${esc(stage.title)}</div><div class="confirm-title">${esc(item.key)} — ${esc(ga.label)}</div><div class="confirm-body">${esc(item.attention_reason || item.next_action || "")}</div><div class="confirm-actions">${actions}</div></div>`,
+          opener,
+        );
+      }
+      // --- d. buzz.log console ---------------------------------------------
+      let logFilter = "all";
+      function logRowHtml(e) {
+        return `<div class="log-row"><span class="lt">${esc(demoClock(e.at))}</span>${chipHtml(e.actor, false)}<span class="li">${esc((AGENTS[e.actor] || {}).display_name || e.actor)}</span><span class="lk">· ${esc(e.item)}</span><span class="lm">— ${esc(e.message)}</span><span class="la t-ago" data-at="${e.at}"></span></div>`;
+      }
+      function renderLogChips() {
+        const keys = [
+          "all",
+          ...REAL_ITEMS.filter((w) =>
+            BUZZLOG.some((e) => e.item === w.key),
+          ).map((w) => w.key),
+        ];
+        return keys
+          .map(
+            (k) =>
+              `<button class="log-chip${logFilter === k ? " on" : ""}" type="button" onclick="setLogFilter('${esc(k)}')">${esc(k)}</button>`,
+          )
+          .join("");
+      }
+      function renderLogList() {
+        const body = $("log-body");
+        if (!body) return;
+        const rows = BUZZLOG.filter(
+          (e) => logFilter === "all" || e.item === logFilter,
+        )
+          .map(logRowHtml)
+          .join("");
+        body.innerHTML =
+          rows || `<div class="ov-empty">No entries for this filter yet.</div>`;
+      }
+      function setLogFilter(k) {
+        logFilter = k;
+        const bar = $("log-chips");
+        if (bar) bar.innerHTML = renderLogChips();
+        renderLogList();
+        renderTimes();
+      }
+      function openLogPanel(opener) {
+        // A single-ticket filter carries into the log's chips.
+        if (SEL.size === 1 && BUZZLOG.some((e) => e.item === [...SEL][0]))
+          logFilter = [...SEL][0];
+        else if (!SEL.size) logFilter = "all";
+        const opened = openOverlay(
+          "log",
+          `<div class="overlay-card log-panel" role="dialog" aria-label="buzz.log — merged activity stream" tabindex="-1"><div class="log-head"><span class="log-title">buzz.log</span><span class="log-sub">merged stream · newest first</span><button class="icon" type="button" aria-label="Close buzz.log" onclick="closeOverlay()"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div><div class="log-chips" id="log-chips">${renderLogChips()}</div><div class="log-body" id="log-body"></div></div>`,
+          opener,
+        );
+        if (!opened) return;
+        renderLogList();
+        renderTimes();
+        requestAnimationFrame(() =>
+          document.querySelector(".log-panel")?.classList.add("in"),
+        );
+      }
+      // Simulator + transitions land here live — one prepended row, in place.
+      function patchLogPanel(entry) {
+        const count = document.querySelector("#tree .logrow .tree-ago");
+        if (count) count.textContent = BUZZLOG.length;
+        const body = $("log-body");
+        if (!body) return;
+        if (logFilter !== "all" && entry.item !== logFilter) return;
+        body.querySelector(".ov-empty")?.remove();
+        const div = document.createElement("div");
+        div.innerHTML = logRowHtml(entry);
+        const row = div.firstChild;
+        body.prepend(row);
+        while (body.children.length > 40) body.lastChild.remove();
+        const ta = row.querySelector(".t-ago");
+        if (ta) ta.textContent = ago(+ta.dataset.at);
+        const bar = $("log-chips");
+        if (bar) bar.innerHTML = renderLogChips();
+      }
+      // --- e. Ask board — answers derive from CURRENT demo state -----------
+      const ASK_QUESTIONS = [
+        { id: "next", label: "What needs me next?" },
+        { id: "where575", label: "Where is AGENTIC-575?" },
+        { id: "idle", label: "Who is idle?" },
+      ];
+      function askAnswer(id) {
+        if (id === "next") {
+          const needy = needyItems();
+          if (!needy.length)
+            return `${chipHtml("ag-driver")} Nothing is waiting on you — every line is running agent-side.`;
+          return needy
+            .map(
+              (w) =>
+                `${chipHtml("ag-ronnie")} <b>${esc(w.key)}</b> — ${esc(w.attention_reason || "")}`,
+            )
+            .join("<br>");
+        }
+        if (id === "where575") {
+          const item = itemByKey("AGENTIC-575");
+          if (!item.current_stage_key)
+            return `<b>AGENTIC-575</b> is done — ${esc(item.done_label || "merged")}.`;
+          const key = item.current_stage_key,
+            rec = recOf(item, key);
+          const verb = capState(rec) === "gate" ? "waiting at" : "riding";
+          const active = (rec.agents || []).filter(
+            (a) => a.link_state === "active",
+          );
+          const sess = (rec.pi_sessions || []).find(
+            (s) => s.status === "running",
+          );
+          const latest =
+            key === "implement" ? LIVE.feed[0] : (rec.activity || []).slice(-1)[0];
+          const nxt = ORDER[ORDER.findIndex((s) => s.stage_key === key) + 1];
+          return `${active.map((a) => chipHtml(a.id)).join("")} <b>AGENTIC-575</b> is ${verb} <b>${esc(STAGE[key].title)}</b>${sess ? ` — ${esc(sess.model)} at <span data-tokens="${esc(sess.id)}">${esc(sess.tokens)}</span> on ${esc(machineName(sess.machine_id))} · ${esc(sess.pane_id)}` : ""}.${latest ? ` Latest: ${esc(latest.message)}` : ""}${nxt ? ` Next: ${esc(nxt.title)}.` : ""}`;
+        }
+        const groups = { idle: [], queued: [], waiting: [], offline: [] };
+        for (const aid of Object.keys(AGENTS)) {
+          const st = effStatus(aid);
+          if (groups[st]) groups[st].push(aid);
+        }
+        const nm = (a) => `${chipHtml(a)} ${esc(AGENTS[a].display_name)}`;
+        const parts = [];
+        if (groups.idle.length)
+          parts.push(`${groups.idle.map(nm).join(" · ")} — idle now`);
+        if (groups.queued.length)
+          parts.push(`${groups.queued.map(nm).join(" · ")} — queued for a slot`);
+        if (groups.waiting.length)
+          parts.push(`${groups.waiting.map(nm).join(" · ")} — waiting on a gate`);
+        if (groups.offline.length)
+          parts.push(`${groups.offline.map(nm).join(" · ")} — offline`);
+        return parts.join("<br>") || "The whole roster is working.";
+      }
+      function toggleAskPanel(opener) {
+        const qs = ASK_QUESTIONS.map(
+          (q, i) =>
+            `<button class="ask-q" type="button" onclick="askRun('${q.id}')"><span class="key">${i + 1}</span>${esc(q.label)}</button>`,
+        ).join("");
+        openOverlay(
+          "ask",
+          `<div class="overlay-card ask-panel" role="dialog" aria-label="Ask the board" tabindex="-1"><div class="ov-head"><svg class="mic" id="ask-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>ask the board</div>${qs}<div class="ask-answer" id="ask-answer" aria-live="polite"></div></div>`,
+          opener,
+        );
+      }
+      function askRun(id) {
+        const mic = $("ask-mic"),
+          out = $("ask-answer");
+        if (!out) return;
+        const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        mic?.classList.add("rec");
+        out.innerHTML = `<span class="ask-thinking">listening…</span>`;
+        clearTimeout(askRun._h);
+        askRun._h = setTimeout(
+          () => {
+            $("ask-mic")?.classList.remove("rec");
+            const o = $("ask-answer");
+            if (o) o.innerHTML = askAnswer(id);
+          },
+          reduced ? 0 : 450,
+        );
+      }
+
+      // ---------------------------------------------------------------------
+      // Liveness — declared vs observed, and the 1s time patcher.
+      // Structure rebuilds are gated; time only mutates text and classes.
+      // ---------------------------------------------------------------------
+      let renderedFeedKey = -1;
+      function renderObserved() {
+        const live = obsFresh() && keyInFilter(LIVE.obs.item);
+        // obs2: a short-lived observed flash on a second stage (Kimi review)
+        const live2 =
+          !!LIVE.obs2 &&
+          Date.now() - LIVE.obs2.at < 12000 &&
+          keyInFilter(LIVE.obs2.item);
+        for (const g of document.querySelectorAll("g.gnode[data-stage]"))
+          g.classList.toggle(
+            "obs-live",
+            (live && g.dataset.stage === LIVE.obs.stage) ||
+              (live2 && g.dataset.stage === LIVE.obs2.stage),
+          );
+        const ft = document.querySelector(
+          `[data-obs-file="${LIVE.obs.stage}"]`,
+        );
+        if (ft)
+          ft.textContent = live
+            ? `${LIVE.obs.file} · ${ago(LIVE.obs.at)}`
+            : "";
+        if (LIVE.obs2 && LIVE.obs2.stage !== LIVE.obs.stage) {
+          const ft2 = document.querySelector(
+            `[data-obs-file="${LIVE.obs2.stage}"]`,
+          );
+          if (ft2)
+            ft2.textContent = live2
+              ? `${LIVE.obs2.file} · ${ago(LIVE.obs2.at)}`
+              : "";
+        }
+        if (renderedFeedKey !== LIVE.feedKey) {
+          renderedFeedKey = LIVE.feedKey;
+          for (const el of document.querySelectorAll("[data-feed-575]"))
+            el.innerHTML = feedRows();
+        }
+      }
+      function renderTimes() {
+        renderBadge();
+        renderObserved();
+        for (const el of document.querySelectorAll(".t-ago"))
+          el.textContent = ago(+el.dataset.at);
+        // Selector amber decays once an item hasn't been touched for a while.
+        for (const row of document.querySelectorAll(
+          "#tree .tree-row.ticket.hot",
+        )) {
+          const at = +((row.querySelector(".t-ago") || {}).dataset || {}).at;
+          if (!at || Date.now() - at > 90000) row.classList.remove("hot");
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // Simulator — every ~7s the board visibly moves: new activity line,
+      // tool line swap, obs flash, tree hot stamp, Working badge refresh.
+      // ---------------------------------------------------------------------
+      const SIM_STEPS = [
+        { file: "context-dump.md", actor: "ag-deepseek", message: "Streamed diff hunk into context-dump.md", tool: { name: "Edit", detail: "tickets/AGENTIC-575/context-dump.md" } },
+        { file: "state.json", actor: "ag-driver", message: "Checkpointed coder state · stage implement", tool: { name: "Write", detail: "tickets/AGENTIC-575/state.json" } },
+        { file: "context-dump.md", actor: "ag-deepseek", message: "Scoped tests green · 42 passed on api-gateway", tool: { name: "Bash", detail: "pytest tests/api_gateway -q" } },
+        { file: "state.json", actor: "ag-driver", message: "Pinged Architect iOS for a review slot", tool: { name: "Read", detail: "guard/impact_middleware.py" } },
+      ];
+      const KIMI_STEPS = [
+        { file: "PanelController.swift", message: "Traced the retain cycle — closure capture in the panel delegate." },
+        { file: "review-notes.md", message: "Wrote the fix note · weak self in the focus handler." },
+        { file: "HotkeyMap.swift", message: "Checked the hotkey remap path — clean." },
+      ];
+      let simI = -1,
+        simN = 0,
+        extraI = 0,
+        kimiI = 0;
+      // Every ~3rd tick, ONE bounded extra: Kimi review activity on HUD-441,
+      // token bumps on live run cards, or a "new" dot on the implement thread.
+      function simExtra() {
+        const kind = extraI++ % 3,
+          now = Date.now();
+        if (kind === 0) {
+          const item = itemByKey("HUD-441");
+          const rec = item && recOf(item, "architect-code-review");
+          if (!rec || rec.state !== "active") return;
+          const st = KIMI_STEPS[kimiI++ % KIMI_STEPS.length];
+          (rec.activity = rec.activity || []).push({
+            t: demoClock(now),
+            at: now,
+            actor: "ag-kimi",
+            message: st.message,
+          });
+          if (rec.activity.length > 5) rec.activity.shift();
+          logAppend({ at: now, actor: "ag-kimi", item: item.key, message: st.message });
+          LIVE.obs2 = {
+            stage: "architect-code-review",
+            item: "HUD-441",
+            file: st.file,
+            at: now,
+          };
+          item._updatedAt = now;
+        } else if (kind === 1) {
+          for (const { session: s } of RUNNING_SESSIONS) {
+            if (s.status !== "running" || s._tok == null) continue;
+            s._tok += 2 + Math.round(Math.random() * 7);
+            s.tokens = fmtTok(s._tok);
+            for (const el of document.querySelectorAll(
+              `[data-run-tok="${s.id}"],[data-tokens="${s.id}"]`,
+            ))
+              el.textContent = s.tokens;
+          }
+        } else {
+          const item = itemByKey("AGENTIC-575");
+          const rec = item && recOf(item, "implement");
+          const th =
+            rec && (rec.buzz_threads || []).find((t) => t.status === "active");
+          if (!th) return;
+          LIVE.threadNew = th.id;
+          for (const sp of document.querySelectorAll(
+            `[data-thread="${th.id}"]`,
+          ))
+            if (!sp.querySelector("[data-new-dot]"))
+              sp.insertAdjacentHTML(
+                "beforeend",
+                '<span class="new-dot" data-new-dot title="new activity"></span>',
+              );
+        }
+      }
+      function simTick() {
+        simI = (simI + 1) % SIM_STEPS.length;
+        simN++;
+        const st = SIM_STEPS[simI],
+          now = Date.now();
+        LIVE.activityAt = now;
+        LIVE.toolHist.unshift({
+          name: LIVE.tool.name,
+          detail: LIVE.tool.detail,
+          ms: 180 + Math.round(Math.random() * 2600),
+        });
+        LIVE.toolHist.length = Math.min(LIVE.toolHist.length, 5);
+        LIVE.tool = { name: st.tool.name, detail: st.tool.detail, at: now };
+        LIVE.obs = { stage: "implement", file: st.file, at: now };
+        const hotPath = "tickets/AGENTIC-575/" + st.file;
+        LIVE.hot[hotPath] = now;
+        LIVE.feed.unshift({ at: now, actor: st.actor, message: st.message });
+        LIVE.feed.length = Math.min(LIVE.feed.length, 6);
+        LIVE.feedKey++;
+        logAppend({ at: now, actor: st.actor, item: "AGENTIC-575", message: st.message });
+        patchTreeHot(hotPath, now);
+        updateRunLive();
+        if (simN % 3 === 0) simExtra();
+        renderTimes();
+      }
+
+      // ---------------------------------------------------------------------
+      // Boot
+      // ---------------------------------------------------------------------
+      syncTheme();
+      renderTree();
+      renderRuns();
+      renderGraph();
+      renderTimes();
+      setInterval(renderTimes, 1000);
+      setInterval(simTick, 7000);
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && overlay) {
+          closeOverlay();
+          return;
+        }
+        if (
+          overlay &&
+          overlay.name === "ask" &&
+          ["1", "2", "3"].includes(e.key)
+        ) {
+          askRun(ASK_QUESTIONS[+e.key - 1].id);
+          return;
+        }
+        if (e.target.closest?.("input,textarea,[contenteditable]")) return;
+        if (
+          (e.key === "f" || e.key === "F") &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey
+        )
+          fitBoard();
+      });
+      window.addEventListener("resize", () => {
+        renderMinimapViewport();
+      });
+    </script>
+    <!-- manifest: option-d-buzz-trail (v2)
+         thesis   : agenttrail itself, pointed at the Buzz ticket pipeline —
+                    eight stage gnodes in four phase regions, work items riding
+                    through them as task capsules, plus the full harness model:
+                    INTAKE setup states, machines, roster, candidates, gates.
+         source   : agenttrail public/index.pretty.html — tokens, radii/shadow
+                    pair, motion system (700ms ease / 250ms ease-out), gnode SVG
+                    anatomy, capsule detail accordions in a transform-mirrored
+                    HTML overlay world (Safari-safe; no foreignObject), run
+                    cards, tree rows + hot accents, badges, keycap chips, btn
+                    pair, overlay surface + shadow, theme toggle with light
+                    compensation, camera math, minimap, keycap hints, toast —
+                    lifted verbatim and renamed for this domain.
+         data     : herdr-active-work-data-v2.js inlined verbatim — 6 pipeline
+                    items (incl. blocked AGENTIC-512 and done IOSDOX-27102),
+                    INTAKE, JIRA_CANDIDATES, MACHINES, the 10-agent roster.
+                    Every count/badge/meta on the board is derived from it.
+         v2       : (a) live gate transitions — approve IOSDOX-27458's Proof
+                    (confirm overlay -> stage complete, item rides Pre-PR, trail
+                    extends, badges/capsules/cards re-derive) · merge PR #510
+                    (AGENTIC-472 -> done: trail dims .2, capsules fade to Done)
+                    · request-changes flips checkpoint_state + pill wording ·
+                    AGENTIC-512's reopen just toasts;
+                    (b) needs-you dropdown on the topbar badge — danger dot ·
+                    KEY · reason · live ago, per-row ack (dims only; badge count
+                    is state), row click = camera flight to the gate capsule;
+                    (c) pi handoff command rows (mono + copy glyph, clipboard
+                    with execCommand fallback) on every session row + run card;
+                    (d) buzz.log console — 420px right slide-in (250ms), merged
+                    stream w/ filter chips, live t-agos, simulator appends;
+                    (e) Ask board (⌁) — three keycap questions answered from
+                    CURRENT demo state, mic pulses 450ms (reduced-motion: 0);
+                    (f) sidebar agents roster (effStatus-derived dots, click =
+                    flight to attachment) + jira candidates (`set up →` spinner
+                    ~1.4s -> new channel_linked INTAKE card) + new-pi-session;
+                    (g) simulator v2 — coder tick + every 3rd tick one of: Kimi
+                    obs-ring flash on HUD-441, token bumps, thread `new` dot
+                    (clears when its capsule detail opens). All in-place.
+         board    : dashed INTAKE region left of OPEN (idea + channel_linked
+                    mini-cards, mono next-step actions); done item = .2 trail
+                    across all 8 stages + faded [x] capsules + `Done` pill +
+                    `merged this morning · monitoring` detail; DevBox machine
+                    chips on capsules, `machine · pane` session rows, jira/PR/
+                    channel/unscoped rows on the current-stage capsule.
+         overlays : one at a time; Esc closes; focus returns to the opener;
+                    all tokens --overlay/--minimap-bg so both themes are free.
+         themes   : dark default; real light mode via role=switch toggle,
+                    storage key "herdr-trail-theme", pre-paint script in head.
+         liveness : 1s t-ago patcher for every timestamp; ~7s simulator moves
+                    the board (capsule activity, tool line, obs-ring, tree hot
+                    stamps, Working badge) with no structural rebuilds on ticks.
+         boot     : fit clamped to zoom >= 0.6, Implement pre-expanded with its
+                    riding capsule open, camera left-anchored on INTAKE/OPEN.
+    -->
+  </body>
+</html>

@@ -11,6 +11,7 @@ struct WorkspaceNavigationView: View {
     @Bindable var shell: HerdrShellState
     @Bindable var activeWorkStore: ActiveWorkStore
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -71,29 +72,56 @@ struct WorkspaceNavigationView: View {
                 )
             }
         case .activeWork:
-            ActiveWorkContainerView(
-                store: activeWorkStore,
-                isControlEnabled: model.canControlPrimary,
-                refresh: refreshActiveWork,
-                createItem: createItem,
-                setupJira: setupJira,
-                transition: transition,
-                setLifecycle: setLifecycle,
-                openSession: openTrackedSession,
-                openURL: { url in
-                    Task {
-                        do {
-                            try await ActiveWorkLinkOpener.open(url)
-                        } catch {
-                            model.toastMessage = error.localizedDescription
+            Group {
+                if model.isDemoMode || model.activeWorkLegacyUI {
+                    ActiveWorkContainerView(
+                        store: activeWorkStore,
+                        isControlEnabled: model.canControlPrimary,
+                        refresh: refreshActiveWork,
+                        createItem: createItem,
+                        setupJira: setupJira,
+                        transition: transition,
+                        setLifecycle: setLifecycle,
+                        openSession: openTrackedSession,
+                        openURL: { url in
+                            Task {
+                                do {
+                                    try await ActiveWorkLinkOpener.open(url)
+                                } catch {
+                                    model.toastMessage = error.localizedDescription
+                                }
+                            }
+                        },
+                        transcribeVoice: { try await model.transcribeVoiceNote(at: $0) },
+                        askBoard: { question in
+                            shell.presentAgent(prompt: activeWorkStore.agentPrompt(question: question))
                         }
-                    }
-                },
-                transcribeVoice: { try await model.transcribeVoiceNote(at: $0) },
-                askBoard: { question in
-                    shell.presentAgent(prompt: activeWorkStore.agentPrompt(question: question))
+                    )
+                } else if let configuration = model.activeServerConfiguration {
+                    ActiveWorkBoardWebView(
+                        configuration: configuration,
+                        openPane: { paneID, machineID in
+                            shell.showSession()
+                            model.openPane(rawPaneID: paneID, machineID: machineID)
+                        },
+                        openExternal: { url in
+                            Task {
+                                do {
+                                    try await ActiveWorkLinkOpener.open(url)
+                                } catch {
+                                    model.toastMessage = error.localizedDescription
+                                }
+                            }
+                        },
+                        copyText: { model.copyToPasteboard($0) },
+                        popOut: { openWindow(id: HerdrWindowID.activeWorkBoard) }
+                    )
+                    .accessibilityIdentifier("active-work-container")
+                } else {
+                    ActiveWorkBoardEmptyStateView()
+                        .accessibilityIdentifier("active-work-container")
                 }
-            )
+            }
         case .attention:
             AttentionView(model: model) { pane, _ in
                 openSession(pane)
@@ -114,17 +142,8 @@ struct WorkspaceNavigationView: View {
 
     private func openTrackedSession(_ session: ActiveWorkPiSession) {
         guard let paneID = session.paneID else { return }
-        let matches = model.workspaces
-            .flatMap(\.panes)
-            .filter { $0.paneID == paneID }
-        let pane = session.machineID.flatMap { machineID in
-            matches.first { $0.machineID == machineID }
-        } ?? (matches.count == 1 ? matches.first : nil)
-        guard let pane else {
-            model.toastMessage = "That Pi session is no longer available in the connected fleet"
-            return
-        }
-        openSession(pane)
+        shell.showSession()
+        model.openPane(rawPaneID: paneID, machineID: session.machineID)
     }
 
     private func refreshActiveWork() async {

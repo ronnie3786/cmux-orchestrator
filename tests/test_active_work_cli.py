@@ -11,6 +11,18 @@ from unittest.mock import patch
 from scripts import herdr_active_work_cli as cli
 
 
+DEFAULT_STAGE_KEYS = (
+    "start-ticket",
+    "plan",
+    "implement",
+    "architect-code-review",
+    "proof",
+    "code-review-pre-pr",
+    "pr",
+    "pr-triage",
+)
+
+
 def item(
     identifier="work_ticket_1",
     *,
@@ -40,7 +52,7 @@ def board(*, items=None, candidates=None):
         "ok": True,
         "pipeline": {
             "id": "pipeline_buzz_feature_work_v1",
-            "stages": [{"stage_key": stage} for stage in cli.STAGE_KEYS],
+            "stages": [{"stage_key": stage} for stage in DEFAULT_STAGE_KEYS],
         },
         "items": list(items or []),
         "jira_candidates": list(candidates or []),
@@ -284,6 +296,130 @@ class ActiveWorkCLITests(unittest.TestCase):
                 "summary": "Production CLI",
                 "title": "Agent command surface",
             },
+        )
+
+    def test_workflow_apply_posts_validated_config_and_validate_flag_skips_network(self):
+        config = {
+            "workflow": "test-workflow",
+            "version": 1,
+            "title": "Test workflow",
+            "phases": [
+                {"key": "plan", "title": "Plan"},
+                {"key": "build", "title": "Build"},
+            ],
+            "stages": [
+                {
+                    "key": "plan",
+                    "title": "Plan",
+                    "phase": "plan",
+                    "skill": "plan-skill",
+                    "next": ["build"],
+                },
+                {
+                    "key": "build",
+                    "title": "Build",
+                    "phase": "build",
+                    "skill": "build-skill",
+                    "next": [],
+                },
+            ],
+        }
+        path = Path(self.temporary.name) / "workflow.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        status, output, error, opener = self.run_cli(
+            ["workflow-apply", "--file", str(path)],
+            FakeResponse(
+                {
+                    "ok": True,
+                    "applied": True,
+                    "reason": None,
+                    "workflow": {"slug": "test-workflow", "version": 1},
+                }
+            ),
+        )
+        self.assertEqual(status, 0)
+        self.assertIsNone(error)
+        self.assertTrue(output["data"]["applied"])
+        self.assertEqual(opener.requests[0]["method"], "POST")
+        self.assertEqual(json.loads(opener.requests[0]["body"]), config)
+
+        status, output, error, opener = self.run_cli(
+            ["workflow-apply", "--file", str(path), "--validate"]
+        )
+        self.assertEqual(status, 0)
+        self.assertIsNone(error)
+        self.assertTrue(output["data"]["valid"])
+        self.assertEqual(opener.requests, [])
+
+        invalid = json.loads(json.dumps(config))
+        invalid["stages"][0]["next"] = ["plan"]
+        path.write_text(json.dumps(invalid), encoding="utf-8")
+        status, output, error, opener = self.run_cli(
+            ["workflow-apply", "--file", str(path), "--validate"]
+        )
+        self.assertEqual(status, 2)
+        self.assertIsNone(output)
+        self.assertEqual(error["error"]["code"], "workflow_config_invalid")
+        self.assertEqual(opener.requests, [])
+
+    def test_attach_doc_builds_documents_patch_payload(self):
+        arguments = [
+            "attach-doc",
+            "work_ticket_1",
+            "--stage",
+            "plan",
+            "--id",
+            "plan-approval",
+            "--title",
+            "plan-approval.html",
+            "--kind",
+            "html",
+            "--skill",
+            "buzz-plan",
+            "--status",
+            "approved",
+            "--by",
+            "Ronnie",
+            "--url",
+            "https://example.test/tickets/AGENTIC-575/plan-approval.html",
+        ]
+        status, output, error, opener = self.run_cli(
+            arguments,
+            FakeResponse({"ok": True, "item": item()}),
+        )
+        self.assertEqual(status, 0)
+        self.assertIsNone(error)
+        self.assertEqual(output["data"]["item"]["id"], "work_ticket_1")
+        request = opener.requests[0]
+        self.assertEqual(request["method"], "PATCH")
+        self.assertEqual(
+            request["url"],
+            "http://127.0.0.1:9092/api/v1/active-work/items/work_ticket_1/stages/plan",
+        )
+        document = json.loads(request["body"])["content"]["documents"]["plan-approval"]
+        self.assertEqual(
+            {key: value for key, value in document.items() if key != "at"},
+            {
+                "title": "plan-approval.html",
+                "kind": "html",
+                "skill": "buzz-plan",
+                "status": "approved",
+                "by": "Ronnie",
+                "url": "https://example.test/tickets/AGENTIC-575/plan-approval.html",
+            },
+        )
+        self.assertRegex(document["at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+
+        status, _, error, opener = self.run_cli(
+            [*arguments, "--at", "2026-08-26T20:00:00Z"],
+            FakeResponse({"ok": True, "item": item()}),
+        )
+        self.assertEqual(status, 0)
+        self.assertIsNone(error)
+        body = json.loads(opener.requests[0]["body"])
+        self.assertEqual(
+            body["content"]["documents"]["plan-approval"]["at"],
+            "2026-08-26T20:00:00Z",
         )
 
     def test_update_fetches_revision_once_and_never_retries(self):
@@ -718,7 +854,7 @@ class ActiveWorkCLITests(unittest.TestCase):
         with redirect_stdout(output), self.assertRaises(SystemExit) as context:
             cli._parser({}).parse_args(["--version"])
         self.assertEqual(context.exception.code, 0)
-        self.assertEqual(output.getvalue().strip(), "herdr-active-work 1")
+        self.assertEqual(output.getvalue().strip(), "herdr-active-work 2")
 
 
 if __name__ == "__main__":
