@@ -503,11 +503,14 @@ actor HerdrAPIClient {
         )
     }
 
-    func startHeadlessAgent(prompt: String) async throws -> HeadlessAgentRunEnvelope {
+    func startHeadlessAgent(
+        prompt: String,
+        mode: HeadlessAgentRunMode = .ask
+    ) async throws -> HeadlessAgentRunEnvelope {
         try await request(
             path: "/api/v1/agent-runs",
             method: "POST",
-            body: HeadlessAgentStartRequest(prompt: prompt)
+            body: HeadlessAgentStartRequest(prompt: prompt, mode: mode)
         )
     }
 

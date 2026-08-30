@@ -1358,7 +1358,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     request_id=request_id,
                 )
             if method == "POST" and tail == ["agent-runs"]:
-                if any(key not in {"prompt", "label"} for key in body):
+                if any(key not in {"prompt", "label", "mode"} for key in body):
                     raise HTTPValidationError("Agent run request contains an unsupported field")
                 prompt = _string(body.get("prompt"), "prompt", maximum=131072)
                 if not prompt.strip():
@@ -1366,7 +1366,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 label = None
                 if body.get("label") is not None:
                     label = _string(body.get("label"), "label", maximum=120)
-                return service.start_agent_run(prompt=prompt, label=label), 202
+                mode = body.get("mode", "ask")
+                if not isinstance(mode, str) or mode not in {"ask", "act"}:
+                    raise HTTPValidationError("mode must be ask or act")
+                return service.start_agent_run(prompt=prompt, label=label, mode=mode), 202
             if len(tail) >= 2 and tail[0] == "agent-runs":
                 run_id = _agent_run_id(tail[1])
                 if method == "GET" and len(tail) == 2:

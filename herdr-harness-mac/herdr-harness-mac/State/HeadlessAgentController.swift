@@ -24,7 +24,12 @@ final class HeadlessAgentController {
         run?.status == .completed && run?.sessionFile?.isEmpty == false && !isPromoting
     }
 
-    func submit(prompt: String, machineID: String, model: HerdrAppModel) async {
+    func submit(
+        prompt: String,
+        machineID: String,
+        mode: HeadlessAgentRunMode = .ask,
+        model: HerdrAppModel
+    ) async {
         let normalizedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedPrompt.isEmpty, !isRunning else { return }
 
@@ -33,7 +38,11 @@ final class HeadlessAgentController {
         isSubmitting = true
         errorMessage = nil
         do {
-            let started = try await model.startHeadlessAgent(prompt: normalizedPrompt, machineID: machineID)
+            let started = try await model.startHeadlessAgent(
+                prompt: normalizedPrompt,
+                machineID: machineID,
+                mode: mode
+            )
             run = started
             isSubmitting = false
             if !started.status.isTerminal {

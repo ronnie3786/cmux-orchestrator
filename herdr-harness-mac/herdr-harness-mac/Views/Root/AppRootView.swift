@@ -114,6 +114,9 @@ struct AppRootView: View {
     @Bindable var shell: HerdrShellState
     @Bindable var activeWorkStore: ActiveWorkStore
     let driver: HerdrConnectionDriver
+    let hudController: HerdrHudController
+    let hudSession: HerdrHudSession
+    let fontScale: HerdrFontScaleStore
     @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -150,6 +153,7 @@ struct AppRootView: View {
         }
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
+            hudController.configure(model: model, session: hudSession, fontScale: fontScale)
         }
         .task {
             if let paneID = HerdrMacAppDelegate.takePendingPaneID() {

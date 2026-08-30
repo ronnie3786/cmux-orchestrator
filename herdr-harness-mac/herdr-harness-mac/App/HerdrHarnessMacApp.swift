@@ -27,6 +27,8 @@ struct HerdrHarnessMacApp: App {
     @State private var connectionDriver = HerdrConnectionDriver()
     @State private var fontScale = HerdrFontScaleStore()
     @State private var cleanupSettings = CleanupSettingsStore()
+    @State private var hudController = HerdrHudController()
+    @State private var hudSession = HerdrHudSession()
 
     var body: some Scene {
         // A single `Window`, not a `WindowGroup`: Herdr shows one fleet, and a
@@ -37,7 +39,10 @@ struct HerdrHarnessMacApp: App {
                 model: model,
                 shell: shell,
                 activeWorkStore: activeWorkStore,
-                driver: connectionDriver
+                driver: connectionDriver,
+                hudController: hudController,
+                hudSession: hudSession,
+                fontScale: fontScale
             )
                 .environment(herdPulse)
                 // Apple documents `dynamicTypeSize` as not affecting text size
@@ -60,13 +65,19 @@ struct HerdrHarnessMacApp: App {
                 model: model,
                 shell: shell,
                 herdPulse: herdPulse,
-                fontScale: fontScale
+                fontScale: fontScale,
+                hudController: hudController
             )
         }
 
         // ⌘, — replaces the iOS Settings tab.
         Settings {
-            SettingsView(model: model, fontScale: fontScale, cleanupSettings: cleanupSettings)
+            SettingsView(
+                model: model,
+                fontScale: fontScale,
+                cleanupSettings: cleanupSettings,
+                hudController: hudController
+            )
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(width: 560, height: 640)
                 .background(HerdrTheme.ink)
@@ -87,6 +98,7 @@ struct HerdrMacCommands: Commands {
     @Bindable var shell: HerdrShellState
     @Bindable var herdPulse: HerdPulseCoordinator
     @Bindable var fontScale: HerdrFontScaleStore
+    let hudController: HerdrHudController
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -106,6 +118,15 @@ struct HerdrMacCommands: Commands {
         // View menu, after the system's own "Toggle Sidebar" item.
         CommandGroup(after: .sidebar) {
             Divider()
+
+            Button("Summon HUD") {
+                hudController.summon()
+            }
+            .keyboardShortcut("h", modifiers: [.command, .control])
+
+            Button(hudController.isEnabled ? "Hide HUD" : "Show HUD") {
+                hudController.setEnabled(!hudController.isEnabled)
+            }
 
             Button("Go to Attention") {
                 shell.detailScope = .attention

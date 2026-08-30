@@ -1069,6 +1069,37 @@ final class HerdrAppModel {
         return try await client.synthesizeResponseAudio(text: text)
     }
 
+    func fetchResponseAudioCapabilities(forMachine machineID: String) async throws -> ResponseAudioCapabilities {
+        guard !isDemoMode, canControl(machineID: machineID),
+              let client = client(forMachine: machineID) else {
+            return .unavailable
+        }
+        return try await client.fetchResponseAudioCapabilities()
+    }
+
+    func prepareResponseAudio(
+        action: ResponseAudioAction,
+        text: String,
+        forMachine machineID: String
+    ) async throws -> ResponseAudioPrepareResponse {
+        guard !isDemoMode, canControl(machineID: machineID),
+              let client = client(forMachine: machineID) else {
+            throw APIError.invalidResponse
+        }
+        return try await client.prepareResponseAudio(action: action, text: text)
+    }
+
+    func synthesizeResponseAudio(
+        text: String,
+        forMachine machineID: String
+    ) async throws -> ResponseAudioSpeechResponse {
+        guard !isDemoMode, canControl(machineID: machineID),
+              let client = client(forMachine: machineID) else {
+            throw APIError.invalidResponse
+        }
+        return try await client.synthesizeResponseAudio(text: text)
+    }
+
     func piConversationEvents(
         for pane: HerdrPane,
         after cursor: String?
@@ -1599,12 +1630,17 @@ final class HerdrAppModel {
         activityFeedError = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 
-    func startHeadlessAgent(prompt: String, machineID: String) async throws -> HeadlessAgentRun {
+    func startHeadlessAgent(
+        prompt: String,
+        machineID: String,
+        mode: HeadlessAgentRunMode = .ask
+    ) async throws -> HeadlessAgentRun {
         if isDemoMode {
             let now = HerdrTimestamp.string(from: .now)
             return HeadlessAgentRun(
                 id: "demo-agent-\(UUID().uuidString)",
                 status: .completed,
+                mode: mode,
                 prompt: prompt,
                 response: "This is a demo Agent response. On a live machine, Pi answers from your home folder with a read-only snapshot of the current Herdr fleet.",
                 error: nil,
@@ -1623,7 +1659,7 @@ final class HerdrAppModel {
                 machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
             )
         }
-        return try await client.startHeadlessAgent(prompt: prompt).run
+        return try await client.startHeadlessAgent(prompt: prompt, mode: mode).run
     }
 
     func fetchHeadlessAgent(runID: String, machineID: String) async throws -> HeadlessAgentRun {
@@ -1670,6 +1706,7 @@ final class HerdrAppModel {
                 run: HeadlessAgentRun(
                     id: runID,
                     status: .promoted,
+                    mode: .ask,
                     prompt: "Demo prompt",
                     response: "Demo response",
                     error: nil,

@@ -286,12 +286,13 @@ class FakeHTTPService:
         }
 
     @staticmethod
-    def _agent_run(status="completed"):
+    def _agent_run(status="completed", *, mode="ask"):
         return {
             "ok": True,
             "run": {
                 "id": "agr_0123456789ab",
                 "status": status,
+                "mode": mode,
                 "prompt": "What changed?",
                 "response": "An answer" if status in {"completed", "promoted"} else None,
                 "error": None,
@@ -306,9 +307,9 @@ class FakeHTTPService:
             },
         }
 
-    def start_agent_run(self, *, prompt, label=None):
-        self.calls.append(("agent_run.start", {"prompt": prompt, "label": label}))
-        result = self._agent_run("queued")
+    def start_agent_run(self, *, prompt, label=None, mode="ask"):
+        self.calls.append(("agent_run.start", {"prompt": prompt, "label": label, "mode": mode}))
+        result = self._agent_run("queued", mode=mode)
         result["run"]["prompt"] = prompt
         return result
 
@@ -788,6 +789,7 @@ class HerdrHTTPTests(unittest.TestCase):
             {
                 "id",
                 "status",
+                "mode",
                 "prompt",
                 "response",
                 "error",
@@ -803,7 +805,7 @@ class HerdrHTTPTests(unittest.TestCase):
         )
         self.assertEqual(
             self.service.calls[-1],
-            ("agent_run.start", {"prompt": "What changed?", "label": None}),
+            ("agent_run.start", {"prompt": "What changed?", "label": None, "mode": "ask"}),
         )
 
         get_status, _, get_body = self.request("/api/v1/agent-runs/agr_0123456789ab")
@@ -817,6 +819,44 @@ class HerdrHTTPTests(unittest.TestCase):
         )
         self.assertEqual(cancel_status, 200)
         self.assertEqual(cancel_body["run"]["status"], "cancelled")
+
+    def test_agent_run_mode_rides_the_start_request_and_rejects_invalid_values(self):
+        status, _, body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Open the browser", "mode": "act"},
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(body["run"]["mode"], "act")
+        self.assertEqual(
+            self.service.calls[-1],
+            (
+                "agent_run.start",
+                {"prompt": "Open the browser", "label": None, "mode": "act"},
+            ),
+        )
+
+        call_count = len(self.service.calls)
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "x", "mode": "bogus"},
+        )
+
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_request")
+        self.assertEqual(len(self.service.calls), call_count)
+
+        unhashable_status, _, unhashable_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "x", "mode": {"nested": 1}},
+        )
+
+        self.assertEqual(unhashable_status, 400)
+        self.assertEqual(unhashable_body["error"]["code"], "invalid_request")
+        self.assertEqual(len(self.service.calls), call_count)
 
     def test_agent_run_promote_and_delete_forward_validated_options(self):
         status, _, body = self.request(

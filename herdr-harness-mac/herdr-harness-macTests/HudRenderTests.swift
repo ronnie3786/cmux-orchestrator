@@ -1,0 +1,85 @@
+import Foundation
+import SwiftUI
+import Testing
+@testable import herdr_harness_mac
+
+@Suite("Herdr HUD renders", .serialized)
+@MainActor
+struct HudRenderTests {
+    @Test("HUD card renders a completed Ask and Do transcript")
+    func rendersHudCard() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(userDefaults: makeDefaults())
+        session.seedExchangesForTesting([
+            HerdrHudExchange(
+                id: "hud-fleet-status",
+                machineID: "demo1",
+                mode: .ask,
+                prompt: "What is the current status of the demo fleet?",
+                sentPrompt: "What is the current status of the demo fleet?",
+                response: "The fleet is healthy. Two alerts need attention, and one pane is waiting for review.",
+                error: nil,
+                status: .completed,
+                costUSD: nil,
+                createdAt: .now,
+                promotedPaneID: nil
+            ),
+            HerdrHudExchange(
+                id: "hud-resolve-alert",
+                machineID: "demo1",
+                mode: .act,
+                prompt: "Resolve the stale attention alert and summarize the change.",
+                sentPrompt: "Resolve the stale attention alert and summarize the change.",
+                response: "Resolved the stale alert, refreshed its status, and left the active pane open for review.",
+                error: nil,
+                status: .completed,
+                costUSD: 0.0042,
+                createdAt: .now,
+                promotedPaneID: nil
+            ),
+        ])
+
+        let result = try await HerdrRenderHarness.render(
+            "15-hud-card.png",
+            size: CGSize(width: 420, height: 580)
+        ) {
+            HerdrHudCardView(
+                model: model,
+                controller: HerdrHudController(),
+                session: session
+            )
+        }
+
+        result.expectSubstantial()
+    }
+
+    @Test("HUD orb renders its unread-alert attention badge")
+    func rendersHudOrb() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(userDefaults: makeDefaults())
+        #expect(model.unreadAlertCount > 0)
+
+        let result = try await HerdrRenderHarness.render(
+            "16-hud-orb.png",
+            size: CGSize(width: 100, height: 100)
+        ) {
+            HerdrHudOrbView(
+                model: model,
+                controller: HerdrHudController(),
+                session: session
+            )
+            .frame(width: 100, height: 100)
+        }
+
+        result.expectSubstantial()
+    }
+
+    private func makeDefaults() -> UserDefaults {
+        let suiteName = "HudRenderTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("Could not create isolated render defaults")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }
+}

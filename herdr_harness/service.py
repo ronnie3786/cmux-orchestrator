@@ -2309,7 +2309,13 @@ class HerdrService:
                 break
         return topology
 
-    def start_agent_run(self, *, prompt: str, label: Optional[str] = None) -> dict:
+    def start_agent_run(
+        self,
+        *,
+        prompt: str,
+        label: Optional[str] = None,
+        mode: str = "ask",
+    ) -> dict:
         display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
         try:
             self.refresh_snapshot()
@@ -2322,6 +2328,7 @@ class HerdrService:
             label=display_label,
             cwd=str(self._server_home()),
             topology=self._agent_topology(),
+            mode=mode,
         )
 
     def get_agent_run(self, run_id: str) -> dict:

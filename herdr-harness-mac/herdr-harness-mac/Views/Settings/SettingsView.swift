@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var fontScale: HerdrFontScaleStore
     @Bindable var cleanupSettings: CleanupSettingsStore
+    let hudController: HerdrHudController
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
@@ -17,6 +18,7 @@ struct SettingsView: View {
             machinesSection
             voiceSection
             alertSection
+            hudSection
             cleanupSection
             textSizeSection
             privacySection
@@ -151,6 +153,25 @@ struct SettingsView: View {
             Text("Voice to prompt")
         } footer: {
             Text("Parakeet audio travels only through your authenticated Herdr server and private cmux proxy. If it is unavailable, Herdr transcribes with Apple Speech. Transcripts remain editable and are never sent automatically.")
+        }
+    }
+
+    private var hudSection: some View {
+        Section {
+            Toggle(
+                "Enable HUD",
+                systemImage: "sparkles",
+                isOn: Binding(
+                    get: { hudController.isEnabled },
+                    set: { hudController.setEnabled($0) }
+                )
+            )
+
+            LabeledContent("Summon", value: "⌥Space")
+        } header: {
+            Text("HUD")
+        } footer: {
+            Text("Ask mode investigates read-only. Do mode can run real commands on the selected machine.")
         }
     }
 

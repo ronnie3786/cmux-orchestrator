@@ -33,6 +33,32 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         return components.url
     }
 
+    static func openPaneURLWithFallback(_ paneID: String) {
+        guard let url = notificationPaneURL(for: paneID) else {
+            pendingPaneID = paneID
+            NotificationCenter.default.post(name: .herdrOpenPane, object: paneID)
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.createsNewApplicationInstance = false
+        configuration.allowsRunningApplicationSubstitution = false
+        NSWorkspace.shared.open(
+            [url],
+            withApplicationAt: Bundle.main.bundleURL,
+            configuration: configuration
+        ) { _, error in
+            if let error {
+                NSLog("Herdr could not open its pane URL: %@", error.localizedDescription)
+                Task { @MainActor in
+                    pendingPaneID = paneID
+                    NotificationCenter.default.post(name: .herdrOpenPane, object: paneID)
+                }
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         HerdrPerfDiagnostics.start()
         VoiceRecordingPolicy.removeStaleTemporaryRecordings()
@@ -66,34 +92,7 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         let userInfo = response.notification.request.content.userInfo
         guard let paneID = Self.resolvedPaneID(fromUserInfo: userInfo) else { return }
         await MainActor.run {
-            // A closed SwiftUI Window has no AppRootView listening for the
-            // old in-process relay. Deliver the pane as one canonical external
-            // event to this exact bundle so the Window scene is recreated first.
-            guard let url = Self.notificationPaneURL(for: paneID) else {
-                Self.pendingPaneID = paneID
-                NotificationCenter.default.post(name: .herdrOpenPane, object: paneID)
-                return
-            }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            configuration.addsToRecentItems = false
-            configuration.createsNewApplicationInstance = false
-            configuration.allowsRunningApplicationSubstitution = false
-            NSWorkspace.shared.open(
-                [url],
-                withApplicationAt: Bundle.main.bundleURL,
-                configuration: configuration
-            ) { _, error in
-                if let error {
-                    NSLog("Herdr could not reopen its pane URL after a notification tap: %@", error.localizedDescription)
-                    Task { @MainActor in
-                        // Preserve the previous relay only as a delivery-failure
-                        // fallback. Running both paths would route one tap twice.
-                        Self.pendingPaneID = paneID
-                        NotificationCenter.default.post(name: .herdrOpenPane, object: paneID)
-                    }
-                }
-            }
+            Self.openPaneURLWithFallback(paneID)
         }
     }
 }
