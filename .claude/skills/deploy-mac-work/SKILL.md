@@ -20,12 +20,27 @@ SSH works non-interactively: `ssh -o BatchMode=yes ronniesitym4mbp '<cmd>'`.
 
 ## Deploy (one SSH command, verified pattern)
 
+App builds run from the **pristine detached worktree `~/herdr-deploy-src`** (created
+2026-08-31; linked to the main clone), NOT from the live clone — the live clone often
+carries in-flight WIP from other sessions/Codex agents, and building there either
+collides with it or silently builds stale code after an aborted pull.
+
 ```bash
-ssh -o BatchMode=yes ronniesitym4mbp 'cd ~/Documents/Development/cmux-harness && git pull --ff-only 2>&1 | tail -1 && cd herdr-harness-mac && xcodebuild -project herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -configuration Release -destination "platform=macOS" -derivedDataPath ~/herdr-deploy-dd CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build 2>&1 | grep -E " error:|BUILD (SUCCEEDED|FAILED)" && pkill -f "Herdr.app/Contents/MacOS"; sleep 1; APP=~/herdr-deploy-dd/Build/Products/Release/herdr-harness-mac.app && rm -rf /Applications/Herdr.app && cp -R "$APP" /Applications/Herdr.app && open -n /Applications/Herdr.app && sleep 4 && pgrep -f "Herdr.app/Contents/MacOS" | wc -l | tr -d " "'
+ssh -o BatchMode=yes ronniesitym4mbp 'git -C ~/Documents/Development/cmux-harness fetch -q origin && git -C ~/herdr-deploy-src checkout -q --detach origin/main && git -C ~/herdr-deploy-src log --oneline -1 && cd ~/herdr-deploy-src/herdr-harness-mac && xcodebuild -project herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -configuration Release -destination "platform=macOS" -derivedDataPath ~/herdr-deploy-dd CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build 2>&1 | grep -E " error:|BUILD (SUCCEEDED|FAILED)" && pkill -f "Herdr.app/Contents/MacOS"; sleep 1; APP=~/herdr-deploy-dd/Build/Products/Release/herdr-harness-mac.app && rm -rf /Applications/Herdr.app && cp -R "$APP" /Applications/Herdr.app && open -n /Applications/Herdr.app && sleep 4 && pgrep -f "Herdr.app/Contents/MacOS" | wc -l | tr -d " "'
 ```
 
-Success = `BUILD SUCCEEDED` and a final `1` (one running process). Report the deployed
-commit: `ssh ... 'git -C ~/Documents/Development/cmux-harness log --oneline -1'`.
+Success = the `git log` line showing the expected commit, `BUILD SUCCEEDED`, and a
+final `1` (one running process). If the worktree is missing, recreate it:
+`git -C ~/Documents/Development/cmux-harness worktree add --detach ~/herdr-deploy-src origin/main`.
+
+**Harness (Python) changes still deploy through the LIVE clone** (`~/Documents/Development/cmux-harness`),
+because launchd runs the harness from there. `git pull --ff-only` in it — and CHECK
+`git log --oneline -1` afterward: an aborted pull still prints `Updating x..y` before the
+error, so tail-ing output looks like success while HEAD never moved (bit us 2026-08-31).
+If the pull is blocked by uncommitted WIP, do NOT stash/discard another session's live
+work — coordinate with the owning session (or Ronnie) to land it first. A zero-touch
+safety snapshot is available if needed:
+`TMPIDX=$(mktemp); cp .git/index $TMPIDX; GIT_INDEX_FILE=$TMPIDX git add -A; git update-ref refs/backups/wip-<date> $(echo snap | git commit-tree $(GIT_INDEX_FILE=$TMPIDX git write-tree) -p HEAD); rm $TMPIDX`.
 
 **Never select the app via `ls -dt DerivedData/herdr-harness-mac-*`** — on 2026-08-25 that
 pattern silently installed a day-old binary from a stale sibling DerivedData dir (its dir
