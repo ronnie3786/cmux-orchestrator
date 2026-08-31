@@ -2409,7 +2409,10 @@ class ActiveWorkRepository:
                 workspace_id = excluded.workspace_id, pane_id = excluded.pane_id,
                 native_session_id = excluded.native_session_id,
                 started_at = COALESCE(excluded.started_at, pi_sessions.started_at),
-                last_seen_at = excluded.last_seen_at,
+                last_seen_at = CASE
+                    WHEN pi_sessions.last_seen_at IS NULL THEN excluded.last_seen_at
+                    ELSE MAX(pi_sessions.last_seen_at, excluded.last_seen_at)
+                END,
                 ended_at = excluded.ended_at,
                 activity_message = excluded.activity_message,
                 activity_message_at = excluded.activity_message_at,

@@ -9,6 +9,7 @@ update; ``agent_settled`` always bypasses the debounce.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import threading
@@ -30,6 +31,9 @@ MAX_GIST_CHARS = 100
 MAX_PROMPT_CHARS = 1600
 MAX_MESSAGE_CHARS = 40
 MAX_MESSAGE_WORDS = 3
+PANE_MISS_LOG_INTERVAL_SECONDS = 300.0
+
+logger = logging.getLogger(__name__)
 
 _TOOL_RING_TYPES = frozenset({"tool_call", "tool_execution_start"})
 _SESSION_BOUNDARY_TYPES = frozenset({"session_start", "session_shutdown"})
@@ -76,6 +80,7 @@ class AgentActivityManager:
         self._last_written: dict[str, str] = {}
         self._last_write_at: dict[str, float] = {}
         self._statuses: dict[str, str] = {}
+        self._pane_miss_logged_at: dict[str, float] = {}
         self._queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self._stop_event = threading.Event()
         self._started = False
@@ -215,6 +220,7 @@ class AgentActivityManager:
                 self._last_written.pop(pane_id, None)
                 self._last_write_at.pop(pane_id, None)
                 self._statuses.pop(pane_id, None)
+                self._log_pane_miss_locked(pane_id)
             return
         with self._lock:
             self._last_written[pane_id] = phrase
@@ -229,6 +235,14 @@ class AgentActivityManager:
                 "generated_at": utc_now(),
             },
         )
+
+    def _log_pane_miss_locked(self, pane_id: str) -> None:
+        """Log one structured line per pane per interval when activity finds no session."""
+        now = time.monotonic()
+        if now - self._pane_miss_logged_at.get(pane_id, 0.0) < PANE_MISS_LOG_INTERVAL_SECONDS:
+            return
+        self._pane_miss_logged_at[pane_id] = now
+        logger.warning("activity pane miss pane_id=%s", pane_id)
 
     def _remember_status_locked(self, pane_id: str, item: dict) -> None:
         sessions = item.get("pi_sessions")

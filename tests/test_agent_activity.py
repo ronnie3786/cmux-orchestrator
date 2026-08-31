@@ -1,5 +1,6 @@
 import http.server
 import json
+import logging
 import threading
 import time
 import unittest
@@ -504,13 +505,18 @@ class AgentActivityManagerTests(unittest.TestCase):
         manager = self.make_manager(repo, broker, model_url="")
         repo.return_none = True
 
-        manager.handle_event(tool("bash", {"command": "git push"}))
-        manager.handle_event(settled())
-        # Both the tool and settled triggers attempt a write; the missing
-        # session swallows them and nothing is published.
-        self.assertTrue(wait_until(lambda: len(repo.calls) >= 2))
-        time.sleep(0.2)
-        self.assertEqual(broker.events, [])
+        with self.assertLogs("herdr_harness.agent_activity", level="WARNING") as captured:
+            manager.handle_event(tool("bash", {"command": "git push"}))
+            manager.handle_event(settled())
+            # Both the tool and settled triggers attempt a write; the missing
+            # session swallows them and nothing is published. The pane-miss
+            # log is rate-limited to one line per pane.
+            self.assertTrue(wait_until(lambda: len(repo.calls) >= 2))
+            time.sleep(0.2)
+            self.assertEqual(broker.events, [])
+            self.assertEqual(len(captured.records), 1)
+            self.assertEqual(captured.records[0].levelno, logging.WARNING)
+            self.assertIn("w1:p1", captured.records[0].getMessage())
 
         repo.calls.clear()
         repo.return_none = False

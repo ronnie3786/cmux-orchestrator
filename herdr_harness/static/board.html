@@ -655,7 +655,13 @@
         line-height: 1.35;
         text-transform: uppercase;
         white-space: nowrap;
-        pointer-events: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .act-bubble > span:first-child {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       :root[data-theme="light"] .act-bubble {
         border-color: rgb(0 0 0 / 0.22);
@@ -666,7 +672,8 @@
           0 0 0 1px rgb(0 0 0 / 0.04);
       }
       .run-head:hover .act-bubble,
-      .task-capsule-detail-row:hover .act-bubble {
+      .task-capsule-detail-row:hover .act-bubble,
+      .act-bubble:hover {
         display: flex;
       }
       .run-head .act-bubble {
@@ -674,6 +681,7 @@
         bottom: calc(100% + 4px);
       }
       .act-time {
+        flex: none;
         color: var(--dim);
         font: 500 9px var(--mono);
         text-transform: none;
@@ -1267,6 +1275,11 @@
       }
       .task-capsule-detail-clip {
         overflow: hidden;
+      }
+      /* Unclip only while a detail row is hovered (the bubble reveal): the
+         bubble below the last row would otherwise be entirely clipped. */
+      .task-capsule-detail-clip:has(.task-capsule-detail-row:hover) {
+        overflow: visible;
       }
       .task-capsule-detail-grid {
         display: grid;
@@ -3633,7 +3646,10 @@
         if (!s.activity_message) return "";
         const at = epoch(s.activity_message_at);
         const glow = activityIsNew(s) ? " act-new" : "";
-        return `<span class="act-bubble${glow}" data-session="${esc(s.id)}"${at ? ` data-at="${at}"` : ""}><span>${esc(s.activity_message)}</span>${at ? `<span class="act-time"><span class="t-ago" data-at="${at}"></span> ago</span>` : ""}</span>`;
+        // Live sessions are current by definition, so the "ago" stamp would
+        // mislead — only non-running sessions carry the age.
+        const live = s.status === "running";
+        return `<span class="act-bubble${glow}" data-session="${esc(s.id)}"${at ? ` data-at="${at}"` : ""}><span>${esc(s.activity_message)}</span>${at && !live ? `<span class="act-time"><span class="t-ago" data-at="${at}"></span> ago</span>` : ""}</span>`;
       }
       function renderRuns() {
         const cards = [];
@@ -4958,13 +4974,11 @@
       window.addEventListener("resize", () => {
         renderMinimapViewport();
       });
-      // Acknowledge new-activity glow on hover (delegated; rows are rendered
-      // as innerHTML strings). The bubble itself is pointer-events:none, so
-      // the hover target is the row.
+      // Acknowledge new-activity glow only when the pointer actually reaches
+      // the bubble (now hoverable and revealed by the row hover) — a row hover
+      // alone, where the bubble may still be clipped, is never an ack.
       document.addEventListener("mouseover", (e) => {
-        const row = e.target.closest(".run-head, .task-capsule-detail-row");
-        if (!row) return;
-        const bubble = row.querySelector(".act-bubble.act-new");
+        const bubble = e.target.closest(".act-bubble.act-new");
         if (!bubble) return;
         const id = bubble.dataset.session;
         const at = Number(bubble.dataset.at) || 0;

@@ -567,6 +567,49 @@ class ActiveWorkStoreTests(unittest.TestCase):
         self.assertEqual(sessions["session-active"]["last_seen_at"], "2026-08-26T16:06:00.000Z")
         self.assertEqual(sessions["session-ended"]["activity_message"], "")
 
+    def test_ingest_without_last_seen_at_keeps_fresher_activity_value(self):
+        item = self.repo.create_item({"title": "Last seen ingest guard"})
+        seed = base_ingestion(item["id"], key="last-seen-guard-1", observed="2026-08-26T16:00:00Z")
+        seed["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "session-ls",
+                        "provider": "pi",
+                        "model": "gpt-5",
+                        "status": "running",
+                        "pane_id": "w1:p1",
+                        "role": "execution",
+                    }
+                ],
+            }
+        ]
+        self.repo.ingest(seed)
+
+        # Activity write bumps last_seen_at past both ingest observations.
+        self.repo.update_session_activity(
+            "w1:p1",
+            activity_message="editing code",
+            activity_message_at="2026-08-26T16:06:00Z",
+            status="running",
+            last_seen_at="2026-08-26T16:06:00Z",
+        )
+
+        # A later applied ingest omits last_seen_at but carries an observed_at
+        # (16:04) that is newer than the seed (16:00) yet older than the live
+        # activity value — it must not regress the fresher activity write.
+        catchup = base_ingestion(item["id"], key="last-seen-guard-2", observed="2026-08-26T16:04:00Z")
+        catchup["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [{"external_id": "session-ls", "status": "running"}],
+            }
+        ]
+        after = self.repo.ingest(catchup)["item"]
+        session = next(s for s in after["pi_sessions"] if s["external_id"] == "session-ls")
+        self.assertEqual(session["last_seen_at"], "2026-08-26T16:06:00.000Z")
+
     def test_active_pane_ids_lists_only_non_terminal_sessions(self):
         item = self.repo.create_item({"title": "Remote activity"})
         payload = base_ingestion(item["id"], key="active-panes")
