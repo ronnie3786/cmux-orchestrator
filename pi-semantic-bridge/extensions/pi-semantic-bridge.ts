@@ -669,12 +669,21 @@ class BridgeRuntime {
 	}
 
 	private write(socket: Socket, bytes: Buffer): void {
-		if (socket.destroyed) return;
+		if (socket.destroyed || !socket.writable) return;
 		if (this.blocked.has(socket)) {
 			socket.destroy();
 			return;
 		}
-		if (!socket.write(bytes) && this.subscribers.has(socket)) {
+		let flushed: boolean;
+		try {
+			flushed = socket.write(bytes);
+		} catch {
+			// A peer can vanish between the writable check and the write; the
+			// failure must never escape into Pi's process.
+			socket.destroy();
+			return;
+		}
+		if (!flushed && this.subscribers.has(socket)) {
 			// A subscriber can recover from the bounded replay on reconnect. Keeping
 			// an unbounded per-client buffer here would threaten Pi's TUI process.
 			this.blocked.add(socket);
@@ -684,6 +693,10 @@ class BridgeRuntime {
 	private accept(socket: Socket): void {
 		socket.setNoDelay(true);
 		socket.unref();
+		// A peer that vanishes mid-write surfaces EPIPE as a socket "error"
+		// event; without a listener Node escalates it to an uncaughtException
+		// that kills Pi's whole TUI process. Drop the connection instead.
+		socket.on("error", () => socket.destroy());
 		let buffer = Buffer.alloc(0);
 		socket.on("drain", () => this.blocked.delete(socket));
 		socket.on("close", () => {
@@ -755,7 +768,7 @@ class BridgeRuntime {
 			frames.push(encoded(this.snapshot(ctx)));
 			const batch = Buffer.concat(frames);
 			this.subscribers.add(socket);
-			if (!socket.write(batch)) this.blocked.add(socket);
+			this.write(socket, batch);
 			return;
 		}
 		if (request.type === "command") {

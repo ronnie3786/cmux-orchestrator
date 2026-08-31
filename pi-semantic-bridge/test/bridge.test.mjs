@@ -738,6 +738,46 @@ try {
 	const recoveredCompactionRecords = await recoveredCompactionPromise;
 	assert.equal(JSON.stringify(recoveredCompactionRecords).includes(privateSentinel), false);
 
+	// Regression: a client that vanishes mid-command must never take down Pi.
+	// Hold the async set_model open until the client's fd is fully closed, so
+	// respond() deterministically writes into a dead unix socket (EPIPE).
+	// Without the socket "error" handler this crashes the whole process.
+	let releaseSetModel;
+	const originalSetModel = pi.setModel;
+	pi.setModel = async (model) => {
+		setModelCalls.push(model);
+		await new Promise((resolve) => { releaseSetModel = resolve; });
+		return true;
+	};
+	const vanishing = await connect(socketPath);
+	vanishing.on("error", () => {});
+	vanishing.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "vanishing-set-model",
+		type: "command",
+		pane_id: "w1:p1",
+		command: "set_model",
+		payload: { provider: "test", id: "model" },
+	})}\n`);
+	for (let attempt = 0; attempt < 200 && !releaseSetModel; attempt += 1) await delay(10);
+	assert.ok(releaseSetModel, "bridge never reached setModel for the vanishing client");
+	vanishing.destroy();
+	releaseSetModel();
+	await delay(80);
+	pi.setModel = originalSetModel;
+	// The bridge must still be alive and serving fresh subscribers.
+	const survivor = await connect(socketPath);
+	const survivorSnapshotPromise = readRecords(survivor, (records) => records.some((item) => item.kind === "snapshot"));
+	survivor.write(`${JSON.stringify({
+		protocol: { name: "herdr.pi.semantic", version: 1 },
+		id: "survivor-subscribe",
+		type: "subscribe",
+		pane_id: "w1:p1",
+		after: 0,
+	})}\n`);
+	assert.ok((await survivorSnapshotPromise).some((item) => item.kind === "snapshot"));
+	survivor.destroy();
+
 	const shutdownRecord = readRecords(subscription, (records) => records.some(
 		(item) => item.event?.type === "session_shutdown",
 	));
