@@ -368,6 +368,99 @@ class ActiveWorkSyncTests(unittest.TestCase):
         self.assertEqual([entry["method"] for entry in http.requests], ["GET"])
         self.assertTrue(http.requests[0]["url"].endswith(sync.SYNC_TARGETS_PATH))
 
+    def test_invalid_ticket_directory_is_skipped_and_sync_continues(self) -> None:
+        temporary = self.make_root(
+            {
+                "IDEA-native-bridge-text-selection": ticket_state(),
+                "IOSDOX-27492": ticket_state(),
+            }
+        )
+        http = RecordingHTTP([target()])
+        herdr = sync.HerdrClient("http://127.0.0.1:9092", token="HERDR_SECRET", open_url=http)
+        summary, plans, errors = sync.run_sync(
+            Path(temporary.name), herdr, sync.BuzzClient(run=RecordingBuzzCLI())
+        )
+        self.assertEqual(summary.discovered, 2)
+        self.assertEqual(summary.untracked, 1)
+        self.assertEqual(summary.tracked, 1)
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("IDEA-native-bridge-text-selection", errors[0])
+        self.assertEqual(len(plans), 1)
+
+    def test_idea_directory_targets_board_item_by_work_item_id(self) -> None:
+        state = ticket_state()
+        state.pop("ticket")
+        state.update(
+            {
+                "kind": "idea",
+                "stage": "implementing",
+                "status": "in-progress",
+                "floor": "devbox",
+                "workspace": "wZ",
+                "tab": "wZ:t1",
+                "root_pane": "wZ:p2",
+                "active_work_id": "work-idea-native-bridge",
+            }
+        )
+        temporary = self.make_root({"IDEA-native-bridge-text-selection": state})
+        idea_target = {
+            "work_item_id": "work-idea-native-bridge",
+            "kind": "idea",
+            "title": "Native text selection (Native Bridge)",
+            "lifecycle": "active",
+            "revision": 1,
+            "jira": [],
+            "buzz_channels": [{"source": "buzz", "external_id": CHANNEL_ID}],
+        }
+        http = RecordingHTTP([idea_target])
+        herdr = sync.HerdrClient("http://127.0.0.1:9092", token="HERDR_SECRET", open_url=http)
+        summary, plans, errors = sync.run_sync(
+            Path(temporary.name), herdr, sync.BuzzClient(run=RecordingBuzzCLI())
+        )
+
+        self.assertEqual(summary.tracked, 1)
+        self.assertEqual(summary.ingested, 1)
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(errors, [])
+        post = next(entry for entry in http.requests if entry["method"] == "POST")
+        self.assertEqual(
+            post["payload"]["selector"],
+            {"work_item_id": "work-idea-native-bridge", "buzz_channel_id": CHANNEL_ID},
+        )
+        stage = next(
+            stage
+            for stage in post["payload"]["stages"]
+            if stage["stage_key"] == "implement"
+        )
+        self.assertEqual(len(stage["pi_sessions"]), 1)
+        session = stage["pi_sessions"][0]
+        self.assertEqual(session["pane_id"], "devbox:wZ:p2")
+        self.assertEqual(session["metadata"]["floor"], "devbox")
+        self.assertTrue(
+            session["external_id"].startswith("state:IDEA-native-bridge-text-selection:")
+        )
+
+    def test_idea_directory_without_active_work_id_stays_untracked(self) -> None:
+        temporary = self.make_root(
+            {
+                "IDEA-native-bridge-text-selection": ticket_state(),
+                "IOSDOX-27492": ticket_state(),
+            }
+        )
+        http = RecordingHTTP([target()])
+        herdr = sync.HerdrClient("http://127.0.0.1:9092", token="HERDR_SECRET", open_url=http)
+        summary, plans, errors = sync.run_sync(
+            Path(temporary.name), herdr, sync.BuzzClient(run=RecordingBuzzCLI())
+        )
+        self.assertEqual(summary.discovered, 2)
+        self.assertEqual(summary.untracked, 1)
+        self.assertEqual(summary.tracked, 1)
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("IDEA-native-bridge-text-selection", errors[0])
+        self.assertEqual(len(plans), 1)
+
     def test_dry_run_resolves_source_but_does_not_post(self) -> None:
         temporary = self.make_root({"IOSDOX-27492": ticket_state()})
         http = RecordingHTTP([target()])

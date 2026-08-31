@@ -66,6 +66,10 @@ STAGE_KEYS = (
     "pr-triage",
 )
 
+# Floors whose Pi panes live on another machine; their board pane ids are
+# namespaced "<floor>:<pane_id>" so they can never collide with local panes.
+REMOTE_FLOORS = frozenset({"devbox"})
+
 
 def _aliases(*values: str) -> set[str]:
     return {value.strip().lower().replace("_", "-").replace(" ", "-") for value in values}
@@ -427,6 +431,14 @@ def _require_ticket(value: Any, *, field: str = "ticket") -> str:
     return candidate
 
 
+def _is_jira_key(value: Any) -> bool:
+    try:
+        _require_ticket(value)
+    except SyncError:
+        return False
+    return True
+
+
 def _require_uuid(value: Any, field: str) -> str:
     candidate = str(value or "").strip().lower()
     if not UUID_RE.fullmatch(candidate):
@@ -768,8 +780,8 @@ class HerdrClient:
             raise SyncError(f"Herdr {method} {path} returned ok=false: {safe_excerpt(value.get('error'))}")
         return value
 
-    def sync_targets(self) -> dict[str, SyncTarget]:
-        return parse_sync_targets(self.request("GET", SYNC_TARGETS_PATH))
+    def sync_targets(self) -> Any:
+        return self.request("GET", SYNC_TARGETS_PATH)
 
     def ingest(self, prepared: PreparedIngestion) -> Any:
         return self.request(
@@ -801,19 +813,26 @@ def normalize_channel(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def parse_sync_targets(value: Any) -> dict[str, SyncTarget]:
-    candidates: Any = value
-    if isinstance(value, Mapping):
+def sync_target_rows(value: Any) -> Any:
+    """Return the raw sync-target candidates from a sync-targets response."""
+
+    if not isinstance(value, Mapping):
+        return None
+    candidates: Any = next(
+        (value[key] for key in ("targets", "syncTargets", "items") if key in value),
+        None,
+    )
+    if candidates is None and isinstance(value.get("data"), Mapping):
+        data = value["data"]
         candidates = next(
-            (value[key] for key in ("targets", "syncTargets", "items") if key in value),
+            (data[key] for key in ("targets", "syncTargets", "items") if key in data),
             None,
         )
-        if candidates is None and isinstance(value.get("data"), Mapping):
-            data = value["data"]
-            candidates = next(
-                (data[key] for key in ("targets", "syncTargets", "items") if key in data),
-                None,
-            )
+    return candidates
+
+
+def parse_sync_targets(value: Any) -> dict[str, SyncTarget]:
+    candidates = sync_target_rows(value)
     if not isinstance(candidates, list):
         raise SyncError("Herdr sync-targets response is missing a targets array")
     targets: dict[str, SyncTarget] = {}
@@ -1096,13 +1115,17 @@ def build_document(
             )
         )
         if runtime_identity:
+            pane_id = str(runtime.get("rootPaneId") or "")
+            floor = str(runtime.get("floor") or "")
+            if pane_id and floor in REMOTE_FLOORS:
+                pane_id = f"{floor}:{pane_id}"
             pi_sessions.append(
                 {
                     "external_id": f"state:{target.ticket_key}:{runtime_identity}"[:512],
                     "title": runtime.get("floor") or runtime.get("workspace") or target.ticket_key,
                     "provider": "pi",
                     "workspace_id": runtime.get("workspaceId") or runtime.get("workspace") or "",
-                    "pane_id": runtime.get("rootPaneId") or "",
+                    "pane_id": pane_id,
                     "metadata": {
                         key: value
                         for key, value in {
@@ -1190,9 +1213,15 @@ def build_document(
     document: dict[str, Any] = {
         "selector": {
             "work_item_id": target.work_item_id,
-            "jira_key": target.ticket_key,
-            **({"jira_site": target.jira_site} if target.jira_site else {}),
             "buzz_channel_id": channel["channelId"],
+            **(
+                {
+                    "jira_key": target.ticket_key,
+                    **({"jira_site": target.jira_site} if target.jira_site else {}),
+                }
+                if _is_jira_key(target.ticket_key)
+                else {}
+            ),
         },
         "item": {
             "title": title,
@@ -1242,9 +1271,10 @@ def prepare_ingestion(
     *,
     fallback_observed_epoch: float | None = None,
 ) -> PreparedIngestion:
-    state_key = _require_ticket(state.get("ticket") or target.ticket_key)
-    if state_key != target.ticket_key:
-        raise SyncError(f"state ticket {state_key} does not match sync target {target.ticket_key}")
+    if _is_jira_key(target.ticket_key):
+        state_key = _require_ticket(state.get("ticket") or target.ticket_key)
+        if state_key != target.ticket_key:
+            raise SyncError(f"state ticket {state_key} does not match sync target {target.ticket_key}")
     channel = buzz.resolve_channel(state_channel_reference(state))
     members, members_truncated = buzz.members(channel["channelId"])
     events, messages_truncated = buzz.channel_events(channel["channelId"])
@@ -1274,6 +1304,28 @@ def prepare_ingestion(
     return PreparedIngestion(target.ticket_key, target, digest, key, document, request)
 
 
+def _target_for_work_item(rows: Any, work_item_id: str, directory_key: str) -> SyncTarget | None:
+    """Resolve a sync target by work item ID for IDEA-keyed ticket directories."""
+
+    if not work_item_id:
+        return None
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        identifier = _bounded_text(
+            row.get("workItemId") or row.get("work_item_id") or row.get("targetId") or row.get("id"),
+            128,
+        )
+        if identifier == work_item_id:
+            return SyncTarget(
+                ticket_key=directory_key,
+                work_item_id=work_item_id,
+                title=_bounded_text(row.get("title"), 500),
+                kind=normalize_kind(row.get("kind"), default="task"),
+            )
+    return None
+
+
 def run_sync(
     workflow_root: Path,
     herdr: HerdrClient,
@@ -1284,15 +1336,39 @@ def run_sync(
 ) -> tuple[SyncSummary, list[dict[str, Any]], list[str]]:
     files = discover_state_files(workflow_root, ticket)
     summary = SyncSummary(discovered=len(files))
-    targets = herdr.sync_targets()
+    raw_targets = herdr.sync_targets()
+    targets = parse_sync_targets(raw_targets)
     plans: list[dict[str, Any]] = []
     errors: list[str] = []
     for state_path in files:
-        directory_key = _require_ticket(state_path.parent.name, field="ticket directory")
-        target = targets.get(directory_key)
+        directory_name = state_path.parent.name
+        target: SyncTarget | None = None
+        try:
+            directory_key = _require_ticket(directory_name, field="ticket directory")
+        except SyncError:
+            if ticket:
+                raise
+            directory_key = directory_name
+        else:
+            target = targets.get(directory_key)
+        if target is None:
+            # IDEA-keyed directories have no Jira link; their buzz state records
+            # the Active Work item directly (active_work_id).
+            try:
+                state = load_state(state_path)
+            except SyncError:
+                state = None
+            if isinstance(state, Mapping):
+                target = _target_for_work_item(
+                    sync_target_rows(raw_targets),
+                    _bounded_text(state.get("active_work_id"), 128),
+                    directory_key,
+                )
         if target is None:
             summary.untracked += 1
-            if ticket:
+            if not _is_jira_key(directory_name):
+                errors.append(f"{directory_name}: invalid ticket directory; skipped")
+            elif ticket:
                 summary.failed += 1
                 errors.append(
                     f"{directory_key}: not set up in Herdr; sync will not create Jira work automatically"
