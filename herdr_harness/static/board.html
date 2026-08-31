@@ -2593,7 +2593,12 @@
           LIVE.obs = { stage: activityStage[0], item: activityItem.key, file: String(newest.message).slice(0, 32), at: newest.at };
           LIVE.hot[`tickets/${activityItem.key}/activity`] = newest.at;
         }
-        JIRA_CANDIDATES = json.jira_candidates || [];
+        // Real candidates use `key` (not `issue_key`) and include tickets
+        // already promoted to items (work_item_id set) — only unlinked ones
+        // belong in the set-up rail.
+        JIRA_CANDIDATES = (json.jira_candidates || [])
+          .filter((c) => !c.work_item_id)
+          .map((c) => ({ ...c, issue_key: c.issue_key || c.key }));
         const preferred = (() => { try { return localStorage.getItem("herdr.board.workflow"); } catch { return null; } })();
         const selected = WORKFLOWS[preferred] ? preferred : Object.values(WORKFLOWS).sort((a, b) => mapped.filter((item) => item.pipeline_slug === b.slug && item.lifecycle !== "done").length - mapped.filter((item) => item.pipeline_slug === a.slug && item.lifecycle !== "done").length)[0]?.slug;
         if (selected) setWorkflow(selected, false);
@@ -3658,6 +3663,15 @@
           )
           .join("");
       }
+      // Sync-observed threads frequently have empty titles — fall back to the
+      // snippet, then a short stable id, so rows never render nameless.
+      function threadLabel(th) {
+        return (
+          th.title ||
+          th.snippet ||
+          `thread ${String(th.external_id || th.id || "").slice(0, 6)}`
+        );
+      }
       function capDetail(key, c) {
         const rec = c.rec,
           item = c.item;
@@ -3691,14 +3705,19 @@
         }
         for (const th of rec.buzz_threads || [])
           row(
-            `<span data-thread="${th.id}"># ${esc(th.title)}${LIVE.threadNew === th.id ? '<span class="new-dot" data-new-dot title="new activity"></span>' : ""}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openBuzz('${th.id}')" ${kd(`openBuzz('${th.id}')`)}>Open in Buzz</span>`,
+            `<span data-thread="${th.id}"># ${esc(threadLabel(th))}${LIVE.threadNew === th.id ? '<span class="new-dot" data-new-dot title="new activity"></span>' : ""}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openBuzz('${th.id}')" ${kd(`openBuzz('${th.id}')`)}>Open in Buzz</span>`,
           );
         for (const s of rec.pi_sessions || []) {
+          // Sync-observed sessions often carry empty model/pane and an
+          // "unknown" status — build the line from what actually exists.
+          const sessLabel = [s.id, s.title && s.title !== s.id ? s.title : null, s.model || null]
+            .filter(Boolean)
+            .join(" · ");
           row(
-            `<span>${esc(s.id)} · ${esc(s.model)}${s.tokens ? ` · <span data-tokens="${esc(s.id)}">${esc(s.tokens)}</span>` : ""}</span>` +
+            `<span>${esc(sessLabel)}${s.tokens ? ` · <span data-tokens="${esc(s.id)}">${esc(s.tokens)}</span>` : ""}</span>` +
               (s.pane_id
                 ? `<span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openPane('${esc(s.pane_id)}','${esc(s.machine_id || "")}')" ${kd(`openPane('${esc(s.pane_id)}','${esc(s.machine_id || "")}')`)}>${esc(machineName(s.machine_id))} · ${esc(s.pane_id)}</span>`
-                : `<span class="task-capsule-detail-meta">${esc(s.status)}</span>`),
+                : `<span class="task-capsule-detail-meta">${s.status && s.status !== "unknown" ? esc(s.status) : ""}</span>`),
           );
           // Pi handoff recipe — one per live/ended session (real Herdr affordance)
           if (s.pane_id) {
@@ -3743,9 +3762,14 @@
             row(
               `<span class="chan-name">${esc(item.channel.name)}</span><span class="task-capsule-detail-meta">channel${(item.unscoped_threads || []).length ? ` · ${item.unscoped_threads.length} unscoped` : ""}</span>`,
             );
-            for (const th of item.unscoped_threads || [])
+            const unscoped = item.unscoped_threads || [];
+            for (const th of unscoped.slice(0, 4))
               row(
-                `<span class="unscoped">↳ ${esc(th.title)}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openBuzz('${th.id}')" ${kd(`openBuzz('${th.id}')`)}>Open in Buzz</span>`,
+                `<span class="unscoped">↳ ${esc(threadLabel(th))}</span><span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openBuzz('${th.id}')" ${kd(`openBuzz('${th.id}')`)}>Open in Buzz</span>`,
+              );
+            if (unscoped.length > 4)
+              row(
+                `<span class="unscoped" style="color:var(--faint)">↳ +${unscoped.length - 4} more in the channel</span><span class="task-capsule-detail-meta"></span>`,
               );
           }
         }
