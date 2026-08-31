@@ -2754,7 +2754,17 @@
           SEL.add(key);
         }
         refreshBoardFilter();
-        if (SEL.size === 1) fitBoard(0.6); // frame the whole expanded journey
+        // Stay at reading zoom: fly the camera to the ticket's current stage
+        // instead of zooming out to fit (F still fits the whole board).
+        if (SEL.size === 1) {
+          const it = itemByKey([...SEL][0]);
+          const target =
+            (it && it.current_stage_key) ||
+            (it && it.lifecycle === "done" && ORDER.length
+              ? ORDER[ORDER.length - 1].stage_key
+              : null);
+          if (target && lastPos[target]) flyToStage(target);
+        }
       }
       function clearSelection() {
         if (!SEL.size) return;
@@ -4895,8 +4905,8 @@
          liveness : 1s t-ago patcher for every timestamp; ~7s simulator moves
                     the board (capsule activity, tool line, obs-ring, tree hot
                     stamps, Working badge) with no structural rebuilds on ticks.
-         boot     : fit clamped to zoom >= 0.6, Implement pre-expanded with its
-                    riding capsule open, camera left-anchored on INTAKE/OPEN.
+         boot     : opens at 100% anchored on INTAKE/OPEN; selecting a ticket
+                    keeps reading zoom and flies to its current stage; F fits.
          modes    : `?demo=1` retains the complete inlined prototype and its
                     simulator. Otherwise the board projects authenticated live
                     Active Work data, supports multiple workflows, and listens
