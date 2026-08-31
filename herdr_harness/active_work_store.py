@@ -491,6 +491,24 @@ class ActiveWorkRepository:
                 except sqlite3.Error:
                     pass
                 raise
+            version = 2
+        if version == 2:
+            applied_at = self._now().replace("'", "''")
+            script = (
+                "BEGIN IMMEDIATE;\n"
+                "ALTER TABLE pi_sessions ADD COLUMN activity_message TEXT NOT NULL DEFAULT '';\n"
+                "ALTER TABLE pi_sessions ADD COLUMN activity_message_at TEXT;\n"
+                + f"INSERT OR REPLACE INTO active_work_schema_migrations(version, applied_at) VALUES (3, '{applied_at}');\n"
+                + "PRAGMA user_version=3;\nCOMMIT;"
+            )
+            try:
+                self._database.executescript(script)
+            except Exception:
+                try:
+                    self._database.rollback()
+                except sqlite3.Error:
+                    pass
+                raise
 
     def _seed_pipeline_locked(self) -> None:
         created_at = self._now()
@@ -1084,6 +1102,89 @@ class ActiveWorkRepository:
             )
             self._audit_locked(conn, actor, "stage_content_patched", "work_item", normalized_id, body)
         result = self.item_projection(normalized_id)
+        assert result is not None
+        return result
+
+    def active_pane_ids(self) -> set[str]:
+        """Pane ids of tracked Pi sessions that have not reached a terminal state."""
+
+        with self._lock:
+            rows = self._database.execute(
+                "SELECT DISTINCT pane_id FROM pi_sessions "
+                "WHERE pane_id != '' AND status NOT IN ('ended', 'failed', 'completed')"
+            ).fetchall()
+        return {str(row["pane_id"]) for row in rows if row["pane_id"]}
+
+    def update_session_activity(
+        self,
+        pane_id: str,
+        *,
+        activity_message: str,
+        activity_message_at: Optional[str] = None,
+        status: Optional[str] = None,
+        last_seen_at: Optional[str] = None,
+        actor: str = "agent:activity",
+    ) -> Optional[dict]:
+        """Persist a live activity bubble on the newest active Pi session for a pane."""
+
+        normalized_pane = text(pane_id, "pane_id", maximum=256)
+        message = text(activity_message, "activity_message", maximum=80)
+        message_at = timestamp(activity_message_at, "activity_message_at")
+        new_status = (
+            choice(status, "Pi session status", SESSION_STATUSES)
+            if status is not None
+            else None
+        )
+        new_last_seen = (
+            timestamp(last_seen_at, "Pi session last_seen_at")
+            if last_seen_at is not None
+            else None
+        )
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM pi_sessions WHERE pane_id = ? AND status NOT IN ('ended', 'failed', 'completed') "
+                "ORDER BY COALESCE(last_seen_at, created_at) DESC LIMIT 1",
+                (normalized_pane,),
+            ).fetchone()
+            if row is None:
+                return None
+            item_id = str(row["work_item_id"])
+            updates: dict[str, Any] = {}
+            if message != str(row["activity_message"] or ""):
+                updates["activity_message"] = message
+            if message_at != row["activity_message_at"]:
+                updates["activity_message_at"] = message_at
+            if new_status is not None and new_status != row["status"]:
+                updates["status"] = new_status
+            if new_last_seen is not None and new_last_seen != row["last_seen_at"]:
+                updates["last_seen_at"] = new_last_seen
+            if updates:
+                now = self._now()
+                updates["updated_at"] = now
+                assignments = ", ".join(f"{column} = ?" for column in updates)
+                conn.execute(
+                    f"UPDATE pi_sessions SET {assignments} WHERE id = ?",
+                    [*updates.values(), row["id"]],
+                )
+                conn.execute(
+                    "UPDATE work_items SET revision = revision + 1, updated_at = ? WHERE id = ?",
+                    (now, item_id),
+                )
+                self._audit_locked(
+                    conn,
+                    actor,
+                    "session_activity_updated",
+                    "work_item",
+                    item_id,
+                    {
+                        "pane_id": normalized_pane,
+                        "activity_message": message,
+                        "activity_message_at": message_at,
+                        **({"status": new_status} if new_status is not None else {}),
+                        **({"last_seen_at": new_last_seen} if new_last_seen is not None else {}),
+                    },
+                )
+        result = self.item_projection(item_id)
         assert result is not None
         return result
 
@@ -2218,6 +2319,8 @@ class ActiveWorkRepository:
                 "started_at",
                 "last_seen_at",
                 "ended_at",
+                "activity_message",
+                "activity_message_at",
                 "metadata",
                 "role",
                 "removed",
@@ -2281,13 +2384,24 @@ class ActiveWorkRepository:
             if "ended_at" in body
             else str(existing["ended_at"] or "") if existing else None
         ) or None
+        activity_message = (
+            text(body.get("activity_message"), "Pi session activity_message", maximum=80)
+            if "activity_message" in body
+            else str(existing["activity_message"] or "") if existing else ""
+        )
+        activity_message_at = (
+            timestamp(body.get("activity_message_at"), "Pi session activity_message_at")
+            if "activity_message_at" in body
+            else str(existing["activity_message_at"] or "") if existing else None
+        ) or None
         conn.execute(
             """
             INSERT INTO pi_sessions(
                 id, work_item_id, source, external_id, agent_id, title, provider,
                 model, status, machine_id, workspace_id, pane_id, native_session_id,
-                started_at, last_seen_at, ended_at, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                started_at, last_seen_at, ended_at, activity_message, activity_message_at,
+                metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source, external_id) DO UPDATE SET
                 agent_id = excluded.agent_id, title = excluded.title,
                 provider = excluded.provider, model = excluded.model,
@@ -2297,6 +2411,8 @@ class ActiveWorkRepository:
                 started_at = COALESCE(excluded.started_at, pi_sessions.started_at),
                 last_seen_at = excluded.last_seen_at,
                 ended_at = excluded.ended_at,
+                activity_message = excluded.activity_message,
+                activity_message_at = excluded.activity_message_at,
                 metadata_json = excluded.metadata_json, updated_at = excluded.updated_at
             """,
             (
@@ -2316,6 +2432,8 @@ class ActiveWorkRepository:
                 timestamp(body.get("started_at"), "Pi session started_at"),
                 timestamp(body.get("last_seen_at"), "Pi session last_seen_at") or observed_at,
                 ended_at,
+                activity_message,
+                activity_message_at,
                 json_dump(session_metadata),
                 created_at,
                 now,
@@ -3083,6 +3201,8 @@ class ActiveWorkRepository:
             "started_at": row["started_at"],
             "last_seen_at": row["last_seen_at"],
             "ended_at": row["ended_at"],
+            "activity_message": row["activity_message"],
+            "activity_message_at": row["activity_message_at"],
             "metadata": json_load(row["metadata_json"], {}),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],

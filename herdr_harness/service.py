@@ -19,6 +19,7 @@ from .alerts import AlertStore, utc_now
 from . import attachments, cmux_tools, response_audio, voice, workspace_tools
 from .active_work import ActiveWorkError
 from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAULT_ACTIVE_WORK_STORE_PATH
+from .agent_activity import AgentActivityManager
 from .agent_runs import AgentRunError, AgentRunManager
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import CleanupManager
@@ -28,6 +29,7 @@ from .normalization import composite_workspaces, pane_index
 from .pi_semantic import PiSemanticError, PiSemanticManager
 from .panes_seen import PaneFirstSeenStore
 from .push_notifications import APNsManager
+from .remote_activity import RemoteActivityPoller
 from .stars import StarStore
 from .terminal import TerminalObserver, TerminalObserverError
 from .workflows import parse_workflow_config
@@ -113,6 +115,8 @@ class HerdrService:
         cleanup: Optional[CleanupManager] = None,
         agent_runs: Optional[AgentRunManager] = None,
         active_work: Optional[ActiveWorkRepository] = None,
+        agent_activity: Optional[AgentActivityManager] = None,
+        remote_activity: Optional[RemoteActivityPoller] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -135,7 +139,7 @@ class HerdrService:
         self.pi_semantic = pi_semantic or PiSemanticManager(
             self.client.socket_path,
             environ=None if production_environment else self.environ,
-            on_event=self._publish_pi_event,
+            on_event=self._dispatch_pi_event,
         )
         self.response_audio = response_audio_service or response_audio.ResponseAudioService(self.environ)
         self.cleanup = cleanup or CleanupManager(self, environ=self.environ)
@@ -144,6 +148,16 @@ class HerdrService:
             active_work_store_path = DEFAULT_ACTIVE_WORK_STORE_PATH if production_environment else ":memory:"
         self.active_work = active_work or ActiveWorkRepository(active_work_store_path, environ=self.environ)
         self._owns_active_work = active_work is None
+        self.agent_activity = agent_activity or AgentActivityManager(
+            self.active_work,
+            self.broker,
+            environ=None if production_environment else self.environ,
+        )
+        self.remote_activity = remote_activity or RemoteActivityPoller(
+            lambda: set(self.active_work.active_pane_ids()),
+            self.agent_activity.handle_event,
+            environ=None if production_environment else self.environ,
+        )
         # Agent runs are initialized lazily. Most harness requests do not need
         # a subprocess manager, and delaying creation avoids touching its
         # private persistence directory until the feature is actually used.
@@ -286,6 +300,14 @@ class HerdrService:
                 "The Pi semantic bridge could not start",
                 code="quick_session_not_ready",
             ) from exc
+        try:
+            self.agent_activity.start()
+        except Exception:
+            pass
+        try:
+            self.remote_activity.start()
+        except Exception:
+            pass
         self._event_thread = threading.Thread(
             target=self._event_loop,
             name="herdr-events",
@@ -304,6 +326,14 @@ class HerdrService:
         self._refresh_event.set()
         self._restart_subscription.set()
         self.pi_semantic.stop()
+        try:
+            self.agent_activity.stop()
+        except Exception:
+            pass
+        try:
+            self.remote_activity.stop()
+        except Exception:
+            pass
         for thread in (
             self._event_thread,
             self._refresh_thread,
@@ -332,6 +362,13 @@ class HerdrService:
                     herdr_session=self.client.session,
                 )
             return self._agent_runs
+
+    def _dispatch_pi_event(self, envelope: dict) -> None:
+        self._publish_pi_event(envelope)
+        try:
+            self.agent_activity.handle_event(envelope)
+        except Exception:
+            pass
 
     def _publish_pi_event(self, envelope: dict) -> None:
         event = envelope.get("event") if isinstance(envelope, dict) else None

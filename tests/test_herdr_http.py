@@ -626,6 +626,16 @@ class HerdrHTTPTests(unittest.TestCase):
             "https://herdr.example.test/base/board/",
         )
 
+    def test_board_page_inlines_bangers_font_and_activity_bubble(self):
+        with urllib.request.urlopen(self.base + "/board/", timeout=2) as response:
+            body = response.read().decode("utf-8")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn('@font-face', body)
+        self.assertIn('font-family: "Bangers"', body)
+        self.assertIn("data:font/woff2;base64,", body)
+        self.assertIn(".act-bubble", body)
+
     def test_api_description_lists_workflow_and_board_endpoints(self):
         status, _, body = self.request("/api/v1")
 

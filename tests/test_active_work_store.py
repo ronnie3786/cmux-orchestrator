@@ -65,7 +65,7 @@ class ActiveWorkStoreTests(unittest.TestCase):
         self.addCleanup(self.repo.close)
 
     def test_schema_is_versioned_private_and_seeds_exact_buzz_pipeline(self):
-        self.assertEqual(self.repo.schema_version(), 2)
+        self.assertEqual(self.repo.schema_version(), 3)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
 
         board = self.repo.board_projection()
@@ -444,6 +444,250 @@ class ActiveWorkStoreTests(unittest.TestCase):
         self.assertEqual(stage["pi_sessions"][0]["model"], "gpt-5")
         self.assertEqual(stage["buzz_threads"][0]["title"], "Implementation discussion")
 
+    def test_fresh_database_has_session_activity_columns(self):
+        columns = {
+            row[1]
+            for row in sqlite3.connect(self.path)
+            .execute("PRAGMA table_info(pi_sessions)")
+            .fetchall()
+        }
+        self.assertIn("activity_message", columns)
+        self.assertIn("activity_message_at", columns)
+
+    def test_ingestion_upsert_persists_and_preserves_session_activity(self):
+        item = self.repo.create_item({"title": "Activity upsert"})
+        first = base_ingestion(item["id"], key="activity-upsert-1", observed="2026-08-26T16:00:00Z")
+        first["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "activity-session",
+                        "provider": "pi",
+                        "model": "gpt-5",
+                        "status": "queued",
+                        "pane_id": "w1:p1",
+                        "role": "execution",
+                    }
+                ],
+            }
+        ]
+        initial = self.repo.ingest(first)["item"]
+        session = next(
+            session for session in initial["pi_sessions"] if session["external_id"] == "activity-session"
+        )
+        self.assertEqual(session["activity_message"], "")
+        self.assertIsNone(session["activity_message_at"])
+
+        with_activity = base_ingestion(
+            item["id"], key="activity-upsert-2", observed="2026-08-26T16:01:00Z"
+        )
+        with_activity["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "activity-session",
+                        "status": "running",
+                        "activity_message": "scanning code",
+                        "activity_message_at": "2026-08-26T16:01:30Z",
+                    }
+                ],
+            }
+        ]
+        updated = self.repo.ingest(with_activity)["item"]
+        session = next(
+            session for session in updated["pi_sessions"] if session["external_id"] == "activity-session"
+        )
+        self.assertEqual(session["activity_message"], "scanning code")
+        self.assertEqual(session["activity_message_at"], "2026-08-26T16:01:30.000Z")
+        self.assertEqual(session["status"], "running")
+
+        without = base_ingestion(
+            item["id"], key="activity-upsert-3", observed="2026-08-26T16:02:00Z"
+        )
+        without["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [{"external_id": "activity-session", "status": "blocked"}],
+            }
+        ]
+        preserved = self.repo.ingest(without)["item"]
+        session = next(
+            session for session in preserved["pi_sessions"] if session["external_id"] == "activity-session"
+        )
+        self.assertEqual(session["activity_message"], "scanning code")
+        self.assertEqual(session["activity_message_at"], "2026-08-26T16:01:30.000Z")
+        self.assertEqual(session["status"], "blocked")
+
+    def test_update_session_activity_targets_newest_active_session_and_bumps_revision(self):
+        item = self.repo.create_item({"title": "Activity target"})
+        payload = base_ingestion(item["id"], key="activity-target")
+        payload["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "session-ended",
+                        "provider": "pi",
+                        "model": "gpt-5",
+                        "status": "ended",
+                        "pane_id": "w1:p1",
+                        "last_seen_at": "2026-08-26T16:07:00Z",
+                        "role": "execution",
+                    },
+                    {
+                        "external_id": "session-active",
+                        "provider": "pi",
+                        "model": "gpt-5",
+                        "status": "queued",
+                        "pane_id": "w1:p1",
+                        "last_seen_at": "2026-08-26T16:05:00Z",
+                        "role": "execution",
+                    },
+                ],
+            }
+        ]
+        self.repo.ingest(payload)
+        before = self.repo.item_projection(item["id"])
+
+        updated = self.repo.update_session_activity(
+            "w1:p1",
+            activity_message="running tests",
+            activity_message_at="2026-08-26T16:06:00Z",
+            status="running",
+            last_seen_at="2026-08-26T16:06:00Z",
+        )
+
+        self.assertEqual(updated["revision"], before["revision"] + 1)
+        sessions = {session["external_id"]: session for session in updated["pi_sessions"]}
+        self.assertEqual(sessions["session-active"]["activity_message"], "running tests")
+        self.assertEqual(sessions["session-active"]["activity_message_at"], "2026-08-26T16:06:00.000Z")
+        self.assertEqual(sessions["session-active"]["status"], "running")
+        self.assertEqual(sessions["session-active"]["last_seen_at"], "2026-08-26T16:06:00.000Z")
+        self.assertEqual(sessions["session-ended"]["activity_message"], "")
+
+    def test_active_pane_ids_lists_only_non_terminal_sessions(self):
+        item = self.repo.create_item({"title": "Remote activity"})
+        payload = base_ingestion(item["id"], key="active-panes")
+        payload["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "devbox-session",
+                        "provider": "pi",
+                        "status": "unknown",
+                        "pane_id": "devbox:wZ:p2",
+                    },
+                    {
+                        "external_id": "local-session",
+                        "provider": "pi",
+                        "status": "ended",
+                        "pane_id": "w1:p9",
+                    },
+                ],
+            }
+        ]
+        self.repo.ingest(payload)
+
+        self.assertEqual(self.repo.active_pane_ids(), {"devbox:wZ:p2"})
+
+    def test_update_session_activity_noop_returns_unchanged(self):
+        item = self.repo.create_item({"title": "Activity noop"})
+        payload = base_ingestion(item["id"], key="activity-noop")
+        payload["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "session-noop",
+                        "provider": "pi",
+                        "model": "gpt-5",
+                        "status": "running",
+                        "pane_id": "w1:p1",
+                        "activity_message": "editing code",
+                        "activity_message_at": "2026-08-26T16:06:00Z",
+                        "role": "execution",
+                    }
+                ],
+            }
+        ]
+        self.repo.ingest(payload)
+        before = self.repo.item_projection(item["id"])
+
+        unchanged = self.repo.update_session_activity(
+            "w1:p1",
+            activity_message="editing code",
+            activity_message_at="2026-08-26T16:06:00Z",
+        )
+
+        self.assertEqual(unchanged["revision"], before["revision"])
+        self.assertEqual(unchanged["pi_sessions"][0]["activity_message"], "editing code")
+        audit = sqlite3.connect(self.path).execute(
+            "SELECT action FROM active_work_audit_events WHERE action = 'session_activity_updated'"
+        ).fetchall()
+        self.assertEqual(audit, [])
+
+    def test_update_session_activity_returns_none_without_an_active_session(self):
+        item = self.repo.create_item({"title": "Activity none"})
+        payload = base_ingestion(item["id"], key="activity-none")
+        payload["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "session-completed",
+                        "provider": "pi",
+                        "model": "gpt-5",
+                        "status": "completed",
+                        "pane_id": "w1:p1",
+                        "role": "execution",
+                    }
+                ],
+            }
+        ]
+        self.repo.ingest(payload)
+
+        self.assertIsNone(
+            self.repo.update_session_activity("w1:p1", activity_message="delegating")
+        )
+        self.assertIsNone(
+            self.repo.update_session_activity("w2:p9", activity_message="delegating")
+        )
+
+    def test_update_session_activity_writes_audit_row(self):
+        item = self.repo.create_item({"title": "Activity audit"})
+        payload = base_ingestion(item["id"], key="activity-audit")
+        payload["stages"] = [
+            {
+                "stage_key": "implement",
+                "pi_sessions": [
+                    {
+                        "external_id": "session-audit",
+                        "provider": "pi",
+                        "model": "gpt-5",
+                        "status": "running",
+                        "pane_id": "w1:p1",
+                        "role": "execution",
+                    }
+                ],
+            }
+        ]
+        self.repo.ingest(payload)
+
+        self.repo.update_session_activity(
+            "w1:p1",
+            activity_message="editing code",
+            activity_message_at="2026-08-26T16:06:00Z",
+        )
+        rows = sqlite3.connect(self.path).execute(
+            "SELECT actor, action, entity_type FROM active_work_audit_events "
+            "WHERE action = 'session_activity_updated'"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0], ("agent:activity", "session_activity_updated", "work_item"))
+
     def test_unscoped_thread_refresh_preserves_existing_stage_scope(self):
         item = self.repo.create_item({"title": "Thread scope"})
         scoped = base_ingestion(item["id"], key="thread-scope-1")
@@ -750,9 +994,97 @@ class ActiveWorkStoreTests(unittest.TestCase):
 
         migrated = ActiveWorkRepository(legacy_path)
         self.addCleanup(migrated.close)
-        self.assertEqual(migrated.schema_version(), 2)
+        self.assertEqual(migrated.schema_version(), 3)
         self.assertEqual(migrated.item_projection("work_legacy")["title"], "Legacy item")
         self.assertIsInstance(migrated.get_workflow("buzz-feature-work")["config"], dict)
+
+    def test_migration_from_v2_adds_activity_columns_and_preserves_rows(self):
+        legacy_path = Path(self.temp.name) / "legacy-v2.sqlite3"
+        connection = sqlite3.connect(legacy_path)
+        connection.executescript(SCHEMA_V1)
+        connection.execute("ALTER TABLE pipeline_templates ADD COLUMN config_json TEXT")
+        created_at = "2026-08-30T00:00:00Z"
+        connection.execute(
+            "INSERT INTO pipeline_templates(id, slug, version, title, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                DEFAULT_PIPELINE_ID,
+                DEFAULT_PIPELINE_SLUG,
+                DEFAULT_PIPELINE_VERSION,
+                "Buzz Feature Work",
+                created_at,
+            ),
+        )
+        for stage in DEFAULT_PIPELINE_STAGES:
+            connection.execute(
+                """
+                INSERT INTO pipeline_stage_definitions(
+                    id, template_id, stage_key, sequence, phase_key, title,
+                    skill_name, checkpoint_kind, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    stage["id"],
+                    DEFAULT_PIPELINE_ID,
+                    stage["stage_key"],
+                    stage["sequence"],
+                    stage["phase_key"],
+                    stage["title"],
+                    stage["skill_name"],
+                    stage["checkpoint_kind"],
+                    created_at,
+                ),
+            )
+        connection.execute(
+            """
+            INSERT INTO work_items(
+                id, kind, title, summary, lifecycle, template_id, current_stage_id,
+                next_action, revision, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, '', 'active', ?, ?, '', 1, '{}', ?, ?)
+            """,
+            ("work_legacy_v2", "task", "Legacy v2 item", DEFAULT_PIPELINE_ID,
+             DEFAULT_PIPELINE_STAGES[0]["id"], created_at, created_at),
+        )
+        for stage in DEFAULT_PIPELINE_STAGES:
+            connection.execute(
+                """
+                INSERT INTO work_stage_states(
+                    work_item_id, stage_id, state, attention, checkpoint_state, summary,
+                    content_json, updated_at
+                ) VALUES (?, ?, ?, 'none', 'none', '', '{}', ?)
+                """,
+                ("work_legacy_v2", stage["id"], "active" if stage["sequence"] == 1 else "pending", created_at),
+            )
+        connection.execute(
+            """
+            INSERT INTO pi_sessions(
+                id, work_item_id, source, external_id, title, provider, model, status,
+                machine_id, workspace_id, pane_id, native_session_id, started_at,
+                last_seen_at, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, '', 'pi', 'gpt-5', 'running', '', '', ?, '', ?, ?, '{}', ?, ?)
+            """,
+            ("session_legacy_v2", "work_legacy_v2", "pi", "legacy-pane-session",
+             "w1:p1", created_at, created_at, created_at, created_at),
+        )
+        connection.execute("PRAGMA user_version=2")
+        connection.commit()
+        connection.close()
+
+        migrated = ActiveWorkRepository(legacy_path)
+        self.addCleanup(migrated.close)
+        self.assertEqual(migrated.schema_version(), 3)
+        columns = {
+            row[1]
+            for row in sqlite3.connect(legacy_path)
+            .execute("PRAGMA table_info(pi_sessions)")
+            .fetchall()
+        }
+        self.assertIn("activity_message", columns)
+        self.assertIn("activity_message_at", columns)
+        item = migrated.item_projection("work_legacy_v2")
+        self.assertEqual(item["title"], "Legacy v2 item")
+        self.assertEqual(item["pi_sessions"][0]["external_id"], "legacy-pane-session")
+        self.assertEqual(item["pi_sessions"][0]["pane_id"], "w1:p1")
+        self.assertEqual(item["pi_sessions"][0]["activity_message"], "")
 
     def test_workflow_apply_creates_template_and_is_idempotent_but_conflicts_on_changed_content(self):
         payload = {
