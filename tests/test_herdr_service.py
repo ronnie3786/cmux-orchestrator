@@ -1931,6 +1931,110 @@ class HerdrServiceTests(unittest.TestCase):
             self.assertTrue(alerts[1]["isRead"])
             self.assertEqual(restarted_service.alerts.unread_count(), 1)
 
+    def test_done_acknowledgement_survives_alert_store_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "alerts.json"
+            first_service = HerdrService(
+                FakeClient(
+                    [snapshot_with_status("working"), snapshot_with_status("done")]
+                ),
+                alerts=AlertStore(store_path=store_path),
+                push=FakePush(),
+                environ={},
+            )
+
+            first_service.refresh_snapshot()
+            first_service.refresh_snapshot()
+            first_service.mark_pane_alerts_read("w1:p1")
+
+            self.assertEqual(
+                first_service.workspaces_response()["workspaces"][0]["panes"][0][
+                    "agent_status"
+                ],
+                "idle",
+            )
+            self.assertEqual(
+                json.loads(store_path.read_text(encoding="utf-8"))["ackedDonePanes"],
+                ["w1:p1"],
+            )
+
+            restarted_service = HerdrService(
+                FakeClient([snapshot_with_status("done")]),
+                alerts=AlertStore(store_path=store_path),
+                push=FakePush(),
+                environ={},
+            )
+            restarted_service.refresh_snapshot()
+
+            self.assertIn("w1:p1", restarted_service.alerts.acked_done_panes())
+            self.assertEqual(
+                restarted_service.workspaces_response()["workspaces"][0]["panes"][0][
+                    "agent_status"
+                ],
+                "idle",
+            )
+
+    def test_restored_done_acknowledgement_rearms_on_a_real_transition(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "alerts.json"
+            first_service = HerdrService(
+                FakeClient(
+                    [snapshot_with_status("working"), snapshot_with_status("done")]
+                ),
+                alerts=AlertStore(store_path=store_path),
+                push=FakePush(),
+                environ={},
+            )
+
+            first_service.refresh_snapshot()
+            first_service.refresh_snapshot()
+            first_service.mark_pane_alerts_read("w1:p1")
+
+            restarted_service = HerdrService(
+                FakeClient(
+                    [
+                        snapshot_with_status("done"),
+                        snapshot_with_status("working"),
+                        snapshot_with_status("done"),
+                    ]
+                ),
+                alerts=AlertStore(store_path=store_path),
+                push=FakePush(),
+                environ={},
+            )
+            restarted_service.refresh_snapshot()
+            restarted_service.refresh_snapshot()
+            restarted_service.refresh_snapshot()
+
+            self.assertNotIn("w1:p1", restarted_service.alerts.acked_done_panes())
+            self.assertEqual(
+                restarted_service.workspaces_response()["workspaces"][0]["panes"][0][
+                    "agent_status"
+                ],
+                "done",
+            )
+            self.assertGreaterEqual(restarted_service.alerts.unread_count(), 1)
+
+    def test_alert_store_defensively_loads_acknowledged_panes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "alerts.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "alerts": [],
+                        "statusByPane": {"w1:p1": "done", "w1:p2": "working"},
+                        "ackedDonePanes": ["w1:p1", "w1:p2", "", 17, {"bad": True}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                AlertStore(store_path=store_path).acked_done_panes(),
+                frozenset({"w1:p1"}),
+            )
+
     def test_alert_store_defensively_loads_a_bounded_journal(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store_path = Path(temp_dir) / "alerts.json"

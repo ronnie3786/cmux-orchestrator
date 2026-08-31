@@ -109,6 +109,20 @@ class AlertStore:
                 ):
                     self._status_by_pane[pane_id] = status
 
+        raw_acked = payload.get("ackedDonePanes")
+        if isinstance(raw_acked, list):
+            # An acknowledgement only suppresses a pane that is still ``done``.
+            # Validating against the restored baseline keeps the set bounded by
+            # ``statusByPane`` and stops a stale entry from muting a pane that
+            # has since moved on.
+            for pane_id in raw_acked:
+                if (
+                    isinstance(pane_id, str)
+                    and pane_id
+                    and self._status_by_pane.get(pane_id) == "done"
+                ):
+                    self._acked_done_panes.add(pane_id)
+
     def _mark_dirty_locked(self) -> None:
         if self.store_path is not None:
             self._dirty = True
@@ -118,6 +132,7 @@ class AlertStore:
             "version": self.STORE_VERSION,
             "alerts": self._alerts,
             "statusByPane": self._status_by_pane,
+            "ackedDonePanes": sorted(self._acked_done_panes),
         }
 
     def _write(self, payload: dict) -> None:
@@ -375,10 +390,17 @@ class AlertStore:
 
     def mark_read_for_pane(self, pane_id: str, now: Optional[str] = None) -> list[dict]:
         with self._lock:
-            if self._status_by_pane.get(pane_id) == "done":
+            acknowledged = False
+            if (
+                self._status_by_pane.get(pane_id) == "done"
+                and pane_id not in self._acked_done_panes
+            ):
                 self._acked_done_panes.add(pane_id)
+                acknowledged = True
             changed = self._mark_pane_alerts_read_locked(pane_id, read_at=now)
-            if changed:
+            # A stale done dot usually has no unread alert left, so the
+            # acknowledgement itself has to drive the write.
+            if changed or acknowledged:
                 self._mark_dirty_locked()
                 self._persist_locked()
             return changed
