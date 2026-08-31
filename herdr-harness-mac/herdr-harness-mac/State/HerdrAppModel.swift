@@ -86,6 +86,10 @@ final class HerdrAppModel {
     @ObservationIgnored private var pendingPaneRoutes: [PendingPaneRouteKey: PendingPaneRoute] = [:]
     @ObservationIgnored private var nextPaneRouteOrder: UInt64 = 0
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
+    /// Scoped pane IDs whose read acknowledgement has not yet been confirmed by
+    /// the server. A refresh that overlaps the POST must not resurrect the
+    /// server's stale unread copy.
+    @ObservationIgnored private var pendingReadAcknowledgements: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
@@ -103,6 +107,8 @@ final class HerdrAppModel {
     @ObservationIgnored var fleetRefreshBoringCycleThreshold = 5
     @ObservationIgnored var fleetRefreshQuietWindow = Duration.seconds(2)
     private static let connectionFailureGrace: TimeInterval = 10
+    private static let paneAlertReadAttempts = 3
+    private static let paneAlertReadRetryDelay: Duration = .milliseconds(400)
     private static let alertsLogger = Logger(subsystem: "dev.ronnierocha.herdr-harness", category: "alerts")
 
     private struct PaneLocation {
@@ -2209,8 +2215,19 @@ final class HerdrAppModel {
         fresh: [HerdrAlert],
         machineID: String
     ) -> [HerdrAlert] {
+        let reconciled: [HerdrAlert]
+        if pendingReadAcknowledgements.isEmpty {
+            reconciled = fresh
+        } else {
+            reconciled = fresh.map { alert in
+                guard !alert.isRead,
+                      pendingReadAcknowledgements.contains(alert.scopedPaneID)
+                else { return alert }
+                return Self.markedRead(alert)
+            }
+        }
         var merged: [HerdrAlert] = []
-        merged.reserveCapacity(current.count + fresh.count)
+        merged.reserveCapacity(current.count + reconciled.count)
         var didInsertMachineSlice = false
         for alert in current {
             guard alert.machineID == machineID else {
@@ -2219,10 +2236,10 @@ final class HerdrAppModel {
             }
             guard !didInsertMachineSlice else { continue }
             didInsertMachineSlice = true
-            merged.append(contentsOf: fresh)
+            merged.append(contentsOf: reconciled)
         }
         if !didInsertMachineSlice {
-            merged.append(contentsOf: fresh)
+            merged.append(contentsOf: reconciled)
         }
         return merged
     }
@@ -2577,31 +2594,50 @@ final class HerdrAppModel {
 
         alerts = alerts.map { alert in
             guard alert.scopedPaneID == paneID, !alert.isRead else { return alert }
-            return HerdrAlert(
-                id: alert.rawID,
-                workspaceID: alert.workspaceID,
-                paneID: alert.paneID,
-                status: alert.status,
-                title: alert.title,
-                message: alert.message,
-                createdAt: alert.createdAt,
-                isRead: true
-            ).stamped(machineID: alert.machineID)
+            return Self.markedRead(alert)
         }
         updateBadgeIfNeeded()
         return true
     }
 
+    private static func markedRead(_ alert: HerdrAlert) -> HerdrAlert {
+        HerdrAlert(
+            id: alert.rawID,
+            workspaceID: alert.workspaceID,
+            paneID: alert.paneID,
+            status: alert.status,
+            title: alert.title,
+            message: alert.message,
+            createdAt: alert.createdAt,
+            isRead: true
+        ).stamped(machineID: alert.machineID)
+    }
+
     private func markPaneAlertsReadRemotely(_ pane: HerdrPane) {
         guard !isDemoMode, let client = client(forMachine: pane.machineID) else { return }
-        Task {
-            do {
-                try await client.markPaneAlertsRead(paneID: pane.paneID)
-            } catch {
-                Self.alertsLogger.error(
-                    "failed to mark pane \(pane.paneID, privacy: .public) alerts read: \(error.localizedDescription, privacy: .public)"
-                )
+        let scopedPaneID = pane.id
+        // Hold the optimistic local read until the server confirms it. A refresh
+        // landing before this POST would otherwise restore the server's unread
+        // copy and relight a pane the user just cleared.
+        pendingReadAcknowledgements.insert(scopedPaneID)
+        Task { [weak self] in
+            for attempt in 1...Self.paneAlertReadAttempts {
+                do {
+                    try await client.markPaneAlertsRead(paneID: pane.paneID)
+                    break
+                } catch {
+                    if attempt == Self.paneAlertReadAttempts {
+                        Self.alertsLogger.error(
+                            "failed to mark pane \(pane.paneID, privacy: .public) alerts read: \(error.localizedDescription, privacy: .public)"
+                        )
+                    } else {
+                        try? await Task.sleep(for: Self.paneAlertReadRetryDelay)
+                    }
+                }
             }
+            // Releasing the hold after a permanent failure lets the next refresh
+            // show the server's truth instead of a read state it never received.
+            self?.pendingReadAcknowledgements.remove(scopedPaneID)
         }
     }
 
