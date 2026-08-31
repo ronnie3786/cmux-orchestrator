@@ -65,6 +65,13 @@ struct HerdrHudTranscriptRowView: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        } else {
+            Text("No response")
+                .herdrFont(.callout)
+                .foregroundStyle(HerdrTheme.muted)
+                .italic()
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

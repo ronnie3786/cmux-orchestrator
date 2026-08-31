@@ -239,6 +239,17 @@ def _assistant_text(message: object) -> str:
     ).strip()
 
 
+def _assistant_error(message: object) -> Optional[str]:
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return None
+    stop_reason = message.get("stopReason")
+    error_message = message.get("errorMessage")
+    value = error_message.strip() if isinstance(error_message, str) else ""
+    if stop_reason == "error" or value:
+        return value
+    return None
+
+
 def _message_cost(message: object) -> float:
     if not isinstance(message, dict):
         return 0.0
@@ -715,12 +726,26 @@ class AgentRunManager:
                             finishedAt=self._now(),
                         )
                     else:
-                        current.update(
-                            status="completed",
-                            error=None,
-                            sessionFile=str(session_file),
-                            finishedAt=self._now(),
-                        )
+                        response = current.get("response")
+                        if isinstance(response, str) and response.strip():
+                            current.update(
+                                status="completed",
+                                error=None,
+                                sessionFile=str(session_file),
+                                finishedAt=self._now(),
+                            )
+                        elif current.get("agentErrorMessage") is not None:
+                            current.update(
+                                status="failed",
+                                error=current["agentErrorMessage"] or "model returned an error",
+                                finishedAt=self._now(),
+                            )
+                        else:
+                            current.update(
+                                status="failed",
+                                error="agent produced no output",
+                                finishedAt=self._now(),
+                            )
                 self._write(current)
         except Exception as exc:
             with self._lock:
@@ -791,6 +816,20 @@ class AgentRunManager:
                     if cost:
                         run["costUSD"] = float(run.get("costUSD") or 0.0) + cost
                         changed = True
+                    error_message = _assistant_error(message)
+                    if error_message is not None:
+                        run["agentErrorMessage"] = error_message
+                        changed = True
+                elif event.get("type") == "agent_end":
+                    raw_messages = event.get("messages")
+                    if isinstance(raw_messages, list):
+                        for message in raw_messages:
+                            if not isinstance(message, dict):
+                                continue
+                            error_message = _assistant_error(message)
+                            if error_message is not None:
+                                run["agentErrorMessage"] = error_message
+                                changed = True
                 if changed:
                     self._write(run)
         process.stdout.close()

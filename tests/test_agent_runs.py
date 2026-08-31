@@ -55,15 +55,54 @@ def write_fake_pi(directory: Path) -> Path:
                     json.dumps({"type": "session", "id": session_id, "cwd": os.getcwd()}) + "\\n",
                     encoding="utf-8",
                 )
-            print(json.dumps({"event": {
-                "type": "message_end",
-                "message": {
+            if mode == "assistant-error":
+                message = {
                     "role": "assistant",
-                    "text": "Fleet answer",
-                    "usage": {"cost": {"total": 0.0123}},
-                },
-            }}), flush=True)
-            print(json.dumps({"type": "agent_end"}), flush=True)
+                    "content": [],
+                    "stopReason": "error",
+                    "errorMessage": "401 status code (no body)",
+                }
+                print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
+                print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
+            elif mode == "empty-text":
+                print(json.dumps({"event": {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "text": "   ",
+                        "usage": {"cost": {"total": 0.0}},
+                    },
+                }}), flush=True)
+                print(json.dumps({"type": "agent_end"}), flush=True)
+            elif mode == "text-then-error":
+                print(json.dumps({"event": {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "text": "Partial answer",
+                        "usage": {"cost": {"total": 0.01}},
+                    },
+                }}), flush=True)
+                print(json.dumps({"event": {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [],
+                        "stopReason": "error",
+                        "errorMessage": "mid-stream failure",
+                    },
+                }}), flush=True)
+                print(json.dumps({"type": "agent_end"}), flush=True)
+            else:
+                print(json.dumps({"event": {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "text": "Fleet answer",
+                        "usage": {"cost": {"total": 0.0123}},
+                    },
+                }}), flush=True)
+                print(json.dumps({"type": "agent_end"}), flush=True)
             """
         ),
         encoding="utf-8",
@@ -195,6 +234,59 @@ class AgentRunManagerTests(unittest.TestCase):
             )
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertNotIn("ACT mode", charter)
+            manager.stop()
+
+    def test_assistant_stream_error_marks_run_failed_and_surfaces_error_message(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="assistant-error")
+
+            started = manager.start(
+                prompt="What changed?",
+                label="Fleet question",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed", "failed"})
+
+            self.assertEqual(finished["run"]["status"], "failed")
+            self.assertEqual(finished["run"]["error"], "401 status code (no body)")
+            self.assertFalse(finished["run"]["response"])
+            manager.stop()
+
+    def test_empty_response_completion_is_marked_failed_with_no_output_error(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="empty-text")
+
+            started = manager.start(
+                prompt="What changed?",
+                label="Fleet question",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed", "failed"})
+
+            self.assertEqual(finished["run"]["status"], "failed")
+            self.assertEqual(finished["run"]["error"], "agent produced no output")
+            manager.stop()
+
+    def test_real_text_followed_by_stream_error_stays_completed_with_text_kept(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="text-then-error")
+
+            started = manager.start(
+                prompt="What changed?",
+                label="Fleet question",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed", "failed"})
+
+            self.assertEqual(finished["run"]["status"], "completed")
+            self.assertEqual(finished["run"]["response"], "Partial answer")
+            self.assertIsNone(finished["run"]["error"])
             manager.stop()
 
     def test_model_and_thinking_level_are_stored_and_appended_to_argv(self):
