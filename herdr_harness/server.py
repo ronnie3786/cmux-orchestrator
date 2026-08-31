@@ -427,6 +427,7 @@ def api_description() -> dict:
             "cleanupModels": "/api/v1/cleanup/models",
             "agentRuns": "/api/v1/agent-runs",
             "agentRun": "/api/v1/agent-runs/{runId}",
+            "agentModels": "/api/v1/agent-runs/models",
         },
         "universalLinks": {
             "appSiteAssociation": "/.well-known/apple-app-site-association",
@@ -1507,6 +1508,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     ),
                     202,
                 )
+            if method == "GET" and tail == ["agent-runs", "models"]:
+                return service.list_agent_models()
             if len(tail) >= 2 and tail[0] == "agent-runs":
                 run_id = _agent_run_id(tail[1])
                 if method == "GET" and len(tail) == 2:

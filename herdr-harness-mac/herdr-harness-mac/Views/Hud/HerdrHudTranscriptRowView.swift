@@ -77,6 +77,9 @@ struct HerdrHudTranscriptRowView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
+            Text(exchange.modelLabel)
+                .herdrFont(.caption2, monospaced: true)
+                .foregroundStyle(HerdrTheme.muted)
             if let costUSD = exchange.costUSD {
                 Text("$\(costUSD.formatted(.number.precision(.fractionLength(4))))")
                     .herdrFont(.caption, monospaced: true)

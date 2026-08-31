@@ -6,10 +6,15 @@ struct HerdrHudAttentionStripView: View {
     let collapse: () -> Void
 
     var body: some View {
-        if !model.attentionPanes.isEmpty {
+        let panes = HerdrHudNotificationFilter.panes(model.attentionPanes)
+        if !panes.isEmpty {
+            let filteredAlerts = HerdrHudNotificationFilter.alerts(
+                model.alerts,
+                panes: model.workspaces.flatMap(\.panes)
+            )
             let attention = HerdPulseAttentionRows.attentionRows(
-                panes: model.attentionPanes,
-                alerts: model.alerts,
+                panes: panes,
+                alerts: filteredAlerts,
                 revealTitles: model.showSessionTitles,
                 limit: 3
             )

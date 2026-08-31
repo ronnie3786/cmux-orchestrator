@@ -21,6 +21,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     var promotedPaneID: String?
     let attachmentFilenames: [String]
     var attachments: [HeadlessAgentAttachment] = []
+    var modelLabel: String = "default"
 }
 
 @MainActor
@@ -28,6 +29,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
 final class HerdrHudSession {
     private enum DefaultsKey {
         static let machineID = "herdr.hud.machineID"
+        static let model = "herdr.hud.model"
     }
 
     static let maxImageAttachments = 4
@@ -45,6 +47,9 @@ final class HerdrHudSession {
     var selectedMachineID: String? {
         didSet { userDefaults.set(selectedMachineID, forKey: DefaultsKey.machineID) }
     }
+    var selectedModel: String? {
+        didSet { userDefaults.set(selectedModel, forKey: DefaultsKey.model) }
+    }
     var isCollapsed = true {
         didSet {
             if isCollapsed {
@@ -58,6 +63,14 @@ final class HerdrHudSession {
     private(set) var promoteErrorMessage: String?
     private(set) var audioErrorMessage: String?
     private(set) var promotingExchangeIDs: Set<String> = []
+    private(set) var availableModels: [PiAvailableModel] = []
+    private(set) var defaultModel: PiModelIdentity?
+    private(set) var isLoadingModels = false
+    private(set) var modelsError: String?
+
+    #if DEBUG
+    private(set) var lastHeadlessRunForTesting: HeadlessAgentRun?
+    #endif
 
     var isRunning: Bool { controller.isRunning }
     var errorMessage: String? { controller.errorMessage }
@@ -65,6 +78,7 @@ final class HerdrHudSession {
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         self.selectedMachineID = userDefaults.string(forKey: DefaultsKey.machineID)
+        self.selectedModel = userDefaults.string(forKey: DefaultsKey.model)
     }
 
     deinit {
@@ -139,6 +153,11 @@ final class HerdrHudSession {
     func appendExchangeForTesting(_ exchange: HerdrHudExchange) {
         append(exchange)
     }
+
+    func seedModelsForTesting(_ models: [PiAvailableModel], default defaultModel: PiModelIdentity?) {
+        availableModels = models
+        self.defaultModel = defaultModel
+    }
     #endif
 
     func submit(model: HerdrAppModel) async {
@@ -164,6 +183,14 @@ final class HerdrHudSession {
         }
 
         let attachmentFilenames = pendingImageAttachments.map(\.filename)
+        let hasAttachments = !pendingImageAttachments.isEmpty
+        let agentModel = HerdrHudModelRouting.model(
+            selection: selectedModel,
+            selectionSupportsImages: selectedModelSupportsImages,
+            hasAttachments: hasAttachments
+        )
+        let thinkingLevel = HerdrHudModelRouting.thinkingLevel
+        let label = modelLabel(for: agentModel)
         let pendingID = "hud-pending-\(UUID().uuidString)"
         let submittedAt = Date.now
         append(
@@ -178,7 +205,8 @@ final class HerdrHudSession {
                 costUSD: nil,
                 createdAt: submittedAt,
                 promotedPaneID: nil,
-                attachmentFilenames: attachmentFilenames
+                attachmentFilenames: attachmentFilenames,
+                modelLabel: label
             )
         )
         draft = ""
@@ -210,9 +238,6 @@ final class HerdrHudSession {
             return
         }
 
-        let hasAttachments = !wireAttachments.isEmpty
-        let agentModel = HerdrHudModelRouting.model(hasAttachments: hasAttachments)
-        let thinkingLevel = HerdrHudModelRouting.thinkingLevel
         let run = await submitAndWait(
             prompt: prompt,
             machineID: machineID,
@@ -238,13 +263,18 @@ final class HerdrHudSession {
                 createdAt: submittedAt,
                 promotedPaneID: nil,
                 attachmentFilenames: attachmentFilenames,
-                attachments: wireAttachments
+                attachments: wireAttachments,
+                modelLabel: label
             )
             if draft.isEmpty { draft = prompt }
             if imageAttachments.isEmpty { imageAttachments = pendingImageAttachments }
             controller.reset()
             return
         }
+
+        #if DEBUG
+        lastHeadlessRunForTesting = run
+        #endif
 
         let isSuccess = run.status == .completed || run.status == .promoted
         let retainedAttachments = isSuccess ? [] : wireAttachments
@@ -260,7 +290,8 @@ final class HerdrHudSession {
             createdAt: submittedAt,
             promotedPaneID: run.promotedPaneID,
             attachmentFilenames: attachmentFilenames,
-            attachments: retainedAttachments
+            attachments: retainedAttachments,
+            modelLabel: label
         )
         if run.status.isTerminal, isCollapsed {
             hasUnseenAnswer = true
@@ -278,6 +309,24 @@ final class HerdrHudSession {
         await responseAudioPlayer.loadCapabilities {
             try await model.fetchResponseAudioCapabilities(forMachine: machineID)
         }
+    }
+
+    func loadModels(model: HerdrAppModel) async {
+        modelsError = nil
+        guard let machineID = resolvedMachineIDReadOnly(in: model) else { return }
+        isLoadingModels = true
+        defer { isLoadingModels = false }
+        do {
+            let response = try await model.fetchAgentModels(machineID: machineID)
+            availableModels = response.models
+            defaultModel = response.defaultModel
+        } catch {
+            modelsError = error.localizedDescription
+        }
+    }
+
+    func setSelectedModel(_ candidate: PiAvailableModel?) {
+        selectedModel = candidate?.id
     }
 
     func activateResponseAudio(
@@ -329,10 +378,16 @@ final class HerdrHudSession {
         promoteErrorMessage = nil
         audioErrorMessage = nil
         let hasAttachments = !exchange.attachments.isEmpty
+        let agentModel = HerdrHudModelRouting.model(
+            selection: selectedModel,
+            selectionSupportsImages: selectedModelSupportsImages,
+            hasAttachments: hasAttachments
+        )
+        let label = modelLabel(for: agentModel)
         guard let run = await submitAndWait(
             prompt: exchange.sentPrompt,
             machineID: exchange.machineID,
-            agentModel: HerdrHudModelRouting.model(hasAttachments: hasAttachments),
+            agentModel: agentModel,
             thinkingLevel: HerdrHudModelRouting.thinkingLevel,
             attachments: hasAttachments ? exchange.attachments : nil,
             model: model
@@ -341,6 +396,9 @@ final class HerdrHudSession {
             controller.reset()
             return
         }
+        #if DEBUG
+        lastHeadlessRunForTesting = run
+        #endif
         let isSuccess = run.status == .completed || run.status == .promoted
         let retainedAttachments = isSuccess ? [] : exchange.attachments
         append(
@@ -356,7 +414,8 @@ final class HerdrHudSession {
                 createdAt: .now,
                 promotedPaneID: run.promotedPaneID,
                 attachmentFilenames: exchange.attachmentFilenames,
-                attachments: retainedAttachments
+                attachments: retainedAttachments,
+                modelLabel: label
             )
         )
         if run.status.isTerminal, isCollapsed {
@@ -388,6 +447,16 @@ final class HerdrHudSession {
             return selectedMachineID
         }
         return model.machines.first?.id
+    }
+
+    private var selectedModelSupportsImages: Bool {
+        guard let selectedModel else { return false }
+        return availableModels.first(where: { $0.id == selectedModel })?.supportsImages ?? false
+    }
+
+    private func modelLabel(for requestedModel: String?) -> String {
+        guard let requestedModel else { return defaultModel?.displayName ?? "default" }
+        return availableModels.first(where: { $0.id == requestedModel })?.displayName ?? requestedModel
     }
 
     private func append(_ exchange: HerdrHudExchange) {

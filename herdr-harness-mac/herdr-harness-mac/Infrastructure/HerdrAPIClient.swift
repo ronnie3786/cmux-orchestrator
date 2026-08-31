@@ -527,6 +527,10 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/agent-runs/\(id)")
     }
 
+    func fetchAgentModels() async throws -> AgentModelCatalogResponse {
+        try await request(path: "/api/v1/agent-runs/models")
+    }
+
     func cancelHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
         try await request(
             path: "/api/v1/agent-runs/\(id)/cancel",

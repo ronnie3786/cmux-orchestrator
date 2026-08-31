@@ -36,6 +36,16 @@ struct HerdrHudComposerView: View {
                 .accessibilityIdentifier("hud-send")
             }
             HStack(spacing: 8) {
+                HerdrHudModelChip(
+                    currentSelectionID: session.selectedModel,
+                    availableModels: session.availableModels,
+                    defaultModel: session.defaultModel,
+                    isLoading: session.isLoadingModels,
+                    errorMessage: session.modelsError,
+                    selectModel: { session.setSelectedModel($0) },
+                    retry: { Task { await session.loadModels(model: model) } }
+                )
+
                 Button(action: toggleVoiceCapture) {
                     Image(systemName: isVoiceCaptureActive ? "mic.fill" : "mic")
                         .foregroundStyle(isVoiceCaptureActive ? HerdrTheme.alert : HerdrTheme.mist)

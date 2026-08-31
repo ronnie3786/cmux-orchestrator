@@ -92,8 +92,117 @@ struct HerdrHudSessionTests {
 
     @Test("Model routing only selects vision for attachments")
     func modelRoutingOnlySelectsVisionForAttachments() {
-        #expect(HerdrHudModelRouting.model(hasAttachments: false) == nil)
-        #expect(HerdrHudModelRouting.model(hasAttachments: true) == HerdrHudModelRouting.visionModel)
+        #expect(
+            HerdrHudModelRouting.model(
+                selection: nil,
+                selectionSupportsImages: false,
+                hasAttachments: false
+            ) == nil
+        )
+        #expect(
+            HerdrHudModelRouting.model(
+                selection: nil,
+                selectionSupportsImages: false,
+                hasAttachments: true
+            ) == HerdrHudModelRouting.visionModel
+        )
+        #expect(
+            HerdrHudModelRouting.model(
+                selection: "provider/text-only",
+                selectionSupportsImages: false,
+                hasAttachments: false
+            ) == "provider/text-only"
+        )
+        #expect(
+            HerdrHudModelRouting.model(
+                selection: "provider/vision",
+                selectionSupportsImages: true,
+                hasAttachments: true
+            ) == "provider/vision"
+        )
+        #expect(
+            HerdrHudModelRouting.model(
+                selection: "provider/text-only",
+                selectionSupportsImages: false,
+                hasAttachments: true
+            ) == HerdrHudModelRouting.visionModel
+        )
+    }
+
+    @Test("Image submissions keep a selected vision-capable model")
+    func imageSubmissionKeepsSelectedVisionCapableModel() async throws {
+        let url = temporaryURL(named: "selected-model-image.png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: url)
+
+        let model = makeDemoModel()
+        let session = makeSession()
+        let selected = PiAvailableModel(
+            provider: "provider",
+            modelID: "vision",
+            name: "Vision Choice",
+            reasoning: true,
+            contextWindow: nil,
+            supportsImages: true
+        )
+        session.seedModelsForTesting([selected], default: nil)
+        session.setSelectedModel(selected)
+        session.addImageAttachments([url])
+        session.draft = "Describe this image"
+
+        await session.submit(model: model)
+
+        #expect(session.exchanges.last?.modelLabel == "Vision Choice")
+        #expect(session.lastHeadlessRunForTesting?.model == selected.id)
+    }
+
+    @Test("Image submissions fall back from a selected text-only model")
+    func imageSubmissionFallsBackFromSelectedTextOnlyModel() async throws {
+        let url = temporaryURL(named: "fallback-model-image.png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: url)
+
+        let model = makeDemoModel()
+        let session = makeSession()
+        let selected = PiAvailableModel(
+            provider: "provider",
+            modelID: "text-only",
+            name: "Text Choice",
+            reasoning: true,
+            contextWindow: nil
+        )
+        session.seedModelsForTesting([selected], default: nil)
+        session.setSelectedModel(selected)
+        session.addImageAttachments([url])
+        session.draft = "Describe this image"
+
+        await session.submit(model: model)
+
+        #expect(session.exchanges.last?.modelLabel == HerdrHudModelRouting.visionModel)
+        #expect(session.lastHeadlessRunForTesting?.model == HerdrHudModelRouting.visionModel)
+    }
+
+    @Test("Exchanges display the harness default or selected model name")
+    func exchangeModelLabelsReflectDefaultAndSelection() async {
+        let model = makeDemoModel()
+        let session = makeSession()
+        let defaultModel = PiModelIdentity(provider: "provider", id: "default", name: "Harness Default")
+        let selected = PiAvailableModel(
+            provider: "provider",
+            modelID: "selected",
+            name: "Selected Choice",
+            reasoning: true,
+            contextWindow: nil
+        )
+        session.seedModelsForTesting([selected], default: defaultModel)
+        session.draft = "Use the default"
+        await session.submit(model: model)
+        #expect(session.exchanges.last?.modelLabel == "Harness Default")
+
+        session.setSelectedModel(selected)
+        session.draft = "Use the selection"
+        await session.submit(model: model)
+        #expect(session.exchanges.last?.modelLabel == "Selected Choice")
     }
 
     @Test("Image attachments enforce count and file-size limits")

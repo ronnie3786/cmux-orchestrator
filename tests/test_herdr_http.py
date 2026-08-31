@@ -347,6 +347,22 @@ class FakeHTTPService:
         self.calls.append(("agent_run.get", {"run_id": run_id}))
         return self._agent_run()
 
+    def list_agent_models(self):
+        self.calls.append(("agent_models.list", {}))
+        return {
+            "ok": True,
+            "models": [
+                {
+                    "provider": "openai-codex",
+                    "id": "gpt-5.6-luna",
+                    "contextWindow": 272000,
+                    "supportsImages": True,
+                    "reasoning": True,
+                }
+            ],
+            "default": {"provider": "openai-codex", "id": "gpt-5.6-luna"},
+        }
+
     def cancel_agent_run(self, run_id):
         self.calls.append(("agent_run.cancel", {"run_id": run_id}))
         return self._agent_run("cancelled")
@@ -905,6 +921,28 @@ class HerdrHTTPTests(unittest.TestCase):
         )
         self.assertEqual(cancel_status, 200)
         self.assertEqual(cancel_body["run"]["status"], "cancelled")
+
+    def test_agent_models_route_uses_catalog_envelope(self):
+        status, _, body = self.request("/api/v1/agent-runs/models")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body,
+            {
+                "ok": True,
+                "models": [
+                    {
+                        "provider": "openai-codex",
+                        "id": "gpt-5.6-luna",
+                        "contextWindow": 272000,
+                        "supportsImages": True,
+                        "reasoning": True,
+                    }
+                ],
+                "default": {"provider": "openai-codex", "id": "gpt-5.6-luna"},
+            },
+        )
+        self.assertEqual(self.service.calls[-1], ("agent_models.list", {}))
 
     def test_agent_run_mode_rides_the_start_request_and_rejects_invalid_values(self):
         status, _, body = self.request(

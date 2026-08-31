@@ -1081,6 +1081,49 @@ final class HerdrAppModel {
         return try await client.fetchResponseAudioCapabilities()
     }
 
+    func fetchAgentModels(machineID: String) async throws -> AgentModelCatalogResponse {
+        if isDemoMode {
+            return AgentModelCatalogResponse(
+                ok: true,
+                models: [
+                    PiAvailableModel(
+                        provider: "openai-codex",
+                        modelID: "gpt-5.6-luna",
+                        name: "GPT-5.6 Luna",
+                        reasoning: true,
+                        contextWindow: 272_000,
+                        supportsImages: true
+                    ),
+                    PiAvailableModel(
+                        provider: "anthropic",
+                        modelID: "claude-sonnet-4-5",
+                        name: "Claude Sonnet 4.5",
+                        reasoning: true,
+                        contextWindow: 200_000
+                    ),
+                    PiAvailableModel(
+                        provider: "custom-lux-dspark",
+                        modelID: "qwen3.8-27b-nvfp4-dspark",
+                        name: "Qwen 3.8 27B",
+                        reasoning: true,
+                        contextWindow: 98_300
+                    ),
+                ],
+                defaultModel: PiModelIdentity(
+                    provider: "openai-codex",
+                    id: "gpt-5.6-luna",
+                    name: "GPT-5.6 Luna"
+                )
+            )
+        }
+        guard !isDemoMode, canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        return try await client.fetchAgentModels()
+    }
+
     func prepareResponseAudio(
         action: ResponseAudioAction,
         text: String,

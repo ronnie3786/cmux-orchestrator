@@ -32,6 +32,17 @@ def write_fake_pi(directory: Path) -> Path:
             def value(flag):
                 return sys.argv[sys.argv.index(flag) + 1]
 
+            if "--list-models" in sys.argv:
+                marker_path = os.environ.get("FAKE_LIST_MODELS_CAPTURE")
+                if marker_path:
+                    with Path(marker_path).open("a", encoding="utf-8") as marker:
+                        marker.write(json.dumps({"called": True}) + "\\n")
+                table = os.environ.get("FAKE_LIST_MODELS_OUTPUT")
+                if table is None:
+                    table = "pi models\\nprovider               model                                  context  max-out  thinking  images\\ncustom-lux-dspark      qwen3.8-27b-nvfp4-dspark               98.3K    16.4K    yes       no\\nopenai-codex           gpt-5.6-luna                           272K     128K     yes       yes\\nother                  million                                 1M       32K      no        no\\nother                  literal                                 16384    8K       no        yes\\n"
+                print(table, end="")
+                raise SystemExit(0)
+
             prompt = sys.stdin.read()
             capture_path = os.environ.get("FAKE_AGENT_CAPTURE")
             if capture_path:
@@ -122,7 +133,7 @@ def wait_for_status(manager: AgentRunManager, run_id: str, statuses, timeout=5):
 
 
 class AgentRunManagerTests(unittest.TestCase):
-    def manager(self, directory: Path, **extra) -> AgentRunManager:
+    def manager(self, directory: Path, *, clock=time.monotonic, **extra) -> AgentRunManager:
         home = directory / "home"
         home.mkdir(exist_ok=True)
         fake_pi = write_fake_pi(directory)
@@ -136,7 +147,119 @@ class AgentRunManagerTests(unittest.TestCase):
             environ=environ,
             herdr_socket_path="/private/tmp/fake-herdr.sock",
             herdr_session="test-machine",
+            clock=clock,
         )
+
+    def test_list_models_parses_catalog_default_and_cache(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            marker_path = directory / "models-called.jsonl"
+            settings_path = directory / "home" / ".pi" / "agent" / "settings.json"
+            settings_path.parent.mkdir(parents=True)
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "defaultProvider": "openai-codex",
+                        "defaultModel": "gpt-5.6-luna",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            clock = [0.0]
+            manager = self.manager(
+                directory,
+                clock=lambda: clock[0],
+                FAKE_LIST_MODELS_CAPTURE=str(marker_path),
+            )
+
+            first = manager.list_models()
+            second = manager.list_models()
+
+            self.assertEqual(first, second)
+            self.assertEqual(first["default"], {"provider": "openai-codex", "id": "gpt-5.6-luna"})
+            self.assertEqual(
+                first["models"],
+                [
+                    {
+                        "provider": "custom-lux-dspark",
+                        "id": "qwen3.8-27b-nvfp4-dspark",
+                        "contextWindow": 98300,
+                        "supportsImages": False,
+                        "reasoning": True,
+                    },
+                    {
+                        "provider": "openai-codex",
+                        "id": "gpt-5.6-luna",
+                        "contextWindow": 272000,
+                        "supportsImages": True,
+                        "reasoning": True,
+                    },
+                    {
+                        "provider": "other",
+                        "id": "million",
+                        "contextWindow": 1000000,
+                        "supportsImages": False,
+                        "reasoning": False,
+                    },
+                    {
+                        "provider": "other",
+                        "id": "literal",
+                        "contextWindow": 16384,
+                        "supportsImages": True,
+                        "reasoning": False,
+                    },
+                ],
+            )
+            self.assertEqual(len(marker_path.read_text(encoding="utf-8").splitlines()), 1)
+
+            clock[0] = 301.0
+            manager.list_models()
+            self.assertEqual(len(marker_path.read_text(encoding="utf-8").splitlines()), 2)
+            manager.stop()
+
+    def test_list_models_uses_fake_home_and_tolerates_unreadable_defaults(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            self.assertIsNone(manager.list_models()["default"])
+            manager.stop()
+
+            malformed = directory / "home" / ".pi" / "agent" / "settings.json"
+            malformed.parent.mkdir(parents=True)
+            malformed.write_text("not json", encoding="utf-8")
+            manager = self.manager(directory)
+            self.assertIsNone(manager.list_models()["default"])
+            manager.stop()
+
+    def test_list_models_reports_unavailable_catalogs(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            missing = AgentRunManager(
+                environ={
+                    "HERDR_HARNESS_AGENT_RUNS_ROOT": str(directory / "runs"),
+                    "HERDR_HARNESS_AGENT_PI_BIN": str(directory / "no-such-pi-binary"),
+                },
+                herdr_socket_path="/private/tmp/fake-herdr.sock",
+                herdr_session="test-machine",
+            )
+            with self.assertRaises(AgentRunError) as context:
+                missing.list_models()
+            self.assertEqual(context.exception.status, 502)
+            self.assertEqual(context.exception.code, "agent_models_unavailable")
+            missing.stop()
+
+            empty = self.manager(
+                directory,
+                FAKE_LIST_MODELS_OUTPUT=(
+                    "banner before table\\n"
+                    "provider  model  context  max-out  thinking  images\\n"
+                ),
+            )
+            with self.assertRaises(AgentRunError) as context:
+                empty.list_models()
+            self.assertEqual(context.exception.status, 502)
+            self.assertEqual(context.exception.code, "agent_models_unavailable")
+            empty.stop()
 
     def test_success_uses_private_cli_capable_pi_and_stable_public_shape(self):
         with tempfile.TemporaryDirectory() as raw_directory:

@@ -111,7 +111,16 @@ struct HerdrHudOrbView: View {
     }
 
     private var attentionCount: Int {
-        model.unreadAlertCount > 0 ? model.unreadAlertCount : model.attentionPanes.count
+        filteredUnreadAlertCount > 0 ? filteredUnreadAlertCount : filteredAttentionPanes.count
+    }
+
+    private var filteredAttentionPanes: [HerdrPane] {
+        HerdrHudNotificationFilter.panes(model.attentionPanes)
+    }
+
+    private var filteredUnreadAlertCount: Int {
+        HerdrHudNotificationFilter.alerts(model.alerts, panes: model.workspaces.flatMap(\.panes))
+            .count(where: { !$0.isRead })
     }
 
     private var glyphColor: Color {

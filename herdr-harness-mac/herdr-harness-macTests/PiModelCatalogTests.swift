@@ -52,6 +52,50 @@ struct PiModelCatalogTests {
         #expect(camelCase.contextWindow == 128000)
     }
 
+    @Test("Available models tolerate image-support wire aliases")
+    func decodesAvailableModelImageSupportAliases() throws {
+        let camelCase = try JSONDecoder().decode(
+            PiAvailableModel.self,
+            from: Data("{\"provider\":\"openai\",\"id\":\"gpt-5\",\"supportsImages\":true}".utf8)
+        )
+        let snakeCase = try JSONDecoder().decode(
+            PiAvailableModel.self,
+            from: Data("{\"provider\":\"openai\",\"id\":\"gpt-5\",\"supports_images\":false}".utf8)
+        )
+        let alias = try JSONDecoder().decode(
+            PiAvailableModel.self,
+            from: Data("{\"provider\":\"openai\",\"id\":\"gpt-5\",\"images\":true}".utf8)
+        )
+
+        #expect(camelCase.supportsImages == true)
+        #expect(snakeCase.supportsImages == false)
+        #expect(alias.supportsImages == true)
+    }
+
+    @Test("Agent model catalog decodes its default model")
+    func decodesAgentModelCatalogResponse() throws {
+        let response = try JSONDecoder().decode(
+            AgentModelCatalogResponse.self,
+            from: Data("""
+            {"ok":true,"models":[{"provider":"openai-codex","id":"gpt-5.6-luna","supportsImages":true}],"default":{"provider":"openai-codex","id":"gpt-5.6-luna"}}
+            """.utf8)
+        )
+        let missingDefault = try JSONDecoder().decode(
+            AgentModelCatalogResponse.self,
+            from: Data("{\"ok\":true,\"models\":[]}".utf8)
+        )
+        let nullDefault = try JSONDecoder().decode(
+            AgentModelCatalogResponse.self,
+            from: Data("{\"ok\":true,\"models\":[],\"default\":null}".utf8)
+        )
+
+        #expect(response.ok)
+        #expect(response.models.first?.supportsImages == true)
+        #expect(response.defaultModel?.id == "gpt-5.6-luna")
+        #expect(missingDefault.defaultModel == nil)
+        #expect(nullDefault.defaultModel == nil)
+    }
+
     @Test("Catalog response decodes the bridge success envelope")
     func decodesCatalogSuccessResponse() throws {
         let success = try JSONDecoder().decode(

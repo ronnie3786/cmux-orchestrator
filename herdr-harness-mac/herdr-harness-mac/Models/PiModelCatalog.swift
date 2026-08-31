@@ -6,6 +6,7 @@ struct PiAvailableModel: Codable, Equatable, Hashable, Sendable, Identifiable {
     let name: String?
     let reasoning: Bool?
     let contextWindow: Int?
+    let supportsImages: Bool?
 
     var id: String { "\(provider)/\(modelID)" }
     var displayName: String { name?.nonEmpty ?? modelID }
@@ -17,6 +18,9 @@ struct PiAvailableModel: Codable, Equatable, Hashable, Sendable, Identifiable {
         case reasoning
         case contextWindow
         case contextWindowSnake = "context_window"
+        case supportsImages
+        case supportsImagesSnake = "supports_images"
+        case imagesAlias = "images"
     }
 
     init(from decoder: Decoder) throws {
@@ -27,14 +31,25 @@ struct PiAvailableModel: Codable, Equatable, Hashable, Sendable, Identifiable {
         reasoning = try container.decodeIfPresent(Bool.self, forKey: .reasoning)
         contextWindow = try container.decodeIfPresent(Int.self, forKey: .contextWindow)
             ?? container.decodeIfPresent(Int.self, forKey: .contextWindowSnake)
+        supportsImages = try container.decodeIfPresent(Bool.self, forKey: .supportsImages)
+            ?? container.decodeIfPresent(Bool.self, forKey: .supportsImagesSnake)
+            ?? container.decodeIfPresent(Bool.self, forKey: .imagesAlias)
     }
 
-    init(provider: String, modelID: String, name: String?, reasoning: Bool?, contextWindow: Int?) {
+    init(
+        provider: String,
+        modelID: String,
+        name: String?,
+        reasoning: Bool?,
+        contextWindow: Int?,
+        supportsImages: Bool? = nil
+    ) {
         self.provider = provider
         self.modelID = modelID
         self.name = name
         self.reasoning = reasoning
         self.contextWindow = contextWindow
+        self.supportsImages = supportsImages
     }
 
     func encode(to encoder: Encoder) throws {
@@ -44,6 +59,19 @@ struct PiAvailableModel: Codable, Equatable, Hashable, Sendable, Identifiable {
         try container.encodeIfPresent(name, forKey: .name)
         try container.encodeIfPresent(reasoning, forKey: .reasoning)
         try container.encodeIfPresent(contextWindow, forKey: .contextWindow)
+        try container.encodeIfPresent(supportsImages, forKey: .supportsImages)
+    }
+}
+
+struct AgentModelCatalogResponse: Decodable, Sendable {
+    let ok: Bool
+    let models: [PiAvailableModel]
+    let defaultModel: PiModelIdentity?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case models
+        case defaultModel = "default"
     }
 }
 

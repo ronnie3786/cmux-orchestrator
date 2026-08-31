@@ -52,6 +52,10 @@ MAX_ATTACHMENTS = 4
 _RUN_ID_RE = re.compile(r"^agr_[0-9a-f]{12}$")
 MAX_RESPONSE_CHARS = 512 * 1024
 MAX_EVENT_LINE_BYTES = 2 * 1024 * 1024
+MODEL_LIST_CACHE_SECONDS = 300
+MODEL_LIST_TIMEOUT_SECONDS = 20
+_MODEL_TABLE_HEADER = ("provider", "model", "context", "max-out", "thinking", "images")
+_MODEL_CONTEXT_RE = re.compile(r"^([0-9]*\.?[0-9]+)([KM]?)$")
 
 
 class AgentRunError(RuntimeError):
@@ -59,6 +63,41 @@ class AgentRunError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.status = status
+
+
+def _model_context_window(value: str) -> Optional[int]:
+    match = _MODEL_CONTEXT_RE.fullmatch(value.strip().upper())
+    if match is None:
+        return None
+    number = float(match.group(1))
+    multiplier = {"": 1, "K": 1_000, "M": 1_000_000}[match.group(2)]
+    return round(number * multiplier)
+
+
+def _parse_model_table(output: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    found_header = False
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        fields = re.split(r"\s{2,}", line.strip())
+        if not found_header:
+            if tuple(field.lower() for field in fields[:6]) == _MODEL_TABLE_HEADER:
+                found_header = True
+            continue
+        if len(fields) < 6:
+            continue
+        provider, model_id, context, _max_out, thinking, images = fields[:6]
+        rows.append(
+            {
+                "provider": provider,
+                "id": model_id,
+                "contextWindow": _model_context_window(context),
+                "supportsImages": images.strip().lower() == "yes",
+                "reasoning": thinking.strip().lower() == "yes",
+            }
+        )
+    return rows
 
 
 def _sanitize_attachment_filename(value: Any) -> str:
@@ -273,6 +312,7 @@ class AgentRunManager:
         herdr_session: str,
         runs_root: Optional[Path] = None,
         now: Callable[[], str] = utc_now,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.environ = dict(environ)
         self.herdr_socket_path = str(herdr_socket_path)
@@ -291,7 +331,11 @@ class AgentRunManager:
             self.runs_root.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(self.runs_root, 0o700)
         self._now = now
+        self._clock = clock
         self._lock = threading.RLock()
+        self._models_lock = threading.Lock()
+        self._cached_models: Optional[dict[str, Any]] = None
+        self._models_expire_at = 0.0
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._cancel_requested: set[str] = set()
@@ -312,6 +356,72 @@ class AgentRunManager:
             daemon=True,
         )
         self._reaper_thread.start()
+
+    def list_models(self) -> dict:
+        now = self._clock()
+        with self._models_lock:
+            if self._cached_models is not None and now < self._models_expire_at:
+                return copy.deepcopy(self._cached_models)
+
+        pi_bin = _resolve_pi_bin(self.environ)
+        if pi_bin is None:
+            raise AgentRunError(
+                "pi is not installed on this machine",
+                code="agent_models_unavailable",
+                status=502,
+            )
+        child_env = dict(os.environ)
+        child_env.update(self.environ)
+        child_env["PI_SKIP_VERSION_CHECK"] = "1"
+        child_env["PATH"] = _child_path(pi_bin, child_env.get("PATH"))
+        try:
+            result = subprocess.run(
+                [pi_bin, "--list-models"],
+                env=child_env,
+                capture_output=True,
+                text=True,
+                timeout=MODEL_LIST_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise AgentRunError(
+                "pi model catalog is unavailable",
+                code="agent_models_unavailable",
+                status=502,
+            ) from exc
+        if result.returncode != 0:
+            raise AgentRunError(
+                "pi model catalog is unavailable",
+                code="agent_models_unavailable",
+                status=502,
+            )
+        models = _parse_model_table(result.stdout)
+        if not models:
+            raise AgentRunError(
+                "pi --list-models returned no models",
+                code="agent_models_unavailable",
+                status=502,
+            )
+
+        home = self.environ.get("HOME")
+        settings_path = (
+            Path(home) / ".pi" / "agent" / "settings.json"
+            if home
+            else Path("~/.pi/agent/settings.json").expanduser()
+        )
+        default = None
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            provider = settings.get("defaultProvider") if isinstance(settings, dict) else None
+            model_id = settings.get("defaultModel") if isinstance(settings, dict) else None
+            if isinstance(provider, str) and provider and isinstance(model_id, str) and model_id:
+                default = {"provider": provider, "id": model_id}
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            pass
+        catalog = {"ok": True, "models": models, "default": default}
+        with self._models_lock:
+            self._cached_models = copy.deepcopy(catalog)
+            self._models_expire_at = now + MODEL_LIST_CACHE_SECONDS
+        return catalog
 
     def _run_dir(self, run_id: str) -> Path:
         if not _RUN_ID_RE.fullmatch(run_id):

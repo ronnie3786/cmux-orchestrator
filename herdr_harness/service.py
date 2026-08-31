@@ -2364,6 +2364,9 @@ class HerdrService:
     def get_agent_run(self, run_id: str) -> dict:
         return self.agent_runs.get(run_id)
 
+    def list_agent_models(self) -> dict:
+        return self.agent_runs.list_models()
+
     def cancel_agent_run(self, run_id: str) -> dict:
         return self.agent_runs.cancel(run_id)
 
