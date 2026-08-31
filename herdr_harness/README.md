@@ -255,6 +255,10 @@ The command surface is:
 | `stage-set REF --stage KEY [--summary TEXT] [--content-file PATH|-]` | Merge a summary or JSON content object into one stage. |
 | `attach-doc REF --stage KEY --id DOCID --title T --kind html\|json\|md\|other --skill NAME --status approved\|changes_requested\|awaiting-you\|info [--by NAME] [--url URL] [--at ISO]` | Attach or update one stage document. |
 
+The full authoring and state-management guide — workflow config schema, the
+writable state vocabulary, gate/attention recipes, the stage-document
+convention, and the direct API table — lives in `docs/WORKFLOWS.md`.
+
 Listing candidates never creates board records. `connect` deliberately accepts
 one Jira key and has no bulk or `--all` form, so importing assigned work always
 requires a singular, reviewable decision:

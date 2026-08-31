@@ -153,6 +153,69 @@ Jira-connected items (`connect`, `candidates`) behave the same — the workflow
 just determines which stages they ride. An item's terminal stage is its
 workflow's last stage; `done` is only accepted there.
 
+### State vocabulary (what agents may set)
+
+| Field | Values | Set with | Notes |
+|---|---|---|---|
+| item `lifecycle` | `active` `blocked` `done` `archived` | `update REF --lifecycle …` | `done` only at the terminal stage; `archived` removes the item from the board. |
+| stage `state` | `pending` `ready` `active` `blocked` `complete` `skipped` | `move REF --to STAGE --state active\|blocked` | Only `active`/`blocked` are writable through `move`; the rest are derived from position (behind = `complete`, ahead = `pending`). |
+| stage `attention` | `none` `agent` `human` | `move … --attention …` | `human` puts the item in the needs-you badge and gates the capsule. |
+| stage `checkpoint_state` | `none` `pending` `approved` `changes_requested` | `move … --checkpoint …` | Meaningful on `checkpoint: human` stages; `pending`/`changes_requested` surface as your gate. |
+
+The board derives everything else — trails, counts, "needs you", gate
+capsules, the DONE region — from those four fields plus stage position.
+
+### Common state moves (agent recipes)
+
+Transitions are forward-only; a transition **to the item's current stage** is
+legal and is how you change state without moving. `--expected-revision` is
+auto-read when omitted; on a 409 revision conflict, re-read and retry once.
+
+```bash
+# Advance to the next stage
+herdr-active-work move REF --to implement
+
+# Raise a human gate on the current stage (item shows in needs-you)
+herdr-active-work move REF --to <current-stage> --checkpoint pending --attention human --note "Event map ready for review"
+
+# Approve the gate and advance in one call
+herdr-active-work move REF --to <next-stage> --checkpoint approved --note "Approved"
+
+# Request changes without moving (stays gated)
+herdr-active-work move REF --to <current-stage> --checkpoint changes_requested --attention human --note "Drop the sandbox scope"
+
+# Hand attention back to the agents / clear a block
+herdr-active-work move REF --to <current-stage> --attention agent --state active
+
+# Finish (terminal stage only), then retire from the board
+herdr-active-work update REF --lifecycle done
+herdr-active-work update REF --lifecycle archived
+```
+
+### Actor identity
+
+Every write is attributed. The CLI sends `X-Herdr-Actor:
+agent:herdr-active-work-cli` by default — agents should identify themselves
+with `--actor agent:<name>` (or env `HERDR_ACTIVE_WORK_ACTOR`), matching
+`^agent:[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$`, so buzz.log and the audit trail
+say who did what.
+
+### Direct API (for agents not using the CLI)
+
+Same manage token, `Authorization: Bearer …`, JSON bodies; all writes take
+`expected_revision`:
+
+| Action | Call |
+|---|---|
+| Read the board | `GET /api/v1/active-work` |
+| Read one item | `GET /api/v1/active-work/items/{id}` |
+| Create | `POST /api/v1/active-work/items` `{title, kind, workflow?, current_stage_key?}` |
+| Item fields / lifecycle | `PATCH /api/v1/active-work/items/{id}` |
+| Move / gate / attention | `POST /api/v1/active-work/items/{id}/transitions` `{to_stage_key, expected_revision, state?, attention?, checkpoint_state?, note?}` |
+| Stage summary/content/docs | `PATCH /api/v1/active-work/items/{id}/stages/{stage_key}` `{summary?, content?}` |
+| Workflows | `GET/POST /api/v1/active-work/workflows`, `GET …/workflows/{slug}` |
+| Live updates | `GET /api/v1/events` (SSE topic `active_work.updated`; send the token as a header — `EventSource` cannot) |
+
 ---
 
 ## 5. Populating stage content

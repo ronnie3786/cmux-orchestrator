@@ -451,6 +451,11 @@ app, or CLI lists it. Other management commands are:
 - `attach-doc REF --stage KEY --id DOCID ...`: attach or update one stage
   document with its skill and approval status.
 
+`docs/WORKFLOWS.md` is the complete workflow and state-management guide:
+config schema, the state vocabulary agents may set, common `move`/`update`
+recipes for gates and attention, the document convention, and the direct API
+table. Point any agent that manages the board at that file first.
+
 An `observe` payload must contain `source`, `idempotency_key`, `observed_at`,
 and `selector`. Optional item, stage, channel, thread, and activity fields are
 merged into an item that is already connected or created. `observe` never
