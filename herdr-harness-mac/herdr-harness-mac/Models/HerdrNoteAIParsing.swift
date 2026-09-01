@@ -7,10 +7,13 @@ enum HerdrNoteAIParsing {
 
     static func fenceSafe(_ text: String) -> String {
         let capped = String(text.prefix(20_000))
-        return capped.components(separatedBy: .newlines).map { line in
+        let prefixed = capped.components(separatedBy: .newlines).map { line -> String in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             return (trimmed.hasPrefix("<<<") || trimmed.hasPrefix(">>>")) ? " " + line : line
         }.joined(separator: "\n")
+        return prefixed
+            .replacingOccurrences(of: "<<<NOTE", with: "< < <NOTE")
+            .replacingOccurrences(of: "NOTE>>>", with: "NOTE> > >")
     }
 
     static func stripFence(_ text: String) -> String {

@@ -68,7 +68,7 @@ struct HerdrLiveNoteAIRunner: HerdrNoteAIRunner {
         let deadlineInstant = clock.now.advanced(by: deadline)
         while controller.isRunning {
             if Task.isCancelled {
-                await controller.cancel(model: appModel)
+                await Task { @MainActor in await controller.cancel(model: appModel) }.value
                 throw HerdrNoteAIError.cancelled
             }
             if clock.now >= deadlineInstant {
@@ -114,12 +114,13 @@ struct HerdrLiveNoteSessionSpawner: HerdrNoteSessionSpawner {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(25))
         while true {
+            try Task.checkCancellation()
             do {
                 try await appModel.sendPiConversationPrompt(text, disposition: .prompt, to: pane)
                 return
             } catch {
                 guard Self.isRetryable(error), clock.now < deadline else { throw error }
-                try? await Task.sleep(for: .milliseconds(500))
+                try await Task.sleep(for: .milliseconds(500))
             }
         }
     }
@@ -128,7 +129,8 @@ struct HerdrLiveNoteSessionSpawner: HerdrNoteSessionSpawner {
         if let apiError = error as? APIError, case let .server(status, _) = apiError {
             return status >= 500 || status == 409
         }
-        return error is URLError
+        if let urlError = error as? URLError { return urlError.code != .cancelled }
+        return false
     }
 }
 
@@ -216,7 +218,10 @@ final class HerdrHudNotesState {
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor in await self.store.flush() }
+            MainActor.assumeIsolated {
+                guard self.hasRestored else { return }
+                try? HerdrNotesSnapshot(notes: self.notes).save(to: self.store.fileURL)
+            }
         }
     }
 
@@ -352,8 +357,9 @@ final class HerdrHudNotesState {
                 }
                 if let title = cleanup.title { self.notes[freshIndex].title = title }
                 self.notes[freshIndex].body = cleanup.body
-                self.notes[freshIndex].lastCleanedAt = .now
-                self.notes[freshIndex].updatedAt = .now
+                let now = Date.now
+                self.notes[freshIndex].lastCleanedAt = now
+                self.notes[freshIndex].updatedAt = now
                 self.bumpRevealRevision(id)
                 self.startCelebration(id)
                 self.schedulePersistedSave()
@@ -426,9 +432,10 @@ final class HerdrHudNotesState {
             case .notConnected: failAction("This machine is not connected."); return
             case let .machineID(value): machineID = value
             }
-            let label = String(("note · " + displayTitle).prefix(120))
+            let tabLabel = String(String.UnicodeScalarView(displayTitle.unicodeScalars.prefix(120)))
+            let label = String(String.UnicodeScalarView(("note · " + displayTitle).unicodeScalars.prefix(120)))
             do {
-                let pane = try await self.sessionSpawner.spawn(machineID: machineID, label: label, workspaceLabel: "Notes", tabLabel: String(displayTitle.prefix(120)), appModel: model)
+                let pane = try await self.sessionSpawner.spawn(machineID: machineID, label: label, workspaceLabel: "Notes", tabLabel: tabLabel, appModel: model)
                 guard let freshIndex = self.notes.firstIndex(where: { $0.id == noteID }), let freshActionIndex = self.notes[freshIndex].actions.firstIndex(where: { $0.id == actionID }) else { return }
                 let link = HerdrNoteLink(id: UUID(), paneID: pane.id, machineID: machineID, title: pane.displayTitle.isEmpty ? action.title : pane.displayTitle, createdAt: .now, actionTitle: action.title)
                 self.notes[freshIndex].links.append(link)
@@ -516,7 +523,14 @@ final class HerdrHudNotesState {
     private func restore(_ snapshot: HerdrNotesSnapshot?) {
         if let snapshot {
             let existingIDs = Set(notes.map(\.id))
-            let restored = snapshot.notes.filter { !existingIDs.contains($0.id) }
+            let restored = snapshot.notes.filter { !existingIDs.contains($0.id) }.map { note -> HerdrNote in
+                var copy = note
+                for i in copy.actions.indices where copy.actions[i].status == .starting {
+                    copy.actions[i].status = .failed
+                    copy.actions[i].error = "Interrupted before the session started."
+                }
+                return copy
+            }
             if !restored.isEmpty { notes += restored }
         }
         hasRestored = true

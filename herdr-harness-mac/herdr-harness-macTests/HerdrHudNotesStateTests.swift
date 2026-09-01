@@ -4,13 +4,13 @@ import Testing
 
 @MainActor
 final class FakeNoteAIRunner: HerdrNoteAIRunner {
-    struct Call { let prompt: String; let machineID: String; let mode: HeadlessAgentRunMode }
+    struct Call { let prompt: String; let machineID: String; let mode: HeadlessAgentRunMode; let systemPrompt: String?; let model: String?; let thinkingLevel: String? }
     enum Mode { case succeed(String), throwing(any Error), hanging }
     var mode: Mode = .succeed("")
     private(set) var calls: [Call] = []
 
     func run(prompt: String, machineID: String, mode: HeadlessAgentRunMode, model: String?, thinkingLevel: String?, systemPrompt: String?, deadline: Duration, appModel: HerdrAppModel) async throws -> String {
-        calls.append(Call(prompt: prompt, machineID: machineID, mode: mode))
+        calls.append(Call(prompt: prompt, machineID: machineID, mode: mode, systemPrompt: systemPrompt, model: model, thinkingLevel: thinkingLevel))
         switch self.mode {
         case let .succeed(text): return text
         case let .throwing(error): throw error
@@ -110,11 +110,15 @@ struct HerdrHudNotesStateTests {
         #expect(cleaned.previousVersion?.title == "Old")
         #expect(harness.state.celebratingNoteID == id)
         #expect(!harness.state.isBusy(id))
+        #expect(harness.ai.calls[0].systemPrompt == HerdrNoteAIPrompts.noToolsCharter)
+        #expect(harness.ai.calls[0].thinkingLevel == "medium")
+        #expect(harness.ai.calls[0].prompt.contains("<<<NOTE\nTitle: Old\n\nOriginal\nNOTE>>>"))
         harness.ai.mode = .succeed(#"{"summary":"s","actions":[{"title":"A","prompt":"do a"},{"title":"B","prompt":"do b"}]}"#)
         await harness.state.planActions(id, model: harness.model)
         #expect(harness.state.note(id: id)?.actions.count == 2)
         #expect(harness.state.note(id: id)?.aiSummary == "s")
         #expect(harness.state.note(id: id)?.actions.allSatisfy { $0.status == .ready } == true)
+        #expect(harness.ai.calls[1].systemPrompt == nil)
     }
 
     @Test("Action launch links the pane and sends rendered context")
@@ -143,7 +147,115 @@ struct HerdrHudNotesStateTests {
         #expect(harness.ai.calls.isEmpty)
     }
 
-    private struct Harness { let model: HerdrAppModel; let state: HerdrHudNotesState; let ai: FakeNoteAIRunner; let spawner: FakeNoteSessionSpawner }
+    @Test("Notes model falls back to the HUD model when unset")
+    func notesModelFallsBackToHudModel() async throws {
+        let harness = await makeHarness()
+        harness.agentSettings.hudModel = "claude-hud-model"
+        let id = harness.state.createNote()
+        harness.state.updateBody("Body", for: id)
+        harness.ai.mode = .succeed("Body")
+        await harness.state.cleanUp(id, model: harness.model)
+        #expect(harness.ai.calls.last?.model == "claude-hud-model")
+    }
+
+    @Test("Repeated cleanups keep the human original until the user edits")
+    func secondCleanupKeepsHumanOriginal() async throws {
+        let harness = await makeHarness()
+        let id = harness.state.createNote()
+        harness.state.updateTitle("Old", for: id)
+        harness.state.updateBody("Original", for: id)
+
+        harness.ai.mode = .succeed("# First\n\n• a")
+        await harness.state.cleanUp(id, model: harness.model)
+        harness.ai.mode = .succeed("# Second\n\n• b")
+        await harness.state.cleanUp(id, model: harness.model)
+        var note = try #require(harness.state.note(id: id))
+        #expect(note.previousVersion?.body == "Original")
+        #expect(note.body == "• b")
+
+        harness.state.updateBody("Edited by hand", for: id)
+        harness.ai.mode = .succeed("# Third\n\n• c")
+        await harness.state.cleanUp(id, model: harness.model)
+        note = try #require(harness.state.note(id: id))
+        #expect(note.previousVersion?.body == "Edited by hand")
+
+        harness.state.undoAI(id)
+        note = try #require(harness.state.note(id: id))
+        #expect(note.body == "Edited by hand")
+    }
+
+    @Test("Deleting a note mid-cleanup cancels the run and leaves no residue")
+    func deleteWhileCleaning() async throws {
+        let harness = await makeHarness()
+        let id = harness.state.createNote()
+        harness.state.updateBody("x", for: id)
+        harness.ai.mode = .hanging
+        let run = Task { await harness.state.cleanUp(id, model: harness.model) }
+        while !harness.state.isBusy(id) { await Task.yield() }
+        harness.state.deleteNote(id)
+        await run.value
+        #expect(harness.state.note(id: id) == nil)
+        #expect(!harness.state.isBusy(id))
+        #expect(harness.state.noteErrors[id] == nil)
+        #expect(harness.state.celebratingNoteID == nil)
+        #expect(harness.state.layout == .hidden)
+    }
+
+    @Test("Only ready or failed actions run; failed actions are reset")
+    func runnableActionStatuses() async throws {
+        let harness = await makeHarness()
+        let id = harness.state.createNote()
+        let started = HerdrNoteAction(id: UUID(), title: "S", prompt: "p", status: .started)
+        var failed = HerdrNoteAction(id: UUID(), title: "F", prompt: "retry", status: .failed)
+        failed.error = "boom"
+        failed.linkID = UUID()
+        failed.startedAt = .now
+        harness.state.seedNotesForTesting([HerdrNote(id: id, body: "n", actions: [started, failed])])
+
+        await harness.state.runAction(started.id, in: id, model: harness.model)
+        #expect(harness.spawner.sendCalls.isEmpty)
+        #expect(harness.state.note(id: id)?.actions[0] == started)
+
+        let priorLinkID = failed.linkID
+        await harness.state.runAction(failed.id, in: id, model: harness.model)
+        let updated = try #require(harness.state.note(id: id))
+        #expect(updated.actions[1].status == .started)
+        #expect(updated.actions[1].error == nil)
+        #expect(updated.actions[1].linkID != priorLinkID)
+        #expect(updated.actions[1].linkID == updated.links.first?.id)
+        #expect(harness.spawner.sendCalls.count == 1)
+        #expect(harness.state.noteStatus[id] == "Session started — click ↗ to open")
+    }
+
+    @Test("Restore merges stored notes after in-memory ones and in-memory wins on collision")
+    func restoreMergesAfterInMemoryNotes() async throws {
+        let suiteName = "HerdrHudNotesStateTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json")
+        let sharedID = UUID()
+        let storedOnlyID = UUID()
+        try HerdrNotesSnapshot(notes: [
+            HerdrNote(id: sharedID, title: "stored"),
+            HerdrNote(id: storedOnlyID, title: "only-stored"),
+        ]).save(to: url)
+
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"], userDefaults: defaults)
+        let ai = FakeNoteAIRunner()
+        let pane = HerdrPane(paneID: "pane", terminalID: "terminal", workspaceID: "workspace", tabID: "tab", focused: false, agentStatus: .unknown, revision: 0, cwd: nil, foregroundCWD: nil, label: "Notes", title: nil, agent: nil, displayAgent: nil, terminalTitle: nil, terminalTitleStripped: nil).stamped(machineID: model.machines.first?.id ?? "demo")
+        let spawner = FakeNoteSessionSpawner(spawnMode: .succeed(pane))
+        let state = HerdrHudNotesState(userDefaults: defaults, agentSettings: AgentModelSettingsStore(defaults: defaults), promptSettings: HerdrPromptSettingsStore(defaults: defaults), persistenceURL: url, aiRunner: ai, sessionSpawner: spawner, hoverGrace: .zero, hoverDelay: .zero, saveDelay: .zero)
+
+        state.seedNotesForTesting([HerdrNote(id: sharedID, title: "memory")])
+        let created = state.createNote()
+        await state.waitForPersistenceRestoreForTesting()
+
+        #expect(state.notes.map(\.id) == [created, sharedID, storedOnlyID])
+        #expect(state.note(id: sharedID)?.title == "memory")
+        #expect(state.layout == .card)
+    }
+
+    private struct Harness { let model: HerdrAppModel; let state: HerdrHudNotesState; let ai: FakeNoteAIRunner; let spawner: FakeNoteSessionSpawner; let agentSettings: AgentModelSettingsStore }
 
     private func makeHarness() async -> Harness {
         let suiteName = "HerdrHudNotesStateTests.\(UUID().uuidString)"
@@ -153,8 +265,9 @@ struct HerdrHudNotesStateTests {
         let ai = FakeNoteAIRunner()
         let pane = HerdrPane(paneID: "pane", terminalID: "terminal", workspaceID: "workspace", tabID: "tab", focused: false, agentStatus: .unknown, revision: 0, cwd: nil, foregroundCWD: nil, label: "Notes", title: nil, agent: nil, displayAgent: nil, terminalTitle: nil, terminalTitleStripped: nil).stamped(machineID: model.machines.first?.id ?? "demo")
         let spawner = FakeNoteSessionSpawner(spawnMode: .succeed(pane))
-        let state = HerdrHudNotesState(userDefaults: defaults, agentSettings: AgentModelSettingsStore(defaults: defaults), promptSettings: HerdrPromptSettingsStore(defaults: defaults), persistenceURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json"), aiRunner: ai, sessionSpawner: spawner, hoverGrace: .zero, hoverDelay: .zero, saveDelay: .zero)
+        let agentSettings = AgentModelSettingsStore(defaults: defaults)
+        let state = HerdrHudNotesState(userDefaults: defaults, agentSettings: agentSettings, promptSettings: HerdrPromptSettingsStore(defaults: defaults), persistenceURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json"), aiRunner: ai, sessionSpawner: spawner, hoverGrace: .zero, hoverDelay: .zero, saveDelay: .zero)
         await state.waitForPersistenceRestoreForTesting()
-        return Harness(model: model, state: state, ai: ai, spawner: spawner)
+        return Harness(model: model, state: state, ai: ai, spawner: spawner, agentSettings: agentSettings)
     }
 }

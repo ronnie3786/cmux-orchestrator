@@ -82,6 +82,10 @@ actor HerdrNotesStore {
         try? snapshot.save(to: fileURL)
     }
 
+    #if DEBUG
+    func waitForPendingFlushForTesting() async { await flushTask?.value }
+    #endif
+
     func remove() {
         pendingSnapshot = nil
         flushTask?.cancel()

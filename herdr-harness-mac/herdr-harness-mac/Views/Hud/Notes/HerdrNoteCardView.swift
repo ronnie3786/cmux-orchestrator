@@ -41,7 +41,7 @@ struct HerdrNoteCardView: View {
                 HerdrNoteShimmerOverlay(color: note.color.ink)
             }
             if notes.celebratingNoteID == note.id {
-                HerdrSparkleBurstView()
+                HerdrSparkleBurstView(color: note.color.ink)
                     .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
                     .offset(x: -82, y: 0)
             }
@@ -58,9 +58,9 @@ struct HerdrNoteCardView: View {
         .clipShape(.rect(cornerRadius: 12))
         .animation(reduceMotion ? nil : .smooth(duration: 0.5), value: notes.revealRevision[note.id] ?? 0)
         .task(id: controller.noteFocusRequest) { isBodyFocused = true }
-        .onChange(of: notes.revealRevision[note.id]) { _, _ in isBodyFocused = true }
+        .onChange(of: notes.revealRevision[note.id]) { _, _ in refocusAfterReveal() }
         .onChange(of: notes.isBusy(note.id)) { wasBusy, isBusy in
-            if wasBusy && !isBusy { isBodyFocused = true }
+            if wasBusy && !isBusy { refocusAfterReveal() }
         }
         .onKeyPress(.escape) {
             controller.closeNote()
@@ -256,21 +256,24 @@ struct HerdrNoteCardView: View {
 
     private func footer(_ note: HerdrNote) -> some View {
         HStack(spacing: 5) {
-            ForEach(HerdrNoteColor.allCases) { color in
-                Button { notes.setColor(color, for: note.id) } label: {
-                    Circle()
-                        .fill(color.fill)
-                        .frame(width: 14, height: 14)
-                        .overlay {
-                            if color == note.color {
-                                Circle().strokeBorder(note.color.ink, lineWidth: 2)
+            HStack(spacing: 0) {
+                ForEach(HerdrNoteColor.allCases) { color in
+                    Button { notes.setColor(color, for: note.id) } label: {
+                        Circle()
+                            .fill(color.fill)
+                            .frame(width: 14, height: 14)
+                            .overlay {
+                                if color == note.color {
+                                    Circle().strokeBorder(note.color.ink, lineWidth: 2)
+                                }
                             }
-                        }
-                        .herdrHitTarget()
+                            .herdrHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Set note color to \(color.label)")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Set note color to \(color.label)")
             }
+            .layoutPriority(-1)
             Spacer(minLength: 0)
             if note.previousVersion != nil {
                 Button { notes.undoAI(note.id) } label: {
@@ -282,9 +285,13 @@ struct HerdrNoteCardView: View {
                 .help("Restore your original text")
             }
             deleteButton(note)
-            Text(note.updatedAt, format: .relative(presentation: .named))
-                .herdrFont(.caption2)
-                .foregroundStyle(note.color.ink.opacity(0.6))
+            if !isDeleteArmed {
+                Text(Self.compactRelativeTime(note.updatedAt))
+                    .herdrFont(.caption2)
+                    .foregroundStyle(note.color.ink.opacity(0.6))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
         }
         .frame(minHeight: HerdrTheme.minHitTarget)
     }
@@ -327,8 +334,27 @@ struct HerdrNoteCardView: View {
     private func bodyBinding(for note: HerdrNote) -> Binding<String> {
         Binding(
             get: { notes.note(id: note.id)?.body ?? "" },
-            set: { notes.updateBody($0, for: note.id) }
+            set: { newValue in
+                guard notes.activities[note.id] != .cleaning else { return }
+                notes.updateBody(newValue, for: note.id)
+            }
         )
+    }
+
+    private func refocusAfterReveal() {
+        isBodyFocused = false
+        Task { @MainActor in isBodyFocused = true }
+    }
+
+    private static func compactRelativeTime(_ date: Date) -> String {
+        let seconds = max(0, Date.now.timeIntervalSince(date))
+        switch seconds {
+        case ..<60: return "now"
+        case ..<3_600: return "\(Int(seconds / 60))m"
+        case ..<86_400: return "\(Int(seconds / 3_600))h"
+        case ..<604_800: return "\(Int(seconds / 86_400))d"
+        default: return "\(Int(seconds / 604_800))w"
+        }
     }
 
     private func armDelete() {
@@ -361,7 +387,7 @@ private struct HerdrNoteActionRow: View {
         switch action.status {
         case .starting: return true
         case .started: return !isStartedLinkAlive
-        case .ready, .failed: return false
+        case .ready, .failed: return notes.isBusy(note.id)
         }
     }
 

@@ -57,6 +57,7 @@ struct HerdrNoteShimmerOverlay: View {
 }
 
 struct HerdrSparkleBurstView: View {
+    let color: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAnimating = false
 
@@ -69,7 +70,8 @@ struct HerdrSparkleBurstView: View {
                     if isAnimating {
                         Image(systemName: "sparkle")
                             .herdrFont(size: 8 + CGFloat(index % 4) * 2, weight: .bold, relativeTo: .caption)
-                            .foregroundStyle(index.isMultiple(of: 2) ? HerdrTheme.working : .white)
+                            .foregroundStyle(index.isMultiple(of: 2) ? color : .white)
+                            .shadow(color: color.opacity(0.6), radius: 1)
                             .transition(
                                 .asymmetric(
                                     insertion: .modifier(

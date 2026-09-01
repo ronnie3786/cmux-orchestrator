@@ -97,9 +97,9 @@ struct HerdrNotesPersistenceTests {
         let store = HerdrNotesStore(fileURL: fileURL)
         let first = HerdrNotesSnapshot(notes: [note(id: UUID(), body: "first", updatedAt: 1)])
         let second = HerdrNotesSnapshot(notes: [note(id: UUID(), body: "second", updatedAt: 2)])
-        await store.scheduleSave(first, delay: .milliseconds(50))
-        await store.scheduleSave(second, delay: .milliseconds(50))
-        try await Task.sleep(for: .milliseconds(150))
+        await store.scheduleSave(first, delay: .seconds(30))
+        await store.scheduleSave(second, delay: .zero)
+        await store.waitForPendingFlushForTesting()
         #expect(HerdrNotesSnapshot.load(from: fileURL)?.notes == second.notes)
     }
 
