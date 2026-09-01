@@ -23,7 +23,9 @@ struct WorkspaceNavigationView: View {
                 openActiveWork: { shell.show(.activeWork, model: model) },
                 isActiveWorkSelected: shell.resolvedScope(for: model) == .activeWork
             )
-                .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 480)
+                // AppKit remembers a column the user has dragged, so ideal only
+                // affects a fresh profile. Sidebar padding moves existing content.
+                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 480)
                 .background(HerdrTheme.ink)
         } detail: {
             detail

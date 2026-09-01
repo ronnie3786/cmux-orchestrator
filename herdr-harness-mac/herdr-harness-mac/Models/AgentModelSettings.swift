@@ -12,7 +12,10 @@ struct AgentModelSettings: Equatable, Sendable {
     static let hudModelKey = "herdr.hud.model"
     static let quickChatModelKey = "herdr.agent.model"
     static let visionModelKey = "herdr.agent.visionModel"
-    static let thinkingLevelKey = "herdr.agent.thinkingLevel"
+    static let hudThinkingLevelKey = "herdr.hud.thinkingLevel"
+    /// Quick chat keeps the key the shared setting used, so an existing choice
+    /// carries over instead of silently resetting to the built-in default.
+    static let quickChatThinkingLevelKey = "herdr.agent.thinkingLevel"
 
     /// The model every image-bearing HUD message is rerouted to when the
     /// chosen model cannot see images. Was `HerdrHudModelRouting.visionModel`.
@@ -22,16 +25,18 @@ struct AgentModelSettings: Equatable, Sendable {
     var hudModel: String
     var quickChatModel: String
     var visionModel: String
-    var thinkingLevel: PiThinkingLevel
+    var hudThinkingLevel: PiThinkingLevel
+    var quickChatThinkingLevel: PiThinkingLevel
 
     static func load(from defaults: UserDefaults) -> AgentModelSettings {
-        AgentModelSettings(
+        let legacy = defaults.string(forKey: quickChatThinkingLevelKey)
+        let hudRaw = defaults.string(forKey: hudThinkingLevelKey) ?? legacy
+        return AgentModelSettings(
             hudModel: defaults.string(forKey: hudModelKey) ?? "",
             quickChatModel: defaults.string(forKey: quickChatModelKey) ?? "",
             visionModel: defaults.string(forKey: visionModelKey) ?? "",
-            thinkingLevel: PiThinkingLevel(
-                rawValue: defaults.string(forKey: thinkingLevelKey) ?? ""
-            ) ?? .max
+            hudThinkingLevel: PiThinkingLevel(rawValue: hudRaw ?? "") ?? builtInThinkingLevel,
+            quickChatThinkingLevel: PiThinkingLevel(rawValue: legacy ?? "") ?? builtInThinkingLevel
         )
     }
 
@@ -39,7 +44,8 @@ struct AgentModelSettings: Equatable, Sendable {
         defaults.set(hudModel, forKey: Self.hudModelKey)
         defaults.set(quickChatModel, forKey: Self.quickChatModelKey)
         defaults.set(visionModel, forKey: Self.visionModelKey)
-        defaults.set(thinkingLevel.rawValue, forKey: Self.thinkingLevelKey)
+        defaults.set(hudThinkingLevel.rawValue, forKey: Self.hudThinkingLevelKey)
+        defaults.set(quickChatThinkingLevel.rawValue, forKey: Self.quickChatThinkingLevelKey)
     }
 
     /// The vision model actually sent, never empty.
@@ -60,8 +66,11 @@ final class AgentModelSettingsStore {
     var visionModel: String {
         didSet { saveIfChanged(oldValue != visionModel) }
     }
-    var thinkingLevel: PiThinkingLevel {
-        didSet { saveIfChanged(oldValue != thinkingLevel) }
+    var hudThinkingLevel: PiThinkingLevel {
+        didSet { saveIfChanged(oldValue != hudThinkingLevel) }
+    }
+    var quickChatThinkingLevel: PiThinkingLevel {
+        didSet { saveIfChanged(oldValue != quickChatThinkingLevel) }
     }
 
     var effectiveVisionModel: String {
@@ -76,7 +85,8 @@ final class AgentModelSettingsStore {
         hudModel = settings.hudModel
         quickChatModel = settings.quickChatModel
         visionModel = settings.visionModel
-        thinkingLevel = settings.thinkingLevel
+        hudThinkingLevel = settings.hudThinkingLevel
+        quickChatThinkingLevel = settings.quickChatThinkingLevel
     }
 
     private func saveIfChanged(_ changed: Bool) {
@@ -85,7 +95,8 @@ final class AgentModelSettingsStore {
             hudModel: hudModel,
             quickChatModel: quickChatModel,
             visionModel: visionModel,
-            thinkingLevel: thinkingLevel
+            hudThinkingLevel: hudThinkingLevel,
+            quickChatThinkingLevel: quickChatThinkingLevel
         ).save(to: defaults)
     }
 }

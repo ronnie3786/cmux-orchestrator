@@ -212,10 +212,17 @@ struct SettingsView: View {
             LabeledContent("HUD model") {
                 modelMenu(selection: $agentSettings.hudModel, identifier: "settings-hud-model-picker")
             }
+            Picker("HUD thinking level", selection: $agentSettings.hudThinkingLevel) {
+                ForEach(PiThinkingLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings-hud-thinking-picker")
             LabeledContent("Agent model") {
                 modelMenu(selection: $agentSettings.quickChatModel, identifier: "settings-agent-model-picker")
             }
-            Picker("Thinking level", selection: $agentSettings.thinkingLevel) {
+            Picker("Agent thinking level", selection: $agentSettings.quickChatThinkingLevel) {
                 ForEach(PiThinkingLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }
@@ -241,7 +248,7 @@ struct SettingsView: View {
         } header: {
             Text("Agent models")
         } footer: {
-            Text("The HUD (⌃⌥Space) and the Agent sheet (⌘⌥A) each run a one-off Pi question. \"Machine default\" uses whatever pi is configured to use on that machine. Images are always rerouted to the vision model when your pick cannot see them. This list comes from the primary machine's pi installation, so it updates without a new Herdr build.")
+            Text("The HUD (⌃⌥Space) and the Agent sheet (⌘⌥A) each carry their own model and thinking level. \"Machine default\" uses whatever pi is configured to use on that machine. Images are rerouted to the vision model when the chosen model cannot see them. This list comes from the primary machine's pi installation, so it updates without a new Herdr build.")
         }
     }
 

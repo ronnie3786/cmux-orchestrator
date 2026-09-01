@@ -10,6 +10,9 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
     static let chipWidth: CGFloat = 132
+    /// Mirrors `HerdrTheme.minHitTarget`. Duplicated as a literal because this
+    /// type is deliberately pure CoreGraphics math with no SwiftUI dependency.
+    static let chipHeight: CGFloat = 28
     static let chipSpacing: CGFloat = 6
     static let maxChips = 3
 
@@ -21,8 +24,8 @@ struct HerdrHudPlacement: Equatable, Sendable {
         let count = min(max(0, chipCount), maxChips)
         guard count > 0 else { return collapsedSize }
         return CGSize(
-            width: collapsedSize.width + CGFloat(count) * (chipWidth + chipSpacing),
-            height: collapsedSize.height
+            width: max(collapsedSize.width, chipWidth),
+            height: collapsedSize.height + CGFloat(count) * (chipHeight + chipSpacing)
         )
     }
 

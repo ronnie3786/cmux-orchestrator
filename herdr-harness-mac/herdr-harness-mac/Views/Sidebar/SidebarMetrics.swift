@@ -1,6 +1,15 @@
 import SwiftUI
 
 enum SidebarMetrics {
+    // Indent ladder for the navigator's hierarchy. Kept here so the rows and the
+    // section titles that align with them cannot drift apart.
+    static let containerLeadingPadding: CGFloat = 4
+    static let containerTrailingPadding: CGFloat = 8
+    static let rowTrailingPadding: CGFloat = 8
+    static let workspaceRowLeadingPadding: CGFloat = 8
+    static let tabRowLeadingPadding: CGFloat = 10
+    static let chatRowLeadingPadding: CGFloat = 20
+
     // Midpoints between the original 11/10/11/10pt sidebar typography and
     // icons and the first enlarged 16/15/16/13pt treatment.
     static let projectLabelSize: CGFloat = 13.5

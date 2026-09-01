@@ -6,19 +6,16 @@ struct HerdrHudSessionChipsView: View {
     let overflow: Int
 
     var body: some View {
-        HStack(spacing: HerdrHudPlacement.chipSpacing) {
+        VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
             ForEach(chips) { chip in
                 chipButton(chip)
             }
-        }
-        .overlay(alignment: .topLeading) {
             if overflow > 0 {
                 Text("+\(overflow)")
                     .herdrFont(.caption2, monospaced: true, weight: .bold)
                     .foregroundStyle(HerdrTheme.mist)
                     .padding(.horizontal, 4)
                     .background(HerdrTheme.graphite.opacity(0.94), in: .capsule)
-                    .offset(x: -30, y: -12)
                     .accessibilityLabel("\(overflow) more sessions")
             }
         }

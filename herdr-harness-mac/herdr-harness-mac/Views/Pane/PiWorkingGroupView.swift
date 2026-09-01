@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Collapses a contiguous run of Pi's sub-process activity, thinking and
-/// tool/command invocations, behind one "Working…" row, so consecutive
+/// tool/command invocations, behind one "Clanking…" row, so consecutive
 /// assistant messages read as a conversation instead of a machine log.
 /// Collapsed by default; the individual `PiThinkingDisclosureView` /
 /// `PiToolCardView` cards inside keep their own per-card disclosure.
@@ -60,7 +60,7 @@ struct PiWorkingGroupView: View {
             .frame(width: 18, height: 18)
             .accessibilityHidden(true)
 
-            Text(group.isLive ? "Working…" : "Working")
+            Text(group.isLive ? "Clanking…" : "Clanking")
                 .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.mist)
                 .contentTransition(.opacity)
@@ -87,6 +87,6 @@ struct PiWorkingGroupView: View {
     }
 
     private var accessibilityLabel: String {
-        (group.isLive ? "Working, " : "Worked, ") + summary
+        (group.isLive ? "Clanking, " : "Clanked, ") + summary
     }
 }

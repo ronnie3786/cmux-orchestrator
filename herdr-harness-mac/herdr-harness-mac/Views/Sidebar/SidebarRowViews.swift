@@ -110,7 +110,8 @@ struct SidebarProjectRow: View {
                         .accessibilityLabel("\(workspace.attentionCount) needing attention")
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: SidebarMetrics.projectRowHeight)
             .contentShape(Rectangle())
             .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
@@ -174,7 +175,8 @@ struct SidebarMachineRow: View {
                     .foregroundStyle(HerdrTheme.muted)
                     .fixedSize()
             }
-            .padding(.horizontal, 12)
+            .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: 38)
             .contentShape(Rectangle())
             .background(isHovering ? HerdrTheme.elevated : HerdrTheme.graphite)
@@ -236,8 +238,8 @@ struct SidebarSectionRow: View {
                     .foregroundStyle(HerdrTheme.muted)
                     .fixedSize()
             }
-            .padding(.leading, 18)
-            .padding(.trailing, 12)
+            .padding(.leading, SidebarMetrics.tabRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: SidebarMetrics.tabRowHeight)
             .contentShape(Rectangle())
             .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
@@ -300,8 +302,8 @@ struct SidebarChatRow: View {
                     .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
             }
-            .padding(.leading, 34)
-            .padding(.trailing, 12)
+            .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .background(rowBackground)

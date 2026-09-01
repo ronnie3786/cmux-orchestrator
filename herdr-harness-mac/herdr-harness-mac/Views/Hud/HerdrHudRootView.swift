@@ -33,17 +33,17 @@ struct HerdrHudRootView: View {
                     if sessionChips.chips.isEmpty {
                         HerdrHudOrbView(model: model, controller: controller, session: session)
                     } else {
-                        HStack(alignment: .center, spacing: HerdrHudPlacement.chipSpacing) {
-                            HerdrHudSessionChipsView(
-                                model: model,
-                                chips: sessionChips.chips,
-                                overflow: sessionChips.overflow
-                            )
+                        VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
                             HerdrHudOrbView(model: model, controller: controller, session: session)
                                 .frame(
                                     width: HerdrHudPlacement.collapsedSize.width,
                                     height: HerdrHudPlacement.collapsedSize.height
                                 )
+                            HerdrHudSessionChipsView(
+                                model: model,
+                                chips: sessionChips.chips,
+                                overflow: sessionChips.overflow
+                            )
                         }
                     }
                 }

@@ -199,7 +199,7 @@ final class HerdrHudSession {
             hasAttachments: hasAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
-        let thinkingLevel = agentSettings.thinkingLevel.rawValue
+        let thinkingLevel = agentSettings.hudThinkingLevel.rawValue
         if resolution.preferenceIsUnavailable {
             validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
         }
@@ -403,7 +403,7 @@ final class HerdrHudSession {
             hasAttachments: hasAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
-        let thinkingLevel = agentSettings.thinkingLevel.rawValue
+        let thinkingLevel = agentSettings.hudThinkingLevel.rawValue
         if resolution.preferenceIsUnavailable {
             validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
         }

@@ -303,7 +303,7 @@ struct HeadlessAgentView: View {
                 prompt: prompt,
                 machineID: selectedMachineID,
                 agentModel: resolution.modelID,
-                thinkingLevel: agentSettings.thinkingLevel.rawValue,
+                thinkingLevel: agentSettings.quickChatThinkingLevel.rawValue,
                 model: model
             )
         }

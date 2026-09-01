@@ -83,16 +83,26 @@ struct HerdrHudPlacementTests {
         #expect(HerdrHudPlacement.collapsedContentSize(chipCount: 0) == HerdrHudPlacement.collapsedSize)
     }
 
-    @Test("Collapsed HUD width grows by one fixed slot per visible chip")
+    @Test("Collapsed HUD height grows by one fixed slot per visible chip")
     func collapsedContentSizeGrowsByChipSlots() {
         for count in 1...HerdrHudPlacement.maxChips {
             let size = HerdrHudPlacement.collapsedContentSize(chipCount: count)
             #expect(
-                size.width == HerdrHudPlacement.collapsedSize.width
-                    + CGFloat(count) * (HerdrHudPlacement.chipWidth + HerdrHudPlacement.chipSpacing)
+                size.width == max(HerdrHudPlacement.collapsedSize.width, HerdrHudPlacement.chipWidth)
             )
-            #expect(size.height == HerdrHudPlacement.collapsedSize.height)
+            #expect(
+                size.height == HerdrHudPlacement.collapsedSize.height
+                    + CGFloat(count) * (HerdrHudPlacement.chipHeight + HerdrHudPlacement.chipSpacing)
+            )
         }
+    }
+
+    @Test("Collapsed chip count clamps at the visible chip maximum")
+    func collapsedContentSizeClampsChipCount() {
+        #expect(
+            HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips + 1)
+                == HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips)
+        )
     }
 
     @Test("Session chips keep the collapsed top-right anchor fixed")
@@ -185,8 +195,8 @@ struct HerdrHudPlacementTests {
         #expect(frame.maxY <= smallFrame.maxY)
     }
 
-    @Test("A wide chip strip still clamps inside a constrained display")
-    func wideChipStripClampsInsideVisibleFrame() {
+    @Test("A tall chip stack still clamps inside a constrained display")
+    func tallChipStackClampsInsideVisibleFrame() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 500, height: 400)
         let frame = HerdrHudPlacement.frame(
             isExpanded: false,

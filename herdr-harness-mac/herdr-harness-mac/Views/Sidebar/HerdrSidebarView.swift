@@ -190,7 +190,8 @@ struct HerdrSidebarView: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.leading, SidebarMetrics.containerLeadingPadding)
+        .padding(.trailing, SidebarMetrics.containerTrailingPadding)
         .padding(.top, 12)
         .padding(.bottom, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -354,7 +355,8 @@ struct HerdrSidebarView: View {
                         .foregroundStyle(HerdrTheme.muted)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.leading, SidebarMetrics.containerLeadingPadding)
+            .padding(.trailing, SidebarMetrics.containerTrailingPadding)
             .frame(minHeight: 48)
             .background(isActiveWorkSelected ? HerdrTheme.elevated : HerdrTheme.graphite.opacity(0.42))
             .overlay(alignment: .leading) {
@@ -528,7 +530,7 @@ struct HerdrSidebarView: View {
                     )
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(1)
-                    .padding(.leading, 34)
+                    .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
                     .padding(.top, 6)
                 ForEach(group.chats) { chatRow($0) }
             }
@@ -553,7 +555,7 @@ struct HerdrSidebarView: View {
                     )
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(1)
-                    .padding(.leading, 34)
+                    .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
                     .padding(.top, 6)
                 ForEach(group.chats) { chatRow($0) }
             }
@@ -594,7 +596,8 @@ struct HerdrSidebarView: View {
                     .disabled(!model.canControl(machineID: group.machine.id))
                     .accessibilityIdentifier("sidebar-review-stale-\(group.machine.id)")
                 }
-                .padding(.horizontal, 10)
+                .padding(.leading, SidebarMetrics.containerLeadingPadding)
+                .padding(.trailing, SidebarMetrics.containerTrailingPadding)
                 .padding(.top, 6)
                 .frame(minHeight: 28)
                 .accessibilityElement(children: .contain)
@@ -622,7 +625,7 @@ struct HerdrSidebarView: View {
                         Text("no workspaces yet")
                             .herdrFont(.caption)
                             .foregroundStyle(HerdrTheme.muted)
-                            .padding(.leading, 34)
+                            .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
                             .frame(minHeight: 24)
                     } else {
                         entriesContent(group.entries, allWorkspaceIDs: snapshot.allWorkspaceIDs)
@@ -685,7 +688,7 @@ struct HerdrSidebarView: View {
                     Text("no panes yet")
                         .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.muted)
-                        .padding(.leading, 34)
+                        .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
                         .frame(minHeight: 24)
                 }
             }

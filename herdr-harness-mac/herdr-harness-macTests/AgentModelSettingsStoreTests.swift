@@ -14,7 +14,8 @@ struct AgentModelSettingsStoreTests {
         #expect(settings.hudModel == "")
         #expect(settings.quickChatModel == "")
         #expect(settings.visionModel == "")
-        #expect(settings.thinkingLevel == .max)
+        #expect(settings.hudThinkingLevel == .max)
+        #expect(settings.quickChatThinkingLevel == .max)
         #expect(settings.effectiveVisionModel == AgentModelSettings.builtInVisionModel)
     }
 
@@ -29,13 +30,15 @@ struct AgentModelSettingsStoreTests {
         store.hudModel = "openai-codex/gpt-5.6-luna"
         store.quickChatModel = "anthropic/claude-sonnet-4-5"
         store.visionModel = "custom/vision"
-        store.thinkingLevel = .low
+        store.hudThinkingLevel = .low
+        store.quickChatThinkingLevel = .high
 
         let loaded = AgentModelSettings.load(from: defaults)
         #expect(loaded.hudModel == "openai-codex/gpt-5.6-luna")
         #expect(loaded.quickChatModel == "anthropic/claude-sonnet-4-5")
         #expect(loaded.visionModel == "custom/vision")
-        #expect(loaded.thinkingLevel == .low)
+        #expect(loaded.hudThinkingLevel == .low)
+        #expect(loaded.quickChatThinkingLevel == .high)
     }
 
     @MainActor
@@ -50,13 +53,32 @@ struct AgentModelSettingsStoreTests {
         #expect(store.hudModel == "p/m")
     }
 
-    @Test("Invalid stored thinking level falls back to max")
-    func invalidStoredThinkingLevelFallsBackToMax() throws {
+    @Test("Invalid stored thinking levels fall back to max")
+    func invalidStoredThinkingLevelsFallBackToMax() throws {
         let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set("bananas", forKey: "herdr.agent.thinkingLevel")
 
-        #expect(AgentModelSettings.load(from: defaults).thinkingLevel == .max)
+        let settings = AgentModelSettings.load(from: defaults)
+        #expect(settings.hudThinkingLevel == .max)
+        #expect(settings.quickChatThinkingLevel == .max)
+    }
+
+    @Test("Legacy quick chat thinking level migrates to both surfaces")
+    func legacyThinkingLevelMigratesToBothSurfaces() throws {
+        let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(PiThinkingLevel.low.rawValue, forKey: AgentModelSettings.quickChatThinkingLevelKey)
+
+        let migrated = AgentModelSettings.load(from: defaults)
+        #expect(migrated.hudThinkingLevel == .low)
+        #expect(migrated.quickChatThinkingLevel == .low)
+
+        defaults.set(PiThinkingLevel.high.rawValue, forKey: AgentModelSettings.hudThinkingLevelKey)
+        let independent = AgentModelSettings.load(from: defaults)
+        #expect(independent.hudThinkingLevel == .high)
+        #expect(independent.quickChatThinkingLevel == .low)
     }
 }

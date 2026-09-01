@@ -387,7 +387,7 @@ struct HerdrHudSessionTests {
     func submissionsUseConfiguredThinkingLevel() async {
         let defaults = makeDefaults(prefix: "thinking-level")
         let store = AgentModelSettingsStore(defaults: defaults)
-        store.thinkingLevel = .low
+        store.hudThinkingLevel = .low
         let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
         session.draft = "What needs attention?"
 
