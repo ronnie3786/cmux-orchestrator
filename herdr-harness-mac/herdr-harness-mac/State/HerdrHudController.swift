@@ -4,21 +4,6 @@ import Observation
 import QuartzCore
 import SwiftUI
 
-/// Lets the transparent parts of the HUD panel pass clicks through.
-///
-/// The panel is borderless and fully transparent, but AppKit hit-tests an
-/// `NSHostingView` geometrically, so without this the whole frame — including
-/// the empty space around the orb and between the session chips — swallows
-/// clicks meant for whatever is underneath. Returning `nil` for a hit that
-/// lands on the hosting view itself, rather than on one of SwiftUI's own
-/// hit-testable subviews, keeps the controls live and gives the rest back.
-final class HerdrHudHostingView<Content: View>: NSHostingView<Content> {
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let hit = super.hitTest(point)
-        return hit === self ? nil : hit
-    }
-}
-
 final class HerdrHudPanel: NSPanel {
     var onCancel: (() -> Void)?
 
@@ -89,7 +74,7 @@ final class HerdrHudController {
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .utilityWindow
         panel.onCancel = { [weak self] in self?.collapse() }
-        panel.contentView = HerdrHudHostingView(
+        panel.contentView = NSHostingView(
             rootView: HerdrHudRootView(
                 model: model,
                 controller: self,
