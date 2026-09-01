@@ -60,7 +60,13 @@ struct HerdrHudRootView: View {
         .contentShape(Rectangle())
         .onHover { notes.setHovering($0) }
         .onChange(of: notes.layout, initial: true) { _, _ in controller.notesLayoutDidChange() }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The panel is placed by its top-right corner and grows downward, so the
+        // content must be pinned there too. Centering (the default) let content
+        // that had already taken its final size overflow above the screen for
+        // the whole of every frame animation, which read as the HUD jumping
+        // off-screen and sliding back in.
+        .padding(HerdrHudPlacement.shadowMargin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: controller.isExpanded)
         .environment(\.herdrFontScale, fontScale.scale)
         .preferredColorScheme(.dark)

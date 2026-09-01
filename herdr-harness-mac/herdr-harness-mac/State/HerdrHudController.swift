@@ -33,6 +33,11 @@ final class HerdrHudController {
     private var notificationTokens: [NSObjectProtocol] = []
     private var isConfigured = false
     private var isProgrammaticMove = false
+    /// Hover-driven notes layouts can start a new frame animation while the
+    /// previous one is still running. Only the newest animation's completion
+    /// may clear `isProgrammaticMove`, or an intermediate frame gets persisted
+    /// as the user's chosen placement.
+    private var frameAnimationGeneration = 0
     private var enabledRevision = 0
 
     private(set) var isExpanded = false
@@ -265,9 +270,12 @@ final class HerdrHudController {
     private func reclampPlacement() {
         guard let panel else { return }
         isProgrammaticMove = true
+        frameAnimationGeneration &+= 1
+        let generation = frameAnimationGeneration
         panel.setFrame(frame(for: isExpanded), display: true)
         DispatchQueue.main.async { [weak self] in
-            self?.isProgrammaticMove = false
+            guard let self, self.frameAnimationGeneration == generation else { return }
+            self.isProgrammaticMove = false
         }
     }
 
@@ -276,6 +284,8 @@ final class HerdrHudController {
         let newFrame = frame(for: isExpanded)
         let shouldAnimate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         isProgrammaticMove = true
+        frameAnimationGeneration &+= 1
+        let generation = frameAnimationGeneration
         if shouldAnimate {
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.18
@@ -283,13 +293,15 @@ final class HerdrHudController {
                 panel.animator().setFrame(newFrame, display: true)
             }, completionHandler: { [weak self] in
                 DispatchQueue.main.async {
-                    self?.isProgrammaticMove = false
+                    guard let self, self.frameAnimationGeneration == generation else { return }
+                    self.isProgrammaticMove = false
                 }
             })
         } else {
             panel.setFrame(newFrame, display: true)
             DispatchQueue.main.async { [weak self] in
-                self?.isProgrammaticMove = false
+                guard let self, self.frameAnimationGeneration == generation else { return }
+                self.isProgrammaticMove = false
             }
         }
     }

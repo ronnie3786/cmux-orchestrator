@@ -172,15 +172,32 @@ struct HerdrNoteCardView: View {
 
     private func statusText(for note: HerdrNote) -> (text: String, isError: Bool)? {
         if let activity = notes.activities[note.id] {
+            let base: String
             switch activity {
-            case .cleaning: return ("Tidying…", false)
-            case .planning: return ("Thinking about what to do…", false)
-            case .starting: return ("Spinning up a session…", false)
+            case .cleaning: base = "Tidying…"
+            case .planning: base = "Thinking about what to do…"
+            case .starting: base = "Spinning up a session…"
             }
+            return (Self.activityText(base, progress: notes.noteProgress[note.id]), false)
         }
         if let status = notes.noteStatus[note.id], !status.isEmpty { return (status, false) }
         if let error = notes.noteErrors[note.id], !error.isEmpty { return (error, true) }
         return nil
+    }
+
+    /// "Tidying… · 12s · 3 tool calls · Command · git status" — enough to see
+    /// that a long run is alive and what it is doing, without a transcript.
+    static func activityText(_ base: String, progress: HerdrNoteProgress?) -> String {
+        guard let progress else { return base }
+        var parts = [base]
+        if progress.elapsedSeconds > 0 { parts.append("\(progress.elapsedSeconds)s") }
+        if progress.stepCount > 0 {
+            parts.append("\(progress.stepCount) tool call\(progress.stepCount == 1 ? "" : "s")")
+        }
+        if let lastStep = progress.lastStep, !lastStep.isEmpty {
+            parts.append(String(lastStep.prefix(48)))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func statusLine(_ status: (text: String, isError: Bool), for note: HerdrNote) -> some View {

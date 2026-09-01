@@ -14,12 +14,29 @@ protocol HerdrNoteAIRunner {
         thinkingLevel: String?,
         systemPrompt: String?,
         deadline: Duration,
-        appModel: HerdrAppModel
+        appModel: HerdrAppModel,
+        onProgress: @escaping @MainActor (HerdrNoteRunProgress) -> Void
     ) async throws -> String
+}
+
+/// What a headless run has done so far, as reported by the runner while it
+/// polls. Elapsed time is tracked by the notes state itself.
+struct HerdrNoteRunProgress: Equatable, Sendable {
+    var stepCount: Int = 0
+    var lastStep: String? = nil
+}
+
+/// Live activity shown on a busy note: seconds elapsed, tool calls made, and
+/// what the run is doing right now.
+struct HerdrNoteProgress: Equatable, Sendable {
+    var elapsedSeconds: Int = 0
+    var stepCount: Int = 0
+    var lastStep: String? = nil
 }
 
 enum HerdrNoteAIPrompts {
     static let noToolsCharter = "You are a text rewriting assistant. Never call tools; the topology snapshot is irrelevant to this task. Reply with plain text only."
+    static let planningCharter = "You are a planning assistant. Never call tools and do not inspect the machine; work only from the note text in the message. Reply with a single JSON object and nothing else."
 }
 
 enum HerdrNoteAIError: LocalizedError {
@@ -33,7 +50,7 @@ enum HerdrNoteAIError: LocalizedError {
         switch self {
         case let .startFailed(reason), let .runFailed(reason): reason
         case .emptyResponse: "The response was empty."
-        case let .timedOut(seconds): "Timed out after \(seconds)s."
+        case let .timedOut(seconds): "Timed out after \(seconds)s — try a shorter note or a faster notes model in Settings."
         case .cancelled: "Cancelled."
         }
     }
@@ -49,7 +66,8 @@ struct HerdrLiveNoteAIRunner: HerdrNoteAIRunner {
         thinkingLevel: String?,
         systemPrompt: String?,
         deadline: Duration,
-        appModel: HerdrAppModel
+        appModel: HerdrAppModel,
+        onProgress: @escaping @MainActor (HerdrNoteRunProgress) -> Void
     ) async throws -> String {
         let controller = HeadlessAgentController()
         await controller.submit(
@@ -66,7 +84,13 @@ struct HerdrLiveNoteAIRunner: HerdrNoteAIRunner {
         }
         let clock = ContinuousClock()
         let deadlineInstant = clock.now.advanced(by: deadline)
+        var reportedProgress = HerdrNoteRunProgress()
         while controller.isRunning {
+            let progress = Self.progress(for: controller.run?.steps ?? [])
+            if progress != reportedProgress {
+                reportedProgress = progress
+                onProgress(progress)
+            }
             if Task.isCancelled {
                 await Task { @MainActor in await controller.cancel(model: appModel) }.value
                 throw HerdrNoteAIError.cancelled
@@ -88,6 +112,14 @@ struct HerdrLiveNoteAIRunner: HerdrNoteAIRunner {
         case .failed, .cancelled, .queued, .running:
             throw HerdrNoteAIError.runFailed(run.error ?? run.status.label)
         }
+    }
+
+    private static func progress(for steps: [HeadlessAgentStep]) -> HerdrNoteRunProgress {
+        guard let last = HerdrHudSession.hudSteps(from: steps).last else {
+            return HerdrNoteRunProgress(stepCount: steps.count, lastStep: nil)
+        }
+        let detail = last.detail.isEmpty ? last.title : "\(last.title) · \(last.detail)"
+        return HerdrNoteRunProgress(stepCount: steps.count, lastStep: detail)
     }
 }
 
@@ -165,6 +197,7 @@ final class HerdrHudNotesState {
     private(set) var activities: [UUID: Activity] = [:]
     private(set) var noteErrors: [UUID: String] = [:]
     private(set) var noteStatus: [UUID: String] = [:]
+    private(set) var noteProgress: [UUID: HerdrNoteProgress] = [:]
     private(set) var revealRevision: [UUID: Int] = [:]
     private(set) var celebratingNoteID: UUID?
     private(set) var layout: Layout = .hidden
@@ -182,6 +215,7 @@ final class HerdrHudNotesState {
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var hoverTask: Task<Void, Never>?
     @ObservationIgnored private var activityTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var progressTickers: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var celebrationTask: Task<Void, Never>?
     @ObservationIgnored private var noteStatusTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored nonisolated(unsafe) private var terminationObserver: NSObjectProtocol?
@@ -230,6 +264,7 @@ final class HerdrHudNotesState {
         hoverTask?.cancel()
         celebrationTask?.cancel()
         for task in activityTasks.values { task.cancel() }
+        for task in progressTickers.values { task.cancel() }
         for task in noteStatusTasks.values { task.cancel() }
         if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
     }
@@ -337,6 +372,7 @@ final class HerdrHudNotesState {
         let noteText = Self.composeNoteText(note)
         let shouldSnapshot = note.previousVersion == nil || note.lastCleanedAt == nil || note.updatedAt > note.lastCleanedAt!
         activities[id] = .cleaning
+        beginProgress(id)
         let task = Task { [weak self] in
             guard let self else { return }
             defer { self.finishActivity(id) }
@@ -349,7 +385,7 @@ final class HerdrHudNotesState {
             do {
                 let systemPrompt = await model.supportsPromptOverrides(machineID: machineID) ? HerdrNoteAIPrompts.noToolsCharter : nil
                 let prompt = HerdrPromptTemplate.render(self.promptSettings.text(for: .notesCleanup), values: ["note": HerdrNoteAIParsing.fenceSafe(noteText)])
-                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: systemPrompt, deadline: .seconds(60), appModel: model)
+                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: systemPrompt, deadline: .seconds(60), appModel: model, onProgress: { [weak self] progress in self?.reportRunProgress(progress, for: id) })
                 guard let freshIndex = self.notes.firstIndex(where: { $0.id == id }) else { return }
                 guard let cleanup = HerdrNoteAIParsing.cleanup(response) else { self.setError("Couldn't tidy this note — try again.", for: id); return }
                 if shouldSnapshot {
@@ -377,6 +413,7 @@ final class HerdrHudNotesState {
         if noteErrors[id] != nil { noteErrors[id] = nil }
         let noteText = Self.composeNoteText(note)
         activities[id] = .planning
+        beginProgress(id)
         let task = Task { [weak self] in
             guard let self else { return }
             defer { self.finishActivity(id) }
@@ -387,8 +424,12 @@ final class HerdrHudNotesState {
             case let .machineID(value): machineID = value
             }
             do {
+                // Planning is a pure reading task: without the no-tools charter
+                // the ask-mode charter invites the model to explore the machine,
+                // which is what pushed real runs past the deadline.
+                let systemPrompt = await model.supportsPromptOverrides(machineID: machineID) ? HerdrNoteAIPrompts.planningCharter : nil
                 let prompt = HerdrPromptTemplate.render(self.promptSettings.text(for: .notesSmartActions), values: ["note": HerdrNoteAIParsing.fenceSafe(noteText)])
-                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: nil, deadline: .seconds(150), appModel: model)
+                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: systemPrompt, deadline: .seconds(120), appModel: model, onProgress: { [weak self] progress in self?.reportRunProgress(progress, for: id) })
                 guard let freshIndex = self.notes.firstIndex(where: { $0.id == id }) else { return }
                 guard let parsed = HerdrNoteAIParsing.smartActions(response) else {
                     self.setError("Couldn't work out actions for this note.", for: id)
@@ -418,6 +459,7 @@ final class HerdrHudNotesState {
         notes[noteIndex].actions[actionIndex].error = nil
         notes[noteIndex].actions[actionIndex].linkID = nil
         activities[noteID] = .starting(actionID)
+        beginProgress(noteID)
         let task = Task { [weak self] in
             guard let self else { return }
             defer { self.finishActivity(noteID) }
@@ -495,6 +537,38 @@ final class HerdrHudNotesState {
     private func finishActivity(_ id: UUID) {
         if activities[id] != nil { activities[id] = nil }
         activityTasks[id] = nil
+        endProgress(id)
+    }
+
+    /// Starts the one-second elapsed ticker shown on a busy note. The runner
+    /// fills in tool-call counts through `reportRunProgress`.
+    private func beginProgress(_ id: UUID) {
+        progressTickers[id]?.cancel()
+        let initial = HerdrNoteProgress()
+        if noteProgress[id] != initial { noteProgress[id] = initial }
+        progressTickers[id] = Task { [weak self] in
+            var seconds = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, let self, var progress = self.noteProgress[id] else { return }
+                seconds += 1
+                progress.elapsedSeconds = seconds
+                if self.noteProgress[id] != progress { self.noteProgress[id] = progress }
+            }
+        }
+    }
+
+    private func reportRunProgress(_ progress: HerdrNoteRunProgress, for id: UUID) {
+        guard var current = noteProgress[id] else { return }
+        current.stepCount = progress.stepCount
+        current.lastStep = progress.lastStep
+        if noteProgress[id] != current { noteProgress[id] = current }
+    }
+
+    private func endProgress(_ id: UUID) {
+        progressTickers[id]?.cancel()
+        progressTickers[id] = nil
+        if noteProgress[id] != nil { noteProgress[id] = nil }
     }
 
     private func bumpRevealRevision(_ id: UUID) { revealRevision[id, default: 0] += 1 }

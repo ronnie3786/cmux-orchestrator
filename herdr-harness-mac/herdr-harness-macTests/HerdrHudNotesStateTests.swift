@@ -9,8 +9,9 @@ final class FakeNoteAIRunner: HerdrNoteAIRunner {
     var mode: Mode = .succeed("")
     private(set) var calls: [Call] = []
 
-    func run(prompt: String, machineID: String, mode: HeadlessAgentRunMode, model: String?, thinkingLevel: String?, systemPrompt: String?, deadline: Duration, appModel: HerdrAppModel) async throws -> String {
+    func run(prompt: String, machineID: String, mode: HeadlessAgentRunMode, model: String?, thinkingLevel: String?, systemPrompt: String?, deadline: Duration, appModel: HerdrAppModel, onProgress: @escaping @MainActor (HerdrNoteRunProgress) -> Void) async throws -> String {
         calls.append(Call(prompt: prompt, machineID: machineID, mode: mode, systemPrompt: systemPrompt, model: model, thinkingLevel: thinkingLevel))
+        onProgress(HerdrNoteRunProgress(stepCount: 1, lastStep: "Read · note.txt"))
         switch self.mode {
         case let .succeed(text): return text
         case let .throwing(error): throw error
@@ -118,7 +119,8 @@ struct HerdrHudNotesStateTests {
         #expect(harness.state.note(id: id)?.actions.count == 2)
         #expect(harness.state.note(id: id)?.aiSummary == "s")
         #expect(harness.state.note(id: id)?.actions.allSatisfy { $0.status == .ready } == true)
-        #expect(harness.ai.calls[1].systemPrompt == nil)
+        #expect(harness.ai.calls[1].systemPrompt == HerdrNoteAIPrompts.planningCharter)
+        #expect(harness.state.noteProgress[id] == nil)
     }
 
     @Test("Action launch links the pane and sends rendered context")
