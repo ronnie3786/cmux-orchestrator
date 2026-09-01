@@ -121,6 +121,7 @@ class APNsManagerTests(unittest.TestCase):
         self.assertEqual(registered["activity"]["activityId"], "pulse-123")
         self.assertNotIn(TOKEN.lower(), str(registered))
         self.assertEqual(reloaded.configuration()["liveActivityCount"], 1)
+        self.assertTrue(reloaded._live_activities(None)[0]["revealSessionTitles"])
 
         stale_token = reloaded.unregister_live_activity(
             "pulse-123",
@@ -135,7 +136,7 @@ class APNsManagerTests(unittest.TestCase):
         self.assertTrue(removed["unregistered"])
         self.assertEqual(removed["liveActivityCount"], 0)
 
-    def test_live_activity_update_uses_activitykit_contract_and_aggregate_only_state(self):
+    def test_live_activity_update_uses_activitykit_contract(self):
         key = Path(self.temp.name) / "AuthKey.p8"
         key.write_text("fixture", encoding="utf-8")
         manager = APNsManager(
@@ -177,6 +178,44 @@ class APNsManagerTests(unittest.TestCase):
         self.assertNotIn("workspaceId", encoded)
         self.assertNotIn("paneId", encoded)
         self.assertNotIn("title", encoded)
+
+    def test_live_activity_delivery_redacts_sessions_per_registration(self):
+        self.manager.register_live_activity(
+            TOKEN,
+            activity_id="pulse-revealed",
+            bundle_id="com.example.Herdr",
+            environment="sandbox",
+        )
+        self.manager.register_live_activity(
+            "cd" * 32,
+            activity_id="pulse-redacted",
+            bundle_id="com.example.Herdr",
+            environment="sandbox",
+            reveal_session_titles=False,
+        )
+        state = {
+            "phase": "working",
+            "sessions": [
+                {
+                    "id": "w1:p1",
+                    "title": "Implement settings",
+                    "agent": "builder",
+                    "state": "working",
+                    "since": 123,
+                }
+            ],
+        }
+
+        with patch.object(self.manager, "_auth_token", return_value=("jwt", None)), patch.object(
+            self.manager, "_send_live_activity", return_value=(True, "")
+        ) as send:
+            result = self.manager.notify_herd_pulse(state)
+
+        self.assertEqual(result["sent"], 2)
+        revealed = send.call_args_list[0].args[1]["aps"]["content-state"]["sessions"][0]
+        redacted = send.call_args_list[1].args[1]["aps"]["content-state"]["sessions"][0]
+        self.assertEqual(revealed, state["sessions"][0])
+        self.assertEqual(redacted, {"id": "s1", "title": "session 1", "agent": "", "state": "working", "since": 123})
 
     def test_live_activity_delivery_uses_activitykit_topic_and_headers(self):
         registration = {

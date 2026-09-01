@@ -11,14 +11,16 @@ actor HerdPulseRegistrationClient {
 
     func register(
         activityID: String,
-        pushToken: String
+        pushToken: String,
+        revealSessionTitles: Bool
     ) async throws -> HerdPulseAPNsCapability {
         let body = HerdPulseRegistrationBody(
             activityId: activityID,
             pushToken: pushToken,
             bundleId: Bundle.main.bundleIdentifier
                 ?? "dev.ronnierocha.herdr-harness.herdr-harness-ios",
-            environment: Self.apnsEnvironment
+            environment: Self.apnsEnvironment,
+            revealSessionTitles: revealSessionTitles
         )
         try await send(path: "/api/v1/live-activities", body: body)
         do {
@@ -86,6 +88,7 @@ private struct HerdPulseRegistrationBody: Encodable, Sendable {
     let pushToken: String
     let bundleId: String
     let environment: String
+    let revealSessionTitles: Bool
 }
 
 private struct HerdPulseUnregistrationBody: Encodable, Sendable {

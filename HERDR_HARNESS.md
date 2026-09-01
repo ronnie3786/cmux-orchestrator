@@ -604,9 +604,10 @@ delivery. Check the backend's delivery readiness with authenticated
 
 Herd Pulse can be started from the waveform button in the workspace header.
 Its ActivityKit push token is registered separately from alert notification
-tokens. The server sends only privacy-safe aggregate counts and connection
-state to the Lock Screen and Dynamic Island. It never sends workspace names,
-pane identifiers, paths, prompts, or terminal content.
+tokens. The server always sends aggregate counts and connection state, plus a
+capped six-row list of working, blocked, and done-unread session titles to
+devices that registered with `revealSessionTitles: true`. That list mirrors
+the acknowledgement state of `POST /api/v1/panes/{paneId}/alerts/read`.
 
 ## Verification
 

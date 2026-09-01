@@ -230,6 +230,7 @@ class APNsManager:
         activity_id: str,
         bundle_id: str,
         environment: str,
+        reveal_session_titles: bool = True,
     ) -> dict:
         token = _normalize_token(push_token)
         identifier = str(activity_id or "").strip()
@@ -246,6 +247,7 @@ class APNsManager:
                 "token": token,
                 "bundleId": bundle,
                 "environment": selected_environment,
+                "revealSessionTitles": bool(reveal_session_titles),
                 "updatedAt": utc_now(),
             }
             self._write(payload)
@@ -603,6 +605,24 @@ class APNsManager:
         threading.Thread(target=deliver, name=f"herdr-apns-{alert_id[-8:]}", daemon=True).start()
         return True
 
+    @staticmethod
+    def _redact_sessions(content_state: dict) -> dict:
+        redacted = dict(content_state)
+        sessions = content_state.get("sessions")
+        if not isinstance(sessions, list):
+            return redacted
+        redacted["sessions"] = [
+            {
+                **session,
+                "id": f"s{index}",
+                "title": f"session {index}",
+                "agent": "",
+            }
+            for index, session in enumerate(sessions, start=1)
+            if isinstance(session, dict)
+        ]
+        return redacted
+
     def _deliver_herd_pulse(
         self,
         content_state: dict,
@@ -623,26 +643,36 @@ class APNsManager:
 
         phase = str(content_state.get("phase") or "offline")
         stale_date = timestamp if phase == "offline" else timestamp + 15 * 60
-        payload = {
-            "aps": {
-                "timestamp": timestamp,
-                "event": "update",
-                "content-state": dict(content_state),
-                "stale-date": stale_date,
-                "relevance-score": {
-                    "attention": 100,
-                    "ready": 80,
-                    "working": 50,
-                    "resting": 20,
-                    "offline": 10,
-                }.get(phase, 10),
+        def build_payload(state: dict) -> dict:
+            return {
+                "aps": {
+                    "timestamp": timestamp,
+                    "event": "update",
+                    "content-state": dict(state),
+                    "stale-date": stale_date,
+                    "relevance-score": {
+                        "attention": 100,
+                        "ready": 80,
+                        "working": 50,
+                        "resting": 20,
+                        "offline": 10,
+                    }.get(phase, 10),
+                }
             }
-        }
+
+        revealed_payload = build_payload(content_state)
+        redacted_payload: Optional[dict] = None
         priority = 10 if phase in {"attention", "ready"} else 5
         sent = 0
         pruned = 0
         errors = []
         for registration in registrations:
+            if registration.get("revealSessionTitles", True):
+                payload = revealed_payload
+            else:
+                if redacted_payload is None:
+                    redacted_payload = build_payload(self._redact_sessions(content_state))
+                payload = redacted_payload
             send_result = self._coerce_live_activity_result(
                 self._send_live_activity(
                     registration,

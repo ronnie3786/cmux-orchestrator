@@ -463,7 +463,15 @@ class FakeHTTPService:
         self.calls.append(("push.unregister", {"deviceToken": device_token}))
         return {"ok": True, "unregistered": True, "deviceCount": 0}
 
-    def register_live_activity(self, push_token, *, activity_id, bundle_id, environment):
+    def register_live_activity(
+        self,
+        push_token,
+        *,
+        activity_id,
+        bundle_id,
+        environment,
+        reveal_session_titles=True,
+    ):
         self.calls.append(
             (
                 "live_activity.register",
@@ -472,6 +480,7 @@ class FakeHTTPService:
                     "activityId": activity_id,
                     "bundleId": bundle_id,
                     "environment": environment,
+                    "revealSessionTitles": reveal_session_titles,
                 },
             )
         )
@@ -1835,6 +1844,7 @@ class HerdrHTTPTests(unittest.TestCase):
                 "pushToken": token,
                 "bundleId": "com.example.Herdr",
                 "environment": "sandbox",
+                "revealSessionTitles": False,
             },
         )
         unregistered, _, _ = self.request(
@@ -1846,6 +1856,7 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(unauthorized, 401)
         self.assertEqual(registered, 200)
         self.assertTrue(body["registered"])
+        self.assertFalse(self.service.calls[-2][1]["revealSessionTitles"])
         self.assertEqual(unregistered, 200)
         self.assertEqual(self.service.calls[-2][0], "live_activity.register")
         self.assertEqual(self.service.calls[-1][0], "live_activity.unregister")

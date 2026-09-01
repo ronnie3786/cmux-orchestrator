@@ -20,4 +20,12 @@ enum HerdPulseTheme {
         case .offline: mist
         }
     }
+
+    static func color(for state: HerdPulseSessionState) -> Color {
+        switch state {
+        case .blocked: alert
+        case .done: signal
+        case .working: working
+        }
+    }
 }

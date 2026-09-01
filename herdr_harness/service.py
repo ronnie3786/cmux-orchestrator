@@ -22,7 +22,7 @@ from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAU
 from .agent_activity import AgentActivityManager
 from .agent_runs import AgentRunError, AgentRunManager
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
-from .cleanup import CleanupManager
+from .cleanup import CleanupManager, _parse_time
 from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
@@ -221,6 +221,8 @@ class HerdrService:
         *,
         connected: bool,
         acked_done_panes: frozenset[str] = frozenset(),
+        lifecycle_by_pane: Optional[dict] = None,
+        limit: int = 6,
     ) -> dict:
         workspaces = [item for item in snapshot.get("workspaces", []) if isinstance(item, dict)]
         panes = [item for item in snapshot.get("panes", []) if isinstance(item, dict)]
@@ -231,6 +233,63 @@ class HerdrService:
             and str(item.get("pane_id")) not in acked_done_panes
             for item in panes
         )
+        lifecycle_by_pane = lifecycle_by_pane or {}
+        candidates = []
+        for pane in panes:
+            pane_id = str(pane.get("pane_id"))
+            status = pane.get("agent_status")
+            if status not in {"blocked", "working"} and not (
+                status == "done" and pane_id not in acked_done_panes
+            ):
+                continue
+            lifecycle = lifecycle_by_pane.get(pane_id)
+            lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
+            timestamp = lifecycle.get("workingSince" if status == "working" else "statusSinceAt")
+            since = int(_parse_time(timestamp) or 0)
+            agent_info = pane.get("agent_info") if isinstance(pane.get("agent_info"), dict) else {}
+            agent = (
+                agent_info.get("name")
+                or agent_info.get("display_agent")
+                or pane.get("display_agent")
+                or agent_info.get("agent")
+                or pane.get("agent")
+                or "Agent"
+            )
+            title = (
+                agent_info.get("title")
+                or pane.get("title")
+                or pane.get("label")
+                or pane.get("terminal_title_stripped")
+            )
+            revision = pane.get("revision")
+            try:
+                revision_sort = float(revision) if not isinstance(revision, bool) else 0
+            except (TypeError, ValueError):
+                revision_sort = 0
+            candidates.append(
+                {
+                    "id": pane_id,
+                    "title": str(title or "")[:40],
+                    "agent": str(agent)[:16],
+                    "state": status,
+                    "since": since,
+                    "_revision": revision_sort,
+                }
+            )
+        # Missing lifecycle data sorts as oldest (epoch 0), then stable pane ID.
+        candidates.sort(
+            key=lambda item: (
+                {"blocked": 0, "done": 1, "working": 2}[item["state"]],
+                item["since"] if item["state"] == "working" else -item["since"],
+                -item["_revision"],
+                item["id"],
+            )
+        )
+        session_limit = max(0, int(limit))
+        sessions = [
+            {key: value for key, value in item.items() if key != "_revision"}
+            for item in candidates[:session_limit]
+        ]
         if not connected:
             phase = "offline"
             connection = "offline"
@@ -252,6 +311,8 @@ class HerdrService:
             "workingCount": working,
             "attentionCount": attention,
             "readyCount": ready,
+            "sessions": sessions,
+            "sessionOverflow": max(0, len(candidates) - session_limit),
             "connection": connection,
             "phase": phase,
             "updatedAt": int(time.time()),
@@ -265,6 +326,7 @@ class HerdrService:
             snapshot,
             connected=connected,
             acked_done_panes=self.alerts.acked_done_panes(),
+            lifecycle_by_pane=self.panes_seen.lifecycle_map(),
         )
         return self.push.notify_herd_pulse_async(
             content_state,
@@ -532,6 +594,7 @@ class HerdrService:
                 focus_changed = self.alerts.mark_read_for_pane(pane_id)
         if resolved or focus_changed:
             self._publish_read_state_changed()
+            self._publish_herd_pulse()
         self._refresh_event.set()
 
     def _cached_snapshot(self) -> tuple[dict, str]:
@@ -2500,6 +2563,7 @@ class HerdrService:
         is_acked = pane_id in self.alerts.acked_done_panes()
         if changed or (not was_acked and is_acked):
             self._publish_read_state_changed()
+            self._publish_herd_pulse()
         return {
             "ok": True,
             "paneId": pane_id,
@@ -2554,12 +2618,14 @@ class HerdrService:
         activity_id: str,
         bundle_id: str,
         environment: str,
+        reveal_session_titles: bool = True,
     ) -> dict:
         result = self.push.register_live_activity(
             push_token,
             activity_id=activity_id,
             bundle_id=bundle_id,
             environment=environment,
+            reveal_session_titles=reveal_session_titles,
         )
         self._publish_herd_pulse(force=True, activity_id=activity_id)
         return result

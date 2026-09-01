@@ -63,6 +63,7 @@ final class HerdPulseCoordinator {
 
     private func performSynchronization(context: HerdPulseSyncContext) async {
         let aggregateChanged = aggregate != context.aggregate
+        let revealSessionTitlesChanged = aggregate.revealSessionTitles != context.aggregate.revealSessionTitles
         aggregate = context.aggregate
         var activityIDs = Self.activityIDs()
 
@@ -128,6 +129,9 @@ final class HerdPulseCoordinator {
         isRunning = true
         statusText = aggregate.phase.displayTitle
         await observePushTokens(activityID: activityID)
+        if revealSessionTitlesChanged {
+            await reregisterPushTokenForSessionTitlePreference(activityID: activityID)
+        }
         if aggregateChanged || lastContentState == nil {
             await updateActivity(id: activityID)
         }
@@ -268,6 +272,17 @@ final class HerdPulseCoordinator {
         await stateTask?.value
     }
 
+    private func reregisterPushTokenForSessionTitlePreference(activityID: String) async {
+        guard activityID == observedActivityID, let token = observedPushToken else { return }
+        let retryTask = registrationRetryTask
+        registrationRetryTask = nil
+        retryTask?.cancel()
+        await retryTask?.value
+        guard activityID == observedActivityID, observedPushToken == token else { return }
+        serverRegisteredPushToken = nil
+        await receivePushToken(token, activityID: activityID, generation: registrationGeneration)
+    }
+
     func receivePushToken(
         _ token: String,
         activityID: String,
@@ -314,6 +329,7 @@ final class HerdPulseCoordinator {
                 client: client,
                 activityID: activityID,
                 pushToken: token,
+                revealSessionTitles: aggregate.revealSessionTitles,
                 receiver: receiver
             )
         }
@@ -554,6 +570,7 @@ final class HerdPulseCoordinator {
         client: HerdPulseRegistrationClient,
         activityID: String,
         pushToken: String,
+        revealSessionTitles: Bool,
         receiver: HerdPulseRegistrationReceiver,
         policy: HerdPulseRegistrationRetryPolicy = .standard
     ) async {
@@ -562,7 +579,8 @@ final class HerdPulseCoordinator {
             do {
                 let capability = try await client.register(
                     activityID: activityID,
-                    pushToken: pushToken
+                    pushToken: pushToken,
+                    revealSessionTitles: revealSessionTitles
                 )
                 guard !Task.isCancelled else { return }
                 await receiver.receive(.succeeded(capability))

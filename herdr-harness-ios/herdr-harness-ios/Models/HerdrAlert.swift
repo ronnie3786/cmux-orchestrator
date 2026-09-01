@@ -20,6 +20,21 @@ struct HerdrAlert: Decodable, Equatable, Hashable, Identifiable, Sendable {
         MachineScopedID.compose(machineID: machineID, rawID: paneID)
     }
 
+    var createdDate: Date? {
+        Self.withFractional.date(from: createdAt) ?? Self.withoutFractional.date(from: createdAt)
+    }
+
+    nonisolated(unsafe) private static let withFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    nonisolated(unsafe) private static let withoutFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
     func stamped(machineID: String) -> HerdrAlert {
         var copy = self
         copy.machineID = machineID

@@ -1581,12 +1581,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 environment = str(body.get("environment") or "sandbox").strip().lower()
                 if environment not in {"sandbox", "production"}:
                     raise HTTPValidationError("environment must be sandbox or production")
+                reveal_session_titles = _boolean(
+                    body.get("revealSessionTitles"),
+                    "revealSessionTitles",
+                    default=True,
+                )
                 try:
                     return service.register_live_activity(
                         token,
                         activity_id=activity_id,
                         bundle_id=bundle_id,
                         environment=environment,
+                        reveal_session_titles=reveal_session_titles,
                     )
                 except ValueError as exc:
                     raise HTTPValidationError(str(exc)) from exc

@@ -1,12 +1,12 @@
 import Foundation
 
-/// The only state Herdr exposes outside its own window. Keep this payload
-/// aggregate-only: on Mac the menu bar is visible in screen shares, recordings,
-/// and screenshots, exactly like the iOS lock screen it replaces.
+/// Herdr exposes aggregate counts always, plus a capped, opt-in list of working,
+/// blocked, and done-unread session titles for Live Activities. That list mirrors
+/// `POST /api/v1/panes/{paneId}/alerts/read`; this Mac menu-bar payload remains
+/// aggregate-only because it is visible in screen shares, recordings, and screenshots.
 ///
-/// Extracted from `HerdrPulseShared/HerdPulseAttributes.swift` without
-/// ActivityKit — the `Codable` shape (property names, order, and the eight
-/// encoded keys) is unchanged so the privacy assertion still pins it.
+/// This aggregate subset is extracted from `HerdrPulseShared/HerdPulseAttributes.swift`
+/// without ActivityKit. Its own `Codable` shape remains intentionally stable.
 struct HerdPulseContentState: Codable, Hashable, Sendable {
     let workspaceCount: Int
     let paneCount: Int

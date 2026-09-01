@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Herd Pulse privacy-safe aggregation", .serialized)
 struct HerdPulseTests {
-    @Test("Aggregate counts every state without exporting session identity")
+    @Test("Aggregate counts every state and redacts identity when requested")
     func aggregateCountsStates() throws {
         let panes = [
             pane(id: "secret-work:p1", status: .working),
@@ -15,6 +15,9 @@ struct HerdPulseTests {
         ]
         let aggregate = HerdPulseAggregate(
             workspaces: [workspace(label: "Confidential Project", panes: panes)],
+            alerts: [],
+            pendingReadPaneIDs: [],
+            revealTitles: true,
             connectionState: .live
         )
 
@@ -29,10 +32,23 @@ struct HerdPulseTests {
         let payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(Set(payload.keys) == [
             "workspaceCount", "paneCount", "workingCount", "attentionCount",
-            "readyCount", "connection", "phase", "updatedAt",
+            "readyCount", "connection", "phase", "updatedAt", "sessions", "sessionOverflow",
         ])
-        #expect(!String(decoding: data, as: UTF8.self).contains("Confidential"))
-        #expect(!String(decoding: data, as: UTF8.self).contains("secret-work"))
+        #expect(String(decoding: data, as: UTF8.self).contains("Secret pane"))
+        #expect(String(decoding: data, as: UTF8.self).contains("secret-work"))
+
+        let redacted = HerdPulseAggregate(
+            workspaces: [workspace(label: "Confidential Project", panes: panes)],
+            alerts: [],
+            pendingReadPaneIDs: [],
+            revealTitles: false,
+            connectionState: .live
+        )
+        let redactedData = try JSONEncoder().encode(redacted.contentState(at: Date(timeIntervalSince1970: 123)))
+        let redactedPayload = String(decoding: redactedData, as: UTF8.self)
+        #expect(redactedPayload.contains("session 1"))
+        #expect(!redactedPayload.contains("Secret pane"))
+        #expect(!redactedPayload.contains("secret-work"))
     }
 
     @Test("Connection and attention priority produce deterministic phases")

@@ -29,12 +29,21 @@ struct HerdPulseLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack {
-                        metric("needs you", value: context.state.attentionCount, color: HerdPulseTheme.alert)
-                        Spacer()
-                        metric("ready", value: context.state.readyCount, color: HerdPulseTheme.signal)
-                        Spacer()
-                        metric("working", value: context.state.workingCount, color: HerdPulseTheme.working)
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            metric("needs you", value: context.state.attentionCount, color: HerdPulseTheme.alert)
+                            Spacer()
+                            metric("ready", value: context.state.readyCount, color: HerdPulseTheme.signal)
+                            Spacer()
+                            metric("working", value: context.state.workingCount, color: HerdPulseTheme.working)
+                        }
+                        if !context.state.sessions.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(context.state.sessions.prefix(2)) { session in
+                                    HerdPulseSessionRow(session: session)
+                                }
+                            }
+                        }
                     }
                     .padding(.top, 5)
                 }

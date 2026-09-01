@@ -48,6 +48,7 @@ final class HerdrAppModel {
     var hasCompletedSetup: Bool
     var smartAlertsEnabled: Bool
     var preferPrivateTranscription: Bool
+    var showSessionTitles: Bool
     var remotePushConfigured = false
     var remotePushDeliveryVerified = false
     var remotePushRegistrationError: String?
@@ -57,12 +58,18 @@ final class HerdrAppModel {
     @ObservationIgnored private var pendingPushToken: String?
     @ObservationIgnored private var pendingPaneID: String?
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
+    /// Scoped pane IDs whose read acknowledgement has not yet been confirmed by
+    /// the server. A refresh that overlaps the POST must not resurrect the
+    /// server's stale unread copy.
+    @ObservationIgnored private var pendingReadAcknowledgements: Set<String> = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
     /// Internal test seam for deterministic URLProtocol-backed clients.
     @ObservationIgnored var clientFactory: (ServerConfiguration) -> HerdrAPIClient = {
         HerdrAPIClient(configuration: $0)
     }
     private static let connectionFailureGrace: TimeInterval = 10
+    private static let paneAlertReadAttempts = 3
+    private static let paneAlertReadRetryDelay: Duration = .milliseconds(400)
     private static let alertsLogger = Logger(subsystem: "dev.ronnierocha.herdr-harness", category: "alerts")
 
     init(
@@ -107,6 +114,7 @@ final class HerdrAppModel {
         hasCompletedSetup = forcedDemo || uiTestServerURL != nil || defaults.bool(forKey: "herdr.completedSetup")
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
+        showSessionTitles = defaults.object(forKey: "herdr.herdPulse.showSessionTitles") as? Bool ?? true
         collapsedSidebarWorkspaceIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedWorkspaces") ?? []
         )
@@ -162,6 +170,10 @@ final class HerdrAppModel {
     }
 
     var unreadAlertCount: Int { alerts.count(where: { !$0.isRead }) }
+    var unreadPaneIDs: Set<String> {
+        Set(alerts.lazy.filter { !$0.isRead }.map(\.scopedPaneID))
+    }
+    var pendingReadPaneIDs: Set<String> { pendingReadAcknowledgements }
     var workingCount: Int { workspaces.flatMap(\.panes).count(where: { $0.agentStatus == .working }) }
     var paneCount: Int { workspaces.reduce(0) { $0 + $1.paneCount } }
     var canControl: Bool { isDemoMode || connectionState == .live }
@@ -519,6 +531,11 @@ final class HerdrAppModel {
     func setPreferPrivateTranscription(_ enabled: Bool) {
         preferPrivateTranscription = enabled
         UserDefaults.standard.set(enabled, forKey: "herdr.preferPrivateTranscription")
+    }
+
+    func setShowSessionTitles(_ enabled: Bool) {
+        showSessionTitles = enabled
+        userDefaults.set(enabled, forKey: "herdr.herdPulse.showSessionTitles")
     }
 
     func transcribeVoiceNote(at fileURL: URL) async throws -> VoiceTranscription {
@@ -984,37 +1001,59 @@ final class HerdrAppModel {
     }
 
     func clearAlertsForPaneOnOpen(_ pane: HerdrPane) {
-        let hasUnreadAlerts = alerts.contains { alert in
-            alert.scopedPaneID == pane.id && !alert.isRead
-        }
-        if hasUnreadAlerts {
-            alerts = alerts.map { alert in
-                guard alert.scopedPaneID == pane.id, !alert.isRead else { return alert }
-                return HerdrAlert(
-                    id: alert.rawID,
-                    workspaceID: alert.workspaceID,
-                    paneID: alert.paneID,
-                    status: alert.status,
-                    title: alert.title,
-                    message: alert.message,
-                    createdAt: alert.createdAt,
-                    isRead: true
-                ).stamped(machineID: alert.machineID)
-            }
-            Task { await NotificationManager.setBadge(unreadAlertCount) }
+        _ = markPaneAlertsReadLocally(pane.id)
+        markPaneAlertsReadRemotely(pane)
+    }
+
+    @discardableResult
+    private func markPaneAlertsReadLocally(_ paneID: String) -> Bool {
+        guard alerts.contains(where: { $0.scopedPaneID == paneID && !$0.isRead }) else {
+            return false
         }
 
-        guard !isDemoMode else { return }
+        alerts = alerts.map { alert in
+            guard alert.scopedPaneID == paneID, !alert.isRead else { return alert }
+            return Self.markedRead(alert)
+        }
+        Task { await NotificationManager.setBadge(unreadAlertCount) }
+        return true
+    }
 
-        guard let client = client(forMachine: pane.machineID) else { return }
+    private static func markedRead(_ alert: HerdrAlert) -> HerdrAlert {
+        HerdrAlert(
+            id: alert.rawID,
+            workspaceID: alert.workspaceID,
+            paneID: alert.paneID,
+            status: alert.status,
+            title: alert.title,
+            message: alert.message,
+            createdAt: alert.createdAt,
+            isRead: true
+        ).stamped(machineID: alert.machineID)
+    }
+
+    private func markPaneAlertsReadRemotely(_ pane: HerdrPane) {
+        guard !isDemoMode, let client = client(forMachine: pane.machineID) else { return }
+        let scopedPaneID = pane.id
+        pendingReadAcknowledgements.insert(scopedPaneID)
         Task {
-            do {
-                try await client.markPaneAlertsRead(paneID: pane.paneID)
-            } catch {
-                Self.alertsLogger.error(
-                    "failed to mark pane \(pane.paneID, privacy: .public) alerts read: \(error.localizedDescription, privacy: .public)"
-                )
+            for attempt in 1...Self.paneAlertReadAttempts {
+                do {
+                    try await client.markPaneAlertsRead(paneID: pane.paneID)
+                    break
+                } catch {
+                    if attempt == Self.paneAlertReadAttempts {
+                        Self.alertsLogger.error(
+                            "failed to mark pane \(pane.paneID, privacy: .public) alerts read: \(error.localizedDescription, privacy: .public)"
+                        )
+                    } else {
+                        try? await Task.sleep(for: Self.paneAlertReadRetryDelay)
+                    }
+                }
             }
+            // A permanent failure must release the optimistic hold so a later
+            // refresh can reflect the server's actual acknowledgement state.
+            self.pendingReadAcknowledgements.remove(scopedPaneID)
         }
     }
 
@@ -1174,7 +1213,8 @@ final class HerdrAppModel {
         let freshWorkspaces = response.workspaces.map { $0.stamped(machineID: machineID) }
         let freshAlerts = response.alerts.map { $0.stamped(machineID: machineID) }
         workspaces = workspaces.filter { $0.machineID != machineID } + freshWorkspaces
-        alerts = alerts.filter { $0.machineID != machineID } + freshAlerts
+        let mergedAlerts = mergeAlerts(fresh: freshAlerts)
+        alerts = alerts.filter { $0.machineID != machineID } + mergedAlerts
         reconcileStarredChats(machineID: machineID, serverStarredRawIDs: response.starredPaneIDs)
         let currentAlertIDs = Set(freshAlerts.map(\.id))
         let readAlertIDs = Set(freshAlerts.filter(\.isRead).map(\.id))
@@ -1200,6 +1240,16 @@ final class HerdrAppModel {
             pendingLocalAlertIDs.remove(alert.id)
         }
         await NotificationManager.setBadge(unreadAlertCount)
+    }
+
+    private func mergeAlerts(fresh: [HerdrAlert]) -> [HerdrAlert] {
+        guard !pendingReadAcknowledgements.isEmpty else { return fresh }
+        return fresh.map { alert in
+            guard !alert.isRead,
+                  pendingReadAcknowledgements.contains(alert.scopedPaneID)
+            else { return alert }
+            return Self.markedRead(alert)
+        }
     }
 
     private func syncPushDevice(machineID: String, using client: HerdrAPIClient, expectedGeneration: Int) async {

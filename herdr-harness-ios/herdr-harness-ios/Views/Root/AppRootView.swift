@@ -69,6 +69,9 @@ struct AppRootView: View {
         return HerdPulseSyncContext(
             aggregate: HerdPulseAggregate(
                 workspaces: model.workspaces,
+                alerts: model.alerts,
+                pendingReadPaneIDs: model.pendingReadPaneIDs,
+                revealTitles: model.showSessionTitles,
                 connectionState: model.connectionState
             ),
             serverConnection: model.activeServerConnection

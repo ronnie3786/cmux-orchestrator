@@ -86,6 +86,16 @@ struct SettingsView: View {
                     Task { await model.setSmartAlerts(newValue) }
                 }
 
+            Toggle(
+                "Show session names on Lock Screen and Dynamic Island",
+                systemImage: "rectangle.and.text.magnifyingglass",
+                isOn: $model.showSessionTitles
+            )
+            .onChange(of: model.showSessionTitles) { oldValue, newValue in
+                guard oldValue != newValue else { return }
+                model.setShowSessionTitles(newValue)
+            }
+
             LabeledContent("Delivery") {
                 Text(model.remotePushStatusText)
                     .foregroundStyle(model.remotePushDeliveryVerified ? HerdrTheme.signal : .secondary)

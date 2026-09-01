@@ -5,41 +5,68 @@ struct HerdPulseLockScreenView: View {
     let context: ActivityViewContext<HerdPulseAttributes>
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    HerdPulseStatusRail(state: context.state)
-                    Text("HERD PULSE")
-                        .font(.caption.monospaced().bold())
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        HerdPulseStatusRail(state: context.state)
+                        Text("HERD PULSE")
+                            .font(.caption.monospaced().bold())
+                            .foregroundStyle(HerdPulseTheme.mist)
+                    }
+
+                    Text(context.isStale ? "Last known herd" : title)
+                        .font(.headline.monospaced().bold())
+                        .foregroundStyle(HerdPulseTheme.text)
+
+                    Text(detail)
+                        .font(.subheadline.monospaced())
                         .foregroundStyle(HerdPulseTheme.mist)
+                        .lineLimit(1)
                 }
 
-                Text(context.isStale ? "Last known herd" : title)
-                    .font(.headline.monospaced().bold())
-                    .foregroundStyle(HerdPulseTheme.text)
+                Spacer(minLength: 8)
 
-                Text(detail)
-                    .font(.subheadline.monospaced())
-                    .foregroundStyle(HerdPulseTheme.mist)
-                    .lineLimit(1)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("\(context.state.paneCount)")
+                        .font(.title.monospaced().bold())
+                        .foregroundStyle(HerdPulseTheme.color(for: context.state.phase))
+                    Text("panes")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(HerdPulseTheme.mist)
+                }
+                .accessibilityElement(children: .combine)
             }
 
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("\(context.state.paneCount)")
-                    .font(.title.monospaced().bold())
-                    .foregroundStyle(HerdPulseTheme.color(for: context.state.phase))
-                Text("panes")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(HerdPulseTheme.mist)
+            if !context.state.sessions.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(context.state.sessions.prefix(4).enumerated()), id: \.element.id) { index, session in
+                        row(session, index: index)
+                    }
+                    let overflow = context.state.sessionOverflow + max(0, context.state.sessions.count - 4)
+                    if overflow > 0 {
+                        Text("+\(overflow) more")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(HerdPulseTheme.mist)
+                    }
+                }
             }
-            .accessibilityElement(children: .combine)
         }
         .padding()
         .activityBackgroundTint(HerdPulseTheme.graphite)
         .activitySystemActionForegroundColor(HerdPulseTheme.text)
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private func row(_ session: HerdPulseAttributes.ContentState.Session, index: Int) -> some View {
+        if session.id != "s\(index + 1)", let url = URL(string: "herdr://pane/\(session.id)") {
+            Link(destination: url) {
+                HerdPulseSessionRow(session: session)
+            }
+        } else {
+            HerdPulseSessionRow(session: session)
+        }
     }
 
     private var title: String {

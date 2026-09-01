@@ -217,7 +217,15 @@ class FakePush:
         self.pulses.append((copy.deepcopy(content_state), force, activity_id))
         return True
 
-    def register_live_activity(self, push_token, *, activity_id, bundle_id, environment):
+    def register_live_activity(
+        self,
+        push_token,
+        *,
+        activity_id,
+        bundle_id,
+        environment,
+        reveal_session_titles=True,
+    ):
         return {"ok": True, "registered": True, "activity": {"activityId": activity_id}}
 
     def unregister_live_activity(self, activity_id, *, push_token=None):
@@ -225,7 +233,7 @@ class FakePush:
 
 
 class HerdrServiceTests(unittest.TestCase):
-    def test_herd_pulse_is_an_aggregate_without_session_identity(self):
+    def test_herd_pulse_includes_revealed_session_identity(self):
         push = FakePush()
         service = HerdrService(FakeClient([snapshot_with_status("blocked")]), push=push, environ={})
 
@@ -236,10 +244,19 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(state["paneCount"], 1)
         self.assertEqual(state["attentionCount"], 1)
         self.assertEqual(state["phase"], "offline")
-        encoded = json.dumps(state)
-        self.assertNotIn("Feature Lab", encoded)
-        self.assertNotIn("w1:p1", encoded)
-        self.assertNotIn("Implement settings", encoded)
+        self.assertEqual(
+            state["sessions"],
+            [
+                {
+                    "id": "w1:p1",
+                    "title": "Implement settings",
+                    "agent": "Agent",
+                    "state": "blocked",
+                    "since": state["sessions"][0]["since"],
+                }
+            ],
+        )
+        self.assertEqual(state["sessionOverflow"], 0)
 
     def test_snapshot_is_raw_and_workspace_composite_preserves_unknown_fields(self):
         raw = snapshot_with_status()
@@ -334,9 +351,91 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(push.pulses[-1][0]["readyCount"], 1)
 
         service.mark_pane_alerts_read("w1:p1")
-        service._publish_herd_pulse(force=True)
 
         self.assertEqual(push.pulses[-1][0]["readyCount"], 0)
+
+    def test_herd_pulse_sessions_share_done_acknowledgement_predicate(self):
+        snapshot = snapshot_with_statuses("done", "working")
+        blocked = copy.deepcopy(snapshot["panes"][0])
+        blocked.update({"pane_id": "w1:p3", "agent_status": "blocked", "revision": 12})
+        snapshot["panes"].append(blocked)
+        unacknowledged_done = copy.deepcopy(snapshot["panes"][0])
+        unacknowledged_done.update({"pane_id": "w1:p4", "revision": 13})
+        snapshot["panes"].append(unacknowledged_done)
+        lifecycle = {
+            "w1:p1": {"statusSinceAt": "2026-01-01T00:00:00Z"},
+            "w1:p2": {"workingSince": "2026-01-02T00:00:00Z"},
+            "w1:p3": {"statusSinceAt": "2026-01-03T00:00:00Z"},
+            "w1:p4": {"statusSinceAt": "2026-01-04T00:00:00Z"},
+        }
+
+        state = HerdrService._herd_pulse_state(
+            snapshot,
+            connected=True,
+            acked_done_panes=frozenset({"w1:p1"}),
+            lifecycle_by_pane=lifecycle,
+        )
+
+        self.assertEqual(state["readyCount"], 1)
+        self.assertEqual(
+            [session["id"] for session in state["sessions"]],
+            ["w1:p3", "w1:p4", "w1:p2"],
+        )
+
+    def test_herd_pulse_sessions_sort_by_rank_lifecycle_revision_and_pane_id(self):
+        panes = [
+            {"pane_id": "blocked-old", "agent_status": "blocked", "revision": 2, "title": "old"},
+            {"pane_id": "blocked-new", "agent_status": "blocked", "revision": 1, "title": "new"},
+            {"pane_id": "done", "agent_status": "done", "revision": 9, "title": "done"},
+            {"pane_id": "working-later", "agent_status": "working", "revision": 1, "title": "later"},
+            {"pane_id": "working-earlier", "agent_status": "working", "revision": 1, "title": "earlier"},
+            {"pane_id": "working-same-b", "agent_status": "working", "revision": 1, "title": "b"},
+            {"pane_id": "working-same-a", "agent_status": "working", "revision": 2, "title": "a"},
+        ]
+        lifecycle = {
+            "blocked-old": {"statusSinceAt": "2026-01-01T00:00:00Z"},
+            "blocked-new": {"statusSinceAt": "2026-02-01T00:00:00Z"},
+            "done": {"statusSinceAt": "2026-03-01T00:00:00Z"},
+            "working-later": {"workingSince": "2026-03-01T00:00:00Z"},
+            "working-earlier": {"workingSince": "2026-01-01T00:00:00Z"},
+            "working-same-b": {"workingSince": "2026-04-01T00:00:00Z"},
+            "working-same-a": {"workingSince": "2026-04-01T00:00:00Z"},
+        }
+
+        state = HerdrService._herd_pulse_state(
+            {"workspaces": [], "panes": panes},
+            connected=True,
+            lifecycle_by_pane=lifecycle,
+            limit=10,
+        )
+
+        self.assertEqual(
+            [session["id"] for session in state["sessions"]],
+            [
+                "blocked-new",
+                "blocked-old",
+                "done",
+                "working-earlier",
+                "working-later",
+                "working-same-a",
+                "working-same-b",
+            ],
+        )
+
+    def test_herd_pulse_session_overflow_counts_rows_past_limit(self):
+        panes = [
+            {"pane_id": f"w1:p{index}", "agent_status": "working", "revision": index}
+            for index in range(7)
+        ]
+
+        state = HerdrService._herd_pulse_state(
+            {"workspaces": [], "panes": panes},
+            connected=True,
+            lifecycle_by_pane={},
+        )
+
+        self.assertEqual(len(state["sessions"]), 6)
+        self.assertEqual(state["sessionOverflow"], 1)
 
     def test_workspaces_response_includes_first_seen_at_for_refreshed_panes(self):
         service = HerdrService(FakeClient([snapshot_with_status("working")]), environ={})
@@ -450,6 +549,21 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(len(aggregate), 1)
         self.assertEqual(aggregate[0]["data"]["unread_count"], service.alerts.unread_count())
         self.assertFalse(any(item["event"] == "alert.updated" for item in events))
+
+    def test_focusing_done_pane_publishes_its_acknowledged_herd_pulse(self):
+        push = FakePush()
+        service = HerdrService(
+            FakeClient([snapshot_with_status("working"), snapshot_with_status("done")]),
+            push=push,
+            environ={},
+        )
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        self.assertEqual(push.pulses[-1][0]["readyCount"], 1)
+
+        service._handle_event({"event": "pane.focused", "data": {"pane_id": "w1:p1"}})
+
+        self.assertEqual(push.pulses[-1][0]["readyCount"], 0)
 
     def test_mark_all_alerts_read_publishes_one_aggregate_event_without_per_alert_events(self):
         client = FakeClient(
