@@ -22,8 +22,10 @@ enum ComposerToolRowFit: Equatable, Sendable {
 ///   terminal keys now share one always-visible row *above* the input, so the
 ///   thing you type into is the bottom-most, closest-to-hand element and the
 ///   tools never move.
-/// - Return sends, Shift/Option+Return inserts a newline, Command+Return always
-///   sends. `onKeyPress` owns that mapping; `onSubmit` stays as a backstop.
+/// - Return sends. Shift/Option/Command+Return all break the line, so a
+///   multi-line prompt never depends on remembering which one this app chose.
+///   `ComposerReturnKeyRouter` owns that table; `onKeyPress` and `onSubmit`
+///   both route through it, because SwiftUI can deliver a ⌘Return to either.
 /// - Typing `$` at a token boundary raises `ComposerSkillsHUD` — the workspace's
 ///   skills, filtered as you type, accepted with Return/Tab. It is an
 ///   accelerator: it never takes focus, never blocks a send, and any signal
@@ -395,7 +397,7 @@ struct PromptComposerView: View {
                     .foregroundStyle(HerdrTheme.text)
                     .textFieldStyle(.plain)
                     .focused($isFocused)
-                    .onSubmit(send)
+                    .onSubmit(handleSubmit)
                     .onKeyPress(.return, phases: .down, action: handleReturnKey)
                     .onKeyPress(.upArrow, phases: .down) { _ in
                         moveSkillsHighlight(by: -1)
@@ -592,29 +594,43 @@ struct PromptComposerView: View {
         return sendAccessibilityHint
     }
 
-    /// Return sends, Shift/Option+Return breaks the line, Command+Return sends
-    /// from anywhere in the field. `onSubmit` still points at `send`, so a Mac
-    /// that routes Return past this handler degrades to "Return sends" rather
-    /// than to a composer that cannot submit.
+    /// Return sends, and every modified Return breaks the line.
+    /// `ComposerReturnKeyRouter` holds the rules; this only turns its verdict
+    /// into a `KeyPress.Result`.
     private func handleReturnKey(_ press: KeyPress) -> KeyPress.Result {
-        // With the skills HUD up, Return commits the highlighted skill and
-        // never the message — sending out from under a visible picker would be
-        // the worst kind of surprise.
-        if skillsPalette.isVisible,
-           !press.modifiers.contains(.shift),
-           !press.modifiers.contains(.option) {
+        switch ComposerReturnKeyRouter.outcome(
+            for: press,
+            isSkillsPaletteVisible: skillsPalette.isVisible
+        ) {
+        case .acceptSkill:
             acceptSkill()
             return .handled
-        }
-        guard !press.modifiers.contains(.shift), !press.modifiers.contains(.option) else {
-            // Hand the chord back to the field editor, which binds it to
-            // `insertNewlineIgnoringFieldEditor:` — a line break at the caret,
-            // and no submit. Appending here instead would drop the break at the
-            // end of the draft no matter where the caret was.
+        case .insertNewline:
+            ComposerNewlineInserter.insertNewline(appendingTo: &draft)
+            return .handled
+        case .passthrough:
             return .ignored
+        case .send:
+            send()
+            return .handled
         }
-        send()
-        return .handled
+    }
+
+    /// `onSubmit` is the backstop for a Return that never reached
+    /// `handleReturnKey`. On a vertical-axis `TextField` that specifically
+    /// includes ⌘Return, which SwiftUI claims as the field's default action, so
+    /// this has to make the same newline decision or the fix leaks.
+    private func handleSubmit() {
+        switch ComposerReturnKeyRouter.submitOutcome(
+            isSkillsPaletteVisible: skillsPalette.isVisible
+        ) {
+        case .insertNewline:
+            ComposerNewlineInserter.insertNewline(appendingTo: &draft)
+        case .acceptSkill:
+            acceptSkill()
+        case .passthrough, .send:
+            send()
+        }
     }
 
     // MARK: - `$` skills HUD

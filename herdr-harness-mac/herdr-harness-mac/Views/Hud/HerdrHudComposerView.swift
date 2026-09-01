@@ -139,7 +139,7 @@ struct HerdrHudComposerView: View {
                     .herdrFont(.callout)
                     .foregroundStyle(HerdrTheme.text)
                     .focused($isComposerFocused)
-                    .onSubmit(submit)
+                    .onSubmit(handleSubmit)
                     .onKeyPress(.return, phases: .down, action: handleReturnKey)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -170,12 +170,27 @@ struct HerdrHudComposerView: View {
         }
     }
 
+    /// Shares `ComposerReturnKeyRouter` with the pane composer so the HUD and
+    /// the chat composer never disagree about what Return does.
     private func handleReturnKey(_ press: KeyPress) -> KeyPress.Result {
-        guard !press.modifiers.contains(.shift), !press.modifiers.contains(.option) else {
+        switch ComposerReturnKeyRouter.outcome(for: press, isSkillsPaletteVisible: false) {
+        case .insertNewline:
+            ComposerNewlineInserter.insertNewline(appendingTo: &session.draft)
+            return .handled
+        case .passthrough:
             return .ignored
+        case .acceptSkill, .send:
+            submit()
+            return .handled
+        }
+    }
+
+    private func handleSubmit() {
+        if ComposerReturnKeyRouter.submitOutcome(isSkillsPaletteVisible: false) == .insertNewline {
+            ComposerNewlineInserter.insertNewline(appendingTo: &session.draft)
+            return
         }
         submit()
-        return .handled
     }
 
     private func submit() {
