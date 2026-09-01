@@ -77,6 +77,8 @@ struct SettingsView: View {
                             .herdrFont(.caption, weight: .bold)
                             .foregroundStyle(HerdrTheme.muted)
                     }
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("settings-machine-row-\(machine.id)")
@@ -236,6 +238,8 @@ struct SettingsView: View {
                     }
                     .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.accent)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .contentShape(Rectangle())
                 }
                 .accessibilityIdentifier("settings-cleanup-model-picker")
             }

@@ -55,10 +55,14 @@ struct CleanupWorkspaceDecisionCard: View {
     @ViewBuilder
     private var workspaceSelectionControl: some View {
         if workspace.workspaceSafeToClose, workspace.panes.allSatisfy(\.safeToClose) {
-            Button(isSelected ? "Keep workspace open" : "Close entire workspace", systemImage: isSelected ? "checkmark.square.fill" : "square", action: toggleWorkspace)
+            Button(action: toggleWorkspace) {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .herdrHitTarget(minWidth: 0)
+            }
                 .buttonStyle(.plain)
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(isSelected ? HerdrTheme.signal : HerdrTheme.mist)
+                .accessibilityLabel(isSelected ? "Keep workspace open" : "Close entire workspace")
                 .accessibilityIdentifier("cleanup-workspace-checkbox-\(workspace.workspaceID)")
         } else {
             Label(

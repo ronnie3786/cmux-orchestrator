@@ -26,6 +26,14 @@ enum HerdrTheme {
     static let pagePadding = 18.0
     static let cardPadding = 16.0
     static let rowSpacing = 12.0
+
+    /// The smallest square a pointer control may occupy.
+    ///
+    /// 28pt, not iOS's 44pt: Mac chrome is deliberately compact (see
+    /// `PiChatChrome.controlHeight` and `ComposerDeckMetrics.controlHeight`,
+    /// both 30). This is the floor, not the target — nothing interactive may be
+    /// smaller than the glyph the pointer is aiming at.
+    static let minHitTarget = 28.0
 }
 
 extension HerdrTheme {

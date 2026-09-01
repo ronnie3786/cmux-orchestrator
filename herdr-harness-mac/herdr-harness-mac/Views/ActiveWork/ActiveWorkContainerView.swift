@@ -285,7 +285,7 @@ struct ActiveWorkContainerView: View {
 
         } label: {
             Image(systemName: "ellipsis")
-                .frame(width: 28, height: 28)
+                .herdrHitTarget()
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

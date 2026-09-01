@@ -502,14 +502,16 @@ private struct ActiveWorkJiraCandidateCard: View {
                     Spacer(minLength: 10)
 
                     if let url = candidate.browserURL {
-                        Button("Open \(candidate.key) in Jira", systemImage: "arrow.up.right.square") {
+                        Button {
                             openURL(url)
+                        } label: {
+                            Image(systemName: "arrow.up.right.square")
+                                .herdrHitTarget(minWidth: 32, minHeight: 32)
                         }
-                        .labelStyle(.iconOnly)
-                        .frame(width: 32, height: 32)
                         .buttonStyle(.plain)
                         .foregroundStyle(HerdrTheme.mist)
                         .help("Open \(candidate.key) in Jira")
+                        .accessibilityLabel("Open \(candidate.key) in Jira")
                     }
 
                     setupButton

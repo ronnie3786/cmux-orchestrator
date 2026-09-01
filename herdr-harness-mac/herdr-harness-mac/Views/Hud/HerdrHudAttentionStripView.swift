@@ -36,7 +36,7 @@ struct HerdrHudAttentionStripView: View {
                             Spacer()
                         }
                         .padding(.horizontal, HerdrTheme.cardPadding)
-                        .padding(.vertical, 4)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
                         .contentShape(.rect)
                     }
                     .buttonStyle(.plain)

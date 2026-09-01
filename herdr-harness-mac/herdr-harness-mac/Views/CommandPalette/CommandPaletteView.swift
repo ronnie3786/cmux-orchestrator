@@ -90,12 +90,14 @@ struct CommandPaletteView: View {
                         .accessibilityIdentifier("command-palette-search")
 
                     if !state.query.isEmpty {
-                        Button("Clear search", systemImage: "xmark.circle.fill", action: clearQuery)
-                            .labelStyle(.iconOnly)
+                        Button(action: clearQuery) {
+                            Image(systemName: "xmark.circle.fill")
+                                .herdrHitTarget(minWidth: 32, minHeight: 32)
+                        }
                             .buttonStyle(.plain)
                             .foregroundStyle(HerdrTheme.mist)
-                            .frame(minWidth: 32, minHeight: 32)
                             .help("Clear search")
+                            .accessibilityLabel("Clear search")
                             .accessibilityIdentifier("command-palette-clear")
                     }
                 }

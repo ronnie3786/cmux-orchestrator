@@ -21,14 +21,16 @@ struct WorkspaceSearchField: View {
                 .accessibilityLabel("Filter spaces")
 
             if !text.isEmpty {
-                Button("Clear workspace filter", systemImage: "xmark.circle.fill") {
+                Button {
                     text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .herdrHitTarget(minWidth: 44, minHeight: 44)
                 }
-                .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
-                .frame(minWidth: 44, minHeight: 44)
                 .help("Clear filter")
+                .accessibilityLabel("Clear workspace filter")
             }
         }
         .padding(.leading, 13)

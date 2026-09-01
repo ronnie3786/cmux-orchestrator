@@ -27,7 +27,6 @@ struct PiInteractionCardView: View {
             }
             .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.mist, emphasis: .text))
             .herdrFont(.caption)
-            .frame(minHeight: PiChatChrome.controlHeight)
             .disabled(isSubmitting)
         }
         .padding(14)

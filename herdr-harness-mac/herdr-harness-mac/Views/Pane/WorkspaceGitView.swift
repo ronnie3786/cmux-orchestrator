@@ -73,15 +73,17 @@ struct WorkspaceGitView: View {
                         .foregroundStyle(status.hasChanges ? HerdrTheme.working : HerdrTheme.success)
                 }
 
-                Button("Refresh Git", systemImage: "arrow.clockwise") {
+                Button {
                     Task { await refresh() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .herdrHitTarget(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
-                .labelStyle(.iconOnly)
                 .foregroundStyle(HerdrTheme.accent)
-                .frame(minWidth: 44, minHeight: 44)
                 .disabled(isLoading)
                 .symbolEffect(.rotate, options: .repeating, isActive: isLoading)
+                .accessibilityLabel("Refresh Git")
             }
 
             Text(status?.cwd?.nonEmpty ?? workspace.displayPath)

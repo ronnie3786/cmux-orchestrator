@@ -1147,6 +1147,7 @@ private struct ActiveWorkRouteStageView: View {
                 } label: {
                     Label("Open", systemImage: "arrow.up.right.square")
                         .herdrFont(.caption, weight: .bold)
+                        .herdrHitTarget(minWidth: 0)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.accent)
@@ -1183,6 +1184,7 @@ private struct ActiveWorkRouteStageView: View {
                 } label: {
                     Label("Open", systemImage: "arrow.up.right.square")
                         .herdrFont(.caption, weight: .bold)
+                        .herdrHitTarget(minWidth: 0)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mauve)
@@ -1221,11 +1223,13 @@ private struct ActiveWorkDiscussionSection: View {
                     }
                     Spacer(minLength: 8)
                     if let url = thread.browserURL {
-                        Button("Open thread", systemImage: "arrow.up.right.square") {
+                        Button {
                             openURL(url)
+                        } label: {
+                            Image(systemName: "arrow.up.right.square")
+                                .herdrHitTarget()
                         }
                         .buttonStyle(.plain)
-                        .labelStyle(.iconOnly)
                         .foregroundStyle(HerdrTheme.mauve)
                         .help("Open this Buzz discussion")
                         .accessibilityLabel("Open Buzz thread \(thread.title)")

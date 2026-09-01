@@ -25,6 +25,8 @@ struct MachinesView: View {
                                     .herdrFont(.caption, weight: .bold)
                                     .foregroundStyle(HerdrTheme.muted)
                             }
+                            .frame(minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("machine-row-\(machine.id)")

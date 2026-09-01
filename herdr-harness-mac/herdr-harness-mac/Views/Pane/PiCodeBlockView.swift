@@ -15,7 +15,7 @@ struct PiCodeBlockView: View {
                     .herdrFont(.caption, weight: .bold)
                     .foregroundStyle(HerdrTheme.code.opacity(0.75))
                 Spacer()
-                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                Button {
                     copyCode()
                     copied = true
                     hapticPulse.fire(.completed)
@@ -23,11 +23,13 @@ struct PiCodeBlockView: View {
                         try? await Task.sleep(for: .seconds(1.4))
                         copied = false
                     }
+                } label: {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .herdrHitTarget(minWidth: 0)
                 }
                 .herdrFont(.caption)
                 .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)
                 .buttonStyle(.plain)
-                .frame(minHeight: 22)
                 .opacity(isHovering || copied ? 1 : 0)
                 .animation(PiChatChrome.hoverAnimation, value: isHovering)
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")

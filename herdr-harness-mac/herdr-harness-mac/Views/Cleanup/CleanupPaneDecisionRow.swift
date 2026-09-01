@@ -134,17 +134,23 @@ struct CleanupPaneDecisionRow: View {
     @ViewBuilder
     private var selectionControl: some View {
         if isIncludedByWorkspace {
-            Button("Keep \(pane.title ?? pane.paneID) open", systemImage: "checkmark.square.fill", action: toggleSelection)
-                .labelStyle(.iconOnly)
+            Button(action: toggleSelection) {
+                Image(systemName: "checkmark.square.fill")
+                    .herdrHitTarget()
+            }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.signal)
                 .help("Included with the selected workspace. Select to keep this pane open.")
+                .accessibilityLabel("Keep \(pane.title ?? pane.paneID) open")
                 .accessibilityIdentifier("cleanup-pane-checkbox-\(pane.paneID)")
         } else if pane.safeToClose {
-            Button(isSelected ? "Keep \(pane.title ?? pane.paneID) open" : "Close \(pane.title ?? pane.paneID)", systemImage: isSelected ? "checkmark.square.fill" : "square", action: toggleSelection)
-                .labelStyle(.iconOnly)
+            Button(action: toggleSelection) {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .herdrHitTarget()
+            }
                 .buttonStyle(.plain)
                 .foregroundStyle(isSelected ? HerdrTheme.signal : HerdrTheme.mist)
+                .accessibilityLabel(isSelected ? "Keep \(pane.title ?? pane.paneID) open" : "Close \(pane.title ?? pane.paneID)")
                 .accessibilityIdentifier("cleanup-pane-checkbox-\(pane.paneID)")
         } else {
             Label(

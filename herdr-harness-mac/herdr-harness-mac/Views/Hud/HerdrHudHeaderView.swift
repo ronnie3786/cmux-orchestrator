@@ -30,6 +30,7 @@ struct HerdrHudHeaderView: View {
             if !session.exchanges.isEmpty {
                 Button(action: clearHistory) {
                     Image(systemName: "trash")
+                        .herdrHitTarget()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
@@ -40,6 +41,7 @@ struct HerdrHudHeaderView: View {
 
             Button(action: controller.collapse) {
                 Image(systemName: "chevron.up")
+                    .herdrHitTarget()
             }
             .buttonStyle(.plain)
             .foregroundStyle(HerdrTheme.mist)
@@ -73,6 +75,8 @@ struct HerdrHudHeaderView: View {
             }
             .herdrFont(.caption, monospaced: true)
             .foregroundStyle(HerdrTheme.mist)
+            .frame(minHeight: HerdrTheme.minHitTarget)
+            .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .accessibilityLabel("HUD machine: \(selectedMachine.name)")

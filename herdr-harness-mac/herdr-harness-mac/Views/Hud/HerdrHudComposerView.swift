@@ -29,6 +29,7 @@ struct HerdrHudComposerView: View {
                     Image(systemName: "arrow.up.circle.fill")
                         .herdrFont(.title3)
                         .foregroundStyle(HerdrTheme.accent)
+                        .herdrHitTarget()
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit)
@@ -49,6 +50,7 @@ struct HerdrHudComposerView: View {
                 Button(action: toggleVoiceCapture) {
                     Image(systemName: isVoiceCaptureActive ? "mic.fill" : "mic")
                         .foregroundStyle(isVoiceCaptureActive ? HerdrTheme.alert : HerdrTheme.mist)
+                        .herdrHitTarget()
                 }
                 .buttonStyle(.plain)
                 .disabled(quickVoiceCapture.phase == .transcribing)
@@ -60,6 +62,7 @@ struct HerdrHudComposerView: View {
                 } label: {
                     Image(systemName: "paperclip")
                         .foregroundStyle(HerdrTheme.mist)
+                        .herdrHitTarget()
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Attach image")

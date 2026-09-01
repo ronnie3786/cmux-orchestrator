@@ -45,8 +45,11 @@ struct LastPromptPeekButton: View {
 
                 Spacer(minLength: 12)
 
-                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                Button {
                     copy(message.text)
+                } label: {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .herdrHitTarget(minWidth: 0)
                 }
                 .herdrFont(.caption, monospaced: true, weight: .medium)
                 .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)

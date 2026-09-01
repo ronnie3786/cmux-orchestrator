@@ -57,6 +57,7 @@ private struct PiDisclosureHeader: View {
                     .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
                     .accessibilityHidden(true)
             }
+            .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -97,7 +98,7 @@ private struct PiChatButtonBody: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, emphasis == .text ? 0 : 14)
             .padding(.vertical, emphasis == .text ? 0 : 7)
-            .frame(minHeight: emphasis == .text ? nil : PiChatChrome.controlHeight)
+            .frame(minHeight: PiChatChrome.controlHeight)
             .background(fill, in: shape)
             .overlay { shape.stroke(stroke, lineWidth: 1) }
             .contentShape(shape)

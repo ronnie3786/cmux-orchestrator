@@ -32,12 +32,15 @@ struct SidebarWorkInboxView: View {
                         .accessibilityLabel("Some work items could not be refreshed")
                 }
 
-                Button("Refresh my work", systemImage: "arrow.clockwise", action: refreshNow)
-                    .labelStyle(.iconOnly)
+                Button(action: refreshNow) {
+                    Image(systemName: "arrow.clockwise")
+                        .herdrHitTarget()
+                }
                     .buttonStyle(.plain)
                     .foregroundStyle(HerdrTheme.mist)
                     .disabled(store.isRefreshing)
                     .help("Refresh GitHub review requests and Jira tickets")
+                    .accessibilityLabel("Refresh my work")
             }
             .padding(.horizontal, 9)
             .padding(.bottom, 4)

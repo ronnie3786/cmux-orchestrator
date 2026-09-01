@@ -53,15 +53,17 @@ struct WorkspaceSkillsView: View {
                         .foregroundStyle(HerdrTheme.signal)
                 }
 
-                Button("Refresh skills", systemImage: "arrow.clockwise") {
+                Button {
                     Task { await refresh() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .herdrHitTarget(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
-                .labelStyle(.iconOnly)
                 .foregroundStyle(HerdrTheme.accent)
-                .frame(minWidth: 44, minHeight: 44)
                 .disabled(isLoading)
                 .symbolEffect(.rotate, options: .repeating, isActive: isLoading)
+                .accessibilityLabel("Refresh skills")
             }
 
             Text(response?.rootPath?.nonEmpty ?? workspace.displayPath)

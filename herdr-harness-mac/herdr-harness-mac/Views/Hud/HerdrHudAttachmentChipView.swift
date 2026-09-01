@@ -19,11 +19,15 @@ struct HerdrHudAttachmentChipView: View {
             Button(action: remove) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(HerdrTheme.muted)
+                    .herdrHitTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove \(attachment.filename)")
         }
-        .padding(5)
+        .padding(.leading, 5)
+        .padding(.top, 5)
+        .padding(.bottom, 5)
+        .padding(.trailing, 2)
         .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .accessibilityIdentifier("hud-attachment-\(attachment.filename)")
         .task(id: attachment.id) {

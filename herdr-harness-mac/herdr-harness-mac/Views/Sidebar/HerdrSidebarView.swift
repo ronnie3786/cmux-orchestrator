@@ -427,7 +427,8 @@ struct HerdrSidebarView: View {
             }
             .herdrFont(.caption, weight: .bold)
             .foregroundStyle(HerdrTheme.mist)
-            .frame(minHeight: 28)
+            .frame(minHeight: HerdrTheme.minHitTarget)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-machine-picker")
@@ -1064,6 +1065,7 @@ private extension View {
     func sidebarActionStyle() -> some View {
         herdrFont(.subheadline, weight: .bold)
             .foregroundStyle(HerdrTheme.accent)
-            .frame(minHeight: 28)
+            .frame(maxWidth: .infinity, minHeight: HerdrTheme.minHitTarget, alignment: .leading)
+            .contentShape(Rectangle())
     }
 }

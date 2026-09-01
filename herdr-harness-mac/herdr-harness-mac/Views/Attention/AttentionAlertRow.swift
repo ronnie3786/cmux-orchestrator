@@ -42,11 +42,11 @@ struct AttentionAlertRow: View {
             Image(systemName: "xmark")
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.mist)
-                .frame(width: 24, height: 24)
+                .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
                 .background(HerdrTheme.elevated, in: Circle())
         }
         .buttonStyle(.plain)
-        .padding(10)
+        .padding(8)
         .help("Clear notification")
         .accessibilityLabel("Clear notification")
     }

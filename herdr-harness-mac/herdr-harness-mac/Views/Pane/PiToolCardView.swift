@@ -15,6 +15,7 @@ struct PiToolCardView: View {
         }
         .disclosureGroupStyle(PiDisclosureGroupStyle())
         .tint(presentation.tint)
+        // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(HerdrTheme.graphite.opacity(0.76), in: RoundedRectangle(cornerRadius: 11))
@@ -28,7 +29,6 @@ struct PiToolCardView: View {
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }
         .herdrHaptic(trigger: hapticPulse)
-        .contentShape(Rectangle())
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-tool-\(tool.callID)")
         .opacity(HerdrProse.subOutputOpacity)
