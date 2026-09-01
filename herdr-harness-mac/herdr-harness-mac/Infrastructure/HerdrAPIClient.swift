@@ -516,7 +516,8 @@ actor HerdrAPIClient {
         mode: HeadlessAgentRunMode = .ask,
         model: String? = nil,
         thinkingLevel: String? = nil,
-        attachments: [HeadlessAgentAttachment]? = nil
+        attachments: [HeadlessAgentAttachment]? = nil,
+        continueFromRunId: String? = nil
     ) async throws -> HeadlessAgentRunEnvelope {
         try await request(
             path: "/api/v1/agent-runs",
@@ -526,7 +527,8 @@ actor HerdrAPIClient {
                 mode: mode,
                 model: model,
                 thinkingLevel: thinkingLevel,
-                attachments: attachments
+                attachments: attachments,
+                continueFromRunId: continueFromRunId
             )
         )
     }

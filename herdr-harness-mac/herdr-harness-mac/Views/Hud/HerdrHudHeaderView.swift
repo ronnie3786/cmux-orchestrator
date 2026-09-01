@@ -35,8 +35,9 @@ struct HerdrHudHeaderView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
                 .disabled(session.isRunning)
-                .accessibilityLabel("Clear HUD history")
+                .accessibilityLabel("End thread and clear HUD")
                 .accessibilityIdentifier("hud-clear-history")
+                .help("End thread and clear HUD")
             }
 
             Button(action: controller.collapse) {

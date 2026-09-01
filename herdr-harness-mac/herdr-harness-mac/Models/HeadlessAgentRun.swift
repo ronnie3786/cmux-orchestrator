@@ -54,6 +54,7 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let attachments: [String]?
     let steps: [HeadlessAgentStep]?
     let stepsTruncated: Bool?
+    let threadRootRunId: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -75,6 +76,7 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
         case attachments
         case steps
         case stepsTruncated
+        case threadRootRunId
     }
 }
 
@@ -110,23 +112,26 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
     let model: String?
     let thinkingLevel: String?
     let attachments: [HeadlessAgentAttachment]?
+    let continueFromRunId: String?
 
     init(
         prompt: String,
         mode: HeadlessAgentRunMode = .ask,
         model: String? = nil,
         thinkingLevel: String? = nil,
-        attachments: [HeadlessAgentAttachment]? = nil
+        attachments: [HeadlessAgentAttachment]? = nil,
+        continueFromRunId: String? = nil
     ) {
         self.prompt = prompt
         self.mode = mode
         self.model = model
         self.thinkingLevel = thinkingLevel
         self.attachments = attachments
+        self.continueFromRunId = continueFromRunId
     }
 
     private enum CodingKeys: String, CodingKey {
-        case prompt, mode, model, thinkingLevel, attachments
+        case prompt, mode, model, thinkingLevel, attachments, continueFromRunId
     }
 
     func encode(to encoder: Encoder) throws {
@@ -137,6 +142,7 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
         }
         try container.encodeIfPresent(model, forKey: .model)
         try container.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
+        try container.encodeIfPresent(continueFromRunId, forKey: .continueFromRunId)
         if let attachments, !attachments.isEmpty {
             try container.encode(attachments, forKey: .attachments)
         }

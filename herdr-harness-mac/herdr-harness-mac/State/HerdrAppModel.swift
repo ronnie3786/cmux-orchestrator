@@ -118,6 +118,14 @@ final class HerdrAppModel {
     @ObservationIgnored var fleetRefreshBackoffWindow = Duration.seconds(1)
     @ObservationIgnored var fleetRefreshBoringCycleThreshold = 5
     @ObservationIgnored var fleetRefreshQuietWindow = Duration.seconds(2)
+#if DEBUG
+    /// Test-only: when true, demo-mode `startHeadlessAgent` returns
+    /// `threadRootRunId == <the new run's own id>` even when a
+    /// `continueFromRunId` was passed, simulating the harness's
+    /// reaped-session fallback (a continuation whose underlying pi
+    /// session no longer exists, so the server starts a fresh thread).
+    var demoForcesFreshThreadForTesting = false
+#endif
     private static let connectionFailureGrace: TimeInterval = 10
     private static let paneAlertReadAttempts = 3
     private static let paneAlertReadRetryDelay: Duration = .milliseconds(400)
@@ -1714,12 +1722,14 @@ final class HerdrAppModel {
         mode: HeadlessAgentRunMode = .ask,
         model: String? = nil,
         thinkingLevel: String? = nil,
-        attachments: [HeadlessAgentAttachment]? = nil
+        attachments: [HeadlessAgentAttachment]? = nil,
+        continueFromRunId: String? = nil
     ) async throws -> HeadlessAgentRun {
         if isDemoMode {
             let now = HerdrTimestamp.string(from: .now)
+            let id = "demo-agent-\(UUID().uuidString)"
             return HeadlessAgentRun(
-                id: "demo-agent-\(UUID().uuidString)",
+                id: id,
                 status: .completed,
                 mode: mode,
                 model: model,
@@ -1737,7 +1747,13 @@ final class HerdrAppModel {
                 promotedPaneID: nil,
                 attachments: attachments?.map(\.filename),
                 steps: nil,
-                stepsTruncated: nil
+                stepsTruncated: nil,
+                threadRootRunId: {
+#if DEBUG
+                    if demoForcesFreshThreadForTesting { return id }
+#endif
+                    return continueFromRunId ?? id
+                }()
             )
         }
         guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
@@ -1750,7 +1766,8 @@ final class HerdrAppModel {
             mode: mode,
             model: model,
             thinkingLevel: thinkingLevel,
-            attachments: attachments
+            attachments: attachments,
+            continueFromRunId: continueFromRunId
         ).run
     }
 
@@ -1814,7 +1831,8 @@ final class HerdrAppModel {
                     promotedPaneID: pane.paneID,
                     attachments: nil,
                     steps: nil,
-                    stepsTruncated: nil
+                    stepsTruncated: nil,
+                    threadRootRunId: nil
                 ),
                 pane: pane
             )

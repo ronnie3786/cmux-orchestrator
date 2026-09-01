@@ -45,7 +45,7 @@ struct HerdrHudCardView: View {
             await session.loadAudioCapabilities(model: model)
             await session.loadModels(model: model)
         }
-        .onChange(of: session.exchanges) { _, _ in
+        .onChange(of: session.exchangesRevision) { _, _ in
             updateResponseAudioAvailability()
         }
     }

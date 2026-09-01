@@ -23,6 +23,135 @@ struct HerdrHudSessionTests {
         #expect(session.validationError == nil)
     }
 
+    @Test("First HUD submit starts a new thread")
+    func firstSubmitStartsNewThread() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "First turn"
+
+        await session.submit(model: model)
+
+        let run = try #require(session.lastHeadlessRunForTesting)
+        let thread = try #require(session.thread)
+        #expect(run.threadRootRunId == run.id)
+        #expect(thread.rootRunID == run.threadRootRunId)
+        #expect(thread.lastRunID == run.id)
+        #expect(thread.turnCount == 1)
+    }
+
+    @Test("Completed follow-ups continue the live HUD thread")
+    func completedFollowUpContinuesThread() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "First turn"
+        await session.submit(model: model)
+        let firstRun = try #require(session.lastHeadlessRunForTesting)
+
+        session.draft = "Second turn"
+        await session.submit(model: model)
+
+        let secondRun = try #require(session.lastHeadlessRunForTesting)
+        let thread = try #require(session.thread)
+        #expect(secondRun.threadRootRunId == firstRun.id)
+        #expect(thread.rootRunID == firstRun.id)
+        #expect(thread.lastRunID == secondRun.id)
+        #expect(thread.turnCount == 2)
+    }
+
+    @Test("A reaped continuation response resets the HUD thread")
+    func reapedContinuationResponseResetsThread() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "First turn"
+        await session.submit(model: model)
+        let firstThread = try #require(session.thread)
+        #expect(firstThread.turnCount == 1)
+
+        model.demoForcesFreshThreadForTesting = true
+        session.draft = "Second turn, but the session was reaped"
+        await session.submit(model: model)
+
+        let run = try #require(session.lastHeadlessRunForTesting)
+        let thread = try #require(session.thread)
+        #expect(run.threadRootRunId == run.id)
+        #expect(thread.rootRunID == run.id)
+        #expect(thread.lastRunID == run.id)
+        #expect(thread.turnCount == 1)
+    }
+
+    @Test("Failed runs leave the live HUD thread unchanged")
+    func failedRunLeavesThreadUnchanged() async throws {
+        let demoModel = makeDemoModel()
+        let session = makeSession()
+        session.draft = "First turn"
+        await session.submit(model: demoModel)
+        let firstRun = try #require(session.lastHeadlessRunForTesting)
+        let originalThread = try #require(session.thread)
+
+        let defaults = makeDefaults(prefix: "thread-failure")
+        let failingModel = HerdrAppModel(arguments: ["HerdrTests"], userDefaults: defaults)
+        #expect(failingModel.addMachine(name: "Unavailable", urlString: "http://localhost:65534", token: "test"))
+        let unavailableMachine = try #require(failingModel.machines.first)
+        failingModel.machineStates[unavailableMachine.id] = .live
+        session.selectedMachineID = unavailableMachine.id
+        session.draft = "This will fail"
+        await session.submit(model: failingModel)
+
+        #expect(session.thread == originalThread)
+
+        session.selectedMachineID = "demo1"
+        session.draft = "Follow up after failure"
+        await session.submit(model: demoModel)
+
+        #expect(session.lastHeadlessRunForTesting?.threadRootRunId == firstRun.id)
+    }
+
+    @Test("Changing machines starts a new HUD thread")
+    func changingMachinesStartsNewThread() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "First machine"
+        await session.submit(model: model)
+
+        let secondMachine = try #require(model.machines.first(where: { $0.id == "demo2" }))
+        session.selectedMachineID = secondMachine.id
+        session.draft = "Second machine"
+        await session.submit(model: model)
+
+        let run = try #require(session.lastHeadlessRunForTesting)
+        let thread = try #require(session.thread)
+        #expect(run.threadRootRunId == run.id)
+        #expect(thread.machineID == secondMachine.id)
+        #expect(thread.turnCount == 1)
+    }
+
+    @Test("Promoting a HUD exchange ends the live thread")
+    func promotingExchangeEndsThread() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "Promote this"
+        await session.submit(model: model)
+        let exchange = try #require(session.exchanges.last)
+
+        let pane = await session.promote(exchange: exchange, model: model)
+
+        #expect(pane != nil)
+        #expect(session.thread == nil)
+    }
+
+    @Test("Clearing the HUD ends the live thread")
+    func clearingHudEndsThread() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "Clear this"
+        await session.submit(model: model)
+
+        await session.clear(model: model)
+
+        #expect(session.exchanges.isEmpty)
+        #expect(session.thread == nil)
+    }
+
     @Test("Failed submission marks the pending exchange failed and restores the draft")
     func failedSubmissionMarksPendingExchangeFailedAndRestoresDraft() async throws {
         let defaults = makeDefaults(prefix: "failed-submission")

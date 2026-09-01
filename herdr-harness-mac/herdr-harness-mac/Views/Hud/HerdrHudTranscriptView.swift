@@ -17,12 +17,21 @@ struct HerdrHudTranscriptView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: HerdrTheme.rowSpacing) {
-                        ForEach(session.exchanges) { exchange in
+                        ForEach(session.exchanges.indices, id: \.self) { index in
+                            let exchange = session.exchanges[index]
+                            if index > session.exchanges.startIndex,
+                               session.exchanges[index - 1].machineID != exchange.machineID {
+                                Text("New thread · \(machineName(for: exchange.machineID))")
+                                    .herdrFont(.caption2, monospaced: true)
+                                    .foregroundStyle(HerdrTheme.muted)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                             HerdrHudTranscriptRowView(
                                 model: model,
                                 session: session,
                                 exchange: exchange,
                                 showsAudioControls: exchange.id == latestCompletedExchangeID,
+                                allowsPromote: session.thread == nil || exchange.id == latestPromotableExchangeID,
                                 openPaneInMainWindow: openPaneInMainWindow,
                                 collapse: collapse
                             )
@@ -63,6 +72,14 @@ struct HerdrHudTranscriptView: View {
             exchange.response?.isEmpty == false
                 && (exchange.status == .completed || exchange.status == .promoted)
         })?.id
+    }
+
+    private var latestPromotableExchangeID: String? {
+        session.latestPromotableExchangeID
+    }
+
+    private func machineName(for machineID: String) -> String {
+        model.machines.first(where: { $0.id == machineID })?.name ?? machineID
     }
 
     private func scrollToLatest(using proxy: ScrollViewProxy) {

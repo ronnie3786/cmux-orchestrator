@@ -38,6 +38,14 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
 @MainActor
 @Observable
 final class HerdrHudSession {
+    /// The live HUD thread. A follow-up continues it; Trash ends it.
+    struct HerdrHudThread: Equatable, Sendable {
+        var machineID: String
+        var rootRunID: String
+        var lastRunID: String
+        var turnCount: Int
+    }
+
     private enum DefaultsKey {
         static let machineID = "herdr.hud.machineID"
     }
@@ -53,6 +61,9 @@ final class HerdrHudSession {
 
     let responseAudioPlayer = ResponseAudioPlayer()
     private(set) var exchanges: [HerdrHudExchange] = []
+    private(set) var exchangesRevision = 0
+    private(set) var latestPromotableExchangeID: String?
+    private(set) var thread: HerdrHudThread?
     var draft = ""
     var imageAttachments: [HerdrHudImageAttachment] = []
     var selectedMachineID: String? {
@@ -164,6 +175,7 @@ final class HerdrHudSession {
     #if DEBUG
     func seedExchangesForTesting(_ exchanges: [HerdrHudExchange]) {
         self.exchanges = exchanges
+        markExchangesChanged()
     }
 
     func appendExchangeForTesting(_ exchange: HerdrHudExchange) {
@@ -218,6 +230,7 @@ final class HerdrHudSession {
         let label = modelLabel(for: agentModel)
         let pendingID = "hud-pending-\(UUID().uuidString)"
         let submittedAt = Date.now
+        let continueFromRunId = thread?.machineID == machineID ? thread?.lastRunID : nil
         append(
             HerdrHudExchange(
                 id: pendingID,
@@ -257,6 +270,7 @@ final class HerdrHudSession {
             }
             exchanges[index].status = .failed
             exchanges[index].error = "Couldn't read \(pendingImageAttachments.first?.filename ?? "attachment"): \(error.localizedDescription)"
+            markExchangesChanged()
             if draft.isEmpty { draft = prompt }
             if imageAttachments.isEmpty { imageAttachments = pendingImageAttachments }
             controller.reset()
@@ -269,6 +283,7 @@ final class HerdrHudSession {
             agentModel: agentModel,
             thinkingLevel: thinkingLevel,
             attachments: hasAttachments ? wireAttachments : nil,
+            continueFromRunId: continueFromRunId,
             model: model
         )
         guard let index = exchanges.firstIndex(where: { $0.id == pendingID }) else {
@@ -291,6 +306,7 @@ final class HerdrHudSession {
                 attachments: wireAttachments,
                 modelLabel: label
             )
+            markExchangesChanged()
             if draft.isEmpty { draft = prompt }
             if imageAttachments.isEmpty { imageAttachments = pendingImageAttachments }
             controller.reset()
@@ -320,6 +336,24 @@ final class HerdrHudSession {
             steps: Self.hudSteps(from: run.steps ?? []),
             stepsTruncated: run.stepsTruncated == true
         )
+        markExchangesChanged()
+        if run.status == .completed {
+            let rootRunID = run.threadRootRunId ?? run.id
+            let turnCount: Int
+            if let thread,
+               thread.machineID == machineID,
+               thread.rootRunID == rootRunID {
+                turnCount = thread.turnCount + 1
+            } else {
+                turnCount = 1
+            }
+            thread = HerdrHudThread(
+                machineID: machineID,
+                rootRunID: rootRunID,
+                lastRunID: run.id,
+                turnCount: turnCount
+            )
+        }
         if run.status.isTerminal, isCollapsed {
             hasUnseenAnswer = true
         }
@@ -392,7 +426,9 @@ final class HerdrHudSession {
             if let index = exchanges.firstIndex(where: { $0.id == exchange.id }) {
                 exchanges[index].promotedPaneID = result.pane.paneID
                 exchanges[index].status = result.run.status
+                markExchangesChanged()
             }
+            thread = nil
             return result.pane
         } catch {
             promoteErrorMessage = error.localizedDescription
@@ -401,6 +437,8 @@ final class HerdrHudSession {
     }
 
     func retry(_ exchange: HerdrHudExchange, model: HerdrAppModel) async {
+        // Retry stays a fresh single-turn run: re-appending it would double a turn in the
+        // session file, and doing it properly needs a harness-side fork.
         guard !controller.isRunning else { return }
         validationError = nil
         promoteErrorMessage = nil
@@ -465,10 +503,16 @@ final class HerdrHudSession {
     }
 
     func clear(model: HerdrAppModel) async {
+        if let thread {
+            try? await model.deleteHeadlessAgent(runID: thread.rootRunID, machineID: thread.machineID)
+        }
         for exchange in exchanges where exchange.promotedPaneID == nil && exchange.status.isTerminal {
+            guard exchange.id != thread?.rootRunID else { continue }
             try? await model.deleteHeadlessAgent(runID: exchange.id, machineID: exchange.machineID)
         }
         exchanges = []
+        markExchangesChanged()
+        thread = nil
     }
 
     private func resolvedMachineID(in model: HerdrAppModel) -> String? {
@@ -502,6 +546,7 @@ final class HerdrHudSession {
     private func append(_ exchange: HerdrHudExchange) {
         exchanges.append(exchange)
         trimExceedingCap()
+        markExchangesChanged()
     }
 
     private func trimExceedingCap() {
@@ -518,12 +563,21 @@ final class HerdrHudSession {
         }
     }
 
+    private func markExchangesChanged() {
+        let latestPromotableExchangeID = exchanges.last(where: { $0.status == .completed })?.id
+        if latestPromotableExchangeID != self.latestPromotableExchangeID {
+            self.latestPromotableExchangeID = latestPromotableExchangeID
+        }
+        exchangesRevision += 1
+    }
+
     private func submitAndWait(
         prompt: String,
         machineID: String,
         agentModel: String?,
         thinkingLevel: String?,
         attachments: [HeadlessAgentAttachment]?,
+        continueFromRunId: String? = nil,
         model: HerdrAppModel
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
@@ -535,6 +589,7 @@ final class HerdrHudSession {
             agentModel: agentModel,
             thinkingLevel: thinkingLevel,
             attachments: attachments,
+            continueFromRunId: continueFromRunId,
             model: model
         )
         beginElapsedTimer()

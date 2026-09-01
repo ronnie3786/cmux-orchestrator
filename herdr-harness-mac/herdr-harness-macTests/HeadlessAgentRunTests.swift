@@ -84,6 +84,7 @@ struct HeadlessAgentRunTests {
         #expect(envelope.run.model == nil)
         #expect(envelope.run.thinkingLevel == nil)
         #expect(envelope.run.attachments == nil)
+        #expect(envelope.run.threadRootRunId == nil)
     }
 
     @Test("Decodes the act mode from a run envelope")
@@ -178,6 +179,16 @@ struct HeadlessAgentRunTests {
         #expect(object["thinkingLevel"] as? String == "max")
         let attachments = try #require(object["attachments"] as? [[String: String]])
         #expect(attachments == [["filename": "a.png", "dataBase64": "Zm9v"]])
+    }
+
+    @Test("Encodes an optional continuation run ID")
+    func encodesContinuationRunID() throws {
+        let data = try JSONEncoder().encode(
+            HeadlessAgentStartRequest(prompt: "follow up", continueFromRunId: "agr_123456abcdef")
+        )
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(object["continueFromRunId"] as? String == "agr_123456abcdef")
     }
 
     @Test("Omits optional model routing and attachments when absent")

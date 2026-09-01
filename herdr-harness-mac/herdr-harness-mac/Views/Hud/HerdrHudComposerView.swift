@@ -68,6 +68,12 @@ struct HerdrHudComposerView: View {
                 .accessibilityLabel("Attach image")
                 .accessibilityIdentifier("hud-attach-image")
 
+                if let thread = session.thread {
+                    Label("Thread · \(thread.turnCount) turns", systemImage: "link")
+                        .herdrFont(.caption2, monospaced: true)
+                        .foregroundStyle(HerdrTheme.muted)
+                }
+
                 Spacer()
             }
         }
@@ -133,7 +139,11 @@ struct HerdrHudComposerView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 42)
             } else {
-                TextField("Ask anything — or tell it what to do…", text: $session.draft, axis: .vertical)
+                TextField(
+                    session.thread == nil ? "Ask anything — or tell it what to do…" : "Reply — it remembers this thread",
+                    text: $session.draft,
+                    axis: .vertical
+                )
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
                     .herdrFont(.callout)

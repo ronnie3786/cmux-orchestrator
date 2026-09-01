@@ -31,6 +31,7 @@ final class HeadlessAgentController {
         agentModel: String? = nil,
         thinkingLevel: String? = nil,
         attachments: [HeadlessAgentAttachment]? = nil,
+        continueFromRunId: String? = nil,
         model: HerdrAppModel
     ) async {
         let normalizedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -47,7 +48,8 @@ final class HeadlessAgentController {
                 mode: mode,
                 model: agentModel,
                 thinkingLevel: thinkingLevel,
-                attachments: attachments
+                attachments: attachments,
+                continueFromRunId: continueFromRunId
             )
             run = started
             isSubmitting = false

@@ -5,6 +5,7 @@ struct HerdrHudTranscriptRowView: View {
     @Bindable var session: HerdrHudSession
     let exchange: HerdrHudExchange
     let showsAudioControls: Bool
+    let allowsPromote: Bool
     let openPaneInMainWindow: (String) -> Void
     let collapse: () -> Void
 
@@ -108,7 +109,7 @@ struct HerdrHudTranscriptRowView: View {
             Text("Opened as chat")
                 .herdrFont(.caption, monospaced: true)
                 .foregroundStyle(HerdrTheme.muted)
-        } else {
+        } else if allowsPromote {
             Button(action: promote) {
                 HStack(spacing: 5) {
                     if isPromoting {
