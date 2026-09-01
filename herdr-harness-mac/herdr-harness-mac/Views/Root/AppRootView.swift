@@ -42,6 +42,11 @@ final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
     var isCreatingWorkspace = false
     var isAgentPresented = false
+    /// Navigate ▸ Jump to Pane…. A pasted reference, not a picker: the ids
+    /// come from outside the app — a URL, a log line, a message — which is
+    /// exactly the case the ⌘K palette cannot serve.
+    var isJumpToPanePresented = false
+    var jumpToPaneInput = ""
     var agentInitialPrompt: String?
     var isCommandPalettePresented = false
     private(set) var commandPaletteFocusRequest = 0
@@ -158,6 +163,29 @@ final class HerdrShellState {
     func openPane(rawPaneID: String, machineID: String?, model: HerdrAppModel) {
         showSession()
         model.openPane(rawPaneID: rawPaneID, machineID: machineID)
+        recordVisit(for: model)
+    }
+
+    /// Routes to a pasted pane reference, recording it in the history like any
+    /// other visit.
+    ///
+    /// Goes through `openPane(rawPaneID:machineID:)` rather than
+    /// `openPane(id:)` because that path already toasts when the pane is not in
+    /// the connected fleet. `openPane(id:)` would instead park the id as a
+    /// pending route and wait silently, which is right for a notification tap
+    /// arriving before the fleet loads and wrong for someone who just pressed
+    /// a button.
+    func jumpToPane(reference: String, model: HerdrAppModel) {
+        guard let normalized = PaneReference.normalize(reference) else {
+            model.toastMessage = "That doesn't look like a pane id"
+            return
+        }
+        showSession()
+        if let scoped = MachineScopedID.split(normalized) {
+            model.openPane(rawPaneID: scoped.rawID, machineID: scoped.machineID)
+        } else {
+            model.openPane(rawPaneID: normalized, machineID: nil)
+        }
         recordVisit(for: model)
     }
 
@@ -326,6 +354,19 @@ struct AppRootView: View {
                 openPane(id: pane.id)
             }
             .onDisappear { shell.agentInitialPrompt = nil }
+        }
+        .alert("Jump to pane", isPresented: $shell.isJumpToPanePresented) {
+            TextField("w1:p2", text: $shell.jumpToPaneInput)
+                .accessibilityIdentifier("jump-to-pane-field")
+            Button("Cancel", role: .cancel) { shell.jumpToPaneInput = "" }
+            Button("Jump") {
+                let reference = shell.jumpToPaneInput
+                shell.jumpToPaneInput = ""
+                shell.jumpToPane(reference: reference, model: model)
+            }
+            .disabled(PaneReference.normalize(shell.jumpToPaneInput) == nil)
+        } message: {
+            Text("Paste a pane id, a machine-scoped id, or a herdr:// link. Percent-encoded ids work too.")
         }
         .overlay(alignment: .top) {
             if let message = model.toastMessage {

@@ -225,6 +225,12 @@ struct HerdrMacCommands: Commands {
             .keyboardShortcut("k", modifiers: [.command, .shift])
             .disabled(selectedPane == nil)
 
+            Button("Jump to Pane…") {
+                shell.jumpToPaneInput = ""
+                shell.isJumpToPanePresented = true
+            }
+            .keyboardShortcut("j", modifiers: .command)
+
             Button("Focus Current Pane on Mac") {
                 guard let pane = selectedPane else { return }
                 Task { await model.focus(pane) }
