@@ -8,7 +8,7 @@ struct HerdrHudImageAttachment: Identifiable, Equatable, Sendable {
     let byteCount: Int
 }
 
-struct HerdrHudStep: Identifiable, Equatable, Sendable {
+struct HerdrHudStep: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let title: String
     let detail: String
@@ -39,7 +39,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
 @Observable
 final class HerdrHudSession {
     /// The live HUD thread. A follow-up continues it; Trash ends it.
-    struct HerdrHudThread: Equatable, Sendable {
+    struct HerdrHudThread: Codable, Equatable, Sendable {
         var machineID: String
         var rootRunID: String
         var lastRunID: String
@@ -57,7 +57,10 @@ final class HerdrHudSession {
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
     @ObservationIgnored private let agentSettings: AgentModelSettingsStore
+    @ObservationIgnored private let persistence: HerdrHudPersistenceStore
     @ObservationIgnored private var elapsedTask: Task<Void, Never>?
+    @ObservationIgnored private var restoreTask: Task<Void, Never>?
+    @ObservationIgnored private var hasStartedSessionActivity = false
 
     let responseAudioPlayer = ResponseAudioPlayer()
     private(set) var exchanges: [HerdrHudExchange] = []
@@ -102,14 +105,27 @@ final class HerdrHudSession {
     var isRunning: Bool { controller.isRunning }
     var errorMessage: String? { controller.errorMessage }
 
-    init(userDefaults: UserDefaults = .standard, agentSettings: AgentModelSettingsStore? = nil) {
+    init(
+        userDefaults: UserDefaults = .standard,
+        agentSettings: AgentModelSettingsStore? = nil,
+        persistenceURL: URL? = nil
+    ) {
         self.userDefaults = userDefaults
         self.agentSettings = agentSettings ?? AgentModelSettingsStore(defaults: userDefaults)
+        self.persistence = HerdrHudPersistenceStore(
+            fileURL: persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
+        )
         self.selectedMachineID = userDefaults.string(forKey: DefaultsKey.machineID)
+        let persistence = self.persistence
+        restoreTask = Task { [weak self, persistence] in
+            guard let snapshot = await persistence.load(), !Task.isCancelled else { return }
+            self?.restore(snapshot)
+        }
     }
 
     deinit {
         elapsedTask?.cancel()
+        restoreTask?.cancel()
     }
 
     func markSeen() {
@@ -182,6 +198,14 @@ final class HerdrHudSession {
         append(exchange)
     }
 
+    func seedThreadForTesting(_ thread: HerdrHudThread?) {
+        self.thread = thread
+    }
+
+    func waitForPersistenceRestoreForTesting() async {
+        await restoreTask?.value
+    }
+
     func seedModelsForTesting(_ models: [PiAvailableModel], default defaultModel: PiModelIdentity?) {
         availableModels = models
         self.defaultModel = defaultModel
@@ -189,6 +213,7 @@ final class HerdrHudSession {
     #endif
 
     func submit(model: HerdrAppModel) async {
+        beginSessionActivity()
         validationError = nil
         promoteErrorMessage = nil
         audioErrorMessage = nil
@@ -274,6 +299,7 @@ final class HerdrHudSession {
             if draft.isEmpty { draft = prompt }
             if imageAttachments.isEmpty { imageAttachments = pendingImageAttachments }
             controller.reset()
+            await schedulePersistenceSave()
             return
         }
 
@@ -310,6 +336,7 @@ final class HerdrHudSession {
             if draft.isEmpty { draft = prompt }
             if imageAttachments.isEmpty { imageAttachments = pendingImageAttachments }
             controller.reset()
+            await schedulePersistenceSave()
             return
         }
 
@@ -358,6 +385,7 @@ final class HerdrHudSession {
             hasUnseenAnswer = true
         }
         controller.reset()
+        await schedulePersistenceSave()
     }
 
     func stop(model: HerdrAppModel) async {
@@ -414,6 +442,7 @@ final class HerdrHudSession {
     }
 
     func promote(exchange: HerdrHudExchange, model: HerdrAppModel) async -> HerdrPane? {
+        beginSessionActivity()
         promoteErrorMessage = nil
         promotingExchangeIDs.insert(exchange.id)
         defer { promotingExchangeIDs.remove(exchange.id) }
@@ -429,6 +458,7 @@ final class HerdrHudSession {
                 markExchangesChanged()
             }
             thread = nil
+            await schedulePersistenceSave()
             return result.pane
         } catch {
             promoteErrorMessage = error.localizedDescription
@@ -437,6 +467,7 @@ final class HerdrHudSession {
     }
 
     func retry(_ exchange: HerdrHudExchange, model: HerdrAppModel) async {
+        beginSessionActivity()
         // Retry stays a fresh single-turn run: re-appending it would double a turn in the
         // session file, and doing it properly needs a harness-side fork.
         guard !controller.isRunning else { return }
@@ -500,9 +531,11 @@ final class HerdrHudSession {
             hasUnseenAnswer = true
         }
         controller.reset()
+        await schedulePersistenceSave()
     }
 
     func clear(model: HerdrAppModel) async {
+        beginSessionActivity()
         if let thread {
             try? await model.deleteHeadlessAgent(runID: thread.rootRunID, machineID: thread.machineID)
         }
@@ -513,6 +546,7 @@ final class HerdrHudSession {
         exchanges = []
         markExchangesChanged()
         thread = nil
+        await persistence.remove()
     }
 
     private func resolvedMachineID(in model: HerdrAppModel) -> String? {
@@ -569,6 +603,25 @@ final class HerdrHudSession {
             self.latestPromotableExchangeID = latestPromotableExchangeID
         }
         exchangesRevision += 1
+    }
+
+    private func restore(_ snapshot: HerdrHudPersistenceSnapshot) {
+        guard !hasStartedSessionActivity, exchanges.isEmpty, thread == nil else { return }
+        let restored = snapshot.restoredValues()
+        exchanges = restored.exchanges
+        thread = restored.thread
+        markExchangesChanged()
+    }
+
+    /// Startup restoration is allowed only until the user initiates real HUD work.
+    private func beginSessionActivity() {
+        hasStartedSessionActivity = true
+        restoreTask?.cancel()
+    }
+
+    private func schedulePersistenceSave() async {
+        let snapshot = HerdrHudPersistenceSnapshot(thread: thread, exchanges: exchanges)
+        await persistence.scheduleSave(snapshot)
     }
 
     private func submitAndWait(

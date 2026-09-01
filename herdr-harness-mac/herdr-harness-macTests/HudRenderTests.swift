@@ -9,7 +9,10 @@ struct HudRenderTests {
     @Test("HUD card renders completed transcript rows")
     func rendersHudCard() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        let session = HerdrHudSession(userDefaults: makeDefaults())
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
         session.seedExchangesForTesting([
             HerdrHudExchange(
                 id: "hud-fleet-status",
@@ -56,7 +59,10 @@ struct HudRenderTests {
     @Test("HUD orb renders its unread-alert attention badge")
     func rendersHudOrb() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        let session = HerdrHudSession(userDefaults: makeDefaults())
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
         #expect(model.unreadAlertCount > 0)
 
         let result = try await HerdrRenderHarness.render(
@@ -115,5 +121,10 @@ struct HudRenderTests {
         }
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private func temporaryPersistenceURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("HudRenderTests-\(UUID().uuidString)-hud-thread.json")
     }
 }

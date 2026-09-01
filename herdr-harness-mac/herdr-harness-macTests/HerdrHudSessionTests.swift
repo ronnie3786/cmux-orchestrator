@@ -502,7 +502,11 @@ struct HerdrHudSessionTests {
         let defaults = makeDefaults(prefix: "custom-vision")
         let store = AgentModelSettingsStore(defaults: defaults)
         store.visionModel = "custom/vision"
-        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        let session = HerdrHudSession(
+            userDefaults: defaults,
+            agentSettings: store,
+            persistenceURL: temporaryURL(named: "hud-thread.json")
+        )
         session.addImageAttachments([url])
         session.draft = "Describe this image"
 
@@ -517,7 +521,11 @@ struct HerdrHudSessionTests {
         let defaults = makeDefaults(prefix: "thinking-level")
         let store = AgentModelSettingsStore(defaults: defaults)
         store.hudThinkingLevel = .low
-        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        let session = HerdrHudSession(
+            userDefaults: defaults,
+            agentSettings: store,
+            persistenceURL: temporaryURL(named: "hud-thread.json")
+        )
         session.draft = "What needs attention?"
 
         await session.submit(model: makeDemoModel())
@@ -530,7 +538,11 @@ struct HerdrHudSessionTests {
         let model = makeDemoModel()
         let defaults = makeDefaults(prefix: "unavailable-preference")
         let store = AgentModelSettingsStore(defaults: defaults)
-        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        let session = HerdrHudSession(
+            userDefaults: defaults,
+            agentSettings: store,
+            persistenceURL: temporaryURL(named: "hud-thread.json")
+        )
         await session.loadModels(model: model)
         store.hudModel = "missing/model"
         session.draft = "What needs attention?"
@@ -545,7 +557,11 @@ struct HerdrHudSessionTests {
     func hudChipAndSettingsStoreShareTheHUDModel() {
         let defaults = makeDefaults(prefix: "shared-model")
         let store = AgentModelSettingsStore(defaults: defaults)
-        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        let session = HerdrHudSession(
+            userDefaults: defaults,
+            agentSettings: store,
+            persistenceURL: temporaryURL(named: "hud-thread.json")
+        )
         let candidate = PiAvailableModel(
             provider: "provider",
             modelID: "model",
@@ -598,7 +614,10 @@ struct HerdrHudSessionTests {
     }
 
     private func makeSession() -> HerdrHudSession {
-        HerdrHudSession(userDefaults: makeDefaults(prefix: "session"))
+        HerdrHudSession(
+            userDefaults: makeDefaults(prefix: "session"),
+            persistenceURL: temporaryURL(named: "hud-thread.json")
+        )
     }
 
     private func makeDefaults(prefix: String) -> UserDefaults {
