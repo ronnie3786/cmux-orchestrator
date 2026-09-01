@@ -364,6 +364,73 @@ struct HerdrHudSessionTests {
         #expect(demoRun.thinkingLevel == HerdrHudModelRouting.thinkingLevel)
     }
 
+    @Test("HUD image submissions use the configured vision model")
+    func imageSubmissionsUseConfiguredVisionModel() async throws {
+        let url = temporaryURL(named: "custom-vision.png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: url)
+
+        let defaults = makeDefaults(prefix: "custom-vision")
+        let store = AgentModelSettingsStore(defaults: defaults)
+        store.visionModel = "custom/vision"
+        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        session.addImageAttachments([url])
+        session.draft = "Describe this image"
+
+        await session.submit(model: makeDemoModel())
+
+        #expect(session.lastHeadlessRunForTesting?.model == "custom/vision")
+        #expect(session.exchanges.last?.modelLabel == "custom/vision")
+    }
+
+    @Test("HUD submissions use the configured thinking level")
+    func submissionsUseConfiguredThinkingLevel() async {
+        let defaults = makeDefaults(prefix: "thinking-level")
+        let store = AgentModelSettingsStore(defaults: defaults)
+        store.thinkingLevel = .low
+        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        session.draft = "What needs attention?"
+
+        await session.submit(model: makeDemoModel())
+
+        #expect(session.lastHeadlessRunForTesting?.thinkingLevel == "low")
+    }
+
+    @Test("An unavailable authoritative HUD preference falls back to the machine default")
+    func unavailableAuthoritativePreferenceFallsBackToMachineDefault() async {
+        let model = makeDemoModel()
+        let defaults = makeDefaults(prefix: "unavailable-preference")
+        let store = AgentModelSettingsStore(defaults: defaults)
+        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        await session.loadModels(model: model)
+        store.hudModel = "missing/model"
+        session.draft = "What needs attention?"
+
+        await session.submit(model: model)
+
+        #expect(session.lastHeadlessRunForTesting?.model == nil)
+        #expect(session.validationError != nil)
+    }
+
+    @Test("The HUD chip and settings store share the HUD model")
+    func hudChipAndSettingsStoreShareTheHUDModel() {
+        let defaults = makeDefaults(prefix: "shared-model")
+        let store = AgentModelSettingsStore(defaults: defaults)
+        let session = HerdrHudSession(userDefaults: defaults, agentSettings: store)
+        let candidate = PiAvailableModel(
+            provider: "provider",
+            modelID: "model",
+            name: nil,
+            reasoning: nil,
+            contextWindow: nil
+        )
+
+        store.hudModel = "provider/direct"
+        #expect(session.selectedModel == "provider/direct")
+        session.setSelectedModel(candidate)
+        #expect(store.hudModel == candidate.id)
+    }
+
     private func exchange(
         id: String,
         status: HeadlessAgentRunStatus,

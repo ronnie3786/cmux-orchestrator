@@ -7,6 +7,10 @@ struct PiModelIdentity: Codable, Equatable, Hashable, Sendable {
 
     var displayName: String { name?.nonEmpty ?? id }
 
+    /// Matches `PiAvailableModel.id`, so a stored preference can be compared
+    /// against the catalog's own `default` entry.
+    var fullID: String { "\(provider)/\(id)" }
+
     init(provider: String, id: String, name: String?) {
         self.provider = provider
         self.id = id

@@ -216,6 +216,7 @@ struct AppRootView: View {
     let driver: HerdrConnectionDriver
     let hudController: HerdrHudController
     let hudSession: HerdrHudSession
+    let agentSettings: AgentModelSettingsStore
     let fontScale: HerdrFontScaleStore
     @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -317,7 +318,11 @@ struct AppRootView: View {
             .frame(minWidth: 460, minHeight: 340)
         }
         .sheet(isPresented: $shell.isAgentPresented) {
-            HeadlessAgentView(model: model, initialPrompt: shell.agentInitialPrompt) { pane in
+            HeadlessAgentView(
+                model: model,
+                initialPrompt: shell.agentInitialPrompt,
+                agentSettings: agentSettings
+            ) { pane in
                 openPane(id: pane.id)
             }
             .onDisappear { shell.agentInitialPrompt = nil }

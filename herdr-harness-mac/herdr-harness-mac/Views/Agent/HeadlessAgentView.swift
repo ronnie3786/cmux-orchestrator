@@ -3,6 +3,7 @@ import SwiftUI
 struct HeadlessAgentView: View {
     @Bindable var model: HerdrAppModel
     let initialPrompt: String?
+    let agentSettings: AgentModelSettingsStore
     let openPane: (HerdrPane) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -10,15 +11,19 @@ struct HeadlessAgentView: View {
     @State private var prompt = ""
     @State private var selectedMachineID = ""
     @State private var promotionWorkspaceID = ""
+    @State private var agentCatalog: AgentModelCatalogResponse?
+    @State private var didLoadAgentCatalog = false
     @FocusState private var isPromptFocused: Bool
 
     init(
         model: HerdrAppModel,
         initialPrompt: String? = nil,
+        agentSettings: AgentModelSettingsStore,
         openPane: @escaping (HerdrPane) -> Void
     ) {
         self.model = model
         self.initialPrompt = initialPrompt
+        self.agentSettings = agentSettings
         self.openPane = openPane
         _prompt = State(initialValue: initialPrompt ?? "")
     }
@@ -62,9 +67,11 @@ struct HeadlessAgentView: View {
                 selectedMachineID = preferredMachineID ?? ""
             }
             isPromptFocused = true
+            await loadAgentModels()
         }
         .onChange(of: selectedMachineID) { _, _ in
             promotionWorkspaceID = ""
+            Task { await loadAgentModels() }
         }
         .onDisappear {
             Task { await controller.discard(model: model) }
@@ -115,7 +122,7 @@ struct HeadlessAgentView: View {
             .onSubmit(submit)
 
             HStack {
-                Text("Runs from ~ with investigative CLI access and a current Herdr fleet summary.")
+                Text("Runs from ~ with investigative CLI access and a current Herdr fleet summary. · Model: \(quickChatModelLabel)")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.muted)
                 Spacer()
@@ -286,7 +293,37 @@ struct HeadlessAgentView: View {
 
     private func submit() {
         guard canSubmit else { return }
-        Task { await controller.submit(prompt: prompt, machineID: selectedMachineID, model: model) }
+        let resolution = AgentModelResolver.resolve(
+            preference: agentSettings.quickChatModel,
+            catalog: agentCatalog?.models ?? [],
+            isCatalogAuthoritative: didLoadAgentCatalog
+        )
+        Task {
+            await controller.submit(
+                prompt: prompt,
+                machineID: selectedMachineID,
+                agentModel: resolution.modelID,
+                thinkingLevel: agentSettings.thinkingLevel.rawValue,
+                model: model
+            )
+        }
+    }
+
+    private var quickChatModelLabel: String {
+        let selection = agentSettings.quickChatModel
+        if !selection.isEmpty {
+            return agentCatalog?.models.first(where: { $0.id == selection })?.displayName ?? selection
+        }
+        return agentCatalog?.defaultModel?.displayName ?? "machine default"
+    }
+
+    private func loadAgentModels() async {
+        do {
+            agentCatalog = try await model.fetchAgentModels(machineID: selectedMachineID)
+            didLoadAgentCatalog = true
+        } catch {
+            // A failed catalog refresh must not invalidate a stored preference.
+        }
     }
 
     private func statusSymbol(for status: HeadlessAgentRunStatus) -> String {

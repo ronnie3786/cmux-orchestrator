@@ -1097,7 +1097,7 @@ final class HerdrAppModel {
         return try await client.fetchResponseAudioCapabilities()
     }
 
-    func fetchAgentModels(machineID: String) async throws -> AgentModelCatalogResponse {
+    func fetchAgentModels(machineID: String? = nil) async throws -> AgentModelCatalogResponse {
         if isDemoMode {
             return AgentModelCatalogResponse(
                 ok: true,
@@ -1132,11 +1132,15 @@ final class HerdrAppModel {
                 )
             )
         }
-        guard !isDemoMode, canControl(machineID: machineID), let client = client(forMachine: machineID) else {
-            throw APIError.noActiveConnection(
-                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
-            )
+        if let machineID {
+            guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+                throw APIError.noActiveConnection(
+                    machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+                )
+            }
+            return try await client.fetchAgentModels()
         }
+        guard let client = primaryClient else { throw APIError.invalidResponse }
         return try await client.fetchAgentModels()
     }
 

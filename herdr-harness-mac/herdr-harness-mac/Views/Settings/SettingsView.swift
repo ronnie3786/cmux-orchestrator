@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var fontScale: HerdrFontScaleStore
     @Bindable var cleanupSettings: CleanupSettingsStore
+    @Bindable var agentSettings: AgentModelSettingsStore
     let hudController: HerdrHudController
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
@@ -11,6 +12,10 @@ struct SettingsView: View {
     @State private var cleanupCatalog: CleanupModelCatalog?
     @State private var isLoadingCleanupModels = false
     @State private var cleanupModelsError: String?
+    @State private var agentCatalog: AgentModelCatalogResponse?
+    @State private var isLoadingAgentModels = false
+    @State private var agentModelsError: String?
+    @State private var didLoadAgentModels = false
 
     var body: some View {
         Form {
@@ -19,6 +24,7 @@ struct SettingsView: View {
             voiceSection
             alertSection
             hudSection
+            agentModelSection
             cleanupSection
             textSizeSection
             privacySection
@@ -36,7 +42,10 @@ struct SettingsView: View {
             MachineEditorView(model: model, machine: editingMachine)
                 .frame(minWidth: 480, minHeight: 420)
         }
-        .task { await loadCleanupModels() }
+        .task {
+            await loadCleanupModels()
+            await loadAgentModels()
+        }
     }
 
     private var statusSection: some View {
@@ -196,6 +205,127 @@ struct SettingsView: View {
         } footer: {
             Text("Applies across Herdr's windows and menu bar.")
         }
+    }
+
+    private var agentModelSection: some View {
+        Section {
+            LabeledContent("HUD model") {
+                modelMenu(selection: $agentSettings.hudModel, identifier: "settings-hud-model-picker")
+            }
+            LabeledContent("Agent model") {
+                modelMenu(selection: $agentSettings.quickChatModel, identifier: "settings-agent-model-picker")
+            }
+            Picker("Thinking level", selection: $agentSettings.thinkingLevel) {
+                ForEach(PiThinkingLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings-agent-thinking-picker")
+            LabeledContent("Vision model") {
+                modelMenu(selection: $agentSettings.visionModel, identifier: "settings-agent-vision-picker")
+            }
+            if AgentModelResolver.resolve(
+                preference: agentSettings.hudModel,
+                catalog: agentCatalog?.models ?? [],
+                isCatalogAuthoritative: didLoadAgentModels
+            ).preferenceIsUnavailable {
+                Label(
+                    "\(agentSettings.hudModel) isn't offered by this machine. Herdr will use its default until you pick again.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .herdrFont(.caption)
+                .foregroundStyle(HerdrTheme.alert)
+                .accessibilityIdentifier("settings-agent-model-stale")
+            }
+        } header: {
+            Text("Agent models")
+        } footer: {
+            Text("The HUD (⌃⌥Space) and the Agent sheet (⌘⌥A) each run a one-off Pi question. \"Machine default\" uses whatever pi is configured to use on that machine. Images are always rerouted to the vision model when your pick cannot see them. This list comes from the primary machine's pi installation, so it updates without a new Herdr build.")
+        }
+    }
+
+    @ViewBuilder
+    private func modelMenu(selection: Binding<String>, identifier: String) -> some View {
+        Menu {
+            Button {
+                selection.wrappedValue = ""
+            } label: {
+                Label(
+                    defaultAgentModelMenuTitle,
+                    systemImage: selection.wrappedValue.isEmpty ? "checkmark.circle.fill" : "cpu"
+                )
+            }
+
+            if isLoadingAgentModels {
+                ProgressView()
+            } else if let agentModelsError {
+                Text(agentModelsError).disabled(true)
+                Button("Retry") { Task { await loadAgentModels() } }
+                    .accessibilityIdentifier("settings-agent-model-retry")
+            } else if agentCatalog?.models.isEmpty ?? true {
+                Text("No models available").disabled(true)
+                Button("Retry") { Task { await loadAgentModels() } }
+                    .accessibilityIdentifier("settings-agent-model-retry")
+            } else {
+                ForEach(groupedAgentProviders, id: \.self) { provider in
+                    Section(provider) {
+                        ForEach(agentModelsByProvider[provider] ?? []) { candidate in
+                            Button {
+                                selection.wrappedValue = candidate.id
+                            } label: {
+                                Label(
+                                    candidate.displayName,
+                                    systemImage: candidate.id == selection.wrappedValue ? "checkmark.circle.fill" : "cpu"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "cpu")
+                Text(agentModelMenuSelectionLabel(for: selection.wrappedValue))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .herdrFont(.caption2)
+            }
+            .herdrFont(.caption, weight: .semibold)
+            .foregroundStyle(HerdrTheme.accent)
+            .frame(minHeight: HerdrTheme.minHitTarget)
+            .contentShape(Rectangle())
+        }
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var defaultAgentModelMenuTitle: String {
+        guard let defaultModel = agentCatalog?.defaultModel else { return "Machine default" }
+        return "Machine default: \(defaultModel.displayName)"
+    }
+
+    private func agentModelMenuSelectionLabel(for selection: String) -> String {
+        guard !selection.isEmpty else { return defaultAgentModelMenuTitle }
+        return agentCatalog?.models.first(where: { $0.id == selection })?.displayName ?? selection
+    }
+
+    private var agentModelsByProvider: [String: [PiAvailableModel]] {
+        Dictionary(grouping: agentCatalog?.models ?? [], by: \.provider)
+    }
+
+    private var groupedAgentProviders: [String] { agentModelsByProvider.keys.sorted() }
+
+    private func loadAgentModels() async {
+        guard !isLoadingAgentModels else { return }
+        isLoadingAgentModels = true
+        agentModelsError = nil
+        do {
+            agentCatalog = try await model.fetchAgentModels()
+            didLoadAgentModels = true
+        } catch {
+            agentModelsError = error.localizedDescription
+        }
+        isLoadingAgentModels = false
     }
 
     private var cleanupSection: some View {

@@ -29,7 +29,14 @@ struct HerdrHarnessMacApp: App {
     @State private var fontScale = HerdrFontScaleStore()
     @State private var cleanupSettings = CleanupSettingsStore()
     @State private var hudController = HerdrHudController()
-    @State private var hudSession = HerdrHudSession()
+    @State private var agentSettings: AgentModelSettingsStore
+    @State private var hudSession: HerdrHudSession
+
+    init() {
+        let settings = AgentModelSettingsStore()
+        _agentSettings = State(initialValue: settings)
+        _hudSession = State(initialValue: HerdrHudSession(agentSettings: settings))
+    }
 
     var body: some Scene {
         // A single `Window`, not a `WindowGroup`: Herdr shows one fleet, and a
@@ -43,6 +50,7 @@ struct HerdrHarnessMacApp: App {
                 driver: connectionDriver,
                 hudController: hudController,
                 hudSession: hudSession,
+                agentSettings: agentSettings,
                 fontScale: fontScale
             )
                 .environment(herdPulse)
@@ -87,6 +95,7 @@ struct HerdrHarnessMacApp: App {
                 model: model,
                 fontScale: fontScale,
                 cleanupSettings: cleanupSettings,
+                agentSettings: agentSettings,
                 hudController: hudController
             )
                 .environment(\.herdrFontScale, fontScale.scale)

@@ -29,7 +29,6 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
 final class HerdrHudSession {
     private enum DefaultsKey {
         static let machineID = "herdr.hud.machineID"
-        static let model = "herdr.hud.model"
     }
 
     static let maxImageAttachments = 4
@@ -38,6 +37,7 @@ final class HerdrHudSession {
 
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
+    @ObservationIgnored private let agentSettings: AgentModelSettingsStore
     @ObservationIgnored private var elapsedTask: Task<Void, Never>?
 
     let responseAudioPlayer = ResponseAudioPlayer()
@@ -47,8 +47,11 @@ final class HerdrHudSession {
     var selectedMachineID: String? {
         didSet { userDefaults.set(selectedMachineID, forKey: DefaultsKey.machineID) }
     }
+    /// The HUD chip and Settings edit the same preference; @Observable
+    /// propagation through the store keeps both surfaces honest.
     var selectedModel: String? {
-        didSet { userDefaults.set(selectedModel, forKey: DefaultsKey.model) }
+        get { agentSettings.hudModel.isEmpty ? nil : agentSettings.hudModel }
+        set { agentSettings.hudModel = newValue ?? "" }
     }
     var isCollapsed = true {
         didSet {
@@ -67,6 +70,7 @@ final class HerdrHudSession {
     private(set) var defaultModel: PiModelIdentity?
     private(set) var isLoadingModels = false
     private(set) var modelsError: String?
+    private(set) var didLoadCatalog = false
 
     #if DEBUG
     private(set) var lastHeadlessRunForTesting: HeadlessAgentRun?
@@ -75,10 +79,10 @@ final class HerdrHudSession {
     var isRunning: Bool { controller.isRunning }
     var errorMessage: String? { controller.errorMessage }
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(userDefaults: UserDefaults = .standard, agentSettings: AgentModelSettingsStore? = nil) {
         self.userDefaults = userDefaults
+        self.agentSettings = agentSettings ?? AgentModelSettingsStore(defaults: userDefaults)
         self.selectedMachineID = userDefaults.string(forKey: DefaultsKey.machineID)
-        self.selectedModel = userDefaults.string(forKey: DefaultsKey.model)
     }
 
     deinit {
@@ -184,12 +188,21 @@ final class HerdrHudSession {
 
         let attachmentFilenames = pendingImageAttachments.map(\.filename)
         let hasAttachments = !pendingImageAttachments.isEmpty
-        let agentModel = HerdrHudModelRouting.model(
-            selection: selectedModel,
-            selectionSupportsImages: selectedModelSupportsImages,
-            hasAttachments: hasAttachments
+        let resolution = AgentModelResolver.resolve(
+            preference: selectedModel,
+            catalog: availableModels,
+            isCatalogAuthoritative: didLoadCatalog
         )
-        let thinkingLevel = HerdrHudModelRouting.thinkingLevel
+        let agentModel = HerdrHudModelRouting.model(
+            selection: resolution.modelID,
+            selectionSupportsImages: selectedModelSupportsImages,
+            hasAttachments: hasAttachments,
+            visionModel: agentSettings.effectiveVisionModel
+        )
+        let thinkingLevel = agentSettings.thinkingLevel.rawValue
+        if resolution.preferenceIsUnavailable {
+            validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
+        }
         let label = modelLabel(for: agentModel)
         let pendingID = "hud-pending-\(UUID().uuidString)"
         let submittedAt = Date.now
@@ -320,6 +333,7 @@ final class HerdrHudSession {
             let response = try await model.fetchAgentModels(machineID: machineID)
             availableModels = response.models
             defaultModel = response.defaultModel
+            didLoadCatalog = true
         } catch {
             modelsError = error.localizedDescription
         }
@@ -378,17 +392,27 @@ final class HerdrHudSession {
         promoteErrorMessage = nil
         audioErrorMessage = nil
         let hasAttachments = !exchange.attachments.isEmpty
-        let agentModel = HerdrHudModelRouting.model(
-            selection: selectedModel,
-            selectionSupportsImages: selectedModelSupportsImages,
-            hasAttachments: hasAttachments
+        let resolution = AgentModelResolver.resolve(
+            preference: selectedModel,
+            catalog: availableModels,
+            isCatalogAuthoritative: didLoadCatalog
         )
+        let agentModel = HerdrHudModelRouting.model(
+            selection: resolution.modelID,
+            selectionSupportsImages: selectedModelSupportsImages,
+            hasAttachments: hasAttachments,
+            visionModel: agentSettings.effectiveVisionModel
+        )
+        let thinkingLevel = agentSettings.thinkingLevel.rawValue
+        if resolution.preferenceIsUnavailable {
+            validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
+        }
         let label = modelLabel(for: agentModel)
         guard let run = await submitAndWait(
             prompt: exchange.sentPrompt,
             machineID: exchange.machineID,
             agentModel: agentModel,
-            thinkingLevel: HerdrHudModelRouting.thinkingLevel,
+            thinkingLevel: thinkingLevel,
             attachments: hasAttachments ? exchange.attachments : nil,
             model: model
         ) else {
