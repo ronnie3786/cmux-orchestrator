@@ -266,9 +266,7 @@ class FakeHTTPService:
         session_file=None,
         session_id=None,
         request_id=None,
-        workspace_label=None,
-        tab_label=None,
-        reuse_named_tab=True,
+        **extra,
     ):
         self.calls.append(
             (
@@ -281,9 +279,7 @@ class FakeHTTPService:
                     "session_file": session_file,
                     "session_id": session_id,
                     "request_id": request_id,
-                    "workspace_label": workspace_label,
-                    "tab_label": tab_label,
-                    "reuse_named_tab": reuse_named_tab,
+                    **extra,
                 },
             )
         )
@@ -843,9 +839,6 @@ class HerdrHTTPTests(unittest.TestCase):
                     "session_file": None,
                     "session_id": None,
                     "request_id": None,
-                    "workspace_label": None,
-                    "tab_label": None,
-                    "reuse_named_tab": True,
                 },
             ),
         )
@@ -888,9 +881,6 @@ class HerdrHTTPTests(unittest.TestCase):
                     "session_file": "/tmp/pi-session.jsonl",
                     "session_id": "pi-session-1",
                     "request_id": "request-1",
-                    "workspace_label": None,
-                    "tab_label": None,
-                    "reuse_named_tab": True,
                 },
             ),
         )
@@ -937,7 +927,9 @@ class HerdrHTTPTests(unittest.TestCase):
             payload={"label": "Project question"},
         )
         self.assertEqual(status, 200)
-        self.assertTrue(self.service.calls[-1][1]["reuse_named_tab"])
+        self.assertNotIn("reuse_named_tab", self.service.calls[-1][1])
+        self.assertNotIn("workspace_label", self.service.calls[-1][1])
+        self.assertNotIn("tab_label", self.service.calls[-1][1])
 
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(
@@ -1040,7 +1032,11 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(status, 202)
         self.assertEqual(self.service.calls[-1][1]["system_prompt"], "Custom instructions")
 
-        for system_prompt in ("", "   ", "x" * 32769):
+        for system_prompt, expected_message in (
+            ("", "systemPrompt is required"),
+            ("   ", "systemPrompt is invalid"),
+            ("x" * 32769, "systemPrompt exceeds 32768 characters"),
+        ):
             with self.subTest(system_prompt=system_prompt):
                 invalid_status, _, invalid_body = self.request(
                     "/api/v1/agent-runs",
@@ -1048,7 +1044,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     payload={"prompt": "What changed?", "systemPrompt": system_prompt},
                 )
                 self.assertEqual(invalid_status, 400)
-                self.assertEqual(invalid_body["error"]["message"], "systemPrompt is invalid")
+                self.assertEqual(invalid_body["error"]["message"], expected_message)
 
     def test_cleanup_run_forwards_judge_charter(self):
         status, _, _ = self.request(
@@ -1062,6 +1058,15 @@ class HerdrHTTPTests(unittest.TestCase):
             self.service.calls[-1],
             ("cleanup.start_run", {"judgeCharter": "Be extra careful."}),
         )
+
+        for judge_charter in ("", "   ", "x" * 32769):
+            with self.subTest(judge_charter=judge_charter):
+                invalid_status, _, _ = self.request(
+                    "/api/v1/cleanup/runs",
+                    method="POST",
+                    payload={"judgeCharter": judge_charter},
+                )
+                self.assertEqual(invalid_status, 400)
 
     def test_agent_run_mode_rides_the_start_request_and_rejects_invalid_values(self):
         status, _, body = self.request(

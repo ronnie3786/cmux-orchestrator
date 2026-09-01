@@ -1201,7 +1201,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("workspaceIds must be an array with at most 200 entries")
                     options["workspaceIds"] = [_identifier(item, "workspace ID") for item in raw_ids]
                 if "judgeCharter" in body:
-                    options["judgeCharter"] = _string(body.get("judgeCharter"), "judgeCharter", maximum=32768)
+                    value = _string(body.get("judgeCharter"), "judgeCharter", maximum=32768)
+                    if not value.strip():
+                        raise HTTPValidationError("judgeCharter is invalid")
+                    options["judgeCharter"] = value
                 return service.cleanup.start_run(options), 202
             if method == "GET" and tail == ["cleanup", "runs"]:
                 return service.cleanup.list_runs(_query_int(query, "limit", 10, minimum=1, maximum=100))
@@ -1488,6 +1491,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     reuse_named_tab = _boolean(body.get("reuseNamedTab"), "reuseNamedTab")
                 else:
                     reuse_named_tab = True
+                extra: dict[str, Any] = {}
+                if workspace_label is not None:
+                    extra["workspace_label"] = workspace_label
+                if tab_label is not None:
+                    extra["tab_label"] = tab_label
+                if "reuseNamedTab" in body:
+                    extra["reuse_named_tab"] = reuse_named_tab
                 return service.quick_pi_session(
                     label,
                     workspace_id=workspace_id,
@@ -1496,9 +1506,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     session_file=session_file,
                     session_id=session_id,
                     request_id=request_id,
-                    workspace_label=workspace_label,
-                    tab_label=tab_label,
-                    reuse_named_tab=reuse_named_tab,
+                    **extra,
                 )
             if method == "POST" and tail == ["agent-runs"]:
                 if any(
@@ -1529,10 +1537,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 request_attachments = _optional_agent_attachments(body)
                 system_prompt = None
                 if body.get("systemPrompt") is not None:
-                    value = body.get("systemPrompt")
-                    if not isinstance(value, str) or not value.strip() or len(value) > 32768:
+                    system_prompt = _string(
+                        body.get("systemPrompt"), "systemPrompt", maximum=32768
+                    )
+                    if not system_prompt.strip():
                         raise HTTPValidationError("systemPrompt is invalid")
-                    system_prompt = value
                 continue_from_run_id = None
                 if body.get("continueFromRunId") is not None:
                     try:

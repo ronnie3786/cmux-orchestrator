@@ -445,11 +445,22 @@ class CleanupManagerTests(unittest.TestCase):
                 },
             )
             run_id = service.cleanup.start_run(
-                {"judgeCharter": "My custom judge instructions."}
+                {"judgeCharter": "My custom judge instructions.", "keepEvidence": True}
             )["runId"]
-            run = service.cleanup.get_run(run_id)
-            self.assertEqual(run["run"]["config"]["judgeCharter"], "My custom judge instructions.")
+            run_data = json.loads(
+                (service.cleanup._run_dir(run_id) / "run.json").read_text()
+            )
+            self.assertEqual(run_data["judgeCharter"], "My custom judge instructions.")
+            self.assertNotIn("judgeCharter", run_data["config"])
+            envelope = service.cleanup.get_run(run_id)
+            self.assertNotIn("judgeCharter", envelope["run"])
+            self.assertNotIn("judgeCharter", envelope["run"]["config"])
             wait_for_run(self, service.cleanup, run_id)
+            manifest = json.loads(
+                (service.cleanup._run_dir(run_id) / "evidence" / "manifest.json").read_text()
+            )
+            self.assertNotIn("judgeCharter", manifest)
+            self.assertNotIn("judgeCharter", manifest["config"])
 
             for judge_charter in ("   ", "x" * 32769, 123):
                 with self.subTest(judge_charter=judge_charter):
@@ -1629,9 +1640,10 @@ class CleanupJudgeTests(unittest.TestCase):
         (run_dir / "judge" / "sessions").mkdir(parents=True)
         (run_dir / "evidence").mkdir()
         config = {"model": model, "thinkingLevel": "medium"}
+        run_data = {"config": config}
         if judge_charter is not None:
-            config["judgeCharter"] = judge_charter
-        (run_dir / "run.json").write_text(json.dumps({"config": config}))
+            run_data["judgeCharter"] = judge_charter
+        (run_dir / "run.json").write_text(json.dumps(run_data))
         workspace = {"workspace_id": "w1", "label": "One"}
         entries = [{"workspace": workspace, "pane": {}, "meta": {"paneId": "w1:p1"}, "base": run_dir / "evidence"}]
         return manager, run_id, workspace, entries, Path(environ["FAKE_PI_ARGV_FILE"])

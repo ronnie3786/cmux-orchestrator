@@ -604,11 +604,12 @@ class CleanupManager:
         """Start a background cleanup collection and judging run."""
         config = self._defaults()
         config.update({key: options[key] for key in config if key in options})
+        judge_charter = None
         if 'judgeCharter' in options:
             value = options['judgeCharter']
             if not isinstance(value, str) or not value.strip() or len(value) > 32768:
                 raise CleanupError('judgeCharter is invalid', code='invalid_request', status=400)
-            config['judgeCharter'] = value
+            judge_charter = value
         model = config.get('model')
         if model not in (None, '') and (not isinstance(model, str) or len(model) > 256 or ('/' in model and (not model.split('/', 1)[0] or not model.split('/', 1)[1]))):
             raise CleanupError('model is invalid', code='invalid_request', status=400)
@@ -634,6 +635,8 @@ class CleanupManager:
         os.chmod(run_dir, 448)
         (run_dir / 'judge' / 'sessions').mkdir(parents=True, exist_ok=True, mode=448)
         run = {'runId': run_id, 'status': 'collecting', 'startedAt': utc_now(), 'finishedAt': None, 'session': self.service.client.session, 'config': config, 'workspaceIds': list(ids), 'keepEvidence': options.get('keepEvidence', False), 'error': None, 'phase': 'collecting', 'phaseDetail': None, 'progress': {'done': 0, 'total': 0}, 'phaseHistory': [{'phase': 'collecting', 'startedAt': utc_now(), 'finishedAt': None, 'detail': None}]}
+        if judge_charter is not None:
+            run['judgeCharter'] = judge_charter
         self._run_locks[run_id] = threading.RLock()
         _atomic_json(run_dir / 'run.json', run)
         self._publish(run)
@@ -996,7 +999,8 @@ class CleanupManager:
         timeout: Optional[int] = None,
     ) -> dict:
         run_dir = self._run_dir(run_id)
-        config = (_read_json(run_dir / 'run.json') or {})['config']
+        run_data = _read_json(run_dir / 'run.json') or {}
+        config = run_data.get('config') or {}
         workspace_id = str(workspace.get('workspace_id') or '')
         pane_id_list = [item['meta']['paneId'] for item in entries]
         pane_ids = set(pane_id_list)
@@ -1021,7 +1025,7 @@ class CleanupManager:
             'signal. Distinguish an idle but reusable session from completed work. Cite concrete evidence in the reason.\n\n'
             f'Workspace:\n{workspace_data}\nPanes:\n{pane_data}'
         )
-        charter = config.get('judgeCharter') or DEFAULT_JUDGE_CHARTER
+        charter = run_data.get('judgeCharter') or DEFAULT_JUDGE_CHARTER
         attempts = 0
         total_cost = 0.0
         pi_bin = _resolve_pi_bin(self.environ)

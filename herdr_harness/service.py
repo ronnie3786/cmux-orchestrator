@@ -1905,8 +1905,10 @@ class HerdrService:
             )
         return actual_session_id
 
-    def _quick_wait_for_pi_session(self, pane_id: str, expected_session_id: str) -> None:
-        """Wait until the bridge proves the resumed pane owns the expected session."""
+    def _quick_wait_for_pi_session(
+        self, pane_id: str, expected_session_id: Optional[str] = None
+    ) -> None:
+        """Wait until the bridge is ready, and verify a resumed session when requested."""
 
         # ``start`` is idempotent. Calling it here also makes direct service use
         # honor the same readiness contract as the long-running HTTP server.
@@ -1943,6 +1945,8 @@ class HerdrService:
             observed = capability.get("session_id") if isinstance(capability, dict) else None
             last_session_id = str(observed) if isinstance(observed, str) and observed else None
             if capability.get("connected") is True:
+                if expected_session_id is None:
+                    return
                 if last_session_id == expected_session_id:
                     return
                 if last_session_id is not None:
@@ -2166,7 +2170,7 @@ class HerdrService:
                     created_tab = True
                     cleanup_method = "workspace.close"
                     cleanup_params = {"workspace_id": workspace_id}
-                    if reuse_named_tab:
+                    if reuse_named_tab or tab_label is not None:
                         self._request_native(
                             "tab.rename",
                             {"tab_id": tab_id, "label": tab_label or QUICK_PI_TAB_LABEL},
@@ -2228,7 +2232,7 @@ class HerdrService:
                         "cwd": str(target_cwd),
                         "focus": True,
                     }
-                    if reuse_named_tab:
+                    if reuse_named_tab or tab_label is not None:
                         params["label"] = tab_label or QUICK_PI_TAB_LABEL
                     raw = self._request_native("tab.create", params)
                     provisional_tab_id = self._quick_new_identifier(
@@ -2313,6 +2317,17 @@ class HerdrService:
                         busy_waits += 1
                 if expected_session_id is not None:
                     self._quick_wait_for_pi_session(pane_id, expected_session_id)
+                    pi_semantic_ready = True
+                elif pi_extension_attached:
+                    try:
+                        self._quick_wait_for_pi_session(pane_id, None)
+                        pi_semantic_ready = True
+                    except HerdrClientError as exc:
+                        if exc.code != "quick_session_not_ready":
+                            raise
+                        pi_semantic_ready = False
+                else:
+                    pi_semantic_ready = False
             except Exception as original_error:
                 cleanup_error: Optional[Exception] = None
                 try:
@@ -2348,7 +2363,7 @@ class HerdrService:
                 "created_tab": created_tab,
                 "created_pane": True,
                 "pi_extension_attached": pi_extension_attached,
-                "pi_semantic_ready": expected_session_id is not None,
+                "pi_semantic_ready": pi_semantic_ready,
                 "request_id": request_id,
                 "session_id": session_id,
             }

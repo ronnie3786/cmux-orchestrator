@@ -822,6 +822,7 @@ class HerdrServiceTests(unittest.TestCase):
             service = HerdrService(
                 client,
                 environ={"HERDR_HARNESS_PI_EXTENSION_PATH": extension_path},
+                pi_semantic=FakeReadyPiSemantic(),
             )
             result = service.quick_pi_session("aug 18, 2:34 pm")
 
@@ -843,7 +844,7 @@ class HerdrServiceTests(unittest.TestCase):
                 "created_tab": True,
                 "created_pane": True,
                 "pi_extension_attached": True,
-                "pi_semantic_ready": False,
+                "pi_semantic_ready": True,
                 "request_id": None,
                 "session_id": None,
             },
@@ -867,7 +868,62 @@ class HerdrServiceTests(unittest.TestCase):
             client.requests[3],
             ("pane.rename", {"pane_id": "w-random:p1", "label": "aug 18, 2:34 pm"}),
         )
-        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.snapshot_calls, 3)
+
+    def test_quick_pi_session_keeps_new_pane_when_semantic_bridge_never_connects(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [], "tabs": [], "panes": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
+                }
+            },
+        )
+        with tempfile.TemporaryDirectory() as extension_path:
+            service = HerdrService(
+                client,
+                environ={
+                    "HERDR_HARNESS_PI_EXTENSION_PATH": extension_path,
+                    "HERDR_HARNESS_QUICK_SESSION_READY_TIMEOUT_MS": "100",
+                },
+                pi_semantic=FakeReadyPiSemantic(connected=False),
+            )
+
+            result = service.quick_pi_session("new session")
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["pi_semantic_ready"])
+        self.assertFalse(
+            any(
+                method in {"workspace.close", "tab.close", "pane.close"}
+                for method, _ in client.requests
+            )
+        )
+
+    def test_quick_pi_session_skips_semantic_bridge_without_extension(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [], "tabs": [], "panes": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
+                }
+            },
+        )
+        semantic = FakeReadyPiSemantic()
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=semantic,
+        )
+
+        result = service.quick_pi_session("new session")
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["pi_semantic_ready"])
+        self.assertEqual(semantic.start_calls, 0)
+        self.assertEqual(semantic.capability_calls, [])
 
     def test_quick_pi_session_accepts_root_pane_from_workspace_create(self):
         client = FakeQuickSessionClient(
@@ -882,6 +938,7 @@ class HerdrServiceTests(unittest.TestCase):
         service = HerdrService(
             client,
             environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
         )
 
         result = service.quick_pi_session("new session")
@@ -917,6 +974,7 @@ class HerdrServiceTests(unittest.TestCase):
         service = HerdrService(
             client,
             environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
         )
 
         result = service.quick_pi_session("new session")
@@ -949,6 +1007,7 @@ class HerdrServiceTests(unittest.TestCase):
         service = HerdrService(
             client,
             environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
         )
         service.refresh_snapshot()
         client._snapshot = {
@@ -1001,6 +1060,7 @@ class HerdrServiceTests(unittest.TestCase):
                     "HOME": str(home),
                     "HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge",
                 },
+                pi_semantic=FakeReadyPiSemantic(),
             )
 
             result = service.quick_pi_session(
@@ -1049,12 +1109,66 @@ class HerdrServiceTests(unittest.TestCase):
             service = HerdrService(
                 client,
                 environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+                pi_semantic=FakeReadyPiSemantic(),
             )
 
             service.quick_pi_session("new session", workspace_id="w-target")
 
         tab_request = next(params for method, params in client.requests if method == "tab.create")
         self.assertEqual(tab_request["cwd"], str(workspace_cwd.resolve()))
+
+    def test_quick_pi_session_applies_explicit_tab_label_when_creating_tab(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [{"workspace_id": "w-target", "label": "Project"}], "tabs": [], "panes": []},
+            {
+                "tab.create": {
+                    "tab": {
+                        "tab_id": "w-target:t2",
+                        "root_pane": {"pane_id": "w-target:p2", "tab_id": "w-target:t2"},
+                    }
+                }
+            },
+        )
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
+
+        service.quick_pi_session(
+            "new session",
+            workspace_id="w-target",
+            tab_label="Custom Tab",
+            reuse_named_tab=False,
+        )
+
+        tab_request = next(params for method, params in client.requests if method == "tab.create")
+        self.assertEqual(tab_request["label"], "Custom Tab")
+
+    def test_quick_pi_session_applies_explicit_tab_label_when_creating_workspace(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [], "tabs": [], "panes": []},
+            {
+                "workspace.create": {
+                    "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                    "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
+                }
+            },
+        )
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
+
+        service.quick_pi_session(
+            "new session", tab_label="Custom Tab", reuse_named_tab=False
+        )
+
+        self.assertIn(
+            ("tab.rename", {"tab_id": "w-random:t1", "label": "Custom Tab"}),
+            client.requests,
+        )
 
     def test_quick_pi_session_name_match_is_exact_and_independent_of_cwd(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1089,6 +1203,7 @@ class HerdrServiceTests(unittest.TestCase):
                     "HOME": str(home),
                     "HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge",
                 },
+                pi_semantic=FakeReadyPiSemantic(),
             )
 
             result = service.quick_pi_session("new session")
@@ -1131,6 +1246,7 @@ class HerdrServiceTests(unittest.TestCase):
         exact_service = HerdrService(
             exact_client,
             environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
         )
         exact_result = exact_service.quick_pi_session("new session")
         self.assertEqual(exact_result["workspace_id"], "w-project")
@@ -1148,7 +1264,11 @@ class HerdrServiceTests(unittest.TestCase):
             snapshot,
             {"pane.split": {"pane": {"pane_id": "w-target:p2", "tab_id": "w-target:t1"}}},
         )
-        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
 
         result = service.quick_pi_session("continued session", tab_id="w-target:t1")
 
@@ -1187,6 +1307,7 @@ class HerdrServiceTests(unittest.TestCase):
         service = HerdrService(
             client,
             environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
         )
 
         result = service.quick_pi_session("new session")
@@ -1205,7 +1326,11 @@ class HerdrServiceTests(unittest.TestCase):
                 "tab.rename": HerdrClientError("rename failed", code="herdr_unavailable"),
             },
         )
-        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
 
         with self.assertRaises(HerdrClientError):
             service.quick_pi_session("new session")
@@ -1230,7 +1355,11 @@ class HerdrServiceTests(unittest.TestCase):
                 "agent.start": HerdrClientError("start failed", code="herdr_unavailable"),
             },
         )
-        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
 
         with self.assertRaises(HerdrClientError):
             service.quick_pi_session("new session")
@@ -1272,7 +1401,11 @@ class HerdrServiceTests(unittest.TestCase):
                 "agent.start": HerdrClientError("start failed", code="herdr_unavailable"),
             }
         )
-        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
 
         with self.assertRaises(HerdrClientError):
             service.quick_pi_session("new session")
@@ -1326,7 +1459,11 @@ class HerdrServiceTests(unittest.TestCase):
                 )
 
         client.responses.update({"pane.split": split, "agent.start": busy_then_start})
-        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
 
         with patch("herdr_harness.service.time.sleep", side_effect=publish_delayed_pane):
             result = service.quick_pi_session("new session")
@@ -1364,7 +1501,11 @@ class HerdrServiceTests(unittest.TestCase):
                 "agent.start": HerdrClientError("pane stayed busy", code="agent_pane_busy"),
             }
         )
-        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
 
         with patch("herdr_harness.service.time.sleep"), self.assertRaises(HerdrClientError) as context:
             service.quick_pi_session("new session")
@@ -1588,7 +1729,11 @@ class HerdrServiceTests(unittest.TestCase):
                 }
             },
         )
-        service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"})
+        service = HerdrService(
+            client,
+            environ={"HERDR_HARNESS_PI_EXTENSION_PATH": "/missing/bridge"},
+            pi_semantic=FakeReadyPiSemantic(),
+        )
 
         first = service.quick_pi_session("new session", request_id="request-1")
         second = service.quick_pi_session("new session", request_id="request-1")
