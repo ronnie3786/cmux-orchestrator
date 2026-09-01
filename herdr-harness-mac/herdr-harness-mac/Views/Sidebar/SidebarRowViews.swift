@@ -68,6 +68,7 @@ struct SidebarProjectRow: View {
     @State private var isHovering = false
 
     var body: some View {
+        let workingCount = workspace.workingCount
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "chevron.right")
@@ -80,7 +81,7 @@ struct SidebarProjectRow: View {
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
 
-                SidebarStatusDot(status: workspace.agentStatus, isWorking: workspace.workingCount > 0)
+                SidebarStatusDot(status: workspace.agentStatus, isWorking: workingCount > 0)
 
                 Text(workspace.label)
                     .herdrFont(
@@ -118,27 +119,26 @@ struct SidebarProjectRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .help(tooltip)
+        .help(tooltip(workingCount: workingCount))
         .accessibilityIdentifier("sidebar-workspace-\(workspace.id)")
         .accessibilityElement(children: .combine)
-        .accessibilityValue(accessibilityValue)
+        .accessibilityValue(accessibilityValue(workingCount: workingCount))
         .accessibilityHint("Collapses or expands this workspace's chats")
     }
 
     /// The chat rows below spell their status out in words; a workspace row only
     /// ever carried it as a hue. With one tone the hover tooltip is where that
     /// detail goes — the mac-native place for it, and no extra chrome in the row.
-    private var tooltip: String {
+    private func tooltip(workingCount: Int) -> String {
         let location = workspace.displayPath.isEmpty ? workspace.label : workspace.displayPath
-        let working = workspace.workingCount
-        guard working > 0 else { return "\(location) — \(workspace.agentStatus.title)" }
-        return "\(location) — \(workspace.agentStatus.title) — \(working) working"
+        guard workingCount > 0 else { return "\(location) — \(workspace.agentStatus.title)" }
+        return "\(location) — \(workspace.agentStatus.title) — \(workingCount) working"
     }
 
-    private var accessibilityValue: String {
+    private func accessibilityValue(workingCount: Int) -> String {
         let expansion = isExpanded ? "expanded" : "collapsed"
-        guard workspace.workingCount > 0 else { return expansion }
-        return "\(expansion), \(workspace.workingCount) working"
+        guard workingCount > 0 else { return expansion }
+        return "\(expansion), \(workingCount) working"
     }
 }
 

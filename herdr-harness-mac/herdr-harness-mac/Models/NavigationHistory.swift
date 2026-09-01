@@ -76,8 +76,11 @@ struct NavigationHistory: Equatable, Sendable {
     }
 
     mutating func prune(isAlive: (HerdrDestination) -> Bool) {
-        backward.removeAll { !isAlive($0) }
-        forward.removeAll { !isAlive($0) }
+        let prunedBackward = backward.filter(isAlive)
+        let prunedForward = forward.filter(isAlive)
+        guard prunedBackward.count != backward.count || prunedForward.count != forward.count else { return }
+        backward = prunedBackward
+        forward = prunedForward
     }
 
     /// Changes the selected history entry while replaying a Back or Forward

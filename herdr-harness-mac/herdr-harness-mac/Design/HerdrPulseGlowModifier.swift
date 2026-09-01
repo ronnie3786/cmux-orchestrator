@@ -11,6 +11,11 @@ enum HerdrPulseGlow {
     static let restOpacity = 0.32
     static let peakOpacity = 0.85
 
+    /// Mirrors `opacity`'s branch that always returns 0 while inactive.
+    static func isVisible(isActive: Bool) -> Bool {
+        isActive
+    }
+
     /// `nil` while resting so a settled row is not left holding a live
     /// `repeatForever` animation. With an unconditional repeating animation,
     /// flipping the driver *off* hands SwiftUI another infinite animation toward
@@ -39,34 +44,40 @@ private struct HerdrPulseGlowModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                // A radial gradient whose only animating property is `opacity`
-                // rasterizes once and alpha-composites on the render server.
-                // `StatusRail` animates `.shadow(color:)`, which re-rasterizes and
-                // re-blurs the glyph every frame — fine for two cards, not for a
-                // scrolling column.
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [color, color.opacity(0)],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: diameter / 2
+                if HerdrPulseGlow.isVisible(isActive: isActive) {
+                    // A radial gradient whose only animating property is `opacity`
+                    // rasterizes once and alpha-composites on the render server.
+                    // `StatusRail` animates `.shadow(color:)`, which re-rasterizes and
+                    // re-blurs the glyph every frame — fine for two cards, not for a
+                    // scrolling column. An opacity-0 gradient still remains in
+                    // SwiftUI's display list and is re-diffed and re-resolved every
+                    // frame. This modifier appears on every sidebar row, so that
+                    // creates O(rows) gradient-resolution work even when invisible;
+                    // gate the whole subview out of existence instead of hiding it.
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [color, color.opacity(0)],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: diameter / 2
+                            )
                         )
-                    )
-                    .frame(width: diameter, height: diameter)
-                    .opacity(
-                        HerdrPulseGlow.opacity(
-                            isActive: isActive,
-                            isPulsing: isPulsing,
-                            reduceMotion: reduceMotion
+                        .frame(width: diameter, height: diameter)
+                        .opacity(
+                            HerdrPulseGlow.opacity(
+                                isActive: isActive,
+                                isPulsing: isPulsing,
+                                reduceMotion: reduceMotion
+                            )
                         )
-                    )
-                    .animation(
-                        HerdrPulseGlow.animation(isPulsing: isPulsing, reduceMotion: reduceMotion),
-                        value: isPulsing
-                    )
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                        .animation(
+                            HerdrPulseGlow.animation(isPulsing: isPulsing, reduceMotion: reduceMotion),
+                            value: isPulsing
+                        )
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             .onChange(of: isActive, initial: true) { _, _ in updatePulse() }
             .onChange(of: reduceMotion) { _, _ in updatePulse() }

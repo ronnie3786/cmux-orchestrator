@@ -3,6 +3,12 @@ import Testing
 
 @Suite("Herdr pulse glow")
 struct HerdrPulseGlowTests {
+    @Test("Visibility mirrors the inactive opacity branch")
+    func visibilityPolicy() {
+        #expect(HerdrPulseGlow.isVisible(isActive: true))
+        #expect(!HerdrPulseGlow.isVisible(isActive: false))
+    }
+
     @Test("Animation only runs while active and motion is allowed")
     func animationPolicy() {
         #expect(HerdrPulseGlow.animation(isPulsing: true, reduceMotion: false) != nil)

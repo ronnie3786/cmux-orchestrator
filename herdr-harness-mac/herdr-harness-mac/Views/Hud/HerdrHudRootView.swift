@@ -17,6 +17,7 @@ struct HerdrHudRootView: View {
     }
 
     var body: some View {
+        let chipState = sessionChips
         Group {
             if controller.isExpanded {
                 HerdrHudCardView(model: model, controller: controller, session: session)
@@ -30,7 +31,7 @@ struct HerdrHudRootView: View {
                     )
             } else {
                 Group {
-                    if sessionChips.chips.isEmpty {
+                    if chipState.chips.isEmpty {
                         HerdrHudOrbView(model: model, controller: controller, session: session)
                     } else {
                         VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
@@ -41,13 +42,13 @@ struct HerdrHudRootView: View {
                                 )
                             HerdrHudSessionChipsView(
                                 model: model,
-                                chips: sessionChips.chips,
-                                overflow: sessionChips.overflow
+                                chips: chipState.chips,
+                                overflow: chipState.overflow
                             )
                         }
                     }
                 }
-                .onChange(of: sessionChips.chips.count, initial: true) { _, count in
+                .onChange(of: chipState.chips.count, initial: true) { _, count in
                     controller.setCollapsedChipCount(count)
                 }
             }

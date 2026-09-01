@@ -96,6 +96,17 @@ struct NavigationHistoryTests {
         #expect(history.forward.isEmpty)
     }
 
+    @Test("Pruning a fully live history is a no-op")
+    func pruningFullyLiveHistoryIsNoOp() {
+        var history = trail(.pane("a"), .pane("b"), .pane("c"))
+        _ = history.goBack(isAlive: alive)
+        let originalHistory = history
+
+        history.prune(isAlive: alive)
+
+        #expect(history == originalHistory)
+    }
+
     @Test("Forward mirrors back")
     func forwardSkipsDroppedDestinationsAndLeavesCurrentWhenNoneSurvive() {
         var history = trail(.pane("a"), .pane("b"), .pane("c"))

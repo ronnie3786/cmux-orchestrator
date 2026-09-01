@@ -659,6 +659,12 @@ struct HerdrSidebarView: View {
         _ entries: [SidebarTree.ProjectEntry],
         allWorkspaceIDs: [String]
     ) -> some View {
+        let tabWorkingCounts = entries
+            .flatMap { $0.workspace.panes }
+            .reduce(into: [String: Int]()) { counts, pane in
+                guard pane.agentStatus == .working else { return }
+                counts[pane.scopedTabID, default: 0] += 1
+            }
         ForEach(entries) { entry in
             SidebarProjectRow(
                 workspace: entry.workspace,
@@ -673,7 +679,7 @@ struct HerdrSidebarView: View {
                         tab: section.tab,
                         isExpanded: section.isExpanded,
                         attentionStatus: tabAttentionStatus(section.tab, in: entry.workspace),
-                        workingCount: tabWorkingCount(section.tab, in: entry.workspace),
+                        workingCount: tabWorkingCounts[section.tab.id, default: 0],
                         action: { toggle(section.tab, allTabIDs: entry.sections.map(\.id)) }
                     )
                         .contextMenu { tabMenu(section.tab, in: entry.workspace) }
@@ -795,10 +801,6 @@ struct HerdrSidebarView: View {
         if statuses.contains(.blocked) { return .blocked }
         if statuses.contains(.done) { return .done }
         return nil
-    }
-
-    private func tabWorkingCount(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> Int {
-        workspace.workingCount(inTab: tab.id)
     }
 
     private func sidebarCountDetail(_ count: Int) -> String {
