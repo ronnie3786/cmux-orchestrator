@@ -9,7 +9,7 @@ struct HerdrHudRunningRowView: View {
             ProgressView()
                 .controlSize(.small)
                 .tint(HerdrTheme.accent)
-            Text("Thinking… \(session.elapsedSeconds)s")
+            Text(statusText)
                 .herdrFont(.caption, monospacedDigit: true)
                 .foregroundStyle(HerdrTheme.mist)
             Spacer()
@@ -22,5 +22,12 @@ struct HerdrHudRunningRowView: View {
 
     private func stop() {
         Task { await session.stop(model: model) }
+    }
+
+    private var statusText: String {
+        guard session.liveStepCount > 0 else {
+            return "Thinking… \(session.elapsedSeconds)s"
+        }
+        return "Clanking… \(session.liveStepCount) steps · \(session.elapsedSeconds)s"
     }
 }

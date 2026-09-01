@@ -11,6 +11,9 @@ struct HerdrHudTranscriptRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             promptBubble
+            if !exchange.steps.isEmpty {
+                HerdrHudWorkingGroupView(exchange: exchange)
+            }
             answer
             if isCompletedResponse {
                 footer

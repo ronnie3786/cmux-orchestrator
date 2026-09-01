@@ -52,6 +52,8 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let promotedWorkspaceID: String?
     let promotedPaneID: String?
     let attachments: [String]?
+    let steps: [HeadlessAgentStep]?
+    let stepsTruncated: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -71,7 +73,20 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
         case promotedWorkspaceID = "promotedWorkspaceId"
         case promotedPaneID = "promotedPaneId"
         case attachments
+        case steps
+        case stepsTruncated
     }
+}
+
+struct HeadlessAgentStep: Codable, Equatable, Sendable {
+    let toolCallId: String?
+    let toolName: String?
+    let argsPreview: String?
+    let resultPreview: String?
+    let isError: Bool?
+    let startedAt: String?
+    let finishedAt: String?
+    let truncated: Bool?
 }
 
 struct HeadlessAgentRunEnvelope: Decodable, Sendable {

@@ -1735,7 +1735,9 @@ final class HerdrAppModel {
                 costUSD: 0,
                 promotedWorkspaceID: nil,
                 promotedPaneID: nil,
-                attachments: attachments?.map(\.filename)
+                attachments: attachments?.map(\.filename),
+                steps: nil,
+                stepsTruncated: nil
             )
         }
         guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
@@ -1810,7 +1812,9 @@ final class HerdrAppModel {
                     costUSD: 0,
                     promotedWorkspaceID: workspace.workspaceID,
                     promotedPaneID: pane.paneID,
-                    attachments: nil
+                    attachments: nil,
+                    steps: nil,
+                    stepsTruncated: nil
                 ),
                 pane: pane
             )

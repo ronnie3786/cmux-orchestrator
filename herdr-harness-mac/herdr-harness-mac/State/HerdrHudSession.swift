@@ -8,6 +8,15 @@ struct HerdrHudImageAttachment: Identifiable, Equatable, Sendable {
     let byteCount: Int
 }
 
+struct HerdrHudStep: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let detail: String
+    let symbol: String
+    let isFailure: Bool
+    let isRunning: Bool
+}
+
 struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     let id: String
     let machineID: String
@@ -22,6 +31,8 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     let attachmentFilenames: [String]
     var attachments: [HeadlessAgentAttachment] = []
     var modelLabel: String = "default"
+    var steps: [HerdrHudStep] = []
+    var stepsTruncated = false
 }
 
 @MainActor
@@ -62,6 +73,7 @@ final class HerdrHudSession {
     }
     private(set) var hasUnseenAnswer = false
     private(set) var elapsedSeconds = 0
+    private(set) var liveStepCount = 0
     private(set) var validationError: String?
     private(set) var promoteErrorMessage: String?
     private(set) var audioErrorMessage: String?
@@ -304,7 +316,9 @@ final class HerdrHudSession {
             promotedPaneID: run.promotedPaneID,
             attachmentFilenames: attachmentFilenames,
             attachments: retainedAttachments,
-            modelLabel: label
+            modelLabel: label,
+            steps: Self.hudSteps(from: run.steps ?? []),
+            stepsTruncated: run.stepsTruncated == true
         )
         if run.status.isTerminal, isCollapsed {
             hasUnseenAnswer = true
@@ -439,7 +453,9 @@ final class HerdrHudSession {
                 promotedPaneID: run.promotedPaneID,
                 attachmentFilenames: exchange.attachmentFilenames,
                 attachments: retainedAttachments,
-                modelLabel: label
+                modelLabel: label,
+                steps: Self.hudSteps(from: run.steps ?? []),
+                stepsTruncated: run.stepsTruncated == true
             )
         )
         if run.status.isTerminal, isCollapsed {
@@ -511,6 +527,7 @@ final class HerdrHudSession {
         model: HerdrAppModel
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
+        liveStepCount = 0
         await controller.submit(
             prompt: prompt,
             machineID: machineID,
@@ -521,14 +538,18 @@ final class HerdrHudSession {
             model: model
         )
         beginElapsedTimer()
+        defer { endElapsedTimer() }
         while controller.isRunning {
             do {
                 try await Task.sleep(for: .milliseconds(100))
             } catch {
                 return nil
             }
+            let count = controller.run?.steps?.count ?? 0
+            if count != liveStepCount {
+                liveStepCount = count
+            }
         }
-        endElapsedTimer()
         return controller.run
     }
 
@@ -552,5 +573,52 @@ final class HerdrHudSession {
         elapsedTask?.cancel()
         elapsedTask = nil
         elapsedSeconds = 0
+        liveStepCount = 0
+    }
+
+    static func hudSteps(from steps: [HeadlessAgentStep]) -> [HerdrHudStep] {
+        steps.enumerated().map { index, step in
+            let toolName = step.toolName.flatMap { $0.isEmpty ? nil : $0 } ?? "Tool"
+            let presentation = PiToolPresentation.details(forToolName: toolName)
+            let identifier = step.toolCallId.flatMap { $0.isEmpty ? nil : $0 } ?? "hud-step-\(index)"
+            return HerdrHudStep(
+                id: identifier,
+                title: presentation.title,
+                detail: Self.hudStepDetail(for: step, isCommand: presentation.title == "Command"),
+                symbol: presentation.symbol,
+                isFailure: step.isError == true,
+                isRunning: step.finishedAt == nil
+            )
+        }
+    }
+
+    private static func hudStepDetail(
+        for step: HeadlessAgentStep,
+        isCommand: Bool
+    ) -> String {
+        let preview: String?
+        if isCommand {
+            preview = commandPreview(from: step.argsPreview) ?? step.argsPreview ?? step.resultPreview
+        } else {
+            preview = step.argsPreview ?? step.resultPreview
+        }
+        return singleLinePreview(preview ?? "")
+    }
+
+    private static func commandPreview(from preview: String?) -> String? {
+        guard let preview,
+              let data = preview.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return ["command", "cmd", "script"].lazy.compactMap { object[$0] as? String }.first
+    }
+
+    private static func singleLinePreview(_ preview: String) -> String {
+        let singleLine = preview.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        let limit = 120
+        guard singleLine.count > limit else { return singleLine }
+        return String(singleLine.prefix(limit - 1)) + "…"
     }
 }
