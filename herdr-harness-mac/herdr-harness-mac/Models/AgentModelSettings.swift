@@ -60,6 +60,12 @@ struct AgentModelSettings: Equatable, Sendable {
     var effectiveVisionModel: String {
         visionModel.isEmpty ? Self.builtInVisionModel : visionModel
     }
+
+    var effectiveNotesModel: String? {
+        if !notesModel.isEmpty { return notesModel }
+        if !hudModel.isEmpty { return hudModel }
+        return nil
+    }
 }
 
 @MainActor
@@ -89,6 +95,12 @@ final class AgentModelSettingsStore {
 
     var effectiveVisionModel: String {
         visionModel.isEmpty ? AgentModelSettings.builtInVisionModel : visionModel
+    }
+
+    var effectiveNotesModel: String? {
+        if !notesModel.isEmpty { return notesModel }
+        if !hudModel.isEmpty { return hudModel }
+        return nil
     }
 
     @ObservationIgnored private let defaults: UserDefaults

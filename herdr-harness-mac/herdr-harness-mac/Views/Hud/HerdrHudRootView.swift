@@ -5,6 +5,7 @@ struct HerdrHudRootView: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     let session: HerdrHudSession
+    let notes: HerdrHudNotesState
     let fontScale: HerdrFontScaleStore
 
     private var sessionChips: (chips: [HerdrHudSessionChips.Chip], overflow: Int) {

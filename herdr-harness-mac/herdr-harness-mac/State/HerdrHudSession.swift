@@ -636,9 +636,12 @@ final class HerdrHudSession {
         elapsedSeconds = 0
         liveStepCount = 0
         var systemPrompt: String?
-        if let override = promptSettings.override(for: .hudActCharter),
-           await model.supportsPromptOverrides(machineID: machineID) {
-            systemPrompt = override
+        if let override = promptSettings.override(for: .hudActCharter) {
+            if await model.supportsPromptOverrides(machineID: machineID) {
+                systemPrompt = override
+            } else if validationError == nil {
+                validationError = "Custom instructions skipped — this machine's harness doesn't support them yet."
+            }
         }
         await controller.submit(
             prompt: prompt,

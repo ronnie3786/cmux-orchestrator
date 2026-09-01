@@ -14,7 +14,7 @@ final class HerdrPromptSettingsStore {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         for id in HerdrPromptID.allCases {
-            if let stored = defaults.string(forKey: id.defaultsKey), !stored.isEmpty {
+            if let stored = defaults.string(forKey: id.defaultsKey) {
                 overrides[id] = stored
             }
         }
@@ -25,20 +25,27 @@ final class HerdrPromptSettingsStore {
     }
 
     func text(for id: HerdrPromptID) -> String {
-        overrides[id] ?? defaultText(for: id)
+        override(for: id) ?? defaultText(for: id)
     }
 
     func isCustomized(_ id: HerdrPromptID) -> Bool {
-        overrides[id] != nil
+        guard let override = overrides[id] else { return false }
+        return override != defaultText(for: id)
     }
 
     func override(for id: HerdrPromptID) -> String? {
-        overrides[id]
+        Self.storedOverride(for: id, defaults: defaults)
+    }
+
+    static func storedOverride(for id: HerdrPromptID, defaults: UserDefaults) -> String? {
+        guard let override = defaults.string(forKey: id.defaultsKey),
+              !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return override
     }
 
     func setText(_ text: String, for id: HerdrPromptID) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || text == defaultText(for: id) {
+        if text == defaultText(for: id) {
             reset(id)
             return
         }

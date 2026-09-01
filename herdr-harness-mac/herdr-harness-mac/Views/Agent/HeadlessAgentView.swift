@@ -14,6 +14,7 @@ struct HeadlessAgentView: View {
     @State private var promotionWorkspaceID = ""
     @State private var agentCatalog: AgentModelCatalogResponse?
     @State private var didLoadAgentCatalog = false
+    @State private var promptOverrideWarning: String?
     @FocusState private var isPromptFocused: Bool
 
     init(
@@ -264,7 +265,7 @@ struct HeadlessAgentView: View {
 
     @ViewBuilder
     private var errorBanner: some View {
-        if let message = controller.errorMessage, !message.isEmpty {
+        if let message = controller.errorMessage ?? promptOverrideWarning, !message.isEmpty {
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .herdrFont(.subheadline)
                 .foregroundStyle(HerdrTheme.alert)
@@ -302,10 +303,14 @@ struct HeadlessAgentView: View {
             isCatalogAuthoritative: didLoadAgentCatalog
         )
         Task {
+            promptOverrideWarning = nil
             var systemPrompt: String?
-            if let override = promptSettings.override(for: .agentAskCharter),
-               await model.supportsPromptOverrides(machineID: selectedMachineID) {
-                systemPrompt = override
+            if let override = promptSettings.override(for: .agentAskCharter) {
+                if await model.supportsPromptOverrides(machineID: selectedMachineID) {
+                    systemPrompt = override
+                } else if promptOverrideWarning == nil {
+                    promptOverrideWarning = "Custom instructions skipped — this machine's harness doesn't support them yet."
+                }
             }
             await controller.submit(
                 prompt: prompt,

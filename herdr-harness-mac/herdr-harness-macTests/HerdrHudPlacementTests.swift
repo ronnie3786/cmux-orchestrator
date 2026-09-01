@@ -211,6 +211,63 @@ struct HerdrHudPlacementTests {
         #expect(frame.maxY <= visibleFrame.maxY)
     }
 
+    @Test("notesContentSize matches each layout's formula")
+    func notesContentSizeMatchesFormula() {
+        #expect(HerdrHudPlacement.notesContentSize(.hidden, isExpanded: false) == .zero)
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 0), isExpanded: false) == .zero)
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 3), isExpanded: false) == CGSize(width: HerdrHudPlacement.chipWidth, height: 3 * HerdrHudPlacement.noteCompactBarHeight + 2 * HerdrHudPlacement.noteCompactBarSpacing))
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 99), isExpanded: false) == HerdrHudPlacement.notesContentSize(.compact(count: HerdrHudPlacement.maxCompactNotes), isExpanded: false))
+        #expect(HerdrHudPlacement.notesContentSize(.rows(count: 0), isExpanded: false) == CGSize(width: HerdrHudPlacement.notesWidth, height: HerdrHudPlacement.noteCtaHeight))
+        #expect(HerdrHudPlacement.notesContentSize(.rows(count: 6), isExpanded: false) == CGSize(width: HerdrHudPlacement.notesWidth, height: HerdrHudPlacement.noteCtaHeight + 6 * (HerdrHudPlacement.noteRowHeight + HerdrHudPlacement.noteRowSpacing)))
+        #expect(HerdrHudPlacement.notesContentSize(.rows(count: 7), isExpanded: false) == HerdrHudPlacement.notesContentSize(.rows(count: 6), isExpanded: false))
+        #expect(HerdrHudPlacement.notesContentSize(.rows(count: 6), isExpanded: true) == HerdrHudPlacement.notesContentSize(.rows(count: HerdrHudPlacement.maxNoteRowsWhenExpanded), isExpanded: true))
+        #expect(HerdrHudPlacement.notesContentSize(.card, isExpanded: false) == HerdrHudPlacement.noteCardSize)
+        #expect(HerdrHudPlacement.notesContentSize(.card, isExpanded: true) == HerdrHudPlacement.noteCardSize)
+    }
+
+    @Test("A zero notes size leaves the frame identical to the existing behaviour")
+    func zeroNotesSizeMatchesExistingFrame() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let offset = HerdrHudPlacement.defaultOffset()
+        for isExpanded in [false, true] {
+            let withoutParam = HerdrHudPlacement.frame(isExpanded: isExpanded, visibleFrame: visibleFrame, topRightOffset: offset)
+            let withZero = HerdrHudPlacement.frame(isExpanded: isExpanded, visibleFrame: visibleFrame, topRightOffset: offset, notesSize: .zero)
+            #expect(withoutParam == withZero)
+        }
+    }
+
+    @Test("Notes size grows the frame by the gap plus its own height, and widens to fit")
+    func notesSizeGrowsFrame() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let offset = HerdrHudPlacement.defaultOffset()
+        let base = HerdrHudPlacement.frame(isExpanded: false, visibleFrame: visibleFrame, topRightOffset: offset)
+        let notesSize = CGSize(width: HerdrHudPlacement.notesWidth, height: 150)
+        let grown = HerdrHudPlacement.frame(isExpanded: false, visibleFrame: visibleFrame, topRightOffset: offset, notesSize: notesSize)
+        #expect(grown.height - base.height == HerdrHudPlacement.notesGap + notesSize.height)
+        #expect(grown.width == max(base.width, notesSize.width + HerdrHudPlacement.shadowMargin * 2))
+        #expect(grown.maxX == base.maxX)
+        #expect(grown.maxY == base.maxY)
+    }
+
+    @Test("Six expanded note rows comfortably fit a common laptop-scale visible frame")
+    func sixRowsExpandedFitsCommonVisibleFrame() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_512, height: 887)
+        let notesSize = HerdrHudPlacement.notesContentSize(.rows(count: 6), isExpanded: true)
+        let frame = HerdrHudPlacement.frame(isExpanded: true, visibleFrame: visibleFrame, topRightOffset: HerdrHudPlacement.defaultOffset(), notesSize: notesSize)
+        let unclampedHeight = HerdrHudPlacement.expandedSize.height + HerdrHudPlacement.notesGap + notesSize.height + HerdrHudPlacement.shadowMargin * 2
+        #expect(unclampedHeight <= visibleFrame.height)
+        #expect(frame.height == unclampedHeight)
+    }
+
+    @Test("An oversized notes height shrinks toward the CTA floor before the card itself is clamped")
+    func oversizedNotesShrinksTowardFloor() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 700)
+        let frame = HerdrHudPlacement.frame(isExpanded: true, visibleFrame: visibleFrame, topRightOffset: HerdrHudPlacement.defaultOffset(), notesSize: CGSize(width: HerdrHudPlacement.notesWidth, height: 1_000))
+        #expect(frame.height <= visibleFrame.height)
+        #expect(frame.maxY <= visibleFrame.maxY)
+        #expect(frame.minY >= visibleFrame.minY)
+    }
+
     private func paddedSize(for contentSize: CGSize) -> CGSize {
         CGSize(
             width: contentSize.width + HerdrHudPlacement.shadowMargin * 2,

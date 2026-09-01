@@ -102,7 +102,7 @@ final class HerdrAppModel {
     /// the server. A refresh that overlaps the POST must not resurrect the
     /// server's stale unread copy.
     @ObservationIgnored private var pendingReadAcknowledgements: Set<String> = []
-    @ObservationIgnored private var promptOverrideSupportCache: [String: (generation: Int, supported: Bool)] = [:]
+    @ObservationIgnored private var promptOverrideSupport: [String: (generation: Int, supported: Bool, probedAt: Date)] = [:]
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
@@ -598,7 +598,10 @@ final class HerdrAppModel {
                 tailLines: nil,
                 keepEvidence: nil,
                 workspaceIDs: workspaceIDs.isEmpty ? nil : workspaceIDs,
-                judgeCharter: judgeCharter
+                judgeCharter: judgeCharter ?? HerdrPromptSettingsStore.storedOverride(
+                    for: .cleanupJudgeCharter,
+                    defaults: userDefaults
+                )
             )
         )
     }
@@ -833,19 +836,12 @@ final class HerdrAppModel {
         return try await client.fetchCleanupModels()
     }
 
-    func makeCleanupController(
-        for target: CleanupSheetTarget,
-        promptSettings: HerdrPromptSettingsStore = HerdrPromptSettingsStore()
-    ) -> CleanupRunController {
+    func makeCleanupController(for target: CleanupSheetTarget) -> CleanupRunController {
         CleanupRunController(
             isDemoMode: isDemoMode,
             runContext: "machine \(target.machineID), workspaces \(target.requestedWorkspaceIDs.isEmpty ? "all" : target.requestedWorkspaceIDs.joined(separator: ","))",
             start: { _ in
-                try await self.startCleanup(
-                    machineID: target.machineID,
-                    workspaceIDs: target.requestedWorkspaceIDs,
-                    judgeCharter: promptSettings.override(for: .cleanupJudgeCharter)
-                )
+                try await self.startCleanup(machineID: target.machineID, workspaceIDs: target.requestedWorkspaceIDs)
             },
             fetch: { runID in
                 try await self.fetchCleanupRun(machineID: target.machineID, runID: runID)
@@ -1167,7 +1163,7 @@ final class HerdrAppModel {
 
     func fetchAgentPromptDefaults(machineID: String? = nil) async throws -> AgentPromptDefaultsResponse {
         if isDemoMode {
-            return AgentPromptDefaultsResponse(
+            let response = AgentPromptDefaultsResponse(
                 ok: true,
                 prompts: [
                     "act": HerdrPromptID.hudActCharter.builtInDefault,
@@ -1175,6 +1171,8 @@ final class HerdrAppModel {
                     "cleanupJudge": HerdrPromptID.cleanupJudgeCharter.builtInDefault,
                 ]
             )
+            if let machineID { promptOverrideSupport[machineID] = (connectionGeneration, true, .now) }
+            return response
         }
         let client: HerdrAPIClient?
         if let machineID {
@@ -1189,24 +1187,27 @@ final class HerdrAppModel {
         }
         guard let client else { throw APIError.invalidResponse }
         do {
-            return try await client.fetchAgentPromptDefaults()
+            let response = try await client.fetchAgentPromptDefaults()
+            if let machineID { promptOverrideSupport[machineID] = (connectionGeneration, true, .now) }
+            return response
         } catch let APIError.server(status, _) where status == 404 {
+            if let machineID { promptOverrideSupport[machineID] = (connectionGeneration, false, .now) }
             throw AgentPromptDefaultsError.unsupported
         }
     }
 
     func supportsPromptOverrides(machineID: String) async -> Bool {
         if isDemoMode { return true }
-        if let cached = promptOverrideSupportCache[machineID], cached.generation == connectionGeneration {
+        if let cached = promptOverrideSupport[machineID],
+           cached.generation == connectionGeneration,
+           cached.supported || Date.now.timeIntervalSince(cached.probedAt) < 60 {
             return cached.supported
         }
         do {
             _ = try await fetchAgentPromptDefaults(machineID: machineID)
-            promptOverrideSupportCache[machineID] = (connectionGeneration, true)
-            return true
+            return promptOverrideSupport[machineID]?.supported ?? true
         } catch is AgentPromptDefaultsError {
-            promptOverrideSupportCache[machineID] = (connectionGeneration, false)
-            return false
+            return promptOverrideSupport[machineID]?.supported ?? false
         } catch {
             return false
         }
@@ -1693,7 +1694,12 @@ final class HerdrAppModel {
                 machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
             )
         }
+        guard !quickPiSessionMachineIDs.contains(machineID) else { throw APIError.invalidResponse }
+        noteUserInteraction(machineID: machineID)
+        quickPiSessionMachineIDs.insert(machineID)
+        defer { quickPiSessionMachineIDs.remove(machineID) }
         let requestID = UUID().uuidString
+        let generation = connectionGeneration
         let supportsOverrides = await supportsPromptOverrides(machineID: machineID)
         let response = try await client.createQuickPiSession(
             label: label,
@@ -1702,8 +1708,8 @@ final class HerdrAppModel {
             tabLabel: supportsOverrides ? tabLabel : nil,
             reuseNamedTab: supportsOverrides ? false : nil
         )
+        guard generation == connectionGeneration else { throw CancellationError() }
         let scopedPaneID = MachineScopedID.compose(machineID: machineID, rawID: response.paneID)
-        let generation = connectionGeneration
         for attempt in 0..<4 {
             try await refresh(machineID: machineID, using: client, showSpinner: false, expectedGeneration: generation)
             if let pane = pane(id: scopedPaneID) {

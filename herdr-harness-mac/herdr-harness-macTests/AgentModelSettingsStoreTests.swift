@@ -87,4 +87,17 @@ struct AgentModelSettingsStoreTests {
         #expect(independent.hudThinkingLevel == .high)
         #expect(independent.quickChatThinkingLevel == .low)
     }
+
+    @Test("effectiveNotesModel falls back through notes model then HUD model then nil")
+    func effectiveNotesModelFallsBack() throws {
+        let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var settings = AgentModelSettings.load(from: defaults)
+        #expect(settings.effectiveNotesModel == nil)
+        settings.hudModel = "hud/model"
+        #expect(settings.effectiveNotesModel == "hud/model")
+        settings.notesModel = "notes/model"
+        #expect(settings.effectiveNotesModel == "notes/model")
+    }
 }

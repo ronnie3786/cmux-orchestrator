@@ -27,6 +27,8 @@ final class HerdrHudController {
     private var panel: HerdrHudPanel?
     private var hotKey: HerdrGlobalHotKey?
     private var session: HerdrHudSession?
+    private var notes: HerdrHudNotesState?
+    private var lastNotesLayout: HerdrHudPlacement.NotesLayout = .hidden
     private var placementOffset = HerdrHudPlacement.defaultOffset()
     private var notificationTokens: [NSObjectProtocol] = []
     private var isConfigured = false
@@ -35,7 +37,12 @@ final class HerdrHudController {
 
     private(set) var isExpanded = false
     private(set) var focusRequest = 0
+    private(set) var noteFocusRequest = 0
     private(set) var collapsedChipCount = 0
+
+    #if DEBUG
+    var panelFrameForTesting: CGRect? { panel?.frame }
+    #endif
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -50,11 +57,14 @@ final class HerdrHudController {
     func configure(
         model: HerdrAppModel,
         session: HerdrHudSession,
+        notes: HerdrHudNotesState,
         fontScale: HerdrFontScaleStore
     ) {
         guard !isConfigured else { return }
         isConfigured = true
         self.session = session
+        self.notes = notes
+        lastNotesLayout = notes.layout
         placementOffset = loadPlacementOffset()
 
         let initialFrame = frame(for: false)
@@ -73,12 +83,13 @@ final class HerdrHudController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .utilityWindow
-        panel.onCancel = { [weak self] in self?.collapse() }
+        panel.onCancel = { [weak self] in self?.handleCancel() }
         panel.contentView = NSHostingView(
             rootView: HerdrHudRootView(
                 model: model,
                 controller: self,
                 session: session,
+                notes: notes,
                 fontScale: fontScale
             )
         )
@@ -101,7 +112,9 @@ final class HerdrHudController {
             setEnabled(true)
         }
         guard let panel else { return }
+        notes?.closeNote()
         isExpanded = true
+        if notes?.isHudExpanded == false { notes?.isHudExpanded = true }
         session?.isCollapsed = false
         applyFrame(animated: true)
         panel.makeKeyAndOrderFront(nil)
@@ -112,6 +125,7 @@ final class HerdrHudController {
     func collapse() {
         guard let panel else { return }
         isExpanded = false
+        if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
         session?.isCollapsed = true
         applyFrame(animated: true)
         if panel.isKeyWindow {
@@ -130,6 +144,7 @@ final class HerdrHudController {
     }
 
     func setEnabled(_ enabled: Bool) {
+        notes?.closeNote()
         userDefaults.set(enabled, forKey: DefaultsKey.enabled)
         enabledRevision &+= 1
         guard let panel else { return }
@@ -137,11 +152,13 @@ final class HerdrHudController {
         if enabled {
             installHotKey()
             isExpanded = false
+            if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
             session?.isCollapsed = true
             applyFrame(animated: false)
             panel.orderFrontRegardless()
         } else {
             isExpanded = false
+            if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
             session?.isCollapsed = true
             applyFrame(animated: false)
             panel.orderOut(nil)
@@ -156,6 +173,49 @@ final class HerdrHudController {
         if !isExpanded {
             applyFrame(animated: true)
         }
+    }
+
+    func notesLayoutDidChange() {
+        guard let panel else { return }
+        let newFrame = frame(for: isExpanded)
+        if newFrame != panel.frame { applyFrame(animated: true) }
+        let currentLayout = notes?.layout ?? .hidden
+        if case .card = lastNotesLayout,
+           !Self.isCardLayout(currentLayout),
+           !isExpanded,
+           panel.isKeyWindow {
+            panel.orderOut(nil)
+            panel.orderFrontRegardless()
+        }
+        lastNotesLayout = currentLayout
+    }
+
+    func openNote(_ id: UUID) {
+        guard let panel, let notes else { return }
+        if isExpanded {
+            isExpanded = false
+            session?.isCollapsed = true
+            if notes.isHudExpanded { notes.isHudExpanded = false }
+        }
+        notes.openNote(id)
+        applyFrame(animated: true)
+        panel.makeKeyAndOrderFront(nil)
+        noteFocusRequest &+= 1
+    }
+
+    func closeNote() { notes?.closeNote() }
+
+    func handleCancel() {
+        if notes?.openNoteID != nil {
+            closeNote()
+        } else {
+            collapse()
+        }
+    }
+
+    private static func isCardLayout(_ layout: HerdrHudPlacement.NotesLayout) -> Bool {
+        if case .card = layout { return true }
+        return false
     }
 
     private func installHotKey() {
@@ -239,7 +299,8 @@ final class HerdrHudController {
             isExpanded: isExpanded,
             visibleFrame: visibleFrame(for: panel),
             topRightOffset: placementOffset,
-            chipCount: isExpanded ? 0 : collapsedChipCount
+            chipCount: isExpanded ? 0 : collapsedChipCount,
+            notesSize: HerdrHudPlacement.notesContentSize(notes?.layout ?? .hidden, isExpanded: isExpanded)
         )
     }
 

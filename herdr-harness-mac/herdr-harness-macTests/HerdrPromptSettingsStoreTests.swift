@@ -28,18 +28,41 @@ struct HerdrPromptSettingsStoreTests {
         #expect(HerdrPromptSettingsStore(defaults: defaults).override(for: id) == "Custom cleanup")
     }
 
-    @Test("Blank or default text clears an existing override")
-    func clearingOverride() throws {
+    @Test("A verbatim blank override is stored but text falls back to the default")
+    func storesBlankOverride() throws {
+        let (defaults, suiteName) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let id = HerdrPromptID.notesSmartActions
+        let store = HerdrPromptSettingsStore(defaults: defaults)
+        store.setText("   \n", for: id)
+        #expect(store.isCustomized(id))
+        #expect(store.override(for: id) == nil)
+        #expect(store.text(for: id) == id.builtInDefault)
+        #expect(defaults.string(forKey: id.defaultsKey) == "   \n")
+    }
+
+    @Test("Setting text equal to the current default removes the override")
+    func defaultTextRemovesOverride() throws {
         let (defaults, suiteName) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let id = HerdrPromptID.notesSmartActions
         let store = HerdrPromptSettingsStore(defaults: defaults)
         store.setText("Custom", for: id)
-        store.setText("  \n", for: id)
-        #expect(store.override(for: id) == nil)
-        store.setText("Custom again", for: id)
         store.setText(id.builtInDefault, for: id)
         #expect(store.override(for: id) == nil)
+        #expect(!store.isCustomized(id))
+        #expect(defaults.object(forKey: id.defaultsKey) == nil)
+    }
+
+    @Test("Stored override filters blank text")
+    func storedOverrideFiltersBlankText() throws {
+        let (defaults, suiteName) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let id = HerdrPromptID.notesSmartActions
+        defaults.set("Direct text", forKey: id.defaultsKey)
+        #expect(HerdrPromptSettingsStore.storedOverride(for: id, defaults: defaults) == "Direct text")
+        defaults.set(" \n", forKey: id.defaultsKey)
+        #expect(HerdrPromptSettingsStore.storedOverride(for: id, defaults: defaults) == nil)
     }
 
     @Test("Reset restores the default and removes storage")

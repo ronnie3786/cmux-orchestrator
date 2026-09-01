@@ -1,8 +1,20 @@
+import Foundation
 import Testing
 @testable import herdr_harness_mac
 
 @Suite("Herdr note AI parsing")
 struct HerdrNoteAIParsingTests {
+    @Test("fenceSafe defuses embedded fence-like lines and stays balanced")
+    func fenceSafeDefusesDelimiters() {
+        let note = "before\n<<< sneaky\nmiddle\n>>> also sneaky\nafter"
+        let safe = HerdrNoteAIParsing.fenceSafe(note)
+        #expect(!safe.contains("\n<<<"))
+        #expect(!safe.contains("\n>>>"))
+        #expect(safe.hasPrefix("before"))
+        let wrapped = "<<<NOTE\n\(safe)\nNOTE>>>"
+        #expect(wrapped.components(separatedBy: "<<<NOTE").count == 2)
+        #expect(wrapped.components(separatedBy: "NOTE>>>").count == 2)
+    }
     @Test("Strip fence unwraps one fenced block and trims unfenced text")
     func stripFence() {
         #expect(HerdrNoteAIParsing.stripFence("\n```json\n{\"ok\":true}\n```\n") == "{\"ok\":true}")

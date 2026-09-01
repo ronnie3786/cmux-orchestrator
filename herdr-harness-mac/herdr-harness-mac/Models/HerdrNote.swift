@@ -115,6 +115,9 @@ struct HerdrNote: Codable, Identifiable, Equatable, Sendable {
         self.lastCleanedAt = lastCleanedAt
     }
 
+}
+
+extension HerdrNote {
     private enum CodingKeys: String, CodingKey {
         case id, title, body, color, createdAt, updatedAt, previousVersion, aiSummary, actions, links, lastCleanedAt
     }
@@ -132,5 +135,22 @@ struct HerdrNote: Codable, Identifiable, Equatable, Sendable {
         actions = try container.decodeIfPresent([HerdrNoteAction].self, forKey: .actions) ?? []
         links = try container.decodeIfPresent([HerdrNoteLink].self, forKey: .links) ?? []
         lastCleanedAt = try container.decodeIfPresent(Date.self, forKey: .lastCleanedAt)
+    }
+}
+
+extension HerdrNoteAction {
+    private enum CodingKeys: String, CodingKey {
+        case id, title, prompt, status, linkID, error, startedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        prompt = try container.decode(String.self, forKey: .prompt)
+        status = try container.decodeIfPresent(Status.self, forKey: .status) ?? .ready
+        linkID = try container.decodeIfPresent(UUID.self, forKey: .linkID)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
     }
 }

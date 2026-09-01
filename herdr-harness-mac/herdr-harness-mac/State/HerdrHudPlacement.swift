@@ -15,6 +15,35 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let chipHeight: CGFloat = 28
     static let chipSpacing: CGFloat = 6
     static let maxChips = 3
+    enum NotesLayout: Equatable, Sendable { case hidden, compact(count: Int), rows(count: Int), card }
+    static let notesGap: CGFloat = 10
+    static let notesWidth: CGFloat = 236
+    static let noteRowHeight: CGFloat = 30
+    static let noteRowSpacing: CGFloat = 6
+    static let noteCtaHeight: CGFloat = 30
+    static let noteCompactBarHeight: CGFloat = 8
+    static let noteCompactBarSpacing: CGFloat = 4
+    static let maxCompactNotes = 5
+    static let maxNoteRows = 6
+    static let maxNoteRowsWhenExpanded = 3
+    static let noteCardSize = CGSize(width: 320, height: 360)
+
+    static func maxNoteRows(isExpanded: Bool) -> Int { isExpanded ? maxNoteRowsWhenExpanded : maxNoteRows }
+    static func notesContentSize(_ layout: NotesLayout, isExpanded: Bool) -> CGSize {
+        switch layout {
+        case .hidden:
+            return .zero
+        case let .compact(count):
+            let k = min(max(count, 0), maxCompactNotes)
+            guard k > 0 else { return .zero }
+            return CGSize(width: chipWidth, height: CGFloat(k) * noteCompactBarHeight + CGFloat(k - 1) * noteCompactBarSpacing)
+        case let .rows(count):
+            let k = min(max(count, 0), maxNoteRows(isExpanded: isExpanded))
+            return CGSize(width: notesWidth, height: noteCtaHeight + CGFloat(k) * (noteRowHeight + noteRowSpacing))
+        case .card:
+            return noteCardSize
+        }
+    }
 
     static func defaultOffset() -> CGSize {
         CGSize(width: defaultInset, height: defaultInset)
@@ -33,9 +62,17 @@ struct HerdrHudPlacement: Equatable, Sendable {
         isExpanded: Bool,
         visibleFrame: CGRect,
         topRightOffset: CGSize,
-        chipCount: Int = 0
+        chipCount: Int = 0,
+        notesSize: CGSize = .zero
     ) -> CGRect {
-        let contentSize = isExpanded ? expandedSize : collapsedContentSize(chipCount: chipCount)
+        var contentSize = isExpanded ? expandedSize : collapsedContentSize(chipCount: chipCount)
+        if notesSize.height > 0 {
+            let availableContentHeight = max(0, visibleFrame.height - shadowMargin * 2)
+            let excess = max(0, contentSize.height + notesGap + notesSize.height - availableContentHeight)
+            let shrunkNotesHeight = max(noteCtaHeight, notesSize.height - excess)
+            contentSize.width = max(contentSize.width, notesSize.width)
+            contentSize.height += notesGap + shrunkNotesHeight
+        }
         let preferredSize = CGSize(
             width: contentSize.width + shadowMargin * 2,
             height: contentSize.height + shadowMargin * 2

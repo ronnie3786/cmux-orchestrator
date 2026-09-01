@@ -14,7 +14,7 @@ struct HerdrNotesPersistenceTests {
 
         let restored = try #require(HerdrNotesSnapshot.load(from: fileURL))
         #expect(restored.version == HerdrNotesSnapshot.currentVersion)
-        #expect(restored.notes == [notes[1], notes[0]])
+        #expect(restored.notes == notes)
     }
 
     @Test("Legacy partial notes decode with safe defaults")
@@ -58,8 +58,8 @@ struct HerdrNotesPersistenceTests {
 
         let restored = try #require(HerdrNotesSnapshot.load(from: fileURL))
         #expect(restored.notes.count == 100)
-        #expect(restored.notes.first?.body == "104")
-        #expect(restored.notes.last?.body == "5")
+        #expect(restored.notes.first?.body == "5")
+        #expect(restored.notes.last?.body == "104")
     }
 
     @Test("Snapshots cap a note body at twenty thousand characters")
@@ -70,6 +70,61 @@ struct HerdrNotesPersistenceTests {
         try HerdrNotesSnapshot(notes: [note(id: UUID(), body: String(repeating: "x", count: 20_100), updatedAt: 1)]).save(to: fileURL)
         let restored = try #require(HerdrNotesSnapshot.load(from: fileURL))
         #expect(restored.notes[0].body.count == HerdrNotesSnapshot.maximumBodyLength)
+    }
+
+    @Test("Snapshots keep original relative order among survivors even when unsorted")
+    func preservesRelativeOrderAmongSurvivors() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-notes.json")
+        let notes = (0..<105).map { index in
+            note(id: UUID(), body: "\(index)", updatedAt: TimeInterval((index * 37) % 105))
+        }
+        try HerdrNotesSnapshot(notes: notes).save(to: fileURL)
+        let restored = try #require(HerdrNotesSnapshot.load(from: fileURL))
+        let ids = Set(notes.sorted { $0.updatedAt > $1.updatedAt }.prefix(100).map(\.id))
+        let expected = notes.filter { ids.contains($0.id) }.map(\.id)
+        #expect(restored.notes.count == 100)
+        #expect(restored.notes.map(\.id) == expected)
+        #expect(restored.notes.map(\.updatedAt) != restored.notes.map(\.updatedAt).sorted(by: >))
+    }
+
+    @Test("Store debounce keeps the latest scheduled snapshot")
+    func storeDebouncesLatestSnapshot() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-notes.json")
+        let store = HerdrNotesStore(fileURL: fileURL)
+        let first = HerdrNotesSnapshot(notes: [note(id: UUID(), body: "first", updatedAt: 1)])
+        let second = HerdrNotesSnapshot(notes: [note(id: UUID(), body: "second", updatedAt: 2)])
+        await store.scheduleSave(first, delay: .milliseconds(50))
+        await store.scheduleSave(second, delay: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(HerdrNotesSnapshot.load(from: fileURL)?.notes == second.notes)
+    }
+
+    @Test("Store flush writes immediately")
+    func storeFlushWritesImmediately() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-notes.json")
+        let store = HerdrNotesStore(fileURL: fileURL)
+        let snapshot = HerdrNotesSnapshot(notes: [note(id: UUID(), body: "now", updatedAt: 1)])
+        await store.scheduleSave(snapshot, delay: .seconds(30))
+        await store.flush()
+        #expect(HerdrNotesSnapshot.load(from: fileURL)?.notes == snapshot.notes)
+    }
+
+    @Test("A legacy note action without a status decodes as ready")
+    func decodesActionWithoutStatus() throws {
+        let id = UUID()
+        let data = Data(#"""
+        {"id": "\#(id.uuidString)", "title": "Do the thing", "prompt": "Do the thing please"}
+        """#.utf8)
+        let action = try JSONDecoder().decode(HerdrNoteAction.self, from: data)
+        #expect(action.status == .ready)
+        #expect(action.linkID == nil)
+        #expect(HerdrNoteAction(id: UUID(), title: "t", prompt: "p").status == .ready)
     }
 
     @Test("Store removal deletes its persistence file")

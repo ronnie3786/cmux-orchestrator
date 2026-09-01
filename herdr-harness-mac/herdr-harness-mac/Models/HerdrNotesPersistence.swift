@@ -10,16 +10,17 @@ struct HerdrNotesSnapshot: Codable, Sendable {
 
     init(version: Int = HerdrNotesSnapshot.currentVersion, notes: [HerdrNote]) {
         self.version = version
-        let capped = notes
-            .sorted { $0.updatedAt > $1.updatedAt }
-            .prefix(Self.maximumNoteCount)
-            .map { note -> HerdrNote in
-                guard note.body.count > Self.maximumBodyLength else { return note }
-                var copy = note
-                copy.body = String(note.body.prefix(Self.maximumBodyLength))
-                return copy
-            }
-        self.notes = Array(capped)
+        var trimmed = notes
+        if trimmed.count > Self.maximumNoteCount {
+            let idsToKeep = Set(trimmed.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maximumNoteCount).map(\.id))
+            trimmed = trimmed.filter { idsToKeep.contains($0.id) }
+        }
+        self.notes = trimmed.map { note in
+            guard note.body.count > Self.maximumBodyLength else { return note }
+            var copy = note
+            copy.body = String(note.body.prefix(Self.maximumBodyLength))
+            return copy
+        }
     }
 
     static func load(from fileURL: URL) -> HerdrNotesSnapshot? {
@@ -42,7 +43,7 @@ struct HerdrNotesSnapshot: Codable, Sendable {
 actor HerdrNotesStore {
     let fileURL: URL
     private var pendingSnapshot: HerdrNotesSnapshot?
-    private var isSaveScheduled = false
+    private var flushTask: Task<Void, Never>?
 
     init(fileURL: URL = HerdrNotesStore.defaultFileURL()) {
         self.fileURL = fileURL
@@ -63,25 +64,28 @@ actor HerdrNotesStore {
         HerdrNotesSnapshot.load(from: fileURL)
     }
 
-    func scheduleSave(_ snapshot: HerdrNotesSnapshot) {
+    func scheduleSave(_ snapshot: HerdrNotesSnapshot, delay: Duration = .milliseconds(500)) {
         pendingSnapshot = snapshot
-        guard !isSaveScheduled else { return }
-        isSaveScheduled = true
-        Task.detached(priority: .utility) { [weak self] in
-            await self?.writePendingSnapshots()
+        flushTask?.cancel()
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            await self?.flush()
         }
+    }
+
+    func flush() async {
+        flushTask?.cancel()
+        flushTask = nil
+        guard let snapshot = pendingSnapshot else { return }
+        pendingSnapshot = nil
+        try? snapshot.save(to: fileURL)
     }
 
     func remove() {
         pendingSnapshot = nil
+        flushTask?.cancel()
+        flushTask = nil
         try? FileManager.default.removeItem(at: fileURL)
-    }
-
-    private func writePendingSnapshots() {
-        while let snapshot = pendingSnapshot {
-            pendingSnapshot = nil
-            try? snapshot.save(to: fileURL)
-        }
-        isSaveScheduled = false
     }
 }

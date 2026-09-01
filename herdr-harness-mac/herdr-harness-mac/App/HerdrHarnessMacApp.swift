@@ -30,12 +30,17 @@ struct HerdrHarnessMacApp: App {
     @State private var cleanupSettings = CleanupSettingsStore()
     @State private var hudController = HerdrHudController()
     @State private var agentSettings: AgentModelSettingsStore
+    @State private var promptSettings: HerdrPromptSettingsStore
     @State private var hudSession: HerdrHudSession
+    @State private var hudNotes: HerdrHudNotesState
 
     init() {
         let settings = AgentModelSettingsStore()
+        let prompts = HerdrPromptSettingsStore()
         _agentSettings = State(initialValue: settings)
-        _hudSession = State(initialValue: HerdrHudSession(agentSettings: settings))
+        _promptSettings = State(initialValue: prompts)
+        _hudSession = State(initialValue: HerdrHudSession(agentSettings: settings, promptSettings: prompts))
+        _hudNotes = State(initialValue: HerdrHudNotesState(agentSettings: settings, promptSettings: prompts))
     }
 
     var body: some Scene {
@@ -50,7 +55,9 @@ struct HerdrHarnessMacApp: App {
                 driver: connectionDriver,
                 hudController: hudController,
                 hudSession: hudSession,
+                hudNotes: hudNotes,
                 agentSettings: agentSettings,
+                promptSettings: promptSettings,
                 fontScale: fontScale
             )
                 .environment(herdPulse)
@@ -96,6 +103,7 @@ struct HerdrHarnessMacApp: App {
                 fontScale: fontScale,
                 cleanupSettings: cleanupSettings,
                 agentSettings: agentSettings,
+                promptSettings: promptSettings,
                 hudController: hudController
             )
                 .environment(\.herdrFontScale, fontScale.scale)

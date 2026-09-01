@@ -244,7 +244,9 @@ struct AppRootView: View {
     let driver: HerdrConnectionDriver
     let hudController: HerdrHudController
     let hudSession: HerdrHudSession
+    let hudNotes: HerdrHudNotesState
     let agentSettings: AgentModelSettingsStore
+    let promptSettings: HerdrPromptSettingsStore
     let fontScale: HerdrFontScaleStore
     @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -282,7 +284,7 @@ struct AppRootView: View {
         }
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
-            hudController.configure(model: model, session: hudSession, fontScale: fontScale)
+            hudController.configure(model: model, session: hudSession, notes: hudNotes, fontScale: fontScale)
         }
         .task {
             if let paneID = HerdrMacAppDelegate.takePendingPaneID() {
@@ -349,7 +351,8 @@ struct AppRootView: View {
             HeadlessAgentView(
                 model: model,
                 initialPrompt: shell.agentInitialPrompt,
-                agentSettings: agentSettings
+                agentSettings: agentSettings,
+                promptSettings: promptSettings
             ) { pane in
                 openPane(id: pane.id)
             }

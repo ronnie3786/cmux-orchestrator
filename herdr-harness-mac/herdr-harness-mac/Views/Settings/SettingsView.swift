@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Bindable var fontScale: HerdrFontScaleStore
     @Bindable var cleanupSettings: CleanupSettingsStore
     @Bindable var agentSettings: AgentModelSettingsStore
+    let promptSettings: HerdrPromptSettingsStore
     let hudController: HerdrHudController
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
