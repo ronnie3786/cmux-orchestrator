@@ -74,6 +74,40 @@ struct HudRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("HUD session chips render in the collapsed strip")
+    func rendersHudSessionChips() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let chips = [
+            HerdrHudSessionChips.Chip(
+                id: "demo1|w1:p1",
+                title: "Working session",
+                status: .working,
+                isMuted: false,
+                since: .now
+            ),
+            HerdrHudSessionChips.Chip(
+                id: "demo2|w2:p1",
+                title: "Ready session",
+                status: .done,
+                isMuted: false,
+                since: .now
+            ),
+        ]
+
+        let result = try await HerdrRenderHarness.render(
+            "17-hud-session-chips.png",
+            size: HerdrHudPlacement.collapsedContentSize(chipCount: 2)
+        ) {
+            HerdrHudSessionChipsView(
+                model: model,
+                chips: chips,
+                overflow: 0
+            )
+        }
+
+        result.expectSubstantial()
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "HudRenderTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {

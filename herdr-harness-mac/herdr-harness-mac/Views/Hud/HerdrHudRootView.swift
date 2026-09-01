@@ -7,6 +7,15 @@ struct HerdrHudRootView: View {
     let session: HerdrHudSession
     let fontScale: HerdrFontScaleStore
 
+    private var sessionChips: (chips: [HerdrHudSessionChips.Chip], overflow: Int) {
+        HerdrHudSessionChips.chips(
+            panes: model.workspaces.flatMap(\.panes),
+            mutedPaneIDs: model.mutedHudSessionIDs,
+            dismissedStatuses: model.dismissedHudChipStatuses,
+            revealTitles: model.showSessionTitles
+        )
+    }
+
     var body: some View {
         Group {
             if controller.isExpanded {
@@ -20,7 +29,27 @@ struct HerdrHudRootView: View {
                             )
                     )
             } else {
-                HerdrHudOrbView(model: model, controller: controller, session: session)
+                Group {
+                    if sessionChips.chips.isEmpty {
+                        HerdrHudOrbView(model: model, controller: controller, session: session)
+                    } else {
+                        HStack(alignment: .center, spacing: HerdrHudPlacement.chipSpacing) {
+                            HerdrHudSessionChipsView(
+                                model: model,
+                                chips: sessionChips.chips,
+                                overflow: sessionChips.overflow
+                            )
+                            HerdrHudOrbView(model: model, controller: controller, session: session)
+                                .frame(
+                                    width: HerdrHudPlacement.collapsedSize.width,
+                                    height: HerdrHudPlacement.collapsedSize.height
+                                )
+                        }
+                    }
+                }
+                .onChange(of: sessionChips.chips.count, initial: true) { _, count in
+                    controller.setCollapsedChipCount(count)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

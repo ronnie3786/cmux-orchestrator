@@ -78,6 +78,62 @@ struct HerdrHudPlacementTests {
         #expect(expanded.size == paddedSize(for: HerdrHudPlacement.expandedSize))
     }
 
+    @Test("Collapsed content keeps its original size with no session chips")
+    func collapsedContentSizeWithoutChipsMatchesOriginal() {
+        #expect(HerdrHudPlacement.collapsedContentSize(chipCount: 0) == HerdrHudPlacement.collapsedSize)
+    }
+
+    @Test("Collapsed HUD width grows by one fixed slot per visible chip")
+    func collapsedContentSizeGrowsByChipSlots() {
+        for count in 1...HerdrHudPlacement.maxChips {
+            let size = HerdrHudPlacement.collapsedContentSize(chipCount: count)
+            #expect(
+                size.width == HerdrHudPlacement.collapsedSize.width
+                    + CGFloat(count) * (HerdrHudPlacement.chipWidth + HerdrHudPlacement.chipSpacing)
+            )
+            #expect(size.height == HerdrHudPlacement.collapsedSize.height)
+        }
+    }
+
+    @Test("Session chips keep the collapsed top-right anchor fixed")
+    func chipsKeepTopRightAnchorFixed() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let offset = CGSize(width: 24, height: 32)
+        let withoutChips = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset
+        )
+        let withChips = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset,
+            chipCount: 3
+        )
+
+        #expect(withChips.maxX == withoutChips.maxX)
+        #expect(withChips.maxY == withoutChips.maxY)
+    }
+
+    @Test("Expanded geometry ignores the collapsed session chip count")
+    func expandedGeometryIgnoresChipCount() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let offset = HerdrHudPlacement.defaultOffset()
+        let withoutChips = HerdrHudPlacement.frame(
+            isExpanded: true,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset
+        )
+        let withChips = HerdrHudPlacement.frame(
+            isExpanded: true,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset,
+            chipCount: 3
+        )
+
+        #expect(withChips == withoutChips)
+    }
+
     // MARK: - Offset persistence
 
     @Test("Frame anchor offsets round-trip through collapsed placement")
@@ -127,6 +183,22 @@ struct HerdrHudPlacementTests {
         #expect(frame.maxX <= smallFrame.maxX)
         #expect(frame.minY >= smallFrame.minY)
         #expect(frame.maxY <= smallFrame.maxY)
+    }
+
+    @Test("A wide chip strip still clamps inside a constrained display")
+    func wideChipStripClampsInsideVisibleFrame() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 500, height: 400)
+        let frame = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: CGSize(width: 10_000, height: -10_000),
+            chipCount: 3
+        )
+
+        #expect(frame.minX >= visibleFrame.minX)
+        #expect(frame.maxX <= visibleFrame.maxX)
+        #expect(frame.minY >= visibleFrame.minY)
+        #expect(frame.maxY <= visibleFrame.maxY)
     }
 
     private func paddedSize(for contentSize: CGSize) -> CGSize {

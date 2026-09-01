@@ -35,6 +35,7 @@ final class HerdrHudController {
 
     private(set) var isExpanded = false
     private(set) var focusRequest = 0
+    private(set) var collapsedChipCount = 0
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -82,6 +83,10 @@ final class HerdrHudController {
             )
         )
         self.panel = panel
+        // The root view reports its initial chip count while the hosting view
+        // is being installed. Reapply after retaining the panel so an eager
+        // initial report cannot be lost before `self.panel` was available.
+        applyFrame(animated: false)
         installObservers(for: panel)
         session.isCollapsed = true
 
@@ -141,6 +146,15 @@ final class HerdrHudController {
             applyFrame(animated: false)
             panel.orderOut(nil)
             hotKey?.unregister()
+        }
+    }
+
+    func setCollapsedChipCount(_ count: Int) {
+        let clampedCount = min(max(0, count), HerdrHudPlacement.maxChips)
+        guard collapsedChipCount != clampedCount else { return }
+        collapsedChipCount = clampedCount
+        if !isExpanded {
+            applyFrame(animated: true)
         }
     }
 
@@ -224,7 +238,8 @@ final class HerdrHudController {
         HerdrHudPlacement.frame(
             isExpanded: isExpanded,
             visibleFrame: visibleFrame(for: panel),
-            topRightOffset: placementOffset
+            topRightOffset: placementOffset,
+            chipCount: isExpanded ? 0 : collapsedChipCount
         )
     }
 

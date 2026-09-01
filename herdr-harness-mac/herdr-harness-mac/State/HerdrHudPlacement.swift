@@ -9,17 +9,30 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let collapsedSize = CGSize(width: 72, height: 72)
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
+    static let chipWidth: CGFloat = 132
+    static let chipSpacing: CGFloat = 6
+    static let maxChips = 3
 
     static func defaultOffset() -> CGSize {
         CGSize(width: defaultInset, height: defaultInset)
     }
 
+    static func collapsedContentSize(chipCount: Int) -> CGSize {
+        let count = min(max(0, chipCount), maxChips)
+        guard count > 0 else { return collapsedSize }
+        return CGSize(
+            width: collapsedSize.width + CGFloat(count) * (chipWidth + chipSpacing),
+            height: collapsedSize.height
+        )
+    }
+
     static func frame(
         isExpanded: Bool,
         visibleFrame: CGRect,
-        topRightOffset: CGSize
+        topRightOffset: CGSize,
+        chipCount: Int = 0
     ) -> CGRect {
-        let contentSize = isExpanded ? expandedSize : collapsedSize
+        let contentSize = isExpanded ? expandedSize : collapsedContentSize(chipCount: chipCount)
         let preferredSize = CGSize(
             width: contentSize.width + shadowMargin * 2,
             height: contentSize.height + shadowMargin * 2

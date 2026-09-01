@@ -932,6 +932,11 @@ struct HerdrSidebarView: View {
             ) {
                 model.toggleStarredChat(pane.id)
             }
+            if model.mutedHudSessionIDs.contains(pane.id) {
+                Button("Unmute session", systemImage: "bell") {
+                    model.toggleMutedHudSession(pane.id)
+                }
+            }
             Button("Focus on Mac", systemImage: "scope") {
                 Task { await model.focus(pane) }
             }

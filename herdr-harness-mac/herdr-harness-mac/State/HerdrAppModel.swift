@@ -40,6 +40,8 @@ final class HerdrAppModel {
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
     var starredChatIDs: Set<String>
+    private(set) var mutedHudSessionIDs: Set<String>
+    private(set) var dismissedHudChipStatuses: [String: AgentStatus] = [:]
     /// The pane ⇧⌘K last asked the sidebar to show, and a token that makes each
     /// ask distinct.
     ///
@@ -197,6 +199,7 @@ final class HerdrAppModel {
             defaults.stringArray(forKey: "herdr.sidebar.collapsedTabs") ?? []
         )
         starredChatIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.starredChats") ?? [])
+        mutedHudSessionIDs = Set(defaults.stringArray(forKey: "herdr.hud.mutedSessions") ?? [])
 
         if case let .machine(id) = machineScope, !persistedMachines.contains(where: { $0.id == id }) {
             machineScope = .all
@@ -2141,6 +2144,20 @@ final class HerdrAppModel {
         Task { try? await client.setPaneStar(id: rawID, starred: starred) }
     }
 
+    func toggleMutedHudSession(_ paneID: String) {
+        if mutedHudSessionIDs.contains(paneID) {
+            mutedHudSessionIDs.remove(paneID)
+        } else {
+            mutedHudSessionIDs.insert(paneID)
+        }
+        userDefaults.set(Array(mutedHudSessionIDs), forKey: "herdr.hud.mutedSessions")
+    }
+
+    func dismissHudChip(_ paneID: String) {
+        guard let pane = pane(id: paneID) else { return }
+        dismissedHudChipStatuses[paneID] = pane.agentStatus
+    }
+
     func openWorkspace(id: String) {
         noteUserInteraction()
         guard let workspace = workspace(id: id) else { return }
@@ -2643,6 +2660,9 @@ final class HerdrAppModel {
             collapsedSidebarTabIDs = prunedCollapsedTabs
             userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         }
+        dismissedHudChipStatuses = dismissedHudChipStatuses.filter { paneID, _ in
+            MachineScopedID.split(paneID)?.machineID != machineID || validPaneIDs.contains(paneID)
+        }
     }
 
     private func beginQuickPaneRoute(
@@ -2824,10 +2844,15 @@ final class HerdrAppModel {
             fleetRevision &+= 1
         }
         starredChatIDs = starredChatIDs.filter { MachineScopedID.split($0)?.machineID != id }
+        mutedHudSessionIDs = mutedHudSessionIDs.filter { MachineScopedID.split($0)?.machineID != id }
+        dismissedHudChipStatuses = dismissedHudChipStatuses.filter {
+            MachineScopedID.split($0.key)?.machineID != id
+        }
         collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarTabIDs = collapsedSidebarTabIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarMachineIDs.remove(id)
         userDefaults.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
+        userDefaults.set(Array(mutedHudSessionIDs), forKey: "herdr.hud.mutedSessions")
         userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
         userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         userDefaults.set(Array(collapsedSidebarMachineIDs), forKey: "herdr.sidebar.collapsedMachines")
