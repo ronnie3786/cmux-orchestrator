@@ -5,7 +5,8 @@ import UIKit
 /// body (paragraphs, headings, lists, quotes, tables). This is the seam that
 /// makes Pi's actual output visually unmistakable versus the surrounding
 /// chrome — output renders in Inter at full contrast, while thinking
-/// disclosures and tool cards (`PiThinkingDisclosureView`, `PiToolCardView`)
+/// disclosures and tool cards (`PiThinkingDisclosureView`, `PiToolCardView`,
+/// `PiWorkingGroupView`)
 /// keep their existing system/mono fonts and instead turn visually recessive
 /// via `subOutputOpacity`. Code blocks stay monospaced everywhere; they're
 /// code, not prose.
@@ -75,9 +76,9 @@ enum HerdrProse {
     /// Spacing between conversation turns in `PiChatTimelineView`.
     static let turnSpacing: CGFloat = 28
 
-    /// Opacity applied to whole "sub-output" cards — thinking disclosures and
-    /// tool cards — so they read as visually recessive relative to Pi's
-    /// actual output prose.
+    /// Opacity applied to whole "sub-output" cards — thinking disclosures,
+    /// tool cards, and working groups — so they read as visually recessive
+    /// relative to Pi's actual output prose.
     static let subOutputOpacity: Double = 0.78
 
     /// Inter font for a role, anchored to its Dynamic Type text style via

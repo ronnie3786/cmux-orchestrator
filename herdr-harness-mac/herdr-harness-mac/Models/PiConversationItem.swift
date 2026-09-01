@@ -22,4 +22,15 @@ enum PiConversationItem: Identifiable, Equatable, Sendable {
         case .tool, .notice: 0
         }
     }
+
+    /// Sub-process activity, thinking and tool/command invocations, that
+    /// `PiConversationTurnView` folds into a collapsed "Working…" group so it
+    /// does not sit between Pi's actual output messages. Assistant prose and
+    /// notices (including the failure notices Pi emits) always stay visible.
+    var isWorking: Bool {
+        switch self {
+        case .thinking, .tool: true
+        case .assistant, .notice: false
+        }
+    }
 }

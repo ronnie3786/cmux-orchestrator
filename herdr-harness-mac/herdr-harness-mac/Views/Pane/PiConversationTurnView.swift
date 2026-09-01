@@ -5,7 +5,8 @@ struct PiConversationTurnView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let structure = PiChatTurnStructure(turn: turn)
+        let segments = PiTurnSegmentation.segments(for: turn.items)
+        let structure = PiChatTurnStructure(turn: turn, segments: segments)
 
         HStack(alignment: .top, spacing: 12) {
             PiTurnActivityRail(turn: turn)
@@ -17,9 +18,15 @@ struct PiConversationTurnView: View {
                         .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
                 }
 
-                ForEach(turn.items) { item in
-                    PiConversationItemView(item: item)
-                        .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
+                ForEach(segments) { segment in
+                    switch segment {
+                    case let .output(item):
+                        PiConversationItemView(item: item)
+                            .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
+                    case let .working(group):
+                        PiWorkingGroupView(group: group)
+                            .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
+                    }
                 }
 
                 if turn.isActive, turn.items.isEmpty {
