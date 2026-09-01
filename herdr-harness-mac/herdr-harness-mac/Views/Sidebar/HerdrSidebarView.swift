@@ -157,7 +157,8 @@ struct HerdrSidebarView: View {
 
             HerdrSectionLabel(
                 title: "chats",
-                detail: sidebarCountDetail(snapshot.paneCount)
+                detail: sidebarCountDetail(snapshot.paneCount),
+                monospaced: false
             )
 
             ScrollViewReader { proxy in
@@ -329,10 +330,10 @@ struct HerdrSidebarView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("active work")
-                        .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                        .herdrFont(.subheadline, weight: .bold)
                         .foregroundStyle(HerdrTheme.text)
                     Text(activeWorkSubtitle)
-                        .herdrFont(.caption2, monospaced: true)
+                        .herdrFont(.caption2)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
                 }
@@ -341,7 +342,7 @@ struct HerdrSidebarView: View {
 
                 if activeWorkStore.attentionCount > 0 {
                     Text("\(activeWorkStore.attentionCount)")
-                        .herdrFont(.caption2, monospaced: true, weight: .bold)
+                        .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.ink)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
@@ -424,7 +425,7 @@ struct HerdrSidebarView: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .herdrFont(.caption, weight: .bold)
             }
-            .herdrFont(.caption, monospaced: true, weight: .bold)
+            .herdrFont(.caption, weight: .bold)
             .foregroundStyle(HerdrTheme.mist)
             .frame(minHeight: 28)
         }
@@ -512,7 +513,7 @@ struct HerdrSidebarView: View {
     @ViewBuilder
     private func unreadSection(_ snapshot: SidebarSnapshot) -> some View {
         if !snapshot.unreadGroups.isEmpty {
-            HerdrSectionLabel(title: "unread", detail: "\(snapshot.unreadCount)")
+            HerdrSectionLabel(title: "unread", detail: "\(snapshot.unreadCount)", monospaced: false)
                 .padding(.top, 4)
                 .accessibilityIdentifier("sidebar-unread-section")
                 .accessibilityLabel("Unread chats")
@@ -521,7 +522,6 @@ struct HerdrSidebarView: View {
                 Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
                     .herdrFont(
                         size: SidebarMetrics.projectLabelSize,
-                        monospaced: true,
                         weight: .bold,
                         relativeTo: .caption
                     )
@@ -538,7 +538,7 @@ struct HerdrSidebarView: View {
     @ViewBuilder
     private func starredSection(_ snapshot: SidebarSnapshot) -> some View {
         if !snapshot.starredGroups.isEmpty {
-            HerdrSectionLabel(title: "starred", detail: "\(snapshot.starredCount)")
+            HerdrSectionLabel(title: "starred", detail: "\(snapshot.starredCount)", monospaced: false)
                 .padding(.top, 4)
                 .accessibilityIdentifier("sidebar-starred-section")
                 .accessibilityLabel("Starred chats")
@@ -547,7 +547,6 @@ struct HerdrSidebarView: View {
                 Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
                     .herdrFont(
                         size: SidebarMetrics.projectLabelSize,
-                        monospaced: true,
                         weight: .bold,
                         relativeTo: .caption
                     )
@@ -572,11 +571,11 @@ struct HerdrSidebarView: View {
                             : "stale chats",
                         systemImage: "archivebox"
                     )
-                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                    .herdrFont(.caption, weight: .bold)
                     .foregroundStyle(HerdrTheme.mist)
 
                     Text("\(group.chats.count)")
-                        .herdrFont(.caption2, monospaced: true, weight: .bold)
+                        .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.ink)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -589,7 +588,7 @@ struct HerdrSidebarView: View {
                         presentStaleCleanup(group)
                     }
                     .buttonStyle(.plain)
-                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                    .herdrFont(.caption, weight: .bold)
                     .foregroundStyle(HerdrTheme.accent)
                     .disabled(!model.canControl(machineID: group.machine.id))
                     .accessibilityIdentifier("sidebar-review-stale-\(group.machine.id)")
@@ -620,7 +619,7 @@ struct HerdrSidebarView: View {
                 if group.isExpanded {
                     if group.entries.isEmpty {
                         Text("no workspaces yet")
-                            .herdrFont(.caption, monospaced: true)
+                            .herdrFont(.caption)
                             .foregroundStyle(HerdrTheme.muted)
                             .padding(.leading, 34)
                             .frame(minHeight: 24)
@@ -634,7 +633,7 @@ struct HerdrSidebarView: View {
             if model.sidebarRecency != .all {
                 if snapshot.unreadGroups.isEmpty && snapshot.starredGroups.isEmpty {
                     Text("no chats from \(model.sidebarRecency.title.lowercased())")
-                        .herdrFont(.caption, monospaced: true)
+                        .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 42)
@@ -670,6 +669,7 @@ struct HerdrSidebarView: View {
                         tab: section.tab,
                         isExpanded: section.isExpanded,
                         attentionStatus: tabAttentionStatus(section.tab, in: entry.workspace),
+                        workingCount: tabWorkingCount(section.tab, in: entry.workspace),
                         action: { toggle(section.tab, allTabIDs: entry.sections.map(\.id)) }
                     )
                         .contextMenu { tabMenu(section.tab, in: entry.workspace) }
@@ -682,7 +682,7 @@ struct HerdrSidebarView: View {
 
                 if entry.sections.isEmpty && entry.looseChats.isEmpty {
                     Text("no panes yet")
-                        .herdrFont(.caption, monospaced: true)
+                        .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.muted)
                         .padding(.leading, 34)
                         .frame(minHeight: 24)
@@ -791,6 +791,10 @@ struct HerdrSidebarView: View {
         if statuses.contains(.blocked) { return .blocked }
         if statuses.contains(.done) { return .done }
         return nil
+    }
+
+    private func tabWorkingCount(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> Int {
+        workspace.workingCount(inTab: tab.id)
     }
 
     private func sidebarCountDetail(_ count: Int) -> String {
@@ -1058,7 +1062,7 @@ struct HerdrSidebarView: View {
 
 private extension View {
     func sidebarActionStyle() -> some View {
-        herdrFont(.subheadline, monospaced: true, weight: .bold)
+        herdrFont(.subheadline, weight: .bold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 28)
     }

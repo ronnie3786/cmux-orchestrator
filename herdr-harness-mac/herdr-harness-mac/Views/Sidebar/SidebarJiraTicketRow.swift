@@ -10,13 +10,13 @@ struct SidebarJiraTicketRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(ticket.key)
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                        .herdrFont(.caption, weight: .bold)
                         .foregroundStyle(HerdrTheme.accent)
 
                     Spacer(minLength: 4)
 
                     Label(ticket.status, systemImage: ticket.workInboxStatus.symbolName)
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                        .herdrFont(.caption, weight: .bold)
                         .foregroundStyle(statusTone)
                         .lineLimit(1)
                 }
@@ -38,7 +38,7 @@ struct SidebarJiraTicketRow: View {
                     Image(systemName: "arrow.up.right")
                         .accessibilityHidden(true)
                 }
-                .herdrFont(.caption, monospaced: true)
+                .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.muted)
             }
             .padding(.vertical, 7)

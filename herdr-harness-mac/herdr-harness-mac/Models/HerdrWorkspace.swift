@@ -73,6 +73,12 @@ struct HerdrWorkspace: Codable, Equatable, Hashable, Identifiable, Sendable {
     var attentionCount: Int { panes.count(where: { $0.agentStatus.needsAttention }) }
     var workingCount: Int { panes.count(where: { $0.agentStatus == .working }) }
 
+    /// Panes are scoped by machine before they reach the sidebar, so tabs are
+    /// matched on `scopedTabID` — `HerdrTab.id`, not `tabID`.
+    func workingCount(inTab scopedTabID: String) -> Int {
+        panes.count(where: { $0.scopedTabID == scopedTabID && $0.agentStatus == .working })
+    }
+
     enum CodingKeys: String, CodingKey {
         case workspaceID = "workspace_id"
         case number

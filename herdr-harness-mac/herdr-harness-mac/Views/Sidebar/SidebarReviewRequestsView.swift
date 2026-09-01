@@ -35,7 +35,7 @@ struct SidebarReviewRequestsView: View {
                     isLoading ? "checking GitHub…" : "no review requests",
                     systemImage: isLoading ? "arrow.clockwise" : "checkmark.circle"
                 )
-                .herdrFont(.caption, monospaced: true)
+                .herdrFont(.caption)
                 .foregroundStyle(isLoading ? HerdrTheme.mist : HerdrTheme.success)
                 .padding(.horizontal, 9)
                 .frame(minHeight: 34)

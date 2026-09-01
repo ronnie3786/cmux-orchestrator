@@ -13,13 +13,13 @@ struct SidebarWorkInboxView: View {
                 Text("my work")
                     .bold()
                     .underline()
-                    .herdrFont(.subheadline, monospaced: true)
+                    .herdrFont(.subheadline)
                     .foregroundStyle(HerdrTheme.mist)
 
                 Spacer(minLength: 4)
 
                 Text(store.hasLoaded ? "\(store.totalCount) watching" : "checking")
-                    .herdrFont(.caption, monospaced: true, monospacedDigit: true)
+                    .herdrFont(.caption, monospacedDigit: true)
                     .foregroundStyle(HerdrTheme.mist)
 
                 if store.isRefreshing {

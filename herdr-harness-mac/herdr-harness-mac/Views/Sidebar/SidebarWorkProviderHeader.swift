@@ -21,7 +21,7 @@ struct SidebarWorkProviderHeader: View {
                     .accessibilityHidden(true)
 
                 Text(title)
-                    .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                    .herdrFont(.subheadline, weight: .bold)
                     .foregroundStyle(HerdrTheme.text)
 
                 Spacer(minLength: 8)
@@ -33,7 +33,7 @@ struct SidebarWorkProviderHeader: View {
                 }
 
                 Text("\(count)")
-                    .herdrFont(.caption, monospaced: true, weight: .bold, monospacedDigit: true)
+                    .herdrFont(.caption, weight: .bold, monospacedDigit: true)
                     .foregroundStyle(HerdrTheme.ink)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)

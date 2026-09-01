@@ -3,6 +3,7 @@ import SwiftUI
 struct HerdrSectionLabel: View {
     let title: String
     var detail: String?
+    var monospaced = true
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -15,7 +16,7 @@ struct HerdrSectionLabel: View {
                     .foregroundStyle(HerdrTheme.mist)
             }
         }
-        .herdrFont(.subheadline, monospaced: true)
+        .herdrFont(.subheadline, monospaced: monospaced)
         .foregroundStyle(HerdrTheme.mist)
         .accessibilityElement(children: .combine)
     }

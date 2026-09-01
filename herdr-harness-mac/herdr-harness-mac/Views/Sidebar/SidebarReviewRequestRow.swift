@@ -10,14 +10,14 @@ struct SidebarReviewRequestRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(request.repository)
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                        .herdrFont(.caption, weight: .bold)
                         .foregroundStyle(HerdrTheme.mauve)
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
 
                     Text("#\(request.number)")
-                        .herdrFont(.caption, monospaced: true, weight: .bold, monospacedDigit: true)
+                        .herdrFont(.caption, weight: .bold, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.mist)
                 }
 
@@ -38,7 +38,7 @@ struct SidebarReviewRequestRow: View {
                     Image(systemName: "arrow.up.right")
                         .accessibilityHidden(true)
                 }
-                .herdrFont(.caption, monospaced: true)
+                .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.muted)
             }
             .padding(.vertical, 7)
