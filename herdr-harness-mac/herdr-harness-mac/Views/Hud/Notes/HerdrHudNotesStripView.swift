@@ -17,7 +17,7 @@ struct HerdrHudNotesStripView: View {
                     .transition(.opacity)
             case .rows:
                 HerdrNoteRowsView(model: model, controller: controller, notes: notes)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.opacity)
             case .card:
                 if let noteID = notes.openNoteID {
                     HerdrNoteCardView(model: model, controller: controller, notes: notes, noteID: noteID)

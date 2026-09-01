@@ -54,6 +54,19 @@ struct HerdrHudControllerTests {
         #expect(afterHeight - beforeHeight == HerdrHudPlacement.notesGap + HerdrHudPlacement.noteCardSize.height)
     }
 
+    @Test("Hover-driven notes layouts resize without animating the HUD panel")
+    func hoverLayoutsDoNotAnimatePanelFrame() {
+        #expect(!HerdrHudController.shouldAnimateNotesFrameTransition(from: .hidden, to: .rows(count: 0)))
+        #expect(!HerdrHudController.shouldAnimateNotesFrameTransition(from: .compact(count: 3), to: .rows(count: 3)))
+        #expect(!HerdrHudController.shouldAnimateNotesFrameTransition(from: .rows(count: 3), to: .compact(count: 3)))
+    }
+
+    @Test("Opening and closing a note card retain their panel animation")
+    func cardLayoutsAnimatePanelFrame() {
+        #expect(HerdrHudController.shouldAnimateNotesFrameTransition(from: .rows(count: 2), to: .card))
+        #expect(HerdrHudController.shouldAnimateNotesFrameTransition(from: .card, to: .compact(count: 2)))
+    }
+
     private struct Harness {
         let model: HerdrAppModel
         let session: HerdrHudSession

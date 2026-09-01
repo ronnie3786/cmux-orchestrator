@@ -182,9 +182,11 @@ final class HerdrHudController {
 
     func notesLayoutDidChange() {
         guard let panel else { return }
-        let newFrame = frame(for: isExpanded)
-        if newFrame != panel.frame { applyFrame(animated: true) }
         let currentLayout = notes?.layout ?? .hidden
+        let newFrame = frame(for: isExpanded)
+        if newFrame != panel.frame {
+            applyFrame(animated: Self.shouldAnimateNotesFrameTransition(from: lastNotesLayout, to: currentLayout))
+        }
         if case .card = lastNotesLayout,
            !Self.isCardLayout(currentLayout),
            !isExpanded,
@@ -193,6 +195,19 @@ final class HerdrHudController {
             panel.orderFrontRegardless()
         }
         lastNotesLayout = currentLayout
+    }
+
+    /// Compact, hidden, and row layouts are all hover-driven. Resizing the
+    /// AppKit panel with an animator for those transitions moves the window's
+    /// origin while SwiftUI is also changing its content, which makes the HUD
+    /// appear to leave the screen. Resize those layouts immediately and let the
+    /// notes view own the fade. Card presentation can retain its deliberate
+    /// panel animation.
+    static func shouldAnimateNotesFrameTransition(
+        from oldLayout: HerdrHudPlacement.NotesLayout,
+        to newLayout: HerdrHudPlacement.NotesLayout
+    ) -> Bool {
+        isCardLayout(oldLayout) || isCardLayout(newLayout)
     }
 
     func openNote(_ id: UUID) {
