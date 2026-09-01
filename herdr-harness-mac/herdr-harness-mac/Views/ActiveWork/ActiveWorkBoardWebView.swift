@@ -103,8 +103,7 @@ struct ActiveWorkBoardWindowRoot: View {
                 openPane: { paneID, machineID in
                     NSApp.activate()
                     openWindow(id: HerdrWindowID.main)
-                    shell.showSession()
-                    model.openPane(rawPaneID: paneID, machineID: machineID)
+                    shell.openPane(rawPaneID: paneID, machineID: machineID, model: model)
                 },
                 openExternal: { url in
                     Task {

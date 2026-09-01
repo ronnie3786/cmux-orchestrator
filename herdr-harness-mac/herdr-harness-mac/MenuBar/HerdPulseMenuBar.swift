@@ -381,8 +381,7 @@ struct HerdPulseMenuBarCard: View {
         dismiss()
         NSApp.activate()
         openWindow(id: HerdrWindowID.main)
-        shell.showSession()
-        model.openPane(id: paneID)
+        shell.openPane(id: paneID, model: model)
     }
 }
 

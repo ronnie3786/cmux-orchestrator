@@ -20,7 +20,7 @@ struct WorkspaceNavigationView: View {
                 activeWorkStore: activeWorkStore,
                 openPane: openSession,
                 openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
-                openActiveWork: shell.showActiveWork,
+                openActiveWork: { shell.show(.activeWork, model: model) },
                 isActiveWorkSelected: shell.resolvedScope(for: model) == .activeWork
             )
                 .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 480)
@@ -107,8 +107,7 @@ struct WorkspaceNavigationView: View {
                     ActiveWorkBoardWebView(
                         configuration: configuration,
                         openPane: { paneID, machineID in
-                            shell.showSession()
-                            model.openPane(rawPaneID: paneID, machineID: machineID)
+                            shell.openPane(rawPaneID: paneID, machineID: machineID, model: model)
                         },
                         openExternal: { url in
                             Task {
@@ -142,14 +141,12 @@ struct WorkspaceNavigationView: View {
     /// the assignment is a no-op and the detail would stay on whatever scope
     /// the user is looking at.
     private func openSession(_ pane: HerdrPane) {
-        shell.showSession()
-        model.openPane(id: pane.id)
+        shell.openPane(id: pane.id, model: model)
     }
 
     private func openTrackedSession(_ session: ActiveWorkPiSession) {
         guard let paneID = session.paneID else { return }
-        shell.showSession()
-        model.openPane(rawPaneID: paneID, machineID: session.machineID)
+        shell.openPane(rawPaneID: paneID, machineID: session.machineID, model: model)
     }
 
     private func refreshActiveWork() async {
@@ -183,6 +180,27 @@ struct WorkspaceNavigationView: View {
 
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            HStack(spacing: 2) {
+                historyButton(
+                    symbol: "chevron.left",
+                    label: "Back",
+                    help: "Go back to the previous pane or screen",
+                    identifier: "nav-history-back",
+                    isEnabled: shell.canGoBack
+                ) { shell.goBack(model: model) }
+
+                historyButton(
+                    symbol: "chevron.right",
+                    label: "Forward",
+                    help: "Go forward",
+                    identifier: "nav-history-forward",
+                    isEnabled: shell.canGoForward
+                ) { shell.goForward(model: model) }
+            }
+            .accessibilityIdentifier("nav-history-controls")
+        }
+
         ToolbarItem(placement: .principal) {
             ZStack(alignment: .topTrailing) {
                 Picker("Detail", selection: scopeSelection) {
@@ -232,8 +250,24 @@ struct WorkspaceNavigationView: View {
     private var scopeSelection: Binding<HerdrDetailScope> {
         Binding(
             get: { shell.resolvedScope(for: model) },
-            set: { shell.detailScope = $0 }
+            set: { shell.show($0, model: model) }
         )
+    }
+
+    private func historyButton(
+        symbol: String, label: String, help: String,
+        identifier: String, isEnabled: Bool, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .herdrHitTarget()
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isEnabled ? HerdrTheme.mist : HerdrTheme.muted)
+        .disabled(!isEnabled)
+        .help(help)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
     }
 
     private func placeholder(_ title: String, symbol: String, detail: String) -> some View {

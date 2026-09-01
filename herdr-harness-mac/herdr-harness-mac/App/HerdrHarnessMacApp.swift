@@ -140,7 +140,7 @@ struct HerdrMacCommands: Commands {
             }
 
             Button("Go to Attention") {
-                shell.detailScope = .attention
+                shell.show(.attention, model: model)
             }
             .keyboardShortcut("1", modifiers: .command)
 
@@ -155,17 +155,17 @@ struct HerdrMacCommands: Commands {
             .keyboardShortcut("3", modifiers: .command)
 
             Button("Workspace Overview") {
-                shell.detailScope = .workspace
+                shell.show(.workspace, model: model)
             }
             .keyboardShortcut("4", modifiers: .command)
 
             Button("Activity Feed") {
-                shell.detailScope = .activity
+                shell.show(.activity, model: model)
             }
             .keyboardShortcut("5", modifiers: .command)
 
             Button("Active Work") {
-                shell.showActiveWork()
+                shell.show(.activeWork, model: model)
             }
             .keyboardShortcut("6", modifiers: .command)
 
@@ -232,6 +232,18 @@ struct HerdrMacCommands: Commands {
 
             Divider()
 
+            // ⇧⌘[ / ⇧⌘] walk the sidebar's spatial order; ⌘[ / ⌘] walk the
+            // temporal order of this window's visit history.
+            Button("Back") { shell.goBack(model: model) }
+                .keyboardShortcut("[", modifiers: .command)
+                .disabled(!shell.canGoBack)
+
+            Button("Forward") { shell.goForward(model: model) }
+                .keyboardShortcut("]", modifiers: .command)
+                .disabled(!shell.canGoForward)
+
+            Divider()
+
             Button("Next Pane") {
                 stepPane(by: 1)
             }
@@ -255,7 +267,7 @@ struct HerdrMacCommands: Commands {
     }
 
     private func focusPane(mode: PaneDetailMode) {
-        shell.detailScope = .session
+        shell.show(.session, model: model)
         NotificationCenter.default.post(name: .herdrFocusPaneMode, object: mode)
     }
 
@@ -286,8 +298,7 @@ struct HerdrMacCommands: Commands {
         } else {
             target = offset > 0 ? 0 : panes.count - 1
         }
-        shell.detailScope = .session
-        model.openPane(id: panes[target].id)
+        shell.openPane(id: panes[target].id, model: model)
     }
 
     private func revealDiagnosticsFolder() {

@@ -46,6 +46,12 @@ final class HerdrShellState {
     var isCommandPalettePresented = false
     private(set) var commandPaletteFocusRequest = 0
 
+    /// Browser-style back/forward over the places the detail column has been.
+    ///
+    /// Session-only by design: pane ids are machine-scoped and the fleet is
+    /// re-fetched on every launch, so a restored stack would be mostly dead ids.
+    private(set) var history = NavigationHistory()
+
     /// Present the global pane navigator. Incrementing the request also lets a
     /// repeated ⌘K put keyboard focus back in its search field.
     func presentCommandPalette() {
@@ -86,6 +92,14 @@ final class HerdrShellState {
         // back to `.session` through the pane observer below.
         model.selectedPaneID = nil
         detailScope = .workspace
+        recordVisit(for: model)
+    }
+
+    /// Scope-only destinations (Active Work, Attention, Activity, and the
+    /// toolbar picker).
+    func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
+        detailScope = scope
+        recordVisit(for: model)
     }
 
     /// The scope actually rendered: `.session` falls back to the workspace
@@ -107,6 +121,92 @@ final class HerdrShellState {
             return .activity
         }
     }
+
+    /// The destination currently on screen. Reads `resolvedScope(for:)` rather
+    /// than the raw `detailScope` so a `.session` with no pane is recorded as
+    /// the workspace overview or the attention deck the user is actually
+    /// looking at — the same reason the toolbar picker reads resolved
+    /// (`WorkspaceNavigationView.scopeSelection`).
+    func currentDestination(for model: HerdrAppModel) -> HerdrDestination? {
+        switch resolvedScope(for: model) {
+        case .session: model.selectedPaneID.map(HerdrDestination.pane)
+        case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
+        case .activeWork: .activeWork
+        case .attention: .attention
+        case .activity: .activity
+        }
+    }
+
+    /// Records where the shell just landed.
+    ///
+    /// Recorded after the fact rather than from the requested destination:
+    /// `HerdrAppModel.openPane(id:)` can defer an unknown pane
+    /// (`pendingPaneRoutes`) and `openPane(rawPaneID:machineID:)` resolves the
+    /// scoped id internally, so only the post-routing state is truthful. A
+    /// route that did not land records nothing.
+    func recordVisit(for model: HerdrAppModel) {
+        guard let destination = currentDestination(for: model) else { return }
+        history.record(destination)
+    }
+
+    func openPane(id paneID: String, model: HerdrAppModel) {
+        showSession()
+        model.openPane(id: paneID)
+        recordVisit(for: model)
+    }
+
+    func openPane(rawPaneID: String, machineID: String?, model: HerdrAppModel) {
+        showSession()
+        model.openPane(rawPaneID: rawPaneID, machineID: machineID)
+        recordVisit(for: model)
+    }
+
+    @discardableResult
+    func goBack(model: HerdrAppModel) -> Bool {
+        guard let destination = history.goBack(isAlive: { isAlive($0, model: model) }) else { return false }
+        apply(destination, model: model)
+        return true
+    }
+
+    @discardableResult
+    func goForward(model: HerdrAppModel) -> Bool {
+        guard let destination = history.goForward(isAlive: { isAlive($0, model: model) }) else { return false }
+        apply(destination, model: model)
+        return true
+    }
+
+    /// Applies a remembered destination WITHOUT recording it — otherwise every
+    /// Back would push a new entry and Forward could never be reached.
+    private func apply(_ destination: HerdrDestination, model: HerdrAppModel) {
+        switch destination {
+        case let .pane(id):
+            detailScope = .session
+            model.openPane(id: id)          // clears alerts + repairs selectedWorkspaceID
+        case let .workspace(id):
+            model.selectedWorkspaceID = id
+            model.selectedPaneID = nil      // mirrors showWorkspace(id:model:)
+            detailScope = .workspace
+        case .activeWork: detailScope = .activeWork
+        case .attention: detailScope = .attention
+        case .activity: detailScope = .activity
+        }
+        history.setCurrent(destination)     // bypasses record() deliberately, see NavigationHistory
+    }
+
+    private func isAlive(_ destination: HerdrDestination, model: HerdrAppModel) -> Bool {
+        switch destination {
+        case let .pane(id): model.pane(id: id) != nil
+        case let .workspace(id): model.workspace(id: id) != nil
+        case .activeWork, .attention, .activity: true
+        }
+    }
+
+    func pruneHistory(for model: HerdrAppModel) {
+        history.prune(isAlive: { isAlive($0, model: model) })
+    }
+
+    var canGoBack: Bool { history.canGoBack }
+    var canGoForward: Bool { history.canGoForward }
 }
 
 struct AppRootView: View {
@@ -200,6 +300,10 @@ struct AppRootView: View {
             // tap — always brings the session back to the front.
             if newValue != nil { shell.detailScope = .session }
         }
+        // Panes close and machines drop; a Back button that offers a dead id and
+        // then no-ops is worse than one that is greyed out. `repairNavigation`
+        // clears the live selection on the same revision — this clears the trail.
+        .onChange(of: model.fleetRevision) { shell.pruneHistory(for: model) }
         .sheet(isPresented: $shell.isCreatingWorkspace) {
             CreateWorkspaceView { label, cwd in
                 let machineID: String?
@@ -239,8 +343,7 @@ struct AppRootView: View {
     /// Deep links and notification taps always land on the session, including
     /// when they name the pane that is already selected.
     private func openPane(id paneID: String) {
-        shell.showSession()
-        model.openPane(id: paneID)
+        shell.openPane(id: paneID, model: model)
     }
 
     private func openURL(_ url: URL) {
