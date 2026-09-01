@@ -114,6 +114,140 @@ struct HudRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("HUD note card renders actions and links")
+    func rendersHudNoteCard() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let agentSettings = AgentModelSettingsStore(defaults: makeDefaults())
+        let promptSettings = HerdrPromptSettingsStore(defaults: makeDefaults())
+        let notes = HerdrHudNotesState(
+            userDefaults: makeDefaults(),
+            agentSettings: agentSettings,
+            promptSettings: promptSettings,
+            persistenceURL: temporaryPersistenceURL(),
+            hoverGrace: .zero,
+            hoverDelay: .zero,
+            saveDelay: .zero
+        )
+        await notes.waitForPersistenceRestoreForTesting()
+        let id = UUID()
+        let startedLink = HerdrNoteLink(
+            id: UUID(),
+            paneID: "w1:p1",
+            machineID: "demo1",
+            title: "Implementation session",
+            createdAt: .now
+        )
+        let standaloneLink = HerdrNoteLink(
+            id: UUID(),
+            paneID: "w2:p1",
+            machineID: "demo2",
+            title: "Review session",
+            createdAt: .now
+        )
+        var started = HerdrNoteAction(
+            id: UUID(),
+            title: "Open implementation session",
+            prompt: "Continue the implementation",
+            status: .started
+        )
+        started.linkID = startedLink.id
+        let ready = HerdrNoteAction(
+            id: UUID(),
+            title: "Draft release notes",
+            prompt: "Draft concise release notes",
+            status: .ready
+        )
+        notes.seedNotesForTesting([
+            HerdrNote(
+                id: id,
+                title: "HUD notes polish",
+                body: "• Build the card\n• Check link handling\n• Verify animations\n• Capture the render",
+                color: .lavender,
+                aiSummary: "The note is ready to turn into focused sessions.",
+                actions: [ready, started],
+                links: [startedLink, standaloneLink]
+            ),
+        ])
+
+        let result = try await HerdrRenderHarness.render(
+            "18-hud-note-card.png",
+            size: HerdrHudPlacement.noteCardSize
+        ) {
+            HerdrNoteCardView(model: model, controller: HerdrHudController(), notes: notes, noteID: id)
+        }
+
+        result.expectSubstantial()
+    }
+
+    @Test("HUD note rows render note signals")
+    func rendersHudNoteRows() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let agentSettings = AgentModelSettingsStore(defaults: makeDefaults())
+        let promptSettings = HerdrPromptSettingsStore(defaults: makeDefaults())
+        let notes = HerdrHudNotesState(
+            userDefaults: makeDefaults(),
+            agentSettings: agentSettings,
+            promptSettings: promptSettings,
+            persistenceURL: temporaryPersistenceURL(),
+            hoverGrace: .zero,
+            hoverDelay: .zero,
+            saveDelay: .zero
+        )
+        await notes.waitForPersistenceRestoreForTesting()
+        let linked = HerdrNoteLink(
+            id: UUID(), paneID: "w1:p1", machineID: "demo1", title: "Linked pane", createdAt: .now
+        )
+        let ready = HerdrNoteAction(id: UUID(), title: "Start a session", prompt: "Start", status: .ready)
+        notes.seedNotesForTesting([
+            HerdrNote(title: "Ready to ship", color: .yellow, actions: [ready]),
+            HerdrNote(title: "Linked investigation", color: .green, links: [linked]),
+            HerdrNote(title: "Quiet scratchpad", color: .blue),
+        ])
+
+        let result = try await HerdrRenderHarness.render(
+            "19-hud-note-rows.png",
+            size: CGSize(
+                width: HerdrHudPlacement.notesWidth,
+                height: HerdrHudPlacement.notesContentSize(.rows(count: 3), isExpanded: false).height
+            )
+        ) {
+            HerdrNoteRowsView(model: model, controller: HerdrHudController(), notes: notes)
+        }
+
+        result.expectSubstantial()
+    }
+
+    @Test("HUD compact notes render color bars")
+    func rendersHudCompactNotes() async throws {
+        let agentSettings = AgentModelSettingsStore(defaults: makeDefaults())
+        let promptSettings = HerdrPromptSettingsStore(defaults: makeDefaults())
+        let notes = HerdrHudNotesState(
+            userDefaults: makeDefaults(),
+            agentSettings: agentSettings,
+            promptSettings: promptSettings,
+            persistenceURL: temporaryPersistenceURL(),
+            hoverGrace: .zero,
+            hoverDelay: .zero,
+            saveDelay: .zero
+        )
+        await notes.waitForPersistenceRestoreForTesting()
+        notes.seedNotesForTesting([
+            HerdrNote(title: "Yellow", color: .yellow),
+            HerdrNote(title: "Peach", color: .peach),
+            HerdrNote(title: "Pink", color: .pink),
+            HerdrNote(title: "Green", color: .green),
+        ])
+
+        let result = try await HerdrRenderHarness.render(
+            "20-hud-note-compact.png",
+            size: HerdrHudPlacement.notesContentSize(.compact(count: 4), isExpanded: false)
+        ) {
+            HerdrNoteCompactStackView(notes: notes, count: 4)
+        }
+
+        result.expectSubstantial(minimumBytes: 1024)
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "HudRenderTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {

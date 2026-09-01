@@ -37,6 +37,14 @@ final class HerdrPromptSettingsStore {
         Self.storedOverride(for: id, defaults: defaults)
     }
 
+    func hasOverride(_ id: HerdrPromptID) -> Bool {
+        overrides[id] != nil
+    }
+
+    func storedOverrideText(for id: HerdrPromptID) -> String? {
+        overrides[id]
+    }
+
     static func storedOverride(for id: HerdrPromptID, defaults: UserDefaults) -> String? {
         guard let override = defaults.string(forKey: id.defaultsKey),
               !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

@@ -26,6 +26,7 @@ struct SettingsView: View {
             alertSection
             hudSection
             agentModelSection
+            promptsSection
             cleanupSection
             textSizeSection
             privacySection
@@ -46,6 +47,7 @@ struct SettingsView: View {
         .task {
             await loadCleanupModels()
             await loadAgentModels()
+            await promptSettings.loadHarnessDefaults(model: model)
         }
     }
 
@@ -233,6 +235,20 @@ struct SettingsView: View {
             LabeledContent("Vision model") {
                 modelMenu(selection: $agentSettings.visionModel, identifier: "settings-agent-vision-picker")
             }
+            LabeledContent("Notes model") {
+                modelMenu(
+                    selection: $agentSettings.notesModel,
+                    identifier: "settings-notes-model-picker",
+                    defaultTitle: "Same as HUD model"
+                )
+            }
+            Picker("Notes thinking level", selection: $agentSettings.notesThinkingLevel) {
+                ForEach(PiThinkingLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings-notes-thinking-picker")
             if AgentModelResolver.resolve(
                 preference: agentSettings.hudModel,
                 catalog: agentCatalog?.models ?? [],
@@ -249,18 +265,27 @@ struct SettingsView: View {
         } header: {
             Text("Agent models")
         } footer: {
-            Text("The HUD (⌃⌥Space) and the Agent sheet (⌘⌥A) each carry their own model and thinking level. \"Machine default\" uses whatever pi is configured to use on that machine. Images are rerouted to the vision model when the chosen model cannot see them. This list comes from the primary machine's pi installation, so it updates without a new Herdr build.")
+            Text("The HUD (⌃⌥Space) and the Agent sheet (⌘⌥A) each carry their own model and thinking level. \"Machine default\" uses whatever pi is configured to use on that machine. Images are rerouted to the vision model when the chosen model cannot see them. This list comes from the primary machine's pi installation, so it updates without a new Herdr build. Notes use their own model for tidying and smart actions; leave it on Same as HUD model to follow the HUD.")
         }
     }
 
+    private var promptsSection: some View {
+        PromptSettingsSectionView(promptSettings: promptSettings)
+    }
+
     @ViewBuilder
-    private func modelMenu(selection: Binding<String>, identifier: String) -> some View {
+    private func modelMenu(
+        selection: Binding<String>,
+        identifier: String,
+        defaultTitle: String? = nil
+    ) -> some View {
+        let effectiveDefaultTitle = defaultTitle ?? defaultAgentModelMenuTitle
         Menu {
             Button {
                 selection.wrappedValue = ""
             } label: {
                 Label(
-                    defaultAgentModelMenuTitle,
+                    effectiveDefaultTitle,
                     systemImage: selection.wrappedValue.isEmpty ? "checkmark.circle.fill" : "cpu"
                 )
             }
@@ -294,7 +319,10 @@ struct SettingsView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "cpu")
-                Text(agentModelMenuSelectionLabel(for: selection.wrappedValue))
+                Text(agentModelMenuSelectionLabel(
+                    for: selection.wrappedValue,
+                    defaultTitle: effectiveDefaultTitle
+                ))
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
                     .herdrFont(.caption2)
@@ -312,8 +340,8 @@ struct SettingsView: View {
         return "Machine default: \(defaultModel.displayName)"
     }
 
-    private func agentModelMenuSelectionLabel(for selection: String) -> String {
-        guard !selection.isEmpty else { return defaultAgentModelMenuTitle }
+    private func agentModelMenuSelectionLabel(for selection: String, defaultTitle: String) -> String {
+        guard !selection.isEmpty else { return defaultTitle }
         return agentCatalog?.models.first(where: { $0.id == selection })?.displayName ?? selection
     }
 
