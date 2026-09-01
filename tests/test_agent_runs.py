@@ -1014,6 +1014,255 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertEqual(retained["prompt"], "")
             manager.stop()
 
+    def test_new_run_is_its_own_thread_root_and_publicly_serialized(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+
+            started = manager.start(
+                prompt="Start a thread",
+                label="Thread",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+
+            self.assertEqual(started["run"]["threadRootRunId"], started["run"]["id"])
+            self.assertIn("threadRootRunId", started["run"])
+            wait_for_status(manager, started["run"]["id"], {"completed"})
+            manager.stop()
+
+    def test_continuation_inherits_the_root_session_and_cwd(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            alternate_cwd = directory / "alternate"
+            alternate_cwd.mkdir()
+            manager = self.manager(directory)
+            root = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="First turn",
+                    label="Thread",
+                    cwd=str(directory / "home"),
+                    topology={},
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+
+            continued = manager.start(
+                prompt="Second turn",
+                label="Thread",
+                cwd=str(alternate_cwd),
+                topology={},
+                continue_from_run_id=root["id"],
+            )["run"]
+            raw_continued = manager._read(continued["id"])
+
+            self.assertEqual(continued["threadRootRunId"], root["id"])
+            self.assertEqual(continued["sessionId"], root["sessionId"])
+            self.assertEqual(raw_continued["sessionsDir"], manager._read(root["id"])["sessionsDir"])
+            self.assertEqual(raw_continued["cwd"], str((directory / "home").resolve()))
+            wait_for_status(manager, continued["id"], {"completed"})
+            manager.stop()
+
+    def test_continuation_of_a_continuation_keeps_the_original_root(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            root = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="First turn", label="Thread", cwd=str(directory / "home"), topology={}
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            middle = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="Second turn",
+                    label="Thread",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=root["id"],
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+
+            third = manager.start(
+                prompt="Third turn",
+                label="Thread",
+                cwd=str(directory / "home"),
+                topology={},
+                continue_from_run_id=middle["id"],
+            )["run"]
+
+            self.assertEqual(third["threadRootRunId"], root["id"])
+            self.assertEqual(third["sessionId"], root["sessionId"])
+            wait_for_status(manager, third["id"], {"completed"})
+            manager.stop()
+
+    def test_missing_continuation_source_starts_a_fresh_thread(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+
+            started = manager.start(
+                prompt="Fresh after reaping",
+                label="Thread",
+                cwd=str(directory / "home"),
+                topology={},
+                continue_from_run_id="agr_0123456789ab",
+            )["run"]
+
+            self.assertEqual(started["threadRootRunId"], started["id"])
+            wait_for_status(manager, started["id"], {"completed"})
+            manager.stop()
+
+    def test_turn_two_is_promotable_from_the_root_session_directory(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            root = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="First turn", label="Thread", cwd=str(directory / "home"), topology={}
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            second = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="Second turn",
+                    label="Thread",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=root["id"],
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+
+            _, session_file = manager.promotable(second["id"])
+
+            self.assertEqual(session_file, root["sessionFile"])
+            manager.stop()
+
+    def test_thread_delete_cascades_only_from_the_root(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            root = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="First turn", label="Thread", cwd=str(directory / "home"), topology={}
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            follower = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="Second turn",
+                    label="Thread",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=root["id"],
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+
+            manager.delete(follower["id"])
+            self.assertTrue((manager.runs_root / root["id"]).is_dir())
+            self.assertFalse((manager.runs_root / follower["id"]).exists())
+
+            final_follower = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="Final turn",
+                    label="Thread",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=root["id"],
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            manager.delete(root["id"])
+
+            self.assertFalse((manager.runs_root / root["id"]).exists())
+            self.assertFalse((manager.runs_root / final_follower["id"]).exists())
+            manager.stop()
+
+    def test_thread_root_is_preserved_when_any_turn_is_promoted(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            root = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="First turn", label="Thread", cwd=str(directory / "home"), topology={}
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            follower = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="Second turn",
+                    label="Thread",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=root["id"],
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            manager.mark_promoted(follower["id"], workspace_id="w1", pane_id="w1:p1")
+
+            manager.delete(root["id"])
+
+            self.assertTrue((manager.runs_root / root["id"]).is_dir())
+            self.assertTrue((manager.runs_root / follower["id"]).is_dir())
+            self.assertEqual(manager.get(root["id"])["run"]["prompt"], "")
+            manager.stop()
+
+    def test_thread_ttl_is_rolling_and_reaps_stale_threads_as_a_unit(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, HERDR_HARNESS_AGENT_TTL_SECONDS="60")
+            root = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="First turn", label="Thread", cwd=str(directory / "home"), topology={}
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            follower = wait_for_status(
+                manager,
+                manager.start(
+                    prompt="Second turn",
+                    label="Thread",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=root["id"],
+                )["run"]["id"],
+                {"completed"},
+            )["run"]
+            old = "2000-01-01T00:00:00Z"
+            root_record = manager._read(root["id"])
+            follower_record = manager._read(follower["id"])
+            root_record["finishedAt"] = old
+            follower_record["finishedAt"] = manager._now()
+            manager._write(root_record)
+            manager._write(follower_record)
+
+            manager.prune()
+
+            self.assertTrue((manager.runs_root / root["id"]).is_dir())
+            self.assertTrue((manager.runs_root / follower["id"]).is_dir())
+            follower_record = manager._read(follower["id"])
+            follower_record["finishedAt"] = old
+            manager._write(follower_record)
+            manager.prune()
+
+            self.assertFalse((manager.runs_root / root["id"]).exists())
+            self.assertFalse((manager.runs_root / follower["id"]).exists())
+            manager.stop()
+
 
 class AgentRunServiceTests(unittest.TestCase):
     def test_current_fleet_context_and_promotion_resume_the_exact_session(self):

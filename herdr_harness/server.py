@@ -1481,7 +1481,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 )
             if method == "POST" and tail == ["agent-runs"]:
                 if any(
-                    key not in {"prompt", "label", "mode", "model", "thinkingLevel", "attachments"}
+                    key not in {
+                        "prompt",
+                        "label",
+                        "mode",
+                        "model",
+                        "thinkingLevel",
+                        "attachments",
+                        "continueFromRunId",
+                    }
                     for key in body
                 ):
                     raise HTTPValidationError("Agent run request contains an unsupported field")
@@ -1497,6 +1505,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 model = _optional_agent_model(body)
                 thinking_level = _optional_agent_thinking_level(body)
                 request_attachments = _optional_agent_attachments(body)
+                continue_from_run_id = None
+                if body.get("continueFromRunId") is not None:
+                    try:
+                        continue_from_run_id = _agent_run_id(body.get("continueFromRunId"))
+                    except HTTPValidationError as exc:
+                        raise HTTPValidationError("continueFromRunId is invalid") from exc
                 return (
                     service.start_agent_run(
                         prompt=prompt,
@@ -1505,6 +1519,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         model=model,
                         thinking_level=thinking_level,
                         attachments=request_attachments,
+                        continue_from_run_id=continue_from_run_id,
                     ),
                     202,
                 )

@@ -37,6 +37,7 @@ PUBLIC_RUN_KEYS = (
     "createdAt",
     "startedAt",
     "finishedAt",
+    "threadRootRunId",
     "sessionId",
     "sessionFile",
     "costUSD",
@@ -519,18 +520,55 @@ class AgentRunManager:
                 self._write(run)
             self._prune_run_if_expired(run)
 
+    @staticmethod
+    def _thread_root_id(run: dict) -> str:
+        """Return a run's session-owning root, including legacy one-off runs."""
+        root_id = run.get("threadRootRunId")
+        if isinstance(root_id, str) and _RUN_ID_RE.fullmatch(root_id):
+            return root_id
+        return str(run["id"])
+
+    def _thread_runs(self, root_id: str) -> list[dict]:
+        """Read every persisted run that belongs to a thread root."""
+        runs: list[dict] = []
+        try:
+            items = list(self.runs_root.iterdir())
+        except OSError:
+            return runs
+        for item in items:
+            if item.is_symlink() or not item.is_dir() or not _RUN_ID_RE.fullmatch(item.name):
+                continue
+            try:
+                candidate = self._read(item.name)
+            except AgentRunError:
+                continue
+            if self._thread_root_id(candidate) == root_id:
+                runs.append(candidate)
+        return runs
+
+    def _remove_thread(self, root_id: str) -> None:
+        for member in self._thread_runs(root_id):
+            member_id = str(member["id"])
+            shutil.rmtree(self._run_dir(member_id), ignore_errors=True)
+            self._clear_pending_steps(member_id)
+
+    def _thread_is_protected(self, members: list[dict]) -> bool:
+        return any(
+            member.get("status") == "promoted" or member.get("retainSession") is True
+            for member in members
+        )
+
     def _prune_run_if_expired(self, run: dict) -> bool:
-        if (
-            run.get("status") == "promoted"
-            or run.get("retainSession") is True
-            or run.get("status") not in TERMINAL_STATUSES
-        ):
+        root_id = self._thread_root_id(run)
+        members = self._thread_runs(root_id)
+        if not members or self._thread_is_protected(members):
             return False
-        age = _iso_age_seconds(run.get("finishedAt"))
-        if age is None or age < self.ttl_seconds:
+        if any(member.get("status") not in TERMINAL_STATUSES for member in members):
             return False
-        shutil.rmtree(self._run_dir(str(run["id"])), ignore_errors=True)
-        self._clear_pending_steps(str(run["id"]))
+        ages = [_iso_age_seconds(member.get("finishedAt")) for member in members]
+        if any(age is None for age in ages) or min(ages) < self.ttl_seconds:
+            return False
+        self._remove_thread(root_id)
         return True
 
     def start(
@@ -544,6 +582,7 @@ class AgentRunManager:
         model: Optional[str] = None,
         thinking_level: Optional[str] = None,
         attachments: Optional[list] = None,
+        continue_from_run_id: Optional[str] = None,
     ) -> dict:
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 131072:
             raise AgentRunError("prompt is invalid", code="invalid_agent_prompt", status=400)
@@ -557,17 +596,16 @@ class AgentRunManager:
             not isinstance(thinking_level, str) or thinking_level not in THINKING_LEVELS
         ):
             raise AgentRunError("thinkingLevel is invalid", code="invalid_agent_thinking_level", status=400)
-        prepared_attachments = _prepare_attachments(attachments)
-        try:
-            working_directory = Path(cwd).expanduser().resolve()
-        except (OSError, RuntimeError, TypeError) as exc:
+        if continue_from_run_id is not None and (
+            not isinstance(continue_from_run_id, str)
+            or not _RUN_ID_RE.fullmatch(continue_from_run_id)
+        ):
             raise AgentRunError(
-                "Agent cwd is unavailable",
-                code="invalid_agent_cwd",
+                "continueFromRunId is invalid",
+                code="invalid_agent_continue_from_run_id",
                 status=400,
-            ) from exc
-        if not working_directory.is_dir():
-            raise AgentRunError("Agent cwd is unavailable", code="invalid_agent_cwd", status=400)
+            )
+        prepared_attachments = _prepare_attachments(attachments)
         try:
             encoded_topology = json.dumps(
                 topology,
@@ -588,12 +626,59 @@ class AgentRunManager:
             )
         self.prune()
         run_id = f"agr_{uuid.uuid4().hex[:12]}"
-        session_id = str(uuid.uuid4())
         run_dir = self._run_dir(run_id)
+        thread_root_run_id = run_id
+        session_id = str(uuid.uuid4())
         sessions_dir = run_dir / "sessions"
+        working_directory: Optional[Path] = None
+
+        if continue_from_run_id is not None:
+            try:
+                referenced = self._read(continue_from_run_id)
+                root_id = self._thread_root_id(referenced)
+                root = self._read(root_id)
+                root_dir = self._run_dir(root_id).resolve()
+                inherited_sessions_dir = Path(str(root.get("sessionsDir") or ""))
+                try:
+                    inherited_sessions_dir.resolve().relative_to(root_dir)
+                except ValueError as exc:
+                    raise AgentRunError(
+                        "Agent session is not owned by the harness",
+                        code="agent_run_session_unsafe",
+                        status=409,
+                    ) from exc
+                session_file = self._find_session_file(root)
+                root_cwd_value = root.get("cwd")
+                root_cwd = (
+                    Path(root_cwd_value).expanduser().resolve()
+                    if isinstance(root_cwd_value, str) and root_cwd_value
+                    else None
+                )
+                if session_file is not None and root_cwd is not None and root_cwd.is_dir():
+                    thread_root_run_id = root_id
+                    sessions_dir = inherited_sessions_dir
+                    session_id = str(root["sessionId"])
+                    working_directory = root_cwd
+            except AgentRunError as exc:
+                if exc.code == "agent_run_not_found":
+                    pass
+                else:
+                    raise
+        if working_directory is None:
+            try:
+                working_directory = Path(cwd).expanduser().resolve()
+            except (OSError, RuntimeError, TypeError) as exc:
+                raise AgentRunError(
+                    "Agent cwd is unavailable",
+                    code="invalid_agent_cwd",
+                    status=400,
+                ) from exc
+            if not working_directory.is_dir():
+                raise AgentRunError("Agent cwd is unavailable", code="invalid_agent_cwd", status=400)
         try:
             run_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
-            sessions_dir.mkdir(mode=0o700)
+            if thread_root_run_id == run_id:
+                sessions_dir.mkdir(mode=0o700)
             context_path = run_dir / "topology.json"
             with context_path.open("x", encoding="utf-8") as handle:
                 handle.write(encoded_topology)
@@ -634,6 +719,7 @@ class AgentRunManager:
             "createdAt": self._now(),
             "startedAt": None,
             "finishedAt": None,
+            "threadRootRunId": thread_root_run_id,
             "sessionId": session_id,
             "sessionFile": None,
             "costUSD": 0.0,
@@ -1192,7 +1278,7 @@ class AgentRunManager:
                 )
             path = Path(str(run.get("sessionFile") or "")).resolve()
             try:
-                path.relative_to(self._run_dir(run_id).resolve())
+                path.relative_to(self._run_dir(self._thread_root_id(run)).resolve())
             except ValueError as exc:
                 raise AgentRunError(
                     "Agent session is not owned by the harness",
@@ -1205,6 +1291,8 @@ class AgentRunManager:
                     code="agent_run_session_missing",
                     status=409,
                 )
+            # A thread is one append-only Pi session, so promoting any turn
+            # hands the new pane the entire conversation, not only that turn.
             # Reserve the session before the service starts Pi. This prevents
             # the TTL reaper from deleting a just-expired session during the
             # small promotion window, including across a harness restart.
@@ -1246,7 +1334,28 @@ class AgentRunManager:
                     status=409,
                 )
             envelope = self._envelope(run)
-            if run.get("status") != "promoted":
+            root_id = self._thread_root_id(run)
+            if run_id == root_id:
+                members = self._thread_runs(root_id)
+                if any(member.get("status") in {"queued", "running"} for member in members):
+                    raise AgentRunError(
+                        "Cancel every Agent run in the thread before deleting it",
+                        code="agent_run_active",
+                        status=409,
+                    )
+                if not self._thread_is_protected(members):
+                    self._remove_thread(root_id)
+                    return envelope
+                # A promoted pane (or a reservation during promotion) may be
+                # appending to the root session. Keep every record in that
+                # protected thread so the root directory remains owned.
+                for member in members:
+                    member["prompt"] = ""
+                    member["response"] = None
+                    self._write(member)
+            elif run.get("status") != "promoted":
+                # A follower owns no session directory, so single-run delete
+                # never affects the root session used by the rest of its thread.
                 shutil.rmtree(self._run_dir(run_id), ignore_errors=True)
                 self._clear_pending_steps(run_id)
             else:

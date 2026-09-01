@@ -2442,6 +2442,7 @@ class HerdrService:
         model: Optional[str] = None,
         thinking_level: Optional[str] = None,
         attachments: Optional[list] = None,
+        continue_from_run_id: Optional[str] = None,
     ) -> dict:
         display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
         try:
@@ -2459,6 +2460,7 @@ class HerdrService:
             model=model,
             thinking_level=thinking_level,
             attachments=attachments,
+            continue_from_run_id=continue_from_run_id,
         )
 
     def get_agent_run(self, run_id: str) -> dict:

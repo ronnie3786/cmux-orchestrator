@@ -301,6 +301,7 @@ class FakeHTTPService:
                 "createdAt": "2026-08-25T00:00:00Z",
                 "startedAt": "2026-08-25T00:00:01Z",
                 "finishedAt": "2026-08-25T00:00:02Z",
+                "threadRootRunId": "agr_0123456789ab",
                 "sessionId": "session-1",
                 "sessionFile": "/private/run/session.jsonl",
                 "costUSD": 0.01,
@@ -319,6 +320,7 @@ class FakeHTTPService:
         model=None,
         thinking_level=None,
         attachments=None,
+        continue_from_run_id=None,
     ):
         self.calls.append(
             (
@@ -330,6 +332,7 @@ class FakeHTTPService:
                     "model": model,
                     "thinking_level": thinking_level,
                     "attachments": attachments,
+                    "continue_from_run_id": continue_from_run_id,
                 },
             )
         )
@@ -905,6 +908,7 @@ class HerdrHTTPTests(unittest.TestCase):
                 "createdAt",
                 "startedAt",
                 "finishedAt",
+                "threadRootRunId",
                 "sessionId",
                 "sessionFile",
                 "costUSD",
@@ -924,6 +928,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "model": None,
                     "thinking_level": None,
                     "attachments": None,
+                    "continue_from_run_id": None,
                 },
             ),
         )
@@ -982,6 +987,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "model": None,
                     "thinking_level": None,
                     "attachments": None,
+                    "continue_from_run_id": None,
                 },
             ),
         )
@@ -1007,6 +1013,32 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(unhashable_body["error"]["code"], "invalid_request")
         self.assertEqual(len(self.service.calls), call_count)
 
+    def test_agent_run_continuation_is_validated_and_forwarded(self):
+        run_id = "agr_0123456789ab"
+        status, _, body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Follow up", "continueFromRunId": run_id},
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(body["run"]["threadRootRunId"], run_id)
+        self.assertEqual(
+            self.service.calls[-1][1]["continue_from_run_id"],
+            run_id,
+        )
+
+        call_count = len(self.service.calls)
+        invalid_status, _, invalid_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Follow up", "continueFromRunId": "not-a-run-id"},
+        )
+
+        self.assertEqual(invalid_status, 400)
+        self.assertEqual(invalid_body["error"]["code"], "invalid_request")
+        self.assertEqual(len(self.service.calls), call_count)
+
     def test_agent_run_model_and_thinking_level_are_validated_and_forwarded(self):
         model = "accounts/fireworks/models/deepseek-v4-flash-0731"
         status, _, body = self.request(
@@ -1029,6 +1061,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "model": model,
                     "thinking_level": "high",
                     "attachments": None,
+                    "continue_from_run_id": None,
                 },
             ),
         )
