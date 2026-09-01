@@ -43,6 +43,8 @@ PUBLIC_RUN_KEYS = (
     "promotedWorkspaceId",
     "promotedPaneId",
     "attachments",
+    "steps",
+    "stepsTruncated",
 )
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "promoted"})
 MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._/:-]{1,200}$")
@@ -54,6 +56,9 @@ MAX_RESPONSE_CHARS = 512 * 1024
 MAX_EVENT_LINE_BYTES = 2 * 1024 * 1024
 MODEL_LIST_CACHE_SECONDS = 300
 MODEL_LIST_TIMEOUT_SECONDS = 20
+TOOL_STEPS_FLUSH_SECONDS = 0.25
+MAX_TOOL_STEPS = 200
+MAX_TOOL_PREVIEW_CHARS = 400
 _MODEL_TABLE_HEADER = ("provider", "model", "context", "max-out", "thinking", "images")
 _MODEL_CONTEXT_RE = re.compile(r"^([0-9]*\.?[0-9]+)([KM]?)$")
 
@@ -301,6 +306,21 @@ def _message_cost(message: object) -> float:
     return value if math.isfinite(value) and value >= 0 else 0.0
 
 
+def _tool_preview(value: Any) -> tuple[str, bool]:
+    """Render an arbitrary Pi tool value without allowing stream parsing to fail."""
+    try:
+        preview = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        )
+        if len(preview) > MAX_TOOL_PREVIEW_CHARS:
+            return preview[:MAX_TOOL_PREVIEW_CHARS], True
+        return preview, False
+    except Exception:
+        return "", False
+
+
 class AgentRunManager:
     """Own subprocesses and private, short-lived Pi session artifacts."""
 
@@ -337,6 +357,10 @@ class AgentRunManager:
         self._cached_models: Optional[dict[str, Any]] = None
         self._models_expire_at = 0.0
         self._processes: dict[str, subprocess.Popen[str]] = {}
+        self._pending_steps: dict[str, list[dict[str, Any]]] = {}
+        self._pending_step_updates: dict[str, dict[str, dict[str, Any]]] = {}
+        self._pending_steps_truncated: set[str] = set()
+        self._steps_last_flush: dict[str, float] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._cancel_requested: set[str] = set()
         self._stop_event = threading.Event()
@@ -436,6 +460,8 @@ class AgentRunManager:
         public = {key: copy.deepcopy(run.get(key)) for key in PUBLIC_RUN_KEYS}
         public["mode"] = run.get("mode") or "ask"
         public["attachments"] = list(run.get("attachments") or [])
+        public["steps"] = list(run.get("steps") or [])
+        public["stepsTruncated"] = bool(run.get("stepsTruncated"))
         return public
 
     def _envelope(self, run: dict) -> dict:
@@ -504,6 +530,7 @@ class AgentRunManager:
         if age is None or age < self.ttl_seconds:
             return False
         shutil.rmtree(self._run_dir(str(run["id"])), ignore_errors=True)
+        self._clear_pending_steps(str(run["id"]))
         return True
 
     def start(
@@ -612,6 +639,8 @@ class AgentRunManager:
             "costUSD": 0.0,
             "promotedWorkspaceId": None,
             "promotedPaneId": None,
+            "steps": [],
+            "stepsTruncated": False,
             "label": label,
             "cwd": str(working_directory),
             "contextFile": str(context_path),
@@ -646,6 +675,117 @@ class AgentRunManager:
             run.update(changes)
             self._write(run)
             return run
+
+    def _clear_pending_steps(self, run_id: str) -> None:
+        self._pending_steps.pop(run_id, None)
+        self._pending_step_updates.pop(run_id, None)
+        self._pending_steps_truncated.discard(run_id)
+        self._steps_last_flush.pop(run_id, None)
+
+    @staticmethod
+    def _tool_event_string(event: dict, key: str) -> str:
+        try:
+            value = event.get(key)
+            return value if isinstance(value, str) else str(value or "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _run_steps(run: dict) -> list[dict[str, Any]]:
+        steps = run.get("steps")
+        return steps if isinstance(steps, list) else []
+
+    def _record_tool_start(self, run_id: str, run: dict, event: dict) -> None:
+        persisted = self._run_steps(run)
+        pending = self._pending_steps.setdefault(run_id, [])
+        if len(persisted) + len(pending) >= MAX_TOOL_STEPS:
+            self._pending_steps_truncated.add(run_id)
+            return
+        args_preview, truncated = _tool_preview(event.get("args"))
+        pending.append(
+            {
+                "toolCallId": self._tool_event_string(event, "toolCallId"),
+                "toolName": self._tool_event_string(event, "toolName"),
+                "argsPreview": args_preview,
+                "resultPreview": "",
+                "isError": False,
+                "startedAt": self._now(),
+                "finishedAt": None,
+                "truncated": truncated,
+            }
+        )
+
+    def _record_tool_end(self, run_id: str, run: dict, event: dict) -> None:
+        tool_call_id = self._tool_event_string(event, "toolCallId")
+        result_preview, result_truncated = _tool_preview(event.get("result"))
+        completed_at = self._now()
+        pending = self._pending_steps.get(run_id, [])
+        for step in reversed(pending):
+            if step.get("toolCallId") == tool_call_id:
+                step.update(
+                    resultPreview=result_preview,
+                    isError=bool(event.get("isError")),
+                    finishedAt=completed_at,
+                    truncated=bool(step.get("truncated")) or result_truncated,
+                )
+                return
+
+        persisted = self._run_steps(run)
+        for step in reversed(persisted):
+            if isinstance(step, dict) and step.get("toolCallId") == tool_call_id:
+                completed = dict(step)
+                completed.update(
+                    resultPreview=result_preview,
+                    isError=bool(event.get("isError")),
+                    finishedAt=completed_at,
+                    truncated=bool(step.get("truncated")) or result_truncated,
+                )
+                self._pending_step_updates.setdefault(run_id, {})[tool_call_id] = completed
+                return
+
+        pending = self._pending_steps.setdefault(run_id, [])
+        if len(persisted) + len(pending) >= MAX_TOOL_STEPS:
+            self._pending_steps_truncated.add(run_id)
+            return
+        pending.append(
+            {
+                "toolCallId": tool_call_id,
+                "toolName": self._tool_event_string(event, "toolName"),
+                "argsPreview": "",
+                "resultPreview": result_preview,
+                "isError": bool(event.get("isError")),
+                "startedAt": completed_at,
+                "finishedAt": completed_at,
+                "truncated": result_truncated,
+            }
+        )
+
+    def _flush_pending_steps(self, run_id: str, *, run: Optional[dict] = None, force: bool = False) -> bool:
+        pending = self._pending_steps.get(run_id, [])
+        updates = self._pending_step_updates.get(run_id, {})
+        truncated = run_id in self._pending_steps_truncated
+        if not pending and not updates and not truncated:
+            return False
+        now = self._clock()
+        last_flush = self._steps_last_flush.get(run_id)
+        if not force and last_flush is not None and now - last_flush < TOOL_STEPS_FLUSH_SECONDS:
+            return False
+        target = run if run is not None else self._read(run_id)
+        steps = self._run_steps(target)
+        if updates:
+            steps = [
+                updates.get(str(step.get("toolCallId")), step) if isinstance(step, dict) else step
+                for step in steps
+            ]
+        if pending:
+            steps = [*steps, *pending]
+        target["steps"] = steps
+        if truncated:
+            target["stepsTruncated"] = True
+        self._write(target)
+        self._clear_pending_steps(run_id)
+        self._steps_last_flush[run_id] = now
+        return True
 
     def _execute(self, run_id: str) -> None:
         acquired = False
@@ -810,6 +950,7 @@ class AgentRunManager:
             stderr_thread.join(timeout=2)
             with self._lock:
                 self._processes.pop(run_id, None)
+                self._flush_pending_steps(run_id, force=True)
                 cancelled = run_id in self._cancel_requested
                 current = self._read(run_id)
                 if cancelled:
@@ -857,9 +998,12 @@ class AgentRunManager:
                                 finishedAt=self._now(),
                             )
                 self._write(current)
+                self._clear_pending_steps(run_id)
         except Exception as exc:
             with self._lock:
+                self._processes.pop(run_id, None)
                 try:
+                    self._flush_pending_steps(run_id, force=True)
                     run = self._read(run_id)
                     if run.get("status") not in TERMINAL_STATUSES:
                         run.update(
@@ -870,9 +1014,11 @@ class AgentRunManager:
                         self._write(run)
                 except (AgentRunError, OSError, TypeError, ValueError):
                     pass
+                self._clear_pending_steps(run_id)
         finally:
             with self._lock:
                 self._processes.pop(run_id, None)
+                self._clear_pending_steps(run_id)
                 self._threads.pop(run_id, None)
             if acquired:
                 self._slots.release()
@@ -893,56 +1039,81 @@ class AgentRunManager:
 
     def _consume_stdout(self, run_id: str, process: subprocess.Popen[str]) -> None:
         assert process.stdout is not None
-        while True:
-            line = process.stdout.readline(MAX_EVENT_LINE_BYTES + 1)
-            if not line:
-                break
-            if len(line) > MAX_EVENT_LINE_BYTES:
-                while line and not line.endswith("\n"):
-                    line = process.stdout.readline(MAX_EVENT_LINE_BYTES + 1)
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(event, dict):
-                continue
-            nested = event.get("event")
-            if isinstance(nested, dict):
-                event = nested
+        try:
+            while True:
+                line = process.stdout.readline(MAX_EVENT_LINE_BYTES + 1)
+                if not line:
+                    break
+                if len(line) > MAX_EVENT_LINE_BYTES:
+                    while line and not line.endswith("\n"):
+                        line = process.stdout.readline(MAX_EVENT_LINE_BYTES + 1)
+                    continue
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                nested = event.get("event")
+                if isinstance(nested, dict):
+                    event = nested
+                if event.get("type") == "tool_execution_update":
+                    continue
+                with self._lock:
+                    try:
+                        run = self._read(run_id)
+                    except AgentRunError:
+                        return
+                    changed = False
+                    steps_flushed = False
+                    if event.get("type") == "message_end":
+                        message = event.get("message")
+                        text = _assistant_text(message)
+                        if text:
+                            run["response"] = text[:MAX_RESPONSE_CHARS]
+                            changed = True
+                        cost = _message_cost(message)
+                        if cost:
+                            run["costUSD"] = float(run.get("costUSD") or 0.0) + cost
+                            changed = True
+                        error_message = _assistant_error(message)
+                        if error_message is not None:
+                            run["agentErrorMessage"] = error_message
+                            changed = True
+                    elif event.get("type") == "agent_end":
+                        raw_messages = event.get("messages")
+                        if isinstance(raw_messages, list):
+                            for message in raw_messages:
+                                if not isinstance(message, dict):
+                                    continue
+                                error_message = _assistant_error(message)
+                                if error_message is not None:
+                                    run["agentErrorMessage"] = error_message
+                                    changed = True
+                    elif event.get("type") == "tool_execution_start":
+                        try:
+                            self._record_tool_start(run_id, run, event)
+                            steps_flushed = self._flush_pending_steps(run_id, run=run)
+                        except Exception:
+                            pass
+                    elif event.get("type") == "tool_execution_end":
+                        try:
+                            self._record_tool_end(run_id, run, event)
+                            steps_flushed = self._flush_pending_steps(run_id, run=run)
+                        except Exception:
+                            pass
+                    if changed and not steps_flushed:
+                        self._write(run)
+        finally:
             with self._lock:
                 try:
-                    run = self._read(run_id)
-                except AgentRunError:
-                    return
-                changed = False
-                if event.get("type") == "message_end":
-                    message = event.get("message")
-                    text = _assistant_text(message)
-                    if text:
-                        run["response"] = text[:MAX_RESPONSE_CHARS]
-                        changed = True
-                    cost = _message_cost(message)
-                    if cost:
-                        run["costUSD"] = float(run.get("costUSD") or 0.0) + cost
-                        changed = True
-                    error_message = _assistant_error(message)
-                    if error_message is not None:
-                        run["agentErrorMessage"] = error_message
-                        changed = True
-                elif event.get("type") == "agent_end":
-                    raw_messages = event.get("messages")
-                    if isinstance(raw_messages, list):
-                        for message in raw_messages:
-                            if not isinstance(message, dict):
-                                continue
-                            error_message = _assistant_error(message)
-                            if error_message is not None:
-                                run["agentErrorMessage"] = error_message
-                                changed = True
-                if changed:
-                    self._write(run)
-        process.stdout.close()
+                    self._flush_pending_steps(run_id, force=True)
+                except Exception:
+                    pass
+            try:
+                process.stdout.close()
+            except (OSError, ValueError):
+                pass
 
     @staticmethod
     def _consume_stderr(process: subprocess.Popen[str], parts: list[str]) -> None:
@@ -1077,6 +1248,7 @@ class AgentRunManager:
             envelope = self._envelope(run)
             if run.get("status") != "promoted":
                 shutil.rmtree(self._run_dir(run_id), ignore_errors=True)
+                self._clear_pending_steps(run_id)
             else:
                 # A promoted Pi process continues writing the exact session
                 # file, so its private directory must remain owned by the pane.

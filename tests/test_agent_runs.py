@@ -66,6 +66,102 @@ def write_fake_pi(directory: Path) -> Path:
                     json.dumps({"type": "session", "id": session_id, "cwd": os.getcwd()}) + "\\n",
                     encoding="utf-8",
                 )
+            if mode == "tool-success":
+                print(json.dumps({
+                    "type": "tool_execution_start",
+                    "toolCallId": "call-1",
+                    "toolName": "read",
+                    "args": {"path": "README.md"},
+                }), flush=True)
+                print(json.dumps({
+                    "type": "tool_execution_update",
+                    "toolCallId": "call-1",
+                    "toolName": "read",
+                    "args": {"path": "README.md"},
+                    "partialResult": "ignore me",
+                }), flush=True)
+                print(json.dumps({
+                    "type": "tool_execution_end",
+                    "toolCallId": "call-1",
+                    "toolName": "read",
+                    "result": "file contents",
+                    "isError": False,
+                }), flush=True)
+            elif mode == "tool-error":
+                print(json.dumps({
+                    "type": "tool_execution_start",
+                    "toolCallId": "call-error",
+                    "toolName": "bash",
+                    "args": {"command": "false"},
+                }), flush=True)
+                print(json.dumps({
+                    "type": "tool_execution_end",
+                    "toolCallId": "call-error",
+                    "toolName": "bash",
+                    "result": "exit status 1",
+                    "isError": True,
+                }), flush=True)
+            elif mode == "tool-end-only":
+                print(json.dumps({
+                    "type": "tool_execution_end",
+                    "toolCallId": "orphan",
+                    "toolName": "grep",
+                    "result": {"matches": 3},
+                    "isError": False,
+                }), flush=True)
+            elif mode == "tool-updates-only":
+                for index in range(100):
+                    print(json.dumps({
+                        "type": "tool_execution_update",
+                        "toolCallId": "update-" + str(index),
+                        "toolName": "read",
+                        "args": {"path": "ignored"},
+                        "partialResult": "chunk",
+                    }), flush=True)
+            elif mode == "tool-cap":
+                for index in range(201):
+                    print(json.dumps({
+                        "type": "tool_execution_start",
+                        "toolCallId": "cap-" + str(index),
+                        "toolName": "read",
+                        "args": {"path": str(index)},
+                    }), flush=True)
+            elif mode == "tool-long-arg":
+                print(json.dumps({
+                    "type": "tool_execution_start",
+                    "toolCallId": "long-arg",
+                    "toolName": "read",
+                    "args": "x" * 5000,
+                }), flush=True)
+            elif mode == "tool-malformed-arg":
+                print(
+                    '{"type":"tool_execution_start","toolCallId":"malformed",'
+                    '"toolName":"read","args":NaN}',
+                    flush=True,
+                )
+                print(json.dumps({
+                    "type": "tool_execution_end",
+                    "toolCallId": "malformed",
+                    "toolName": "read",
+                    "result": "ok",
+                    "isError": False,
+                }), flush=True)
+            elif mode == "tool-burst":
+                for index in range(50):
+                    tool_call_id = "burst-" + str(index)
+                    print(json.dumps({
+                        "type": "tool_execution_start",
+                        "toolCallId": tool_call_id,
+                        "toolName": "read",
+                        "args": {"path": str(index)},
+                    }), flush=True)
+                    print(json.dumps({
+                        "type": "tool_execution_end",
+                        "toolCallId": tool_call_id,
+                        "toolName": "read",
+                        "result": "ok",
+                        "isError": False,
+                    }), flush=True)
             if mode == "assistant-error":
                 message = {
                     "role": "assistant",
@@ -412,6 +508,162 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertIsNone(finished["run"]["error"])
             manager.stop()
 
+    def test_tool_start_and_end_produce_one_completed_step(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="tool-success")
+            started = manager.start(
+                prompt="Read the README",
+                label="Read",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertEqual(len(finished["run"]["steps"]), 1)
+            step = finished["run"]["steps"][0]
+            self.assertEqual(step["toolCallId"], "call-1")
+            self.assertEqual(step["toolName"], "read")
+            self.assertEqual(step["argsPreview"], '{"path":"README.md"}')
+            self.assertEqual(step["resultPreview"], "file contents")
+            self.assertFalse(step["isError"])
+            self.assertIsNotNone(step["startedAt"])
+            self.assertIsNotNone(step["finishedAt"])
+            self.assertFalse(step["truncated"])
+            manager.stop()
+
+    def test_tool_end_preserves_error_and_orphan_end_is_kept(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="tool-error")
+            started = manager.start(
+                prompt="Run false",
+                label="Error",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+            self.assertTrue(finished["run"]["steps"][0]["isError"])
+            manager.stop()
+
+            manager = self.manager(directory, FAKE_AGENT_MODE="tool-end-only")
+            started = manager.start(
+                prompt="Find matches",
+                label="Orphan",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+            step = finished["run"]["steps"][0]
+            self.assertEqual(step["toolCallId"], "orphan")
+            self.assertEqual(step["argsPreview"], "")
+            self.assertEqual(step["resultPreview"], '{"matches":3}')
+            self.assertIsNotNone(step["startedAt"])
+            self.assertIsNotNone(step["finishedAt"])
+            manager.stop()
+
+    def test_tool_execution_updates_are_ignored_without_extra_writes(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+
+            def run_and_count(mode=None):
+                extra = {"FAKE_AGENT_MODE": mode} if mode else {}
+                manager = self.manager(directory, **extra)
+                writes = []
+                original_write = manager._write
+
+                def counting_write(run):
+                    writes.append(run["id"])
+                    original_write(run)
+
+                manager._write = counting_write
+                started = manager.start(
+                    prompt="What changed?",
+                    label="Updates",
+                    cwd=str(directory / "home"),
+                    topology={},
+                )
+                finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+                manager.stop()
+                return finished, len(writes)
+
+            baseline, baseline_writes = run_and_count()
+            updated, updated_writes = run_and_count("tool-updates-only")
+
+            self.assertEqual(baseline["run"]["steps"], [])
+            self.assertEqual(updated["run"]["steps"], [])
+            self.assertEqual(updated_writes, baseline_writes)
+
+    def test_tool_steps_cap_and_preview_truncation(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="tool-cap")
+            started = manager.start(
+                prompt="Many reads",
+                label="Cap",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+            self.assertEqual(len(finished["run"]["steps"]), 200)
+            self.assertTrue(finished["run"]["stepsTruncated"])
+            manager.stop()
+
+            manager = self.manager(directory, FAKE_AGENT_MODE="tool-long-arg")
+            started = manager.start(
+                prompt="Large read",
+                label="Long arg",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+            step = finished["run"]["steps"][0]
+            self.assertEqual(len(step["argsPreview"]), 400)
+            self.assertTrue(step["truncated"])
+            manager.stop()
+
+    def test_malformed_tool_args_do_not_stop_stdout_capture(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="tool-malformed-arg")
+            started = manager.start(
+                prompt="Read safely",
+                label="Malformed",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            step = finished["run"]["steps"][0]
+            self.assertEqual(step["argsPreview"], "")
+            self.assertEqual(step["resultPreview"], "ok")
+            self.assertEqual(finished["run"]["response"], "Fleet answer")
+            manager.stop()
+
+    def test_tool_step_burst_is_debounced(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory, FAKE_AGENT_MODE="tool-burst")
+            writes = []
+            original_write = manager._write
+
+            def counting_write(run):
+                writes.append(run["id"])
+                original_write(run)
+
+            manager._write = counting_write
+            started = manager.start(
+                prompt="Burst",
+                label="Burst",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertEqual(len(finished["run"]["steps"]), 50)
+            self.assertLess(len(writes), 15)
+            manager.stop()
+
     def test_model_and_thinking_level_are_stored_and_appended_to_argv(self):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)
@@ -654,7 +906,10 @@ class AgentRunManagerTests(unittest.TestCase):
                 herdr_session="test",
             )
 
-            self.assertEqual(manager.get(run_id)["run"]["mode"], "ask")
+            public = manager.get(run_id)["run"]
+            self.assertEqual(public["mode"], "ask")
+            self.assertEqual(public["steps"], [])
+            self.assertFalse(public["stepsTruncated"])
             manager.stop()
 
     def test_cancel_and_noncompleted_promotion_are_safe(self):
