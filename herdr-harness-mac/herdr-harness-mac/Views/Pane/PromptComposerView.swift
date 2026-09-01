@@ -446,7 +446,10 @@ struct PromptComposerView: View {
             radius: quickVoiceCapture.phase == .locked ? 8 : 0
         )
         .animation(
-            reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+            // Keep the resting state animation-free, per HerdrPulseGlow's policy.
+            (reduceMotion || !isLockPulsing)
+                ? nil
+                : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
             value: isLockPulsing
         )
         .accessibilityIdentifier("prompt-composer")
@@ -476,7 +479,9 @@ struct PromptComposerView: View {
         .scaleEffect(isCTALockedCapture && isLockPulsing && !reduceMotion ? 1.035 : 1)
         .opacity(trailingComposerOpacity)
         .animation(
-            reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+            (reduceMotion || !isLockPulsing)
+                ? nil
+                : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
             value: isLockPulsing
         )
         .buttonStyle(.plain)
