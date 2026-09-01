@@ -464,6 +464,14 @@ actor HerdrAPIClient {
         try await mutation(path: "/api/v1/workspaces/\(workspaceID)/tabs", body: APIActionBody(label: label))
     }
 
+    func renameTab(id: String, label: String) async throws {
+        try await mutation(
+            path: "/api/v1/tabs/\(id)",
+            method: "PATCH",
+            body: APIActionBody(label: label)
+        )
+    }
+
     func createQuickPiSession(
         label: String,
         requestID: String,

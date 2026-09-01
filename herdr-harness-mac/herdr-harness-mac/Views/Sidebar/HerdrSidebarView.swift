@@ -19,6 +19,8 @@ struct HerdrSidebarView: View {
     @State private var workspaceName = ""
     @State private var renamingPane: HerdrPane?
     @State private var paneName = ""
+    @State private var renamingTab: HerdrTab?
+    @State private var tabName = ""
     @State private var closingWorkspace: HerdrWorkspace?
     @State private var closingPane: HerdrPane?
     @State private var snapshotCache = SidebarSnapshotCache()
@@ -93,6 +95,11 @@ struct HerdrSidebarView: View {
         var unreadCount: Int { unreadGroups.reduce(0) { $0 + $1.chats.count } }
         var starredCount: Int { starredGroups.reduce(0) { $0 + $1.chats.count } }
         var staleCount: Int { staleGroups.reduce(0) { $0 + $1.chats.count } }
+        /// Every workspace row currently on screen, in render order — the scope an
+        /// option-click expands or collapses.
+        var allWorkspaceIDs: [String] {
+            showsMachineChrome ? machineGroups.flatMap(\.entries).map(\.id) : tree.map(\.id)
+        }
         var paneCount: Int {
             unreadCount + starredCount + staleCount + HerdrSidebarView.paneCount(
                 in: showsMachineChrome ? machineGroups.flatMap(\.entries) : tree
@@ -153,15 +160,34 @@ struct HerdrSidebarView: View {
                 detail: sidebarCountDetail(snapshot.paneCount)
             )
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    unreadSection(snapshot)
-                    starredSection(snapshot)
-                    staleSection(snapshot)
-                    workspaceContent(snapshot)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        unreadSection(snapshot)
+                        starredSection(snapshot)
+                        staleSection(snapshot)
+                        workspaceContent(snapshot)
+                    }
+                }
+                .scrollIndicators(.hidden)
+                // Navigate ▸ Reveal in Sidebar (⇧⌘K). The model has already
+                // un-collapsed the pane's machine, workspace, and tab; the filter
+                // field is view-local `@State`, so clearing it is this view's half
+                // of the job. Yield one turn so the rebuilt tree — and the row that
+                // did not exist a moment ago — is laid out before asking the scroll
+                // view for it.
+                .task(id: model.sidebarRevealToken) {
+                    guard model.sidebarRevealToken > 0,
+                          let paneID = model.sidebarRevealPaneID
+                    else { return }
+                    if !query.isEmpty { query = "" }
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.snappy) {
+                        proxy.scrollTo(paneID, anchor: .center)
+                    }
                 }
             }
-            .scrollIndicators(.hidden)
         }
         .padding(.horizontal, 10)
         .padding(.top, 12)
@@ -210,6 +236,17 @@ struct HerdrSidebarView: View {
             .disabled(paneName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } message: {
             Text("This label is shared with Herdr on your Mac.")
+        }
+        .alert("Rename tab", isPresented: isRenamingTab) {
+            TextField("Tab name", text: $tabName)
+            Button("Cancel", role: .cancel) { }
+            Button("Save") {
+                guard let tab = renamingTab else { return }
+                Task { await model.rename(tab, label: tabName) }
+            }
+            .disabled(tabName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("The new label appears in Herdr on every connected client.")
         }
         .confirmationDialog(
             "Close this workspace?",
@@ -588,7 +625,7 @@ struct HerdrSidebarView: View {
                             .padding(.leading, 34)
                             .frame(minHeight: 24)
                     } else {
-                        entriesContent(group.entries)
+                        entriesContent(group.entries, allWorkspaceIDs: snapshot.allWorkspaceIDs)
                     }
                 }
                 machineSeparator
@@ -610,54 +647,32 @@ struct HerdrSidebarView: View {
                     .padding(.top, 42)
             }
         } else {
-            entriesContent(snapshot.tree)
+            entriesContent(snapshot.tree, allWorkspaceIDs: snapshot.allWorkspaceIDs)
         }
     }
 
     @ViewBuilder
-    private func entriesContent(_ entries: [SidebarTree.ProjectEntry]) -> some View {
+    private func entriesContent(
+        _ entries: [SidebarTree.ProjectEntry],
+        allWorkspaceIDs: [String]
+    ) -> some View {
         ForEach(entries) { entry in
             SidebarProjectRow(
                 workspace: entry.workspace,
                 isExpanded: entry.isExpanded,
-                action: { toggle(entry.workspace) }
+                action: { toggle(entry.workspace, allWorkspaceIDs: allWorkspaceIDs) }
             )
             .contextMenu { workspaceMenu(entry.workspace) }
 
             if entry.isExpanded {
                 ForEach(entry.sections) { section in
-                    let firstPane = firstPane(in: section.tab, workspace: entry.workspace)
                     SidebarSectionRow(
                         tab: section.tab,
                         isExpanded: section.isExpanded,
                         attentionStatus: tabAttentionStatus(section.tab, in: entry.workspace),
-                        action: { toggle(section.tab) }
+                        action: { toggle(section.tab, allTabIDs: entry.sections.map(\.id)) }
                     )
-                        .contextMenu {
-                            Button("Focus on Mac", systemImage: "scope") {
-                                guard let firstPane else { return }
-                                Task { await model.focus(firstPane) }
-                            }
-                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
-                            Button("New Pi Chat", systemImage: "plus.bubble") {
-                                Task { await model.addPane(toTab: section.tab, in: entry.workspace, running: "pi") }
-                            }
-                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
-                            Button("New Shell", systemImage: "terminal") {
-                                Task { await model.addPane(toTab: section.tab, in: entry.workspace) }
-                            }
-                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
-                            Divider()
-                            Button("Copy /send-to-herdr Command", systemImage: "doc.on.doc") {
-                                copySendToHerdrCommand(
-                                    workspaceID: entry.workspace.workspaceID,
-                                    tabID: section.tab.tabID
-                                )
-                            }
-                            .disabled(firstPane == nil)
-                            .help("Paste into a Pi session on \(machineName(for: entry.workspace.machineID))")
-                            .accessibilityIdentifier("sidebar-tab-copy-send-to-herdr-\(section.tab.id)")
-                        }
+                        .contextMenu { tabMenu(section.tab, in: entry.workspace) }
                     if section.isExpanded {
                         ForEach(section.chats) { chatRow($0) }
                     }
@@ -711,6 +726,37 @@ struct HerdrSidebarView: View {
             closingWorkspace = workspace
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
+    }
+
+    @ViewBuilder
+    private func tabMenu(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> some View {
+        let firstPane = firstPane(in: tab, workspace: workspace)
+        Button("Focus on Mac", systemImage: "scope") {
+            guard let firstPane else { return }
+            Task { await model.focus(firstPane) }
+        }
+        .disabled(firstPane == nil || !model.canControl(machineID: workspace.machineID))
+        Button("Rename tab", systemImage: "pencil") {
+            tabName = tab.label
+            renamingTab = tab
+        }
+        .disabled(!model.canControl(machineID: workspace.machineID))
+        .accessibilityIdentifier("sidebar-tab-rename-\(tab.id)")
+        Button("New Pi Chat", systemImage: "plus.bubble") {
+            Task { await model.addPane(toTab: tab, in: workspace, running: "pi") }
+        }
+        .disabled(firstPane == nil || !model.canControl(machineID: workspace.machineID))
+        Button("New Shell", systemImage: "terminal") {
+            Task { await model.addPane(toTab: tab, in: workspace) }
+        }
+        .disabled(firstPane == nil || !model.canControl(machineID: workspace.machineID))
+        Divider()
+        Button("Copy /send-to-herdr Command", systemImage: "doc.on.doc") {
+            copySendToHerdrCommand(workspaceID: workspace.workspaceID, tabID: tab.tabID)
+        }
+        .disabled(firstPane == nil)
+        .help("Paste into a Pi session on \(machineName(for: workspace.machineID))")
+        .accessibilityIdentifier("sidebar-tab-copy-send-to-herdr-\(tab.id)")
     }
 
     @ViewBuilder
@@ -831,6 +877,13 @@ struct HerdrSidebarView: View {
         )
     }
 
+    private var isRenamingTab: Binding<Bool> {
+        Binding(
+            get: { renamingTab != nil },
+            set: { if !$0 { renamingTab = nil } }
+        )
+    }
+
     private var isClosingWorkspace: Binding<Bool> {
         Binding(
             get: { closingWorkspace != nil },
@@ -914,6 +967,7 @@ struct HerdrSidebarView: View {
             }
             .disabled(!model.canControl(machineID: pane.machineID))
         }
+        .id(pane.id)
     }
 
     private func priorityGroupTitle(_ workspace: HerdrWorkspace, showsMachineChrome: Bool) -> String {
@@ -956,15 +1010,35 @@ struct HerdrSidebarView: View {
         isPresentingCreateWorkspace = true
     }
 
-    private func toggle(_ workspace: HerdrWorkspace) {
+    /// Option-click expands or collapses every workspace at once, the way
+    /// option-clicking a file chevron works on a GitHub diff.
+    ///
+    /// `NSEvent.modifierFlags` rather than `onModifierKeysChanged`: the SwiftUI
+    /// modifier would need `@State` on this view, and every Option press anywhere
+    /// in the app would then invalidate the navigator's body — the exact cost
+    /// `SidebarSnapshotCache` exists to avoid. This reads the flag once, at click
+    /// time, and holds no state.
+    private func toggle(_ workspace: HerdrWorkspace, allWorkspaceIDs: [String]) {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !NSEvent.modifierFlags.contains(.option) else {
+            // Expanding a whole fleet inserts hundreds of lazy rows at once;
+            // animating that insert is the jank this column can least afford.
+            model.toggleSidebarSection(workspace.id, applyingToAll: allWorkspaceIDs)
+            return
+        }
         withAnimation(.snappy) {
             model.toggleSidebarSection(workspace.id)
         }
     }
 
-    private func toggle(_ tab: HerdrTab) {
+    private func toggle(_ tab: HerdrTab, allTabIDs: [String]) {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !NSEvent.modifierFlags.contains(.option) else {
+            // Expanding a whole fleet inserts hundreds of lazy rows at once;
+            // animating that insert is the jank this column can least afford.
+            model.toggleSidebarTabSection(tab.id, applyingToAll: allTabIDs)
+            return
+        }
         withAnimation(.snappy) {
             model.toggleSidebarTabSection(tab.id)
         }

@@ -32,6 +32,12 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
+        // Revealing a pane in a column the user has hidden would be a silent
+        // no-op, so ⇧⌘K brings the navigator back first.
+        .onChange(of: model.sidebarRevealToken) { _, token in
+            guard token > 0 else { return }
+            withAnimation(.snappy) { columnVisibility = .all }
+        }
         .task(id: model.connectionGeneration) {
             activeWorkStore.resetForConnectionChange()
             await refreshActiveWork()

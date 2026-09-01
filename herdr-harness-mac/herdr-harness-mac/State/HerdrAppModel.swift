@@ -40,6 +40,16 @@ final class HerdrAppModel {
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
     var starredChatIDs: Set<String>
+    /// The pane ⇧⌘K last asked the sidebar to show, and a token that makes each
+    /// ask distinct.
+    ///
+    /// A reveal cannot be inferred from `selectedPaneID` changing — revealing the
+    /// pane you are already looking at is the common case, and that assignment is
+    /// a no-op. Same reasoning as `HerdrShellState.showSession()`. The token is
+    /// the shape `commandPaletteFocusRequest` already uses for a repeatable
+    /// request.
+    private(set) var sidebarRevealPaneID: String?
+    private(set) var sidebarRevealToken = 0
     var searchText = ""
     var filter: WorkspaceFilter = .all
     var errorMessage: String? {
@@ -1474,6 +1484,14 @@ final class HerdrAppModel {
         }
     }
 
+    func rename(_ tab: HerdrTab, label: String) async {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        await perform("Tab renamed", machineID: tab.machineID) { client in
+            try await client.renameTab(id: tab.tabID, label: trimmed)
+        }
+    }
+
     func close(_ workspace: HerdrWorkspace) async {
         await perform("Workspace closed", machineID: workspace.machineID) { client in
             try await client.closeWorkspace(id: workspace.workspaceID)
@@ -1986,6 +2004,31 @@ final class HerdrAppModel {
         )
     }
 
+    /// GitHub's option-click-a-chevron gesture, ported to the navigator: the row
+    /// you clicked decides the direction and every visible workspace follows it.
+    /// The clicked row always lands where a plain click would have put it —
+    /// Option only widens the blast radius.
+    func toggleSidebarSection(_ workspaceID: String, applyingToAll ids: some Sequence<String>) {
+        setSidebarWorkspacesExpanded(
+            collapsedSidebarWorkspaceIDs.contains(workspaceID),
+            ids: Array(ids) + [workspaceID]
+        )
+    }
+
+    /// Bulk counterpart to `toggleSidebarSection(_:)`. Pure with respect to the
+    /// view — the caller decides which workspaces are in scope, so a unit test can
+    /// exercise the whole gesture without a sidebar.
+    func setSidebarWorkspacesExpanded(_ expanded: Bool, ids: some Sequence<String>) {
+        let scope = Set(ids)
+        guard !scope.isEmpty else { return }
+        let updated = expanded
+            ? collapsedSidebarWorkspaceIDs.subtracting(scope)
+            : collapsedSidebarWorkspaceIDs.union(scope)
+        guard updated != collapsedSidebarWorkspaceIDs else { return }
+        collapsedSidebarWorkspaceIDs = updated
+        userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
+    }
+
     func toggleSidebarTabSection(_ tabID: String) {
         if collapsedSidebarTabIDs.contains(tabID) {
             collapsedSidebarTabIDs.remove(tabID)
@@ -1998,6 +2041,21 @@ final class HerdrAppModel {
         )
     }
 
+    func toggleSidebarTabSection(_ tabID: String, applyingToAll ids: some Sequence<String>) {
+        setSidebarTabsExpanded(collapsedSidebarTabIDs.contains(tabID), ids: Array(ids) + [tabID])
+    }
+
+    func setSidebarTabsExpanded(_ expanded: Bool, ids: some Sequence<String>) {
+        let scope = Set(ids)
+        guard !scope.isEmpty else { return }
+        let updated = expanded
+            ? collapsedSidebarTabIDs.subtracting(scope)
+            : collapsedSidebarTabIDs.union(scope)
+        guard updated != collapsedSidebarTabIDs else { return }
+        collapsedSidebarTabIDs = updated
+        userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
+    }
+
     func toggleSidebarMachineSection(_ machineID: String) {
         if collapsedSidebarMachineIDs.contains(machineID) {
             collapsedSidebarMachineIDs.remove(machineID)
@@ -2008,6 +2066,61 @@ final class HerdrAppModel {
             Array(collapsedSidebarMachineIDs),
             forKey: "herdr.sidebar.collapsedMachines"
         )
+    }
+
+    /// Navigate ▸ Reveal in Sidebar (⇧⌘K).
+    @discardableResult
+    func revealSelectedPaneInSidebar() -> Bool {
+        guard let selectedPaneID else { return false }
+        return revealPaneInSidebar(id: selectedPaneID)
+    }
+
+    /// Makes the navigator show `paneID`'s row: undoes any scope or recency
+    /// filter that excludes it, expands its machine, workspace, and tab, and
+    /// publishes a token the sidebar turns into a `scrollTo`.
+    ///
+    /// Expanding the ancestors is not always what surfaces the row — an unread,
+    /// starred, or stale chat is promoted to its own section and is not under its
+    /// workspace at all (`SidebarTree.buildEntry`). Both placements draw the same
+    /// `chatRow`, so the single scroll target covers them.
+    ///
+    /// Returns `false` when the pane is not in the connected fleet, so the caller
+    /// can leave the sidebar alone.
+    @discardableResult
+    func revealPaneInSidebar(id paneID: String) -> Bool {
+        guard let pane = pane(id: paneID) else { return false }
+
+        // A machine scope pinned to some other host filters the pane's workspace
+        // out entirely. Narrow to the pane's own machine rather than widening to
+        // `.all`, which would add machine chrome the user did not ask for.
+        if case let .machine(scopedID) = machineScope, scopedID != pane.machineID {
+            setMachineScope(.machine(pane.machineID))
+        }
+
+        // `.all` is the only recency that is guaranteed to include the pane,
+        // whatever its timestamps say.
+        if !sidebarRecency.includes(pane, now: Date(), calendar: .autoupdatingCurrent) {
+            sidebarRecency = .all
+        }
+
+        expandSidebarAncestors(of: pane)
+
+        sidebarRevealPaneID = pane.id
+        sidebarRevealToken &+= 1
+        return true
+    }
+
+    private func expandSidebarAncestors(of pane: HerdrPane) {
+        if collapsedSidebarMachineIDs.remove(pane.machineID) != nil {
+            userDefaults.set(Array(collapsedSidebarMachineIDs), forKey: "herdr.sidebar.collapsedMachines")
+        }
+        if let workspace = workspace(containing: pane),
+           collapsedSidebarWorkspaceIDs.remove(workspace.id) != nil {
+            userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
+        }
+        if collapsedSidebarTabIDs.remove(pane.scopedTabID) != nil {
+            userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
+        }
     }
 
     func toggleStarredChat(_ paneID: String) {

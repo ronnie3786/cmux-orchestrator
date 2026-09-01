@@ -210,6 +210,12 @@ struct HerdrMacCommands: Commands {
             .keyboardShortcut("k", modifiers: .command)
             .disabled(!model.hasCompletedSetup)
 
+            Button("Reveal in Sidebar") {
+                model.revealSelectedPaneInSidebar()
+            }
+            .keyboardShortcut("k", modifiers: [.command, .shift])
+            .disabled(selectedPane == nil)
+
             Button("Focus Current Pane on Mac") {
                 guard let pane = selectedPane else { return }
                 Task { await model.focus(pane) }
