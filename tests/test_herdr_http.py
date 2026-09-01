@@ -22,6 +22,15 @@ class FakePiSemantic:
         return []
 
 
+class FakeCleanup:
+    def __init__(self, calls):
+        self.calls = calls
+
+    def start_run(self, options):
+        self.calls.append(("cleanup.start_run", options))
+        return {"ok": True, "runId": "clr_0123456789ab", "status": "collecting"}
+
+
 class FakeHTTPService:
     def __init__(self):
         self.environ = {}
@@ -31,6 +40,7 @@ class FakeHTTPService:
         self.pi_extension_args_calls = 0
         self.split_result = None
         self.calls = []
+        self.cleanup = FakeCleanup(self.calls)
         self.snapshot = {
             "version": "0.8.0",
             "protocol": 19,
@@ -256,6 +266,9 @@ class FakeHTTPService:
         session_file=None,
         session_id=None,
         request_id=None,
+        workspace_label=None,
+        tab_label=None,
+        reuse_named_tab=True,
     ):
         self.calls.append(
             (
@@ -268,6 +281,9 @@ class FakeHTTPService:
                     "session_file": session_file,
                     "session_id": session_id,
                     "request_id": request_id,
+                    "workspace_label": workspace_label,
+                    "tab_label": tab_label,
+                    "reuse_named_tab": reuse_named_tab,
                 },
             )
         )
@@ -320,6 +336,7 @@ class FakeHTTPService:
         model=None,
         thinking_level=None,
         attachments=None,
+        system_prompt=None,
         continue_from_run_id=None,
     ):
         self.calls.append(
@@ -332,6 +349,7 @@ class FakeHTTPService:
                     "model": model,
                     "thinking_level": thinking_level,
                     "attachments": attachments,
+                    "system_prompt": system_prompt,
                     "continue_from_run_id": continue_from_run_id,
                 },
             )
@@ -365,6 +383,10 @@ class FakeHTTPService:
             ],
             "default": {"provider": "openai-codex", "id": "gpt-5.6-luna"},
         }
+
+    def agent_prompt_defaults(self):
+        self.calls.append(("agent_prompt_defaults", {}))
+        return {"ok": True, "prompts": {"act": "act", "ask": "ask", "cleanupJudge": "cleanup"}}
 
     def cancel_agent_run(self, run_id):
         self.calls.append(("agent_run.cancel", {"run_id": run_id}))
@@ -821,6 +843,9 @@ class HerdrHTTPTests(unittest.TestCase):
                     "session_file": None,
                     "session_id": None,
                     "request_id": None,
+                    "workspace_label": None,
+                    "tab_label": None,
+                    "reuse_named_tab": True,
                 },
             ),
         )
@@ -863,6 +888,9 @@ class HerdrHTTPTests(unittest.TestCase):
                     "session_file": "/tmp/pi-session.jsonl",
                     "session_id": "pi-session-1",
                     "request_id": "request-1",
+                    "workspace_label": None,
+                    "tab_label": None,
+                    "reuse_named_tab": True,
                 },
             ),
         )
@@ -884,6 +912,32 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(missing_file_status, 400)
         self.assertEqual(missing_file_body["error"]["code"], "invalid_request")
         self.assertEqual(len(self.service.calls), call_count)
+
+    def test_quick_pi_session_forwards_named_tab_options(self):
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={
+                "label": "Project question",
+                "workspaceLabel": "W",
+                "tabLabel": "T",
+                "reuseNamedTab": False,
+            },
+        )
+
+        self.assertEqual(status, 200)
+        call = self.service.calls[-1][1]
+        self.assertEqual(call["workspace_label"], "W")
+        self.assertEqual(call["tab_label"], "T")
+        self.assertFalse(call["reuse_named_tab"])
+
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "Project question"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(self.service.calls[-1][1]["reuse_named_tab"])
 
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(
@@ -928,6 +982,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "model": None,
                     "thinking_level": None,
                     "attachments": None,
+                    "system_prompt": None,
                     "continue_from_run_id": None,
                 },
             ),
@@ -967,6 +1022,47 @@ class HerdrHTTPTests(unittest.TestCase):
         )
         self.assertEqual(self.service.calls[-1], ("agent_models.list", {}))
 
+    def test_agent_prompts_route_uses_defaults_envelope(self):
+        status, _, body = self.request("/api/v1/agent-runs/prompts")
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(set(body["prompts"]), {"act", "ask", "cleanupJudge"})
+        self.assertEqual(self.service.calls[-1], ("agent_prompt_defaults", {}))
+
+    def test_agent_run_system_prompt_is_validated_and_forwarded(self):
+        status, _, _ = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "What changed?", "systemPrompt": "Custom instructions"},
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(self.service.calls[-1][1]["system_prompt"], "Custom instructions")
+
+        for system_prompt in ("", "   ", "x" * 32769):
+            with self.subTest(system_prompt=system_prompt):
+                invalid_status, _, invalid_body = self.request(
+                    "/api/v1/agent-runs",
+                    method="POST",
+                    payload={"prompt": "What changed?", "systemPrompt": system_prompt},
+                )
+                self.assertEqual(invalid_status, 400)
+                self.assertEqual(invalid_body["error"]["message"], "systemPrompt is invalid")
+
+    def test_cleanup_run_forwards_judge_charter(self):
+        status, _, _ = self.request(
+            "/api/v1/cleanup/runs",
+            method="POST",
+            payload={"judgeCharter": "Be extra careful."},
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(
+            self.service.calls[-1],
+            ("cleanup.start_run", {"judgeCharter": "Be extra careful."}),
+        )
+
     def test_agent_run_mode_rides_the_start_request_and_rejects_invalid_values(self):
         status, _, body = self.request(
             "/api/v1/agent-runs",
@@ -987,6 +1083,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "model": None,
                     "thinking_level": None,
                     "attachments": None,
+                    "system_prompt": None,
                     "continue_from_run_id": None,
                 },
             ),
@@ -1061,6 +1158,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "model": model,
                     "thinking_level": "high",
                     "attachments": None,
+                    "system_prompt": None,
                     "continue_from_run_id": None,
                 },
             ),

@@ -433,6 +433,31 @@ class CleanupManagerTests(unittest.TestCase):
             finished = wait_for_run(self, service.cleanup, run_id)
             self.assertEqual(finished["run"]["progress"]["done"], finished["run"]["progress"]["total"])
 
+    def test_start_run_stores_and_validates_judge_charter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_pi = write_fake_pi(directory)
+            service = HerdrService(
+                FakeClient([snapshot(), snapshot()]),
+                environ={
+                    "HERDR_HARNESS_CLEANUP_RUNS_ROOT": directory,
+                    "HERDR_HARNESS_CLEANUP_DWELL_SECONDS": "0",
+                    "HERDR_HARNESS_CLEANUP_PI_BIN": str(fake_pi),
+                },
+            )
+            run_id = service.cleanup.start_run(
+                {"judgeCharter": "My custom judge instructions."}
+            )["runId"]
+            run = service.cleanup.get_run(run_id)
+            self.assertEqual(run["run"]["config"]["judgeCharter"], "My custom judge instructions.")
+            wait_for_run(self, service.cleanup, run_id)
+
+            for judge_charter in ("   ", "x" * 32769, 123):
+                with self.subTest(judge_charter=judge_charter):
+                    with self.assertRaises(CleanupError) as context:
+                        service.cleanup.start_run({"judgeCharter": judge_charter})
+                    self.assertEqual(context.exception.code, "invalid_request")
+                    self.assertEqual(context.exception.status, 400)
+
     def test_get_run_normalizes_required_decoder_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             service = HerdrService(FakeClient([snapshot()]), environ={"HERDR_HARNESS_CLEANUP_RUNS_ROOT": directory})
@@ -1585,7 +1610,7 @@ class CleanupManagerTests(unittest.TestCase):
 
 
 class CleanupJudgeTests(unittest.TestCase):
-    def _manager_with_batch(self, directory, mode, *, counter_path=None, model=None, extra_environ=None):
+    def _manager_with_batch(self, directory, mode, *, counter_path=None, model=None, judge_charter=None, extra_environ=None):
         fake_pi = write_fake_pi(directory)
         environ = {
             "HERDR_HARNESS_CLEANUP_RUNS_ROOT": directory,
@@ -1603,7 +1628,10 @@ class CleanupJudgeTests(unittest.TestCase):
         run_dir = manager._run_dir(run_id)
         (run_dir / "judge" / "sessions").mkdir(parents=True)
         (run_dir / "evidence").mkdir()
-        (run_dir / "run.json").write_text(json.dumps({"config": {"model": model, "thinkingLevel": "medium"}}))
+        config = {"model": model, "thinkingLevel": "medium"}
+        if judge_charter is not None:
+            config["judgeCharter"] = judge_charter
+        (run_dir / "run.json").write_text(json.dumps({"config": config}))
         workspace = {"workspace_id": "w1", "label": "One"}
         entries = [{"workspace": workspace, "pane": {}, "meta": {"paneId": "w1:p1"}, "base": run_dir / "evidence"}]
         return manager, run_id, workspace, entries, Path(environ["FAKE_PI_ARGV_FILE"])
@@ -1662,6 +1690,21 @@ class CleanupJudgeTests(unittest.TestCase):
             argv = json.loads(argv_path.read_text().splitlines()[0])
             self.assertIn("--model", argv)
             self.assertEqual(argv[argv.index("--model") + 1], "provider/model")
+
+    def test_judge_uses_custom_charter_when_configured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager, run_id, workspace, entries, argv_path = self._manager_with_batch(
+                directory,
+                "valid",
+                judge_charter="CUSTOM JUDGE TEXT",
+            )
+
+            manager._run_judge_batch(run_id, 1, workspace, entries)
+
+            argv = json.loads(argv_path.read_text().splitlines()[0])
+            charter = argv[argv.index("--append-system-prompt") + 1]
+            self.assertIn("CUSTOM JUDGE TEXT", charter)
+            self.assertNotIn("workspace-hygiene judge", charter)
 
     def test_judge_surfaces_stderr_when_output_is_invalid(self):
         with tempfile.TemporaryDirectory() as directory:

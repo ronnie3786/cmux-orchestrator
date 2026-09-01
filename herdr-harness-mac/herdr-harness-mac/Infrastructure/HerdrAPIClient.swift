@@ -479,7 +479,10 @@ actor HerdrAPIClient {
         tabID: String? = nil,
         cwd: String? = nil,
         sessionFile: String? = nil,
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        workspaceLabel: String? = nil,
+        tabLabel: String? = nil,
+        reuseNamedTab: Bool? = nil
     ) async throws -> QuickPiSessionResponse {
         let response: QuickPiSessionResponse = try await request(
             path: "/api/v1/quick-sessions/pi",
@@ -491,7 +494,10 @@ actor HerdrAPIClient {
                 tabID: tabID,
                 cwd: cwd,
                 sessionFile: sessionFile,
-                sessionID: sessionID
+                sessionID: sessionID,
+                workspaceLabel: workspaceLabel,
+                tabLabel: tabLabel,
+                reuseNamedTab: reuseNamedTab
             )
         )
         guard response.ok,
@@ -517,7 +523,8 @@ actor HerdrAPIClient {
         model: String? = nil,
         thinkingLevel: String? = nil,
         attachments: [HeadlessAgentAttachment]? = nil,
-        continueFromRunId: String? = nil
+        continueFromRunId: String? = nil,
+        systemPrompt: String? = nil
     ) async throws -> HeadlessAgentRunEnvelope {
         try await request(
             path: "/api/v1/agent-runs",
@@ -528,7 +535,8 @@ actor HerdrAPIClient {
                 model: model,
                 thinkingLevel: thinkingLevel,
                 attachments: attachments,
-                continueFromRunId: continueFromRunId
+                continueFromRunId: continueFromRunId,
+                systemPrompt: systemPrompt
             )
         )
     }
@@ -539,6 +547,10 @@ actor HerdrAPIClient {
 
     func fetchAgentModels() async throws -> AgentModelCatalogResponse {
         try await request(path: "/api/v1/agent-runs/models")
+    }
+
+    func fetchAgentPromptDefaults() async throws -> AgentPromptDefaultsResponse {
+        try await request(path: "/api/v1/agent-runs/prompts")
     }
 
     func cancelHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {

@@ -46,10 +46,7 @@ final class HerdrHudSession {
         var turnCount: Int
     }
 
-    private enum DefaultsKey {
-        static let machineID = "herdr.hud.machineID"
-    }
-
+    static let machineIDDefaultsKey = "herdr.hud.machineID"
     static let maxImageAttachments = 4
     static let maxCombinedImageBytes: Int64 = 21 * 1024 * 1024
     static let allowedImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic"]
@@ -57,6 +54,7 @@ final class HerdrHudSession {
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
     @ObservationIgnored private let agentSettings: AgentModelSettingsStore
+    @ObservationIgnored private let promptSettings: HerdrPromptSettingsStore
     @ObservationIgnored private let persistence: HerdrHudPersistenceStore
     @ObservationIgnored private var elapsedTask: Task<Void, Never>?
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
@@ -70,7 +68,7 @@ final class HerdrHudSession {
     var draft = ""
     var imageAttachments: [HerdrHudImageAttachment] = []
     var selectedMachineID: String? {
-        didSet { userDefaults.set(selectedMachineID, forKey: DefaultsKey.machineID) }
+        didSet { userDefaults.set(selectedMachineID, forKey: Self.machineIDDefaultsKey) }
     }
     /// The HUD chip and Settings edit the same preference; @Observable
     /// propagation through the store keeps both surfaces honest.
@@ -108,14 +106,16 @@ final class HerdrHudSession {
     init(
         userDefaults: UserDefaults = .standard,
         agentSettings: AgentModelSettingsStore? = nil,
-        persistenceURL: URL? = nil
+        persistenceURL: URL? = nil,
+        promptSettings: HerdrPromptSettingsStore? = nil
     ) {
         self.userDefaults = userDefaults
         self.agentSettings = agentSettings ?? AgentModelSettingsStore(defaults: userDefaults)
+        self.promptSettings = promptSettings ?? HerdrPromptSettingsStore(defaults: userDefaults)
         self.persistence = HerdrHudPersistenceStore(
             fileURL: persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
         )
-        self.selectedMachineID = userDefaults.string(forKey: DefaultsKey.machineID)
+        self.selectedMachineID = userDefaults.string(forKey: Self.machineIDDefaultsKey)
         let persistence = self.persistence
         restoreTask = Task { [weak self, persistence] in
             guard let snapshot = await persistence.load(), !Task.isCancelled else { return }
@@ -635,6 +635,11 @@ final class HerdrHudSession {
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
         liveStepCount = 0
+        var systemPrompt: String?
+        if let override = promptSettings.override(for: .hudActCharter),
+           await model.supportsPromptOverrides(machineID: machineID) {
+            systemPrompt = override
+        }
         await controller.submit(
             prompt: prompt,
             machineID: machineID,
@@ -643,6 +648,7 @@ final class HerdrHudSession {
             thinkingLevel: thinkingLevel,
             attachments: attachments,
             continueFromRunId: continueFromRunId,
+            systemPrompt: systemPrompt,
             model: model
         )
         beginElapsedTimer()

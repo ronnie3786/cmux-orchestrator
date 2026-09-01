@@ -4,6 +4,7 @@ struct HeadlessAgentView: View {
     @Bindable var model: HerdrAppModel
     let initialPrompt: String?
     let agentSettings: AgentModelSettingsStore
+    let promptSettings: HerdrPromptSettingsStore
     let openPane: (HerdrPane) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -19,11 +20,13 @@ struct HeadlessAgentView: View {
         model: HerdrAppModel,
         initialPrompt: String? = nil,
         agentSettings: AgentModelSettingsStore,
+        promptSettings: HerdrPromptSettingsStore = HerdrPromptSettingsStore(),
         openPane: @escaping (HerdrPane) -> Void
     ) {
         self.model = model
         self.initialPrompt = initialPrompt
         self.agentSettings = agentSettings
+        self.promptSettings = promptSettings
         self.openPane = openPane
         _prompt = State(initialValue: initialPrompt ?? "")
     }
@@ -299,11 +302,17 @@ struct HeadlessAgentView: View {
             isCatalogAuthoritative: didLoadAgentCatalog
         )
         Task {
+            var systemPrompt: String?
+            if let override = promptSettings.override(for: .agentAskCharter),
+               await model.supportsPromptOverrides(machineID: selectedMachineID) {
+                systemPrompt = override
+            }
             await controller.submit(
                 prompt: prompt,
                 machineID: selectedMachineID,
                 agentModel: resolution.modelID,
                 thinkingLevel: agentSettings.quickChatThinkingLevel.rawValue,
+                systemPrompt: systemPrompt,
                 model: model
             )
         }

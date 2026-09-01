@@ -699,10 +699,30 @@ struct CleanupStartRunRequest: Codable, Sendable, Equatable {
     let tailLines: Int?
     let keepEvidence: Bool?
     let workspaceIDs: [String]?
+    let judgeCharter: String?
 
     enum CodingKeys: String, CodingKey {
         case model, thinkingLevel, costThresholdUSD, tailLines, keepEvidence
         case workspaceIDs = "workspaceIds"
+        case judgeCharter
+    }
+
+    init(
+        model: String?,
+        thinkingLevel: CleanupThinkingLevel?,
+        costThresholdUSD: Double?,
+        tailLines: Int?,
+        keepEvidence: Bool?,
+        workspaceIDs: [String]?,
+        judgeCharter: String? = nil
+    ) {
+        self.model = model
+        self.thinkingLevel = thinkingLevel
+        self.costThresholdUSD = costThresholdUSD
+        self.tailLines = tailLines
+        self.keepEvidence = keepEvidence
+        self.workspaceIDs = workspaceIDs
+        self.judgeCharter = judgeCharter
     }
 }
 

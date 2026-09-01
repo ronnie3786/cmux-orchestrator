@@ -455,6 +455,88 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertNotIn("ACT mode", charter)
             manager.stop()
 
+    def test_custom_system_prompt_uses_act_tools_and_keeps_topology_note(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+
+            started = manager.start(
+                prompt="Open the browser",
+                label="Open browser",
+                cwd=str(directory / "home"),
+                topology={},
+                mode="act",
+                system_prompt="Custom instructions here",
+            )
+            wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                capture["argv"][capture["argv"].index("--tools") + 1],
+                "read,bash,grep,find,ls,write,edit",
+            )
+            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertTrue(charter.startswith("Custom instructions here "))
+            self.assertIn("snapshot", charter)
+            self.assertNotIn("MAY execute state-changing commands", charter)
+            manager.stop()
+
+    def test_custom_system_prompt_uses_ask_tools_and_keeps_topology_note(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+
+            started = manager.start(
+                prompt="What changed?",
+                label="Fleet question",
+                cwd=str(directory / "home"),
+                topology={},
+                system_prompt="Custom instructions here",
+            )
+            wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                capture["argv"][capture["argv"].index("--tools") + 1],
+                "read,bash,grep,find,ls",
+            )
+            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertTrue(charter.startswith("Custom instructions here "))
+            self.assertIn("snapshot", charter)
+            self.assertNotIn("Commands must be investigative only", charter)
+            manager.stop()
+
+    def test_system_prompt_is_validated_and_not_public(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+
+            for system_prompt in (123, "   ", "x" * 32769):
+                with self.subTest(system_prompt=system_prompt):
+                    with self.assertRaises(AgentRunError) as context:
+                        manager.start(
+                            prompt="What changed?",
+                            label="Fleet question",
+                            cwd=str(directory / "home"),
+                            topology={},
+                            system_prompt=system_prompt,
+                        )
+                    self.assertEqual(context.exception.status, 400)
+                    self.assertEqual(context.exception.code, "invalid_agent_system_prompt")
+
+            started = manager.start(
+                prompt="What changed?",
+                label="Fleet question",
+                cwd=str(directory / "home"),
+                topology={},
+                system_prompt="Private instructions",
+            )
+            self.assertNotIn("systemPrompt", started["run"])
+            self.assertNotIn("systemPrompt", manager.get(started["run"]["id"])["run"])
+            manager.stop()
+
     def test_assistant_stream_error_marks_run_failed_and_surfaces_error_message(self):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)

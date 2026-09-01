@@ -16,6 +16,8 @@ struct AgentModelSettingsStoreTests {
         #expect(settings.visionModel == "")
         #expect(settings.hudThinkingLevel == .max)
         #expect(settings.quickChatThinkingLevel == .max)
+        #expect(settings.notesModel == "")
+        #expect(settings.notesThinkingLevel == .medium)
         #expect(settings.effectiveVisionModel == AgentModelSettings.builtInVisionModel)
     }
 
@@ -32,6 +34,8 @@ struct AgentModelSettingsStoreTests {
         store.visionModel = "custom/vision"
         store.hudThinkingLevel = .low
         store.quickChatThinkingLevel = .high
+        store.notesModel = "openai-codex/gpt-5.6-luna"
+        store.notesThinkingLevel = .low
 
         let loaded = AgentModelSettings.load(from: defaults)
         #expect(loaded.hudModel == "openai-codex/gpt-5.6-luna")
@@ -39,6 +43,8 @@ struct AgentModelSettingsStoreTests {
         #expect(loaded.visionModel == "custom/vision")
         #expect(loaded.hudThinkingLevel == .low)
         #expect(loaded.quickChatThinkingLevel == .high)
+        #expect(loaded.notesModel == "openai-codex/gpt-5.6-luna")
+        #expect(loaded.notesThinkingLevel == .low)
     }
 
     @MainActor

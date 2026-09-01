@@ -102,6 +102,7 @@ final class HerdrAppModel {
     /// the server. A refresh that overlaps the POST must not resurrect the
     /// server's stale unread copy.
     @ObservationIgnored private var pendingReadAcknowledgements: Set<String> = []
+    @ObservationIgnored private var promptOverrideSupportCache: [String: (generation: Int, supported: Bool)] = [:]
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
@@ -575,7 +576,11 @@ final class HerdrAppModel {
         toastMessage = "Unstaged \(file)"
     }
 
-    func startCleanup(machineID: String, workspaceIDs: [String]) async throws -> CleanupStartRunResponse {
+    func startCleanup(
+        machineID: String,
+        workspaceIDs: [String],
+        judgeCharter: String? = nil
+    ) async throws -> CleanupStartRunResponse {
         if isDemoMode {
             return CleanupStartRunResponse(ok: true, runID: "clr_demo", status: .collecting)
         }
@@ -592,7 +597,8 @@ final class HerdrAppModel {
                 costThresholdUSD: settings.costThresholdUSD,
                 tailLines: nil,
                 keepEvidence: nil,
-                workspaceIDs: workspaceIDs.isEmpty ? nil : workspaceIDs
+                workspaceIDs: workspaceIDs.isEmpty ? nil : workspaceIDs,
+                judgeCharter: judgeCharter
             )
         )
     }
@@ -827,14 +833,18 @@ final class HerdrAppModel {
         return try await client.fetchCleanupModels()
     }
 
-    func makeCleanupController(for target: CleanupSheetTarget) -> CleanupRunController {
+    func makeCleanupController(
+        for target: CleanupSheetTarget,
+        promptSettings: HerdrPromptSettingsStore = HerdrPromptSettingsStore()
+    ) -> CleanupRunController {
         CleanupRunController(
             isDemoMode: isDemoMode,
             runContext: "machine \(target.machineID), workspaces \(target.requestedWorkspaceIDs.isEmpty ? "all" : target.requestedWorkspaceIDs.joined(separator: ","))",
             start: { _ in
                 try await self.startCleanup(
                     machineID: target.machineID,
-                    workspaceIDs: target.requestedWorkspaceIDs
+                    workspaceIDs: target.requestedWorkspaceIDs,
+                    judgeCharter: promptSettings.override(for: .cleanupJudgeCharter)
                 )
             },
             fetch: { runID in
@@ -1155,6 +1165,53 @@ final class HerdrAppModel {
         return try await client.fetchAgentModels()
     }
 
+    func fetchAgentPromptDefaults(machineID: String? = nil) async throws -> AgentPromptDefaultsResponse {
+        if isDemoMode {
+            return AgentPromptDefaultsResponse(
+                ok: true,
+                prompts: [
+                    "act": HerdrPromptID.hudActCharter.builtInDefault,
+                    "ask": HerdrPromptID.agentAskCharter.builtInDefault,
+                    "cleanupJudge": HerdrPromptID.cleanupJudgeCharter.builtInDefault,
+                ]
+            )
+        }
+        let client: HerdrAPIClient?
+        if let machineID {
+            guard canControl(machineID: machineID) else {
+                throw APIError.noActiveConnection(
+                    machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+                )
+            }
+            client = self.client(forMachine: machineID)
+        } else {
+            client = primaryClient
+        }
+        guard let client else { throw APIError.invalidResponse }
+        do {
+            return try await client.fetchAgentPromptDefaults()
+        } catch let APIError.server(status, _) where status == 404 {
+            throw AgentPromptDefaultsError.unsupported
+        }
+    }
+
+    func supportsPromptOverrides(machineID: String) async -> Bool {
+        if isDemoMode { return true }
+        if let cached = promptOverrideSupportCache[machineID], cached.generation == connectionGeneration {
+            return cached.supported
+        }
+        do {
+            _ = try await fetchAgentPromptDefaults(machineID: machineID)
+            promptOverrideSupportCache[machineID] = (connectionGeneration, true)
+            return true
+        } catch is AgentPromptDefaultsError {
+            promptOverrideSupportCache[machineID] = (connectionGeneration, false)
+            return false
+        } catch {
+            return false
+        }
+    }
+
     func prepareResponseAudio(
         action: ResponseAudioAction,
         text: String,
@@ -1201,6 +1258,19 @@ final class HerdrAppModel {
               let client = client(forMachine: pane.machineID)
         else { throw APIError.invalidResponse }
         try await client.sendPiPrompt(paneID: pane.paneID, text: prompt, disposition: disposition)
+    }
+
+    func sendPiPrompt(paneID scopedPaneID: String, text: String) async throws {
+        guard let scope = MachineScopedID.split(scopedPaneID) else {
+            throw APIError.invalidResponse
+        }
+        if isDemoMode { return }
+        guard canControl(machineID: scope.machineID), let client = client(forMachine: scope.machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == scope.machineID })?.name ?? scope.machineID
+            )
+        }
+        try await client.sendPiPrompt(paneID: scope.rawID, text: text, disposition: .prompt)
     }
 
     func abortPiConversation(for pane: HerdrPane) async throws {
@@ -1605,6 +1675,45 @@ final class HerdrAppModel {
         }
     }
 
+    func createLinkedQuickPiSession(
+        machineID: String,
+        label: String,
+        workspaceLabel: String?,
+        tabLabel: String?
+    ) async throws -> HerdrPane {
+        if isDemoMode {
+            guard let workspace = workspaces.first(where: { $0.machineID == machineID }),
+                  let pane = workspace.panes.first else {
+                throw APIError.invalidResponse
+            }
+            return pane
+        }
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        let requestID = UUID().uuidString
+        let supportsOverrides = await supportsPromptOverrides(machineID: machineID)
+        let response = try await client.createQuickPiSession(
+            label: label,
+            requestID: requestID,
+            workspaceLabel: supportsOverrides ? workspaceLabel : nil,
+            tabLabel: supportsOverrides ? tabLabel : nil,
+            reuseNamedTab: supportsOverrides ? false : nil
+        )
+        let scopedPaneID = MachineScopedID.compose(machineID: machineID, rawID: response.paneID)
+        let generation = connectionGeneration
+        for attempt in 0..<4 {
+            try await refresh(machineID: machineID, using: client, showSpinner: false, expectedGeneration: generation)
+            if let pane = pane(id: scopedPaneID) {
+                return pane
+            }
+            if attempt < 3 { try await Task.sleep(for: .milliseconds(200)) }
+        }
+        throw APIError.invalidResponse
+    }
+
     private func createQuickPiSessionWithRetry(
         client: HerdrAPIClient,
         label: String,
@@ -1723,7 +1832,8 @@ final class HerdrAppModel {
         model: String? = nil,
         thinkingLevel: String? = nil,
         attachments: [HeadlessAgentAttachment]? = nil,
-        continueFromRunId: String? = nil
+        continueFromRunId: String? = nil,
+        systemPrompt: String? = nil
     ) async throws -> HeadlessAgentRun {
         if isDemoMode {
             let now = HerdrTimestamp.string(from: .now)
@@ -1767,7 +1877,8 @@ final class HerdrAppModel {
             model: model,
             thinkingLevel: thinkingLevel,
             attachments: attachments,
-            continueFromRunId: continueFromRunId
+            continueFromRunId: continueFromRunId,
+            systemPrompt: systemPrompt
         ).run
     }
 

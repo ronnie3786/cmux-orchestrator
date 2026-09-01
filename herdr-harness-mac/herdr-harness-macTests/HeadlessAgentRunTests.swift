@@ -191,6 +191,49 @@ struct HeadlessAgentRunTests {
         #expect(object["continueFromRunId"] as? String == "agr_123456abcdef")
     }
 
+    @Test("Encodes a custom system prompt only when provided")
+    func encodesSystemPrompt() throws {
+        let encoded = try JSONEncoder().encode(HeadlessAgentStartRequest(prompt: "hello", systemPrompt: "be nice"))
+        let encodedObject = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(encodedObject["systemPrompt"] as? String == "be nice")
+
+        let defaultEncoded = try JSONEncoder().encode(HeadlessAgentStartRequest(prompt: "hello"))
+        let defaultObject = try #require(JSONSerialization.jsonObject(with: defaultEncoded) as? [String: Any])
+        #expect(defaultObject["systemPrompt"] == nil)
+    }
+
+    @Test("Encodes linked quick session metadata only when provided")
+    func encodesLinkedQuickSessionMetadata() throws {
+        let request = QuickPiSessionRequest(
+            label: "Notes",
+            requestID: "request",
+            workspaceID: nil,
+            tabID: nil,
+            cwd: nil,
+            sessionFile: nil,
+            sessionID: nil,
+            workspaceLabel: "Notes",
+            tabLabel: "Follow up",
+            reuseNamedTab: false
+        )
+        let encoded = try JSONEncoder().encode(request)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["workspaceLabel"] as? String == "Notes")
+        #expect(object["tabLabel"] as? String == "Follow up")
+        #expect(object["reuseNamedTab"] as? Bool == false)
+
+        let defaultRequest = QuickPiSessionRequest(
+            label: "Notes", requestID: "request", workspaceID: nil, tabID: nil,
+            cwd: nil, sessionFile: nil, sessionID: nil, workspaceLabel: nil,
+            tabLabel: nil, reuseNamedTab: nil
+        )
+        let defaultEncoded = try JSONEncoder().encode(defaultRequest)
+        let defaultObject = try #require(JSONSerialization.jsonObject(with: defaultEncoded) as? [String: Any])
+        #expect(defaultObject["workspaceLabel"] == nil)
+        #expect(defaultObject["tabLabel"] == nil)
+        #expect(defaultObject["reuseNamedTab"] == nil)
+    }
+
     @Test("Omits optional model routing and attachments when absent")
     func omitsOptionalModelRoutingAndAttachmentsWhenAbsent() throws {
         let data = try JSONEncoder().encode(HeadlessAgentStartRequest(prompt: "hello"))

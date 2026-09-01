@@ -122,6 +122,11 @@ struct QuickPiSessionResponse: Decodable, Sendable {
     }
 }
 
+struct AgentPromptDefaultsResponse: Decodable, Sendable {
+    let ok: Bool
+    let prompts: [String: String]
+}
+
 struct QuickPiSessionRequest: Encodable, Sendable {
     let label: String
     let requestID: String
@@ -130,6 +135,9 @@ struct QuickPiSessionRequest: Encodable, Sendable {
     let cwd: String?
     let sessionFile: String?
     let sessionID: String?
+    let workspaceLabel: String?
+    let tabLabel: String?
+    let reuseNamedTab: Bool?
 
     enum CodingKeys: String, CodingKey {
         case label
@@ -139,6 +147,9 @@ struct QuickPiSessionRequest: Encodable, Sendable {
         case cwd
         case sessionFile
         case sessionID
+        case workspaceLabel
+        case tabLabel
+        case reuseNamedTab
     }
 }
 

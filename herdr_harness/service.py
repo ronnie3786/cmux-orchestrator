@@ -20,9 +20,9 @@ from . import attachments, cmux_tools, response_audio, voice, workspace_tools
 from .active_work import ActiveWorkError
 from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAULT_ACTIVE_WORK_STORE_PATH
 from .agent_activity import AgentActivityManager
-from .agent_runs import AgentRunError, AgentRunManager
+from .agent_runs import ACT_CHARTER, ASK_CHARTER, AgentRunError, AgentRunManager
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
-from .cleanup import CleanupManager, _parse_time
+from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
@@ -2442,6 +2442,7 @@ class HerdrService:
         model: Optional[str] = None,
         thinking_level: Optional[str] = None,
         attachments: Optional[list] = None,
+        system_prompt: Optional[str] = None,
         continue_from_run_id: Optional[str] = None,
     ) -> dict:
         display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
@@ -2460,6 +2461,7 @@ class HerdrService:
             model=model,
             thinking_level=thinking_level,
             attachments=attachments,
+            system_prompt=system_prompt,
             continue_from_run_id=continue_from_run_id,
         )
 
@@ -2468,6 +2470,16 @@ class HerdrService:
 
     def list_agent_models(self) -> dict:
         return self.agent_runs.list_models()
+
+    def agent_prompt_defaults(self) -> dict:
+        return {
+            "ok": True,
+            "prompts": {
+                "act": ACT_CHARTER,
+                "ask": ASK_CHARTER,
+                "cleanupJudge": DEFAULT_JUDGE_CHARTER,
+            },
+        }
 
     def cancel_agent_run(self, run_id: str) -> dict:
         return self.agent_runs.cancel(run_id)

@@ -428,6 +428,7 @@ def api_description() -> dict:
             "agentRuns": "/api/v1/agent-runs",
             "agentRun": "/api/v1/agent-runs/{runId}",
             "agentModels": "/api/v1/agent-runs/models",
+            "agentPrompts": "/api/v1/agent-runs/prompts",
         },
         "universalLinks": {
             "appSiteAssociation": "/.well-known/apple-app-site-association",
@@ -1199,6 +1200,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     if not isinstance(raw_ids, list) or len(raw_ids) > 200:
                         raise HTTPValidationError("workspaceIds must be an array with at most 200 entries")
                     options["workspaceIds"] = [_identifier(item, "workspace ID") for item in raw_ids]
+                if "judgeCharter" in body:
+                    options["judgeCharter"] = _string(body.get("judgeCharter"), "judgeCharter", maximum=32768)
                 return service.cleanup.start_run(options), 202
             if method == "GET" and tail == ["cleanup", "runs"]:
                 return service.cleanup.list_runs(_query_int(query, "limit", 10, minimum=1, maximum=100))
@@ -1448,6 +1451,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "sessionFile",
                         "sessionId",
                         "requestId",
+                        "workspaceLabel",
+                        "tabLabel",
+                        "reuseNamedTab",
                     }
                     for key in body
                 ):
@@ -1470,6 +1476,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 request_id = None
                 if body.get("requestId") is not None:
                     request_id = _identifier(body.get("requestId"), "request ID")
+                workspace_label = None
+                if body.get("workspaceLabel") is not None:
+                    workspace_label = _string(body.get("workspaceLabel"), "workspaceLabel", maximum=120)
+                tab_label = None
+                if body.get("tabLabel") is not None:
+                    tab_label = _string(body.get("tabLabel"), "tabLabel", maximum=120)
+                if "reuseNamedTab" in body:
+                    if body.get("reuseNamedTab") is None:
+                        raise HTTPValidationError("reuseNamedTab must be a boolean")
+                    reuse_named_tab = _boolean(body.get("reuseNamedTab"), "reuseNamedTab")
+                else:
+                    reuse_named_tab = True
                 return service.quick_pi_session(
                     label,
                     workspace_id=workspace_id,
@@ -1478,6 +1496,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     session_file=session_file,
                     session_id=session_id,
                     request_id=request_id,
+                    workspace_label=workspace_label,
+                    tab_label=tab_label,
+                    reuse_named_tab=reuse_named_tab,
                 )
             if method == "POST" and tail == ["agent-runs"]:
                 if any(
@@ -1489,6 +1510,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "thinkingLevel",
                         "attachments",
                         "continueFromRunId",
+                        "systemPrompt",
                     }
                     for key in body
                 ):
@@ -1505,6 +1527,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 model = _optional_agent_model(body)
                 thinking_level = _optional_agent_thinking_level(body)
                 request_attachments = _optional_agent_attachments(body)
+                system_prompt = None
+                if body.get("systemPrompt") is not None:
+                    value = body.get("systemPrompt")
+                    if not isinstance(value, str) or not value.strip() or len(value) > 32768:
+                        raise HTTPValidationError("systemPrompt is invalid")
+                    system_prompt = value
                 continue_from_run_id = None
                 if body.get("continueFromRunId") is not None:
                     try:
@@ -1519,12 +1547,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         model=model,
                         thinking_level=thinking_level,
                         attachments=request_attachments,
+                        system_prompt=system_prompt,
                         continue_from_run_id=continue_from_run_id,
                     ),
                     202,
                 )
             if method == "GET" and tail == ["agent-runs", "models"]:
                 return service.list_agent_models()
+            if method == "GET" and tail == ["agent-runs", "prompts"]:
+                return service.agent_prompt_defaults()
             if len(tail) >= 2 and tail[0] == "agent-runs":
                 run_id = _agent_run_id(tail[1])
                 if method == "GET" and len(tail) == 2:
