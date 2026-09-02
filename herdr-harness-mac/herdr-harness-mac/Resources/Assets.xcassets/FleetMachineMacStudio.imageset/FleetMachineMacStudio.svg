@@ -1,0 +1,20 @@
+<svg width="160" height="120" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="studioBody" x1="37" y1="16" x2="123" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45475A"/>
+      <stop offset="1" stop-color="#252537"/>
+    </linearGradient>
+    <linearGradient id="studioRing" x1="66" y1="34" x2="95" y2="72" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#94E2D5"/>
+      <stop offset="1" stop-color="#89B4FA"/>
+    </linearGradient>
+  </defs>
+  <path d="M42 22C42 14.82 47.82 9 55 9H105C112.18 9 118 14.82 118 22V87C118 94.18 112.18 100 105 100H55C47.82 100 42 94.18 42 87V22Z" fill="url(#studioBody)" stroke="#585B70" stroke-width="2"/>
+  <path d="M53 24C53 19.03 57.03 15 62 15H98C102.97 15 107 19.03 107 24V76C107 80.97 102.97 85 98 85H62C57.03 85 53 80.97 53 76V24Z" stroke="#1E1E2E" stroke-width="2" opacity=".72"/>
+  <circle cx="80" cy="51" r="20" stroke="#181825" stroke-width="5" opacity=".9"/>
+  <circle cx="80" cy="51" r="13" stroke="url(#studioRing)" stroke-width="3"/>
+  <circle cx="80" cy="51" r="4" fill="#94E2D5"/>
+  <path d="M27 104H133" stroke="#94E2D5" stroke-width="2" stroke-linecap="round" opacity=".72"/>
+  <path d="M57 107H103" stroke="#89B4FA" stroke-width="3" stroke-linecap="round" opacity=".9"/>
+  <circle cx="128" cy="104" r="3" fill="#CBA6F7"/>
+</svg>

@@ -476,6 +476,64 @@ struct DemoScreenshotRenderTests {
 /// snapshots the view's backing store. The unit-test bundle is hosted by the
 /// app, so this needs no entitlement the app does not already have.
 enum HerdrRenderHarness {
+    @MainActor
+    private final class RenderGate {
+        private struct Waiter {
+            let id: Int
+            let continuation: CheckedContinuation<Void, Error>
+        }
+
+        private var occupied = false
+        private var nextID = 0
+        private var waiters: [Waiter] = []
+
+        func acquire() async throws {
+            try Task.checkCancellation()
+
+            guard occupied else {
+                occupied = true
+                return
+            }
+
+            let id = nextID
+            nextID += 1
+
+            try await withTaskCancellationHandler(operation: {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    guard !Task.isCancelled else {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    waiters.append(Waiter(id: id, continuation: continuation))
+                }
+            }, onCancel: {
+                Task { @MainActor in
+                    HerdrRenderHarness.renderGate.cancel(waiterID: id)
+                }
+            })
+        }
+
+        func release() {
+            guard occupied else { return }
+
+            if waiters.isEmpty {
+                occupied = false
+            } else {
+                waiters.removeFirst().continuation.resume()
+            }
+        }
+
+        private func cancel(waiterID: Int) {
+            guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else {
+                return
+            }
+            waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    @MainActor
+    private static let renderGate = RenderGate()
+
     enum RenderError: Error, CustomStringConvertible {
         case bitmapUnavailable(String)
         case encodingFailed(String)
@@ -568,6 +626,10 @@ enum HerdrRenderHarness {
         settlePasses: Int = 8,
         @ViewBuilder content: () -> some View
     ) async throws -> RenderResult {
+        try await renderGate.acquire()
+        defer { renderGate.release() }
+        try Task.checkCancellation()
+
         let hosting = NSHostingView(
             rootView: content()
                 .frame(width: size.width, height: size.height)

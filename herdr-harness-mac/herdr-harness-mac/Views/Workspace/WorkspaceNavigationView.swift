@@ -11,6 +11,7 @@ struct WorkspaceNavigationView: View {
     @Bindable var shell: HerdrShellState
     @Bindable var activeWorkStore: ActiveWorkStore
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var isFleetPresented = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -34,6 +35,9 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
+        .sheet(isPresented: $isFleetPresented) {
+            FleetManagementSheet(model: model)
+        }
         // Revealing a pane in a column the user has hidden would be a silent
         // no-op, so ⇧⌘K brings the navigator back first.
         .onChange(of: model.sidebarRevealToken) { _, token in
@@ -240,6 +244,18 @@ struct WorkspaceNavigationView: View {
 
         ToolbarItem(placement: .primaryAction) {
             HerdPulseButton()
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button("Fleet", systemImage: "macwindow.on.rectangle") {
+                isFleetPresented = true
+            }
+            .labelStyle(.iconOnly)
+            .foregroundStyle(HerdrTheme.mist)
+            .help("Manage the Fleet")
+            .accessibilityLabel("Fleet")
+            .accessibilityHint("Open Fleet management")
+            .accessibilityIdentifier("fleet-toolbar-button")
         }
 
         ToolbarItem(placement: .primaryAction) {

@@ -21,6 +21,7 @@ from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
 from .cleanup import CleanupError
+from .fleet import FleetError, FleetManager
 from .network import public_base_url
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError
 from .secret_file import (
@@ -429,6 +430,10 @@ def api_description() -> dict:
             "agentRun": "/api/v1/agent-runs/{runId}",
             "agentModels": "/api/v1/agent-runs/models",
             "agentPrompts": "/api/v1/agent-runs/prompts",
+            "fleet": "/api/v1/fleet",
+            "fleetInventory": "/api/v1/fleet/inventory",
+            "fleetSync": "/api/v1/fleet/sync",
+            "fleetItemAction": "/api/v1/fleet/items/{itemId}/action",
         },
         "universalLinks": {
             "appSiteAssociation": "/.well-known/apple-app-site-association",
@@ -469,6 +474,8 @@ def api_description() -> dict:
             "POST /api/v1/cleanup/runs",
             "POST /api/v1/cleanup/runs/{runId}/apply",
             "POST /api/v1/cleanup/runs/{runId}/cancel",
+            "POST /api/v1/fleet/sync",
+            "POST /api/v1/fleet/items/{itemId}/action",
         ],
         "sseEvents": [
             "snapshot.updated",
@@ -531,6 +538,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
     )
     cors_origin = service.environ.get("HERDR_HARNESS_CORS_ORIGIN", "")
     universal_app_ids = _universal_link_app_ids(service.environ)
+    # Fleet management is independent from the native Herdr socket.  Reuse a
+    # service-provided manager when available, otherwise keep one manager per
+    # HTTP handler so resolved install roots and its lock stay stable.
+    fleet_manager = getattr(service, "fleet", None)
+    if not isinstance(fleet_manager, FleetManager):
+        fleet_manager = FleetManager(environ=service.environ)
 
     class HerdrHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -789,6 +802,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(exc.status, exc.code, str(exc))
             except response_audio.ResponseAudioError as exc:
                 self._error(exc.status, exc.code, str(exc))
+            except FleetError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
             except Exception:
@@ -890,6 +905,35 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             tail = segments[2:]
             if method == "GET" and not tail:
                 return api_description()
+            if method == "GET" and (tail == ["fleet"] or tail == ["fleet", "inventory"]):
+                return fleet_manager.inventory()
+            if method == "POST" and tail == ["fleet", "sync"]:
+                return fleet_manager.sync(body)
+            if (
+                method == "POST"
+                and len(tail) >= 4
+                and tail[:2] == ["fleet", "items"]
+                and tail[-1] in {"action", "actions"}
+            ):
+                # Keep item IDs URL-safe while still accepting a catalog path
+                # component when clients do not percent-encode a slash.
+                item_id = _string("/".join(tail[2:-1]), "itemId", maximum=192)
+                if set(body) - {"action"}:
+                    raise HTTPValidationError("Fleet action contains an unsupported field")
+                action = _string(body.get("action"), "action", maximum=16)
+                return fleet_manager.action(item_id, action)
+            if method == "POST" and len(tail) == 3 and tail[:2] == ["fleet", "items"]:
+                item_id = _string("/".join(tail[2:]), "itemId", maximum=192)
+                if set(body) - {"action"}:
+                    raise HTTPValidationError("Fleet action contains an unsupported field")
+                action = _string(body.get("action"), "action", maximum=16)
+                return fleet_manager.action(item_id, action)
+            if method == "POST" and tail == ["fleet", "action"]:
+                if set(body) - {"itemId", "action"}:
+                    raise HTTPValidationError("Fleet action contains an unsupported field")
+                item_id = _string(body.get("itemId"), "itemId", maximum=192)
+                action = _string(body.get("action"), "action", maximum=16)
+                return fleet_manager.action(item_id, action)
             if method == "GET" and tail == ["health"]:
                 return service.health_response()
             if method == "GET" and tail == ["response-audio", "capabilities"]:

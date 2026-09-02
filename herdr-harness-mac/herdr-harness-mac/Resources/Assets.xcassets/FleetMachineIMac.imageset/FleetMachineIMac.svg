@@ -1,0 +1,19 @@
+<svg width="160" height="120" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="imacScreen" x1="34" y1="15" x2="126" y2="79" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#313244"/>
+      <stop offset="1" stop-color="#1E1E2E"/>
+    </linearGradient>
+    <linearGradient id="imacEdge" x1="43" y1="10" x2="116" y2="93" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#89B4FA"/>
+      <stop offset="1" stop-color="#CBA6F7"/>
+    </linearGradient>
+  </defs>
+  <path d="M28 16C28 10.48 32.48 6 38 6H122C127.52 6 132 10.48 132 16V73C132 78.52 127.52 83 122 83H38C32.48 83 28 78.52 28 73V16Z" fill="url(#imacScreen)" stroke="url(#imacEdge)" stroke-width="2"/>
+  <path d="M36 18C36 14.69 38.69 12 42 12H118C121.31 12 124 14.69 124 18V68C124 71.31 121.31 74 118 74H42C38.69 74 36 71.31 36 68V18Z" stroke="#585B70" stroke-width="1.5"/>
+  <path d="M55 45H73L78 40L88 49L96 42L107 53" stroke="#94E2D5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="55" cy="45" r="3" fill="#CBA6F7"/>
+  <path d="M74 84H86L91 105H69L74 84Z" fill="#45475A" stroke="#585B70" stroke-width="2"/>
+  <path d="M49 106H111" stroke="#94E2D5" stroke-width="3" stroke-linecap="round"/>
+  <path d="M82 7V10" stroke="#94E2D5" stroke-width="2" stroke-linecap="round"/>
+</svg>

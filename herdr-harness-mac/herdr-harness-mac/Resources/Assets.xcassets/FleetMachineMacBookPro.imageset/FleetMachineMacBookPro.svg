@@ -1,0 +1,19 @@
+<svg width="160" height="120" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mbpScreen" x1="38" y1="13" x2="122" y2="76" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45475A"/>
+      <stop offset="1" stop-color="#252537"/>
+    </linearGradient>
+    <linearGradient id="mbpAccent" x1="48" y1="22" x2="110" y2="66" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#89B4FA"/>
+      <stop offset="1" stop-color="#94E2D5"/>
+    </linearGradient>
+  </defs>
+  <path d="M35 17C35 11.48 39.48 7 45 7H115C120.52 7 125 11.48 125 17V72C125 77.52 120.52 82 115 82H45C39.48 82 35 77.52 35 72V17Z" fill="url(#mbpScreen)" stroke="#585B70" stroke-width="2"/>
+  <path d="M42 18C42 14.69 44.69 12 48 12H112C115.31 12 118 14.69 118 18V67C118 70.31 115.31 73 112 73H48C44.69 73 42 70.31 42 67V18Z" fill="#181825" stroke="#45475A" stroke-width="1.5"/>
+  <path d="M52 27H105M52 38H92M52 49H99M52 60H79" stroke="url(#mbpAccent)" stroke-width="2.5" stroke-linecap="round" opacity=".9"/>
+  <circle cx="47" cy="27" r="2.5" fill="#CBA6F7"/>
+  <path d="M19 88C20.59 84.4 24.17 82 28.1 82H131.9C135.83 82 139.41 84.4 141 88L146 99H14L19 88Z" fill="#45475A" stroke="#585B70" stroke-width="2"/>
+  <path d="M16 99H144C142.2 106.2 135.7 111 128.3 111H31.7C24.3 111 17.8 106.2 16 99Z" fill="#252537" stroke="#94E2D5" stroke-width="2"/>
+  <path d="M68 94H92" stroke="#89B4FA" stroke-width="2" stroke-linecap="round"/>
+</svg>

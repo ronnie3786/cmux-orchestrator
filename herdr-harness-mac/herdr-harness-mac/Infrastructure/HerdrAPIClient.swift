@@ -31,6 +31,48 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/health")
     }
 
+    /// Reads the machine's inventory from the Fleet contract. Fleet is kept as
+    /// a first-class client method so callers do not need to know request
+    /// headers, authentication, or the endpoint's URL shape.
+    func fetchFleet() async throws -> FleetResponse {
+        try await request(path: "/api/v1/fleet")
+    }
+
+    /// Starts reconciliation for the requested machines. A nil list means the
+    /// server's complete fleet, which is useful for the Sync All control.
+    func syncFleet() async throws -> FleetSyncResponse {
+        try await request(
+            path: "/api/v1/fleet/sync",
+            method: "POST",
+            body: FleetSyncRequest()
+        )
+    }
+
+    /// Performs one explicit inventory action. Removal is guarded in the
+    /// SwiftUI layer for external items, while `force` remains available for
+    /// a future server-side confirmation token.
+    func performFleetAction(
+        machineID: String,
+        itemID: String,
+        action: FleetAction,
+        force: Bool = false
+    ) async throws -> FleetActionResponse {
+        // The server resolves the authenticated machine from the client
+        // connection. Keep the machine id in the app-facing API for store
+        // routing, but do not send it as an unrecognised backend field.
+        _ = machineID
+        _ = force
+        let response: FleetActionResponse = try await request(
+            path: "/api/v1/fleet/action",
+            method: "POST",
+            body: FleetActionRequest(
+                itemID: itemID,
+                action: action
+            )
+        )
+        return response
+    }
+
     func fetchNetworkInfo() async throws -> NetworkInfoResponse {
         try await request(path: "/api/v1/network")
     }
@@ -974,6 +1016,12 @@ actor HerdrAPIClient {
         }
         if path == "/api/v1/agent-runs", method == "POST" {
             return 90
+        }
+        if path == "/api/v1/fleet/sync" || path == "/api/v1/fleet/action" {
+            // Sync can clone a missing catalog and action handlers may wait
+            // for the managed command to finish. Keep the client alive for
+            // the backend's long-running Fleet operations.
+            return 150
         }
         if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") {
             return 30
