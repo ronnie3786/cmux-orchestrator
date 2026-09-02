@@ -52,6 +52,8 @@ struct ShellNavigationHistoryTests {
     @Test("Fleet is a standalone destination outside the detail picker")
     func fleetIsExcludedFromDetailPickerAndRecordsNavigation() throws {
         #expect(!HerdrDetailScope.pickerCases.contains(.fleet))
+        #expect(HerdrDetailScope.pickerSelection(for: .fleet) == nil)
+        #expect(HerdrDetailScope.pickerSelection(for: .attention) == .attention)
 
         try withModel { model, firstPane, _, _, _ in
             let shell = HerdrShellState()

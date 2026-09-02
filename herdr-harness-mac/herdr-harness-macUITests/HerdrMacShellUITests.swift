@@ -262,6 +262,13 @@ final class HerdrMacShellUITests: HerdrUITestCase {
             "A destination has nothing to dismiss, so it must not carry the sheet's Done button"
         )
         XCTAssertTrue(fleet.isSelected, "The Fleet toolbar button should expose its active state")
+
+        let pickerSegments = picker.buttons.allElementsBoundByIndex
+            + picker.radioButtons.allElementsBoundByIndex
+        XCTAssertFalse(
+            pickerSegments.contains(where: { $0.isSelected }),
+            "No detail picker segment should be selected while Fleet is active"
+        )
     }
 
     /// The navigator used to carry an Active Work CTA above the tree. It moved

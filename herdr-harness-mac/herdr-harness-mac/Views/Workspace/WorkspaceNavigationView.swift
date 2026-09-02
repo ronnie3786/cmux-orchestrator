@@ -208,7 +208,7 @@ struct WorkspaceNavigationView: View {
                 Picker("Detail", selection: scopeSelection) {
                     ForEach(HerdrDetailScope.pickerCases) { scope in
                         Label(scope.label, systemImage: scope.symbol)
-                            .tag(scope)
+                            .tag(scope as HerdrDetailScope?)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -287,14 +287,19 @@ struct WorkspaceNavigationView: View {
         }
     }
 
-    /// Reads the *resolved* scope so the control always reflects what is on
-    /// screen, and writes the requested one straight through to the shell.
-    /// Fleet intentionally has no picker tag, so the segmented control stays
-    /// visibly unselected while the dedicated Fleet button carries selection.
-    private var scopeSelection: Binding<HerdrDetailScope> {
+    /// Reads the resolved scope when the picker has a matching segment, and
+    /// otherwise returns nil so dedicated destinations leave every segment
+    /// unselected. Writes are limited to actual picker cases.
+    private var scopeSelection: Binding<HerdrDetailScope?> {
         Binding(
-            get: { shell.resolvedScope(for: model) },
-            set: { shell.show($0, model: model) }
+            get: {
+                HerdrDetailScope.pickerSelection(for: shell.resolvedScope(for: model))
+            },
+            set: { scope in
+                guard let scope = scope,
+                      HerdrDetailScope.pickerSelection(for: scope) != nil else { return }
+                shell.show(scope, model: model)
+            }
         )
     }
 

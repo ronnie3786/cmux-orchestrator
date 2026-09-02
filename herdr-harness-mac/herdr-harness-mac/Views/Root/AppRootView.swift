@@ -24,6 +24,12 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         .activity,
     ]
 
+    /// Returns a scope only when the central picker has a matching segment.
+    /// Dedicated toolbar destinations intentionally resolve to no selection.
+    static func pickerSelection(for scope: HerdrDetailScope) -> HerdrDetailScope? {
+        pickerCases.contains(scope) ? scope : nil
+    }
+
     var label: String {
         switch self {
         case .session: "Session"
