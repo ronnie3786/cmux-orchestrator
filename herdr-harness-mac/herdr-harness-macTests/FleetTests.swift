@@ -575,6 +575,7 @@ struct FleetTests {
     func syncAllSupersedesInFlightRefresh() async throws {
         let machines = syncTestMachines()
         let delayedHost = host(for: machines[0])
+        let refreshGate = FleetStoreURLGate()
         let syncResponses = Dictionary(uniqueKeysWithValues: machines.map { machine in
             (
                 host(for: machine),
@@ -593,29 +594,24 @@ struct FleetTests {
             failingHosts: [],
             pathOutcomes: [
                 delayedHost: [
-                    "/api/v1/fleet": .delayedSuccess(delayedRefreshData, seconds: 0.2)
+                    "/api/v1/fleet": .gatedSuccess(delayedRefreshData, gate: refreshGate)
                 ]
             ]
         )
-        defer { FleetStoreURLProtocol.router.reset() }
+        defer {
+            refreshGate.release()
+            FleetStoreURLProtocol.router.reset()
+        }
         let store = makeSyncStore(machines: machines)
         let refreshTask = Task { await store.refresh() }
-
-        var refreshStarted = false
-        for _ in 0..<500 {
-            if FleetStoreURLProtocol.router.requestPaths(for: delayedHost).contains("/api/v1/fleet") {
-                refreshStarted = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(1))
-        }
-        #expect(refreshStarted)
+        await refreshGate.waitUntilStarted()
         #expect(store.isLoading)
 
         await store.syncAll()
 
         #expect(store.notice == "All machines are in sync")
         #expect(store.items.isEmpty)
+        refreshGate.release()
         await refreshTask.value
         #expect(store.notice == "All machines are in sync")
         #expect(store.items.isEmpty)
@@ -920,14 +916,12 @@ private final class FleetStoreURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
         case let .success(data):
             deliverSuccess(data)
-        case let .delayedSuccess(data, seconds):
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + seconds) { [weak self] in
-                self?.deliverSuccess(data)
-            }
+        case let .gatedSuccess(data, gate):
+            gate.hold(self, data: data)
         }
     }
 
-    private func deliverSuccess(_ data: Data) {
+    fileprivate func deliverSuccess(_ data: Data) {
         guard let url = request.url,
               let response = HTTPURLResponse(
                   url: url,
@@ -951,7 +945,7 @@ private final class FleetStoreURLRouter: @unchecked Sendable {
     enum Outcome {
         case success(Data)
         case failure
-        case delayedSuccess(Data, seconds: TimeInterval)
+        case gatedSuccess(Data, gate: FleetStoreURLGate)
     }
 
     private let lock = NSLock()
@@ -1001,5 +995,62 @@ private final class FleetStoreURLRouter: @unchecked Sendable {
         outcomes = [:]
         pathOutcomes = [:]
         pathsByHost = [:]
+    }
+}
+
+private final class FleetStoreURLGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    private var released = false
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var pendingProtocol: FleetStoreURLProtocol?
+    private var pendingData: Data?
+
+    func hold(_ urlProtocol: FleetStoreURLProtocol, data: Data) {
+        lock.lock()
+        started = true
+        let waiters = self.startedWaiters
+        self.startedWaiters.removeAll(keepingCapacity: false)
+        if released {
+            pendingProtocol = nil
+            pendingData = nil
+        } else {
+            pendingProtocol = urlProtocol
+            pendingData = data
+        }
+        let shouldDeliverImmediately = released
+        lock.unlock()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        if shouldDeliverImmediately {
+            urlProtocol.deliverSuccess(data)
+        }
+    }
+
+    func waitUntilStarted() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if started {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                startedWaiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func release() {
+        lock.lock()
+        released = true
+        let pendingProtocol = self.pendingProtocol
+        let pendingData = self.pendingData
+        self.pendingProtocol = nil
+        self.pendingData = nil
+        lock.unlock()
+        if let pendingProtocol, let pendingData {
+            pendingProtocol.deliverSuccess(pendingData)
+        }
     }
 }
