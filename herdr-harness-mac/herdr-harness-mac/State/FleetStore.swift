@@ -379,14 +379,26 @@ final class FleetStore {
 
     private func apply(_ response: FleetResponse, fallbackMachineID: String?) {
         if let summary = response.machine {
-            let summaryID = summary.machineID.isEmpty ? fallbackMachineID : summary.machineID
+            // A response returned by a client is scoped to the machine that
+            // made that request. The server's optional machine id is useful
+            // for aggregate payloads, but must not redirect a single-machine
+            // response into another saved card.
+            let summaryID = fallbackMachineID ?? (summary.machineID.isEmpty ? nil : summary.machineID)
             if let summaryID { updateMachine(summary, id: summaryID) }
             if let fallbackMachineID { setMachineOnline(true, id: fallbackMachineID) }
         }
-        for summary in response.machines {
-            let targetID = summary.machineID.isEmpty ? fallbackMachineID : summary.machineID
-            guard let targetID else { continue }
-            updateMachine(summary, id: targetID)
+        if let fallbackMachineID {
+            // Some older servers put the one summary in `machines` rather
+            // than `machine`. Keep the request identity authoritative here as
+            // well. Item state is handled by the same rule below.
+            if response.machine == nil, let summary = response.machines.first {
+                updateMachine(summary, id: fallbackMachineID)
+            }
+        } else {
+            for summary in response.machines {
+                guard !summary.machineID.isEmpty else { continue }
+                updateMachine(summary, id: summary.machineID)
+            }
         }
 
         if response.machines.isEmpty, let fallbackMachineID {
@@ -399,16 +411,19 @@ final class FleetStore {
         var merged = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
         var replacedMachineIDs = Set<String>()
         if let fallbackMachineID {
+            // Never let machine ids embedded in a single-machine payload
+            // clear or overwrite a different local card.
             replacedMachineIDs.insert(fallbackMachineID)
-        }
-        if let summaryID = response.machine?.machineID, !summaryID.isEmpty {
-            replacedMachineIDs.insert(summaryID)
-        }
-        for summary in response.machines where !summary.machineID.isEmpty {
-            replacedMachineIDs.insert(summary.machineID)
-        }
-        for serverItem in response.items {
-            replacedMachineIDs.formUnion(serverItem.machineStates.keys)
+        } else {
+            if let summaryID = response.machine?.machineID, !summaryID.isEmpty {
+                replacedMachineIDs.insert(summaryID)
+            }
+            for summary in response.machines where !summary.machineID.isEmpty {
+                replacedMachineIDs.insert(summary.machineID)
+            }
+            for serverItem in response.items {
+                replacedMachineIDs.formUnion(serverItem.machineStates.keys)
+            }
         }
 
         // A per-machine Fleet response is a complete snapshot. Clear that
@@ -420,7 +435,9 @@ final class FleetStore {
             }
         }
 
+        let knownMachineIDs = Set(machines.map(\.id))
         for serverItem in response.items {
+            let hadExistingItem = merged[serverItem.id] != nil
             var item = merged[serverItem.id] ?? serverItem
             item.name = serverItem.name
             item.category = serverItem.category
@@ -438,11 +455,31 @@ final class FleetStore {
             item.missing = serverItem.missing
             item.authCheckAvailable = serverItem.authCheckAvailable ?? item.authCheckAvailable
             item.installable = serverItem.installable ?? item.installable
-            for (machineID, state) in serverItem.machineStates {
-                item.machineStates[machineID] = state
-            }
-            if item.machineStates.isEmpty, let fallbackMachineID {
+            if let fallbackMachineID {
+                // GET /api/v1/fleet and the sync/action responses are
+                // intentionally single-machine payloads. `serverItem` does
+                // not carry a machineStates map in that contract. Always
+                // materialize the item under the requesting machine id,
+                // rather than checking the merged item: after the first
+                // response it already contains another machine's state, which
+                // previously caused later responses to be silently dropped.
+                // If this is a new row, discard any optional embedded map as
+                // well. A single-machine response cannot prove that another
+                // key belongs to a different locally configured machine.
+                if !hadExistingItem {
+                    item.machineStates.removeAll(keepingCapacity: true)
+                } else {
+                    // Keep known cells already collected from other saved
+                    // machines, while dropping stale or server-only keys.
+                    item.machineStates = item.machineStates.filter {
+                        knownMachineIDs.contains($0.key)
+                    }
+                }
                 item.machineStates[fallbackMachineID] = state(for: serverItem)
+            } else {
+                for (machineID, state) in serverItem.machineStates {
+                    item.machineStates[machineID] = state
+                }
             }
             merged[item.id] = item
         }

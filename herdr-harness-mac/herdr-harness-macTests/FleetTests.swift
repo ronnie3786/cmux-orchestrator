@@ -191,6 +191,187 @@ struct FleetTests {
         let shared = try #require(store.items.first)
         #expect(store.state(for: shared, machineID: "machine-b").state == .outdated)
     }
+
+    @Test("Merges arbitrary-order single-machine snapshots into three independent cards")
+    func mergesIndependentSingleMachineSnapshots() throws {
+        let machines = [
+            HerdrMachine(id: "work", name: "Work Mac", urlString: "https://work.example"),
+            HerdrMachine(id: "studio", name: "RocketBot", urlString: "https://studio.example"),
+            HerdrMachine(id: "dev", name: "DevBox", urlString: "https://dev.example"),
+        ]
+        let store = FleetStore(machines: machines)
+        let snapshots = Dictionary(uniqueKeysWithValues: machines.map { machine in
+            (machine.id, makeLargeSingleMachineResponse(machineID: machine.id))
+        })
+
+        // Task-group completion is intentionally nondeterministic in
+        // production. Applying the same three responses in a non-display
+        // order reproduces the original bug, where only the first response
+        // received any machineStates entries.
+        for machineID in ["dev", "work", "studio"] {
+            store.applyForTesting(try #require(snapshots[machineID]), fallbackMachineID: machineID)
+        }
+
+        #expect(store.items.count == 186)
+        #expect(store.machines.map(\.itemCount) == [186, 186, 186])
+        #expect(store.machines.map(\.skillsCount) == [172, 172, 172])
+        #expect(store.machines.map(\.piExtensionsCount) == [7, 7, 7])
+        #expect(store.machines.map(\.cliCount) == [7, 7, 7])
+        #expect(store.machines.map(\.online) == [true, true, true])
+
+        let representative = try #require(store.items.first(where: { $0.id == "skill:item-0" }))
+        #expect(Set(representative.machineStates.keys) == Set(["work", "studio", "dev"]))
+        #expect(store.state(for: representative, machineID: "work").state == .installed)
+        #expect(store.state(for: representative, machineID: "studio").state == .outdated)
+        #expect(store.state(for: representative, machineID: "dev").state == .missing)
+
+        // A later refresh/sync can complete in a different order. It must
+        // replace each requested machine's cells without dropping the others.
+        for machineID in ["studio", "dev", "work"] {
+            store.applyForTesting(try #require(snapshots[machineID]), fallbackMachineID: machineID)
+        }
+
+        #expect(store.items.count == 186)
+        #expect(store.machines.map(\.itemCount) == [186, 186, 186])
+        #expect(store.items.allSatisfy { Set($0.machineStates.keys) == Set(["work", "studio", "dev"]) })
+    }
+
+    @Test("A single-machine payload cannot redirect item state into another card")
+    func scopesEmbeddedStatesToRequestingMachine() throws {
+        let machines = [
+            HerdrMachine(id: "work", name: "Work Mac", urlString: "https://work.example"),
+            HerdrMachine(id: "studio", name: "RocketBot", urlString: "https://studio.example"),
+        ]
+        let store = FleetStore(machines: machines)
+        let item = FleetInventoryItem(
+            id: "skill:scoped",
+            name: "scoped",
+            category: .skills,
+            status: .installed,
+            installed: true,
+            current: true,
+            machineStates: [
+                // A server-side machine key is not a local Herdr machine id.
+                // The request's client identity must remain authoritative.
+                "server-machine": FleetMachineItemState(state: .missing)
+            ]
+        )
+
+        store.applyForTesting(FleetResponse(items: [item]), fallbackMachineID: "work")
+
+        let scoped = try #require(store.items.first)
+        #expect(Set(scoped.machineStates.keys) == Set(["work"]))
+        #expect(store.state(for: scoped, machineID: "work").state == .installed)
+        #expect(store.state(for: scoped, machineID: "studio").state == .unknown)
+    }
+
+    @Test("A failed machine refresh preserves last-known cells and other machine state")
+    func failedMachineRefreshPreservesLastKnownCells() async throws {
+        let machines = [
+            HerdrMachine(id: "work", name: "Work Mac", urlString: "https://work.example"),
+            HerdrMachine(id: "studio", name: "RocketBot", urlString: "https://studio.example"),
+            HerdrMachine(id: "dev", name: "DevBox", urlString: "https://dev.example"),
+        ]
+        let responses = Dictionary(uniqueKeysWithValues: machines.map { machine in
+            (URL(string: machine.urlString)!.host!, try! JSONEncoder().encode(makeLargeSingleMachineResponse(machineID: machine.id)))
+        })
+        FleetStoreURLProtocol.router.configure(responses: responses, failingHosts: ["dev.example"])
+        defer { FleetStoreURLProtocol.router.reset() }
+
+        let clients = Dictionary(uniqueKeysWithValues: machines.map { machine in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [FleetStoreURLProtocol.self]
+            let client = HerdrAPIClient(
+                configuration: ServerConfiguration(urlString: machine.urlString, token: "test")!,
+                session: URLSession(configuration: configuration)
+            )
+            return (machine.id, client)
+        })
+        let store = FleetStore(
+            machines: machines,
+            connectionStates: Dictionary(uniqueKeysWithValues: machines.map { ($0.id, ConnectionState.live) }),
+            clients: clients
+        )
+
+        // Seed a complete, known-good matrix first. The subsequent refresh
+        // fails only for DevBox, matching the production error path where a
+        // failed task never calls apply().
+        for machineID in ["work", "studio", "dev"] {
+            store.applyForTesting(
+                makeLargeSingleMachineResponse(machineID: machineID),
+                fallbackMachineID: machineID
+            )
+        }
+        let before = try #require(store.items.first(where: { $0.id == "skill:item-0" }))
+
+        await store.refresh()
+
+        #expect(store.machines.first(where: { $0.id == "dev" })?.online == false)
+        #expect(store.machines.first(where: { $0.id == "work" })?.online == true)
+        #expect(store.machines.first(where: { $0.id == "studio" })?.online == true)
+        let after = try #require(store.items.first(where: { $0.id == before.id }))
+        #expect(Set(after.machineStates.keys) == Set(["work", "studio", "dev"]))
+        #expect(after.machineStates["dev"] == before.machineStates["dev"])
+        #expect(after.machineStates["work"]?.state == .installed)
+        #expect(after.machineStates["studio"]?.state == .outdated)
+    }
+
+    private func makeLargeSingleMachineResponse(machineID: String) -> FleetResponse {
+        let status: FleetInstallState
+        let installed: Bool
+        let current: Bool
+        let drifted: Bool
+        let missing: Bool
+        switch machineID {
+        case "studio":
+            status = .outdated
+            installed = true
+            current = false
+            drifted = true
+            missing = false
+        case "dev":
+            status = .missing
+            installed = false
+            current = false
+            drifted = false
+            missing = true
+        default:
+            status = .installed
+            installed = true
+            current = true
+            drifted = false
+            missing = false
+        }
+
+        let items = (0..<186).map { index -> FleetInventoryItem in
+            let category: FleetInventoryCategory
+            switch index {
+            case 0..<172: category = .skills
+            case 172..<179: category = .piExtensions
+            default: category = .cli
+            }
+            let prefix: String
+            switch category {
+            case .skills: prefix = "skill"
+            case .piExtensions: prefix = "pi"
+            case .cli: prefix = "cli"
+            }
+            return FleetInventoryItem(
+                id: "\(prefix):item-\(index)",
+                name: "item-\(index)",
+                category: category,
+                version: "\(machineID)-v1",
+                ownership: status == .missing ? .unmanaged : .managed,
+                installable: category != .cli,
+                status: status,
+                installed: installed,
+                current: current,
+                drifted: drifted,
+                missing: missing
+            )
+        }
+        return FleetResponse(items: items, generatedAt: "2026-09-02T00:00:00Z")
+    }
 }
 
 @Suite("Fleet management renders", .serialized)
@@ -242,5 +423,79 @@ struct FleetRenderTests {
             FleetManagementSheet(model: model, initiallySelectedMachineID: "demo1")
         }
         result.expectSubstantial()
+    }
+}
+
+private final class FleetStoreURLProtocol: URLProtocol, @unchecked Sendable {
+    static let router = FleetStoreURLRouter()
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let host = request.url?.host,
+              let outcome = Self.router.outcome(for: host)
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        switch outcome {
+        case .failure:
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+        case let .success(data):
+            guard let url = request.url,
+                  let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                  )
+            else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+                return
+            }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private final class FleetStoreURLRouter: @unchecked Sendable {
+    enum Outcome {
+        case success(Data)
+        case failure
+    }
+
+    private let lock = NSLock()
+    private var outcomes: [String: Outcome] = [:]
+
+    func configure(responses: [String: Data], failingHosts: Set<String>) {
+        lock.lock()
+        defer { lock.unlock() }
+        outcomes = responses.mapValues(Outcome.success)
+        for host in failingHosts {
+            outcomes[host] = .failure
+        }
+    }
+
+    func outcome(for host: String) -> Outcome? {
+        lock.lock()
+        defer { lock.unlock() }
+        return outcomes[host]
+    }
+
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        outcomes = [:]
     }
 }
