@@ -1,7 +1,15 @@
 import Foundation
 import Observation
 
-private struct FleetSyncTotals: Sendable {
+private func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {
+    let (sum, overflowed) = lhs.addingReportingOverflow(rhs)
+    if overflowed {
+        return rhs >= 0 ? Int.max : Int.min
+    }
+    return sum
+}
+
+struct FleetSyncTotals: Sendable {
     var updated = 0
     var restored = 0
     var skipped = 0
@@ -9,18 +17,21 @@ private struct FleetSyncTotals: Sendable {
     var failed = 0
 
     mutating func add(_ counts: FleetReconciliationCounts) {
-        updated += counts.updated
-        restored += counts.restored
-        skipped += counts.skipped
-        skippedDrifted += counts.skippedDrifted
-        failed += counts.failed
+        updated = saturatingAdd(updated, counts.updated)
+        restored = saturatingAdd(restored, counts.restored)
+        skipped = saturatingAdd(skipped, counts.skipped)
+        skippedDrifted = saturatingAdd(skippedDrifted, counts.skippedDrifted)
+        failed = saturatingAdd(failed, counts.failed)
     }
 
     var hasItemIssues: Bool {
         updated > 0 || restored > 0 || skipped > 0 || skippedDrifted > 0 || failed > 0
     }
 
-    var guardedSkipped: Int { max(0, skipped - skippedDrifted) }
+    var guardedSkipped: Int {
+        guard skipped > skippedDrifted else { return 0 }
+        return skipped - skippedDrifted
+    }
 }
 
 @MainActor
@@ -271,8 +282,8 @@ final class FleetStore {
         var reconciliationComplete = true
         var successfulCount = 0
         for result in results {
-            if let response = result.response {
-                successfulCount += 1
+            if let response = result.response, response.ok {
+                successfulCount = saturatingAdd(successfulCount, 1)
                 apply(response.fleet, fallbackMachineID: result.machineID)
                 setMachineOnline(true, id: result.machineID)
                 setMachineLastSync(response.fleet.generatedAt, id: result.machineID)
@@ -282,9 +293,17 @@ final class FleetStore {
                 } else {
                     reconciliationComplete = false
                 }
+            } else if result.response != nil {
+                // A 2xx response can still report an operation-level failure.
+                // The server was reachable, but its inventory and
+                // reconciliation payload are not a successful Sync All result.
+                setMachineOnline(true, id: result.machineID)
+                setMachineError("The server could not complete that Fleet action.", id: result.machineID)
+                reconciliationComplete = false
             } else {
                 setMachineOnline(false, id: result.machineID)
                 setMachineError(result.errorMessage, id: result.machineID)
+                reconciliationComplete = false
             }
         }
         for machine in machines where clients[machine.id] == nil {
@@ -292,7 +311,6 @@ final class FleetStore {
             setMachineError("No connection configured for this machine.", id: machine.id)
         }
 
-        await refresh()
         notice = Self.syncNotice(
             succeeded: successfulCount,
             configured: configuredMachineCount,

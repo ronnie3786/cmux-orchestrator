@@ -56,7 +56,9 @@ struct FleetTests {
                   "attempted": 2,
                   "updated": 1,
                   "restored": 1,
-                  "current": 0,
+                  "unchanged": 1,
+                  "skipped": 0,
+                  "current": 1,
                   "skippedDrifted": 0,
                   "failed": 0,
                   "rollbackRestored": 0
@@ -81,6 +83,7 @@ struct FleetTests {
         let reconciliation = try #require(response.reconciliation)
         #expect(reconciliation.counts.updated == 1)
         #expect(reconciliation.counts.restored == 1)
+        #expect(reconciliation.counts.unchanged == 1)
         #expect(reconciliation.counts.attempted == 2)
         let outcome = try #require(reconciliation.items.first)
         #expect(outcome.itemID == "skill:reviewer")
@@ -100,6 +103,97 @@ struct FleetTests {
         let response = try JSONDecoder().decode(FleetSyncResponse.self, from: data)
         #expect(response.reconciliation == nil)
         #expect(response.fleet.items.map { $0.id } == ["skill:reviewer"])
+    }
+
+    @Test("Rejects incomplete, bounded, and inconsistent reconciliation counts")
+    func rejectsInvalidSyncReconciliationCounts() throws {
+        let valid: [String: Any] = [
+            "total": 3,
+            "eligible": 3,
+            "attempted": 2,
+            "updated": 1,
+            "restored": 1,
+            "unchanged": 1,
+            "skipped": 0,
+            "failed": 0,
+            "current": 1,
+            "rollbackRestored": 0,
+            "skippedDrifted": 0,
+        ]
+
+        var missingField = valid
+        missingField.removeValue(forKey: "failed")
+        var negative = valid
+        negative["updated"] = -1
+        var huge = valid
+        huge["total"] = FleetReconciliationCounts.maximumValue + 1
+        var partitionMismatch = valid
+        partitionMismatch["unchanged"] = 0
+        partitionMismatch["current"] = 0
+        var currentMismatch = valid
+        currentMismatch["current"] = 0
+        var skippedDriftMismatch = valid
+        skippedDriftMismatch["skipped"] = 1
+        skippedDriftMismatch["skippedDrifted"] = 2
+        var rollbackMismatch = valid
+        rollbackMismatch["failed"] = 0
+        rollbackMismatch["rollbackRestored"] = 1
+        var eligibilityMismatch = valid
+        eligibilityMismatch["eligible"] = 2
+        var attemptedMismatch = valid
+        attemptedMismatch["attempted"] = 1
+
+        let invalidCounts: [[String: Any]] = [
+            [:],
+            missingField,
+            negative,
+            huge,
+            partitionMismatch,
+            currentMismatch,
+            skippedDriftMismatch,
+            rollbackMismatch,
+            eligibilityMismatch,
+            attemptedMismatch,
+        ]
+
+        for counts in invalidCounts {
+            let response: [String: Any] = [
+                "ok": true,
+                "items": [],
+                "reconciliation": ["counts": counts],
+            ]
+            let data = try JSONSerialization.data(withJSONObject: response)
+            let decoded = try JSONDecoder().decode(FleetSyncResponse.self, from: data)
+            #expect(decoded.reconciliation == nil)
+        }
+    }
+
+    @Test("Caps oversized reconciliation outcomes at 1024 items")
+    func capsOversizedSyncReconciliationOutcomes() throws {
+        let outcome: [String: Any] = ["status": "unchanged"]
+        let outcomes = Array(repeating: outcome, count: FleetReconciliation.maximumDecodedItems + 1)
+        let counts: [String: Any] = [
+            "total": FleetReconciliation.maximumDecodedItems,
+            "eligible": FleetReconciliation.maximumDecodedItems,
+            "attempted": 0,
+            "updated": 0,
+            "restored": 0,
+            "unchanged": FleetReconciliation.maximumDecodedItems,
+            "skipped": 0,
+            "failed": 0,
+            "current": FleetReconciliation.maximumDecodedItems,
+            "rollbackRestored": 0,
+            "skippedDrifted": 0,
+        ]
+        let response: [String: Any] = [
+            "ok": true,
+            "items": [],
+            "reconciliation": ["counts": counts, "items": outcomes],
+        ]
+
+        let data = try JSONSerialization.data(withJSONObject: response)
+        let decoded = try JSONDecoder().decode(FleetSyncResponse.self, from: data)
+        #expect(decoded.reconciliation?.items.count == FleetReconciliation.maximumDecodedItems)
     }
 
     @Test("Preserves missing and auth-unknown states instead of assuming installed")
@@ -387,6 +481,9 @@ struct FleetTests {
 
         #expect(store.notice == "All machines are in sync")
         #expect(store.machines.allSatisfy { $0.online })
+        for machine in machines {
+            #expect(FleetStoreURLProtocol.router.requestPaths(for: host(for: machine)) == ["/api/v1/fleet/sync"])
+        }
     }
 
     @Test("Aggregates updates and restores without hiding successful machines")
@@ -459,10 +556,44 @@ struct FleetTests {
         #expect(store.machines.first(where: { $0.id == "work" })?.online == true)
     }
 
+    @Test("Treats a 2xx application failure as reachable but unsuccessful")
+    func syncAllReportsApplicationFailureOnline() async {
+        let machines = syncTestMachines()
+        let failedHost = host(for: machines[1])
+        configureSyncResponses(for: machines, applicationFailureHosts: [failedHost])
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "Synced 2 of 3 machines")
+        #expect(store.machines.first(where: { $0.id == machines[1].id })?.online == true)
+        #expect(store.machines.first(where: { $0.id == machines[1].id })?.error == "The server could not complete that Fleet action.")
+    }
+
     @Test("Does not claim all machines are in sync for older responses without reconciliation")
     func syncAllKeepsBackwardsCompatibleNotice() async {
         let machines = syncTestMachines()
         configureSyncResponses(for: machines, includeReconciliation: false)
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "Synced 3 of 3 machines")
+        #expect(store.machines.allSatisfy { $0.online })
+    }
+
+    @Test("Does not claim all machines are current when reconciliation is invalid")
+    func syncAllKeepsNeutralNoticeForInvalidReconciliation() async throws {
+        let machines = syncTestMachines()
+        let response = try JSONSerialization.data(withJSONObject: [
+            "ok": true,
+            "items": [],
+            "reconciliation": ["counts": [:]],
+        ] as [String: Any])
+        let responses = Dictionary(uniqueKeysWithValues: machines.map { (host(for: $0), response) })
+        FleetStoreURLProtocol.router.configure(responses: responses, failingHosts: [])
         defer { FleetStoreURLProtocol.router.reset() }
         let store = makeSyncStore(machines: machines)
 
@@ -479,6 +610,16 @@ struct FleetTests {
         await store.syncAll()
 
         #expect(store.notice == "No machines configured")
+    }
+
+    @Test("Saturates reconciliation totals across machines instead of overflowing")
+    func saturatesReconciliationTotalsAcrossMachines() {
+        var totals = FleetSyncTotals()
+        totals.add(FleetReconciliationCounts(updated: Int.max, skipped: Int.max))
+        totals.add(FleetReconciliationCounts(updated: 1, skipped: 1))
+
+        #expect(totals.updated == Int.max)
+        #expect(totals.skipped == Int.max)
     }
 
     private func syncTestMachines() -> [HerdrMachine] {
@@ -510,15 +651,17 @@ struct FleetTests {
         for machines: [HerdrMachine],
         counts: [String: FleetReconciliationCounts] = [:],
         includeReconciliation: Bool = true,
-        failingHosts: Set<String> = []
+        failingHosts: Set<String> = [],
+        applicationFailureHosts: Set<String> = []
     ) {
         let responses = Dictionary(uniqueKeysWithValues: machines.map { machine in
             (
                 host(for: machine),
                 makeSyncResponseData(
                     machineID: machine.id,
-                    counts: counts[machine.id] ?? FleetReconciliationCounts(),
-                    includeReconciliation: includeReconciliation
+                    counts: normalizedSyncCounts(counts[machine.id] ?? FleetReconciliationCounts()),
+                    includeReconciliation: includeReconciliation,
+                    ok: !applicationFailureHosts.contains(host(for: machine))
                 )
             )
         })
@@ -532,10 +675,11 @@ struct FleetTests {
     private func makeSyncResponseData(
         machineID: String,
         counts: FleetReconciliationCounts,
-        includeReconciliation: Bool
+        includeReconciliation: Bool,
+        ok: Bool = true
     ) -> Data {
         var response: [String: Any] = [
-            "ok": true,
+            "ok": ok,
             "machine": [
                 "machineID": machineID,
                 "online": true,
@@ -567,6 +711,27 @@ struct FleetTests {
             ]
         }
         return try! JSONSerialization.data(withJSONObject: response)
+    }
+
+    private func normalizedSyncCounts(_ counts: FleetReconciliationCounts) -> FleetReconciliationCounts {
+        let statusTotal = counts.updated + counts.restored + counts.unchanged + counts.skipped + counts.failed
+        let total = counts.total == 0 ? statusTotal : counts.total
+        let eligible = counts.eligible == 0 && total > 0 ? total : counts.eligible
+        let attempted = counts.attempted == 0 ? counts.updated + counts.restored + counts.failed : counts.attempted
+        let current = counts.current == 0 ? counts.unchanged : counts.current
+        return FleetReconciliationCounts(
+            total: total,
+            eligible: eligible,
+            attempted: attempted,
+            updated: counts.updated,
+            restored: counts.restored,
+            unchanged: counts.unchanged,
+            skipped: counts.skipped,
+            failed: counts.failed,
+            current: current,
+            rollbackRestored: counts.rollbackRestored,
+            skippedDrifted: counts.skippedDrifted
+        )
     }
 
     private func makeLargeSingleMachineResponse(machineID: String) -> FleetResponse {
@@ -691,6 +856,7 @@ private final class FleetStoreURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
+        Self.router.record(request)
         guard let host = request.url?.host,
               let outcome = Self.router.outcome(for: host)
         else {
@@ -730,14 +896,31 @@ private final class FleetStoreURLRouter: @unchecked Sendable {
 
     private let lock = NSLock()
     private var outcomes: [String: Outcome] = [:]
+    private var pathsByHost: [String: [String]] = [:]
 
     func configure(responses: [String: Data], failingHosts: Set<String>) {
         lock.lock()
         defer { lock.unlock() }
         outcomes = responses.mapValues(Outcome.success)
+        pathsByHost = [:]
         for host in failingHosts {
             outcomes[host] = .failure
         }
+    }
+
+    func record(_ request: URLRequest) {
+        guard let host = request.url?.host,
+              let path = request.url?.path
+        else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        pathsByHost[host, default: []].append(path)
+    }
+
+    func requestPaths(for host: String) -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return pathsByHost[host] ?? []
     }
 
     func outcome(for host: String) -> Outcome? {
@@ -750,5 +933,6 @@ private final class FleetStoreURLRouter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         outcomes = [:]
+        pathsByHost = [:]
     }
 }

@@ -835,10 +835,14 @@ struct FleetResponse: Codable, Equatable, Sendable {
     }
 }
 
-/// Counts reported by `POST /api/v1/fleet/sync`. All values are defensive
-/// non-negative integers so a malformed optional reconciliation payload cannot
-/// produce a misleading negative notice in the Fleet UI.
+/// Counts reported by `POST /api/v1/fleet/sync`.
+///
+/// The server emits a complete bounded schema. Decoding is intentionally
+/// strict so an incomplete or inconsistent optional reconciliation object is
+/// treated as unavailable instead of looking like a valid all-current result.
 struct FleetReconciliationCounts: Decodable, Equatable, Hashable, Sendable {
+    static let maximumValue = 1024
+
     var total: Int
     var eligible: Int
     var attempted: Int
@@ -864,17 +868,17 @@ struct FleetReconciliationCounts: Decodable, Equatable, Hashable, Sendable {
         rollbackRestored: Int = 0,
         skippedDrifted: Int = 0
     ) {
-        self.total = max(0, total)
-        self.eligible = max(0, eligible)
-        self.attempted = max(0, attempted)
-        self.updated = max(0, updated)
-        self.restored = max(0, restored)
-        self.unchanged = max(0, unchanged)
-        self.skipped = max(0, skipped)
-        self.failed = max(0, failed)
-        self.current = max(0, current)
-        self.rollbackRestored = max(0, rollbackRestored)
-        self.skippedDrifted = max(0, skippedDrifted)
+        self.total = total
+        self.eligible = eligible
+        self.attempted = attempted
+        self.updated = updated
+        self.restored = restored
+        self.unchanged = unchanged
+        self.skipped = skipped
+        self.failed = failed
+        self.current = current
+        self.rollbackRestored = rollbackRestored
+        self.skippedDrifted = skippedDrifted
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -895,23 +899,96 @@ struct FleetReconciliationCounts: Decodable, Equatable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            total: try container.decodeIfPresent(Int.self, forKey: .total) ?? 0,
-            eligible: try container.decodeIfPresent(Int.self, forKey: .eligible) ?? 0,
-            attempted: try container.decodeIfPresent(Int.self, forKey: .attempted) ?? 0,
-            updated: try container.decodeIfPresent(Int.self, forKey: .updated) ?? 0,
-            restored: try container.decodeIfPresent(Int.self, forKey: .restored) ?? 0,
-            unchanged: try container.decodeIfPresent(Int.self, forKey: .unchanged) ?? 0,
-            skipped: try container.decodeIfPresent(Int.self, forKey: .skipped) ?? 0,
-            failed: try container.decodeIfPresent(Int.self, forKey: .failed) ?? 0,
-            current: try container.decodeIfPresent(Int.self, forKey: .current) ?? 0,
-            rollbackRestored: try container.decodeIfPresent(Int.self, forKey: .rollbackRestored)
-                ?? container.decodeIfPresent(Int.self, forKey: .rollbackRestoredSnake)
-                ?? 0,
-            skippedDrifted: try container.decodeIfPresent(Int.self, forKey: .skippedDrifted)
-                ?? container.decodeIfPresent(Int.self, forKey: .skippedDriftedSnake)
-                ?? 0
+        let rollbackRestored = try Self.decodeRequiredAliasedInt(
+            from: container,
+            primaryKey: .rollbackRestored,
+            aliasKey: .rollbackRestoredSnake
         )
+        let skippedDrifted = try Self.decodeRequiredAliasedInt(
+            from: container,
+            primaryKey: .skippedDrifted,
+            aliasKey: .skippedDriftedSnake
+        )
+        let decoded = Self(
+            total: try container.decode(Int.self, forKey: .total),
+            eligible: try container.decode(Int.self, forKey: .eligible),
+            attempted: try container.decode(Int.self, forKey: .attempted),
+            updated: try container.decode(Int.self, forKey: .updated),
+            restored: try container.decode(Int.self, forKey: .restored),
+            unchanged: try container.decode(Int.self, forKey: .unchanged),
+            skipped: try container.decode(Int.self, forKey: .skipped),
+            failed: try container.decode(Int.self, forKey: .failed),
+            current: try container.decode(Int.self, forKey: .current),
+            rollbackRestored: rollbackRestored,
+            skippedDrifted: skippedDrifted
+        )
+        guard decoded.isValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .total,
+                in: container,
+                debugDescription: "Fleet reconciliation counts are out of bounds or inconsistent"
+            )
+        }
+        self = decoded
+    }
+
+    var isValid: Bool {
+        let values = [
+            total,
+            eligible,
+            attempted,
+            updated,
+            restored,
+            unchanged,
+            skipped,
+            failed,
+            current,
+            rollbackRestored,
+            skippedDrifted,
+        ]
+        guard values.allSatisfy({ (0...Self.maximumValue).contains($0) }) else {
+            return false
+        }
+
+        // These are the partitions emitted by FleetManager._reconcile_managed_items.
+        guard updated + restored + unchanged + skipped + failed == total else {
+            return false
+        }
+        guard attempted == updated + restored + failed else {
+            return false
+        }
+        guard eligible == total,
+              current == unchanged,
+              skippedDrifted <= skipped,
+              rollbackRestored <= failed
+        else {
+            return false
+        }
+        return true
+    }
+
+    private static func decodeRequiredAliasedInt(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        primaryKey: CodingKeys,
+        aliasKey: CodingKeys
+    ) throws -> Int {
+        let primary = try container.decodeIfPresent(Int.self, forKey: primaryKey)
+        let alias = try container.decodeIfPresent(Int.self, forKey: aliasKey)
+        if let primary, let alias, primary != alias {
+            throw DecodingError.dataCorruptedError(
+                forKey: primaryKey,
+                in: container,
+                debugDescription: "Fleet reconciliation count aliases disagree"
+            )
+        }
+        guard let value = primary ?? alias else {
+            throw DecodingError.dataCorruptedError(
+                forKey: primaryKey,
+                in: container,
+                debugDescription: "Fleet reconciliation count is required"
+            )
+        }
+        return value
     }
 }
 
@@ -1050,11 +1127,14 @@ struct FleetReconciliation: Decodable, Equatable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        if container.contains(.counts) {
-            counts = try container.decode(FleetReconciliationCounts.self, forKey: .counts)
-        } else {
-            counts = try FleetReconciliationCounts(from: decoder)
+        guard container.contains(.counts) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .counts,
+                in: container,
+                debugDescription: "Fleet reconciliation counts are required"
+            )
         }
+        counts = try container.decode(FleetReconciliationCounts.self, forKey: .counts)
         if container.contains(.items) {
             items = try Self.decodeItems(from: container, forKey: .items)
         } else if container.contains(.outcomes) {
