@@ -1849,7 +1849,7 @@ class FleetManager:
             )
 
     def sync(self, body: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
-        """Clone or fast-forward the allowlisted catalog and return inventory."""
+        """Fast-forward the trusted catalog, reconcile managed items, and return inventory."""
 
         body = dict(body or {})
         forbidden = {"repo", "repository", "url", "checkout", "path", "source"}
@@ -1936,7 +1936,478 @@ class FleetManager:
                 "syncedAt": _now(),
             }
             self._save_state(state)
-            return self._sync_response(catalog, state=state)
+            # Reconciliation intentionally stays inside this manager's
+            # critical section, but it does not call the public ``action``
+            # method.  That keeps the operation's lock surface small and lets
+            # independent items continue after one item fails.
+            reconciliation = self._reconcile_managed_items(catalog, state)
+            response = self._sync_response(catalog, state=state)
+            response["reconciliation"] = reconciliation
+            return response
+
+    # ------------------------------------------------------------------
+    # Managed-item reconciliation
+
+    @staticmethod
+    def _reconciliation_item(
+        item: _CatalogItem,
+        *,
+        status: str,
+        state: str,
+        reason: str,
+        catalog_revision: str,
+        action: str = "none",
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+        rollback_restored: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        """Build a bounded operation result for one managed item.
+
+        ``status`` describes the Sync All operation (``unchanged``,
+        ``updated``, ``restored``, ``skipped``, or ``failed``); ``state``
+        describes the
+        resulting inventory state.  Keeping both avoids making clients infer
+        whether a skipped item was current, missing, or locally drifted.
+        """
+
+        result: dict[str, Any] = {
+            "itemId": item.id,
+            "id": item.id,
+            "type": item.type,
+            "name": item.name,
+            "target": FleetManager._target_display(item),
+            "status": status,
+            "outcome": status,
+            "state": state,
+            "inventoryStatus": state,
+            "action": action,
+            "reason": reason,
+            "catalogRevision": catalog_revision,
+        }
+        if error_code:
+            result["errorCode"] = _safe_text(error_code, maximum=64)
+        if error_message:
+            result["error"] = _safe_text(error_message, maximum=256)
+        if rollback_restored is not None:
+            result["rollback"] = {"restored": rollback_restored}
+        return result
+
+    @staticmethod
+    def _path_identity(path: Path) -> Optional[tuple[int, int]]:
+        try:
+            stat_result = path.lstat()
+        except OSError:
+            return None
+        return stat_result.st_dev, stat_result.st_ino
+
+    def _rollback_reconciliation_install(
+        self,
+        item: _CatalogItem,
+        target: Path,
+        root: Path,
+        destination: Optional[Path],
+        installed_identity: Optional[tuple[int, int]],
+        expected_digest: Optional[str],
+    ) -> bool:
+        """Remove only our replacement and restore its quarantined source."""
+
+        lexical_target = root / PurePosixPath(item.target)
+        if installed_identity is None and expected_digest:
+            # A test seam or an interrupted wrapper may report a copy failure
+            # after its atomic replace has completed.  Recognize that copy by
+            # digest, but never treat a symlink as our replacement.
+            candidate_identity = self._path_identity(lexical_target)
+            if candidate_identity is not None and not lexical_target.is_symlink():
+                try:
+                    if _tree_digest(lexical_target) == expected_digest:
+                        installed_identity = candidate_identity
+                except OSError:
+                    pass
+        replacement_removed = installed_identity is None
+        if installed_identity is not None:
+            # A concurrent process may have replaced our just-installed item.
+            # In that case leave the live target untouched rather than moving
+            # an unmanaged target into Herdr quarantine.
+            current_identity = self._path_identity(lexical_target)
+            if current_identity == installed_identity:
+                try:
+                    if not _path_has_symlink_component(root, lexical_target):
+                        self._quarantine_target(item, target, root)
+                        replacement_removed = True
+                except Exception:
+                    replacement_removed = False
+
+        if destination is None:
+            # A missing-target restore has no previous copy to restore.  The
+            # boolean returned by this helper describes recovery of the
+            # quarantined version, not merely removal of a replacement.
+            return False
+        try:
+            if destination.is_symlink() or not destination.exists():
+                return False
+            if lexical_target.exists() or lexical_target.is_symlink():
+                return False
+            if _path_has_symlink_component(root, lexical_target):
+                return False
+            os.replace(destination, lexical_target)
+            return replacement_removed and lexical_target.exists() and not lexical_target.is_symlink()
+        except OSError:
+            return False
+
+    def _reconcile_managed_item(
+        self,
+        catalog: _Catalog,
+        item: _CatalogItem,
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Reconcile one already-managed writable filesystem item.
+
+        A missing target with a valid ownership record is safely restored from
+        the trusted catalog.  An explicit Uninstall removes that ownership
+        record, so a remaining record is the evidence needed to distinguish an
+        accidental deletion from an operator-requested removal.  For an
+        existing target, only an observed digest that still equals the
+        recorded digest may be replaced automatically.
+        """
+
+        managed = state.get("managed", {})
+        record = managed.get(item.id) if isinstance(managed, dict) else None
+        if not isinstance(record, dict) or not self._record_matches_item(record, item):
+            return self._reconciliation_item(
+                item,
+                status="skipped",
+                state="unmanaged",
+                reason="not_herdr_managed",
+                catalog_revision=catalog.revision,
+            )
+        if item.type not in {"skill", "pi_extension"} or not _item_writable(item.writable, item.classification):
+            return self._reconciliation_item(
+                item,
+                status="skipped",
+                state="readonly",
+                reason="item_not_writable",
+                catalog_revision=catalog.revision,
+            )
+        expected_digest = record.get("digest")
+        if not isinstance(expected_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+            return self._reconciliation_item(
+                item,
+                status="skipped",
+                state="drifted",
+                reason="managed_record_invalid",
+                catalog_revision=catalog.revision,
+            )
+
+        root = self._item_root(item)
+        lexical_target = root / PurePosixPath(item.target)
+        if _path_has_symlink_component(root, lexical_target) or lexical_target.is_symlink():
+            return self._reconciliation_item(
+                item,
+                status="skipped",
+                state="unmanaged",
+                reason="target_symlink",
+                catalog_revision=catalog.revision,
+            )
+        target_was_missing = not lexical_target.exists()
+        if target_was_missing:
+            # A still-present Herdr ownership record makes this an explicit,
+            # safe restore.  Uninstall removes the record, so it is not
+            # possible for this path to resurrect an intentionally removed
+            # item.
+            try:
+                self._prepare_install_roots()
+            except FleetError as exc:
+                return self._reconciliation_item(
+                    item,
+                    status="failed",
+                    state="missing",
+                    reason="restore_failed",
+                    catalog_revision=catalog.revision,
+                    action="restore",
+                    error_code=exc.code,
+                    error_message=str(exc),
+                    rollback_restored=False,
+                )
+            root = self._item_root(item)
+            lexical_target = root / PurePosixPath(item.target)
+            if _path_has_symlink_component(root, lexical_target) or lexical_target.is_symlink():
+                return self._reconciliation_item(
+                    item,
+                    status="skipped",
+                    state="unmanaged",
+                    reason="target_symlink",
+                    catalog_revision=catalog.revision,
+                )
+
+        try:
+            target = _resolved_child(root, item.target, label="Fleet install target")
+        except FleetError:
+            return self._reconciliation_item(
+                item,
+                status="skipped",
+                state="unmanaged",
+                reason="target_unmanaged",
+                catalog_revision=catalog.revision,
+            )
+        observed_digest = None if target_was_missing else _tree_digest(target)
+        if not target_was_missing and observed_digest is None:
+            return self._reconciliation_item(
+                item,
+                status="skipped",
+                state="drifted",
+                reason="target_unreadable",
+                catalog_revision=catalog.revision,
+            )
+        # The recorded catalog revision is a cheap fast path.  We still hash
+        # the installed target, because a same-revision local edit must be
+        # observed and never overwritten.
+        if not target_was_missing and record.get("catalogRevision") == catalog.revision and observed_digest == expected_digest:
+            return self._reconciliation_item(
+                item,
+                status="unchanged",
+                state="current",
+                reason="already_current",
+                catalog_revision=catalog.revision,
+            )
+
+        source_root_name = "skills" if item.type == "skill" else "pi-extensions"
+        source_prefix = source_root_name + "/"
+        if not item.source.startswith(source_prefix):
+            return self._reconciliation_item(
+                item,
+                status="failed",
+                state="unknown",
+                reason="catalog_source_invalid",
+                catalog_revision=catalog.revision,
+                action="update",
+                error_code="catalog_invalid",
+                error_message="Fleet catalog source is invalid",
+            )
+        source_relative = item.source[len(source_prefix) :]
+        try:
+            source = _resolved_child(catalog.checkout / source_root_name, source_relative, label="Fleet catalog source")
+            source_digest = _tree_digest(source)
+        except FleetError:
+            source = None
+            source_digest = None
+        if source is None or source_digest is None:
+            return self._reconciliation_item(
+                item,
+                status="failed",
+                state="unknown",
+                reason="catalog_source_unavailable",
+                catalog_revision=catalog.revision,
+                action="update",
+                error_code="catalog_invalid",
+                error_message="Fleet catalog source is unavailable",
+            )
+
+        if not target_was_missing and observed_digest == source_digest:
+            # The target may have been brought current by an earlier action
+            # or an interrupted sync while the ownership record still points
+            # at an older catalog revision.  Refresh that record so the next
+            # Sync All takes the cheap same-revision path without replacing a
+            # target that is already an exact copy of the trusted source.
+            if record.get("catalogRevision") != catalog.revision or record.get("digest") != source_digest:
+                refreshed_record = {
+                    **record,
+                    "type": item.type,
+                    "source": item.source,
+                    "target": item.target,
+                    "destination": item.destination,
+                    "digest": source_digest,
+                    "catalogRevision": catalog.revision,
+                    "updatedAt": _now(),
+                }
+                managed[item.id] = refreshed_record
+                try:
+                    self._save_state(state)
+                except Exception:
+                    # The item is already current and was not mutated.  Keep
+                    # the in-memory record unchanged if persistence is
+                    # temporarily unavailable; a later sync can retry the
+                    # metadata refresh safely.
+                    managed[item.id] = record
+            return self._reconciliation_item(
+                item,
+                status="unchanged",
+                state="current",
+                reason="already_current",
+                catalog_revision=catalog.revision,
+            )
+        if not target_was_missing and observed_digest != expected_digest:
+            # The local copy changed since Herdr last wrote it.  It may be an
+            # intentional edit or an external replacement, so Sync All only
+            # reports it and leaves it exactly where it is.
+            return self._reconciliation_item(
+                item,
+                status="skipped",
+                state="drifted",
+                reason="local_drift",
+                catalog_revision=catalog.revision,
+            )
+
+        prior_record = dict(record)
+        prior_digest = observed_digest
+        destination: Optional[Path] = None
+        quarantine_record: Optional[dict[str, Any]] = None
+        installed_identity: Optional[tuple[int, int]] = None
+        quarantine_appended = False
+        managed_map = state.setdefault("managed", {})
+        try:
+            # This is the same quarantine-before-copy sequence used by the
+            # explicit update action.  The old item remains recoverable until
+            # the new item has been verified and state has been persisted.
+            destination = self._quarantine_target(item, target, root) if not target_was_missing else None
+            quarantine_record = self._quarantine_record(item, destination, digest=prior_digest)
+            self._copy_item(item, source, target)
+            installed_identity = self._path_identity(target)
+            if installed_identity is None or _tree_digest(target) != source_digest:
+                raise FleetError("installed Fleet item failed verification", code="fleet_install_failed", status=503)
+
+            managed_map[item.id] = {
+                **prior_record,
+                "type": item.type,
+                "source": item.source,
+                "target": item.target,
+                "destination": item.destination,
+                "digest": source_digest,
+                "catalogRevision": catalog.revision,
+                "updatedAt": _now(),
+            }
+            if quarantine_record is not None:
+                state.setdefault("quarantine", []).append(quarantine_record)
+                quarantine_appended = True
+            self._save_state(state)
+        except Exception as exc:
+            try:
+                rollback_restored = self._rollback_reconciliation_install(
+                    item,
+                    target,
+                    root,
+                    destination,
+                    installed_identity,
+                    source_digest,
+                )
+            except Exception:
+                # A rollback failure is itself part of the per-item result.
+                # Do not allow it to abort reconciliation of independent
+                # items, and never claim the old copy was restored.
+                rollback_restored = False
+            managed_map[item.id] = prior_record
+            if quarantine_appended:
+                quarantine = state.get("quarantine")
+                if isinstance(quarantine, list) and quarantine and quarantine[-1] == quarantine_record:
+                    quarantine.pop()
+            # Normally an atomic state write either succeeds or leaves the
+            # previous file intact.  Re-persist the reverted in-memory state
+            # as a best-effort repair for a write failure that happened after
+            # replace but before its final filesystem sync.
+            try:
+                self._save_state(state)
+            except Exception:
+                pass
+            if isinstance(exc, FleetError):
+                error_code = exc.code
+                error_message = str(exc)
+            else:
+                error_code = "fleet_reconcile_failed"
+                error_message = "Fleet item could not be reconciled"
+            return self._reconciliation_item(
+                item,
+                status="failed",
+                state=("missing" if target_was_missing else ("outdated" if rollback_restored else "failed")),
+                reason="update_failed" if rollback_restored else "rollback_failed",
+                catalog_revision=catalog.revision,
+                action="restore" if target_was_missing else "update",
+                error_code=error_code,
+                error_message=error_message,
+                rollback_restored=rollback_restored,
+            )
+
+        return self._reconciliation_item(
+            item,
+            status="restored" if target_was_missing else "updated",
+            state="current",
+            reason="managed_target_missing" if target_was_missing else "catalog_updated",
+            catalog_revision=catalog.revision,
+            action="restore" if target_was_missing else "update",
+        )
+
+    def _reconcile_managed_items(self, catalog: _Catalog, state: dict[str, Any]) -> dict[str, Any]:
+        """Reconcile only catalog items proven managed by persisted state."""
+
+        managed = state.get("managed", {})
+        outcomes: list[dict[str, Any]] = []
+        if isinstance(managed, dict):
+            for item in catalog.items:
+                if item.type not in {"skill", "pi_extension"}:
+                    continue
+                if not _item_writable(item.writable, item.classification):
+                    continue
+                record = managed.get(item.id)
+                if not self._record_matches_item(record, item):
+                    continue
+                # Each helper is defensive, and unexpected per-item failures
+                # are converted to a bounded failure outcome so another
+                # independent managed item can still be reconciled.
+                try:
+                    outcome = self._reconcile_managed_item(catalog, item, state)
+                except Exception:
+                    outcome = self._reconciliation_item(
+                        item,
+                        status="failed",
+                        state="unknown",
+                        reason="reconcile_failed",
+                        catalog_revision=catalog.revision,
+                        action="update",
+                        error_code="fleet_reconcile_failed",
+                        error_message="Fleet item could not be reconciled",
+                        rollback_restored=False,
+                    )
+                outcomes.append(outcome)
+
+        updated_count = sum(1 for outcome in outcomes if outcome.get("status") == "updated")
+        restored_count = sum(1 for outcome in outcomes if outcome.get("status") == "restored")
+        unchanged_count = sum(1 for outcome in outcomes if outcome.get("status") == "unchanged")
+        skipped_count = sum(1 for outcome in outcomes if outcome.get("status") == "skipped")
+        failed_count = sum(1 for outcome in outcomes if outcome.get("status") == "failed")
+        skipped_drifted_count = sum(
+            1
+            for outcome in outcomes
+            if outcome.get("status") == "skipped" and outcome.get("state") == "drifted"
+        )
+        rollback_restored_count = sum(
+            1
+            for outcome in outcomes
+            if outcome.get("status") == "failed"
+            and isinstance(outcome.get("rollback"), dict)
+            and outcome["rollback"].get("restored") is True
+        )
+        counts = {
+            "total": len(outcomes),
+            "eligible": len(outcomes),
+            "attempted": sum(1 for outcome in outcomes if outcome.get("action") in {"update", "restore"}),
+            "updated": updated_count,
+            "restored": restored_count,
+            "unchanged": unchanged_count,
+            "skipped": skipped_count,
+            "failed": failed_count,
+            # These names are intentionally explicit for the native clients.
+            # ``current`` is the operation-level spelling of unchanged;
+            "current": unchanged_count,
+            "rollbackRestored": rollback_restored_count,
+            "skippedDrifted": skipped_drifted_count,
+        }
+        # The flat aliases make the contract easy to consume from lightweight
+        # clients, while ``counts`` is the stable structured form.
+        return {
+            "counts": counts,
+            **counts,
+            "items": outcomes,
+            "outcomes": outcomes,
+            "results": outcomes,
+        }
 
     # ------------------------------------------------------------------
     # Inventory

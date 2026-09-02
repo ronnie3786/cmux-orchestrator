@@ -438,6 +438,35 @@ Push registration and removal return `503 api_token_required` when the harness
 bearer token is not configured, even though the rest of the API may run in its
 optional unauthenticated development mode.
 
+### Fleet catalog synchronization
+
+`POST /api/v1/fleet/sync` first verifies the allowlisted Git remote, branch,
+upstream, and clean checkout boundary, then fetches and fast-forwards the
+catalog. Only after that trusted catalog read does it reconcile persisted
+Herdr-managed records for writable skills and Pi extensions. CLI recipes,
+unmanaged or external items, symlinked targets, and locally drifted targets
+are never changed.
+
+Sync All restores a managed target that is missing on disk when its valid
+ownership record remains. An explicit Uninstall removes that record, so a
+remaining record is the evidence that makes this restore safe. If the record
+is absent, the target is unmanaged and remains untouched.
+
+For an outdated managed item, the observed target digest must still equal the
+digest recorded when Herdr last wrote it. The previous copy is atomically moved
+to the private quarantine before the catalog copy is installed and verified.
+If installation or state persistence fails, the new copy is removed when it is
+still provably Herdr's copy and the quarantined version is restored. A failure
+for one item does not stop independent items from being reconciled.
+
+The response keeps the existing inventory fields and adds a `reconciliation`
+object. Its `counts` (also available as flat aliases) include `attempted`,
+`updated`, `current`, `restored`, `skippedDrifted`, `failed`, and
+`rollbackRestored`; `items`, `outcomes`, and `results` contain bounded per-item
+operation records. Item failures are reported in that object while the
+endpoint remains `ok: true`, so the client does not mark a reachable machine
+offline.
+
 ### Mutation contract
 
 All mutation responses are `{ "ok": true, "result": <native Herdr result> }`

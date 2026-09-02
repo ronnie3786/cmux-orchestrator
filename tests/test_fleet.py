@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from herdr_harness.fleet import FleetError, FleetManager, _run_command, _which
+from herdr_harness.fleet import FleetError, FleetManager, _run_command, _tree_digest, _which
 from herdr_harness.server import HTTPValidationError, make_handler
 
 
@@ -241,10 +241,11 @@ class FleetBackendTests(unittest.TestCase):
         source.write_text("foo-v2\n", encoding="utf-8")
         self._git("-C", str(self.repo), "add", ".")
         self._git("-C", str(self.repo), "commit", "-m", "catalog update")
-        manager.sync()
+        synced = manager.sync()
+        self.assertEqual(synced["reconciliation"]["updated"], 1)
         old_state = manager.inventory()
         old_item = next(item for item in old_state["items"] if item["id"] == "skill:personal/foo")
-        self.assertEqual(old_item["status"], "outdated")
+        self.assertEqual(old_item["status"], "current")
 
         updated = manager.action("skill:personal/foo", "update")
         self.assertEqual(updated["item"]["status"], "current")
@@ -260,6 +261,245 @@ class FleetBackendTests(unittest.TestCase):
         self.assertGreaterEqual(len(all_copies), 2)
         self.assertEqual(stat.S_IMODE(quarantine.stat().st_mode), 0o700)
         self.assertIn("foo-v2\n", [path.joinpath("SKILL.md").read_text(encoding="utf-8") for path in all_copies])
+
+    def _commit_catalog_change(self, relative_path, contents, message="catalog update"):
+        path = self.repo / relative_path
+        path.write_text(contents, encoding="utf-8")
+        self._git("-C", str(self.repo), "add", ".")
+        self._git("-C", str(self.repo), "commit", "-m", message)
+
+    def test_sync_reconciliation_leaves_current_managed_items_untouched(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        manager.action("pi-package", "install")
+        foo = manager.skills_root / "foo"
+        extension = manager.pi_extensions_root / "package"
+        before_foo = self._git("-C", str(self.repo), "rev-parse", "HEAD").stdout.strip()
+
+        response = manager.sync()
+
+        self.assertEqual(response["reconciliation"]["attempted"], 0)
+        self.assertEqual(response["reconciliation"]["updated"], 0)
+        self.assertEqual(response["reconciliation"]["current"], 2)
+        self.assertEqual(response["reconciliation"]["unchanged"], 2)
+        self.assertEqual(
+            {item["status"] for item in response["reconciliation"]["items"]},
+            {"unchanged"},
+        )
+        self.assertEqual(foo.joinpath("SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        self.assertEqual(extension.joinpath("index.ts").read_text(encoding="utf-8"), "export {};\n")
+        self.assertEqual(self._git("-C", str(self.repo), "rev-parse", "HEAD").stdout.strip(), before_foo)
+
+    def test_sync_reconciliation_updates_only_an_unchanged_managed_target(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        old_digest = manager._load_state(strict=True)["managed"]["skill:personal/foo"]["digest"]
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "updated")
+        self.assertEqual(outcome["state"], "current")
+        self.assertEqual(response["reconciliation"]["attempted"], 1)
+        self.assertEqual(response["reconciliation"]["updated"], 1)
+        self.assertEqual(manager.skills_root.joinpath("foo/SKILL.md").read_text(encoding="utf-8"), "foo-v2\n")
+        copies = [path for path in manager.quarantine_root.iterdir() if path.is_dir()]
+        self.assertTrue(copies)
+        self.assertIn("foo-v1\n", [path.joinpath("SKILL.md").read_text(encoding="utf-8") for path in copies])
+        state = manager._load_state(strict=True)
+        self.assertNotEqual(state["managed"]["skill:personal/foo"]["digest"], old_digest)
+
+    def test_sync_reconciliation_refreshes_stale_record_for_current_target(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        target = manager.skills_root / "foo"
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        # Simulate a target that is already current while its ownership record
+        # was not persisted by an earlier operation.
+        source = self.repo / "skills" / "personal" / "foo"
+        target.joinpath("SKILL.md").write_text(source.joinpath("SKILL.md").read_text(encoding="utf-8"), encoding="utf-8")
+        stale_state = manager._load_state(strict=True)
+        stale_record = stale_state["managed"]["skill:personal/foo"]
+        stale_record["catalogRevision"] = "stale-revision"
+        stale_record["digest"] = "0" * 64
+        manager._save_state(stale_state)
+
+        response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "unchanged")
+        self.assertEqual(outcome["state"], "current")
+        self.assertEqual(response["reconciliation"]["attempted"], 0)
+        refreshed = manager._load_state(strict=True)["managed"]["skill:personal/foo"]
+        self.assertEqual(refreshed["catalogRevision"], response["catalogRevision"])
+        self.assertEqual(refreshed["digest"], _tree_digest(target))
+        self.assertEqual(list(manager.quarantine_root.iterdir()) if manager.quarantine_root.exists() else [], [])
+
+    def test_sync_reconciliation_restores_managed_missing_target(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        (manager.skills_root / "foo").rename(manager.skills_root / "foo-removed")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "restored")
+        self.assertEqual(outcome["state"], "current")
+        self.assertEqual(outcome["reason"], "managed_target_missing")
+        self.assertEqual((manager.skills_root / "foo/SKILL.md").read_text(encoding="utf-8"), "foo-v2\n")
+        self.assertEqual(response["reconciliation"]["restored"], 1)
+        self.assertIn("skill:personal/foo", manager._load_state(strict=True)["managed"])
+
+    def test_sync_reconciliation_reports_missing_restore_failure_without_rollback_claim(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        (manager.skills_root / "foo").rename(manager.skills_root / "foo-removed")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        with mock.patch.object(
+            manager,
+            "_copy_item",
+            side_effect=FleetError("injected restore failure", code="fleet_install_failed", status=503),
+        ):
+            response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["action"], "restore")
+        self.assertFalse(outcome["rollback"]["restored"])
+        self.assertEqual(response["reconciliation"]["restored"], 0)
+        self.assertEqual(response["reconciliation"]["failed"], 1)
+        self.assertFalse((manager.skills_root / "foo").exists())
+        self.assertTrue((manager.skills_root / "foo-removed").exists())
+
+    def test_sync_reconciliation_does_not_restore_after_explicit_uninstall(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        manager.action("skill:personal/foo", "remove")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        response = manager.sync()
+
+        self.assertEqual(response["reconciliation"]["total"], 0)
+        self.assertFalse((manager.skills_root / "foo").exists())
+        self.assertNotIn("skill:personal/foo", manager._load_state(strict=True)["managed"])
+
+    def test_sync_reconciliation_preserves_locally_drifted_target(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        target = manager.skills_root / "foo" / "SKILL.md"
+        target.write_text("local edit\n", encoding="utf-8")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "skipped")
+        self.assertEqual(outcome["state"], "drifted")
+        self.assertEqual(outcome["reason"], "local_drift")
+        self.assertEqual(target.read_text(encoding="utf-8"), "local edit\n")
+        self.assertEqual(list(manager.quarantine_root.iterdir()) if manager.quarantine_root.exists() else [], [])
+
+    def test_sync_reconciliation_never_replaces_an_unmanaged_target(self):
+        manager = self.sync_manager()
+        manager.skills_root.mkdir(parents=True, exist_ok=True)
+        target = manager.skills_root / "foo"
+        target.mkdir()
+        target.joinpath("SKILL.md").write_text("local copy\n", encoding="utf-8")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        response = manager.sync()
+
+        self.assertEqual(response["reconciliation"]["total"], 0)
+        self.assertEqual(target.joinpath("SKILL.md").read_text(encoding="utf-8"), "local copy\n")
+
+    def test_sync_reconciliation_never_replaces_a_symlinked_managed_target(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        target = manager.skills_root / "foo"
+        outside = self.home / "outside"
+        outside.mkdir()
+        target.rename(self.home / "old-managed-copy")
+        target.symlink_to(outside, target_is_directory=True)
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+
+        response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "skipped")
+        self.assertEqual(outcome["reason"], "target_symlink")
+        self.assertTrue(target.is_symlink())
+        self.assertEqual(target.resolve(), outside.resolve())
+        self.assertTrue((self.home / "old-managed-copy").exists())
+
+    def test_sync_reconciliation_continues_after_failure_and_rolls_back_item(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        manager.action("pi-package", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        self._commit_catalog_change("pi-extensions/package/index.ts", "export const v2 = true;\n", "extension update")
+        original_copy = manager._copy_item
+
+        def copy_or_fail(item, source, target):
+            if item.id == "skill:personal/foo":
+                raise FleetError("injected copy failure", code="fleet_install_failed", status=503)
+            return original_copy(item, source, target)
+
+        with mock.patch.object(manager, "_copy_item", side_effect=copy_or_fail):
+            response = manager.sync()
+
+        self.assertTrue(response["ok"])
+        outcomes = {item["itemId"]: item for item in response["reconciliation"]["items"]}
+        self.assertEqual(outcomes["pi-package"]["status"], "updated")
+        self.assertEqual(outcomes["skill:personal/foo"]["status"], "failed")
+        self.assertEqual(outcomes["skill:personal/foo"]["rollback"]["restored"], True)
+        self.assertEqual(response["reconciliation"]["failed"], 1)
+        self.assertEqual(response["reconciliation"]["rollbackRestored"], 1)
+        self.assertEqual(manager.skills_root.joinpath("foo/SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        self.assertEqual(manager.pi_extensions_root.joinpath("package/index.ts").read_text(encoding="utf-8"), "export const v2 = true;\n")
+
+    def test_sync_reconciliation_rolls_back_when_copy_reports_failure_after_replace(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        original_copy = manager._copy_item
+
+        def copy_then_fail(item, source, target):
+            original_copy(item, source, target)
+            raise FleetError("post-copy failure", code="fleet_install_failed", status=503)
+
+        with mock.patch.object(manager, "_copy_item", side_effect=copy_then_fail):
+            response = manager.sync()
+
+        outcome = response["reconciliation"]["items"][0]
+        self.assertEqual(outcome["status"], "failed")
+        self.assertTrue(outcome["rollback"]["restored"])
+        self.assertEqual(manager.skills_root.joinpath("foo/SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_sync_response_keeps_inventory_and_exposes_bounded_reconciliation_shape(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        response = manager.sync()
+
+        self.assertTrue(response["ok"])
+        self.assertIn("items", response)
+        self.assertIn("skills", response)
+        self.assertIn("piExtensions", response)
+        self.assertIn("cli", response)
+        reconciliation = response["reconciliation"]
+        self.assertEqual(
+            {"counts", "items", "outcomes"}.issubset(reconciliation),
+            True,
+        )
+        self.assertEqual(
+            {"attempted", "updated", "current", "restored", "skippedDrifted", "failed"}.issubset(reconciliation["counts"]),
+            True,
+        )
+        self.assertEqual(reconciliation["items"], reconciliation["outcomes"])
+        self.assertNotIn("stdout", json.dumps(response))
 
     def test_production_rejects_local_repository_override(self):
         production_environment = dict(self.environ)
