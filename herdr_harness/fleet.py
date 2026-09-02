@@ -639,7 +639,12 @@ class FleetManager:
             self.managed_checkout,
         ]
 
-    def _trusted_existing_checkout(self, *, require_git: bool = True) -> Optional[Path]:
+    def _trusted_existing_checkout(
+        self,
+        *,
+        require_git: bool = True,
+        require_current: bool = True,
+    ) -> Optional[Path]:
         if require_git:
             try:
                 git = self._git_executable()
@@ -649,16 +654,19 @@ class FleetManager:
                 raise
         else:
             git = _which(self.environ, "git")
-        managed_error: Optional[FleetError] = None
         for candidate in self._checkout_candidates():
+            managed_candidate = candidate == self.managed_checkout
             try:
                 candidate = _safe_checkout_path(candidate)
             except FleetError:
-                if self._checkout_explicit:
+                if self._checkout_explicit or managed_candidate:
                     raise
                 # A same-name source path that is a symlink or a non-directory
                 # is not a candidate.  Continue to the next known location,
                 # never follow or mutate it.
+                continue
+            managed_candidate = candidate == self.managed_checkout
+            if not candidate.exists():
                 continue
             git_metadata = candidate / ".git"
             if (
@@ -667,32 +675,36 @@ class FleetManager:
                 or git_metadata.is_symlink()
                 or not (git_metadata.is_dir() or git_metadata.is_file())
             ):
+                if managed_candidate:
+                    raise FleetError(
+                        "managed catalog checkout is not a regular Git checkout",
+                        code="catalog_checkout_invalid",
+                        status=409,
+                    )
                 continue
             if git is None:
                 continue
             try:
-                self._verify_remote(git, candidate)
+                # Implicit user checkouts are only reusable when they satisfy
+                # the same branch, upstream, and cleanliness boundary as a
+                # managed checkout.  A sync may still select a clean stale
+                # checkout so it can fetch and fast-forward it below.
+                self._validate_trusted_checkout_for_read(candidate, require_current=require_current)
             except FleetError:
-                # An untrusted same-name directory is ignored.  Explicit
-                # configuration remains strict and is handled by callers.
-                if self._checkout_explicit:
+                # An invalid implicit user checkout is left untouched and
+                # ignored.  Explicit configuration and the managed fallback
+                # remain strict, so an unsafe managed checkout can never be
+                # silently replaced by a clone.
+                if self._checkout_explicit or managed_candidate:
                     raise
-                if candidate == self.managed_checkout:
-                    managed_error = FleetError(
-                        "managed catalog remote is not the allowlisted repository",
-                        code="catalog_remote_forbidden",
-                        status=409,
-                    )
                 continue
             return candidate
-        if managed_error is not None:
-            raise managed_error
         return None
 
-    def _select_checkout(self, *, require_existing: bool = False) -> Path:
+    def _select_checkout(self, *, require_existing: bool = False, require_current: bool = True) -> Path:
         if self._checkout_explicit:
             return self.managed_checkout
-        existing = self._trusted_existing_checkout()
+        existing = self._trusted_existing_checkout(require_current=require_current)
         if existing is not None:
             self.checkout = existing
             return existing
@@ -1660,7 +1672,7 @@ class FleetManager:
             # Select an already trusted sync-skills source before falling back
             # to the managed checkout.  This prevents duplicate clones and
             # rejects arbitrary same-name directories by their remote.
-            checkout = self._select_checkout(require_existing=False)
+            checkout = self._select_checkout(require_existing=False, require_current=False)
             parent = checkout.parent
             try:
                 parent.mkdir(parents=True, exist_ok=True, mode=0o700)

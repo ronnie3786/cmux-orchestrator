@@ -123,6 +123,21 @@ class FleetBackendTests(unittest.TestCase):
     def manager(self):
         return FleetManager(environ=self.environ)
 
+    def _implicit_environment(self):
+        environment = dict(self.environ)
+        for name in (
+            "HERDR_FLEET_CATALOG_PATH",
+            "HERDR_FLEET_CHECKOUT_PATH",
+            "HERDR_FLEET_REPO_PATH",
+        ):
+            environment.pop(name, None)
+        return environment
+
+    def _clone_checkout(self, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._git("clone", str(self.repo), str(path))
+        return path
+
     def sync_manager(self):
         manager = self.manager()
         result = manager.sync()
@@ -260,6 +275,60 @@ class FleetBackendTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "catalog_clone_failed")
         self.assertFalse(target.exists())
         self.assertEqual(list(target.parent.glob(f".{target.name}.fleet-clone-*")), [])
+
+    def test_ignored_only_implicit_checkout_is_untouched_and_managed_checkout_is_promoted(self):
+        environment = self._implicit_environment()
+        user_checkout = self._clone_checkout(
+            self.home / "Documents" / "Development" / "personal-claude-plugin"
+        )
+        before_revision = self._git("-C", str(user_checkout), "rev-parse", "HEAD").stdout.strip()
+        exclude = user_checkout / ".git" / "info" / "exclude"
+        with exclude.open("a", encoding="utf-8") as handle:
+            handle.write("fleet-ignored.txt\n")
+        ignored_file = user_checkout / "fleet-ignored.txt"
+        ignored_file.write_text("local ignored state\n", encoding="utf-8")
+        self.assertEqual(self._git("-C", str(user_checkout), "status", "--porcelain").stdout, "")
+
+        manager = FleetManager(environ=environment)
+        response = manager.sync()
+
+        managed_checkout = self.home / ".local" / "share" / "herdr-fleet" / "personal-claude-plugin"
+        self.assertTrue(response["ok"])
+        self.assertEqual(manager.checkout, managed_checkout.resolve())
+        self.assertTrue((managed_checkout / "fleet.json").is_file())
+        self.assertEqual(ignored_file.read_text(encoding="utf-8"), "local ignored state\n")
+        after_revision = self._git("-C", str(user_checkout), "rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(after_revision, before_revision)
+        self.assertEqual(self._git("-C", str(user_checkout), "status", "--porcelain").stdout, "")
+
+    def test_clean_stale_implicit_checkout_is_fast_forwarded_on_sync(self):
+        environment = self._implicit_environment()
+        user_checkout = self._clone_checkout(
+            self.home / "Code" / "ronnie3786" / "personal-claude-plugin"
+        )
+        before_revision = self._git("-C", str(user_checkout), "rev-parse", "HEAD").stdout.strip()
+
+        source = self.repo / "skills" / "personal" / "foo" / "SKILL.md"
+        source.write_text("foo-v2\n", encoding="utf-8")
+        self._git("-C", str(self.repo), "add", ".")
+        self._git("-C", str(self.repo), "commit", "-m", "catalog update")
+        remote_revision = self._git("-C", str(self.repo), "rev-parse", "HEAD").stdout.strip()
+
+        manager = FleetManager(environ=environment)
+        response = manager.sync()
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(manager.checkout, user_checkout.resolve())
+        self.assertNotEqual(before_revision, remote_revision)
+        self.assertEqual(
+            self._git("-C", str(user_checkout), "rev-parse", "HEAD").stdout.strip(),
+            remote_revision,
+        )
+        self.assertEqual(
+            (user_checkout / "skills" / "personal" / "foo" / "SKILL.md").read_text(encoding="utf-8"),
+            "foo-v2\n",
+        )
+        self.assertFalse((self.home / ".local" / "share" / "herdr-fleet" / "personal-claude-plugin").exists())
 
     def test_cli_checks_require_discarding_read_only_policy_and_are_inventory_only(self):
         manager = self.manager()
