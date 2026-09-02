@@ -14,6 +14,8 @@ the native agent is unavailable.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import hmac
 import json
@@ -24,6 +26,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import threading
 import time
 import urllib.parse
@@ -38,8 +41,11 @@ DEFAULT_STATE_RELATIVE_PATH = ".local/share/herdr-fleet/state.json"
 MAX_CATALOG_BYTES = 4 * 1024 * 1024
 MAX_CATALOG_ITEMS = 1024
 MAX_MANAGED_TOMBSTONES = 1024
+MAX_CATALOG_SNAPSHOT_BYTES = 256 * 1024 * 1024
 MAX_ITEM_FILES = 4096
 MAX_ITEM_FILE_BYTES = 32 * 1024 * 1024
+MAX_CATALOG_SNAPSHOT_ENTRIES = 65536
+MAX_CATALOG_SNAPSHOT_FILE_BYTES = MAX_ITEM_FILE_BYTES
 MAX_SUBPROCESS_SECONDS = 120.0
 DEFAULT_SUBPROCESS_SECONDS = 30.0
 LOCAL_CLI_COMMANDS = ("gh", "acli", "slack", "pi", "codex", "claude", "herdr")
@@ -336,6 +342,90 @@ def _tree_digest(path: Path) -> Optional[str]:
         return digest.hexdigest()
     except (OSError, UnicodeError, ValueError):
         return None
+
+
+# Darwin's ``renamex_np`` flags define RENAME_EXCL as 0x4.  0x2 is
+# RENAME_SWAP, which would be a catastrophic mismatch for a no-clobber
+# promotion.
+_RENAME_EXCL = 0x00000004
+
+
+class _SnapshotDirectory:
+    """Private snapshot directory with explicit, warning-free cleanup."""
+
+    def __init__(self) -> None:
+        self.path: Optional[Path] = Path(tempfile.mkdtemp(prefix=".herdr-fleet-snapshot-"))
+
+    def cleanup(self) -> None:
+        path = self.path
+        if path is None:
+            return
+        self.path = None
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            elif path.exists() or path.is_symlink():
+                path.unlink()
+        except OSError:
+            pass
+
+    def __del__(self) -> None:
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
+
+def _lstat_identity(path: Path) -> Optional[tuple[int, int]]:
+    try:
+        stat_result = path.lstat()
+    except OSError:
+        return None
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _exclusive_move(source: Path, destination: Path) -> None:
+    """Move ``source`` to an absent destination without ever replacing it.
+
+    Darwin exposes the required atomic primitive as ``renamex_np`` with
+    ``RENAME_EXCL``.  Where that API is unavailable, regular files use an
+    exclusive hard-link on the same filesystem.  Directory promotion fails
+    closed without that native primitive because a recursive copy cannot
+    provide an atomic move and could expose a partial tree.
+    """
+
+    if platform.system() == "Darwin":
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            renamex_np = libc.renamex_np
+        except (AttributeError, OSError):
+            renamex_np = None
+        if renamex_np is not None:
+            renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+            renamex_np.restype = ctypes.c_int
+            result = renamex_np(os.fsencode(source), os.fsencode(destination), _RENAME_EXCL)
+            if result == 0:
+                return
+            error_number = ctypes.get_errno() or errno.EIO
+            if error_number not in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+                raise OSError(error_number, os.strerror(error_number), str(destination))
+
+    # A hard link is an atomic no-clobber move for regular files on the same
+    # filesystem.  Do not follow source links, even in the fallback path.  A
+    # cross-filesystem copy is deliberately rejected because it would expose
+    # a partially written destination and make cleanup race-prone.
+    if source.is_symlink():
+        raise OSError(errno.ELOOP, "source is a symlink")
+    if source.is_file():
+        try:
+            os.link(source, destination, follow_symlinks=False)
+        except OSError:
+            raise
+        source.unlink()
+        return
+    if source.is_dir():
+        raise OSError(errno.ENOTSUP, "directory promotion requires renamex_np")
+    raise OSError(errno.ENOENT, "source is unavailable")
 
 
 def _catalog_file_digest(path: Path) -> Optional[str]:
@@ -648,11 +738,43 @@ class _CatalogItem:
 
 
 class _Catalog:
-    def __init__(self, *, checkout: Path, revision: str, fleet_file_digest: str, items: list[_CatalogItem]) -> None:
+    def __init__(
+        self,
+        *,
+        checkout: Path,
+        revision: str,
+        fleet_file_digest: str,
+        items: list[_CatalogItem],
+        source_checkout: Optional[Path] = None,
+        source_digests: Optional[dict[str, str]] = None,
+        snapshot_cleanup: Any = None,
+    ) -> None:
         self.checkout = checkout
         self.revision = revision
         self.fleet_file_digest = fleet_file_digest
         self.items = items
+        # ``checkout`` remains the trusted worktree for display and Git
+        # identity.  Source reads use the immutable Git-object snapshot when
+        # one is available, so a later edit to the worktree cannot alter an
+        # install that was already validated.
+        self.source_checkout = source_checkout or checkout
+        self.source_digests = source_digests or {}
+        self._snapshot_cleanup = snapshot_cleanup
+
+    def close(self) -> None:
+        cleanup = self._snapshot_cleanup
+        self._snapshot_cleanup = None
+        if cleanup is not None:
+            try:
+                cleanup.cleanup()
+            except Exception:
+                pass
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class FleetManager:
@@ -1110,7 +1232,13 @@ class FleetManager:
             raise FleetError("catalog revision is invalid", code="catalog_invalid", status=409)
         return revision.lower()
 
-    def _read_catalog(self, checkout: Path) -> _Catalog:
+    def _read_catalog(
+        self,
+        checkout: Path,
+        *,
+        revision: Optional[str] = None,
+        tracked_gitlinks: Optional[frozenset[str]] = None,
+    ) -> _Catalog:
         fleet_file = checkout / "fleet.json"
         fleet_digest = _catalog_file_digest(fleet_file)
         if fleet_digest is None:
@@ -1131,9 +1259,176 @@ class FleetManager:
             raise FleetError("fleet.json schema version is unsupported", code="catalog_invalid", status=409)
         if value.get("catalogId") != "herdr-fleet":
             raise FleetError("fleet.json catalog identity is invalid", code="catalog_invalid", status=409)
-        revision = self._revision(checkout)
-        items = self._parse_catalog_items(checkout, value)
+        if revision is None:
+            revision = self._revision(checkout)
+        items = self._parse_catalog_items(checkout, value, tracked_gitlinks=tracked_gitlinks)
         return _Catalog(checkout=checkout, revision=revision, fleet_file_digest=fleet_digest, items=items)
+
+    def _materialize_catalog_snapshot(self, checkout: Path, revision: str) -> tuple[Path, Any]:
+        """Materialize catalog bytes from one immutable Git tree object.
+
+        The checkout is validated separately, but its working tree can still
+        be edited by hooks or another local process between validation and a
+        filesystem read.  ``git archive <revision>`` reads the object database
+        directly, so the returned tree is bound to the revision that passed
+        the trust checks.
+        """
+
+        if not _HEX_RE.fullmatch(revision):
+            raise FleetError("catalog revision is invalid", code="catalog_invalid", status=409)
+        temporary = _SnapshotDirectory()
+        snapshot = temporary.path
+        assert snapshot is not None
+        git = self._git_executable()
+        command = [
+            git,
+            "-c",
+            "protocol.version=2",
+            "archive",
+            "--format=tar",
+            revision,
+            "--",
+            "fleet.json",
+            "skills",
+            "pi-extensions",
+        ]
+        process: Optional[subprocess.Popen[bytes]] = None
+        total_bytes = 0
+        member_count = 0
+
+        def fail(message: str, *, code: str = "catalog_invalid", status: int = 409) -> FleetError:
+            temporary.cleanup()
+            return FleetError(message, code=code, status=status)
+
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(checkout),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+            )
+            assert process.stdout is not None
+            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                for member in archive:
+                    member_count += 1
+                    if member_count > MAX_CATALOG_SNAPSHOT_ENTRIES:
+                        raise fail("catalog Git archive contains too many entries")
+                    name = member.name
+                    if not isinstance(name, str) or not name:
+                        raise fail("catalog Git archive contains an invalid path")
+                    parts = PurePosixPath(name).parts
+                    if (
+                        name.startswith("/")
+                        or any(part in {"", ".", ".."} for part in parts)
+                        or parts[0] not in {"fleet.json", "skills", "pi-extensions"}
+                        or (parts[0] == "fleet.json" and len(parts) != 1)
+                    ):
+                        raise fail("catalog Git archive contains an invalid path")
+                    destination = snapshot.joinpath(*parts)
+                    if _path_has_symlink_component(snapshot, destination):
+                        raise fail("catalog Git archive contains a symlink", code="catalog_invalid", status=409)
+                    if member.issym() or member.islnk() or member.isdev() or not (member.isdir() or member.isfile()):
+                        raise fail("catalog Git archive contains an unsupported entry")
+                    if member.isdir():
+                        destination.mkdir(parents=True, exist_ok=False)
+                        continue
+                    if member.size < 0 or member.size > MAX_CATALOG_SNAPSHOT_FILE_BYTES:
+                        raise fail("catalog Git archive contains an oversized file")
+                    total_bytes += member.size
+                    if total_bytes > MAX_CATALOG_SNAPSHOT_BYTES:
+                        raise fail("catalog Git archive is too large")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise fail("catalog Git archive is unreadable")
+                    with source, destination.open("xb") as target:
+                        remaining = member.size
+                        while remaining:
+                            chunk = source.read(min(1024 * 1024, remaining))
+                            if not chunk:
+                                raise fail("catalog Git archive is truncated")
+                            target.write(chunk)
+                            remaining -= len(chunk)
+                    try:
+                        os.chmod(destination, member.mode & 0o777)
+                    except OSError:
+                        pass
+            process.stdout.close()
+            try:
+                returncode = process.wait(timeout=self.timeout)
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                process.wait()
+                raise fail("Fleet operation timed out", code="fleet_timeout", status=504) from exc
+            if returncode != 0:
+                raise fail("catalog Git archive failed", code="catalog_git_error", status=502)
+            # The snapshot is private to this process and its bytes are
+            # already checked against the Git object.  Preserve Git modes so
+            # an installed copy remains writable where the catalog permits it.
+            snapshot.chmod(0o700)
+            return snapshot, temporary
+        except FleetError:
+            if process is not None and process.stdout is not None:
+                process.stdout.close()
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+            temporary.cleanup()
+            raise
+        except (OSError, tarfile.TarError, UnicodeError, ValueError) as exc:
+            if process is not None and process.stdout is not None:
+                process.stdout.close()
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+            temporary.cleanup()
+            raise FleetError("catalog Git archive is invalid", code="catalog_invalid", status=409) from exc
+
+    def _read_validated_catalog(self, checkout: Path, revision: str) -> _Catalog:
+        """Read the catalog manifest and sources from a validated Git snapshot."""
+
+        live_fleet_digest = _catalog_file_digest(checkout / "fleet.json")
+        if live_fleet_digest is None:
+            raise FleetError("fleet.json is required", code="catalog_invalid", status=409)
+        tracked_gitlinks = self._tracked_skill_gitlinks(checkout, revision=revision)
+        snapshot, cleanup = self._materialize_catalog_snapshot(checkout, revision)
+        try:
+            # Call the class implementation directly so a test or hook that
+            # wraps live-worktree reads cannot redirect this immutable parse.
+            snapshot_catalog = FleetManager._read_catalog(
+                self,
+                snapshot,
+                revision=revision,
+                tracked_gitlinks=tracked_gitlinks,
+            )
+            if snapshot_catalog.fleet_file_digest != live_fleet_digest:
+                raise FleetError("fleet.json changed during read", code="catalog_checkout_changed", status=409)
+            source_digests: dict[str, str] = {}
+            for item in snapshot_catalog.items:
+                if item.type not in {"skill", "pi_extension"}:
+                    continue
+                source_root_name = "skills" if item.type == "skill" else "pi-extensions"
+                source_prefix = source_root_name + "/"
+                if not item.source.startswith(source_prefix):
+                    raise FleetError("Fleet catalog source is invalid", code="catalog_invalid", status=409)
+                source = _resolved_child(
+                    snapshot / source_root_name,
+                    item.source[len(source_prefix) :],
+                    label="Fleet catalog source",
+                )
+                digest = _tree_digest(source)
+                if digest is None:
+                    raise FleetError("Fleet catalog source is unavailable", code="catalog_invalid", status=409)
+                source_digests[item.source] = digest
+            snapshot_catalog.checkout = checkout
+            snapshot_catalog.source_checkout = snapshot
+            snapshot_catalog.source_digests = source_digests
+            snapshot_catalog._snapshot_cleanup = cleanup
+            return snapshot_catalog
+        except Exception:
+            cleanup.cleanup()
+            raise
 
     def _parse_auth_env(self, value: Any) -> tuple[str, ...]:
         if value is None:
@@ -1380,7 +1675,7 @@ class FleetManager:
             )
         return specs
 
-    def _tracked_skill_gitlinks(self, checkout: Path) -> frozenset[str]:
+    def _tracked_skill_gitlinks(self, checkout: Path, *, revision: str = "HEAD") -> frozenset[str]:
         """Return skills-relative paths recorded as Git gitlinks.
 
         Git records a submodule as mode 160000, but a checkout may contain
@@ -1392,7 +1687,7 @@ class FleetManager:
 
         result = _git(
             self._git_executable(),
-            ["ls-tree", "-r", "-z", "--full-tree", "HEAD", "--", "skills"],
+            ["ls-tree", "-r", "-z", "--full-tree", revision, "--", "skills"],
             cwd=checkout,
             timeout=self.timeout,
             code="catalog_checkout_invalid",
@@ -1473,7 +1768,13 @@ class FleetManager:
             found.append((current_path.relative_to(root.parent).as_posix(), current_path))
         return found
 
-    def _parse_catalog_items(self, checkout: Path, value: dict[str, Any]) -> list[_CatalogItem]:
+    def _parse_catalog_items(
+        self,
+        checkout: Path,
+        value: dict[str, Any],
+        *,
+        tracked_gitlinks: Optional[frozenset[str]] = None,
+    ) -> list[_CatalogItem]:
         parsed: dict[str, _CatalogItem] = {}
         classifications = self._skill_classifications(checkout)
         # Flat names must be unique within one destination.  RocketBot is a
@@ -1551,7 +1852,8 @@ class FleetManager:
         # any concrete package under skills/.
         discovered_skill_paths: dict[str, tuple[Path, dict[str, Any]]] = {}
         skills_dir = checkout / "skills"
-        tracked_gitlinks = self._tracked_skill_gitlinks(checkout)
+        if tracked_gitlinks is None:
+            tracked_gitlinks = self._tracked_skill_gitlinks(checkout)
         excluded_gitlink_paths = frozenset(
             (skills_dir / PurePosixPath(relative)).resolve(strict=False)
             for relative in tracked_gitlinks
@@ -1871,7 +2173,7 @@ class FleetManager:
             )
         return list(sorted(parsed.values(), key=lambda item: (item.type, item.id)))
 
-    def _validate_trusted_checkout_for_read(self, checkout: Path, *, require_current: bool = True) -> None:
+    def _validate_trusted_checkout_for_read(self, checkout: Path, *, require_current: bool = True) -> str:
         """Validate a checkout without fetching or changing it.
 
         Inventory and actions share this read boundary.  A checkout is trusted
@@ -1893,6 +2195,7 @@ class FleetManager:
                 status=409,
             )
         git = self._git_executable()
+        initial_revision = self._revision(checkout)
         self._verify_remote(git, checkout)
         branch_result = _git(
             git,
@@ -1949,6 +2252,14 @@ class FleetManager:
                     code="catalog_checkout_stale",
                     status=409,
                 )
+        final_revision = self._revision(checkout)
+        if final_revision != initial_revision:
+            raise FleetError(
+                "managed catalog checkout changed during validation",
+                code="catalog_checkout_changed",
+                status=409,
+            )
+        return final_revision
 
     def _checkout_catalog(self, *, require_sync: bool = False) -> _Catalog:
         try:
@@ -1967,8 +2278,13 @@ class FleetManager:
             if require_sync:
                 raise FleetError("Fleet catalog is not synced", code="catalog_unavailable", status=503)
             raise FleetError("Fleet catalog is unavailable", code="catalog_unavailable", status=503)
-        self._validate_trusted_checkout_for_read(checkout)
-        return self._read_catalog(checkout)
+        revision = self._validate_trusted_checkout_for_read(checkout)
+        catalog = self._read_validated_catalog(checkout, revision)
+        # Bind the snapshot to a HEAD that is still current immediately before
+        # the caller can inspect or mutate an install target.
+        if self._validate_trusted_checkout_for_read(checkout) != revision:
+            raise FleetError("managed catalog checkout changed during read", code="catalog_checkout_changed", status=409)
+        return catalog
 
     # ------------------------------------------------------------------
     # Git synchronization
@@ -2032,6 +2348,28 @@ class FleetManager:
                 timeout=self.timeout,
                 code="catalog_sync_failed",
             )
+
+    def _complete_sync(self, checkout: Path, catalog: _Catalog) -> dict[str, Any]:
+        # The snapshot itself is immutable.  This final worktree check still
+        # makes the catalog state/reconciliation decision fail closed if HEAD
+        # or cleanliness changed while it was built.
+        self._validate_trusted_checkout_for_read(checkout, require_current=True)
+        state = self._load_state(strict=True)
+        state["catalog"] = {
+            "revision": catalog.revision,
+            "fleetFileDigest": catalog.fleet_file_digest,
+            "syncedAt": _now(),
+        }
+        self._save_state(state)
+        # Reconciliation intentionally stays inside this manager's critical
+        # section, but it does not call the public ``action`` method.  That
+        # keeps the operation's lock surface small and lets independent items
+        # continue after one item fails.
+        self._validate_trusted_checkout_for_read(checkout, require_current=True)
+        reconciliation = self._reconcile_managed_items(catalog, state)
+        response = self._sync_response(catalog, state=state)
+        response["reconciliation"] = reconciliation
+        return response
 
     def sync(self, body: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
         """Fast-forward the trusted catalog, reconcile managed items, and return inventory."""
@@ -2104,7 +2442,7 @@ class FleetManager:
                             code="catalog_checkout_conflict",
                             status=409,
                         )
-                    os.replace(temporary, checkout)
+                    _exclusive_move(temporary, checkout)
                 except FleetError:
                     # A failed clone can leave partial data, but only the
                     # unique temporary sibling belongs to this operation.
@@ -2112,32 +2450,23 @@ class FleetManager:
                     raise
                 except OSError as exc:
                     cleanup_temporary()
+                    if exc.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                        raise FleetError(
+                            "managed catalog checkout appeared during clone",
+                            code="catalog_checkout_conflict",
+                            status=409,
+                        ) from exc
                     raise FleetError("managed catalog checkout could not be promoted", code="catalog_checkout_failed", status=503) from exc
             # Fetch and fast-forward may run repository hooks or otherwise
             # leave files changed after the pre-fetch trust check.  Revalidate
             # the complete checkout boundary at the point where catalog bytes
             # are about to become actionable.
-            self._validate_trusted_checkout_for_read(checkout, require_current=True)
-            catalog = self._read_catalog(checkout)
-            state = self._load_state(strict=True)
-            state["catalog"] = {
-                "revision": catalog.revision,
-                "fleetFileDigest": catalog.fleet_file_digest,
-                "syncedAt": _now(),
-            }
-            self._save_state(state)
-            # Reconciliation intentionally stays inside this manager's
-            # critical section, but it does not call the public ``action``
-            # method.  That keeps the operation's lock surface small and lets
-            # independent items continue after one item fails.
-            # State persistence above is another seam at which a hook or an
-            # external process could dirty the checkout, so validate again
-            # immediately before any managed target is touched.
-            self._validate_trusted_checkout_for_read(checkout, require_current=True)
-            reconciliation = self._reconcile_managed_items(catalog, state)
-            response = self._sync_response(catalog, state=state)
-            response["reconciliation"] = reconciliation
-            return response
+            revision = self._validate_trusted_checkout_for_read(checkout, require_current=True)
+            catalog = self._read_validated_catalog(checkout, revision)
+            try:
+                return self._complete_sync(checkout, catalog)
+            finally:
+                catalog.close()
 
     # ------------------------------------------------------------------
     # Managed-item reconciliation
@@ -2212,6 +2541,30 @@ class FleetManager:
             code="fleet_target_changed",
             status=409,
         )
+
+    def _catalog_source(self, catalog: _Catalog, item: _CatalogItem) -> tuple[Optional[Path], Optional[str]]:
+        """Resolve an item source from the catalog's immutable snapshot."""
+
+        source_root_name = "skills" if item.type == "skill" else "pi-extensions"
+        source_prefix = source_root_name + "/"
+        if not item.source.startswith(source_prefix):
+            return None, None
+        source_checkout = getattr(catalog, "source_checkout", catalog.checkout)
+        try:
+            source = _resolved_child(
+                source_checkout / source_root_name,
+                item.source[len(source_prefix) :],
+                label="Fleet catalog source",
+            )
+        except FleetError:
+            return None, None
+        digest = _tree_digest(source)
+        if digest is None:
+            return None, None
+        expected_digest = getattr(catalog, "source_digests", {}).get(item.source)
+        if expected_digest is not None and digest != expected_digest:
+            return None, None
+        return source, digest
 
     def _rollback_reconciliation_install(
         self,
@@ -2385,26 +2738,7 @@ class FleetManager:
                 catalog_revision=catalog.revision,
             )
 
-        source_root_name = "skills" if item.type == "skill" else "pi-extensions"
-        source_prefix = source_root_name + "/"
-        if not item.source.startswith(source_prefix):
-            return self._reconciliation_item(
-                item,
-                status="failed",
-                state="unknown",
-                reason="catalog_source_invalid",
-                catalog_revision=catalog.revision,
-                action="update",
-                error_code="catalog_invalid",
-                error_message="Fleet catalog source is invalid",
-            )
-        source_relative = item.source[len(source_prefix) :]
-        try:
-            source = _resolved_child(catalog.checkout / source_root_name, source_relative, label="Fleet catalog source")
-            source_digest = _tree_digest(source)
-        except FleetError:
-            source = None
-            source_digest = None
+        source, source_digest = self._catalog_source(catalog, item)
         if source is None or source_digest is None:
             return self._reconciliation_item(
                 item,
@@ -2843,10 +3177,7 @@ class FleetManager:
         status, ownership, observed_digest = self._filesystem_item_state(item)
         managed = self._record_matches_item(managed_record, item)
         expected_digest = managed_record.get("digest") if managed_record else None
-        source_root = catalog.checkout / ("skills" if item.type == "skill" else "pi-extensions")
-        source_relative = item.source.split("/", 1)[1] if "/" in item.source else item.source
-        source_path = _resolved_child(source_root, source_relative, label="Fleet catalog source")
-        catalog_digest = _tree_digest(source_path)
+        _, catalog_digest = self._catalog_source(catalog, item)
         installed = status != "missing"
         content_current = bool(installed and catalog_digest and observed_digest == catalog_digest)
         current = content_current
@@ -3018,12 +3349,15 @@ class FleetManager:
                     **basics,
                     "generatedAt": _now(),
                 }
-            result = self._sync_response(catalog, state=state)
-            result["machine"] = _machine_metadata(self.environ, self.session)
-            result["auth"] = _redact_environment_auth(self.environ)
-            # Reorder is unnecessary for JSON, but keeping these at the top
-            # makes the response pleasant to inspect in curl and tests.
-            return result
+            try:
+                result = self._sync_response(catalog, state=state)
+                result["machine"] = _machine_metadata(self.environ, self.session)
+                result["auth"] = _redact_environment_auth(self.environ)
+                # Reorder is unnecessary for JSON, but keeping these at the top
+                # makes the response pleasant to inspect in curl and tests.
+                return result
+            finally:
+                catalog.close()
 
     # ------------------------------------------------------------------
     # Actions
@@ -3058,7 +3392,7 @@ class FleetManager:
                 shutil.copy2(source, temporary)
             if target.exists() or target.is_symlink():
                 raise FleetError("install target must be absent before atomic install", code="fleet_target_conflict", status=409)
-            os.replace(temporary, target)
+            _exclusive_move(temporary, target)
             temporary = None
             self._last_copy_identity = self._path_identity(target)
             if self._last_copy_identity is None:
@@ -3066,6 +3400,8 @@ class FleetManager:
         except FleetError:
             raise
         except OSError as exc:
+            if exc.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                raise FleetError("install target appeared during install", code="fleet_target_conflict", status=409) from exc
             raise FleetError("Fleet item could not be installed", code="fleet_install_failed", status=503) from exc
         finally:
             if temporary is not None:
@@ -3119,9 +3455,9 @@ class FleetManager:
                 return False
             if _path_has_symlink_component(root, lexical_target):
                 return False
-            os.replace(destination, lexical_target)
+            _exclusive_move(destination, lexical_target)
             restored_identity, restored_digest = self._target_snapshot(lexical_target)
-            if restored_identity != identity or restored_digest != digest:
+            if restored_identity is None or restored_digest != digest:
                 return False
             return True
         except OSError:
@@ -3165,42 +3501,52 @@ class FleetManager:
         if destination.exists() or destination.is_symlink():
             raise FleetError("Fleet quarantine is unavailable", code="fleet_quarantine_failed", status=503)
         try:
-            # os.replace is atomic on the supported local filesystems.  An
-            # EXDEV failure is surfaced without falling back to copy/delete.
-            os.replace(lexical_target, destination)
+            _exclusive_move(lexical_target, destination)
         except OSError as exc:
             raise FleetError("Fleet quarantine could not preserve the item", code="fleet_quarantine_failed", status=503) from exc
         if expected_identity is not None:
-            moved_identity, moved_digest = self._target_snapshot(destination)
-            target_reappeared = lexical_target.exists() or lexical_target.is_symlink()
-            if moved_identity != expected_identity or moved_digest != expected_digest or target_reappeared:
-                # A hook or concurrent process altered the object after the
-                # rename, or repopulated the live target before installation.
-                # If the quarantined object is still an ordinary safe object
-                # and the live target remains absent, return that actual
-                # object to its original location.  This avoids stranding a
-                # concurrently edited last-known-good copy.  If the live
-                # target was repopulated, or the quarantine object is no
-                # longer safe, leave it indexed for recovery instead.
-                restored = False
-                if (
-                    moved_identity is not None
-                    and moved_digest is not None
-                    and not target_reappeared
-                    and not _path_has_symlink_component(root, lexical_target)
-                ):
-                    restored = self._restore_quarantine_target(
-                        destination,
-                        lexical_target,
-                        root,
-                        expected_identity=moved_identity,
-                        expected_digest=moved_digest,
-                    )
-                error = self._target_changed_error()
-                error.quarantine_path = None if restored else destination
-                error.quarantine_identity = moved_identity
-                error.quarantine_digest = moved_digest
-                raise error
+            try:
+                moved_identity, moved_digest = self._target_snapshot(destination)
+                target_reappeared = lexical_target.exists() or lexical_target.is_symlink()
+                if moved_identity != expected_identity or moved_digest != expected_digest or target_reappeared:
+                    # A hook or concurrent process altered the object after the
+                    # rename, or repopulated the live target before installation.
+                    # If the quarantined object is still an ordinary safe object
+                    # and the live target remains absent, return that actual
+                    # object to its original location.  This avoids stranding a
+                    # concurrently edited last-known-good copy.  If the live
+                    # target was repopulated, or the quarantine object is no
+                    # longer safe, leave it indexed for recovery instead.
+                    restored = False
+                    if (
+                        moved_identity is not None
+                        and moved_digest is not None
+                        and not target_reappeared
+                        and not _path_has_symlink_component(root, lexical_target)
+                    ):
+                        restored = self._restore_quarantine_target(
+                            destination,
+                            lexical_target,
+                            root,
+                            expected_identity=moved_identity,
+                            expected_digest=moved_digest,
+                        )
+                    error = self._target_changed_error()
+                    error.quarantine_path = None if restored else destination
+                    error.quarantine_identity = moved_identity
+                    error.quarantine_digest = moved_digest
+                    raise error
+            except Exception as exc:
+                # Preserve the moved object even if a post-move verifier or
+                # recovery hook itself raises before it can attach metadata.
+                if getattr(exc, "quarantine_path", None) is None:
+                    try:
+                        exc.quarantine_path = destination
+                        exc.quarantine_identity = self._path_identity(destination)
+                        exc.quarantine_digest = _tree_digest(destination)
+                    except Exception:
+                        pass
+                raise
         return destination
 
     def _quarantine_record(
@@ -3266,13 +3612,39 @@ class FleetManager:
             raise FleetError("Fleet target is unreadable", code="fleet_target_unmanaged", status=409)
         if expected_identity is not None and (prior_identity != expected_identity or prior_digest != expected_digest):
             raise self._target_changed_error()
-        destination = self._quarantine_target(
-            item,
-            target,
-            root,
-            expected_identity=prior_identity,
-            expected_digest=prior_digest,
-        )
+        try:
+            destination = self._quarantine_target(
+                item,
+                target,
+                root,
+                expected_identity=prior_identity,
+                expected_digest=prior_digest,
+            )
+        except Exception as exc:
+            # A guarded quarantine can move the object and then discover a
+            # post-move race.  Preserve the attached recovery path before
+            # propagating the original error, while leaving the managed
+            # ownership record intact because removal did not complete.
+            moved_destination = getattr(exc, "quarantine_path", None)
+            if moved_destination is not None:
+                moved_identity = getattr(exc, "quarantine_identity", None) or self._path_identity(moved_destination)
+                moved_digest = getattr(exc, "quarantine_digest", None) or _tree_digest(moved_destination)
+                try:
+                    recovery_record = self._quarantine_record(
+                        item,
+                        moved_destination,
+                        digest=moved_digest or prior_digest,
+                        identity=moved_identity,
+                    )
+                except Exception:
+                    recovery_record = None
+                if recovery_record is not None:
+                    state.setdefault("quarantine", []).append(recovery_record)
+                    try:
+                        self._save_state(state)
+                    except Exception:
+                        pass
+            raise
         previous_managed = dict(record)
         managed.pop(record_key, None)
         quarantine_record = self._quarantine_record(
@@ -3422,6 +3794,13 @@ class FleetManager:
             raise FleetError("action must be install, update, remove, adopt, or checkAuth", code="invalid_fleet_action", status=400)
         with self._lock:
             catalog = self._checkout_catalog(require_sync=True)
+            try:
+                return self._action_with_catalog(catalog, item_id, normalized_action)
+            finally:
+                catalog.close()
+
+    def _action_with_catalog(self, catalog: _Catalog, item_id: str, normalized_action: str) -> dict[str, Any]:
+        with self._lock:
             state = self._load_state(strict=True)
             item = next((candidate for candidate in catalog.items if candidate.id == item_id), None)
             if item is None:
@@ -3463,6 +3842,15 @@ class FleetManager:
                     "generatedAt": _now(),
                 }
 
+            if normalized_action in {"install", "update", "adopt"} and any(
+                entry["recordId"] == item.id for entry in self._managed_tombstones(catalog, state)
+            ):
+                raise FleetError(
+                    "remove the stale managed Fleet tombstone before reusing this item ID",
+                    code="fleet_action_forbidden",
+                    status=409,
+                )
+
             if not _item_writable(item.writable, item.classification):
                 raise FleetError(
                     "this Fleet item is read-only or externally owned",
@@ -3477,13 +3865,7 @@ class FleetManager:
                 raise FleetError("CLI recipes are inventory-only", code="fleet_action_forbidden", status=409)
 
             self._prepare_install_roots()
-            source_root_name = "skills" if item.type == "skill" else "pi-extensions"
-            source_prefix = source_root_name + "/"
-            if not item.source.startswith(source_prefix):
-                raise FleetError("Fleet catalog source is invalid", code="catalog_invalid", status=409)
-            source_relative = item.source[len(source_prefix) :]
-            source_root = catalog.checkout / source_root_name
-            source = _resolved_child(source_root, source_relative, label="Fleet catalog source")
+            source, source_digest = self._catalog_source(catalog, item)
             root = self._item_root(item)
             lexical_target = root / PurePosixPath(item.target)
             if _path_has_symlink_component(root, lexical_target):
@@ -3507,16 +3889,14 @@ class FleetManager:
                     "generatedAt": _now(),
                 }
 
-            if not source.exists() or source.is_symlink() or not (source.is_dir() if item.type == "skill" else source.is_file() or source.is_dir()):
+            if source is None or source_digest is None or not source.exists() or source.is_symlink() or not (
+                source.is_dir() if item.type == "skill" else source.is_file() or source.is_dir()
+            ):
                 raise FleetError("Fleet catalog source is unavailable", code="catalog_invalid", status=409)
             if item.type == "skill" and not (source / "SKILL.md").is_file():
                 raise FleetError("Fleet skill source is unavailable", code="catalog_invalid", status=409)
             if _tree_has_symlink(source):
                 raise FleetError("catalog item contains a symlink", code="catalog_invalid", status=409)
-            source_digest = _tree_digest(source)
-            if source_digest is None:
-                raise FleetError("Fleet catalog source is unreadable", code="catalog_invalid", status=409)
-
             target_exists = lexical_target.exists() or lexical_target.is_symlink()
             if normalized_action == "adopt":
                 if not target_exists or lexical_target.is_symlink() or owns_target:
@@ -3574,91 +3954,135 @@ class FleetManager:
                 }
 
             prior_record = dict(record) if owns_target and isinstance(record, dict) else None
+            prior_catalog = state.get("catalog")
+            prior_catalog = dict(prior_catalog) if isinstance(prior_catalog, dict) else prior_catalog
             prior_identity, prior_digest = (
                 (None, None) if not target_exists else self._target_snapshot(target)
             )
             if target_exists and (prior_identity is None or prior_digest is None):
                 raise FleetError("Fleet target is unreadable", code="fleet_target_unmanaged", status=409)
-            destination = (
-                self._quarantine_target(
-                    item,
-                    target,
-                    root,
-                    expected_identity=prior_identity,
-                    expected_digest=prior_digest,
-                )
-                if target_exists
-                else None
-            )
-            quarantine_record = self._quarantine_record(
-                item,
-                destination,
-                digest=prior_digest,
-                identity=prior_identity,
-            )
+
+            destination: Optional[Path] = None
+            quarantine_record: Optional[dict[str, Any]] = None
+            quarantine_appended = False
             installed_identity: Optional[tuple[int, int]] = None
+            self._last_copy_identity = None
+            self._last_rollback_quarantine = None
+
+            def index_attached_quarantine(error: Exception) -> None:
+                nonlocal destination, quarantine_record, quarantine_appended
+                if destination is None:
+                    destination = getattr(error, "quarantine_path", None)
+                if destination is None or quarantine_record is not None:
+                    return
+                moved_identity = getattr(error, "quarantine_identity", None) or self._path_identity(destination)
+                moved_digest = getattr(error, "quarantine_digest", None) or _tree_digest(destination)
+                try:
+                    quarantine_record = self._quarantine_record(
+                        item,
+                        destination,
+                        digest=moved_digest or prior_digest,
+                        identity=moved_identity,
+                    )
+                except Exception:
+                    quarantine_record = None
+                if quarantine_record is not None:
+                    state.setdefault("quarantine", []).append(quarantine_record)
+                    quarantine_appended = True
+                    try:
+                        self._save_state(state)
+                    except Exception:
+                        pass
+
             try:
-                self._last_copy_identity = None
+                if target_exists:
+                    try:
+                        destination = self._quarantine_target(
+                            item,
+                            target,
+                            root,
+                            expected_identity=prior_identity,
+                            expected_digest=prior_digest,
+                        )
+                    except Exception as exc:
+                        index_attached_quarantine(exc)
+                        raise
+                quarantine_record = self._quarantine_record(
+                    item,
+                    destination,
+                    digest=prior_digest,
+                    identity=prior_identity,
+                )
+                if quarantine_record is not None:
+                    state.setdefault("quarantine", []).append(quarantine_record)
+                    quarantine_appended = True
+                    # Preserve the previous catalog and managed record before
+                    # the new bytes are promoted.  This is the recovery index
+                    # for a late copy or state-write failure.
+                    self._save_state(state)
                 self._copy_item(item, source, target)
                 installed_identity = self._last_copy_identity or self._path_identity(target)
                 verified_identity, verified_digest = self._target_snapshot(target)
                 if installed_identity is None or verified_identity != installed_identity or verified_digest != source_digest:
                     raise FleetError("installed Fleet item failed verification", code="fleet_install_failed", status=503)
-            except FleetError:
-                installed_identity = self._last_copy_identity or installed_identity
-                current_identity, current_digest = self._target_snapshot(lexical_target)
-                if (
-                    installed_identity is not None
-                    and current_identity == installed_identity
-                    and current_digest == source_digest
-                ):
-                    try:
-                        self._quarantine_target(
-                            item,
-                            target,
-                            root,
-                            expected_identity=installed_identity,
-                            expected_digest=source_digest,
-                        )
-                    except FleetError:
-                        pass
-                if destination is not None and destination.exists() and not destination.is_symlink():
-                    try:
-                        os.replace(destination, lexical_target)
-                    except OSError:
-                        pass
-                raise
-            if quarantine_record is not None:
-                state.setdefault("quarantine", []).append(quarantine_record)
-            managed[item.id] = {
-                "type": item.type,
-                "source": item.source,
-                "target": item.target,
-                "destination": item.destination,
-                "digest": source_digest,
-                "catalogRevision": catalog.revision,
-                "managedAt": _now(),
-            }
-            state["catalog"] = {
-                "revision": catalog.revision,
-                "fleetFileDigest": catalog.fleet_file_digest,
-                "syncedAt": state.get("catalog", {}).get("syncedAt") or _now(),
-            }
-            try:
+                managed[item.id] = {
+                    "type": item.type,
+                    "source": item.source,
+                    "target": item.target,
+                    "destination": item.destination,
+                    "digest": source_digest,
+                    "catalogRevision": catalog.revision,
+                    "managedAt": _now(),
+                }
+                state["catalog"] = {
+                    "revision": catalog.revision,
+                    "fleetFileDigest": catalog.fleet_file_digest,
+                    "syncedAt": state.get("catalog", {}).get("syncedAt") or _now(),
+                }
                 self._save_state(state)
-            except FleetError:
-                # Move the newly installed copy out of the live tree before
-                # restoring the last-known-good quarantined version.
-                failed_destination = self._quarantine_target(item, target, root)
-                if destination is not None and destination.exists() and not destination.is_symlink():
-                    try:
-                        os.replace(destination, lexical_target)
-                    except OSError:
-                        pass
+            except Exception as exc:
+                index_attached_quarantine(exc)
+                if installed_identity is None:
+                    installed_identity = self._last_copy_identity
+                try:
+                    rollback_restored = self._rollback_reconciliation_install(
+                        item,
+                        target,
+                        root,
+                        destination,
+                        installed_identity,
+                        source_digest,
+                        destination_identity=prior_identity,
+                        destination_digest=prior_digest,
+                    )
+                except Exception:
+                    rollback_restored = False
                 if prior_record is not None:
                     managed[item.id] = prior_record
                 else:
                     managed.pop(item.id, None)
+                if isinstance(prior_catalog, dict):
+                    state["catalog"] = prior_catalog
+                if quarantine_appended and rollback_restored:
+                    quarantine = state.get("quarantine")
+                    if isinstance(quarantine, list):
+                        state["quarantine"] = [entry for entry in quarantine if entry != quarantine_record]
+                failed_destination = self._last_rollback_quarantine
+                if failed_destination is not None:
+                    failed_identity = installed_identity or self._path_identity(failed_destination)
+                    failed_digest = _tree_digest(failed_destination) or source_digest
+                    failed_record = self._quarantine_record(
+                        item,
+                        failed_destination,
+                        digest=failed_digest,
+                        identity=failed_identity,
+                    )
+                    if failed_record is not None:
+                        state.setdefault("quarantine", []).append(failed_record)
+                try:
+                    self._save_state(state)
+                except Exception:
+                    pass
                 raise
             payload = self._item_payload(catalog, item, state)
             return {

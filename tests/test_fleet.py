@@ -1,6 +1,8 @@
 import hashlib
+import errno
 import json
 import os
+import platform
 import stat
 import subprocess
 import tempfile
@@ -523,14 +525,14 @@ class FleetBackendTests(unittest.TestCase):
         manager = self.sync_manager()
         manager.action("skill:personal/foo", "install")
         self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
-        original_read_catalog = manager._read_catalog
+        original_read_snapshot = manager._read_validated_catalog
 
-        def read_then_dirty(checkout):
-            catalog = original_read_catalog(checkout)
+        def read_then_dirty(checkout, revision):
+            catalog = original_read_snapshot(checkout, revision)
             (checkout / "post-read-hook-output").write_text("unexpected\n", encoding="utf-8")
             return catalog
 
-        with mock.patch.object(manager, "_read_catalog", side_effect=read_then_dirty):
+        with mock.patch.object(manager, "_read_validated_catalog", side_effect=read_then_dirty):
             with self.assertRaises(FleetError) as raised:
                 manager.sync()
         self.assertEqual(raised.exception.code, "catalog_dirty")
@@ -590,10 +592,58 @@ class FleetBackendTests(unittest.TestCase):
         self.assertTrue((manager.skills_root / "foo").exists())
         self.assertNotIn(tombstone["id"], {item["id"] for item in response["skills"] if not item.get("tombstone")})
 
+        # A retargeted item ID cannot reuse its stale ownership slot.  The
+        # old target remains owned until its Remove-only tombstone is cleared.
+        for action in ("install", "update", "adopt"):
+            with self.assertRaises(FleetError) as raised:
+                manager.action("skill:personal/foo", action)
+            self.assertEqual(raised.exception.code, "fleet_action_forbidden")
+        self.assertTrue((manager.skills_root / "foo").exists())
+        self.assertFalse((manager.skills_root / "foo-renamed").exists())
+
         removed = manager.action(tombstone["id"], "remove")
         self.assertEqual(removed["item"]["status"], "missing")
         self.assertFalse((manager.skills_root / "foo").exists())
         self.assertNotIn("skill:personal/foo", manager._load_state(strict=True)["managed"])
+
+        installed = manager.action("skill:personal/foo", "install")
+        self.assertEqual(installed["item"]["status"], "current")
+        self.assertEqual((manager.skills_root / "foo-renamed" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_sync_reconciliation_uses_git_snapshot_after_worktree_source_edit(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        source = manager.checkout / "skills" / "personal" / "foo" / "SKILL.md"
+        original_reconcile = manager._reconcile_managed_items
+
+        def edit_worktree_then_reconcile(catalog, state):
+            source.write_text("dirty after validation\n", encoding="utf-8")
+            return original_reconcile(catalog, state)
+
+        with mock.patch.object(manager, "_reconcile_managed_items", side_effect=edit_worktree_then_reconcile):
+            response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "updated")
+        self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v2\n")
+        self.assertEqual(source.read_text(encoding="utf-8"), "dirty after validation\n")
+
+    def test_action_install_uses_git_snapshot_after_worktree_source_edit(self):
+        manager = self.sync_manager()
+        source = manager.checkout / "skills" / "personal" / "foo" / "SKILL.md"
+        original_copy = manager._copy_item
+
+        def edit_worktree_then_copy(item, source_path, target):
+            source.write_text("dirty during install\n", encoding="utf-8")
+            return original_copy(item, source_path, target)
+
+        with mock.patch.object(manager, "_copy_item", side_effect=edit_worktree_then_copy):
+            response = manager.action("skill:personal/foo", "install")
+
+        self.assertEqual(response["item"]["status"], "current")
+        self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        self.assertEqual(source.read_text(encoding="utf-8"), "dirty during install\n")
 
     def test_malicious_managed_state_path_is_omitted_from_inventory_and_actions(self):
         manager = self.sync_manager()
@@ -726,24 +776,192 @@ class FleetBackendTests(unittest.TestCase):
         self.assertIn("skill:personal/foo", state["managed"])
         self.assertEqual(state.get("quarantine", []), [])
 
+    def test_remove_indexes_quarantine_when_post_move_guard_fails(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        target = manager.skills_root / "foo"
+        real_move = fleet_module._exclusive_move
+        raced = False
+
+        def move_then_repopulate(source, destination):
+            nonlocal raced
+            result = real_move(source, destination)
+            if not raced and Path(destination).parent == manager.quarantine_root:
+                raced = True
+                target.mkdir()
+                (target / "SKILL.md").write_text("concurrent remove replacement\n", encoding="utf-8")
+            return result
+
+        with mock.patch.object(fleet_module, "_exclusive_move", side_effect=move_then_repopulate):
+            with self.assertRaises(FleetError) as raised:
+                manager.action("skill:personal/foo", "remove")
+
+        self.assertEqual(raised.exception.code, "fleet_target_changed")
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "concurrent remove replacement\n")
+        state = manager._load_state(strict=True)
+        self.assertIn("skill:personal/foo", state["managed"])
+        self.assertTrue(state.get("quarantine"))
+        recovery = manager.quarantine_root / state["quarantine"][-1]["path"]
+        self.assertEqual((recovery / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_explicit_update_restores_state_after_late_atomic_state_failure(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        before = manager._load_state(strict=True)
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        self._git("-C", str(manager.checkout), "fetch", "origin")
+        self._git("-C", str(manager.checkout), "merge", "--ff-only", "origin/main")
+        real_replace = os.replace
+        state_replacements = 0
+
+        def replace_then_fail_final(source, destination):
+            nonlocal state_replacements
+            result = real_replace(source, destination)
+            if Path(destination) == manager.state_path:
+                state_replacements += 1
+                if state_replacements == 2:
+                    raise OSError("injected post-replace state failure")
+            return result
+
+        with mock.patch.object(fleet_module.os, "replace", side_effect=replace_then_fail_final):
+            with self.assertRaises(FleetError) as raised:
+                manager.action("skill:personal/foo", "update")
+
+        self.assertEqual(raised.exception.code, "fleet_state_write_failed")
+        self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        state = manager._load_state(strict=True)
+        self.assertEqual(state["managed"]["skill:personal/foo"]["digest"], before["managed"]["skill:personal/foo"]["digest"])
+        self.assertEqual(state["catalog"], before["catalog"])
+        self.assertTrue(state.get("quarantine"))
+        failed = manager.quarantine_root / state["quarantine"][-1]["path"]
+        self.assertEqual((failed / "SKILL.md").read_text(encoding="utf-8"), "foo-v2\n")
+
+    def test_explicit_update_rollback_never_removes_concurrent_replacement(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        before = manager._load_state(strict=True)
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        self._git("-C", str(manager.checkout), "fetch", "origin")
+        self._git("-C", str(manager.checkout), "merge", "--ff-only", "origin/main")
+        target = manager.skills_root / "foo"
+        original_copy = manager._copy_item
+
+        def copy_then_replace(item, source, destination):
+            original_copy(item, source, destination)
+            (destination / "SKILL.md").unlink()
+            destination.rmdir()
+            destination.mkdir()
+            (destination / "SKILL.md").write_text("concurrent explicit replacement\n", encoding="utf-8")
+            raise FleetError("injected post-copy failure", code="fleet_install_failed", status=503)
+
+        with mock.patch.object(manager, "_copy_item", side_effect=copy_then_replace):
+            with self.assertRaises(FleetError) as raised:
+                manager.action("skill:personal/foo", "update")
+
+        self.assertEqual(raised.exception.code, "fleet_install_failed")
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "concurrent explicit replacement\n")
+        state = manager._load_state(strict=True)
+        self.assertEqual(state["managed"]["skill:personal/foo"]["digest"], before["managed"]["skill:personal/foo"]["digest"])
+        self.assertTrue(state.get("quarantine"))
+        old_copy = manager.quarantine_root / state["quarantine"][0]["path"]
+        self.assertEqual((old_copy / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_exclusive_native_promotion_refuses_existing_destination(self):
+        if platform.system() != "Darwin":
+            self.skipTest("Darwin renamex_np coverage")
+        source = self.home / "native-source"
+        destination = self.home / "native-destination"
+        source.mkdir()
+        (source / "value").write_text("source\n", encoding="utf-8")
+        destination.mkdir()
+        (destination / "value").write_text("destination\n", encoding="utf-8")
+
+        with self.assertRaises(OSError) as raised:
+            fleet_module._exclusive_move(source, destination)
+
+        self.assertEqual(raised.exception.errno, errno.EEXIST)
+        self.assertTrue(source.exists())
+        self.assertEqual((destination / "value").read_text(encoding="utf-8"), "destination\n")
+
+    def test_copy_promotion_race_never_replaces_new_target(self):
+        manager = self.sync_manager()
+        manager._prepare_install_roots()
+        catalog = manager._checkout_catalog()
+        item = next(item for item in catalog.items if item.id == "skill:personal/foo")
+        source, source_digest = manager._catalog_source(catalog, item)
+        self.assertIsNotNone(source)
+        self.assertIsNotNone(source_digest)
+        target = manager.skills_root / "foo"
+        original_move = fleet_module._exclusive_move
+        raced = False
+
+        def create_then_promote(source_path, destination):
+            nonlocal raced
+            if not raced and destination == target:
+                raced = True
+                destination.mkdir()
+                (destination / "SKILL.md").write_text("created during promotion\n", encoding="utf-8")
+            return original_move(source_path, destination)
+
+        with mock.patch.object(fleet_module, "_exclusive_move", side_effect=create_then_promote):
+            with self.assertRaises(FleetError) as raised:
+                manager._copy_item(item, source, target)
+
+        self.assertEqual(raised.exception.code, "fleet_target_conflict")
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "created during promotion\n")
+
+    def test_restore_promotion_race_never_replaces_new_target(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        catalog = manager._checkout_catalog()
+        item = next(item for item in catalog.items if item.id == "skill:personal/foo")
+        target = manager.skills_root / "foo"
+        identity, digest = manager._target_snapshot(target)
+        destination = manager._quarantine_target(
+            item,
+            target,
+            manager.skills_root,
+            expected_identity=identity,
+            expected_digest=digest,
+        )
+        original_move = fleet_module._exclusive_move
+
+        def create_then_restore(source_path, destination_path):
+            target.mkdir()
+            (target / "SKILL.md").write_text("created during restore\n", encoding="utf-8")
+            return original_move(source_path, destination_path)
+
+        with mock.patch.object(fleet_module, "_exclusive_move", side_effect=create_then_restore):
+            restored = manager._restore_quarantine_target(
+                destination,
+                target,
+                manager.skills_root,
+                expected_identity=identity,
+                expected_digest=digest,
+            )
+
+        self.assertFalse(restored)
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "created during restore\n")
+        self.assertTrue(destination.exists())
+
     def test_reconciliation_guards_concurrent_replacement_after_quarantine(self):
         manager = self.sync_manager()
         manager.action("skill:personal/foo", "install")
         self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
         target = manager.skills_root / "foo"
-        real_replace = os.replace
+        real_move = fleet_module._exclusive_move
         raced = False
 
-        def replace_then_repopulate(source, destination):
+        def move_then_repopulate(source, destination):
             nonlocal raced
-            result = real_replace(source, destination)
+            result = real_move(source, destination)
             if not raced and Path(destination).parent == manager.quarantine_root:
                 raced = True
                 target.mkdir()
                 (target / "SKILL.md").write_text("concurrent copy\n", encoding="utf-8")
             return result
 
-        with mock.patch.object(fleet_module.os, "replace", side_effect=replace_then_repopulate):
+        with mock.patch.object(fleet_module, "_exclusive_move", side_effect=move_then_repopulate):
             response = manager.sync()
 
         outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
@@ -814,18 +1032,18 @@ class FleetBackendTests(unittest.TestCase):
         manager.action("skill:personal/foo", "install")
         self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
         target = manager.skills_root / "foo"
-        real_replace = os.replace
+        real_move = fleet_module._exclusive_move
         edited = False
 
-        def replace_then_edit(source, destination):
+        def move_then_edit(source, destination):
             nonlocal edited
-            result = real_replace(source, destination)
+            result = real_move(source, destination)
             if not edited and Path(destination).parent == manager.quarantine_root:
                 edited = True
                 (Path(destination) / "SKILL.md").write_text("edited while preserved\n", encoding="utf-8")
             return result
 
-        with mock.patch.object(fleet_module.os, "replace", side_effect=replace_then_edit):
+        with mock.patch.object(fleet_module, "_exclusive_move", side_effect=move_then_edit):
             response = manager.sync()
 
         outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")

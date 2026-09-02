@@ -481,6 +481,17 @@ explicit Remove quarantines a still-owned matching target, or safely clears
 the record when the target is already missing. Invalid state-derived paths are
 omitted from inventory and cannot become actions.
 
+When a catalog item keeps the same ID but changes its source, target, or
+destination, install, update, and adopt remain blocked until the old
+Remove-only tombstone is explicitly removed. This prevents the new item from
+overwriting the old state slot or orphaning its target.
+
+Catalog manifests and install sources are read from a bounded snapshot of the
+validated Git revision, so a worktree edit after validation cannot change the
+bytes promoted to a managed target. Target promotions use an exclusive
+no-clobber primitive; directory promotion fails closed where the platform
+cannot provide that guarantee.
+
 The response keeps the existing inventory fields and adds a `reconciliation`
 object. Its `counts` (also available as flat aliases) include `attempted`,
 `updated`, `current`, `restored`, `skipped`, `skippedDrifted`, `failed`, and
