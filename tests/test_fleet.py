@@ -1,8 +1,9 @@
-import hashlib
 import errno
+import hashlib
 import json
 import os
 import platform
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -610,6 +611,47 @@ class FleetBackendTests(unittest.TestCase):
         self.assertEqual(installed["item"]["status"], "current")
         self.assertEqual((manager.skills_root / "foo-renamed" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
 
+    def test_retarget_guard_is_not_hidden_by_bounded_tombstone_inventory(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        manifest = json.loads((self.repo / "fleet.json").read_text(encoding="utf-8"))
+        manifest["skills"] = [
+            {
+                "id": "skill:personal/foo",
+                "name": "foo",
+                "path": "skills/personal/foo",
+                "target": "foo-renamed",
+                "classification": "personal",
+                "writable": True,
+            }
+        ]
+        (self.repo / "fleet.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self._git("-C", str(self.repo), "add", ".")
+        self._git("-C", str(self.repo), "commit", "-m", "retarget with many stale records")
+        manager.sync()
+
+        state = manager._load_state(strict=True)
+        for number in range(fleet_module.MAX_MANAGED_TOMBSTONES):
+            record_id = f"aaa-stale-{number:04d}"
+            state["managed"][record_id] = {
+                "type": "skill",
+                "source": "skills/personal/foo",
+                "target": f"stale-{number:04d}",
+                "destination": "agents",
+                "digest": "0" * 64,
+                "catalogRevision": state["catalog"]["revision"],
+            }
+        manager._save_state(state)
+        before = manager._load_state(strict=True)
+
+        with self.assertRaises(FleetError) as raised:
+            manager.action("skill:personal/foo", "install")
+
+        self.assertEqual(raised.exception.code, "fleet_action_forbidden")
+        self.assertEqual(manager._load_state(strict=True), before)
+        self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        self.assertFalse((manager.skills_root / "foo-renamed").exists())
+
     def test_sync_reconciliation_uses_git_snapshot_after_worktree_source_edit(self):
         manager = self.sync_manager()
         manager.action("skill:personal/foo", "install")
@@ -662,6 +704,54 @@ class FleetBackendTests(unittest.TestCase):
         with self.assertRaises(FleetError) as raised:
             manager.action("evil", "remove")
         self.assertEqual(raised.exception.code, "fleet_item_not_found")
+
+    def test_malformed_quarantine_state_fails_before_remove_or_reconcile(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        valid_state = manager._load_state(strict=True)
+        malformed_state = dict(valid_state)
+        malformed_state["quarantine"] = {}
+        manager.state_path.write_text(json.dumps(malformed_state), encoding="utf-8")
+
+        catalog = manager._checkout_catalog()
+        try:
+            with self.assertRaises(FleetError) as raised:
+                manager._reconcile_managed_items(catalog, malformed_state)
+            self.assertEqual(raised.exception.code, "fleet_state_invalid")
+        finally:
+            catalog.close()
+
+        before = manager.state_path.read_bytes()
+        with self.assertRaises(FleetError) as raised:
+            manager.action("skill:personal/foo", "remove")
+        self.assertEqual(raised.exception.code, "fleet_state_invalid")
+        self.assertEqual(manager.state_path.read_bytes(), before)
+        self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+        with self.assertRaises(FleetError) as raised:
+            manager.sync()
+        self.assertEqual(raised.exception.code, "fleet_state_invalid")
+        self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_malformed_catalog_state_is_safe_for_inventory_and_checkauth(self):
+        manager = self.manager()
+        malformed_state = {"version": 1, "catalog": [], "managed": {}, "quarantine": []}
+        manager.state_path.parent.mkdir(parents=True, exist_ok=True)
+        manager.state_path.write_text(json.dumps(malformed_state), encoding="utf-8")
+
+        response = manager.inventory()
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["catalog"]["state"], "notSynced")
+        self.assertIsNone(response["catalogRevision"])
+
+        manager.state_path.unlink()
+        manager.sync()
+        valid_state = manager._load_state(strict=True)
+        valid_state["catalog"] = []
+        manager.state_path.write_text(json.dumps(valid_state), encoding="utf-8")
+        with self.assertRaises(FleetError) as raised:
+            manager.action("cli:slack", "checkAuth")
+        self.assertEqual(raised.exception.code, "fleet_state_invalid")
 
     def test_tombstone_remove_cleans_missing_target_without_reinstalling_it(self):
         manager = self.sync_manager()
@@ -750,6 +840,49 @@ class FleetBackendTests(unittest.TestCase):
         self.assertNotIn(candidate, occupied)
         self.assertEqual(candidate, FleetManager._tombstone_action_id(record, occupied))
 
+    def test_quarantine_capacity_is_reserved_before_remove(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        state = manager._load_state(strict=True)
+        state["quarantine"] = [
+            {
+                "itemId": f"reserved-{number}",
+                "type": "skill",
+                "path": f"reserved-{number}",
+                "digest": "0" * 64,
+            }
+            for number in range(fleet_module.MAX_STATE_QUARANTINE_RECORDS)
+        ]
+        manager._save_state(state)
+        before = manager.state_path.read_bytes()
+
+        with self.assertRaises(FleetError) as raised:
+            manager.action("skill:personal/foo", "remove")
+
+        self.assertEqual(raised.exception.code, "fleet_state_invalid")
+        self.assertEqual(manager.state_path.read_bytes(), before)
+        self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_save_state_rejects_oversized_recovery_record_before_replace(self):
+        manager = self.sync_manager()
+        before = manager.state_path.read_bytes()
+        state = manager._load_state(strict=True)
+        state["quarantine"] = [
+            {
+                "itemId": "skill:personal/foo",
+                "type": "skill",
+                "path": "oversized",
+                "digest": "0" * 64,
+                "payload": "x" * fleet_module.MAX_CATALOG_BYTES,
+            }
+        ]
+
+        with self.assertRaises(FleetError) as raised:
+            manager._save_state(state)
+
+        self.assertEqual(raised.exception.code, "fleet_state_write_failed")
+        self.assertEqual(manager.state_path.read_bytes(), before)
+
     def test_remove_repairs_state_after_atomic_state_replace_reports_failure(self):
         manager = self.sync_manager()
         manager.action("skill:personal/foo", "install")
@@ -801,8 +934,43 @@ class FleetBackendTests(unittest.TestCase):
         state = manager._load_state(strict=True)
         self.assertIn("skill:personal/foo", state["managed"])
         self.assertTrue(state.get("quarantine"))
+        for entry in state["quarantine"]:
+            self.assertTrue((manager.quarantine_root / entry["path"]).exists())
         recovery = manager.quarantine_root / state["quarantine"][-1]["path"]
         self.assertEqual((recovery / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_remove_does_not_index_restored_quarantine_as_a_ghost(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        target = manager.skills_root / "foo"
+        real_move = fleet_module._exclusive_move
+        original_snapshot = manager._target_snapshot
+        mismatched = False
+
+        def report_mismatched_quarantine_snapshot(path):
+            nonlocal mismatched
+            result = original_snapshot(path)
+            if not mismatched and Path(path).parent == manager.quarantine_root and result[0] is not None:
+                mismatched = True
+                return ((result[0][0], result[0][1] + 1), result[1])
+            return result
+
+        def restore_after_repopulation(destination, lexical_target, root, **kwargs):
+            real_move(destination, lexical_target)
+            return True
+
+        with mock.patch.object(manager, "_target_snapshot", side_effect=report_mismatched_quarantine_snapshot):
+            with mock.patch.object(manager, "_restore_quarantine_target", side_effect=restore_after_repopulation):
+                with self.assertRaises(FleetError) as raised:
+                    manager.action("skill:personal/foo", "remove")
+
+        self.assertEqual(raised.exception.code, "fleet_target_changed")
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        state = manager._load_state(strict=True)
+        self.assertIn("skill:personal/foo", state["managed"])
+        for entry in state.get("quarantine", []):
+            self.assertTrue((manager.quarantine_root / entry["path"]).exists())
+        self.assertEqual(state.get("quarantine", []), [])
 
     def test_explicit_update_restores_state_after_late_atomic_state_failure(self):
         manager = self.sync_manager()
@@ -943,6 +1111,115 @@ class FleetBackendTests(unittest.TestCase):
         self.assertFalse(restored)
         self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "created during restore\n")
         self.assertTrue(destination.exists())
+
+    def test_restore_promotion_rejects_byte_identical_inode_swap(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        catalog = manager._checkout_catalog()
+        self.addCleanup(catalog.close)
+        item = next(item for item in catalog.items if item.id == "skill:personal/foo")
+        target = manager.skills_root / "foo"
+        identity, digest = manager._target_snapshot(target)
+        destination = manager._quarantine_target(
+            item,
+            target,
+            manager.skills_root,
+            expected_identity=identity,
+            expected_digest=digest,
+        )
+        original_move = fleet_module._exclusive_move
+        swapped = False
+
+        def move_then_swap(source_path, destination_path):
+            nonlocal swapped
+            result = original_move(source_path, destination_path)
+            if not swapped and destination_path == target:
+                swapped = True
+                replacement = target.parent / ".byte-identical-swap"
+                shutil.copytree(target, replacement)
+                shutil.rmtree(target)
+                replacement.rename(target)
+            return result
+
+        with mock.patch.object(fleet_module, "_exclusive_move", side_effect=move_then_swap):
+            restored = manager._restore_quarantine_target(
+                destination,
+                target,
+                manager.skills_root,
+                expected_identity=identity,
+                expected_digest=digest,
+            )
+
+        self.assertFalse(restored)
+        self.assertNotEqual(manager._path_identity(target), identity)
+        self.assertEqual(_tree_digest(target), digest)
+        self.assertFalse(destination.exists())
+
+    def test_snapshot_cleanup_retries_after_failure(self):
+        cleanup = fleet_module._SnapshotDirectory()
+        snapshot = cleanup.path
+        self.assertIsNotNone(snapshot)
+        real_rmtree = fleet_module.shutil.rmtree
+        attempts = 0
+
+        def fail_once(path):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("injected cleanup failure")
+            return real_rmtree(path)
+
+        with mock.patch.object(fleet_module.shutil, "rmtree", side_effect=fail_once):
+            cleanup.cleanup()
+            self.assertEqual(cleanup.path, snapshot)
+            self.assertTrue(snapshot.exists())
+            cleanup.cleanup()
+
+        self.assertIsNone(cleanup.path)
+        self.assertFalse(snapshot.exists())
+
+    def test_catalog_snapshot_stream_timeout_kills_stalled_partial_archive(self):
+        manager = self.sync_manager()
+        revision = manager._revision(manager.checkout)
+        manager.timeout = 0.05
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b"\x00")
+        stream = os.fdopen(read_fd, "rb", buffering=0)
+
+        class StalledProcess:
+            def __init__(self):
+                self.stdout = stream
+                self.killed = False
+                self.waited = False
+
+            def poll(self):
+                return -9 if self.killed else None
+
+            def kill(self):
+                self.killed = True
+                nonlocal write_fd
+                if write_fd is not None:
+                    os.close(write_fd)
+                    write_fd = None
+
+            def wait(self, timeout=None):
+                self.waited = True
+                return 0
+
+        process = StalledProcess()
+        try:
+            with mock.patch.object(fleet_module.subprocess, "Popen", return_value=process):
+                with self.assertRaises(FleetError) as raised:
+                    manager._materialize_catalog_snapshot(manager.checkout, revision)
+        finally:
+            if write_fd is not None:
+                os.close(write_fd)
+            if not stream.closed:
+                stream.close()
+
+        self.assertEqual(raised.exception.code, "fleet_timeout")
+        self.assertTrue(process.killed)
+        self.assertTrue(process.waited)
 
     def test_reconciliation_guards_concurrent_replacement_after_quarantine(self):
         manager = self.sync_manager()

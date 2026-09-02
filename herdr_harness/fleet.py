@@ -23,6 +23,7 @@ import math
 import os
 import platform
 import re
+import select
 import shutil
 import subprocess
 import tempfile
@@ -46,6 +47,8 @@ MAX_ITEM_FILES = 4096
 MAX_ITEM_FILE_BYTES = 32 * 1024 * 1024
 MAX_CATALOG_SNAPSHOT_ENTRIES = 65536
 MAX_CATALOG_SNAPSHOT_FILE_BYTES = MAX_ITEM_FILE_BYTES
+MAX_STATE_CATALOG_FIELDS = 16
+MAX_STATE_QUARANTINE_RECORDS = 4096
 MAX_SUBPROCESS_SECONDS = 120.0
 DEFAULT_SUBPROCESS_SECONDS = 30.0
 LOCAL_CLI_COMMANDS = ("gh", "acli", "slack", "pi", "codex", "claude", "herdr")
@@ -360,7 +363,6 @@ class _SnapshotDirectory:
         path = self.path
         if path is None:
             return
-        self.path = None
         try:
             if path.is_dir() and not path.is_symlink():
                 shutil.rmtree(path)
@@ -368,12 +370,58 @@ class _SnapshotDirectory:
                 path.unlink()
         except OSError:
             pass
+        else:
+            # Keep the path as a retry handle when cleanup was interrupted.
+            # A failed rmtree can leave a partially removed tree, and dropping
+            # the only reference here would strand the remaining snapshot.
+            self.path = None
 
     def __del__(self) -> None:
         try:
             self.cleanup()
         except Exception:
             pass
+
+
+class _DeadlineReader:
+    """Make blocking reads from a Git archive subject to one deadline."""
+
+    _READ_CHUNK_BYTES = 1024 * 1024
+
+    def __init__(self, stream: Any, deadline: float) -> None:
+        self._stream = stream
+        self._deadline = deadline
+
+    def _wait_readable(self) -> None:
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("catalog Git archive stream timed out")
+        try:
+            readable, _, _ = select.select([self._stream], [], [], remaining)
+        except (OSError, TypeError, ValueError) as exc:
+            raise OSError("catalog Git archive stream is not readable") from exc
+        if not readable:
+            raise TimeoutError("catalog Git archive stream timed out")
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            size = self._READ_CHUNK_BYTES
+        self._wait_readable()
+        read_one = getattr(self._stream, "read1", None)
+        if read_one is not None:
+            return read_one(size)
+        return self._stream.read(size)
+
+    def readinto(self, buffer: Any) -> int:
+        size = len(buffer)
+        if size == 0:
+            return 0
+        chunk = self.read(min(size, self._READ_CHUNK_BYTES))
+        buffer[: len(chunk)] = chunk
+        return len(chunk)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
 
 
 def _lstat_identity(path: Path) -> Optional[tuple[int, int]]:
@@ -1159,7 +1207,23 @@ class FleetManager:
     # State and catalog discovery
 
     def _empty_state(self) -> dict[str, Any]:
-        return {"version": 1, "catalog": {}, "managed": {}}
+        return {"version": 1, "catalog": {}, "managed": {}, "quarantine": []}
+
+    @staticmethod
+    def _quarantine_entries(state: dict[str, Any], *, reserve: int = 0) -> list[Any]:
+        """Return the bounded recovery list, normalizing only its absence."""
+
+        if "quarantine" not in state:
+            state["quarantine"] = []
+        quarantine = state["quarantine"]
+        if (
+            not isinstance(quarantine, list)
+            or not isinstance(reserve, int)
+            or reserve < 0
+            or len(quarantine) > MAX_STATE_QUARANTINE_RECORDS - reserve
+        ):
+            raise FleetError("Fleet state is invalid", code="fleet_state_invalid", status=409)
+        return quarantine
 
     def _load_state(self, *, strict: bool = False) -> dict[str, Any]:
         if not self.state_path.exists():
@@ -1177,6 +1241,14 @@ class FleetManager:
             managed = value.get("managed", {})
             if not isinstance(managed, dict):
                 raise ValueError("invalid managed state")
+            catalog = value.get("catalog", {})
+            if not isinstance(catalog, dict) or len(catalog) > MAX_STATE_CATALOG_FIELDS:
+                raise ValueError("invalid catalog state")
+            quarantine = value.get("quarantine", [])
+            if not isinstance(quarantine, list) or len(quarantine) > MAX_STATE_QUARANTINE_RECORDS:
+                raise ValueError("invalid quarantine state")
+            value["catalog"] = catalog
+            value["quarantine"] = quarantine
             return value
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             if strict:
@@ -1189,11 +1261,13 @@ class FleetManager:
             parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             if self.state_path.is_symlink():
                 raise OSError("state path is a symlink")
+            encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            if len(encoded) >= MAX_CATALOG_BYTES:
+                raise OSError("state file too large")
             fd, temporary = tempfile.mkstemp(prefix=".fleet-state-", suffix=".tmp", dir=str(parent))
             temporary_path = Path(temporary)
             try:
                 os.fchmod(fd, 0o600)
-                encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
                 view = memoryview(encoded)
                 while view:
                     written = os.write(fd, view)
@@ -1293,6 +1367,7 @@ class FleetManager:
             "pi-extensions",
         ]
         process: Optional[subprocess.Popen[bytes]] = None
+        deadline = time.monotonic() + max(self.timeout, 0.001)
         total_bytes = 0
         member_count = 0
 
@@ -1309,7 +1384,8 @@ class FleetManager:
                 shell=False,
             )
             assert process.stdout is not None
-            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+            stream = _DeadlineReader(process.stdout, deadline)
+            with tarfile.open(fileobj=stream, mode="r|") as archive:
                 for member in archive:
                     member_count += 1
                     if member_count > MAX_CATALOG_SNAPSHOT_ENTRIES:
@@ -1355,8 +1431,11 @@ class FleetManager:
                     except OSError:
                         pass
             process.stdout.close()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("catalog Git archive stream timed out")
             try:
-                returncode = process.wait(timeout=self.timeout)
+                returncode = process.wait(timeout=remaining)
             except subprocess.TimeoutExpired as exc:
                 process.kill()
                 process.wait()
@@ -1376,6 +1455,14 @@ class FleetManager:
                 process.wait()
             temporary.cleanup()
             raise
+        except TimeoutError as exc:
+            if process is not None and process.stdout is not None:
+                process.stdout.close()
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+            temporary.cleanup()
+            raise FleetError("Fleet operation timed out", code="fleet_timeout", status=504) from exc
         except (OSError, tarfile.TarError, UnicodeError, ValueError) as exc:
             if process is not None and process.stdout is not None:
                 process.stdout.close()
@@ -2355,6 +2442,7 @@ class FleetManager:
         # or cleanliness changed while it was built.
         self._validate_trusted_checkout_for_read(checkout, require_current=True)
         state = self._load_state(strict=True)
+        self._quarantine_entries(state)
         state["catalog"] = {
             "revision": catalog.revision,
             "fleetFileDigest": catalog.fleet_file_digest,
@@ -2636,6 +2724,7 @@ class FleetManager:
         recorded digest may be replaced automatically.
         """
 
+        quarantine_entries = self._quarantine_entries(state)
         managed = state.get("managed", {})
         record = managed.get(item.id) if isinstance(managed, dict) else None
         if not isinstance(record, dict) or not self._record_matches_item(record, item):
@@ -2798,6 +2887,7 @@ class FleetManager:
 
         prior_record = dict(record)
         prior_digest = observed_digest
+        self._quarantine_entries(state, reserve=2)
         destination: Optional[Path] = None
         quarantine_record: Optional[dict[str, Any]] = None
         installed_identity: Optional[tuple[int, int]] = None
@@ -2825,7 +2915,7 @@ class FleetManager:
                 identity=observed_identity,
             )
             if quarantine_record is not None:
-                state.setdefault("quarantine", []).append(quarantine_record)
+                quarantine_entries.append(quarantine_record)
                 quarantine_appended = True
                 # Index the preserved copy before installing anything.  If a
                 # later state write or rollback fails, this record remains a
@@ -2877,7 +2967,7 @@ class FleetManager:
                 except FleetError:
                     quarantine_record = None
                 if quarantine_record is not None:
-                    state.setdefault("quarantine", []).append(quarantine_record)
+                    quarantine_entries.append(quarantine_record)
                     quarantine_appended = True
                     try:
                         self._save_state(state)
@@ -2907,9 +2997,8 @@ class FleetManager:
                 rollback_restored = False
             managed_map[item.id] = prior_record
             if quarantine_appended and rollback_restored:
-                quarantine = state.get("quarantine")
-                if isinstance(quarantine, list) and quarantine and quarantine[-1] == quarantine_record:
-                    quarantine.pop()
+                if quarantine_entries and quarantine_entries[-1] == quarantine_record:
+                    quarantine_entries.pop()
             failed_quarantine = self._last_rollback_quarantine
             if failed_quarantine is not None:
                 failed_record = self._quarantine_record(
@@ -2919,7 +3008,7 @@ class FleetManager:
                     identity=installed_identity,
                 )
                 if failed_record is not None:
-                    state.setdefault("quarantine", []).append(failed_record)
+                    quarantine_entries.append(failed_record)
             # Normally an atomic state write either succeeds or leaves the
             # previous file intact.  Re-persist the reverted in-memory state
             # as a best-effort repair for a write failure that happened after
@@ -2970,6 +3059,7 @@ class FleetManager:
     def _reconcile_managed_items(self, catalog: _Catalog, state: dict[str, Any]) -> dict[str, Any]:
         """Reconcile only catalog items proven managed by persisted state."""
 
+        self._quarantine_entries(state)
         managed = state.get("managed", {})
         outcomes: list[dict[str, Any]] = []
         if isinstance(managed, dict):
@@ -3457,7 +3547,7 @@ class FleetManager:
                 return False
             _exclusive_move(destination, lexical_target)
             restored_identity, restored_digest = self._target_snapshot(lexical_target)
-            if restored_identity is None or restored_digest != digest:
+            if restored_identity != identity or restored_digest != digest:
                 return False
             return True
         except OSError:
@@ -3539,11 +3629,16 @@ class FleetManager:
             except Exception as exc:
                 # Preserve the moved object even if a post-move verifier or
                 # recovery hook itself raises before it can attach metadata.
-                if getattr(exc, "quarantine_path", None) is None:
+                if not hasattr(exc, "quarantine_path"):
                     try:
-                        exc.quarantine_path = destination
-                        exc.quarantine_identity = self._path_identity(destination)
-                        exc.quarantine_digest = _tree_digest(destination)
+                        if (
+                            self._quarantine_path_is_safe(destination)
+                            and not destination.is_symlink()
+                            and destination.exists()
+                        ):
+                            exc.quarantine_path = destination
+                            exc.quarantine_identity = self._path_identity(destination)
+                            exc.quarantine_digest = _tree_digest(destination)
                     except Exception:
                         pass
                 raise
@@ -3558,6 +3653,12 @@ class FleetManager:
         identity: Optional[tuple[int, int]] = None,
     ) -> Optional[dict[str, Any]]:
         if destination is None:
+            return None
+        if (
+            not self._quarantine_path_is_safe(destination)
+            or destination.is_symlink()
+            or not destination.exists()
+        ):
             return None
         try:
             relative = destination.relative_to(self.quarantine_root).as_posix()
@@ -3585,6 +3686,7 @@ class FleetManager:
         expected_digest: Optional[str] = None,
         managed_key: Optional[str] = None,
     ) -> bool:
+        quarantine_entries = self._quarantine_entries(state)
         managed = state.get("managed", {})
         record_key = managed_key or item.id
         record = managed.get(record_key) if isinstance(managed, dict) else None
@@ -3612,6 +3714,8 @@ class FleetManager:
             raise FleetError("Fleet target is unreadable", code="fleet_target_unmanaged", status=409)
         if expected_identity is not None and (prior_identity != expected_identity or prior_digest != expected_digest):
             raise self._target_changed_error()
+        if target.exists():
+            self._quarantine_entries(state, reserve=1)
         try:
             destination = self._quarantine_target(
                 item,
@@ -3639,7 +3743,7 @@ class FleetManager:
                 except Exception:
                     recovery_record = None
                 if recovery_record is not None:
-                    state.setdefault("quarantine", []).append(recovery_record)
+                    quarantine_entries.append(recovery_record)
                     try:
                         self._save_state(state)
                     except Exception:
@@ -3647,17 +3751,18 @@ class FleetManager:
             raise
         previous_managed = dict(record)
         managed.pop(record_key, None)
-        quarantine_record = self._quarantine_record(
-            item,
-            destination,
-            digest=prior_digest,
-            identity=prior_identity,
-        )
-        if quarantine_record is not None:
-            state.setdefault("quarantine", []).append(quarantine_record)
+        quarantine_record: Optional[dict[str, Any]] = None
         try:
+            quarantine_record = self._quarantine_record(
+                item,
+                destination,
+                digest=prior_digest,
+                identity=prior_identity,
+            )
+            if quarantine_record is not None:
+                quarantine_entries.append(quarantine_record)
             self._save_state(state)
-        except FleetError:
+        except Exception:
             # Preserve the old ownership record if state persistence fails.
             managed[record_key] = previous_managed
             try:
@@ -3673,9 +3778,8 @@ class FleetManager:
                 # the quarantine record below remains the recovery handle.
                 restored = False
             if restored:
-                quarantine = state.get("quarantine")
-                if isinstance(quarantine, list) and quarantine and quarantine[-1] == quarantine_record:
-                    quarantine.pop()
+                if quarantine_entries and quarantine_entries[-1] == quarantine_record:
+                    quarantine_entries.pop()
             # Persist the restored managed record in both branches.  The
             # first save may have failed after its atomic replace, leaving the
             # file in the intermediate (ownership-removed) state.  A second
@@ -3691,6 +3795,7 @@ class FleetManager:
     def _remove_tombstone(self, catalog: _Catalog, state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
         """Explicitly remove a stale managed record and, if safe, its target."""
 
+        self._quarantine_entries(state)
         record_id = entry["recordId"]
         managed = state.get("managed", {})
         record = managed.get(record_id) if isinstance(managed, dict) else None
@@ -3802,6 +3907,7 @@ class FleetManager:
     def _action_with_catalog(self, catalog: _Catalog, item_id: str, normalized_action: str) -> dict[str, Any]:
         with self._lock:
             state = self._load_state(strict=True)
+            quarantine_entries = self._quarantine_entries(state)
             item = next((candidate for candidate in catalog.items if candidate.id == item_id), None)
             if item is None:
                 tombstone = next(
@@ -3842,9 +3948,7 @@ class FleetManager:
                     "generatedAt": _now(),
                 }
 
-            if normalized_action in {"install", "update", "adopt"} and any(
-                entry["recordId"] == item.id for entry in self._managed_tombstones(catalog, state)
-            ):
+            if normalized_action in {"install", "update", "adopt"} and isinstance(record, dict) and not self._record_matches_item(record, item):
                 raise FleetError(
                     "remove the stale managed Fleet tombstone before reusing this item ID",
                     code="fleet_action_forbidden",
@@ -3961,6 +4065,12 @@ class FleetManager:
             )
             if target_exists and (prior_identity is None or prior_digest is None):
                 raise FleetError("Fleet target is unreadable", code="fleet_target_unmanaged", status=409)
+            if normalized_action in {"install", "update"}:
+                # An update can retain both the old copy and a failed new
+                # copy in recovery.  Reserve both slots before touching the
+                # live target, so a full recovery list cannot force an
+                # unindexed move.
+                quarantine_entries = self._quarantine_entries(state, reserve=2)
 
             destination: Optional[Path] = None
             quarantine_record: Optional[dict[str, Any]] = None
@@ -3987,7 +4097,7 @@ class FleetManager:
                 except Exception:
                     quarantine_record = None
                 if quarantine_record is not None:
-                    state.setdefault("quarantine", []).append(quarantine_record)
+                    quarantine_entries.append(quarantine_record)
                     quarantine_appended = True
                     try:
                         self._save_state(state)
@@ -4014,7 +4124,7 @@ class FleetManager:
                     identity=prior_identity,
                 )
                 if quarantine_record is not None:
-                    state.setdefault("quarantine", []).append(quarantine_record)
+                    quarantine_entries.append(quarantine_record)
                     quarantine_appended = True
                     # Preserve the previous catalog and managed record before
                     # the new bytes are promoted.  This is the recovery index
@@ -4064,9 +4174,7 @@ class FleetManager:
                 if isinstance(prior_catalog, dict):
                     state["catalog"] = prior_catalog
                 if quarantine_appended and rollback_restored:
-                    quarantine = state.get("quarantine")
-                    if isinstance(quarantine, list):
-                        state["quarantine"] = [entry for entry in quarantine if entry != quarantine_record]
+                    quarantine_entries[:] = [entry for entry in quarantine_entries if entry != quarantine_record]
                 failed_destination = self._last_rollback_quarantine
                 if failed_destination is not None:
                     failed_identity = installed_identity or self._path_identity(failed_destination)
@@ -4078,7 +4186,7 @@ class FleetManager:
                         identity=failed_identity,
                     )
                     if failed_record is not None:
-                        state.setdefault("quarantine", []).append(failed_record)
+                        quarantine_entries.append(failed_record)
                 try:
                     self._save_state(state)
                 except Exception:
