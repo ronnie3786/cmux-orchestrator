@@ -99,7 +99,7 @@ enum FleetMachineRole: String, Codable, Hashable, Sendable {
 
     var label: String {
         switch self {
-        case .thisMac: "This Mac"
+        case .thisMac: "RocketBot"
         case .devBox: "DevBox"
         case .workMac: "Work Mac"
         case .node: "Node"

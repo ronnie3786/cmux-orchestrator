@@ -568,6 +568,7 @@ struct HerdrSidebarView: View {
     private func sidebarCountDetail(_ count: Int) -> String {
         switch model.sidebarRecency {
         case .today: "\(count) today"
+        case .last3Days: "\(count) in 3 days"
         case .thisWeek: "\(count) this week"
         case .all: "\(count) total shown"
         }

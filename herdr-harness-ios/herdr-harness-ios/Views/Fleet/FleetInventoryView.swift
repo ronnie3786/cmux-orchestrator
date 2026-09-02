@@ -55,7 +55,7 @@ struct FleetInventoryView: View {
 
     private var summaryHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Fleet", systemImage: "point.3.connected.trianglepath.dotted")
+            Label("Fleet", systemImage: "desktopcomputer")
                 .font(.largeTitle.bold())
                 .fontDesign(.rounded)
 

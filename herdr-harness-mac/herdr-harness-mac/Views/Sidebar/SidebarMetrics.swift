@@ -25,4 +25,7 @@ enum SidebarMetrics {
     static let projectRowHeight: CGFloat = 34
     static let tabRowHeight: CGFloat = 30
     static let chatRowHeight: CGFloat = 30
+    /// Fixed slot for the quick-star, so a star appearing on hover cannot shove
+    /// the status age sideways.
+    static let starSlotWidth: CGFloat = 16
 }

@@ -250,7 +250,7 @@ struct FleetTests {
         #expect(store.machines.count == source.count)
         #expect(store.machines.map(\.role) == [.workMac, .thisMac, .devBox])
         #expect(store.machines.map(\.kind) == [.macBookPro, .macStudio, .iMac])
-        #expect(store.machines.map(\.displayName) == ["Work Mac", "This Mac", "DevBox"])
+        #expect(store.machines.map(\.displayName) == ["Work Mac", "RocketBot", "DevBox"])
     }
 
     @Test("Encodes the backend action contract without a client machine id")

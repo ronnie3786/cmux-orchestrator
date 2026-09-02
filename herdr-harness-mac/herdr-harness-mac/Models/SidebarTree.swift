@@ -49,6 +49,19 @@ enum SidebarTree {
         var workspaceIDs: [String] { Array(Set(chats.map(\.workspaceID))).sorted() }
     }
 
+    /// Workspaces read alphabetically rather than in creation order.
+    ///
+    /// `number` is the order cmux happened to open them in, which is stable but
+    /// meaningless to a reader scanning for a project by name. Ties fall back to
+    /// `number` so the order stays deterministic when two workspaces share a
+    /// label, and comparison is `localizedStandardCompare` so "Herdr 10" sorts
+    /// after "Herdr 9" instead of before it.
+    static func byWorkspaceName(_ lhs: HerdrWorkspace, _ rhs: HerdrWorkspace) -> Bool {
+        let comparison = lhs.label.localizedStandardCompare(rhs.label)
+        if comparison != .orderedSame { return comparison == .orderedAscending }
+        return lhs.number < rhs.number
+    }
+
     static func build(
         workspaces: [HerdrWorkspace],
         query: String,
@@ -61,7 +74,7 @@ enum SidebarTree {
         calendar: Calendar = .autoupdatingCurrent
     ) -> [ProjectEntry] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return workspaces.sorted { $0.number < $1.number }.compactMap { workspace in
+        return workspaces.sorted(by: Self.byWorkspaceName).compactMap { workspace in
             buildEntry(
                 for: workspace,
                 query: trimmedQuery,
@@ -95,7 +108,7 @@ enum SidebarTree {
                 let lhsOrder = lhsMachine.flatMap { machineOrder[$0] } ?? Int.max
                 let rhsOrder = rhsMachine.flatMap { machineOrder[$0] } ?? Int.max
                 if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
-                return $0.number < $1.number
+                return byWorkspaceName($0, $1)
             }
             .compactMap { workspace in
                 let chats = workspace.panes
@@ -129,7 +142,7 @@ enum SidebarTree {
                 let lhsOrder = lhsMachine.flatMap { machineOrder[$0] } ?? Int.max
                 let rhsOrder = rhsMachine.flatMap { machineOrder[$0] } ?? Int.max
                 if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
-                return $0.number < $1.number
+                return byWorkspaceName($0, $1)
             }
             .compactMap { workspace in
                 let workspaceMatches = trimmedQuery.isEmpty

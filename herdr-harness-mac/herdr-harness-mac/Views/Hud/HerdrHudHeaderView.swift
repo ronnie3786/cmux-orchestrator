@@ -28,16 +28,19 @@ struct HerdrHudHeaderView: View {
             Spacer()
 
             if !session.exchanges.isEmpty {
+                // Reads as "start a new chat" rather than "destroy something":
+                // ending the thread is how you begin the next one, and a trash
+                // can made a routine action look consequential.
                 Button(action: clearHistory) {
-                    Image(systemName: "trash")
+                    Image(systemName: "square.and.pencil")
                         .herdrHitTarget()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
                 .disabled(session.isRunning)
-                .accessibilityLabel("End thread and clear HUD")
+                .accessibilityLabel("New chat")
                 .accessibilityIdentifier("hud-clear-history")
-                .help("End thread and clear HUD")
+                .help("End this thread and start a new chat")
             }
 
             Button(action: controller.collapse) {

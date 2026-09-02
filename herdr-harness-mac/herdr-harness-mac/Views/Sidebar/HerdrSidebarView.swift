@@ -749,6 +749,7 @@ struct HerdrSidebarView: View {
     private func sidebarCountDetail(_ count: Int) -> String {
         switch model.sidebarRecency {
         case .today: "\(count) today"
+        case .last3Days: "\(count) in 3 days"
         case .thisWeek: "\(count) this week"
         case .all: "\(count) total shown"
         }
@@ -871,7 +872,8 @@ struct HerdrSidebarView: View {
             isSelected: pane.id == model.selectedPaneID,
             isStarred: model.starredChatIDs.contains(pane.id),
             statusSince: statusSince(for: pane),
-            action: { open(pane) }
+            action: { open(pane) },
+            toggleStar: { model.toggleStarredChat(pane.id) }
         )
         .contextMenu {
             Button(

@@ -53,11 +53,62 @@ struct HerdrHudOrbView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
+    @State private var isDragging = false
+    @State private var lastTranslation: CGSize = .zero
 
     private let orbSize: CGFloat = 56
+    /// How far the pointer may slide before a press stops counting as a click.
+    /// Small enough that a deliberate drag is caught immediately, large enough
+    /// to survive the shake in an ordinary click.
+    private static let dragThreshold: CGFloat = 4
 
     var body: some View {
-        Button(action: controller.summon) {
+        orb
+            .contentShape(Circle())
+            // A plain Button fires on mouse-up wherever the pointer ended, so
+            // dragging the HUD by its orb expanded it on release. A press that
+            // travelled is a move; only a press that stayed put summons.
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let distance = hypot(value.translation.width, value.translation.height)
+                        if !isDragging, distance > Self.dragThreshold {
+                            isDragging = true
+                            // Absorb the pre-threshold slop so the panel does
+                            // not jump by it on the first move.
+                            lastTranslation = value.translation
+                        }
+                        guard isDragging else { return }
+                        controller.moveOrb(
+                            by: CGSize(
+                                width: value.translation.width - lastTranslation.width,
+                                height: value.translation.height - lastTranslation.height
+                            )
+                        )
+                        lastTranslation = value.translation
+                    }
+                    .onEnded { _ in
+                        let didDrag = isDragging
+                        isDragging = false
+                        lastTranslation = .zero
+                        if didDrag {
+                            controller.endOrbDrag()
+                        } else {
+                            controller.summon()
+                        }
+                    }
+            )
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { controller.summon() }
+            .onHover { isHovered = $0 }
+            .accessibilityIdentifier("hud-orb")
+            .accessibilityLabel("Herdr HUD")
+            .accessibilityValue(accessibilityValue)
+    }
+
+    private var orb: some View {
+        Group {
             ZStack {
                 Circle()
                     .fill(HerdrTheme.graphite)
@@ -107,11 +158,6 @@ struct HerdrHudOrbView: View {
             .brightness(isHovered ? 0.04 : 0)
             .animation(.snappy(duration: 0.15), value: isHovered)
         }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .accessibilityIdentifier("hud-orb")
-        .accessibilityLabel("Herdr HUD")
-        .accessibilityValue(accessibilityValue)
     }
 
     @ViewBuilder

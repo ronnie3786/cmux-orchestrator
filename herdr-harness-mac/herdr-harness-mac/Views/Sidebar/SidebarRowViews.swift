@@ -271,6 +271,9 @@ struct SidebarChatRow: View {
     var isStarred: Bool = false
     var statusSince: Date?
     let action: () -> Void
+    /// Quick-star. Nil leaves the row read-only, which is what the render
+    /// tests and any non-interactive host want.
+    var toggleStar: (() -> Void)?
     @State private var isHovering = false
 
     var body: some View {
@@ -288,14 +291,7 @@ struct SidebarChatRow: View {
 
                 Spacer()
 
-                if isStarred {
-                    Image(systemName: "star.fill")
-                        .herdrFont(
-                            size: SidebarMetrics.hierarchyIconSize,
-                            relativeTo: .caption2
-                        )
-                        .foregroundStyle(SidebarTone.status)
-                }
+                starControl
 
                 SidebarStatusAgeLabel(status: pane.agentStatus, since: statusSince)
                     .herdrFont(.caption, monospaced: true)
@@ -317,8 +313,40 @@ struct SidebarChatRow: View {
         .onHover { isHovering = $0 }
         .help(pane.displayTitle)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
-        .accessibilityElement(children: .combine)
+        // `.combine` would fold the star button into the row and lose its own
+        // action; `.contain` keeps it separately reachable.
+        .accessibilityElement(children: toggleStar == nil ? .combine : .contain)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// A starred row always shows its star; an unstarred one only offers the
+    /// control under the pointer, so the column stays quiet until you reach for
+    /// it. The slot keeps its width either way — a star that appears on hover
+    /// must not shove the status age sideways.
+    @ViewBuilder
+    private var starControl: some View {
+        if let toggleStar {
+            Button(action: toggleStar) {
+                Image(systemName: isStarred ? "star.fill" : "star")
+                    .herdrFont(size: SidebarMetrics.hierarchyIconSize, relativeTo: .caption2)
+                    .foregroundStyle(isStarred ? SidebarTone.status : HerdrTheme.muted)
+                    .frame(width: SidebarMetrics.starSlotWidth, height: SidebarMetrics.chatRowHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isStarred || isHovering ? 1 : 0)
+            .allowsHitTesting(isStarred || isHovering)
+            .help(isStarred ? "Unstar this chat" : "Star this chat")
+            .accessibilityLabel(isStarred ? "Unstar \(pane.displayTitle)" : "Star \(pane.displayTitle)")
+            .accessibilityIdentifier("sidebar-pane-star-\(pane.id)")
+        } else if isStarred {
+            Image(systemName: "star.fill")
+                .herdrFont(size: SidebarMetrics.hierarchyIconSize, relativeTo: .caption2)
+                .foregroundStyle(SidebarTone.status)
+                .frame(width: SidebarMetrics.starSlotWidth)
+        } else {
+            Color.clear.frame(width: SidebarMetrics.starSlotWidth)
+        }
     }
 
     private var accessibilityLabel: String {

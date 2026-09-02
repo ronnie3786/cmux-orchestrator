@@ -52,6 +52,22 @@ struct PaneSessionHeader: View {
                         .foregroundStyle(sessionStatusColor)
                         .fixedSize()
                         .accessibilityIdentifier("pane-session-status")
+
+                    if let lastActivityAt = pane.lastActivityAt {
+                        // Re-renders on its own so an open chat's staleness does
+                        // not freeze at whatever it read when the view mounted.
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            Text(Self.stalenessLabel(since: lastActivityAt, now: context.date))
+                                .herdrFont(.caption, monospaced: true)
+                                .foregroundStyle(Self.stalenessColor(since: lastActivityAt, now: context.date))
+                                .accessibilityLabel(
+                                    "Last activity \(HerdrTimestamp.spokenAge(since: lastActivityAt, now: context.date))"
+                                )
+                        }
+                        .fixedSize()
+                        .help("Last message in this chat")
+                        .accessibilityIdentifier("pane-session-last-activity")
+                    }
                 }
 
                 HStack(spacing: 3) {
@@ -141,6 +157,32 @@ struct PaneSessionHeader: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.compactionActivity)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.connection)
         .accessibilityElement(children: .contain)
+    }
+
+    /// How stale the chat is, as a clock time for today and a date beyond it.
+    ///
+    /// A bare age ("3d") answers "how long" but not "since when", and the point
+    /// of this label is deciding whether a chat is worth returning to. Today's
+    /// chats get a wall-clock time, yesterday's get named, and anything older
+    /// gets a date — each the shortest form that is still unambiguous.
+    static func stalenessLabel(since date: Date, now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> String {
+        if now.timeIntervalSince(date) < 60 { return "just now" }
+        if calendar.isDate(date, inSameDayAs: now) {
+            return date.formatted(.dateTime.hour().minute())
+        }
+        if calendar.isDateInYesterday(date) {
+            return "yesterday \(date.formatted(.dateTime.hour().minute()))"
+        }
+        if let sixDaysAgo = calendar.date(byAdding: .day, value: -6, to: now), date >= sixDaysAgo {
+            return date.formatted(.dateTime.weekday(.abbreviated))
+        }
+        return date.formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    /// Goes quiet for a fresh chat and warms up once it has been sitting for a
+    /// day, so staleness is scannable without reading the label.
+    static func stalenessColor(since date: Date, now: Date = Date()) -> Color {
+        now.timeIntervalSince(date) >= 86_400 ? HerdrTheme.muted : HerdrTheme.mist
     }
 
     private var showsCompaction: Bool {

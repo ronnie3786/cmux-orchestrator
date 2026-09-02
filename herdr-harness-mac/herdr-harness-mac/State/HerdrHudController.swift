@@ -193,6 +193,26 @@ final class HerdrHudController {
         }
     }
 
+    /// Nudge the panel while the orb is being dragged.
+    ///
+    /// `isMovableByWindowBackground` cannot serve here: a SwiftUI control
+    /// consumes the mouse-down before AppKit can start a window drag, so the
+    /// orb has to move the panel itself. Deltas rather than a cumulative
+    /// translation, and the y axis flips — SwiftUI measures down from the top,
+    /// AppKit screen coordinates up from the bottom.
+    func moveOrb(by delta: CGSize) {
+        guard let panel else { return }
+        panel.setFrameOrigin(
+            CGPoint(x: panel.frame.origin.x + delta.width, y: panel.frame.origin.y - delta.height)
+        )
+    }
+
+    /// Keep where the drag left the panel. Deliberately not `isProgrammaticMove`
+    /// — this is the user placing it, which is exactly what should persist.
+    func endOrbDrag() {
+        persistCurrentPlacement()
+    }
+
     /// Reveal every session the `+N` control had grouped away.
     func showAllChips() {
         chipRegroupTask?.cancel()

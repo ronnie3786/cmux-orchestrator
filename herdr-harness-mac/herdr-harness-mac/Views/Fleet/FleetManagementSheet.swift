@@ -82,7 +82,7 @@ struct FleetManagementSheet: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(HerdrTheme.signal.opacity(0.14))
                     .frame(width: 34, height: 34)
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: HerdrDetailScope.fleet.symbol)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(HerdrTheme.signal)
             }

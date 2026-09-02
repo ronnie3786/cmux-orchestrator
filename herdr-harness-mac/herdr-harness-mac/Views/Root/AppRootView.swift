@@ -51,7 +51,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "bubble.left.and.bubble.right"
         case .workspace: "rectangle.3.group"
         case .activeWork: "point.topleft.down.to.point.bottomright.curvepath"
-        case .fleet: "macwindow.on.rectangle"
+        case .fleet: "desktopcomputer"
         case .attention: "bell.badge"
         case .activity: "clock.arrow.circlepath"
         }
