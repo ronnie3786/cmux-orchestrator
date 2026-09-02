@@ -23,7 +23,7 @@ import math
 import os
 import platform
 import re
-import select
+import selectors
 import shutil
 import subprocess
 import tempfile
@@ -49,6 +49,7 @@ MAX_CATALOG_SNAPSHOT_ENTRIES = 65536
 MAX_CATALOG_SNAPSHOT_FILE_BYTES = MAX_ITEM_FILE_BYTES
 MAX_STATE_CATALOG_FIELDS = 16
 MAX_STATE_QUARANTINE_RECORDS = 4096
+MAX_STATE_MUTATION_HEADROOM_BYTES = 64 * 1024
 MAX_SUBPROCESS_SECONDS = 120.0
 DEFAULT_SUBPROCESS_SECONDS = 30.0
 LOCAL_CLI_COMMANDS = ("gh", "acli", "slack", "pi", "codex", "claude", "herdr")
@@ -396,10 +397,14 @@ class _DeadlineReader:
         remaining = self._deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("catalog Git archive stream timed out")
+        selector = selectors.DefaultSelector()
         try:
-            readable, _, _ = select.select([self._stream], [], [], remaining)
-        except (OSError, TypeError, ValueError) as exc:
+            selector.register(self._stream, selectors.EVENT_READ)
+            readable = selector.select(remaining)
+        except (OSError, KeyError, TypeError, ValueError) as exc:
             raise OSError("catalog Git archive stream is not readable") from exc
+        finally:
+            selector.close()
         if not readable:
             raise TimeoutError("catalog Git archive stream timed out")
 
@@ -811,12 +816,13 @@ class _Catalog:
 
     def close(self) -> None:
         cleanup = self._snapshot_cleanup
-        self._snapshot_cleanup = None
         if cleanup is not None:
             try:
                 cleanup.cleanup()
             except Exception:
                 pass
+            if getattr(cleanup, "path", None) is None:
+                self._snapshot_cleanup = None
 
     def __del__(self) -> None:
         try:
@@ -1210,6 +1216,19 @@ class FleetManager:
         return {"version": 1, "catalog": {}, "managed": {}, "quarantine": []}
 
     @staticmethod
+    def _require_state_mutation_headroom(state: dict[str, Any]) -> None:
+        """Fail before filesystem mutation when recovery state cannot fit."""
+
+        try:
+            encoded_size = len(
+                json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            )
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise FleetError("Fleet state is invalid", code="fleet_state_invalid", status=409) from exc
+        if encoded_size > MAX_CATALOG_BYTES - MAX_STATE_MUTATION_HEADROOM_BYTES:
+            raise FleetError("Fleet state has no recovery capacity", code="fleet_state_invalid", status=409)
+
+    @staticmethod
     def _quarantine_entries(state: dict[str, Any], *, reserve: int = 0) -> list[Any]:
         """Return the bounded recovery list, normalizing only its absence."""
 
@@ -1223,6 +1242,8 @@ class FleetManager:
             or len(quarantine) > MAX_STATE_QUARANTINE_RECORDS - reserve
         ):
             raise FleetError("Fleet state is invalid", code="fleet_state_invalid", status=409)
+        if reserve:
+            FleetManager._require_state_mutation_headroom(state)
         return quarantine
 
     def _load_state(self, *, strict: bool = False) -> dict[str, Any]:
@@ -1244,6 +1265,19 @@ class FleetManager:
             catalog = value.get("catalog", {})
             if not isinstance(catalog, dict) or len(catalog) > MAX_STATE_CATALOG_FIELDS:
                 raise ValueError("invalid catalog state")
+            revision = catalog.get("revision")
+            if revision is not None and (not isinstance(revision, str) or not _HEX_RE.fullmatch(revision)):
+                raise ValueError("invalid catalog revision")
+            fleet_file_digest = catalog.get("fleetFileDigest")
+            if fleet_file_digest is not None and (
+                not isinstance(fleet_file_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", fleet_file_digest)
+            ):
+                raise ValueError("invalid catalog digest")
+            synced_at = catalog.get("syncedAt")
+            if synced_at is not None and (
+                not isinstance(synced_at, str) or not synced_at or len(synced_at) > 64 or "\x00" in synced_at
+            ):
+                raise ValueError("invalid catalog sync timestamp")
             quarantine = value.get("quarantine", [])
             if not isinstance(quarantine, list) or len(quarantine) > MAX_STATE_QUARANTINE_RECORDS:
                 raise ValueError("invalid quarantine state")
@@ -2996,9 +3030,13 @@ class FleetManager:
                 # items, and never claim the old copy was restored.
                 rollback_restored = False
             managed_map[item.id] = prior_record
-            if quarantine_appended and rollback_restored:
-                if quarantine_entries and quarantine_entries[-1] == quarantine_record:
-                    quarantine_entries.pop()
+            if quarantine_appended:
+                self._drop_consumed_quarantine_record(
+                    quarantine_entries,
+                    quarantine_record,
+                    destination,
+                    restored=rollback_restored,
+                )
             failed_quarantine = self._last_rollback_quarantine
             if failed_quarantine is not None:
                 failed_record = self._quarantine_record(
@@ -3677,6 +3715,31 @@ class FleetManager:
             record["identity"] = {"device": identity[0], "inode": identity[1]}
         return record
 
+    def _drop_consumed_quarantine_record(
+        self,
+        entries: list[Any],
+        record: Optional[dict[str, Any]],
+        destination: Optional[Path],
+        *,
+        restored: bool,
+    ) -> None:
+        """Remove an index entry once its preserved object has been consumed."""
+
+        if record is None:
+            return
+        destination_present = False
+        if destination is not None:
+            try:
+                destination_present = (
+                    self._quarantine_path_is_safe(destination)
+                    and not destination.is_symlink()
+                    and destination.exists()
+                )
+            except OSError:
+                destination_present = False
+        if restored or not destination_present:
+            entries[:] = [entry for entry in entries if entry != record]
+
     def _remove_item(
         self,
         item: _CatalogItem,
@@ -3777,9 +3840,12 @@ class FleetManager:
                 # Keep the original state-write failure as the action error;
                 # the quarantine record below remains the recovery handle.
                 restored = False
-            if restored:
-                if quarantine_entries and quarantine_entries[-1] == quarantine_record:
-                    quarantine_entries.pop()
+            self._drop_consumed_quarantine_record(
+                quarantine_entries,
+                quarantine_record,
+                destination,
+                restored=restored,
+            )
             # Persist the restored managed record in both branches.  The
             # first save may have failed after its atomic replace, leaving the
             # file in the intermediate (ownership-removed) state.  A second
@@ -3948,7 +4014,11 @@ class FleetManager:
                     "generatedAt": _now(),
                 }
 
-            if normalized_action in {"install", "update", "adopt"} and isinstance(record, dict) and not self._record_matches_item(record, item):
+            if (
+                normalized_action in {"install", "update", "adopt"}
+                and item.id in managed
+                and not self._record_matches_item(record, item)
+            ):
                 raise FleetError(
                     "remove the stale managed Fleet tombstone before reusing this item ID",
                     code="fleet_action_forbidden",
@@ -4173,8 +4243,13 @@ class FleetManager:
                     managed.pop(item.id, None)
                 if isinstance(prior_catalog, dict):
                     state["catalog"] = prior_catalog
-                if quarantine_appended and rollback_restored:
-                    quarantine_entries[:] = [entry for entry in quarantine_entries if entry != quarantine_record]
+                if quarantine_appended:
+                    self._drop_consumed_quarantine_record(
+                        quarantine_entries,
+                        quarantine_record,
+                        destination,
+                        restored=rollback_restored,
+                    )
                 failed_destination = self._last_rollback_quarantine
                 if failed_destination is not None:
                     failed_identity = installed_identity or self._path_identity(failed_destination)

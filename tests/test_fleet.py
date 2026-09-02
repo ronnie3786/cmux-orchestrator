@@ -1,4 +1,5 @@
 import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -652,6 +653,20 @@ class FleetBackendTests(unittest.TestCase):
         self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
         self.assertFalse((manager.skills_root / "foo-renamed").exists())
 
+    def test_present_malformed_managed_slot_cannot_be_overwritten(self):
+        manager = self.sync_manager()
+        state = manager._load_state(strict=True)
+        state["managed"]["skill:personal/foo"] = "malformed-existing-slot"
+        manager._save_state(state)
+        before = manager.state_path.read_bytes()
+
+        with self.assertRaises(FleetError) as raised:
+            manager.action("skill:personal/foo", "install")
+
+        self.assertEqual(raised.exception.code, "fleet_action_forbidden")
+        self.assertEqual(manager.state_path.read_bytes(), before)
+        self.assertFalse((manager.skills_root / "foo").exists())
+
     def test_sync_reconciliation_uses_git_snapshot_after_worktree_source_edit(self):
         manager = self.sync_manager()
         manager.action("skill:personal/foo", "install")
@@ -735,7 +750,12 @@ class FleetBackendTests(unittest.TestCase):
 
     def test_malformed_catalog_state_is_safe_for_inventory_and_checkauth(self):
         manager = self.manager()
-        malformed_state = {"version": 1, "catalog": [], "managed": {}, "quarantine": []}
+        malformed_state = {
+            "version": 1,
+            "catalog": {"revision": [], "fleetFileDigest": "not-a-digest", "syncedAt": {}},
+            "managed": {},
+            "quarantine": [],
+        }
         manager.state_path.parent.mkdir(parents=True, exist_ok=True)
         manager.state_path.write_text(json.dumps(malformed_state), encoding="utf-8")
 
@@ -747,7 +767,7 @@ class FleetBackendTests(unittest.TestCase):
         manager.state_path.unlink()
         manager.sync()
         valid_state = manager._load_state(strict=True)
-        valid_state["catalog"] = []
+        valid_state["catalog"]["revision"] = []
         manager.state_path.write_text(json.dumps(valid_state), encoding="utf-8")
         with self.assertRaises(FleetError) as raised:
             manager.action("cli:slack", "checkAuth")
@@ -862,6 +882,39 @@ class FleetBackendTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "fleet_state_invalid")
         self.assertEqual(manager.state_path.read_bytes(), before)
         self.assertEqual((manager.skills_root / "foo" / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_near_limit_state_fails_before_update_moves_any_target(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        self._git("-C", str(manager.checkout), "fetch", "origin")
+        self._git("-C", str(manager.checkout), "merge", "--ff-only", "origin/main")
+        target = manager.skills_root / "foo"
+
+        state = manager._load_state(strict=True)
+        state["padding"] = ""
+        encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        desired_size = fleet_module.MAX_CATALOG_BYTES - 32
+        state["padding"] = "x" * (desired_size - len(encoded))
+        encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self.assertLess(len(encoded), fleet_module.MAX_CATALOG_BYTES)
+        self.assertGreater(len(encoded), fleet_module.MAX_CATALOG_BYTES - fleet_module.MAX_STATE_MUTATION_HEADROOM_BYTES)
+        manager.state_path.write_bytes(encoded)
+        moves = 0
+        real_move = fleet_module._exclusive_move
+
+        def count_move(source, destination):
+            nonlocal moves
+            moves += 1
+            return real_move(source, destination)
+
+        with mock.patch.object(fleet_module, "_exclusive_move", side_effect=count_move):
+            with self.assertRaises(FleetError) as raised:
+                manager.action("skill:personal/foo", "update")
+
+        self.assertEqual(raised.exception.code, "fleet_state_invalid")
+        self.assertEqual(moves, 0)
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
 
     def test_save_state_rejects_oversized_recovery_record_before_replace(self):
         manager = self.sync_manager()
@@ -1155,6 +1208,60 @@ class FleetBackendTests(unittest.TestCase):
         self.assertEqual(_tree_digest(target), digest)
         self.assertFalse(destination.exists())
 
+    def test_update_rollback_drops_consumed_recovery_after_identity_swap(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        before = manager._load_state(strict=True)
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        self._git("-C", str(manager.checkout), "fetch", "origin")
+        self._git("-C", str(manager.checkout), "merge", "--ff-only", "origin/main")
+        target = manager.skills_root / "foo"
+        real_save = manager._save_state
+        real_move = fleet_module._exclusive_move
+        save_calls = 0
+        swapped = False
+
+        def fail_final_state_write(state):
+            nonlocal save_calls
+            save_calls += 1
+            if save_calls == 2:
+                raise FleetError("injected state write failure", code="fleet_state_write_failed", status=503)
+            return real_save(state)
+
+        def move_then_swap_restored_copy(source, destination):
+            nonlocal swapped
+            result = real_move(source, destination)
+            destination = Path(destination)
+            source = Path(source)
+            if (
+                not swapped
+                and source.parent == manager.quarantine_root
+                and destination == target
+                and (target / "SKILL.md").read_text(encoding="utf-8") == "foo-v1\n"
+            ):
+                swapped = True
+                replacement = target.parent / ".byte-identical-rollback-swap"
+                shutil.copytree(target, replacement)
+                shutil.rmtree(target)
+                replacement.rename(target)
+            return result
+
+        with mock.patch.object(manager, "_save_state", side_effect=fail_final_state_write):
+            with mock.patch.object(fleet_module, "_exclusive_move", side_effect=move_then_swap_restored_copy):
+                with self.assertRaises(FleetError) as raised:
+                    manager.action("skill:personal/foo", "update")
+
+        self.assertEqual(raised.exception.code, "fleet_state_write_failed")
+        self.assertTrue(swapped)
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        state = manager._load_state(strict=True)
+        self.assertEqual(state["managed"]["skill:personal/foo"]["digest"], before["managed"]["skill:personal/foo"]["digest"])
+        self.assertEqual(len(state["quarantine"]), 1)
+        for entry in state["quarantine"]:
+            recovery = manager.quarantine_root / entry["path"]
+            self.assertTrue(recovery.exists())
+            self.assertEqual((recovery / "SKILL.md").read_text(encoding="utf-8"), "foo-v2\n")
+
     def test_snapshot_cleanup_retries_after_failure(self):
         cleanup = fleet_module._SnapshotDirectory()
         snapshot = cleanup.path
@@ -1177,6 +1284,67 @@ class FleetBackendTests(unittest.TestCase):
 
         self.assertIsNone(cleanup.path)
         self.assertFalse(snapshot.exists())
+
+    def test_catalog_retains_snapshot_cleanup_until_removal_succeeds(self):
+        cleanup = fleet_module._SnapshotDirectory()
+        snapshot = cleanup.path
+        self.assertIsNotNone(snapshot)
+        catalog = fleet_module._Catalog(
+            checkout=self.repo,
+            revision="a" * 40,
+            fleet_file_digest="b" * 64,
+            items=[],
+            snapshot_cleanup=cleanup,
+        )
+        real_rmtree = fleet_module.shutil.rmtree
+        attempts = 0
+
+        def fail_twice(path):
+            nonlocal attempts
+            attempts += 1
+            if attempts <= 2:
+                raise OSError("injected catalog cleanup failure")
+            return real_rmtree(path)
+
+        with mock.patch.object(fleet_module.shutil, "rmtree", side_effect=fail_twice):
+            catalog.close()
+            self.assertIs(catalog._snapshot_cleanup, cleanup)
+            self.assertTrue(snapshot.exists())
+            catalog.close()
+            self.assertIs(catalog._snapshot_cleanup, cleanup)
+            self.assertTrue(snapshot.exists())
+            catalog.close()
+
+        self.assertIsNone(catalog._snapshot_cleanup)
+        self.assertFalse(snapshot.exists())
+
+    def test_deadline_reader_supports_descriptor_above_fd_setsize(self):
+        read_fd, write_fd = os.pipe()
+        high_fd = None
+        stream = None
+        try:
+            try:
+                high_fd = fcntl.fcntl(read_fd, fcntl.F_DUPFD, 1100)
+            except OSError as exc:
+                self.skipTest(f"high descriptor unavailable: {exc}")
+            os.close(read_fd)
+            read_fd = -1
+            os.write(write_fd, b"x")
+            os.close(write_fd)
+            write_fd = -1
+            stream = os.fdopen(high_fd, "rb", buffering=0)
+            high_fd = None
+            reader = fleet_module._DeadlineReader(stream, fleet_module.time.monotonic() + 1.0)
+            self.assertEqual(reader.read(1), b"x")
+        finally:
+            if stream is not None:
+                stream.close()
+            if high_fd is not None:
+                os.close(high_fd)
+            if read_fd >= 0:
+                os.close(read_fd)
+            if write_fd >= 0:
+                os.close(write_fd)
 
     def test_catalog_snapshot_stream_timeout_kills_stalled_partial_archive(self):
         manager = self.sync_manager()
