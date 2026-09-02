@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import stat
@@ -8,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import herdr_harness.fleet as fleet_module
 from herdr_harness.fleet import FleetError, FleetManager, _run_command, _tree_digest, _which
 from herdr_harness.server import HTTPValidationError, make_handler
 
@@ -500,6 +502,364 @@ class FleetBackendTests(unittest.TestCase):
         )
         self.assertEqual(reconciliation["items"], reconciliation["outcomes"])
         self.assertNotIn("stdout", json.dumps(response))
+
+    def test_sync_revalidates_checkout_after_fetch_before_any_install(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        original_sync_existing = manager._sync_existing
+
+        def sync_then_dirty(checkout):
+            original_sync_existing(checkout)
+            (checkout / "post-fetch-hook-output").write_text("unexpected\n", encoding="utf-8")
+
+        with mock.patch.object(manager, "_sync_existing", side_effect=sync_then_dirty):
+            with self.assertRaises(FleetError) as raised:
+                manager.sync()
+        self.assertEqual(raised.exception.code, "catalog_dirty")
+        self.assertEqual((manager.skills_root / "foo/SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_sync_revalidates_checkout_again_before_reconciliation(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        original_read_catalog = manager._read_catalog
+
+        def read_then_dirty(checkout):
+            catalog = original_read_catalog(checkout)
+            (checkout / "post-read-hook-output").write_text("unexpected\n", encoding="utf-8")
+            return catalog
+
+        with mock.patch.object(manager, "_read_catalog", side_effect=read_then_dirty):
+            with self.assertRaises(FleetError) as raised:
+                manager.sync()
+        self.assertEqual(raised.exception.code, "catalog_dirty")
+        self.assertEqual((manager.skills_root / "foo/SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_deleted_managed_record_is_remove_only_tombstone_until_explicit_cleanup(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        source = self.repo / "skills/personal/foo/SKILL.md"
+        source.unlink()
+        source.parent.rmdir()
+        self._git("-C", str(self.repo), "add", "-A")
+        self._git("-C", str(self.repo), "commit", "-m", "remove catalog skill")
+
+        response = manager.sync()
+        tombstone = next(item for item in response["items"] if item.get("tombstone"))
+        self.assertEqual(tombstone["ownership"], "managed")
+        self.assertFalse(tombstone["installable"])
+        self.assertEqual(tombstone["status"], "unknown")
+        self.assertEqual(response["catalog"]["itemCounts"]["skills"], 1)
+        self.assertEqual(response["reconciliation"]["skipped"], 1)
+        with self.assertRaises(FleetError) as raised:
+            manager.action(tombstone["id"], "update")
+        self.assertEqual(raised.exception.code, "fleet_action_forbidden")
+
+        removed = manager.action(tombstone["id"], "remove")
+        self.assertEqual(removed["item"]["status"], "missing")
+        self.assertNotIn("skill:personal/foo", manager._load_state(strict=True)["managed"])
+        self.assertFalse((manager.skills_root / "foo").exists())
+
+    def test_retargeted_same_id_keeps_old_target_as_deterministic_tombstone(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        manifest = json.loads((self.repo / "fleet.json").read_text(encoding="utf-8"))
+        manifest["skills"] = [
+            {
+                "id": "skill:personal/foo",
+                "name": "foo",
+                "path": "skills/personal/foo",
+                "target": "foo-renamed",
+                "classification": "personal",
+                "writable": True,
+            }
+        ]
+        (self.repo / "fleet.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self._git("-C", str(self.repo), "add", ".")
+        self._git("-C", str(self.repo), "commit", "-m", "retarget catalog skill")
+
+        response = manager.sync()
+        tombstones = [item for item in response["items"] if item.get("tombstone")]
+        self.assertEqual(len(tombstones), 1)
+        tombstone = tombstones[0]
+        self.assertEqual(tombstone["tombstoneReason"], "catalog_item_retargeted")
+        self.assertFalse(tombstone["installable"])
+        self.assertEqual(response["catalog"]["itemCounts"]["skills"], 2)
+        self.assertEqual(response["reconciliation"]["skipped"], 1)
+        self.assertTrue((manager.skills_root / "foo").exists())
+        self.assertNotIn(tombstone["id"], {item["id"] for item in response["skills"] if not item.get("tombstone")})
+
+        removed = manager.action(tombstone["id"], "remove")
+        self.assertEqual(removed["item"]["status"], "missing")
+        self.assertFalse((manager.skills_root / "foo").exists())
+        self.assertNotIn("skill:personal/foo", manager._load_state(strict=True)["managed"])
+
+    def test_malicious_managed_state_path_is_omitted_from_inventory_and_actions(self):
+        manager = self.sync_manager()
+        state = manager._load_state(strict=True)
+        state["managed"]["evil"] = {
+            "type": "skill",
+            "source": "skills/../../outside",
+            "target": "../outside",
+            "destination": "agents",
+            "digest": "0" * 64,
+        }
+        manager._save_state(state)
+
+        response = manager.inventory()
+        self.assertFalse(any(item.get("managedRecordId") == "evil" for item in response["items"]))
+        with self.assertRaises(FleetError) as raised:
+            manager.action("evil", "remove")
+        self.assertEqual(raised.exception.code, "fleet_item_not_found")
+
+    def test_tombstone_remove_cleans_missing_target_without_reinstalling_it(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        (manager.skills_root / "foo" / "SKILL.md").unlink()
+        (manager.skills_root / "foo").rmdir()
+        source = self.repo / "skills/personal/foo/SKILL.md"
+        source.unlink()
+        source.parent.rmdir()
+        self._git("-C", str(self.repo), "add", "-A")
+        self._git("-C", str(self.repo), "commit", "-m", "remove missing catalog skill")
+
+        response = manager.sync()
+        tombstone = next(item for item in response["items"] if item.get("tombstone"))
+        removed = manager.action(tombstone["id"], "remove")
+        self.assertEqual(removed["item"]["status"], "missing")
+        self.assertNotIn("skill:personal/foo", manager._load_state(strict=True)["managed"])
+
+    def test_tombstone_with_symlinked_target_is_visible_but_remove_is_guarded(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        target = manager.skills_root / "foo"
+        target.rename(manager.home / "old-managed-copy")
+        outside = manager.home / "outside"
+        outside.mkdir()
+        target.symlink_to(outside, target_is_directory=True)
+        source = self.repo / "skills/personal/foo/SKILL.md"
+        source.unlink()
+        source.parent.rmdir()
+        self._git("-C", str(self.repo), "add", "-A")
+        self._git("-C", str(self.repo), "commit", "-m", "remove symlinked catalog skill")
+
+        response = manager.sync()
+        tombstone = next(item for item in response["items"] if item.get("tombstone"))
+        with self.assertRaises(FleetError) as raised:
+            manager.action(tombstone["id"], "remove")
+        self.assertEqual(raised.exception.code, "fleet_target_unmanaged")
+        self.assertTrue(target.is_symlink())
+        self.assertEqual(target.resolve(), outside.resolve())
+
+    def test_tombstone_action_id_changes_deterministically_when_catalog_id_collides(self):
+        record = {
+            "id": "old-item",
+            "type": "skill",
+            "source": "skills/personal/old",
+            "target": "old",
+            "destination": "agents",
+            "digest": "0" * 64,
+        }
+        first = FleetManager._tombstone_action_id(record, set())
+        second = FleetManager._tombstone_action_id(record, {first})
+        self.assertNotEqual(first, second)
+        self.assertEqual(second, FleetManager._tombstone_action_id(record, {first}))
+
+    def test_tombstone_action_id_exhausts_full_digest_collisions(self):
+        record = {
+            "id": "old-item",
+            "type": "skill",
+            "source": "skills/personal/old",
+            "target": "old",
+            "destination": "agents",
+            "digest": "0" * 64,
+        }
+        identity = json.dumps(
+            {
+                "id": record["id"],
+                "type": record["type"],
+                "source": record["source"],
+                "target": record["target"],
+                "destination": record["destination"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(identity).hexdigest()
+        occupied = {
+            "managed-tombstone:" + digest[:32],
+            "managed-tombstone-record:" + digest[:32],
+            "managed-tombstone-record:" + digest,
+        }
+        occupied.update(f"managed-tombstone-record:{digest}-{number}" for number in range(1, 9))
+
+        candidate = FleetManager._tombstone_action_id(record, occupied)
+
+        self.assertEqual(candidate, f"managed-tombstone-record:{digest}-9")
+        self.assertNotIn(candidate, occupied)
+        self.assertEqual(candidate, FleetManager._tombstone_action_id(record, occupied))
+
+    def test_remove_repairs_state_after_atomic_state_replace_reports_failure(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        target = manager.skills_root / "foo"
+        real_replace = os.replace
+        state_replace_failed = False
+
+        def replace_then_fail_once(source, destination):
+            nonlocal state_replace_failed
+            result = real_replace(source, destination)
+            if Path(destination) == manager.state_path and not state_replace_failed:
+                state_replace_failed = True
+                raise OSError("injected post-replace state failure")
+            return result
+
+        with mock.patch.object(fleet_module.os, "replace", side_effect=replace_then_fail_once):
+            with self.assertRaises(FleetError) as raised:
+                manager.action("skill:personal/foo", "remove")
+
+        self.assertEqual(raised.exception.code, "fleet_state_write_failed")
+        self.assertTrue(target.exists())
+        self.assertEqual(target.joinpath("SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+        state = manager._load_state(strict=True)
+        self.assertIn("skill:personal/foo", state["managed"])
+        self.assertEqual(state.get("quarantine", []), [])
+
+    def test_reconciliation_guards_concurrent_replacement_after_quarantine(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        target = manager.skills_root / "foo"
+        real_replace = os.replace
+        raced = False
+
+        def replace_then_repopulate(source, destination):
+            nonlocal raced
+            result = real_replace(source, destination)
+            if not raced and Path(destination).parent == manager.quarantine_root:
+                raced = True
+                target.mkdir()
+                (target / "SKILL.md").write_text("concurrent copy\n", encoding="utf-8")
+            return result
+
+        with mock.patch.object(fleet_module.os, "replace", side_effect=replace_then_repopulate):
+            response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "skipped")
+        self.assertEqual(outcome["reason"], "target_changed_during_reconcile")
+        self.assertFalse(outcome["rollback"]["restored"])
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "concurrent copy\n")
+        state = manager._load_state(strict=True)
+        recovery = state.get("quarantine", [])
+        self.assertTrue(recovery)
+        recovery_path = manager.quarantine_root / recovery[-1]["path"]
+        self.assertTrue(recovery_path.exists())
+        self.assertEqual((recovery_path / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
+
+    def test_reconciliation_guards_target_swap_between_snapshot_and_quarantine(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        target = manager.skills_root / "foo"
+        original_snapshot = manager._target_snapshot
+        swapped = False
+
+        def snapshot_then_swap(path):
+            nonlocal swapped
+            result = original_snapshot(path)
+            if not swapped and path == target:
+                swapped = True
+                (path / "SKILL.md").unlink()
+                path.rmdir()
+                path.mkdir()
+                (path / "SKILL.md").write_text("swapped before quarantine\n", encoding="utf-8")
+            return result
+
+        with mock.patch.object(manager, "_target_snapshot", side_effect=snapshot_then_swap):
+            response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "skipped")
+        self.assertEqual(outcome["reason"], "target_changed_during_reconcile")
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "swapped before quarantine\n")
+
+    def test_reconciliation_rollback_never_removes_concurrent_replacement(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        target = manager.skills_root / "foo"
+        original_copy = manager._copy_item
+
+        def copy_then_replace(item, source, destination):
+            original_copy(item, source, destination)
+            (destination / "SKILL.md").unlink()
+            destination.rmdir()
+            destination.mkdir()
+            (destination / "SKILL.md").write_text("concurrent replacement\n", encoding="utf-8")
+            raise FleetError("injected post-copy failure", code="fleet_install_failed", status=503)
+
+        with mock.patch.object(manager, "_copy_item", side_effect=copy_then_replace):
+            response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertFalse(outcome["rollback"]["restored"])
+        self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "concurrent replacement\n")
+        self.assertTrue(manager.quarantine_root.joinpath(next(iter(manager._load_state(strict=True)["quarantine"]))["path"]).exists())
+
+    def test_quarantine_edit_is_restored_or_indexed_never_stranded(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        target = manager.skills_root / "foo"
+        real_replace = os.replace
+        edited = False
+
+        def replace_then_edit(source, destination):
+            nonlocal edited
+            result = real_replace(source, destination)
+            if not edited and Path(destination).parent == manager.quarantine_root:
+                edited = True
+                (Path(destination) / "SKILL.md").write_text("edited while preserved\n", encoding="utf-8")
+            return result
+
+        with mock.patch.object(fleet_module.os, "replace", side_effect=replace_then_edit):
+            response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "skipped")
+        self.assertTrue(target.exists() or manager._load_state(strict=True).get("quarantine"))
+        if target.exists():
+            self.assertEqual((target / "SKILL.md").read_text(encoding="utf-8"), "edited while preserved\n")
+
+    def test_reconciliation_keeps_recovery_record_when_state_write_and_restore_fail(self):
+        manager = self.sync_manager()
+        manager.action("skill:personal/foo", "install")
+        self._commit_catalog_change("skills/personal/foo/SKILL.md", "foo-v2\n")
+        original_save = manager._save_state
+        calls = 0
+
+        def save_with_final_failure(state):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise FleetError("injected state write failure", code="fleet_state_write_failed", status=503)
+            return original_save(state)
+
+        with mock.patch.object(manager, "_save_state", side_effect=save_with_final_failure):
+            with mock.patch.object(manager, "_restore_quarantine_target", return_value=False):
+                response = manager.sync()
+
+        outcome = next(item for item in response["reconciliation"]["items"] if item["itemId"] == "skill:personal/foo")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertFalse(outcome["rollback"]["restored"])
+        state = manager._load_state(strict=True)
+        self.assertTrue(state.get("quarantine"))
+        recovery = manager.quarantine_root / state["quarantine"][-1]["path"]
+        self.assertTrue(recovery.exists())
+        self.assertEqual((recovery / "SKILL.md").read_text(encoding="utf-8"), "foo-v1\n")
 
     def test_production_rejects_local_repository_override(self):
         production_environment = dict(self.environ)

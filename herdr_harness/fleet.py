@@ -37,6 +37,7 @@ DEFAULT_CATALOG_RELATIVE_PATH = ".local/share/herdr-fleet/personal-claude-plugin
 DEFAULT_STATE_RELATIVE_PATH = ".local/share/herdr-fleet/state.json"
 MAX_CATALOG_BYTES = 4 * 1024 * 1024
 MAX_CATALOG_ITEMS = 1024
+MAX_MANAGED_TOMBSTONES = 1024
 MAX_ITEM_FILES = 4096
 MAX_ITEM_FILE_BYTES = 32 * 1024 * 1024
 MAX_SUBPROCESS_SECONDS = 120.0
@@ -709,6 +710,11 @@ class FleetManager:
         self.timeout = _subprocess_timeout(self.environ)
         self.session = session or str(self.environ.get("HERDR_SESSION") or "")
         self._lock = threading.RLock()
+        # A copy wrapper can report an error after its atomic replace.  Keep
+        # the identity produced by the copy primitive so rollback never has
+        # to infer Herdr ownership from a digest alone.
+        self._last_copy_identity: Optional[tuple[int, int]] = None
+        self._last_rollback_quarantine: Optional[Path] = None
 
     def _checkout_candidates(self) -> list[Path]:
         if self._checkout_explicit:
@@ -832,6 +838,49 @@ class FleetManager:
         return self.skills_root
 
     @staticmethod
+    def _strict_managed_record(record_id: Any, record: Any) -> Optional[dict[str, Any]]:
+        """Return only safe ownership fields from an old state record.
+
+        Persisted state is not a catalog trust boundary.  In particular, do
+        not resolve a state-derived path until its item type, source, target,
+        and destination have each passed the same constrained path rules used
+        for catalog entries.  Unknown metadata is deliberately discarded.
+        """
+
+        try:
+            safe_id = _safe_item_id(record_id, "managed item id")
+            if not isinstance(record, dict):
+                return None
+            item_type = record.get("type")
+            if item_type not in {"skill", "pi_extension"}:
+                return None
+            source = _safe_relative(record.get("source"), "managed source")
+            prefix = "skills/" if item_type == "skill" else "pi-extensions/"
+            if not source.startswith(prefix):
+                return None
+            _safe_relative(source[len(prefix) :], "managed source")
+            target = _safe_relative(record.get("target"), "managed target")
+            if any(ord(character) < 0x20 or ord(character) == 0x7F for character in f"{source}/{target}"):
+                return None
+            destination = record.get("destination", "agents")
+            allowed_destinations = {"agents", "rocketbot"} if item_type == "skill" else {"agents"}
+            if not isinstance(destination, str) or destination not in allowed_destinations:
+                return None
+            digest = record.get("digest")
+            if digest is not None and (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+                return None
+        except FleetError:
+            return None
+        return {
+            "id": safe_id,
+            "type": item_type,
+            "source": source,
+            "target": target,
+            "destination": destination,
+            "digest": digest,
+        }
+
+    @staticmethod
     def _record_matches_item(record: Any, item: _CatalogItem) -> bool:
         """Return whether persisted ownership belongs to this exact target.
 
@@ -840,13 +889,149 @@ class FleetManager:
         compatibility without allowing a record to cross safe roots.
         """
 
-        if not isinstance(record, dict):
+        safe_record = FleetManager._strict_managed_record(item.id, record)
+        if safe_record is None:
             return False
-        if record.get("type") != item.type or record.get("source") != item.source or record.get("target") != item.target:
+        if safe_record["type"] != item.type or safe_record["source"] != item.source or safe_record["target"] != item.target:
             return False
         if item.type == "skill":
-            return record.get("destination", "agents") == item.destination
+            return safe_record["destination"] == item.destination
         return True
+
+    @staticmethod
+    def _tombstone_action_id(record: dict[str, Any], occupied: set[str]) -> str:
+        """Build a stable, non-path-derived action id for a stale record."""
+
+        identity = json.dumps(
+            {
+                "id": record["id"],
+                "type": record["type"],
+                "source": record["source"],
+                "target": record["target"],
+                "destination": record["destination"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(identity).hexdigest()
+        for prefix in ("managed-tombstone:", "managed-tombstone-record:"):
+            candidate = prefix + digest[:32]
+            if candidate not in occupied:
+                return candidate
+
+        # Preserve the original full-digest spelling when it is available,
+        # then keep extending the deterministic namespace until a genuinely
+        # free id is found.  A catalog is allowed to contain arbitrary safe
+        # ids, so even the full digest can be occupied by another item.
+        candidate = "managed-tombstone-record:" + digest
+        if candidate not in occupied:
+            return candidate
+        collision = 1
+        while True:
+            candidate = f"managed-tombstone-record:{digest}-{collision}"
+            if candidate not in occupied:
+                return candidate
+            collision += 1
+
+    @staticmethod
+    def _tombstone_name(record: dict[str, Any]) -> str:
+        """Return a bounded name that does not disclose a stale full path."""
+
+        name = record.get("name")
+        if isinstance(name, str) and _SAFE_NAME_RE.fullmatch(name):
+            return name
+        return "Managed skill" if record["type"] == "skill" else "Managed Pi extension"
+
+    def _managed_tombstones(
+        self,
+        catalog: _Catalog,
+        state: dict[str, Any],
+        *,
+        limit: int = MAX_MANAGED_TOMBSTONES,
+    ) -> list[dict[str, Any]]:
+        """Build safe Remove-only rows for managed records absent from catalog."""
+
+        managed = state.get("managed", {})
+        if not isinstance(managed, dict):
+            return []
+        catalog_by_id = {item.id: item for item in catalog.items}
+        occupied = set(catalog_by_id)
+        tombstones: list[dict[str, Any]] = []
+        for raw_id in sorted(managed):
+            if len(tombstones) >= limit:
+                break
+            raw_record = managed.get(raw_id)
+            record = self._strict_managed_record(raw_id, raw_record)
+            if record is None:
+                # Malformed state is never promoted to an actionable row.
+                continue
+            current = catalog_by_id.get(record["id"])
+            if (
+                current is not None
+                and current.type in {"skill", "pi_extension"}
+                and _item_writable(current.writable, current.classification)
+                and self._record_matches_item(raw_record, current)
+            ):
+                continue
+            action_id = self._tombstone_action_id(record, occupied)
+            occupied.add(action_id)
+            if current is None:
+                reason = "catalog_item_removed"
+            elif (
+                current.type != record["type"]
+                or current.source != record["source"]
+                or current.target != record["target"]
+                or current.destination != record["destination"]
+            ):
+                reason = "catalog_item_retargeted"
+            else:
+                reason = "catalog_item_changed"
+            item = _CatalogItem(
+                item_id=action_id,
+                item_type=record["type"],
+                name=self._tombstone_name(raw_record),
+                source=record["source"],
+                target=record["target"],
+                writable=True,
+                classification="managed",
+                destination=record["destination"],
+            )
+            tombstones.append(
+                {
+                    "item": item,
+                    "record": record,
+                    "recordId": record["id"],
+                    "actionId": action_id,
+                    "reason": reason,
+                }
+            )
+        return tombstones
+
+    @staticmethod
+    def _tombstone_payload(entry: dict[str, Any]) -> dict[str, Any]:
+        item = entry["item"]
+        record = entry["record"]
+        return {
+            "id": item.id,
+            "type": item.type,
+            "name": item.name,
+            "source": record["source"],
+            "target": FleetManager._target_display(item),
+            "status": "unknown",
+            "installed": None,
+            "current": False,
+            "drifted": False,
+            "outdated": False,
+            "missing": None,
+            "managed": True,
+            "ownership": "managed",
+            "classification": "managed",
+            "canAdopt": False,
+            "installable": False,
+            "tombstone": True,
+            "managedRecordId": entry["recordId"],
+            "tombstoneReason": entry["reason"],
+        }
 
     # ------------------------------------------------------------------
     # State and catalog discovery
@@ -1928,6 +2113,11 @@ class FleetManager:
                 except OSError as exc:
                     cleanup_temporary()
                     raise FleetError("managed catalog checkout could not be promoted", code="catalog_checkout_failed", status=503) from exc
+            # Fetch and fast-forward may run repository hooks or otherwise
+            # leave files changed after the pre-fetch trust check.  Revalidate
+            # the complete checkout boundary at the point where catalog bytes
+            # are about to become actionable.
+            self._validate_trusted_checkout_for_read(checkout, require_current=True)
             catalog = self._read_catalog(checkout)
             state = self._load_state(strict=True)
             state["catalog"] = {
@@ -1940,6 +2130,10 @@ class FleetManager:
             # critical section, but it does not call the public ``action``
             # method.  That keeps the operation's lock surface small and lets
             # independent items continue after one item fails.
+            # State persistence above is another seam at which a hook or an
+            # external process could dirty the checkout, so validate again
+            # immediately before any managed target is touched.
+            self._validate_trusted_checkout_for_read(checkout, require_current=True)
             reconciliation = self._reconcile_managed_items(catalog, state)
             response = self._sync_response(catalog, state=state)
             response["reconciliation"] = reconciliation
@@ -2000,6 +2194,25 @@ class FleetManager:
             return None
         return stat_result.st_dev, stat_result.st_ino
 
+    def _target_snapshot(self, path: Path) -> tuple[Optional[tuple[int, int]], Optional[str]]:
+        """Read an ordinary target's identity and digest as one guarded snapshot."""
+
+        identity = self._path_identity(path)
+        if identity is None or path.is_symlink():
+            return None, None
+        digest = _tree_digest(path)
+        if digest is None or self._path_identity(path) != identity:
+            return None, None
+        return identity, digest
+
+    @staticmethod
+    def _target_changed_error() -> FleetError:
+        return FleetError(
+            "Fleet target changed during reconciliation",
+            code="fleet_target_changed",
+            status=409,
+        )
+
     def _rollback_reconciliation_install(
         self,
         item: _CatalogItem,
@@ -2008,33 +2221,36 @@ class FleetManager:
         destination: Optional[Path],
         installed_identity: Optional[tuple[int, int]],
         expected_digest: Optional[str],
+        *,
+        destination_identity: Optional[tuple[int, int]] = None,
+        destination_digest: Optional[str] = None,
     ) -> bool:
         """Remove only our replacement and restore its quarantined source."""
 
+        self._last_rollback_quarantine = None
         lexical_target = root / PurePosixPath(item.target)
-        if installed_identity is None and expected_digest:
-            # A test seam or an interrupted wrapper may report a copy failure
-            # after its atomic replace has completed.  Recognize that copy by
-            # digest, but never treat a symlink as our replacement.
-            candidate_identity = self._path_identity(lexical_target)
-            if candidate_identity is not None and not lexical_target.is_symlink():
-                try:
-                    if _tree_digest(lexical_target) == expected_digest:
-                        installed_identity = candidate_identity
-                except OSError:
-                    pass
+        # ``installed_identity`` is recorded immediately after Herdr's atomic
+        # install.  A digest-only match is intentionally insufficient here,
+        # because a concurrent replacement could have copied the same bytes.
         replacement_removed = installed_identity is None
         if installed_identity is not None:
             # A concurrent process may have replaced our just-installed item.
             # In that case leave the live target untouched rather than moving
             # an unmanaged target into Herdr quarantine.
-            current_identity = self._path_identity(lexical_target)
-            if current_identity == installed_identity:
+            current_identity, current_digest = self._target_snapshot(lexical_target)
+            if current_identity == installed_identity and current_digest == expected_digest:
                 try:
                     if not _path_has_symlink_component(root, lexical_target):
-                        self._quarantine_target(item, target, root)
+                        self._last_rollback_quarantine = self._quarantine_target(
+                            item,
+                            target,
+                            root,
+                            expected_identity=installed_identity,
+                            expected_digest=expected_digest,
+                        )
                         replacement_removed = True
-                except Exception:
+                except Exception as rollback_error:
+                    self._last_rollback_quarantine = getattr(rollback_error, "quarantine_path", None)
                     replacement_removed = False
 
         if destination is None:
@@ -2042,17 +2258,14 @@ class FleetManager:
             # boolean returned by this helper describes recovery of the
             # quarantined version, not merely removal of a replacement.
             return False
-        try:
-            if destination.is_symlink() or not destination.exists():
-                return False
-            if lexical_target.exists() or lexical_target.is_symlink():
-                return False
-            if _path_has_symlink_component(root, lexical_target):
-                return False
-            os.replace(destination, lexical_target)
-            return replacement_removed and lexical_target.exists() and not lexical_target.is_symlink()
-        except OSError:
-            return False
+        restored = self._restore_quarantine_target(
+            destination,
+            lexical_target,
+            root,
+            expected_identity=destination_identity,
+            expected_digest=destination_digest,
+        )
+        return replacement_removed and restored
 
     def _reconcile_managed_item(
         self,
@@ -2149,7 +2362,9 @@ class FleetManager:
                 reason="target_unmanaged",
                 catalog_revision=catalog.revision,
             )
-        observed_digest = None if target_was_missing else _tree_digest(target)
+        observed_identity, observed_digest = (
+            (None, None) if target_was_missing else self._target_snapshot(target)
+        )
         if not target_was_missing and observed_digest is None:
             return self._reconciliation_item(
                 item,
@@ -2258,11 +2473,39 @@ class FleetManager:
             # This is the same quarantine-before-copy sequence used by the
             # explicit update action.  The old item remains recoverable until
             # the new item has been verified and state has been persisted.
-            destination = self._quarantine_target(item, target, root) if not target_was_missing else None
-            quarantine_record = self._quarantine_record(item, destination, digest=prior_digest)
+            destination = (
+                self._quarantine_target(
+                    item,
+                    target,
+                    root,
+                    expected_identity=observed_identity,
+                    expected_digest=prior_digest,
+                )
+                if not target_was_missing
+                else None
+            )
+            quarantine_record = self._quarantine_record(
+                item,
+                destination,
+                digest=prior_digest,
+                identity=observed_identity,
+            )
+            if quarantine_record is not None:
+                state.setdefault("quarantine", []).append(quarantine_record)
+                quarantine_appended = True
+                # Index the preserved copy before installing anything.  If a
+                # later state write or rollback fails, this record remains a
+                # durable recovery handle in the previous state file.
+                self._save_state(state)
+            self._last_copy_identity = None
             self._copy_item(item, source, target)
-            installed_identity = self._path_identity(target)
-            if installed_identity is None or _tree_digest(target) != source_digest:
+            installed_identity = self._last_copy_identity or self._path_identity(target)
+            installed_identity_after, installed_digest = self._target_snapshot(target)
+            if (
+                installed_identity is None
+                or installed_identity_after != installed_identity
+                or installed_digest != source_digest
+            ):
                 raise FleetError("installed Fleet item failed verification", code="fleet_install_failed", status=503)
 
             managed_map[item.id] = {
@@ -2275,11 +2518,43 @@ class FleetManager:
                 "catalogRevision": catalog.revision,
                 "updatedAt": _now(),
             }
-            if quarantine_record is not None:
-                state.setdefault("quarantine", []).append(quarantine_record)
-                quarantine_appended = True
             self._save_state(state)
         except Exception as exc:
+            if destination is None:
+                destination = getattr(exc, "quarantine_path", None)
+            if destination is not None and quarantine_record is None:
+                # A guarded quarantine can fail after the atomic move but
+                # before returning its path.  Index that preserved object
+                # before attempting any rollback, so a concurrent live
+                # replacement can never strand the last-known-good copy.
+                moved_identity = getattr(exc, "quarantine_identity", None)
+                moved_digest = getattr(exc, "quarantine_digest", None)
+                if moved_identity is None:
+                    moved_identity = self._path_identity(destination)
+                if moved_digest is None:
+                    moved_digest = _tree_digest(destination)
+                try:
+                    quarantine_record = self._quarantine_record(
+                        item,
+                        destination,
+                        digest=moved_digest or prior_digest,
+                        identity=moved_identity,
+                    )
+                except FleetError:
+                    quarantine_record = None
+                if quarantine_record is not None:
+                    state.setdefault("quarantine", []).append(quarantine_record)
+                    quarantine_appended = True
+                    try:
+                        self._save_state(state)
+                    except Exception:
+                        pass
+            # A wrapper may raise after _copy_item completed its atomic
+            # replace, before control returned to the verification lines.
+            # Use only the identity recorded by that copy primitive, never a
+            # digest-only guess.
+            if installed_identity is None:
+                installed_identity = self._last_copy_identity
             try:
                 rollback_restored = self._rollback_reconciliation_install(
                     item,
@@ -2288,6 +2563,8 @@ class FleetManager:
                     destination,
                     installed_identity,
                     source_digest,
+                    destination_identity=observed_identity,
+                    destination_digest=prior_digest,
                 )
             except Exception:
                 # A rollback failure is itself part of the per-item result.
@@ -2295,10 +2572,20 @@ class FleetManager:
                 # items, and never claim the old copy was restored.
                 rollback_restored = False
             managed_map[item.id] = prior_record
-            if quarantine_appended:
+            if quarantine_appended and rollback_restored:
                 quarantine = state.get("quarantine")
                 if isinstance(quarantine, list) and quarantine and quarantine[-1] == quarantine_record:
                     quarantine.pop()
+            failed_quarantine = self._last_rollback_quarantine
+            if failed_quarantine is not None:
+                failed_record = self._quarantine_record(
+                    item,
+                    failed_quarantine,
+                    digest=source_digest,
+                    identity=installed_identity,
+                )
+                if failed_record is not None:
+                    state.setdefault("quarantine", []).append(failed_record)
             # Normally an atomic state write either succeeds or leaves the
             # previous file intact.  Re-persist the reverted in-memory state
             # as a best-effort repair for a write failure that happened after
@@ -2313,6 +2600,18 @@ class FleetManager:
             else:
                 error_code = "fleet_reconcile_failed"
                 error_message = "Fleet item could not be reconciled"
+            if isinstance(exc, FleetError) and exc.code == "fleet_target_changed":
+                return self._reconciliation_item(
+                    item,
+                    status="skipped",
+                    state="drifted",
+                    reason="target_changed_during_reconcile",
+                    catalog_revision=catalog.revision,
+                    action="update",
+                    error_code=error_code,
+                    error_message=error_message,
+                    rollback_restored=rollback_restored,
+                )
             return self._reconciliation_item(
                 item,
                 status="failed",
@@ -2365,6 +2664,23 @@ class FleetManager:
                         error_message="Fleet item could not be reconciled",
                         rollback_restored=False,
                     )
+                outcomes.append(outcome)
+
+            # A catalog deletion or retarget is not permission to erase the
+            # old managed ownership record.  Keep a bounded Remove-only
+            # tombstone visible and count it as guarded work so Sync All can
+            # never claim every managed item is current.
+            for entry in self._managed_tombstones(catalog, state):
+                outcome = self._reconciliation_item(
+                    entry["item"],
+                    status="skipped",
+                    state="unknown",
+                    reason=entry["reason"],
+                    catalog_revision=catalog.revision,
+                )
+                outcome["tombstone"] = True
+                outcome["managedRecordId"] = entry["recordId"]
+                outcome["tombstoneAction"] = entry["actionId"]
                 outcomes.append(outcome)
 
         updated_count = sum(1 for outcome in outcomes if outcome.get("status") == "updated")
@@ -2568,10 +2884,16 @@ class FleetManager:
         return result
 
     def _sync_response(self, catalog: _Catalog, *, state: dict[str, Any], include_inventory: bool = False) -> dict[str, Any]:
-        items = [self._item_payload(catalog, item, state) for item in catalog.items]
+        catalog_items = [self._item_payload(catalog, item, state) for item in catalog.items]
+        tombstone_entries = self._managed_tombstones(catalog, state)
+        tombstone_items = [self._tombstone_payload(entry) for entry in tombstone_entries]
+        items = catalog_items + tombstone_items
         skills = [item for item in items if item["type"] == "skill"]
         extensions = [item for item in items if item["type"] == "pi_extension"]
         cli = [item for item in items if item["type"] == "cli"]
+        catalog_skills = [item for item in catalog_items if item["type"] == "skill"]
+        catalog_extensions = [item for item in catalog_items if item["type"] == "pi_extension"]
+        catalog_cli = [item for item in catalog_items if item["type"] == "cli"]
         response: dict[str, Any] = {
             "ok": True,
             "catalogRevision": catalog.revision,
@@ -2581,7 +2903,14 @@ class FleetManager:
                 "revision": catalog.revision,
                 "catalogName": "personal-claude-plugin",
                 "syncedAt": state.get("catalog", {}).get("syncedAt"),
-                "itemCounts": {"skills": len(skills), "piExtensions": len(extensions), "cli": len(cli)},
+                # Counts describe the trusted catalog only.  Stale managed
+                # tombstones remain visible in the arrays for explicit
+                # cleanup, but must not change catalog cardinality.
+                "itemCounts": {
+                    "skills": len(catalog_skills),
+                    "piExtensions": len(catalog_extensions),
+                    "cli": len(catalog_cli),
+                },
             },
             "skills": skills,
             "piExtensions": extensions,
@@ -2700,6 +3029,7 @@ class FleetManager:
     # Actions
 
     def _copy_item(self, item: _CatalogItem, source: Path, target: Path) -> None:
+        self._last_copy_identity = None
         if source.is_symlink() or (source.is_dir() and _tree_has_symlink(source)):
             raise FleetError("catalog item contains a symlink", code="catalog_invalid", status=409)
         target_parent = target.parent
@@ -2730,6 +3060,9 @@ class FleetManager:
                 raise FleetError("install target must be absent before atomic install", code="fleet_target_conflict", status=409)
             os.replace(temporary, target)
             temporary = None
+            self._last_copy_identity = self._path_identity(target)
+            if self._last_copy_identity is None:
+                raise FleetError("installed Fleet item could not be identified", code="fleet_install_failed", status=503)
         except FleetError:
             raise
         except OSError as exc:
@@ -2744,8 +3077,66 @@ class FleetManager:
                 except OSError:
                     pass
 
-    def _quarantine_target(self, item: _CatalogItem, target: Path, root: Path) -> Optional[Path]:
-        """Atomically move a managed target into private Fleet quarantine."""
+    def _quarantine_path_is_safe(self, path: Path) -> bool:
+        """Check a recovery path without following an untrusted symlink."""
+
+        try:
+            if self.quarantine_root.is_symlink() or not path.is_relative_to(self.quarantine_root):
+                return False
+        except (AttributeError, OSError):
+            try:
+                path.relative_to(self.quarantine_root)
+            except ValueError:
+                return False
+            if self.quarantine_root.is_symlink():
+                return False
+        return not _path_has_symlink_component(self.quarantine_root, path)
+
+    def _restore_quarantine_target(
+        self,
+        destination: Optional[Path],
+        lexical_target: Path,
+        root: Path,
+        *,
+        expected_identity: Optional[tuple[int, int]] = None,
+        expected_digest: Optional[str] = None,
+    ) -> bool:
+        """Restore a quarantined object only when both sides remain safe."""
+
+        if destination is None or not self._quarantine_path_is_safe(destination):
+            return False
+        try:
+            if destination.is_symlink() or not destination.exists():
+                return False
+            identity, digest = self._target_snapshot(destination)
+            if identity is None or digest is None:
+                return False
+            if expected_identity is not None and identity != expected_identity:
+                return False
+            if expected_digest is not None and digest != expected_digest:
+                return False
+            if lexical_target.exists() or lexical_target.is_symlink():
+                return False
+            if _path_has_symlink_component(root, lexical_target):
+                return False
+            os.replace(destination, lexical_target)
+            restored_identity, restored_digest = self._target_snapshot(lexical_target)
+            if restored_identity != identity or restored_digest != digest:
+                return False
+            return True
+        except OSError:
+            return False
+
+    def _quarantine_target(
+        self,
+        item: _CatalogItem,
+        target: Path,
+        root: Path,
+        *,
+        expected_identity: Optional[tuple[int, int]] = None,
+        expected_digest: Optional[str] = None,
+    ) -> Optional[Path]:
+        """Atomically move a target into quarantine with an optional snapshot guard."""
 
         self.quarantine_root = _ensure_root(self._quarantine_path, allow_root_symlink=False, create=True)
         try:
@@ -2763,6 +3154,12 @@ class FleetManager:
             return None
         if target != lexical_target.resolve(strict=False):
             raise FleetError("Fleet install target is invalid", code="fleet_path_escape", status=409)
+        if (expected_identity is None) != (expected_digest is None):
+            raise FleetError("Fleet target snapshot is incomplete", code="fleet_target_changed", status=409)
+        if expected_identity is not None:
+            observed_identity, observed_digest = self._target_snapshot(lexical_target)
+            if observed_identity != expected_identity or observed_digest != expected_digest:
+                raise self._target_changed_error()
         safe_id = re.sub(r"[^A-Za-z0-9._-]", "-", item.id)[:48] or "item"
         destination = self.quarantine_root / f"{int(time.time())}-{safe_id}-{uuid.uuid4().hex[:12]}"
         if destination.exists() or destination.is_symlink():
@@ -2773,9 +3170,47 @@ class FleetManager:
             os.replace(lexical_target, destination)
         except OSError as exc:
             raise FleetError("Fleet quarantine could not preserve the item", code="fleet_quarantine_failed", status=503) from exc
+        if expected_identity is not None:
+            moved_identity, moved_digest = self._target_snapshot(destination)
+            target_reappeared = lexical_target.exists() or lexical_target.is_symlink()
+            if moved_identity != expected_identity or moved_digest != expected_digest or target_reappeared:
+                # A hook or concurrent process altered the object after the
+                # rename, or repopulated the live target before installation.
+                # If the quarantined object is still an ordinary safe object
+                # and the live target remains absent, return that actual
+                # object to its original location.  This avoids stranding a
+                # concurrently edited last-known-good copy.  If the live
+                # target was repopulated, or the quarantine object is no
+                # longer safe, leave it indexed for recovery instead.
+                restored = False
+                if (
+                    moved_identity is not None
+                    and moved_digest is not None
+                    and not target_reappeared
+                    and not _path_has_symlink_component(root, lexical_target)
+                ):
+                    restored = self._restore_quarantine_target(
+                        destination,
+                        lexical_target,
+                        root,
+                        expected_identity=moved_identity,
+                        expected_digest=moved_digest,
+                    )
+                error = self._target_changed_error()
+                error.quarantine_path = None if restored else destination
+                error.quarantine_identity = moved_identity
+                error.quarantine_digest = moved_digest
+                raise error
         return destination
 
-    def _quarantine_record(self, item: _CatalogItem, destination: Optional[Path], *, digest: Optional[str]) -> Optional[dict[str, Any]]:
+    def _quarantine_record(
+        self,
+        item: _CatalogItem,
+        destination: Optional[Path],
+        *,
+        digest: Optional[str],
+        identity: Optional[tuple[int, int]] = None,
+    ) -> Optional[dict[str, Any]]:
         if destination is None:
             return None
         try:
@@ -2784,17 +3219,29 @@ class FleetManager:
             raise FleetError("Fleet quarantine path is invalid", code="fleet_quarantine_failed", status=503) from exc
         # This record is persisted for local recovery only and is intentionally
         # never copied into the HTTP response.
-        return {
+        record: dict[str, Any] = {
             "itemId": item.id,
             "type": item.type,
             "path": relative,
             "digest": digest,
             "movedAt": _now(),
         }
+        if identity is not None:
+            record["identity"] = {"device": identity[0], "inode": identity[1]}
+        return record
 
-    def _remove_item(self, item: _CatalogItem, state: dict[str, Any]) -> bool:
+    def _remove_item(
+        self,
+        item: _CatalogItem,
+        state: dict[str, Any],
+        *,
+        expected_identity: Optional[tuple[int, int]] = None,
+        expected_digest: Optional[str] = None,
+        managed_key: Optional[str] = None,
+    ) -> bool:
         managed = state.get("managed", {})
-        record = managed.get(item.id) if isinstance(managed, dict) else None
+        record_key = managed_key or item.id
+        record = managed.get(record_key) if isinstance(managed, dict) else None
         if not self._record_matches_item(record, item):
             raise FleetError(
                 "only Herdr-managed copies may be removed",
@@ -2810,25 +3257,116 @@ class FleetManager:
                 status=409,
             )
         target = _resolved_child(root, item.target, label="Fleet install target")
-        prior_digest = _tree_digest(target) if target.exists() and not target.is_symlink() else None
-        destination = self._quarantine_target(item, target, root)
+        if (expected_identity is None) != (expected_digest is None):
+            raise FleetError("Fleet target snapshot is incomplete", code="fleet_target_changed", status=409)
+        prior_identity, prior_digest = (
+            (None, None) if not target.exists() else self._target_snapshot(target)
+        )
+        if target.exists() and (prior_identity is None or prior_digest is None):
+            raise FleetError("Fleet target is unreadable", code="fleet_target_unmanaged", status=409)
+        if expected_identity is not None and (prior_identity != expected_identity or prior_digest != expected_digest):
+            raise self._target_changed_error()
+        destination = self._quarantine_target(
+            item,
+            target,
+            root,
+            expected_identity=prior_identity,
+            expected_digest=prior_digest,
+        )
         previous_managed = dict(record)
-        managed.pop(item.id, None)
-        quarantine_record = self._quarantine_record(item, destination, digest=prior_digest)
+        managed.pop(record_key, None)
+        quarantine_record = self._quarantine_record(
+            item,
+            destination,
+            digest=prior_digest,
+            identity=prior_identity,
+        )
         if quarantine_record is not None:
             state.setdefault("quarantine", []).append(quarantine_record)
         try:
             self._save_state(state)
         except FleetError:
             # Preserve the old ownership record if state persistence fails.
-            managed[item.id] = previous_managed
-            if destination is not None and destination.exists() and not destination.is_symlink():
-                try:
-                    os.replace(destination, lexical_target)
-                except OSError:
-                    pass
+            managed[record_key] = previous_managed
+            try:
+                restored = self._restore_quarantine_target(
+                    destination,
+                    lexical_target,
+                    root,
+                    expected_identity=prior_identity,
+                    expected_digest=prior_digest,
+                )
+            except Exception:
+                # Keep the original state-write failure as the action error;
+                # the quarantine record below remains the recovery handle.
+                restored = False
+            if restored:
+                quarantine = state.get("quarantine")
+                if isinstance(quarantine, list) and quarantine and quarantine[-1] == quarantine_record:
+                    quarantine.pop()
+            # Persist the restored managed record in both branches.  The
+            # first save may have failed after its atomic replace, leaving the
+            # file in the intermediate (ownership-removed) state.  A second
+            # best-effort save repairs that state when rollback succeeded, or
+            # records the quarantine path when the live target changed.
+            try:
+                self._save_state(state)
+            except Exception:
+                pass
             raise
         return True
+
+    def _remove_tombstone(self, catalog: _Catalog, state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+        """Explicitly remove a stale managed record and, if safe, its target."""
+
+        record_id = entry["recordId"]
+        managed = state.get("managed", {})
+        record = managed.get(record_id) if isinstance(managed, dict) else None
+        safe_record = self._strict_managed_record(record_id, record)
+        expected_record = entry["record"]
+        if safe_record is None or any(safe_record[key] != expected_record[key] for key in ("type", "source", "target", "destination")):
+            raise FleetError("Fleet managed tombstone is no longer valid", code="fleet_target_unmanaged", status=409)
+
+        item = entry["item"]
+        self._prepare_install_roots()
+        root = self._item_root(item)
+        lexical_target = root / PurePosixPath(item.target)
+        if _path_has_symlink_component(root, lexical_target) or lexical_target.is_symlink():
+            raise FleetError("only Herdr-managed copies may be removed", code="fleet_target_unmanaged", status=409)
+        if not lexical_target.exists():
+            # The old target was already removed.  Clearing the ownership
+            # record is safe because there is no live object to mutate.
+            managed.pop(record_id, None)
+            self._save_state(state)
+        else:
+            target = _resolved_child(root, item.target, label="Fleet install target")
+            identity, digest = self._target_snapshot(target)
+            if identity is None or digest is None:
+                raise FleetError("only Herdr-managed copies may be removed", code="fleet_target_unmanaged", status=409)
+            recorded_digest = safe_record.get("digest")
+            if not isinstance(recorded_digest, str) or digest != recorded_digest:
+                raise FleetError("Fleet target has local changes", code="fleet_target_drifted", status=409)
+            self._remove_item(
+                item,
+                state,
+                expected_identity=identity,
+                expected_digest=digest,
+                managed_key=record_id,
+            )
+
+        payload = self._tombstone_payload(entry)
+        payload.update(
+            {
+                "status": "missing",
+                "installed": False,
+                "current": False,
+                "missing": True,
+                "managed": False,
+                "ownership": "unmanaged",
+                "tombstone": False,
+            }
+        )
+        return payload
 
     def _prepare_install_roots(self) -> None:
         # GET inventory never creates directories.  Mutating actions opt into
@@ -2884,10 +3422,29 @@ class FleetManager:
             raise FleetError("action must be install, update, remove, adopt, or checkAuth", code="invalid_fleet_action", status=400)
         with self._lock:
             catalog = self._checkout_catalog(require_sync=True)
+            state = self._load_state(strict=True)
             item = next((candidate for candidate in catalog.items if candidate.id == item_id), None)
             if item is None:
-                raise FleetError("Fleet item not found", code="fleet_item_not_found", status=404)
-            state = self._load_state(strict=True)
+                tombstone = next(
+                    (entry for entry in self._managed_tombstones(catalog, state) if entry["actionId"] == item_id),
+                    None,
+                )
+                if tombstone is None:
+                    raise FleetError("Fleet item not found", code="fleet_item_not_found", status=404)
+                if normalized_action != "remove":
+                    raise FleetError(
+                        "stale managed Fleet items only support remove",
+                        code="fleet_action_forbidden",
+                        status=409,
+                    )
+                payload = self._remove_tombstone(catalog, state, tombstone)
+                return {
+                    "ok": True,
+                    "action": normalized_action,
+                    "item": payload,
+                    "catalogRevision": catalog.revision,
+                    "generatedAt": _now(),
+                }
             managed = state.setdefault("managed", {})
             record = managed.get(item.id)
 
@@ -3017,17 +3574,52 @@ class FleetManager:
                 }
 
             prior_record = dict(record) if owns_target and isinstance(record, dict) else None
-            prior_digest = _tree_digest(target) if target_exists and not lexical_target.is_symlink() else None
-            destination = self._quarantine_target(item, target, root) if target_exists else None
-            quarantine_record = self._quarantine_record(item, destination, digest=prior_digest)
+            prior_identity, prior_digest = (
+                (None, None) if not target_exists else self._target_snapshot(target)
+            )
+            if target_exists and (prior_identity is None or prior_digest is None):
+                raise FleetError("Fleet target is unreadable", code="fleet_target_unmanaged", status=409)
+            destination = (
+                self._quarantine_target(
+                    item,
+                    target,
+                    root,
+                    expected_identity=prior_identity,
+                    expected_digest=prior_digest,
+                )
+                if target_exists
+                else None
+            )
+            quarantine_record = self._quarantine_record(
+                item,
+                destination,
+                digest=prior_digest,
+                identity=prior_identity,
+            )
+            installed_identity: Optional[tuple[int, int]] = None
             try:
+                self._last_copy_identity = None
                 self._copy_item(item, source, target)
-                if _tree_digest(target) != source_digest:
+                installed_identity = self._last_copy_identity or self._path_identity(target)
+                verified_identity, verified_digest = self._target_snapshot(target)
+                if installed_identity is None or verified_identity != installed_identity or verified_digest != source_digest:
                     raise FleetError("installed Fleet item failed verification", code="fleet_install_failed", status=503)
             except FleetError:
-                if target.exists() or target.is_symlink():
+                installed_identity = self._last_copy_identity or installed_identity
+                current_identity, current_digest = self._target_snapshot(lexical_target)
+                if (
+                    installed_identity is not None
+                    and current_identity == installed_identity
+                    and current_digest == source_digest
+                ):
                     try:
-                        self._quarantine_target(item, target, root)
+                        self._quarantine_target(
+                            item,
+                            target,
+                            root,
+                            expected_identity=installed_identity,
+                            expected_digest=source_digest,
+                        )
                     except FleetError:
                         pass
                 if destination is not None and destination.exists() and not destination.is_symlink():

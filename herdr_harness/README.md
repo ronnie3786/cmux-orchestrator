@@ -450,26 +450,40 @@ optional unauthenticated development mode.
 
 `POST /api/v1/fleet/sync` first verifies the allowlisted Git remote, branch,
 upstream, and clean checkout boundary, then fetches and fast-forwards the
-catalog. Only after that trusted catalog read does it reconcile persisted
-Herdr-managed records for writable skills and Pi extensions. CLI recipes,
-unmanaged or external items, symlinked targets, and locally drifted targets
-are never changed.
+catalog. The checkout boundary is revalidated after fetch/merge and again
+immediately before catalog items are reconciled, so post-fetch hooks or local
+changes fail closed before any install mutation. Only after those trusted
+catalog reads does it reconcile persisted Herdr-managed records for writable
+skills and Pi extensions. CLI recipes, unmanaged or external items, symlinked
+targets, and locally drifted targets are never changed.
 
 Sync All restores a managed target that is missing on disk when its valid
 ownership record remains. An explicit Uninstall removes that record, so a
 remaining record is the evidence that makes this restore safe. If the record
 is absent, the target is unmanaged and remains untouched.
 
-For an outdated managed item, the observed target digest must still equal the
-digest recorded when Herdr last wrote it. The previous copy is atomically moved
-to the private quarantine before the catalog copy is installed and verified.
-If installation or state persistence fails, the new copy is removed when it is
-still provably Herdr's copy and the quarantined version is restored. A failure
-for one item does not stop independent items from being reconciled.
+During Sync All for an outdated managed item, the observed target digest must still match the
+digest in the record from when Herdr last wrote it, and the target identity is
+checked to remain stable across each guarded operation. The previous copy is
+atomically moved to the private quarantine, verified there, and indexed before
+the catalog copy is installed and verified. If installation or state
+persistence fails, the new copy is removed only while its identity and digest
+still prove it is Herdr's copy, and the quarantined version is restored only
+while its preserved identity and digest still match. A concurrent replacement
+or edit is left untouched and reported as guarded work. If rollback also
+fails, the quarantine recovery record is retained for a later repair. A
+failure for one item does not stop independent items from being reconciled.
+
+Managed records whose catalog item was deleted, renamed, or retargeted remain
+visible as bounded, Remove-only tombstones. They are never auto-deleted or
+reinstalled. Tombstones have `status: "unknown"` and `installable: false`;
+explicit Remove quarantines a still-owned matching target, or safely clears
+the record when the target is already missing. Invalid state-derived paths are
+omitted from inventory and cannot become actions.
 
 The response keeps the existing inventory fields and adds a `reconciliation`
 object. Its `counts` (also available as flat aliases) include `attempted`,
-`updated`, `current`, `restored`, `skippedDrifted`, `failed`, and
+`updated`, `current`, `restored`, `skipped`, `skippedDrifted`, `failed`, and
 `rollbackRestored`; `items`, `outcomes`, and `results` contain bounded per-item
 operation records. Item failures are reported in that object while the
 endpoint remains `ok: true`, so the client does not mark a reachable machine
