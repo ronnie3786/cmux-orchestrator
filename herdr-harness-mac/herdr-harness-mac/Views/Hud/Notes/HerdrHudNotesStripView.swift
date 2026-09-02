@@ -14,17 +14,34 @@ struct HerdrHudNotesStripView: View {
                 EmptyView()
             case let .compact(count):
                 HerdrNoteCompactStackView(notes: notes, count: count)
-                    .transition(.opacity)
+                    .transition(fadeTransition)
             case .rows:
                 HerdrNoteRowsView(model: model, controller: controller, notes: notes)
-                    .transition(.opacity)
+                    .transition(fadeTransition)
             case .card:
                 if let noteID = notes.openNoteID {
                     HerdrNoteCardView(model: model, controller: controller, notes: notes, noteID: noteID)
-                        .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
+                        .transition(cardTransition)
                 }
             }
         }
-        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: notes.layout)
+    }
+
+    /// Attach animation to each transition instead of the enclosing ZStack.
+    /// A container-level animation also interpolates the stack's changing size
+    /// and placement, which makes an opacity transition visibly slide.
+    private var fadeTransition: AnyTransition {
+        AnyTransition.opacity.animation(transitionAnimation)
+    }
+
+    private var cardTransition: AnyTransition {
+        AnyTransition
+            .scale(scale: 0.92, anchor: .topTrailing)
+            .combined(with: .opacity)
+            .animation(transitionAnimation)
+    }
+
+    private var transitionAnimation: Animation? {
+        reduceMotion ? nil : .snappy(duration: 0.18)
     }
 }
