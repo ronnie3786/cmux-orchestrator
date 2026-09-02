@@ -1,9 +1,11 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from herdr_harness import secret_file
 from herdr_harness import response_audio
 
 
@@ -180,7 +182,11 @@ class ResponseAudioServiceTests(unittest.TestCase):
         self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
 
         path.write_text(json.dumps({"ttsUrl": "http://local.test"}), encoding="utf-8")
-        with mock.patch.object(Path, "open", side_effect=PermissionError("permission denied")):
+        with mock.patch.object(
+            response_audio,
+            "load_private_file_bytes",
+            side_effect=secret_file.SecretFileError("permission denied"),
+        ):
             self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
 
         path.write_text(
@@ -198,6 +204,43 @@ class ResponseAudioServiceTests(unittest.TestCase):
         target.write_text(json.dumps({"ttsUrl": "http://local.test"}), encoding="utf-8")
         path.symlink_to(target)
         self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
+
+    def test_local_config_requires_private_owner_and_stable_inode(self):
+        path = self._write_local_tts_config({"ttsUrl": "http://local.test"})
+        for mode in (0o644, 0o660):
+            with self.subTest(mode=oct(mode)):
+                path.chmod(mode)
+                self.assertIsNone(self._local_service().tts_endpoint)
+        path.chmod(0o600)
+
+        with mock.patch.object(secret_file.os, "getuid", return_value=os.getuid() + 1):
+            self.assertIsNone(self._local_service().tts_endpoint)
+
+        real_fstat = secret_file.os.fstat
+
+        def changed_inode(file_descriptor):
+            metadata = real_fstat(file_descriptor)
+            values = list(metadata)
+            values[1] += 1
+            return os.stat_result(values)
+
+        with mock.patch.object(secret_file.os, "fstat", side_effect=changed_inode):
+            self.assertIsNone(self._local_service().tts_endpoint)
+
+    def test_invalid_tts_url_is_unavailable_without_generic_failure(self):
+        opener = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network used"))
+        for environment in (
+            {"HERDR_RESPONSE_AUDIO_TTS_URL": "http://["},
+            {},
+        ):
+            with self.subTest(environment=environment):
+                if not environment:
+                    self._write_local_tts_config({"ttsUrl": "http://["})
+                service = self._local_service(opener=opener, extra_environment=environment)
+                self.assertEqual(
+                    service.capabilities(),
+                    {"ok": True, "available": False, "listen": False, "tldr": False},
+                )
 
     def test_missing_tts_configuration_reports_unavailable_action(self):
         service = self._local_service(

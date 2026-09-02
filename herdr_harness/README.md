@@ -113,9 +113,11 @@ Configuration:
 - `HERDR_RESPONSE_AUDIO_TTS_URL`: optional TTS base URL or full
   `/v1/audio/speech` URL. When absent, the backend reads `ttsUrl` from the
   private `~/.config/herdr-harness/response-audio.json` file. Keep that file
-  outside source control with mode `0600`; an absent, malformed, unreadable,
-  or non-regular file leaves response audio unavailable without preventing
-  startup.
+  outside source control as a user-owned regular file with mode `0600`; Herdr
+  opens it without following the final symlink, verifies its owner and mode,
+  and limits reads to 64 KiB. An absent, malformed, oversized, unreadable,
+  unsafe, or non-regular file leaves response audio unavailable without
+  preventing startup.
 
 For any Tailscale-shared server, set `HERDR_HARNESS_API_TOKEN` to a long random
 value and configure the same value in the iOS app.

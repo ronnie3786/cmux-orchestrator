@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from .secret_file import SecretFileError, load_private_file_bytes
+
 
 DEFAULT_SUMMARY_PROVIDER = "custom-lux-dspark"
 DEFAULT_SUMMARY_MODEL = "qwen3.8-27b-nvfp4-dspark"
@@ -90,14 +92,13 @@ def _local_response_audio_tts_url(environ: Mapping[str, str]) -> str:
     if path is None:
         return ""
     try:
-        if path.is_symlink() or not path.is_file():
-            return ""
-        with path.open("rb") as config_file:
-            raw = config_file.read(RESPONSE_AUDIO_CONFIG_MAX_BYTES + 1)
-        if len(raw) > RESPONSE_AUDIO_CONFIG_MAX_BYTES:
-            return ""
+        raw = load_private_file_bytes(
+            str(path),
+            field="response audio config",
+            maximum_bytes=RESPONSE_AUDIO_CONFIG_MAX_BYTES,
+        )
         payload = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError, ValueError):
+    except (SecretFileError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError, ValueError):
         return ""
     if not isinstance(payload, dict):
         return ""
@@ -459,12 +460,12 @@ class ResponseAudioService:
     def _probe(self, url: Optional[str], *, headers: Optional[dict[str, str]] = None) -> bool:
         if not url:
             return False
-        request = urllib.request.Request(url, headers=headers or {"Accept": "application/json"}, method="GET")
         try:
+            request = urllib.request.Request(url, headers=headers or {"Accept": "application/json"}, method="GET")
             self._open_bytes(request, timeout=2.0, maximum=1024 * 1024)
-            return True
-        except ResponseAudioError:
+        except (ResponseAudioError, TypeError, ValueError):
             return False
+        return True
 
     def _open_json(self, request: urllib.request.Request, *, timeout: float) -> dict[str, Any]:
         raw = self._open_bytes(request, timeout=timeout, maximum=4 * 1024 * 1024)
