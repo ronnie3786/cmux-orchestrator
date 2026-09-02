@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import herdr_harness_mac
 
@@ -82,5 +83,39 @@ struct HerdrPulseGlowTests {
             terminalTitle: nil,
             terminalTitleStripped: nil
         )
+    }
+}
+
+@Suite("Herdr HUD orb motion")
+struct HerdrHudOrbMotionTests {
+    @Test("Motion state prioritizes an active HUD session")
+    func statePolicy() {
+        #expect(HerdrHudOrbMotion.state(sessionIsRunning: true, workingCount: 0) == .thinking)
+        #expect(HerdrHudOrbMotion.state(sessionIsRunning: true, workingCount: 3) == .thinking)
+        #expect(HerdrHudOrbMotion.state(sessionIsRunning: false, workingCount: 3, attentionCount: 1) == .attention)
+        #expect(HerdrHudOrbMotion.state(sessionIsRunning: false, workingCount: 1) == .working)
+        #expect(HerdrHudOrbMotion.state(sessionIsRunning: false, workingCount: 0) == .idle)
+    }
+
+    @Test("Reduce Motion and idle states never install a live timeline")
+    func animationPolicy() {
+        #expect(HerdrHudOrbMotion.usesTimeline(for: .thinking, reduceMotion: false))
+        #expect(HerdrHudOrbMotion.usesTimeline(for: .working, reduceMotion: false))
+        #expect(!HerdrHudOrbMotion.usesTimeline(for: .attention, reduceMotion: false))
+        #expect(!HerdrHudOrbMotion.usesTimeline(for: .thinking, reduceMotion: true))
+        #expect(!HerdrHudOrbMotion.usesTimeline(for: .working, reduceMotion: true))
+        #expect(!HerdrHudOrbMotion.usesTimeline(for: .idle, reduceMotion: false))
+    }
+
+    @Test("Animated ring cadence is capped and working pulse stays in range")
+    func cadenceAndPulsePolicy() {
+        #expect(HerdrHudOrbMotion.timelineCadence >= 1.0 / 12.0)
+        let rest = Date(timeIntervalSinceReferenceDate: 0)
+        let peak = Date(timeIntervalSinceReferenceDate: HerdrHudOrbMotion.workingPeriod / 2)
+        #expect(abs(HerdrHudOrbMotion.workingOpacity(at: rest) - HerdrHudOrbMotion.workingRestOpacity) < 0.0001)
+        #expect(abs(HerdrHudOrbMotion.workingOpacity(at: peak) - HerdrHudOrbMotion.workingPeakOpacity) < 0.0001)
+        let inBetween = HerdrHudOrbMotion.workingOpacity(at: Date(timeIntervalSinceReferenceDate: 0.3))
+        #expect(inBetween >= HerdrHudOrbMotion.workingRestOpacity)
+        #expect(inBetween <= HerdrHudOrbMotion.workingPeakOpacity)
     }
 }

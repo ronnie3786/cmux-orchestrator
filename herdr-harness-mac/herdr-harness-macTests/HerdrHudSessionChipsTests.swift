@@ -4,6 +4,15 @@ import Testing
 
 @Suite("Herdr HUD session chips")
 struct HerdrHudSessionChipsTests {
+    @Test("Working chip glow is static, so collapsed HUD chips do not animate")
+    func chipMotionPolicy() {
+        #expect(HerdrHudChipMotion.showsStaticGlow(for: .working))
+        #expect(!HerdrHudChipMotion.showsStaticGlow(for: .blocked))
+        #expect(!HerdrHudChipMotion.showsStaticGlow(for: .done))
+        #expect(HerdrHudChipMotion.workingGlowOpacity > 0)
+        #expect(HerdrHudChipMotion.workingGlowOpacity < 1)
+    }
+
     @Test("Only blocked, done, and working Pi sessions qualify")
     func filtersStatusesAndNonPiPanes() throws {
         let result = HerdrHudSessionChips.chips(

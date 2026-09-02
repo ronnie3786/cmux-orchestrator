@@ -1,6 +1,51 @@
 import AppKit
 import SwiftUI
 
+/// Keeps the HUD's always-mounted orb informative without pinning SwiftUI's
+/// display link at animation rate. The timeline cadence is deliberately capped
+/// because this is a 56-point status affordance, not a content surface.
+enum HerdrHudOrbMotion {
+    enum State: Equatable {
+        case idle
+        case attention
+        case working
+        case thinking
+    }
+
+    static let timelineCadence: TimeInterval = 1.0 / 12.0
+    static let workingPeriod: TimeInterval = 1.4
+    static let thinkingPeriod: TimeInterval = 1.2
+    static let workingRestOpacity = 0.5
+    static let workingPeakOpacity = 1.0
+
+    static func state(sessionIsRunning: Bool, workingCount: Int, attentionCount: Int = 0) -> State {
+        if sessionIsRunning { return .thinking }
+        if attentionCount > 0 { return .attention }
+        if workingCount > 0 { return .working }
+        return .idle
+    }
+
+    static func usesTimeline(for state: State, reduceMotion: Bool) -> Bool {
+        !reduceMotion && (state == .working || state == .thinking)
+    }
+
+    static func phase(at date: Date, period: TimeInterval) -> Double {
+        guard period > 0 else { return 0 }
+        let remainder = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period)
+        return remainder >= 0 ? remainder / period : (remainder + period) / period
+    }
+
+    static func workingOpacity(at date: Date) -> Double {
+        let phase = phase(at: date, period: workingPeriod)
+        let envelope = (1 - cos(phase * 2 * .pi)) / 2
+        return workingRestOpacity + (workingPeakOpacity - workingRestOpacity) * envelope
+    }
+
+    static func thinkingRotation(at date: Date) -> Double {
+        phase(at: date, period: thinkingPeriod) * 360
+    }
+}
+
 struct HerdrHudOrbView: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
@@ -8,7 +53,6 @@ struct HerdrHudOrbView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
-    @State private var isAnimating = false
 
     private let orbSize: CGFloat = 56
 
@@ -65,10 +109,6 @@ struct HerdrHudOrbView: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .onAppear { updateAnimation() }
-        .onChange(of: reduceMotion, initial: true) { _, _ in updateAnimation() }
-        .onChange(of: session.isRunning) { _, _ in updateAnimation() }
-        .onChange(of: model.workingCount) { _, _ in updateAnimation() }
         .accessibilityIdentifier("hud-orb")
         .accessibilityLabel("Herdr HUD")
         .accessibilityValue(accessibilityValue)
@@ -76,37 +116,43 @@ struct HerdrHudOrbView: View {
 
     @ViewBuilder
     private var stateRing: some View {
-        if session.isRunning {
-            if reduceMotion {
-                Circle()
-                    .strokeBorder(HerdrTheme.accent.opacity(isAnimating ? 1 : 0.5), lineWidth: 2.5)
-                    .padding(2)
-                    .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: isAnimating)
-            } else {
-                Circle()
-                    .trim(from: 0.08, to: 0.72)
-                    .stroke(HerdrTheme.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                    .padding(3.25)
-                    .rotationEffect(.degrees(isAnimating ? 360 : 0))
-                    .animation(.linear(duration: 1.2).repeatForever(autoreverses: false), value: isAnimating)
-            }
-        } else if attentionCount > 0 {
+        let state = HerdrHudOrbMotion.state(
+            sessionIsRunning: session.isRunning,
+            workingCount: model.workingCount,
+            attentionCount: attentionCount
+        )
+        if HerdrHudOrbMotion.usesTimeline(for: state, reduceMotion: reduceMotion) {
+            HerdrHudOrbAnimatedRing(state: state)
+        } else {
+            staticStateRing(for: state)
+        }
+    }
+
+    @ViewBuilder
+    private func staticStateRing(for state: HerdrHudOrbMotion.State) -> some View {
+        switch state {
+        case .attention:
             Circle()
                 .strokeBorder(HerdrTheme.alert, lineWidth: 2.5)
                 .padding(2)
-        } else if model.workingCount > 0 {
+        case .thinking:
             Circle()
-                .strokeBorder(HerdrTheme.working.opacity(reduceMotion ? 1 : (isAnimating ? 1 : 0.5)), lineWidth: 2.5)
+                .strokeBorder(HerdrTheme.accent, lineWidth: 2.5)
                 .padding(2)
-                .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: isAnimating)
-        } else if model.connectionState == .live || model.isDemoMode {
+        case .working:
             Circle()
-                .strokeBorder(HerdrTheme.signal.opacity(0.4), lineWidth: 2.5)
+                .strokeBorder(HerdrTheme.working, lineWidth: 2.5)
                 .padding(2)
-        } else {
-            Circle()
-                .strokeBorder(HerdrTheme.muted.opacity(0.18), lineWidth: 2.5)
-                .padding(2)
+        case .idle:
+            if model.connectionState == .live || model.isDemoMode {
+                Circle()
+                    .strokeBorder(HerdrTheme.signal.opacity(0.4), lineWidth: 2.5)
+                    .padding(2)
+            } else {
+                Circle()
+                    .strokeBorder(HerdrTheme.muted.opacity(0.18), lineWidth: 2.5)
+                    .padding(2)
+            }
         }
     }
 
@@ -134,8 +180,55 @@ struct HerdrHudOrbView: View {
         if model.connectionState == .live || model.isDemoMode { return "Idle" }
         return "Offline"
     }
+}
 
-    private func updateAnimation() {
-        isAnimating = session.isRunning || (!reduceMotion && model.workingCount > 0)
+private struct HerdrHudOrbAnimatedRing: View {
+    let state: HerdrHudOrbMotion.State
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: HerdrHudOrbMotion.timelineCadence)) { context in
+            Canvas { graphics, size in
+                let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                let lineWidth: CGFloat = 2.5
+                let inset: CGFloat = state == .thinking ? 3.25 : 2
+                let radius = max(0, min(size.width, size.height) / 2 - inset - lineWidth / 2)
+
+                switch state {
+                case .thinking:
+                    let start = HerdrHudOrbMotion.thinkingRotation(at: context.date)
+                    var path = Path()
+                    path.addArc(
+                        center: center,
+                        radius: radius,
+                        startAngle: .degrees(start + 360 * 0.08),
+                        endAngle: .degrees(start + 360 * 0.72),
+                        clockwise: false
+                    )
+                    graphics.stroke(
+                        path,
+                        with: .color(HerdrTheme.accent),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                    )
+                case .working:
+                    var path = Path()
+                    path.addEllipse(
+                        in: CGRect(
+                            x: center.x - radius,
+                            y: center.y - radius,
+                            width: radius * 2,
+                            height: radius * 2
+                        )
+                    )
+                    graphics.opacity = HerdrHudOrbMotion.workingOpacity(at: context.date)
+                    graphics.stroke(path, with: .color(HerdrTheme.working), lineWidth: lineWidth)
+                case .attention:
+                    break
+                case .idle:
+                    break
+                }
+            }
+        }
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
 }

@@ -1,5 +1,16 @@
 import SwiftUI
 
+enum HerdrHudChipMotion {
+    static let workingGlowOpacity = 0.55
+
+    /// HUD chips are permanently mounted beside the orb, so their working
+    /// signal stays static. A static shadow preserves the visual cue without
+    /// adding one perpetual display-link animation per chip.
+    static func showsStaticGlow(for status: AgentStatus) -> Bool {
+        status == .working
+    }
+}
+
 struct HerdrHudSessionChipsView: View {
     @Bindable var model: HerdrAppModel
     let chips: [HerdrHudSessionChips.Chip]
@@ -30,6 +41,12 @@ struct HerdrHudSessionChipsView: View {
                 Circle()
                     .fill(chip.status.color)
                     .frame(width: 6, height: 6)
+                    .shadow(
+                        color: HerdrHudChipMotion.showsStaticGlow(for: chip.status)
+                            ? chip.status.color.opacity(HerdrHudChipMotion.workingGlowOpacity)
+                            : .clear,
+                        radius: 3
+                    )
                     .accessibilityHidden(true)
                 Text(chip.title)
                     .lineLimit(1)
@@ -54,11 +71,6 @@ struct HerdrHudSessionChipsView: View {
             }
         }
         .buttonStyle(.plain)
-        .herdrPulseGlow(
-            chip.status.color,
-            isActive: chip.status == .working,
-            diameter: HerdrTheme.minHitTarget
-        )
         .contextMenu {
             Button(
                 chip.isMuted ? "Unmute session" : "Mute session",
