@@ -14,9 +14,6 @@ enum ComposerReturnKeyRouter {
         /// Break the line ourselves, because the field editor is never going to
         /// see this keystroke.
         case insertNewline
-        /// Hand the chord back to the field editor, which breaks the line at the
-        /// caret better than we can.
-        case passthrough
         /// Send the prompt.
         case send
     }
@@ -30,6 +27,14 @@ enum ComposerReturnKeyRouter {
     /// closes on its own afterwards: a newline is whitespace, and
     /// `ComposerSkillsPalette` already treats whitespace after a `$token` as
     /// the end of that token.
+    ///
+    /// ⇧/⌥Return break the line here rather than deferring to the field
+    /// editor's own `insertNewlineIgnoringFieldEditor:` binding. Deferring
+    /// looked equivalent and was not: the deferral verdict reached `onSubmit`,
+    /// whose backstop could only read it as "not a newline" and therefore
+    /// SENT the prompt — the exact surprise ⌘Return was fixed to avoid.
+    /// `ComposerNewlineInserter` goes through that same AppKit method, so the
+    /// break still lands at the caret; only the decision moved.
     static func outcome(
         command: Bool,
         shift: Bool,
@@ -38,9 +43,7 @@ enum ComposerReturnKeyRouter {
     ) -> Outcome {
         if command { return .insertNewline }
         if isSkillsPaletteVisible, !shift, !option { return .acceptSkill }
-        // ⇧/⌥Return are already bound to `insertNewlineIgnoringFieldEditor:`.
-        // The field editor knows the caret and we do not, so let it win.
-        if shift || option { return .passthrough }
+        if shift || option { return .insertNewline }
         return .send
     }
 

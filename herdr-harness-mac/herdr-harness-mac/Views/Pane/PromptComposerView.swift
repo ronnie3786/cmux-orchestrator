@@ -613,8 +613,6 @@ struct PromptComposerView: View {
         case .insertNewline:
             ComposerNewlineInserter.insertNewline(appendingTo: &draft)
             return .handled
-        case .passthrough:
-            return .ignored
         case .send:
             send()
             return .handled
@@ -633,7 +631,7 @@ struct PromptComposerView: View {
             ComposerNewlineInserter.insertNewline(appendingTo: &draft)
         case .acceptSkill:
             acceptSkill()
-        case .passthrough, .send:
+        case .send:
             send()
         }
     }

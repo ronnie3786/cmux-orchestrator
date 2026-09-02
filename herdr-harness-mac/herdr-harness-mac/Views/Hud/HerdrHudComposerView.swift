@@ -187,8 +187,6 @@ struct HerdrHudComposerView: View {
         case .insertNewline:
             ComposerNewlineInserter.insertNewline(appendingTo: &session.draft)
             return .handled
-        case .passthrough:
-            return .ignored
         case .acceptSkill, .send:
             submit()
             return .handled
