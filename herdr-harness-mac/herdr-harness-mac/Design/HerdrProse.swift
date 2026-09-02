@@ -61,10 +61,17 @@ enum HerdrProse {
     /// Spacing between conversation turns in `PiChatTimelineView`.
     static let turnSpacing: CGFloat = 28
 
-    /// Opacity applied to whole "sub-output" cards — thinking disclosures,
-    /// tool cards, and working groups — so they read as visually recessive
-    /// relative to Pi's actual output prose.
+    /// How far "sub-output" cards — thinking disclosures, tool cards, and
+    /// working groups — are dimmed so they read as visually recessive relative
+    /// to Pi's actual output prose. Applied to the cards' foreground colours
+    /// (`dimmed(_:)`), never as `.opacity` on the whole card: a group-opacity
+    /// on each of a hundred cards cost ~170 ms per card per layout pass.
     static let subOutputOpacity: Double = 0.78
+
+    /// A card foreground colour at `subOutputOpacity`.
+    static func dimmed(_ color: Color) -> Color {
+        color.opacity(subOutputOpacity)
+    }
 
     /// Inter font for a role, scaled by the user's global font-scale
     /// preference (`HerdrFontScale`), mirroring `HerdrTheme.scaled` /

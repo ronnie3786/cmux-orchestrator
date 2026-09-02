@@ -8,12 +8,11 @@ struct PiToolCardView: View {
 
     var body: some View {
         let presentation = PiToolPresentation(tool: tool)
-        PiDisclosureCard(isExpanded: $isExpanded) {
+        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: presentation.tint) {
             detail
         } label: {
             label(presentation)
         }
-        .tint(presentation.tint)
         // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -30,24 +29,23 @@ struct PiToolCardView: View {
         .herdrHaptic(trigger: hapticPulse)
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-tool-\(tool.callID)")
-        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private func label(_ presentation: PiToolPresentation) -> some View {
         HStack(spacing: 10) {
             Image(systemName: presentation.symbol)
                 .frame(width: 18)
-                .foregroundStyle(presentation.tint)
+                .foregroundStyle(HerdrProse.dimmed(presentation.tint))
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(presentation.title)
                     .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.text)
+                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.text))
                 if let subtitle = presentation.subtitle {
                     Text(subtitle)
                         .herdrFont(.caption, monospaced: true)
-                        .foregroundStyle(HerdrTheme.mist)
+                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                         .lineLimit(1)
                 }
             }
@@ -61,7 +59,7 @@ struct PiToolCardView: View {
                 if let elapsedDuration {
                     Text(elapsedDuration)
                         .herdrFont(.caption, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
                 }
             }
             .accessibilityElement(children: .combine)
@@ -112,19 +110,19 @@ struct PiToolCardView: View {
         switch tool.status {
         case .waiting:
             Text("QUEUED")
-                .foregroundStyle(HerdrTheme.muted)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
         case .running:
             HStack(spacing: 5) {
                 ProgressView().controlSize(.mini)
                 Text("RUNNING")
             }
-            .foregroundStyle(HerdrTheme.working)
+            .foregroundStyle(HerdrProse.dimmed(HerdrTheme.working))
         case .succeeded:
             Label("DONE", systemImage: "checkmark")
-                .foregroundStyle(HerdrTheme.success)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.success))
         case .failed:
             Label("FAILED", systemImage: "exclamationmark")
-                .foregroundStyle(HerdrTheme.alert)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.alert))
         }
     }
 

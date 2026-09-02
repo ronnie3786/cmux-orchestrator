@@ -8,7 +8,7 @@ struct PiThinkingDisclosureView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        PiDisclosureCard(isExpanded: $isExpanded) {
+        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: HerdrTheme.mauve) {
             markdownContent()
         } label: {
             HStack(spacing: 9) {
@@ -20,7 +20,7 @@ struct PiThinkingDisclosureView: View {
                             .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                     } else {
                         Image(systemName: "brain.head.profile")
-                            .foregroundStyle(HerdrTheme.mauve)
+                            .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mauve))
                             .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                     }
                 }
@@ -29,7 +29,7 @@ struct PiThinkingDisclosureView: View {
 
                 Text(block.isStreaming ? "Thinking" : "Thought process")
                     .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                     .contentTransition(.opacity)
 
                 Spacer(minLength: 8)
@@ -37,12 +37,11 @@ struct PiThinkingDisclosureView: View {
                 if block.isStreaming, let startedAt = block.startedAt {
                     Text(startedAt, style: .relative)
                         .herdrFont(.caption, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
                         .transition(.opacity)
                 }
             }
         }
-        .tint(HerdrTheme.mauve)
         // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -59,7 +58,6 @@ struct PiThinkingDisclosureView: View {
         .herdrHaptic(trigger: hapticPulse)
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-thinking-\(block.id)")
-        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private func markdownContent() -> some View {
@@ -74,7 +72,7 @@ struct PiThinkingDisclosureView: View {
             id: isLiveBlockText ? block.id : nil,
             cacheKeyLength: isLiveBlockText ? text.utf8.count : nil
         )
-        .foregroundStyle(HerdrTheme.mist)
+        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
         .padding(.top, 10)
     }
 

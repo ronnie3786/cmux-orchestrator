@@ -31,51 +31,42 @@ enum PiChatChrome {
 /// difference is the whole main-thread budget.
 ///
 /// The chevron rotation is animated by the caller's existing
-/// `.animation(PiChatMotion.disclosureAnimation(…), value: isExpanded)`, so the
-/// card adds no motion of its own beyond the hover cross-fade.
+/// `.animation(PiChatMotion.disclosureAnimation(…), value: isExpanded)`; the
+/// card adds no motion of its own. The chevron colour is passed in rather
+/// than read from `.tint`, and there is no `.onHover` cross-fade: with a
+/// hundred cards mounted, per-card hover tracking and tint resolution were a
+/// measurable slice of every layout pass (`HangReproTests.rowKindCosts`).
 struct PiDisclosureCard<Label: View, Content: View>: View {
     @Binding var isExpanded: Bool
+    let chevronColor: Color
     @ViewBuilder let content: () -> Content
     @ViewBuilder let label: () -> Label
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PiDisclosureHeader(isExpanded: $isExpanded, label: label)
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    label()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Image(systemName: "chevron.right")
+                        .herdrFont(.caption2, weight: .semibold)
+                        .foregroundStyle(chevronColor.opacity(0.8))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: HerdrTheme.minHitTarget)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
             if isExpanded {
                 content()
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-}
-
-private struct PiDisclosureHeader<Label: View>: View {
-    @Binding var isExpanded: Bool
-    @ViewBuilder let label: () -> Label
-    @State private var isHovering = false
-
-    var body: some View {
-        Button {
-            isExpanded.toggle()
-        } label: {
-            HStack(spacing: 8) {
-                label()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .herdrFont(.caption2, weight: .semibold)
-                    .foregroundStyle(.tint)
-                    .opacity(isHovering ? 1 : 0.62)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .accessibilityHidden(true)
-            }
-            .frame(minHeight: HerdrTheme.minHitTarget)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .animation(PiChatChrome.hoverAnimation, value: isHovering)
     }
 }
 

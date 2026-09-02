@@ -13,7 +13,10 @@ struct PiWorkingGroupView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        PiDisclosureCard(isExpanded: $isExpanded) {
+        PiDisclosureCard(
+            isExpanded: $isExpanded,
+            chevronColor: group.hasFailure ? HerdrTheme.alert : HerdrTheme.mist
+        ) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(group.items) { item in
                     PiConversationItemView(item: item)
@@ -24,7 +27,6 @@ struct PiWorkingGroupView: View {
         } label: {
             label
         }
-        .tint(group.hasFailure ? HerdrTheme.alert : HerdrTheme.mist)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
@@ -40,7 +42,6 @@ struct PiWorkingGroupView: View {
         .herdrHaptic(trigger: hapticPulse)
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-working-\(group.id)")
-        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private var label: some View {
@@ -53,7 +54,7 @@ struct PiWorkingGroupView: View {
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 } else {
                     Image(systemName: group.hasFailure ? "exclamationmark.triangle" : "gearshape.2")
-                        .foregroundStyle(group.hasFailure ? HerdrTheme.alert : HerdrTheme.muted)
+                        .foregroundStyle(HerdrProse.dimmed(group.hasFailure ? HerdrTheme.alert : HerdrTheme.muted))
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 }
             }
@@ -62,12 +63,12 @@ struct PiWorkingGroupView: View {
 
             Text(group.isLive ? "Clanking…" : "Clanking")
                 .herdrFont(.caption, weight: .semibold)
-                .foregroundStyle(HerdrTheme.mist)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                 .contentTransition(.opacity)
 
             Text(summary)
                 .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.muted)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
                 .lineLimit(1)
                 .contentTransition(.opacity)
 

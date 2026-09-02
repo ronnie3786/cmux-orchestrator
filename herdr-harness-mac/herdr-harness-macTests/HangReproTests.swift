@@ -406,6 +406,76 @@ struct HangReproTests {
             .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
             .frame(minHeight: 44)
         } } }
+        // Bisect the collapsed-card chrome, one modifier family at a time.
+        @State var dummy = false
+        try await measure("card-bare") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+                .frame(minHeight: 44)
+        } } }
+        try await measure("card+tint+opacity") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
+                .tint(HerdrTheme.mist)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+                .frame(minHeight: 44)
+                .opacity(HerdrProse.subOutputOpacity)
+        } } }
+        try await measure("card+animations") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+                .animation(PiChatMotion.disclosureAnimation(reduceMotion: false), value: false)
+                .animation(PiChatMotion.stateAnimation(reduceMotion: false), value: i)
+                .frame(minHeight: 44)
+        } } }
+        try await measure("card+onChange") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+                .onChange(of: i) { _, _ in }
+                .onChange(of: i, initial: true) { _, _ in }
+                .frame(minHeight: 44)
+        } } }
+        try await measure("card+haptic") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+                .herdrHaptic(trigger: HerdrHapticPulse())
+                .frame(minHeight: 44)
+        } } }
+        try await measure("card+labelZStackTransitions") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: {
+                HStack(spacing: 9) {
+                    ZStack {
+                        if i % 2 == 0 {
+                            ProgressView().controlSize(.small).tint(HerdrTheme.working).transition(PiChatMotion.stateTransition(reduceMotion: false))
+                        } else {
+                            Image(systemName: "gearshape.2").foregroundStyle(HerdrTheme.muted).transition(PiChatMotion.stateTransition(reduceMotion: false))
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    Text("Clanking").herdrFont(.caption, weight: .semibold).contentTransition(.opacity)
+                    Text("\(i) steps").herdrFont(.caption).lineLimit(1).contentTransition(.opacity)
+                    Spacer(minLength: 8)
+                }
+            }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+                .frame(minHeight: 44)
+        } } }
+        try await measure("card+progressViewOnly") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            HStack(spacing: 9) {
+                ProgressView().controlSize(.small)
+                Text("Clanking \(i)").herdrFont(.caption, weight: .semibold)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+            .frame(minHeight: 44)
+        } } }
+        _ = dummy
         for (name, duration) in results {
             print("HANGREPRO rowcost \(name) elapsed=\(duration)")
         }

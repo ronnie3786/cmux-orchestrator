@@ -9,7 +9,10 @@ struct HerdrHudWorkingGroupView: View {
     private var failureCount: Int { steps.count(where: \.isFailure) }
 
     var body: some View {
-        PiDisclosureCard(isExpanded: $isExpanded) {
+        PiDisclosureCard(
+            isExpanded: $isExpanded,
+            chevronColor: hasFailure ? HerdrTheme.alert : HerdrTheme.mist
+        ) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(steps) { step in
                     HerdrHudWorkingStepRow(step: step)
@@ -24,7 +27,6 @@ struct HerdrHudWorkingGroupView: View {
         } label: {
             label
         }
-        .tint(hasFailure ? HerdrTheme.alert : HerdrTheme.mist)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
