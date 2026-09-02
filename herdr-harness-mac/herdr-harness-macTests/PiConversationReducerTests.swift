@@ -807,3 +807,68 @@ struct PiConversationReducerTests {
         )
     }
 }
+
+@Suite("Pi conversation reducer settle revisions")
+struct PiConversationReducerSettleRevisionTests {
+    @Test("Settling only bumps the turns that were still live")
+    func settleBumpsOnlyLiveTurns() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decode(
+            entries: """
+            [
+              {"type":"message","id":"u1","message":{"role":"user","content":"First"}},
+              {"type":"message","id":"a1","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}},
+              {"type":"message","id":"u2","message":{"role":"user","content":"Second"}}
+            ]
+            """,
+            state: "{\"isStreaming\":true,\"working\":true}"
+        ))
+        _ = reducer.apply(try envelope(10, """
+        {"type":"message_start","message":{"role":"assistant","id":"a2","content":[]}}
+        """))
+        _ = reducer.apply(try envelope(11, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+        """))
+        _ = reducer.apply(try envelope(12, """
+        {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Streaming"}}
+        """))
+        #expect(reducer.turns.count == 2)
+        let settledRevision = reducer.turns[0].itemsRevision
+        let liveRevision = reducer.turns[1].itemsRevision
+
+        let effect = reducer.apply(try envelope(13, "{\"type\":\"agent_settled\"}"))
+
+        #expect(effect == .completed)
+        #expect(reducer.turns[0].itemsRevision == settledRevision, "a long-settled turn must not be re-rendered by another turn settling")
+        #expect(reducer.turns[1].itemsRevision > liveRevision)
+        #expect(reducer.turns.allSatisfy { !$0.isActive })
+        if case let .assistant(block) = reducer.turns[1].items.last {
+            #expect(block.status == .complete)
+        } else {
+            Issue.record("expected the streamed assistant block")
+        }
+    }
+
+    private func decode(entries: String, state: String) throws -> PiConversationSnapshot {
+        try JSONDecoder().decode(
+            PiConversationSnapshot.self,
+            from: Data(
+                """
+                {"protocol":{"name":"herdr.pi.semantic","version":1},"paneId":"p1","available":true,"connected":true,
+                 "session":{"id":"s1"},"state":\(state),"entries":\(entries),"pendingInteractions":[],"cursor":"0","oldestCursor":"0","truncated":false}
+                """.utf8
+            )
+        )
+    }
+
+    private func envelope(_ cursor: Int, _ eventJSON: String) throws -> PiConversationEnvelope {
+        try JSONDecoder().decode(
+            PiConversationEnvelope.self,
+            from: Data(
+                """
+                {"protocol":{"name":"herdr.pi.semantic","version":1},"paneId":"p1","sessionId":"s1","cursor":"\(cursor)","event":\(eventJSON)}
+                """.utf8
+            )
+        )
+    }
+}

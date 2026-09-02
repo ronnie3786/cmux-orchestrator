@@ -634,6 +634,10 @@ final class PiConversationStore {
                     return
                 }
                 guard !Task.isCancelled, let self else { return }
+                // How late this task ran is a direct read of main-actor
+                // congestion: the sleep ended on time, but the main thread was
+                // still inside a layout pass. Widen the window accordingly.
+                self.coalescer.noteFlushLateness(deadline.duration(to: clock.now))
                 self.publishReducerState()
                 self.coalescer.markFlushed()
                 self.flushTask = nil

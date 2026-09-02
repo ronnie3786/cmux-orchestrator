@@ -7,18 +7,19 @@ struct PiUserMessageView: View {
 
     var body: some View {
         let accessibilityLabel = labelCache.accessibilityLabel(for: message)
-        HStack {
-            Spacer(minLength: 42)
-            PiMarkdownText(message.text, font: HerdrTheme.scaled(.body, scale: fontScale))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(HerdrTheme.surface.opacity(0.82), in: RoundedRectangle(cornerRadius: 16))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(HerdrTheme.accent.opacity(0.16), lineWidth: 1)
-                }
-        }
-        .accessibilityElement(children: .combine)
+        // A trailing-aligned frame instead of `HStack { Spacer; bubble }`: the
+        // stack would size-probe the bubble at several widths per layout pass.
+        PiMarkdownText(message.text, font: HerdrTheme.scaled(.body, scale: fontScale))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(HerdrTheme.surface.opacity(0.82), in: RoundedRectangle(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(HerdrTheme.accent.opacity(0.16), lineWidth: 1)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 42)
+            .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
     }
 }

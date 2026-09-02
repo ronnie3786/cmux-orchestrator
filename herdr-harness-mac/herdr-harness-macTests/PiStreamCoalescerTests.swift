@@ -108,3 +108,39 @@ struct PiStreamCoalescerTests {
         }
     }
 }
+
+@Suite("Pi stream coalescer backpressure")
+struct PiStreamCoalescerBackpressureTests {
+    @Test("Late flushes widen the window up to the cap; prompt flushes shrink it back")
+    func windowAdaptsToFlushLateness() {
+        var coalescer = PiStreamCoalescer(window: .milliseconds(120))
+
+        coalescer.noteFlushLateness(.milliseconds(500))
+        #expect(coalescer.window == .milliseconds(240))
+        coalescer.noteFlushLateness(.milliseconds(500))
+        #expect(coalescer.window == .milliseconds(480))
+        coalescer.noteFlushLateness(.milliseconds(500))
+        coalescer.noteFlushLateness(.milliseconds(500))
+        coalescer.noteFlushLateness(.milliseconds(500))
+        #expect(coalescer.window == PiStreamCoalescer.maxWindow)
+
+        // A borderline flush neither widens nor shrinks.
+        coalescer.noteFlushLateness(.milliseconds(40))
+        #expect(coalescer.window == PiStreamCoalescer.maxWindow)
+
+        coalescer.noteFlushLateness(.milliseconds(5))
+        #expect(coalescer.window == .milliseconds(500))
+        for _ in 0..<5 { coalescer.noteFlushLateness(.zero) }
+        #expect(coalescer.window == .milliseconds(120))
+    }
+
+    @Test("A widened window is what deltas coalesce into")
+    func widenedWindowDrivesDeadlines() {
+        let now = ContinuousClock().now
+        var coalescer = PiStreamCoalescer(window: .milliseconds(120))
+        coalescer.noteFlushLateness(.milliseconds(300))
+
+        #expect(coalescer.register(.delta, now: now) == .coalesce(deadline: now.advanced(by: .milliseconds(240))))
+        #expect(coalescer.register(.turnBoundary, now: now) == .flushNow)
+    }
+}

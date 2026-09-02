@@ -827,22 +827,35 @@ struct PiConversationReducer: Sendable {
         }
     }
 
+    /// Settling only touches what is still live. Bumping every turn's
+    /// `itemsRevision` here used to re-render the entire transcript on each
+    /// `agent_settled`, which on a long orchestrator session was the single
+    /// heaviest layout pass the app ever ran.
     private mutating func markTurnsSettled() {
         for index in turns.indices {
-            turns[index].isActive = false
+            var changed = false
+            if turns[index].isActive {
+                turns[index].isActive = false
+                changed = true
+            }
             for itemIndex in turns[index].items.indices {
                 switch turns[index].items[itemIndex] {
                 case var .assistant(block):
-                    if case .streaming = block.status { block.status = .complete }
+                    guard case .streaming = block.status else { continue }
+                    block.status = .complete
                     turns[index].items[itemIndex] = .assistant(block)
-                    turns[index].itemsRevision = nextItemsRevision()
+                    changed = true
                 case var .thinking(block):
+                    guard block.isStreaming else { continue }
                     block.isStreaming = false
                     turns[index].items[itemIndex] = .thinking(block)
-                    turns[index].itemsRevision = nextItemsRevision()
+                    changed = true
                 case .tool, .notice:
                     break
                 }
+            }
+            if changed {
+                turns[index].itemsRevision = nextItemsRevision()
             }
         }
         activeTurnID = turns.last?.id

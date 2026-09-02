@@ -25,15 +25,25 @@ struct PiChatTimelineView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: HerdrProse.turnSpacing) {
+                // Spacing lives on the rows (`PiTimelineRow.topSpacing`) so the
+                // rail can run through it; the stack itself adds none.
+                LazyVStack(alignment: .leading, spacing: 0) {
                     transcriptHeader
+                        .padding(.bottom, HerdrProse.turnSpacing)
                         .transition(.opacity)
 
                     if store.hasContent {
-                        ForEach(store.turns) { turn in
-                            PiConversationTurnRow(turn: turn)
+                        // One row per segment, never per turn: a streamed token
+                        // invalidates a single row and the lazy stack lays out
+                        // only what is on screen. See `PiTimelineRow`.
+                        ForEach(PiTimelineRow.rows(for: store.turns)) { row in
+                            PiTimelineRowView(row: row)
                                 .equatable()
-                                .transition(PiChatMotion.turnTransition(reduceMotion: reduceMotion))
+                                .transition(
+                                    row.startsTurn
+                                        ? PiChatMotion.turnTransition(reduceMotion: reduceMotion)
+                                        : PiChatMotion.itemTransition(reduceMotion: reduceMotion)
+                                )
                         }
                     } else if store.connection == .connected {
                         emptyTranscript
@@ -44,6 +54,7 @@ struct PiChatTimelineView: View {
                         PiInteractionCardView(interaction: interaction, isConnected: isConnected) { response in
                             await respond(interaction, response)
                         }
+                        .padding(.top, HerdrProse.turnSpacing)
                         .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
                     }
 
@@ -174,21 +185,6 @@ struct PiChatTimelineView: View {
                 scrollPosition.scrollTo(edge: .bottom)
             }
         }
-    }
-}
-
-private struct PiConversationTurnRow: View, Equatable {
-    let turn: PiConversationTurn
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.turn.id == rhs.turn.id
-            && lhs.turn.itemsRevision == rhs.turn.itemsRevision
-            && lhs.turn.isActive == rhs.turn.isActive
-            && lhs.turn.items.last?.diffingTextLength == rhs.turn.items.last?.diffingTextLength
-    }
-
-    var body: some View {
-        PiConversationTurnView(turn: turn)
     }
 }
 

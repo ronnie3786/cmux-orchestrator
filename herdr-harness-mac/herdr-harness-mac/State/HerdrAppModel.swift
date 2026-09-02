@@ -1068,6 +1068,11 @@ final class HerdrAppModel {
     }
 
     func fetchPiConversationSnapshot(for pane: HerdrPane) async throws -> PiConversationSnapshot {
+        #if DEBUG
+        if isDemoMode, let replay = HerdrPiReplay.shared, replay.handles(pane) {
+            return try replay.snapshot()
+        }
+        #endif
         guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID) else {
             throw APIError.invalidResponse
@@ -1240,6 +1245,11 @@ final class HerdrAppModel {
         for pane: HerdrPane,
         after cursor: String?
     ) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>? {
+        #if DEBUG
+        if isDemoMode, let replay = HerdrPiReplay.shared, replay.handles(pane) {
+            return replay.events()
+        }
+        #endif
         guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID) else { return nil }
         return await client.piConversationEvents(paneID: pane.paneID, after: cursor)
@@ -1252,6 +1262,12 @@ final class HerdrAppModel {
     ) async throws {
         noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        #if DEBUG
+        if isDemoMode, let replay = HerdrPiReplay.shared, replay.handles(pane) {
+            replay.arm()
+            return
+        }
+        #endif
         guard !prompt.isEmpty,
               !isDemoMode,
               canControl(machineID: pane.machineID),
@@ -2705,6 +2721,19 @@ final class HerdrAppModel {
         }
         workspaces = DemoData.workspaces.map { $0.stamped(machineID: "demo1") }
             + DemoData.workspacesForWorkMBP.map { $0.stamped(machineID: "demo2") }
+        #if DEBUG
+        if HerdrPiReplay.shared != nil {
+            workspaces = workspaces.map { workspace in
+                var copy = workspace
+                copy.panes = workspace.panes.map { pane in
+                    pane.machineID == HerdrPiReplay.machineID && pane.paneID == HerdrPiReplay.paneRawID
+                        ? HerdrPiReplay.piCapable(pane).stamped(machineID: HerdrPiReplay.machineID)
+                        : pane
+                }
+                return copy
+            }
+        }
+        #endif
         alerts = DemoData.alerts.map { $0.stamped(machineID: "demo1") }
         activityHistoryAlerts = alerts
         activityFeedError = nil
@@ -2724,6 +2753,12 @@ final class HerdrAppModel {
         selectedWorkspaceID = selectedWorkspaceID ?? workspaces.first?.id
         connectionState = .demo
         lastUpdated = .now
+        #if DEBUG
+        if HerdrPiReplay.shared != nil {
+            selectedWorkspaceID = "\(HerdrPiReplay.machineID)|w1"
+            selectedPaneID = "\(HerdrPiReplay.machineID)|\(HerdrPiReplay.paneRawID)"
+        }
+        #endif
     }
 
     private func resetConnectionState() {
