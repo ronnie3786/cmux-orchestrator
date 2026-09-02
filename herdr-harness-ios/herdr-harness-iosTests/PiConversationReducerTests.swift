@@ -53,6 +53,164 @@ struct PiConversationReducerTests {
         }
     }
 
+    @Test("Compaction activity is orthogonal to the conversation phase and survives snapshots")
+    func compactionProjectsFromSnapshot() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(
+            entries: "[]",
+            state: """
+            {
+              "isStreaming":true,
+              "isCompacting":true,
+              "compaction":{"active":true,"reason":"threshold","willRetry":false}
+            }
+            """
+        ))
+
+        #expect(reducer.phase == .working)
+        #expect(reducer.compactionActivity == PiCompactionActivity(reason: .threshold, willRetry: false))
+    }
+
+    @Test("Compaction start and terminal events transition immediately without changing turn phase")
+    func liveCompactionTransitions() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]"))
+
+        let started = reducer.apply(try envelope(
+            1,
+            "{\"type\":\"session_before_compact\",\"reason\":\"overflow\",\"willRetry\":true}"
+        ))
+
+        #expect(started == .compactionChanged)
+        #expect(reducer.phase == .idle)
+        #expect(reducer.compactionActivity == PiCompactionActivity(reason: .overflow, willRetry: true))
+
+        let finished = reducer.apply(try envelope(
+            2,
+            "{\"type\":\"session_compact_end\",\"reason\":\"overflow\",\"outcome\":\"aborted\"}"
+        ))
+        #expect(finished == .compactionChanged)
+        #expect(reducer.compactionActivity == nil)
+        #expect(reducer.phase == .idle)
+    }
+
+    @Test("Native compaction and agent settlement clear stale compaction activity")
+    func lifecycleClearsCompaction() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]"))
+        _ = reducer.apply(try envelope(
+            1,
+            "{\"type\":\"session_before_compact\",\"reason\":\"manual\",\"willRetry\":false}"
+        ))
+
+        #expect(reducer.apply(try envelope(2, "{\"type\":\"agent_settled\"}")) == .compactionChanged)
+        #expect(reducer.compactionActivity == nil)
+
+        _ = reducer.apply(try envelope(
+            3,
+            "{\"type\":\"session_before_compact\",\"reason\":\"manual\",\"willRetry\":false}"
+        ))
+        #expect(reducer.apply(try envelope(4, "{\"type\":\"session_compact\"}")) == .needsSnapshot)
+        #expect(reducer.compactionActivity == nil)
+    }
+
+    @Test("Bridge disconnect and offline ready frames clear stale compaction activity")
+    func disconnectClearsCompaction() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(
+            entries: "[]",
+            state: "{\"isCompacting\":true,\"compaction\":{\"active\":true,\"reason\":\"manual\"}}",
+            connected: false
+        ))
+        #expect(!reducer.bridgeConnected)
+        #expect(reducer.compactionActivity == nil)
+
+        reducer.replace(with: try decodeSnapshot(
+            entries: "[]",
+            state: "{\"isCompacting\":true,\"compaction\":{\"active\":true,\"reason\":\"manual\"}}"
+        ))
+
+        let disconnected = reducer.apply(try envelope(
+            1,
+            "{\"type\":\"bridge.connection\",\"connected\":false}"
+        ))
+
+        #expect(disconnected == .compactionChanged)
+        #expect(!reducer.bridgeConnected)
+        #expect(reducer.compactionActivity == nil)
+
+        _ = reducer.apply(try envelope(
+            2,
+            "{\"type\":\"session_before_compact\",\"reason\":\"threshold\",\"willRetry\":false}"
+        ))
+        let offlineReady = PiConversationEnvelope(
+            paneID: "w1:p1",
+            sessionID: "session-a",
+            cursor: "2",
+            event: .object(["type": .string("ready"), "connected": .bool(false)])
+        )
+
+        #expect(reducer.apply(offlineReady) == .compactionChanged)
+        #expect(reducer.compactionActivity == nil)
+    }
+
+    @MainActor
+    @Test("The store publishes bridge offline ahead of stale compaction UI")
+    func storeDisconnectPublishesOffline() async throws {
+        let store = PiConversationStore()
+        let connected = try envelope(
+            1,
+            "{\"type\":\"bridge.connection\",\"connected\":true}"
+        )
+        let compacting = try envelope(
+            2,
+            "{\"type\":\"session_before_compact\",\"reason\":\"manual\",\"willRetry\":false}"
+        )
+        let disconnected = try envelope(
+            3,
+            "{\"type\":\"bridge.connection\",\"connected\":false}"
+        )
+        let stream = AsyncThrowingStream<PiConversationStreamEvent, any Error> { continuation in
+            continuation.yield(.envelope(connected))
+            continuation.yield(.envelope(compacting))
+            continuation.yield(.envelope(disconnected))
+            continuation.finish()
+        }
+
+        #expect(!(try await store.consume(stream)))
+        #expect(store.connection == .bridgeOffline)
+        #expect(!store.canSendCommands)
+        #expect(store.compactionActivity == nil)
+    }
+
+    @MainActor
+    @Test("The store publishes compaction edges without the delta coalescing delay")
+    func storePublishesCompactionImmediately() async throws {
+        let store = PiConversationStore()
+        let start = try envelope(
+            1,
+            "{\"type\":\"session_before_compact\",\"reason\":\"manual\",\"willRetry\":false}"
+        )
+        let end = try envelope(
+            2,
+            "{\"type\":\"session_compact_end\",\"reason\":\"manual\",\"outcome\":\"failed\"}"
+        )
+
+        let startedStream = AsyncThrowingStream<PiConversationStreamEvent, any Error> { continuation in
+            continuation.yield(.envelope(start))
+            continuation.finish()
+        }
+        #expect(!(try await store.consume(startedStream)))
+        #expect(store.compactionActivity == PiCompactionActivity(reason: .manual, willRetry: false))
+
+        let endedStream = AsyncThrowingStream<PiConversationStreamEvent, any Error> { continuation in
+            continuation.yield(.envelope(end))
+            continuation.finish()
+        }
+        #expect(!(try await store.consume(endedStream)))
+        #expect(store.compactionActivity == nil)
+    }
+
     @Test("Snapshot groups persisted entries into stable user turns")
     func projectsSnapshotIntoTurns() throws {
         let snapshot = try decodeSnapshot(
@@ -398,7 +556,8 @@ struct PiConversationReducerTests {
 
     private func decodeSnapshot(
         entries: String,
-        state: String = "{\"isStreaming\":false}"
+        state: String = "{\"isStreaming\":false}",
+        connected: Bool = true
     ) throws -> PiConversationSnapshot {
         try JSONDecoder().decode(
             PiConversationSnapshot.self,
@@ -406,7 +565,7 @@ struct PiConversationReducerTests {
                 """
                 {
                   "protocol":{"name":"herdr.pi.semantic","version":1},
-                  "paneId":"p1","available":true,"connected":true,
+                  "paneId":"p1","available":true,"connected":\(connected),
                   "session":{"id":"s1"},"state":\(state),"entries":\(entries),
                   "pendingInteractions":[],"cursor":"0","oldestCursor":"0","truncated":false
                 }

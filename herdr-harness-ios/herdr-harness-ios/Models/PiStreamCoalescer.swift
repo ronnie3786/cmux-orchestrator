@@ -9,6 +9,7 @@ struct PiStreamCoalescer: Sendable {
     enum Trigger: Sendable, Equatable {
         case delta
         case phaseTransition
+        case compactionChange
         case pendingInteraction
         case turnBoundary
         case turnCompletion
@@ -19,7 +20,7 @@ struct PiStreamCoalescer: Sendable {
             switch self {
             case .delta:
                 false
-            case .phaseTransition, .pendingInteraction, .turnBoundary,
+            case .phaseTransition, .compactionChange, .pendingInteraction, .turnBoundary,
                  .turnCompletion, .streamReset, .connectionChange:
                 true
             }

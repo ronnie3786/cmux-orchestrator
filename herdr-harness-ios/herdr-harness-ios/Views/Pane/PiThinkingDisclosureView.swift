@@ -7,9 +7,9 @@ struct PiThinkingDisclosureView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
+        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: HerdrTheme.mauve) {
             PiMarkdownText(visibleText, font: .callout)
-                .foregroundStyle(HerdrTheme.mist)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                 .padding(.top, 10)
         } label: {
             HStack(spacing: 9) {
@@ -21,7 +21,7 @@ struct PiThinkingDisclosureView: View {
                             .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                     } else {
                         Image(systemName: "brain.head.profile")
-                            .foregroundStyle(HerdrTheme.mauve)
+                            .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mauve))
                             .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                     }
                 }
@@ -30,7 +30,7 @@ struct PiThinkingDisclosureView: View {
 
                 Text(block.isStreaming ? "Thinking" : "Thought process")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(HerdrTheme.mist)
+                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                     .contentTransition(.opacity)
 
                 Spacer(minLength: 8)
@@ -38,14 +38,11 @@ struct PiThinkingDisclosureView: View {
                 if block.isStreaming, let startedAt = block.startedAt {
                     Text(startedAt, style: .relative)
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(HerdrTheme.muted)
+                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
                         .transition(.opacity)
                 }
             }
         }
-        .tint(HerdrTheme.mauve)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .background(HerdrTheme.elevated.opacity(0.46), in: RoundedRectangle(cornerRadius: 11))
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: block.isStreaming)
@@ -53,10 +50,8 @@ struct PiThinkingDisclosureView: View {
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }
         .herdrHaptic(trigger: hapticPulse)
-        .contentShape(Rectangle())
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-thinking-\(block.id)")
-        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private var visibleText: String {

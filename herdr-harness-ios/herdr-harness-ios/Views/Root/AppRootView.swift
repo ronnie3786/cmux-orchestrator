@@ -55,6 +55,12 @@ struct AppRootView: View {
             }
         }
         .animation(.snappy, value: model.toastMessage)
+        // Presented from the root, not from the navigator drawer that opens it:
+        // the drawer closes as soon as a promoted run routes the app to its new
+        // pane, and the sheet has to outlive that.
+        .sheet(item: $model.agentRequest) { request in
+            HeadlessAgentSheet(model: model, machineID: request.machineID)
+        }
         .alert(
             "Connection issue",
             isPresented: $model.isShowingError

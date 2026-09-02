@@ -8,14 +8,11 @@ struct PiToolCardView: View {
 
     var body: some View {
         let presentation = PiToolPresentation(tool: tool)
-        DisclosureGroup(isExpanded: $isExpanded) {
+        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: presentation.tint) {
             detail
         } label: {
             label(presentation)
         }
-        .tint(presentation.tint)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .background(HerdrTheme.graphite.opacity(0.76), in: RoundedRectangle(cornerRadius: 11))
         .overlay {
             RoundedRectangle(cornerRadius: 11)
@@ -27,27 +24,25 @@ struct PiToolCardView: View {
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }
         .herdrHaptic(trigger: hapticPulse)
-        .contentShape(Rectangle())
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-tool-\(tool.callID)")
-        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private func label(_ presentation: PiToolPresentation) -> some View {
         HStack(spacing: 10) {
             Image(systemName: presentation.symbol)
                 .frame(width: 18)
-                .foregroundStyle(presentation.tint)
+                .foregroundStyle(HerdrProse.dimmed(presentation.tint))
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(presentation.title)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(HerdrTheme.text)
+                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.text))
                 if let subtitle = presentation.subtitle {
                     Text(subtitle)
                         .font(.caption.monospaced())
-                        .foregroundStyle(HerdrTheme.mist)
+                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                         .lineLimit(1)
                 }
             }
@@ -61,7 +56,7 @@ struct PiToolCardView: View {
                 if let elapsedDuration {
                     Text(elapsedDuration)
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(HerdrTheme.muted)
+                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
                 }
             }
             .accessibilityElement(children: .combine)
@@ -112,19 +107,26 @@ struct PiToolCardView: View {
         switch tool.status {
         case .waiting:
             Text("QUEUED")
-                .foregroundStyle(HerdrTheme.muted)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
         case .running:
             HStack(spacing: 5) {
-                ProgressView().controlSize(.mini)
+                // This spinner used to inherit the card's ambient
+                // `.tint(presentation.tint)`. The card takes its chevron colour
+                // as a parameter now, so there is no ambient tint left to
+                // inherit and the spinner has to name its own colour —
+                // `.foregroundStyle` does not reach a circular ProgressView.
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(HerdrProse.dimmed(HerdrTheme.working))
                 Text("RUNNING")
             }
-            .foregroundStyle(HerdrTheme.working)
+            .foregroundStyle(HerdrProse.dimmed(HerdrTheme.working))
         case .succeeded:
             Label("DONE", systemImage: "checkmark")
-                .foregroundStyle(HerdrTheme.success)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.success))
         case .failed:
             Label("FAILED", systemImage: "exclamationmark")
-                .foregroundStyle(HerdrTheme.alert)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.alert))
         }
     }
 

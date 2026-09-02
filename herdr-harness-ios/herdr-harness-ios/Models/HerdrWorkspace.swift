@@ -30,6 +30,38 @@ struct HerdrWorkspace: Codable, Equatable, Hashable, Identifiable, Sendable {
         return copy
     }
 
+    /// True when nothing a person would notice differs: the workspace's own
+    /// fields, its tabs, and each pane compared with `isEqualIgnoringRevision`.
+    /// `id` is computed from `machineID` + `workspaceID`, both compared here.
+    ///
+    /// Panes are compared positionally on purpose — the server returns them in a
+    /// stable order, and a reorder is a change worth rendering.
+    func isEqualIgnoringPaneRevisions(to other: HerdrWorkspace) -> Bool {
+        guard workspaceID == other.workspaceID,
+              number == other.number,
+              label == other.label,
+              focused == other.focused,
+              paneCount == other.paneCount,
+              tabCount == other.tabCount,
+              activeTabID == other.activeTabID,
+              agentStatus == other.agentStatus,
+              tokens == other.tokens,
+              worktree == other.worktree,
+              tabs == other.tabs,
+              agents == other.agents,
+              layouts == other.layouts,
+              machineID == other.machineID,
+              panes.count == other.panes.count
+        else { return false }
+
+        for index in panes.indices {
+            if !panes[index].isEqualIgnoringRevision(to: other.panes[index]) {
+                return false
+            }
+        }
+        return true
+    }
+
     var displayPath: String {
         if let worktree { return worktree.checkoutPath }
         return panes.compactMap(\.foregroundCWD).first ?? panes.compactMap(\.cwd).first ?? ""

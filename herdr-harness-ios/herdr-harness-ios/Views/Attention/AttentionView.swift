@@ -3,6 +3,7 @@ import SwiftUI
 struct AttentionView: View {
     @Bindable var model: HerdrAppModel
     let selectPane: (HerdrPane, HerdrAlert?) -> Void
+    let openActivity: () -> Void
 
     var body: some View {
         ZStack {
@@ -66,6 +67,12 @@ struct AttentionView: View {
         }
         .navigationTitle("Attention")
         .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Activity feed", systemImage: "clock.arrow.circlepath", action: openActivity)
+                    .accessibilityIdentifier("open-activity-feed")
+            }
+        }
     }
 
     private var header: some View {

@@ -41,6 +41,38 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         return copy
     }
 
+    /// Every field the fleet UI draws, minus `revision`.
+    ///
+    /// The server bumps `revision` on any terminal byte, so a plain `==` calls a
+    /// pane "changed" for panes that look identical on screen. The refresh gate
+    /// uses this to decide whether a poll is worth a re-render.
+    ///
+    /// `id` and `scopedTabID` are computed from `machineID`, `paneID` and
+    /// `tabID` — all three are compared here, so they need no clause of their own.
+    func isEqualIgnoringRevision(to other: HerdrPane) -> Bool {
+        paneID == other.paneID
+            && terminalID == other.terminalID
+            && workspaceID == other.workspaceID
+            && tabID == other.tabID
+            && focused == other.focused
+            && agentStatus == other.agentStatus
+            && cwd == other.cwd
+            && foregroundCWD == other.foregroundCWD
+            && label == other.label
+            && title == other.title
+            && agent == other.agent
+            && displayAgent == other.displayAgent
+            && terminalTitle == other.terminalTitle
+            && terminalTitleStripped == other.terminalTitleStripped
+            && stateLabels == other.stateLabels
+            && tokens == other.tokens
+            && piSemantic == other.piSemantic
+            && firstSeenAt == other.firstSeenAt
+            && lastActivityAt == other.lastActivityAt
+            && workingSince == other.workingSince
+            && machineID == other.machineID
+    }
+
     var displayTitle: String {
         for candidate in [label, title, terminalTitleStripped, displayAgent, agent] {
             if let candidate, !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -87,20 +119,6 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         case workingSince = "working_since"
     }
 
-    // ISO8601DateFormatter is documented as thread-safe. These immutable
-    // formatters avoid allocating one for every pane decoded from a snapshot.
-    // TODO: Revisit if Foundation changes that thread-safety guarantee.
-    nonisolated(unsafe) private static let withFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-    nonisolated(unsafe) private static let withoutFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         paneID = try container.decode(String.self, forKey: .paneID)
@@ -121,15 +139,9 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         stateLabels = try container.decodeIfPresent([String: String].self, forKey: .stateLabels) ?? [:]
         tokens = try container.decodeIfPresent([String: String].self, forKey: .tokens) ?? [:]
         piSemantic = try container.decodeIfPresent(PiSemanticCapability.self, forKey: .piSemantic)
-        firstSeenAt = try container.decodeIfPresent(String.self, forKey: .firstSeenAt).flatMap {
-            Self.withFractional.date(from: $0) ?? Self.withoutFractional.date(from: $0)
-        }
-        lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt).flatMap {
-            Self.withFractional.date(from: $0) ?? Self.withoutFractional.date(from: $0)
-        }
-        workingSince = try container.decodeIfPresent(String.self, forKey: .workingSince).flatMap {
-            Self.withFractional.date(from: $0) ?? Self.withoutFractional.date(from: $0)
-        }
+        firstSeenAt = try container.decodeIfPresent(String.self, forKey: .firstSeenAt).flatMap(HerdrTimestamp.date)
+        lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt).flatMap(HerdrTimestamp.date)
+        workingSince = try container.decodeIfPresent(String.self, forKey: .workingSince).flatMap(HerdrTimestamp.date)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -152,9 +164,9 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encode(stateLabels, forKey: .stateLabels)
         try container.encode(tokens, forKey: .tokens)
         try container.encodeIfPresent(piSemantic, forKey: .piSemantic)
-        try container.encodeIfPresent(firstSeenAt.map { Self.withoutFractional.string(from: $0) }, forKey: .firstSeenAt)
-        try container.encodeIfPresent(lastActivityAt.map { Self.withoutFractional.string(from: $0) }, forKey: .lastActivityAt)
-        try container.encodeIfPresent(workingSince.map { Self.withoutFractional.string(from: $0) }, forKey: .workingSince)
+        try container.encodeIfPresent(firstSeenAt.map(HerdrTimestamp.string), forKey: .firstSeenAt)
+        try container.encodeIfPresent(lastActivityAt.map(HerdrTimestamp.string), forKey: .lastActivityAt)
+        try container.encodeIfPresent(workingSince.map(HerdrTimestamp.string), forKey: .workingSince)
     }
 
     init(

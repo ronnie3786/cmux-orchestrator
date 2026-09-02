@@ -9,8 +9,8 @@ struct PiChatMotionStructureTests {
         let streamed = turn(text: "Hello", status: .streaming)
         let completed = turn(text: "Hello", status: .complete)
 
-        #expect(PiChatTurnStructure(turn: initial) == PiChatTurnStructure(turn: streamed))
-        #expect(PiChatTurnStructure(turn: streamed) == PiChatTurnStructure(turn: completed))
+        #expect(timelineStructure(turns: [initial]) == timelineStructure(turns: [streamed]))
+        #expect(timelineStructure(turns: [streamed]) == timelineStructure(turns: [completed]))
     }
 
     @Test("New transcript items trigger structural motion")
@@ -32,7 +32,6 @@ struct PiChatMotionStructureTests {
             )
         )
 
-        #expect(PiChatTurnStructure(turn: initial) != PiChatTurnStructure(turn: withTool))
         #expect(timelineStructure(turns: [initial]) != timelineStructure(turns: [withTool]))
     }
 

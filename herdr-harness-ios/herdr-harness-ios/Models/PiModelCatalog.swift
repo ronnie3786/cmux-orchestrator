@@ -47,6 +47,18 @@ struct PiAvailableModel: Codable, Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
+struct AgentModelCatalogResponse: Decodable, Sendable {
+    let ok: Bool
+    let models: [PiAvailableModel]
+    let defaultModel: PiModelIdentity?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case models
+        case defaultModel = "default"
+    }
+}
+
 struct PiModelCatalogResponse: Decodable, Sendable {
     let accepted: Bool
     let models: [PiAvailableModel]

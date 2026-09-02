@@ -4,6 +4,17 @@ import Testing
 
 @Suite("Sidebar tree")
 struct SidebarTreeTests {
+    /// 2025-01-01T12:00:00Z, a Wednesday.
+    private let now = Date(timeIntervalSince1970: 1_735_732_800)
+
+    /// Pinned so the week window is the same on every machine.
+    private let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        calendar.firstWeekday = 1
+        return calendar
+    }()
+
     @Test("Builds the full workspace tree in deterministic order")
     func buildsFullTree() {
         let tree = SidebarTree.build(
@@ -20,9 +31,8 @@ struct SidebarTreeTests {
         #expect(tree[0].looseChats.isEmpty)
     }
 
-    @Test("Recent-only filtering keeps only panes first seen today")
-    func recentOnlyFiltersPanesByFirstSeenDay() {
-        let now = Date(timeIntervalSince1970: 1_735_732_800)
+    @Test("Today keeps only panes active today")
+    func todayRecencyFiltersPanesByActivityDay() {
         let tabs = [tab(id: "recent:t1", workspaceID: "recent", number: 1, label: "Today", paneCount: 3)]
         let panes = [
             pane(id: "recent:p1", workspaceID: "recent", tabID: "recent:t1", title: "Today", firstSeenAt: now),
@@ -34,16 +44,72 @@ struct SidebarTreeTests {
             workspaces: [workspace(id: "recent", number: 1, label: "Recent", tabs: tabs, panes: panes)],
             query: "",
             collapsedWorkspaceIDs: [],
-            recentOnly: true,
-            now: now
+            recency: .today,
+            now: now,
+            calendar: calendar
         )
 
         #expect(tree[0].sections[0].chats.map(\.id) == ["recent:p1"])
     }
 
-    @Test("Recent-only filtering applies to starred groups")
-    func recentOnlyFiltersStarredGroups() {
-        let now = Date(timeIntervalSince1970: 1_735_732_800)
+    /// The filter reads `lastActivityAt ?? firstSeenAt`, so "today" means worked
+    /// on today rather than created today.
+    @Test("Today prefers last activity over a stale first-seen date")
+    func todayRecencyPrefersLastActivity() {
+        let tabs = [tab(id: "touched:t1", workspaceID: "touched", number: 1, label: "Touched", paneCount: 2)]
+        let panes = [
+            pane(
+                id: "touched:p1",
+                workspaceID: "touched",
+                tabID: "touched:t1",
+                title: "Opened last week, touched today",
+                firstSeenAt: now.addingTimeInterval(-6 * 86_400),
+                lastActivityAt: now
+            ),
+            pane(
+                id: "touched:p2",
+                workspaceID: "touched",
+                tabID: "touched:t1",
+                title: "Opened today, untouched since",
+                firstSeenAt: now,
+                lastActivityAt: now.addingTimeInterval(-3 * 86_400)
+            ),
+        ]
+
+        let tree = SidebarTree.build(
+            workspaces: [workspace(id: "touched", number: 1, label: "Touched", tabs: tabs, panes: panes)],
+            query: "",
+            collapsedWorkspaceIDs: [],
+            recency: .today,
+            now: now,
+            calendar: calendar
+        )
+
+        #expect(tree[0].sections[0].chats.map(\.id) == ["touched:p1"])
+    }
+
+    @Test("This week keeps panes from the current week only")
+    func thisWeekRecencyKeepsThisWeeksPanes() {
+        let tabs = [tab(id: "week:t1", workspaceID: "week", number: 1, label: "Week", paneCount: 2)]
+        let panes = [
+            pane(id: "week:p1", workspaceID: "week", tabID: "week:t1", title: "Three days ago", lastActivityAt: now.addingTimeInterval(-3 * 86_400)),
+            pane(id: "week:p2", workspaceID: "week", tabID: "week:t1", title: "Ten days ago", lastActivityAt: now.addingTimeInterval(-10 * 86_400)),
+        ]
+
+        let tree = SidebarTree.build(
+            workspaces: [workspace(id: "week", number: 1, label: "Week", tabs: tabs, panes: panes)],
+            query: "",
+            collapsedWorkspaceIDs: [],
+            recency: .thisWeek,
+            now: now,
+            calendar: calendar
+        )
+
+        #expect(tree[0].sections[0].chats.map(\.id) == ["week:p1"])
+    }
+
+    @Test("Today filtering applies to starred groups")
+    func todayRecencyFiltersStarredGroups() {
         let tabs = [tab(id: "starred:t1", workspaceID: "starred", number: 1, label: "Today", paneCount: 2)]
         let panes = [
             pane(id: "starred:p1", workspaceID: "starred", tabID: "starred:t1", title: "Today", firstSeenAt: now),
@@ -53,16 +119,16 @@ struct SidebarTreeTests {
             workspaces: [workspace(id: "starred", number: 1, label: "Starred", tabs: tabs, panes: panes)],
             query: "",
             starredIDs: ["starred:p1", "starred:p2"],
-            recentOnly: true,
-            now: now
+            recency: .today,
+            now: now,
+            calendar: calendar
         )
 
         #expect(groups[0].chats.map(\.id) == ["starred:p1"])
     }
 
-    @Test("Recent-only filtering drops empty tabs and workspaces")
-    func recentOnlyDropsEmptyTabsAndWorkspaces() {
-        let now = Date(timeIntervalSince1970: 1_735_732_800)
+    @Test("Today filtering drops empty tabs and workspaces")
+    func todayRecencyDropsEmptyTabsAndWorkspaces() {
         let mixedTabs = [
             tab(id: "mixed:t1", workspaceID: "mixed", number: 1, label: "Old", paneCount: 1),
             tab(id: "mixed:t2", workspaceID: "mixed", number: 2, label: "Today", paneCount: 1),
@@ -83,17 +149,17 @@ struct SidebarTreeTests {
             ],
             query: "",
             collapsedWorkspaceIDs: [],
-            recentOnly: true,
-            now: now
+            recency: .today,
+            now: now,
+            calendar: calendar
         )
 
         #expect(tree.map(\.id) == ["mixed"])
         #expect(tree[0].sections.map(\.id) == ["mixed:t2"])
     }
 
-    @Test("Disabling recent-only filtering preserves dated panes")
-    func disabledRecentOnlyKeepsAllPanes() {
-        let now = Date(timeIntervalSince1970: 1_735_732_800)
+    @Test("All preserves dated and undated panes alike")
+    func allRecencyKeepsAllPanes() {
         let tabs = [tab(id: "all:t1", workspaceID: "all", number: 1, label: "All", paneCount: 3)]
         let panes = [
             pane(id: "all:p1", workspaceID: "all", tabID: "all:t1", title: "Today", firstSeenAt: now),
@@ -104,8 +170,9 @@ struct SidebarTreeTests {
             workspaces: [workspace(id: "all", number: 1, label: "All", tabs: tabs, panes: panes)],
             query: "",
             collapsedWorkspaceIDs: [],
-            recentOnly: false,
-            now: now
+            recency: .all,
+            now: now,
+            calendar: calendar
         )
 
         #expect(tree[0].sections[0].chats.map(\.id) == ["all:p1", "all:p2", "all:p3"])
@@ -568,7 +635,8 @@ struct SidebarTreeTests {
         workspaceID: String,
         tabID: String,
         title: String,
-        firstSeenAt: Date? = nil
+        firstSeenAt: Date? = nil,
+        lastActivityAt: Date? = nil
     ) -> HerdrPane {
         HerdrPane(
             paneID: id,
@@ -586,7 +654,8 @@ struct SidebarTreeTests {
             displayAgent: nil,
             terminalTitle: nil,
             terminalTitleStripped: nil,
-            firstSeenAt: firstSeenAt
+            firstSeenAt: firstSeenAt,
+            lastActivityAt: lastActivityAt
         )
     }
 }

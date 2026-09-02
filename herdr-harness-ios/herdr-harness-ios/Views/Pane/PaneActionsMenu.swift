@@ -4,6 +4,12 @@ struct PaneActionsMenu: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     @Binding var selectedMode: PaneDetailMode
+    var isPiCompacting = false
+    /// Mirrors the Mac's `PaneSessionHeader` parameters. Defaulted so the flag
+    /// and the action can be added at the single call site without touching
+    /// anything else.
+    var showsPiSessionSummary = false
+    var summarizePiSession: () -> Void = { }
     @State private var isConfirmingClose = false
     @State private var isConfirmingEndPiAndClose = false
     @State private var isRenaming = false
@@ -43,24 +49,43 @@ struct PaneActionsMenu: View {
             }
             .disabled(!model.canControl)
 
+            // Gated on the Pi session id, not on `supportsPiSemanticChat`: the
+            // summary reads the transcript off disk in a separate headless
+            // session, so a pane whose semantic bridge is no longer connected
+            // can still be summarized.
+            if showsPiSessionSummary {
+                Button("Summarize Pi session", systemImage: "list.bullet.clipboard", action: summarizePiSession)
+                    // The run is dispatched to the pane's machine, not the
+                    // primary connection, so this row checks that machine.
+                    .disabled(!model.canControl(machineID: pane.machineID))
+                    .accessibilityIdentifier("pane-summarize-pi-session")
+                    .accessibilityHint("Opens a short summary generated in a separate headless Pi session")
+            }
+
             if pane.supportsPiSemanticChat || [pane.agent, pane.displayAgent].contains(where: { $0?.caseInsensitiveCompare("pi") == .orderedSame }) {
+                Button("Compact Pi chat", systemImage: "arrow.down.right.and.arrow.up.left") {
+                    Task { await model.compactPiChat(in: pane) }
+                }
+                .accessibilityIdentifier("pane-action-compact-pi-chat")
+                .disabled(piSessionMutationIsDisabled)
+
                 Button("New Pi chat", systemImage: "plus.bubble") {
                     Task { await model.startNewPiChat(in: pane) }
                 }
                 .accessibilityIdentifier("pane-action-new-pi-chat")
-                .disabled(!model.canControl)
+                .disabled(piSessionMutationIsDisabled)
 
                 Button("End Pi session", systemImage: "xmark.bubble", role: .destructive) {
                     Task { await model.endPiSession(in: pane) }
                 }
                 .accessibilityIdentifier("pane-action-end-pi-session")
-                .disabled(!model.canControl)
+                .disabled(piSessionMutationIsDisabled)
 
                 Button("End Pi & close pane", systemImage: "xmark.rectangle", role: .destructive) {
                     isConfirmingEndPiAndClose = true
                 }
                 .accessibilityIdentifier("pane-action-end-pi-and-close-pane")
-                .disabled(!model.canControl)
+                .disabled(piSessionMutationIsDisabled)
             }
 
             Button("Rename pane", systemImage: "pencil") {
@@ -134,5 +159,19 @@ struct PaneActionsMenu: View {
 
     private var availableModes: [PaneDetailMode] {
         PaneDetailMode.allCases.filter { $0 != .chat || pane.supportsPiSemanticChat }
+    }
+
+    private var piSessionMutationIsDisabled: Bool {
+        !Self.piSessionMutationsEnabled(
+            // Every one of these runs against the pane's own machine, and each
+            // handler guards on it and returns silently. Gating on the
+            // aggregate connection would leave the row tappable and mute.
+            canControl: model.canControl(machineID: pane.machineID),
+            isCompacting: isPiCompacting
+        )
+    }
+
+    static func piSessionMutationsEnabled(canControl: Bool, isCompacting: Bool) -> Bool {
+        canControl && !isCompacting
     }
 }

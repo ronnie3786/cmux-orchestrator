@@ -5,6 +5,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
     let steer: Bool
     let followUp: Bool
     let abort: Bool
+    let compact: Bool
     let listModels: Bool
     let setModel: Bool
     let setThinkingLevel: Bool
@@ -15,6 +16,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         steer: false,
         followUp: false,
         abort: false,
+        compact: false,
         listModels: false,
         setModel: false,
         setThinkingLevel: false,
@@ -26,6 +28,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         steer: Bool,
         followUp: Bool,
         abort: Bool,
+        compact: Bool = false,
         listModels: Bool,
         setModel: Bool,
         setThinkingLevel: Bool,
@@ -35,6 +38,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         self.steer = steer
         self.followUp = followUp
         self.abort = abort
+        self.compact = compact
         self.listModels = listModels
         self.setModel = setModel
         self.setThinkingLevel = setThinkingLevel
@@ -47,6 +51,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         case followUp
         case followUpSnake = "follow_up"
         case abort
+        case compact
         case listModels
         case listModelsSnake = "list_models"
         case setModel
@@ -65,6 +70,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
             ?? container.decodeIfPresent(Bool.self, forKey: .followUpSnake)
             ?? false
         abort = try container.decodeIfPresent(Bool.self, forKey: .abort) ?? false
+        compact = try container.decodeIfPresent(Bool.self, forKey: .compact) ?? false
         listModels = try container.decodeIfPresent(Bool.self, forKey: .listModels)
             ?? container.decodeIfPresent(Bool.self, forKey: .listModelsSnake)
             ?? false
@@ -85,6 +91,7 @@ struct PiSemanticCapabilities: Codable, Equatable, Hashable, Sendable {
         try container.encode(steer, forKey: .steer)
         try container.encode(followUp, forKey: .followUp)
         try container.encode(abort, forKey: .abort)
+        try container.encode(compact, forKey: .compact)
         try container.encode(listModels, forKey: .listModels)
         try container.encode(setModel, forKey: .setModel)
         try container.encode(setThinkingLevel, forKey: .setThinkingLevel)

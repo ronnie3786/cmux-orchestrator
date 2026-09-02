@@ -10,6 +10,8 @@ struct HerdrSidebarView: View {
     @State private var workspaceName = ""
     @State private var renamingPane: HerdrPane?
     @State private var paneName = ""
+    @State private var renamingTab: HerdrTab?
+    @State private var tabName = ""
     @State private var closingWorkspace: HerdrWorkspace?
     @State private var closingPane: HerdrPane?
 
@@ -24,20 +26,29 @@ struct HerdrSidebarView: View {
             WorkspaceSearchField(text: $query, placeholder: "filter chats")
             creationControls
 
-            HerdrSectionLabel(
-                title: "chats",
-                detail: model.sidebarRecentOnly ? "\(paneCount) today" : "\(paneCount) total shown"
-            )
-
+            // The inbox rides inside the scroll region rather than above it.
+            // Pinned, an expanded inbox would permanently squeeze the chat
+            // list — which is what people actually open the drawer for — so the
+            // "chats" label comes along and the two read as peer sections.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) {
+                    SidebarWorkInboxView(model: model)
+                        .padding(.bottom, 8)
+
+                    HerdrSectionLabel(
+                        title: "chats",
+                        detail: sidebarCountDetail(paneCount),
+                        monospaced: false
+                    )
+                    .padding(.bottom, 2)
+
                     starredSection
                     workspaceContent
                 }
             }
             .scrollIndicators(.hidden)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, SidebarMetrics.containerHorizontalPadding)
         .padding(.top, 12)
         .padding(.bottom, 18)
         .sheet(isPresented: $isPresentingCreateWorkspace) {
@@ -79,6 +90,17 @@ struct HerdrSidebarView: View {
         } message: {
             Text("This label is shared with Herdr on your Mac.")
         }
+        .alert("Rename tab", isPresented: isRenamingTab) {
+            TextField("Tab name", text: $tabName)
+            Button("Cancel", role: .cancel) { }
+            Button("Save") {
+                guard let tab = renamingTab else { return }
+                Task { await model.rename(tab, label: tabName) }
+            }
+            .disabled(tabName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("The new label appears in Herdr on every connected client.")
+        }
         .confirmationDialog("Close this workspace?", isPresented: isClosingWorkspace, titleVisibility: .visible) {
             Button("Close workspace", role: .destructive) {
                 guard let workspace = closingWorkspace else { return }
@@ -106,17 +128,26 @@ struct HerdrSidebarView: View {
                 .font(.headline.monospaced().bold())
                 .foregroundStyle(HerdrTheme.text)
             Spacer()
-            Button {
-                model.sidebarRecentOnly.toggle()
+            Menu {
+                ForEach(SidebarRecency.allCases) { recency in
+                    Button {
+                        model.sidebarRecency = recency
+                    } label: {
+                        Label(
+                            recency.title,
+                            systemImage: recency == model.sidebarRecency ? "checkmark" : recency.symbolName
+                        )
+                    }
+                }
             } label: {
-                Image(systemName: model.sidebarRecentOnly ? "clock.fill" : "clock")
+                Image(systemName: model.sidebarRecency.symbolName)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .foregroundStyle(model.sidebarRecentOnly ? HerdrTheme.accent : HerdrTheme.mist)
+            .foregroundStyle(model.sidebarRecency == .all ? HerdrTheme.mist : HerdrTheme.accent)
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-recent-filter")
-            .accessibilityLabel("Today's chats")
+            .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
             Button(action: dismiss) {
                 Image(systemName: "xmark")
                     .frame(width: 44, height: 44)
@@ -155,7 +186,7 @@ struct HerdrSidebarView: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption.bold())
             }
-            .font(.caption.monospaced().bold())
+            .font(.caption.bold())
             .foregroundStyle(HerdrTheme.mist)
             .frame(minHeight: 30)
         }
@@ -189,6 +220,20 @@ struct HerdrSidebarView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-new-pi-session")
+
+            Menu {
+                ForEach(model.machines) { machine in
+                    Button(machine.name) {
+                        model.presentAgent(machineID: machine.id)
+                        dismiss()
+                    }
+                }
+            } label: {
+                Label("run agent", systemImage: "sparkles")
+                    .sidebarActionStyle()
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("sidebar-run-agent")
         } else {
             Button("new workspace", systemImage: "plus") {
                 presentCreateWorkspace(for: scopedMachineID)
@@ -203,20 +248,28 @@ struct HerdrSidebarView: View {
             .sidebarActionStyle()
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-new-pi-session")
+
+            Button("run agent", systemImage: "sparkles") {
+                model.presentAgent(machineID: scopedMachineID)
+                dismiss()
+            }
+            .sidebarActionStyle()
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("sidebar-run-agent")
         }
     }
 
     @ViewBuilder
     private var starredSection: some View {
         if !starredGroups.isEmpty {
-            HerdrSectionLabel(title: "starred", detail: "\(starredCount)")
+            HerdrSectionLabel(title: "starred", detail: "\(starredCount)", monospaced: false)
                 .padding(.top, 4)
             ForEach(starredGroups) { group in
                 Text(starredGroupTitle(group))
-                    .font(.caption.monospaced())
+                    .font(.caption.bold())
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(1)
-                    .padding(.leading, 34)
+                    .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
                     .padding(.top, 6)
                 ForEach(group.chats) { chatRow($0) }
             }
@@ -242,10 +295,10 @@ struct HerdrSidebarView: View {
                 if group.isExpanded {
                     if group.entries.isEmpty {
                         Text("no workspaces yet")
-                            .font(.caption.monospaced())
+                            .font(.caption)
                             .foregroundStyle(HerdrTheme.muted)
-                            .padding(.leading, 34)
-                            .frame(minHeight: 36)
+                            .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
+                            .frame(minHeight: SidebarMetrics.placeholderRowHeight)
                     } else {
                         entriesContent(group.entries)
                     }
@@ -253,10 +306,10 @@ struct HerdrSidebarView: View {
                 machineSeparator
             }
         } else if tree.isEmpty {
-            if model.sidebarRecentOnly {
+            if model.sidebarRecency != .all {
                 if starredGroups.isEmpty {
-                    Text("no chats started today")
-                        .font(.caption.monospaced())
+                    Text("no chats from \(model.sidebarRecency.title.lowercased())")
+                        .font(.caption)
                         .foregroundStyle(HerdrTheme.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 42)
@@ -278,23 +331,8 @@ struct HerdrSidebarView: View {
                 .contextMenu { workspaceMenu(entry.workspace) }
             if entry.isExpanded {
                 ForEach(entry.sections) { section in
-                    let firstPane = firstPane(in: section.tab, workspace: entry.workspace)
                     SidebarSectionRow(tab: section.tab, isExpanded: section.isExpanded, action: { toggle(section.tab) })
-                        .contextMenu {
-                            Button("Focus on Mac", systemImage: "scope") {
-                                guard let firstPane else { return }
-                                Task { await model.focus(firstPane) }
-                            }
-                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
-                            Button("New Pi Chat", systemImage: "plus.bubble") {
-                                Task { await model.addPane(toTab: section.tab, in: entry.workspace, running: "pi") }
-                            }
-                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
-                            Button("New Shell", systemImage: "terminal") {
-                                Task { await model.addPane(toTab: section.tab, in: entry.workspace) }
-                            }
-                            .disabled(firstPane == nil || !model.canControl(machineID: entry.workspace.machineID))
-                        }
+                        .contextMenu { tabMenu(section.tab, in: entry.workspace) }
                     if section.isExpanded {
                         ForEach(section.chats) { chatRow($0) }
                     }
@@ -302,14 +340,38 @@ struct HerdrSidebarView: View {
                 ForEach(entry.looseChats) { chatRow($0) }
                 if entry.sections.isEmpty && entry.looseChats.isEmpty {
                     Text("no panes yet")
-                        .font(.caption.monospaced())
+                        .font(.caption)
                         .foregroundStyle(HerdrTheme.muted)
-                        .padding(.leading, 34)
-                        .frame(minHeight: 36)
+                        .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
+                        .frame(minHeight: SidebarMetrics.placeholderRowHeight)
                 }
             }
             separator
         }
+    }
+
+    @ViewBuilder
+    private func tabMenu(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> some View {
+        let firstPane = firstPane(in: tab, workspace: workspace)
+        Button("Focus on Mac", systemImage: "scope") {
+            guard let firstPane else { return }
+            Task { await model.focus(firstPane) }
+        }
+        .disabled(firstPane == nil || !model.canControl(machineID: workspace.machineID))
+        Button("Rename tab", systemImage: "pencil") {
+            tabName = tab.label
+            renamingTab = tab
+        }
+        .disabled(!model.canControl(machineID: workspace.machineID))
+        .accessibilityIdentifier("sidebar-tab-rename-\(tab.id)")
+        Button("New Pi Chat", systemImage: "plus.bubble") {
+            Task { await model.addPane(toTab: tab, in: workspace, running: "pi") }
+        }
+        .disabled(firstPane == nil || !model.canControl(machineID: workspace.machineID))
+        Button("New Shell", systemImage: "terminal") {
+            Task { await model.addPane(toTab: tab, in: workspace) }
+        }
+        .disabled(firstPane == nil || !model.canControl(machineID: workspace.machineID))
     }
 
     @ViewBuilder
@@ -360,7 +422,7 @@ struct HerdrSidebarView: View {
             collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
             collapsedTabIDs: model.collapsedSidebarTabIDs,
             starredIDs: model.starredChatIDs,
-            recentOnly: model.sidebarRecentOnly
+            recency: model.sidebarRecency
         )
     }
 
@@ -374,7 +436,7 @@ struct HerdrSidebarView: View {
             collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
             collapsedTabIDs: model.collapsedSidebarTabIDs,
             starredIDs: model.starredChatIDs,
-            recentOnly: model.sidebarRecentOnly
+            recency: model.sidebarRecency
         )
     }
 
@@ -384,7 +446,7 @@ struct HerdrSidebarView: View {
             query: query,
             starredIDs: model.starredChatIDs,
             machines: model.machines,
-            recentOnly: model.sidebarRecentOnly
+            recency: model.sidebarRecency
         )
     }
 
@@ -420,6 +482,10 @@ struct HerdrSidebarView: View {
         Binding(get: { renamingPane != nil }, set: { if !$0 { renamingPane = nil } })
     }
 
+    private var isRenamingTab: Binding<Bool> {
+        Binding(get: { renamingTab != nil }, set: { if !$0 { renamingTab = nil } })
+    }
+
     private var isClosingWorkspace: Binding<Bool> {
         Binding(get: { closingWorkspace != nil }, set: { if !$0 { closingWorkspace = nil } })
     }
@@ -443,6 +509,7 @@ struct HerdrSidebarView: View {
             pane: pane,
             isSelected: pane.id == model.selectedPaneID,
             isStarred: model.starredChatIDs.contains(pane.id),
+            statusSince: statusSince(for: pane),
             action: { open(pane) }
         )
         .contextMenu {
@@ -505,6 +572,36 @@ struct HerdrSidebarView: View {
         workspace.panes.filter { $0.scopedTabID == tab.id }.sorted { $0.paneID < $1.paneID }.first
     }
 
+    private func sidebarCountDetail(_ count: Int) -> String {
+        switch model.sidebarRecency {
+        case .today: "\(count) today"
+        case .thisWeek: "\(count) this week"
+        case .all: "\(count) total shown"
+        }
+    }
+
+    /// When the pane's current status started.
+    ///
+    /// `workingSince` is the server's own clock for a working pane. Every other
+    /// status is dated from the newest alert that still matches it — the alert
+    /// feed is the only place the snapshot records *when* a pane became blocked
+    /// or done. A pane whose status has no matching alert simply has no age, and
+    /// `SidebarStatusAgeLabel` falls back to the bare status word.
+    private func statusSince(for pane: HerdrPane) -> Date? {
+        let newestMatchingAlert = model.alerts.lazy
+            .filter {
+                $0.machineID == pane.machineID
+                    && $0.paneID == pane.paneID
+                    && $0.status == pane.agentStatus
+            }
+            .compactMap(\.createdDate)
+            .max()
+        if pane.agentStatus == .working {
+            return pane.workingSince ?? newestMatchingAlert
+        }
+        return newestMatchingAlert
+    }
+
     private func presentCreateWorkspace(for machineID: String?) {
         creatingWorkspaceMachineID = machineID
         isPresentingCreateWorkspace = true
@@ -537,7 +634,7 @@ struct HerdrSidebarView: View {
 
 private extension View {
     func sidebarActionStyle() -> some View {
-        font(.subheadline.monospaced().bold())
+        font(.subheadline.bold())
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 44)
     }

@@ -7,6 +7,7 @@ struct PiConversationReducer: Sendable {
         case completed
         case failed
         case interactionRequested
+        case compactionChanged
     }
 
     private(set) var turns: [PiConversationTurn] = []
@@ -20,6 +21,7 @@ struct PiConversationReducer: Sendable {
     private(set) var sessionCost: PiSessionCost?
     private(set) var currentModel: PiModelIdentity?
     private(set) var thinkingLevel: String?
+    private(set) var compactionActivity: PiCompactionActivity?
 
     private var activeTurnID: String?
     private var activeMessageID: String?
@@ -41,6 +43,9 @@ struct PiConversationReducer: Sendable {
         sessionCost = PiSessionCost(from: snapshot.state?["cost"])
         currentModel = PiModelIdentity(json: snapshot.state?["model"])
         thinkingLevel = snapshot.state?.string(for: "thinkingLevel", "thinking_level")
+        compactionActivity = snapshot.connected
+            ? PiCompactionActivity(snapshotState: snapshot.state)
+            : nil
 
         for entry in snapshot.entries {
             projectSessionEntry(entry)
@@ -65,8 +70,9 @@ struct PiConversationReducer: Sendable {
         // the same cursor, so they must bypass durable-event de-duplication.
         if type == "ready" {
             cursor = envelope.cursor ?? cursor
-            bridgeConnected = event.bool(for: "connected") ?? envelope.connected ?? false
-            return .none
+            return updateBridgeConnection(
+                event.bool(for: "connected") ?? envelope.connected ?? false
+            )
         }
         if type == "stream.reset" {
             cursor = envelope.cursor ?? cursor
@@ -86,8 +92,9 @@ struct PiConversationReducer: Sendable {
 
         switch type {
         case "bridge.connection":
-            bridgeConnected = event.bool(for: "connected") ?? envelope.connected ?? false
-            return .none
+            return updateBridgeConnection(
+                event.bool(for: "connected") ?? envelope.connected ?? false
+            )
         case "model_select":
             if let updated = PiModelIdentity(json: event["model"]) {
                 currentModel = updated
@@ -98,14 +105,32 @@ struct PiConversationReducer: Sendable {
                 thinkingLevel = level
             }
             return .none
+        case "session_before_compact":
+            let activity = PiCompactionActivity(event: event)
+            guard activity != compactionActivity else { return .none }
+            compactionActivity = activity
+            return .compactionChanged
+        case "session_compact_end":
+            guard compactionActivity != nil else { return .none }
+            compactionActivity = nil
+            return .compactionChanged
         case "session_tree", "session_compact":
             // Both can replace the current context without changing the Pi
             // session ID, so the only safe projection is authoritative reload.
+            compactionActivity = nil
             return .needsSnapshot
         case "session_start", "session_switch":
-            return sessionChanged(by: event) ? .needsSnapshot : .none
+            let hadCompaction = compactionActivity != nil
+            compactionActivity = nil
+            if sessionChanged(by: event) { return .needsSnapshot }
+            return hadCompaction ? .compactionChanged : .none
+        case "session_shutdown":
+            guard compactionActivity != nil else { return .none }
+            compactionActivity = nil
+            return .compactionChanged
         case "agent_start", "turn_start":
             phase = .working
+            compactionActivity = nil
             // Pi emits agent/turn start before the user message. Wait for the
             // first semantic item so we do not render an empty orphan rail.
             return .none
@@ -119,9 +144,12 @@ struct PiConversationReducer: Sendable {
             return .none
         case "agent_settled":
             let wasWorking = phase == .working
+            let hadCompaction = compactionActivity != nil
             phase = .idle
+            compactionActivity = nil
             markTurnsSettled()
-            return wasWorking ? .completed : .none
+            if wasWorking { return .completed }
+            return hadCompaction ? .compactionChanged : .none
         case "message_start":
             projectLiveMessage(event["message"], envelope: envelope, final: false)
             return .none
@@ -133,6 +161,7 @@ struct PiConversationReducer: Sendable {
             projectLiveMessage(message, envelope: envelope, final: true)
             if Self.messageFailed(message) {
                 phase = .failed
+                compactionActivity = nil
                 return .failed
             }
             return .none
@@ -165,10 +194,18 @@ struct PiConversationReducer: Sendable {
                 tone: .error
             )
             phase = .failed
+            compactionActivity = nil
             return .failed
         default:
             return .none
         }
+    }
+
+    private mutating func updateBridgeConnection(_ connected: Bool) -> Effect {
+        bridgeConnected = connected
+        guard !connected, compactionActivity != nil else { return .none }
+        compactionActivity = nil
+        return .compactionChanged
     }
 
     mutating func removeInteraction(id: String) {

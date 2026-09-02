@@ -97,6 +97,26 @@ struct QuickPiSessionResponse: Decodable, Sendable {
     }
 }
 
+struct AlertsResponse: Decodable, Sendable {
+    let ok: Bool
+    let alerts: [HerdrAlert]
+    let unreadCount: Int
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? true
+        alerts = try container.decodeIfPresent([HerdrAlert].self, forKey: .alerts) ?? []
+        unreadCount = try container.decodeIfPresent(Int.self, forKey: .unreadCount)
+            ?? alerts.count(where: { !$0.isRead })
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case alerts
+        case unreadCount
+    }
+}
+
 struct PaneOutputResponse: Decodable, Sendable {
     let ok: Bool
     let paneID: String

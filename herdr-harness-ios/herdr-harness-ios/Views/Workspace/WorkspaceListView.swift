@@ -81,7 +81,10 @@ struct WorkspaceListView: View {
                 statuses: agentStatuses
             )
         }
-        .onChange(of: model.lastUpdated) {
+        // `refreshTick`, not `lastUpdated`: the tracker re-arms haptics on the
+        // first server refresh after foregrounding, and that refresh is usually
+        // boring — `lastUpdated` would not move and haptics would stay silent.
+        .onChange(of: model.refreshTick) {
             statusHapticTracker.recordRefresh(statuses: agentStatuses)
         }
         .herdrHaptic(trigger: hapticPulse)

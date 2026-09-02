@@ -5,6 +5,7 @@ import SwiftUI
 /// assistant messages read as a conversation instead of a machine log.
 /// Collapsed by default; the individual `PiThinkingDisclosureView` /
 /// `PiToolCardView` cards inside keep their own per-card disclosure.
+/// Built on `PiDisclosureCard`, never `DisclosureGroup` (see that type).
 struct PiWorkingGroupView: View {
     let group: PiWorkingGroup
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -12,7 +13,10 @@ struct PiWorkingGroupView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
+        PiDisclosureCard(
+            isExpanded: $isExpanded,
+            chevronColor: group.hasFailure ? HerdrTheme.alert : HerdrTheme.mist
+        ) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(group.items) { item in
                     PiConversationItemView(item: item)
@@ -23,9 +27,6 @@ struct PiWorkingGroupView: View {
         } label: {
             label
         }
-        .tint(group.hasFailure ? HerdrTheme.alert : HerdrTheme.mist)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .background(HerdrTheme.elevated.opacity(0.46), in: RoundedRectangle(cornerRadius: 11))
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: group.isLive)
@@ -37,10 +38,8 @@ struct PiWorkingGroupView: View {
             if failed { isExpanded = true }
         }
         .herdrHaptic(trigger: hapticPulse)
-        .contentShape(Rectangle())
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-working-\(group.id)")
-        .opacity(HerdrProse.subOutputOpacity)
     }
 
     private var label: some View {
@@ -53,7 +52,7 @@ struct PiWorkingGroupView: View {
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 } else {
                     Image(systemName: group.hasFailure ? "exclamationmark.triangle" : "gearshape.2")
-                        .foregroundStyle(group.hasFailure ? HerdrTheme.alert : HerdrTheme.muted)
+                        .foregroundStyle(HerdrProse.dimmed(group.hasFailure ? HerdrTheme.alert : HerdrTheme.muted))
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 }
             }
@@ -62,12 +61,12 @@ struct PiWorkingGroupView: View {
 
             Text(group.isLive ? "Clanking…" : "Clanking")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(HerdrTheme.mist)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                 .contentTransition(.opacity)
 
             Text(summary)
                 .font(.caption)
-                .foregroundStyle(HerdrTheme.muted)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
                 .lineLimit(1)
                 .contentTransition(.opacity)
 

@@ -26,6 +26,19 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/network")
     }
 
+    /// Reads the machine's inventory from the Fleet contract. The payload is
+    /// deliberately small and privacy-safe: inventory metadata and machine ids
+    /// only, no hostnames, paths, or account names.
+    ///
+    /// This is the *only* Fleet call on iOS. The Mac harness also has
+    /// `syncFleet()` and `performFleetAction(...)`; both are intentionally
+    /// absent here because Fleet on iPhone is read-only, so
+    /// `POST /api/v1/fleet/sync` and `POST /api/v1/fleet/action` are not
+    /// reachable from the phone at all.
+    func fetchFleet() async throws -> FleetResponse {
+        try await request(path: "/api/v1/fleet")
+    }
+
     func fetchResponseAudioCapabilities() async throws -> ResponseAudioCapabilities {
         try await request(path: "/api/v1/response-audio/capabilities")
     }
@@ -125,6 +138,10 @@ actor HerdrAPIClient {
         )
     }
 
+    func fetchWorkInbox() async throws -> WorkInboxResponse {
+        try await request(path: "/api/v1/work-inbox")
+    }
+
     func uploadAttachment(
         workspaceID: String,
         fileURL: URL,
@@ -191,11 +208,72 @@ actor HerdrAPIClient {
         try await mutation(path: "/api/v1/workspaces/\(workspaceID)/tabs", body: APIActionBody(label: label))
     }
 
+    func renameTab(id: String, label: String) async throws {
+        try await mutation(
+            path: "/api/v1/tabs/\(id)",
+            method: "PATCH",
+            body: APIActionBody(label: label)
+        )
+    }
+
     func createQuickPiSession(label: String) async throws -> QuickPiSessionResponse {
         try await request(
             path: "/api/v1/quick-sessions/pi",
             method: "POST",
             body: APIActionBody(label: label)
+        )
+    }
+
+    func startHeadlessAgent(
+        prompt: String,
+        mode: HeadlessAgentRunMode = .act,
+        model: String?,
+        thinkingLevel: String?
+    ) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs",
+            method: "POST",
+            body: HeadlessAgentStartRequest(
+                prompt: prompt,
+                mode: mode,
+                model: model,
+                thinkingLevel: thinkingLevel
+            )
+        )
+    }
+
+    func fetchHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
+        try await request(path: "/api/v1/agent-runs/\(id)")
+    }
+
+    func fetchAgentModels() async throws -> AgentModelCatalogResponse {
+        try await request(path: "/api/v1/agent-runs/models")
+    }
+
+    func cancelHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs/\(id)/cancel",
+            method: "POST",
+            body: APIActionBody()
+        )
+    }
+
+    func deleteHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs/\(id)",
+            method: "DELETE",
+            body: APIActionBody()
+        )
+    }
+
+    func promoteHeadlessAgent(
+        id: String,
+        workspaceID: String?
+    ) async throws -> HeadlessAgentRunEnvelope {
+        try await request(
+            path: "/api/v1/agent-runs/\(id)/promote",
+            method: "POST",
+            body: HeadlessAgentPromotionRequest(workspaceID: workspaceID)
         )
     }
 
@@ -260,6 +338,13 @@ actor HerdrAPIClient {
         try await mutation(
             path: "/api/v1/panes/\(id)/start-agent",
             body: APIActionBody(kind: kind, name: name)
+        )
+    }
+
+    func fetchAlerts(limit: Int = 500) async throws -> AlertsResponse {
+        try await request(
+            path: "/api/v1/alerts",
+            query: [URLQueryItem(name: "limit", value: String(min(max(limit, 1), 500)))]
         )
     }
 
@@ -460,6 +545,15 @@ actor HerdrAPIClient {
         guard response.accepted else { throw APIError.invalidResponse }
     }
 
+    func compactPiConversation(paneID: String) async throws {
+        let response: PiCommandResponse = try await request(
+            path: "/api/v1/panes/\(paneID)/pi/compact",
+            method: "POST",
+            body: APIActionBody()
+        )
+        guard response.accepted else { throw APIError.invalidResponse }
+    }
+
     func setPiModel(paneID: String, provider: String, modelID: String) async throws {
         let response: PiCommandResponse = try await request(
             path: "/api/v1/panes/\(paneID)/pi/model",
@@ -556,6 +650,15 @@ actor HerdrAPIClient {
         if path == "/api/v1/quick-sessions/pi" {
             return 75
         }
+        // The harness holds the POST open while it queues the run; every other
+        // agent-run call is a short read that still outlives the generic 15s
+        // budget on a slow link.
+        if path == "/api/v1/agent-runs", method == "POST" {
+            return 90
+        }
+        if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") {
+            return 30
+        }
         if method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream")) {
             return 24 * 60 * 60
         }
@@ -567,11 +670,13 @@ actor HerdrAPIClient {
         if path == "/api/v1/voice/transcriptions" {
             return 120
         }
-        if path.hasPrefix("/api/v1/jira/") ||
+        if path == "/api/v1/work-inbox" ||
+            path.hasPrefix("/api/v1/jira/") ||
             (path.hasPrefix("/api/v1/workspaces/") &&
                 (path.contains("/git") || path.hasSuffix("/skills") || path.hasSuffix("/files"))) {
             // cmux permits Git and Jira operations to run for up to 10 and 15
-            // seconds respectively. The client must outlive the upstream call.
+            // seconds respectively, and the work inbox fans out to GitHub and
+            // Jira in one call. The client must outlive the upstream call.
             return 30
         }
         return 15

@@ -53,6 +53,32 @@ struct PiPromptComposerConfigurationTests {
         #expect(!configuration.canAbort)
     }
 
+    @Test("Compaction disables prompt, stop, model, and thinking controls with a reason-aware status")
+    func compactionDisablesActions() {
+        let cases: [(PiCompactionActivity, String)] = [
+            (PiCompactionActivity(reason: .manual, willRetry: false), "Compacting context…"),
+            (PiCompactionActivity(reason: .threshold, willRetry: false), "Compacting context automatically…"),
+            (
+                PiCompactionActivity(reason: .overflow, willRetry: true),
+                "Compacting context after overflow, then retrying…"
+            ),
+        ]
+
+        for (activity, status) in cases {
+            let configuration = makeConfiguration(
+                phase: .working,
+                compactionActivity: activity
+            )
+
+            #expect(configuration.availableDispositions.isEmpty)
+            #expect(!configuration.canAbort)
+            #expect(!configuration.canSelectModel)
+            #expect(!configuration.canSelectThinkingLevel)
+            #expect(configuration.placeholder(for: .prompt) == "Pi is compacting context")
+            #expect(activity.statusMessage == status)
+        }
+    }
+
     @Test("Known models remain read-only when model capabilities are unavailable")
     func unavailableModelCapabilitiesDoNotSupportMenu() {
         let configuration = makeConfiguration(
@@ -149,6 +175,7 @@ struct PiPromptComposerConfigurationTests {
 
     private func makeConfiguration(
         phase: PiConversationPhase,
+        compactionActivity: PiCompactionActivity? = nil,
         capabilities: PiSemanticCapabilities = PiSemanticCapabilities(
             prompt: true,
             steer: true,
@@ -169,6 +196,7 @@ struct PiPromptComposerConfigurationTests {
         PiPromptComposerConfiguration(
             capabilities: capabilities,
             phase: phase,
+            compactionActivity: compactionActivity,
             isConnected: isConnected,
             isSubmitting: false,
             isAborting: false,

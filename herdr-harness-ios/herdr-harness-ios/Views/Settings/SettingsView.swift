@@ -27,9 +27,12 @@ struct SettingsView: View {
             LabeledContent("Workspaces", value: "\(model.workspaces.count)")
             LabeledContent("Live panes", value: "\(model.paneCount)")
             LabeledContent("Machines", value: "\(model.machines.count) \(model.machines.count == 1 ? "machine" : "machines") · \(liveMachineCount) live")
-            if let lastUpdated = model.lastUpdated {
+            // `lastSyncedAt`, not `lastUpdated`: people read this row as "is
+            // this thing still talking to my Mac", and a healthy but quiet
+            // connection must not read "3 hours ago".
+            if let lastSyncedAt = model.lastSyncedAt {
                 LabeledContent("Last update") {
-                    Text(lastUpdated, style: .relative)
+                    Text(lastSyncedAt, style: .relative)
                 }
             }
         } header: {
@@ -61,6 +64,15 @@ struct SettingsView: View {
                 Label("Manage machines", systemImage: "server.rack")
             }
             .accessibilityIdentifier("settings-manage-machines")
+
+            // Fleet is a read-only report about the machines configured above,
+            // so it belongs in the same bucket rather than in a fourth tab.
+            NavigationLink {
+                FleetInventoryView(model: model)
+            } label: {
+                Label("Fleet inventory", systemImage: "point.3.connected.trianglepath.dotted")
+            }
+            .accessibilityIdentifier("settings-fleet-inventory")
 
             if model.isDemoMode {
                 Button("Connect a real server", systemImage: "server.rack", action: model.leaveDemo)

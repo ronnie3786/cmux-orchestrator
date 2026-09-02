@@ -8,6 +8,7 @@ enum PiStreamTransport: Equatable, Sendable {
 }
 
 private let piStreamLog = OSLog(subsystem: "dev.ronnierocha.herdr-harness", category: "pi-stream")
+private let piReloadLog = Logger(subsystem: "dev.ronnierocha.herdr-harness", category: "pi-stream")
 
 @MainActor
 @Observable
@@ -15,6 +16,7 @@ final class PiConversationStore {
     private(set) var turns: [PiConversationTurn] = []
     private(set) var pendingInteractions: [PiPendingInteraction] = []
     private(set) var phase: PiConversationPhase = .idle
+    private(set) var compactionActivity: PiCompactionActivity?
     private(set) var connection: PiConversationConnection = .loading
     private(set) var revision = 0
     private(set) var isTruncated = false
@@ -38,9 +40,22 @@ final class PiConversationStore {
     @ObservationIgnored private var reducer = PiConversationReducer()
     @ObservationIgnored private var coalescer = PiStreamCoalescer()
     @ObservationIgnored private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var lastReloadCursor: String?
+    @ObservationIgnored private var lastReloadAt: ContinuousClock.Instant?
+    @ObservationIgnored private(set) var noProgressReloads = 0
+    /// Internal test seams for deterministic snapshot and stream sequences.
+    @ObservationIgnored var reloadBackoffBase: Duration = .milliseconds(250)
+    @ObservationIgnored var reloadDecayWindow: Duration = .seconds(60)
+    @ObservationIgnored var stuckCursorPollingHold: Duration = .seconds(60)
+    @ObservationIgnored var snapshotProvider: (@MainActor (HerdrPane) async throws -> PiConversationSnapshot)?
+    @ObservationIgnored var eventsProvider: (@MainActor (HerdrPane, String?) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>?)?
 
     var hasContent: Bool {
         turns.contains(where: \.hasVisibleContent)
+    }
+
+    var isCompacting: Bool {
+        compactionActivity != nil
     }
 
     var latestCompletedAssistantResponse: String? {
@@ -68,7 +83,7 @@ final class PiConversationStore {
 
         followLoop: while !Task.isCancelled {
             do {
-                let snapshot = try await model.fetchPiConversationSnapshot(for: pane)
+                let snapshot = try await fetchSnapshot(model: model, pane: pane)
                 try Task.checkCancellation()
                 guard snapshot.protocolInfo.name == "herdr.pi.semantic",
                       snapshot.protocolInfo.version == 1,
@@ -111,10 +126,56 @@ final class PiConversationStore {
                 }
 
                 transport = .liveStream
-                guard let events = await model.piConversationEvents(for: pane, after: reducer.cursor) else {
+                guard let events = await fetchEvents(model: model, pane: pane, after: reducer.cursor) else {
                     throw APIError.streamEnded
                 }
                 if try await consume(events) {
+                    // A reducer that demands a snapshot on every stream while
+                    // the cursor never advances is a hot loop: fetch snapshot,
+                    // open SSE, get the same reset frame, repeat. On a phone
+                    // that is a battery and cellular-data leak with no visible
+                    // symptom, so back off exponentially and hand the pane to
+                    // snapshot polling once the cursor has proven it is stuck.
+                    let cursor = reducer.cursor
+                    let now = ContinuousClock().now
+                    if let lastReloadAt, lastReloadAt.duration(to: now) > reloadDecayWindow {
+                        noProgressReloads = 0
+                    }
+                    if cursor == lastReloadCursor {
+                        noProgressReloads += 1
+                    } else {
+                        noProgressReloads = 0
+                    }
+                    lastReloadCursor = cursor
+                    lastReloadAt = now
+                    let reloadNumber = noProgressReloads + 1
+                    let reloadBackoff = min(
+                        reloadBackoffBase * (1 << noProgressReloads),
+                        .milliseconds(6_000)
+                    )
+                    piReloadLog.notice(
+                        "pi needsSnapshot reload #\(reloadNumber) pane=\(pane.paneID, privacy: .public) cursor=\(cursor ?? "nil", privacy: .public) noProgress=\(self.noProgressReloads)"
+                    )
+                    try await Task.sleep(for: reloadBackoff)
+                    if noProgressReloads >= 2 {
+                        piReloadLog.error(
+                            "pi needsSnapshot polling fallback pane=\(pane.paneID, privacy: .public) cursor=\(cursor ?? "nil", privacy: .public)"
+                        )
+                        if await followSnapshotPolling(
+                            model: model,
+                            pane: pane,
+                            initialSnapshot: snapshot,
+                            stuckCursor: cursor
+                        ) {
+                            retryAttempt = 0
+                            retryDelay = 0.65
+                            lastReloadCursor = nil
+                            lastReloadAt = nil
+                            noProgressReloads = 0
+                            continue followLoop
+                        }
+                        return
+                    }
                     retryAttempt = 0
                     retryDelay = 0.65
                     continue followLoop
@@ -123,6 +184,7 @@ final class PiConversationStore {
             } catch is CancellationError {
                 return
             } catch {
+                guard !HerdrCancellation.isCancellation(error) else { return }
                 retryAttempt += 1
                 connection = .reconnecting(attempt: retryAttempt)
                 lastError = hasContent
@@ -146,7 +208,7 @@ final class PiConversationStore {
         pane: HerdrPane
     ) async -> Bool {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !isSubmitting else { return false }
+        guard !prompt.isEmpty, !isSubmitting, compactionActivity == nil else { return false }
         guard canSendCommands else {
             lastError = "Pi is offline. Reconnect before sending a message."
             return false
@@ -167,7 +229,7 @@ final class PiConversationStore {
     }
 
     func abort(model: HerdrAppModel, pane: HerdrPane) async -> Bool {
-        guard !isAborting, canSendCommands else { return false }
+        guard !isAborting, canSendCommands, compactionActivity == nil else { return false }
         isAborting = true
         commandNotice = nil
         defer { isAborting = false }
@@ -183,7 +245,7 @@ final class PiConversationStore {
     }
 
     func setModel(_ candidate: PiAvailableModel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
-        guard canSendCommands, !isSettingModel else { return false }
+        guard canSendCommands, !isSettingModel, compactionActivity == nil else { return false }
         isSettingModel = true
         commandNotice = nil
         defer { isSettingModel = false }
@@ -202,7 +264,7 @@ final class PiConversationStore {
     }
 
     func setThinkingLevel(_ level: PiThinkingLevel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
-        guard canSendCommands, !isSettingThinkingLevel else { return false }
+        guard canSendCommands, !isSettingThinkingLevel, compactionActivity == nil else { return false }
         isSettingThinkingLevel = true
         commandNotice = nil
         defer { isSettingThinkingLevel = false }
@@ -274,6 +336,7 @@ final class PiConversationStore {
                 continue
             case let .envelope(envelope):
                 let previousPhase = reducer.phase
+                let previousCompactionActivity = reducer.compactionActivity
                 let previousTurnCount = reducer.turns.count
                 let previousPendingInteractions = reducer.pendingInteractions
                 let previousBridgeConnected = reducer.bridgeConnected
@@ -284,13 +347,19 @@ final class PiConversationStore {
                     trigger(
                         for: effect,
                         previousPhase: previousPhase,
+                        previousCompactionActivity: previousCompactionActivity,
                         previousTurnCount: previousTurnCount,
                         previousPendingInteractions: previousPendingInteractions,
                         previousBridgeConnected: previousBridgeConnected
                     )
                 )
-                connection = reducer.bridgeConnected ? .connected : .bridgeOffline
-                lastError = reducer.bridgeConnected ? nil : "Pi is offline. The saved transcript is still available."
+                // @Observable notifies on every assignment, equal or not, so an
+                // unconditional write here re-renders the connection banner on
+                // every single text delta. Only publish real changes.
+                let newConnection: PiConversationConnection = reducer.bridgeConnected ? .connected : .bridgeOffline
+                let newError = reducer.bridgeConnected ? nil : "Pi is offline. The saved transcript is still available."
+                if connection != newConnection { connection = newConnection }
+                if lastError != newError { lastError = newError }
                 if effect == .needsSnapshot {
                     return true
                 }
@@ -307,6 +376,7 @@ final class PiConversationStore {
         turns = []
         pendingInteractions = []
         phase = .idle
+        compactionActivity = nil
         connection = .loading
         revision &+= 1
         isTruncated = false
@@ -326,6 +396,9 @@ final class PiConversationStore {
         lastError = nil
         commandNotice = nil
         transport = .liveStream
+        lastReloadCursor = nil
+        lastReloadAt = nil
+        noProgressReloads = 0
     }
 
     /// Legacy bridges can provide a durable snapshot without a compatible
@@ -334,23 +407,28 @@ final class PiConversationStore {
     private func followSnapshotPolling(
         model: HerdrAppModel,
         pane: HerdrPane,
-        initialSnapshot: PiConversationSnapshot
+        initialSnapshot: PiConversationSnapshot,
+        stuckCursor: String? = nil
     ) async -> Bool {
         transport = .polling
         var previousSnapshot = initialSnapshot
         var retryDelay = 2.0
+        let pollingStartedAt = ContinuousClock().now
 
         while !Task.isCancelled {
             do {
-                try await Task.sleep(for: .seconds(2))
-                let snapshot = try await model.fetchPiConversationSnapshot(for: pane)
+                // An offline bridge has nothing to report; polling it at the
+                // live cadence is pure radio wake-up cost on a phone.
+                try await Task.sleep(for: .seconds(previousSnapshot.connected ? 2 : 5))
+                let snapshot = try await fetchSnapshot(model: model, pane: pane)
                 try Task.checkCancellation()
                 guard snapshot.protocolInfo.name == "herdr.pi.semantic",
                       snapshot.protocolInfo.version == 1,
                       snapshot.available
                 else {
-                    connection = .unavailable
-                    lastError = "This Pi session does not expose a compatible native transcript."
+                    if connection != .unavailable { connection = .unavailable }
+                    let message = "This Pi session does not expose a compatible native transcript."
+                    if lastError != message { lastError = message }
                     return false
                 }
 
@@ -360,23 +438,36 @@ final class PiConversationStore {
                     guard !Task.isCancelled else { return false }
                     previousSnapshot = snapshot
                 }
-                connection = snapshot.connected ? .connected : .bridgeOffline
-                lastError = snapshot.connected
+                let newConnection: PiConversationConnection = snapshot.connected ? .connected : .bridgeOffline
+                let newError = snapshot.connected
                     ? nil
                     : "Pi is offline. The saved transcript is still available."
+                if connection != newConnection { connection = newConnection }
+                if lastError != newError { lastError = newError }
                 retryDelay = 2
 
-                if snapshot.reportsContextUsage && snapshot.connected {
+                // Returning to the live stream the moment the bridge reports a
+                // modern contract would bounce straight back into the same
+                // stuck reset frame. When polling was entered because of a
+                // stuck cursor, stay here until the server actually moves the
+                // cursor on, or until the hold expires.
+                let heldStuckCursorLongEnough = pollingStartedAt.duration(to: ContinuousClock().now) >= stuckCursorPollingHold
+                if snapshot.reportsContextUsage && snapshot.connected && (
+                    stuckCursor == nil || snapshot.cursor != stuckCursor || heldStuckCursorLongEnough
+                ) {
                     return true
                 }
             } catch is CancellationError {
                 return false
             } catch {
+                guard !HerdrCancellation.isCancellation(error) else { return false }
                 retryDelay = min(retryDelay * 1.7, 8)
-                connection = .reconnecting(attempt: 1)
-                lastError = hasContent
+                let newConnection: PiConversationConnection = .reconnecting(attempt: 1)
+                let newError = hasContent
                     ? "Live updates paused. Reconnecting…"
                     : error.localizedDescription
+                if connection != newConnection { connection = newConnection }
+                if lastError != newError { lastError = newError }
                 do {
                     try await Task.sleep(for: .seconds(retryDelay))
                 } catch {
@@ -405,11 +496,26 @@ final class PiConversationStore {
             || previous.truncated != current.truncated
     }
 
+    private func fetchSnapshot(model: HerdrAppModel, pane: HerdrPane) async throws -> PiConversationSnapshot {
+        if let snapshotProvider { return try await snapshotProvider(pane) }
+        return try await model.fetchPiConversationSnapshot(for: pane)
+    }
+
+    private func fetchEvents(
+        model: HerdrAppModel,
+        pane: HerdrPane,
+        after cursor: String?
+    ) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>? {
+        if let eventsProvider { return await eventsProvider(pane, cursor) }
+        return await model.piConversationEvents(for: pane, after: cursor)
+    }
+
     private func publishReducerState() {
         os_signpost(.event, log: piStreamLog, name: "publish")
         turns = reducer.turns
         pendingInteractions = reducer.pendingInteractions
         phase = reducer.phase
+        compactionActivity = reducer.compactionActivity
         isTruncated = reducer.isTruncated
         bridgeConnected = reducer.bridgeConnected
         contextUsage = reducer.contextUsage
@@ -422,6 +528,7 @@ final class PiConversationStore {
     private func trigger(
         for effect: PiConversationReducer.Effect,
         previousPhase: PiConversationPhase,
+        previousCompactionActivity: PiCompactionActivity?,
         previousTurnCount: Int,
         previousPendingInteractions: [PiPendingInteraction],
         previousBridgeConnected: Bool
@@ -433,6 +540,8 @@ final class PiConversationStore {
             .turnCompletion
         case .interactionRequested:
             .pendingInteraction
+        case .compactionChanged:
+            .compactionChange
         case .failed:
             .phaseTransition
         case .none:
@@ -440,6 +549,8 @@ final class PiConversationStore {
                 .connectionChange
             } else if reducer.phase != previousPhase {
                 .phaseTransition
+            } else if reducer.compactionActivity != previousCompactionActivity {
+                .compactionChange
             } else if reducer.pendingInteractions != previousPendingInteractions {
                 .pendingInteraction
             } else if reducer.turns.count > previousTurnCount {

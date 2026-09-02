@@ -26,6 +26,7 @@ struct PaneSessionView: View {
     @State private var composerDraft = ""
     @State private var composerAttachments: [TerminalAttachment] = []
     @State private var composerFocusRequest = 0
+    @State private var piSessionSummaryRequest: PiSessionSummaryRequest?
 
     var body: some View {
         ZStack {
@@ -54,7 +55,14 @@ struct PaneSessionView: View {
                 )
             }
             ToolbarItem(placement: .topBarTrailing) {
-                PaneActionsMenu(model: model, pane: currentPane, selectedMode: modeSelection)
+                PaneActionsMenu(
+                    model: model,
+                    pane: currentPane,
+                    selectedMode: modeSelection,
+                    isPiCompacting: isPiCompacting,
+                    showsPiSessionSummary: summaryRequest != nil,
+                    summarizePiSession: presentPiSessionSummary
+                )
             }
         }
         .task(id: followTaskID) {
@@ -76,6 +84,9 @@ struct PaneSessionView: View {
                   currentPane.supportsPiSemanticChat
             else { return }
             await piConversationStore.follow(model: model, pane: currentPane)
+        }
+        .sheet(item: $piSessionSummaryRequest) { request in
+            PiSessionSummaryView(model: model, request: request)
         }
         .onAppear {
             autoSelectChatIfNeeded()
@@ -117,6 +128,14 @@ struct PaneSessionView: View {
 
     private var currentPane: HerdrPane {
         model.pane(id: pane.id) ?? pane
+    }
+
+    /// `piChatTaskID` includes the selected mode, so leaving chat cancels the
+    /// follow loop while the store keeps its last published state. Gate on the
+    /// mode so a compaction that was live when the user switched to the
+    /// terminal cannot keep the Pi actions disabled behind a dead stream.
+    private var isPiCompacting: Bool {
+        selectedMode == .chat && piConversationStore.isCompacting
     }
 
     private var modeSelection: Binding<PaneDetailMode> {
@@ -213,6 +232,15 @@ struct PaneSessionView: View {
 
     private var workspace: HerdrWorkspace? {
         model.workspace(containing: currentPane)
+    }
+
+    /// `nil` for a pane with no Pi session id, which is what hides the action.
+    private var summaryRequest: PiSessionSummaryRequest? {
+        PiSessionSummaryRequest(pane: currentPane)
+    }
+
+    private func presentPiSessionSummary() {
+        piSessionSummaryRequest = summaryRequest
     }
 
     private func unavailableMode(_ name: String, systemImage: String) -> some View {

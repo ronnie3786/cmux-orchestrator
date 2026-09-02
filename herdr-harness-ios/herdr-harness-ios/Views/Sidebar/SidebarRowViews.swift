@@ -17,29 +17,32 @@ struct SidebarProjectRow: View {
                 HerdrStatusDot(status: workspace.agentStatus)
 
                 Text(workspace.label)
-                    .font(.subheadline.monospaced().bold())
+                    .font(.subheadline.bold())
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
                 if workspace.focused {
                     Text("active")
-                        .font(.caption.monospaced().bold())
+                        .font(.caption.bold())
                         .foregroundStyle(HerdrTheme.accent)
+                        .fixedSize()
                 }
 
                 Spacer()
 
                 if workspace.attentionCount > 0 {
                     Text("\(workspace.attentionCount)")
-                        .font(.caption2.monospaced().bold())
+                        .font(.caption2.bold().monospacedDigit())
                         .foregroundStyle(HerdrTheme.ink)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(HerdrTheme.alert, in: Capsule())
+                        .accessibilityLabel("\(workspace.attentionCount) needing attention")
                 }
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 48)
+            .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
+            .frame(minHeight: SidebarMetrics.projectRowHeight)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-workspace-\(workspace.id)")
@@ -70,18 +73,20 @@ struct SidebarMachineRow: View {
                     .frame(width: 8, height: 8)
 
                 Text(machine.name.lowercased())
-                    .font(.subheadline.monospaced().bold())
+                    .font(.subheadline.bold())
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text("\(paneCount) panes")
-                    .font(.caption.monospaced())
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(HerdrTheme.muted)
+                    .fixedSize()
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 48)
+            .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
+            .frame(minHeight: SidebarMetrics.machineRowHeight)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-machine-\(machine.id)")
@@ -104,19 +109,20 @@ struct SidebarSectionRow: View {
                     .foregroundStyle(HerdrTheme.mist)
 
                 Text(tab.label)
-                    .font(.caption.monospaced().bold())
+                    .font(.caption.bold())
                     .foregroundStyle(HerdrTheme.mist)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text("\(tab.paneCount)")
-                    .font(.caption2.monospaced())
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(HerdrTheme.muted)
+                    .fixedSize()
             }
-            .padding(.leading, 18)
-            .padding(.trailing, 12)
-            .frame(minHeight: 44)
+            .padding(.leading, SidebarMetrics.tabRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
+            .frame(minHeight: SidebarMetrics.tabRowHeight)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-tab-\(tab.id)")
@@ -131,6 +137,7 @@ struct SidebarChatRow: View {
     let pane: HerdrPane
     let isSelected: Bool
     var isStarred: Bool = false
+    var statusSince: Date?
     let action: () -> Void
 
     var body: some View {
@@ -139,7 +146,7 @@ struct SidebarChatRow: View {
                 HerdrStatusDot(status: pane.agentStatus)
 
                 Text(pane.displayTitle)
-                    .font(.subheadline.monospaced())
+                    .font(.subheadline)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
@@ -151,13 +158,14 @@ struct SidebarChatRow: View {
                         .foregroundStyle(HerdrTheme.muted)
                 }
 
-                Text(pane.agentStatus.compactTitle.lowercased())
+                SidebarStatusAgeLabel(status: pane.agentStatus, since: statusSince)
                     .font(.caption.monospaced())
                     .foregroundStyle(pane.agentStatus.labelColor)
+                    .fixedSize()
             }
-            .padding(.leading, 34)
-            .padding(.trailing, 12)
-            .frame(minHeight: 44)
+            .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
+            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
+            .frame(minHeight: SidebarMetrics.chatRowHeight)
             .background(isSelected ? HerdrTheme.elevated : .clear)
             .overlay(alignment: .leading) {
                 Rectangle()
@@ -168,6 +176,13 @@ struct SidebarChatRow: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)")
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        guard let statusSince else {
+            return "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
+        }
+        return "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title), \(HerdrTimestamp.spokenAge(since: statusSince))"
     }
 }
