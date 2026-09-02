@@ -835,6 +835,251 @@ struct FleetResponse: Codable, Equatable, Sendable {
     }
 }
 
+/// Counts reported by `POST /api/v1/fleet/sync`. All values are defensive
+/// non-negative integers so a malformed optional reconciliation payload cannot
+/// produce a misleading negative notice in the Fleet UI.
+struct FleetReconciliationCounts: Decodable, Equatable, Hashable, Sendable {
+    var total: Int
+    var eligible: Int
+    var attempted: Int
+    var updated: Int
+    var restored: Int
+    var unchanged: Int
+    var skipped: Int
+    var failed: Int
+    var current: Int
+    var rollbackRestored: Int
+    var skippedDrifted: Int
+
+    init(
+        total: Int = 0,
+        eligible: Int = 0,
+        attempted: Int = 0,
+        updated: Int = 0,
+        restored: Int = 0,
+        unchanged: Int = 0,
+        skipped: Int = 0,
+        failed: Int = 0,
+        current: Int = 0,
+        rollbackRestored: Int = 0,
+        skippedDrifted: Int = 0
+    ) {
+        self.total = max(0, total)
+        self.eligible = max(0, eligible)
+        self.attempted = max(0, attempted)
+        self.updated = max(0, updated)
+        self.restored = max(0, restored)
+        self.unchanged = max(0, unchanged)
+        self.skipped = max(0, skipped)
+        self.failed = max(0, failed)
+        self.current = max(0, current)
+        self.rollbackRestored = max(0, rollbackRestored)
+        self.skippedDrifted = max(0, skippedDrifted)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case total
+        case eligible
+        case attempted
+        case updated
+        case restored
+        case unchanged
+        case skipped
+        case failed
+        case current
+        case rollbackRestored
+        case rollbackRestoredSnake = "rollback_restored"
+        case skippedDrifted
+        case skippedDriftedSnake = "skipped_drifted"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            total: try container.decodeIfPresent(Int.self, forKey: .total) ?? 0,
+            eligible: try container.decodeIfPresent(Int.self, forKey: .eligible) ?? 0,
+            attempted: try container.decodeIfPresent(Int.self, forKey: .attempted) ?? 0,
+            updated: try container.decodeIfPresent(Int.self, forKey: .updated) ?? 0,
+            restored: try container.decodeIfPresent(Int.self, forKey: .restored) ?? 0,
+            unchanged: try container.decodeIfPresent(Int.self, forKey: .unchanged) ?? 0,
+            skipped: try container.decodeIfPresent(Int.self, forKey: .skipped) ?? 0,
+            failed: try container.decodeIfPresent(Int.self, forKey: .failed) ?? 0,
+            current: try container.decodeIfPresent(Int.self, forKey: .current) ?? 0,
+            rollbackRestored: try container.decodeIfPresent(Int.self, forKey: .rollbackRestored)
+                ?? container.decodeIfPresent(Int.self, forKey: .rollbackRestoredSnake)
+                ?? 0,
+            skippedDrifted: try container.decodeIfPresent(Int.self, forKey: .skippedDrifted)
+                ?? container.decodeIfPresent(Int.self, forKey: .skippedDriftedSnake)
+                ?? 0
+        )
+    }
+}
+
+/// One bounded managed-item result returned by Fleet Sync All. The display
+/// client keeps the raw operation labels available for a future detail view,
+/// while notices intentionally use only aggregate counts.
+struct FleetReconciliationItem: Decodable, Equatable, Hashable, Sendable {
+    var itemID: String
+    var id: String
+    var type: String
+    var name: String
+    var target: String
+    var status: String
+    var outcome: String
+    var state: String
+    var inventoryStatus: String
+    var action: String
+    var reason: String
+    var catalogRevision: String
+    var errorCode: String?
+    var error: String?
+    var rollbackRestored: Bool?
+
+    init(
+        itemID: String = "",
+        id: String = "",
+        type: String = "",
+        name: String = "",
+        target: String = "",
+        status: String = "",
+        outcome: String = "",
+        state: String = "",
+        inventoryStatus: String = "",
+        action: String = "",
+        reason: String = "",
+        catalogRevision: String = "",
+        errorCode: String? = nil,
+        error: String? = nil,
+        rollbackRestored: Bool? = nil
+    ) {
+        self.itemID = itemID
+        self.id = id
+        self.type = type
+        self.name = name
+        self.target = target
+        self.status = status
+        self.outcome = outcome
+        self.state = state
+        self.inventoryStatus = inventoryStatus
+        self.action = action
+        self.reason = reason
+        self.catalogRevision = catalogRevision
+        self.errorCode = errorCode
+        self.error = error
+        self.rollbackRestored = rollbackRestored
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case itemID = "itemId"
+        case itemIDCamel = "itemID"
+        case id
+        case type
+        case name
+        case target
+        case status
+        case outcome
+        case state
+        case inventoryStatus
+        case inventoryStatusSnake = "inventory_status"
+        case action
+        case reason
+        case catalogRevision
+        case catalogRevisionSnake = "catalog_revision"
+        case errorCode
+        case errorCodeSnake = "error_code"
+        case error
+        case rollback
+        case rollbackRestored
+    }
+
+    private struct Rollback: Decodable {
+        var restored: Bool?
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        itemID = try container.decodeIfPresent(String.self, forKey: .itemID)
+            ?? container.decodeIfPresent(String.self, forKey: .itemIDCamel)
+            ?? ""
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? itemID
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? ""
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        target = try container.decodeIfPresent(String.self, forKey: .target) ?? ""
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        outcome = try container.decodeIfPresent(String.self, forKey: .outcome) ?? status
+        state = try container.decodeIfPresent(String.self, forKey: .state) ?? ""
+        inventoryStatus = try container.decodeIfPresent(String.self, forKey: .inventoryStatus)
+            ?? container.decodeIfPresent(String.self, forKey: .inventoryStatusSnake)
+            ?? state
+        action = try container.decodeIfPresent(String.self, forKey: .action) ?? ""
+        reason = try container.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        catalogRevision = try container.decodeIfPresent(String.self, forKey: .catalogRevision)
+            ?? container.decodeIfPresent(String.self, forKey: .catalogRevisionSnake)
+            ?? ""
+        errorCode = try container.decodeIfPresent(String.self, forKey: .errorCode)
+            ?? container.decodeIfPresent(String.self, forKey: .errorCodeSnake)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        rollbackRestored = try container.decodeIfPresent(Bool.self, forKey: .rollbackRestored)
+            ?? container.decodeIfPresent(Rollback.self, forKey: .rollback)?.restored
+    }
+}
+
+/// Optional metadata attached to the sync response. Older servers may omit
+/// this object, so FleetSyncResponse keeps it optional and still decodes the
+/// complete inventory projection.
+struct FleetReconciliation: Decodable, Equatable, Hashable, Sendable {
+    static let maximumDecodedItems = 1024
+
+    var counts: FleetReconciliationCounts
+    var items: [FleetReconciliationItem]
+
+    init(
+        counts: FleetReconciliationCounts = FleetReconciliationCounts(),
+        items: [FleetReconciliationItem] = []
+    ) {
+        self.counts = counts
+        self.items = Array(items.prefix(Self.maximumDecodedItems))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case counts
+        case items
+        case outcomes
+        case results
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.counts) {
+            counts = try container.decode(FleetReconciliationCounts.self, forKey: .counts)
+        } else {
+            counts = try FleetReconciliationCounts(from: decoder)
+        }
+        if container.contains(.items) {
+            items = try Self.decodeItems(from: container, forKey: .items)
+        } else if container.contains(.outcomes) {
+            items = try Self.decodeItems(from: container, forKey: .outcomes)
+        } else if container.contains(.results) {
+            items = try Self.decodeItems(from: container, forKey: .results)
+        } else {
+            items = []
+        }
+    }
+
+    private static func decodeItems(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) throws -> [FleetReconciliationItem] {
+        var values = try container.nestedUnkeyedContainer(forKey: key)
+        var decoded: [FleetReconciliationItem] = []
+        decoded.reserveCapacity(min(Self.maximumDecodedItems, values.count ?? Self.maximumDecodedItems))
+        while !values.isAtEnd && decoded.count < Self.maximumDecodedItems {
+            decoded.append(try values.decode(FleetReconciliationItem.self))
+        }
+        return decoded
+    }
+}
+
 enum FleetAction: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case install
     case manage = "adopt"
@@ -920,6 +1165,27 @@ struct FleetSyncResponse: Decodable, Sendable {
     var catalogRevision: String?
     var message: String?
     var error: String?
+    var reconciliation: FleetReconciliation?
+
+    init(
+        fleet: FleetResponse,
+        reconciliation: FleetReconciliation? = nil,
+        message: String? = nil,
+        error: String? = nil
+    ) {
+        self.ok = fleet.ok
+        self.fleet = fleet
+        self.items = fleet.items
+        self.machine = fleet.machine
+        self.catalogRevision = fleet.catalogRevision
+        self.message = message ?? fleet.error
+        self.error = error ?? fleet.error
+        self.reconciliation = reconciliation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case reconciliation
+    }
 
     init(from decoder: Decoder) throws {
         fleet = try FleetResponse(from: decoder)
@@ -929,5 +1195,7 @@ struct FleetSyncResponse: Decodable, Sendable {
         catalogRevision = fleet.catalogRevision
         message = fleet.error
         error = fleet.error
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reconciliation = try? container.decodeIfPresent(FleetReconciliation.self, forKey: .reconciliation)
     }
 }

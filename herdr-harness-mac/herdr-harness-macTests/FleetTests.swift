@@ -42,6 +42,66 @@ struct FleetTests {
         #expect(slack.auth?.status == "notChecked")
     }
 
+    @Test("Decodes sync reconciliation counts and bounded item outcomes")
+    func decodesSyncReconciliation() throws {
+        let data = Data(
+            """
+            {
+              "ok": true,
+              "items": [],
+              "reconciliation": {
+                "counts": {
+                  "total": 3,
+                  "eligible": 3,
+                  "attempted": 2,
+                  "updated": 1,
+                  "restored": 1,
+                  "current": 0,
+                  "skippedDrifted": 0,
+                  "failed": 0,
+                  "rollbackRestored": 0
+                },
+                "items": [
+                  {
+                    "itemId": "skill:reviewer",
+                    "status": "updated",
+                    "outcome": "updated",
+                    "state": "current",
+                    "action": "update",
+                    "target": "~/.agents/skills/reviewer",
+                    "rollback": { "restored": true }
+                  }
+                ]
+              }
+            }
+            """.utf8
+        )
+
+        let response = try JSONDecoder().decode(FleetSyncResponse.self, from: data)
+        let reconciliation = try #require(response.reconciliation)
+        #expect(reconciliation.counts.updated == 1)
+        #expect(reconciliation.counts.restored == 1)
+        #expect(reconciliation.counts.attempted == 2)
+        let outcome = try #require(reconciliation.items.first)
+        #expect(outcome.itemID == "skill:reviewer")
+        #expect(outcome.status == "updated")
+        #expect(outcome.rollbackRestored == true)
+        #expect(response.fleet.items.isEmpty)
+    }
+
+    @Test("Keeps older sync responses compatible when reconciliation is absent")
+    func decodesSyncWithoutReconciliation() throws {
+        let data = Data(
+            """
+            {"ok":true,"items":[{"id":"skill:reviewer","type":"skill","name":"reviewer","status":"current"}]}
+            """.utf8
+        )
+
+        let response = try JSONDecoder().decode(FleetSyncResponse.self, from: data)
+        #expect(response.reconciliation == nil)
+        #expect(response.fleet.items.map { $0.id } == ["skill:reviewer"])
+    }
+
     @Test("Preserves missing and auth-unknown states instead of assuming installed")
     func preservesSafeUnknowns() throws {
         let data = Data(
@@ -314,6 +374,199 @@ struct FleetTests {
         #expect(after.machineStates["dev"] == before.machineStates["dev"])
         #expect(after.machineStates["work"]?.state == .installed)
         #expect(after.machineStates["studio"]?.state == .outdated)
+    }
+
+    @Test("Reports all machines in sync for successful no-op reconciliation")
+    func syncAllReportsNoOpSuccess() async {
+        let machines = syncTestMachines()
+        configureSyncResponses(for: machines)
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "All machines are in sync")
+        #expect(store.machines.allSatisfy { $0.online })
+    }
+
+    @Test("Aggregates updates and restores without hiding successful machines")
+    func syncAllAggregatesUpdatesAndRestores() async {
+        let machines = syncTestMachines()
+        configureSyncResponses(
+            for: machines,
+            counts: [
+                "studio": FleetReconciliationCounts(updated: 1, restored: 1),
+                "dev": FleetReconciliationCounts(updated: 2),
+            ]
+        )
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "Synced 3 of 3 machines: 3 updated, 1 restored")
+        #expect(store.machines.allSatisfy { $0.online })
+    }
+
+    @Test("Reports preserved local edits and item failures without marking machines offline")
+    func syncAllReportsDriftAndItemFailures() async {
+        let machines = syncTestMachines()
+        configureSyncResponses(
+            for: machines,
+            counts: [
+                "studio": FleetReconciliationCounts(skipped: 2, skippedDrifted: 2),
+                "dev": FleetReconciliationCounts(failed: 1),
+            ]
+        )
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "Synced 3 of 3 machines: 2 local edits preserved, 1 item failure")
+        #expect(store.machines.allSatisfy { $0.online })
+        #expect(!(store.notice ?? "").contains("/"))
+    }
+
+    @Test("Reports guarded skips separately from preserved local edits")
+    func syncAllReportsGuardedSkips() async {
+        let machines = syncTestMachines()
+        configureSyncResponses(
+            for: machines,
+            counts: ["studio": FleetReconciliationCounts(skipped: 1)]
+        )
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "Synced 3 of 3 machines: 1 guarded item skipped")
+        #expect(store.machines.allSatisfy { $0.online })
+    }
+
+    @Test("Reports reachable machine count when one configured machine is offline")
+    func syncAllReportsMixedConnectivity() async {
+        let machines = syncTestMachines()
+        configureSyncResponses(for: machines, failingHosts: [host(for: machines[1])])
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "Synced 2 of 3 machines")
+        #expect(store.machines.first(where: { $0.id == "studio" })?.online == true)
+        #expect(store.machines.first(where: { $0.id == "dev" })?.online == false)
+        #expect(store.machines.first(where: { $0.id == "work" })?.online == true)
+    }
+
+    @Test("Does not claim all machines are in sync for older responses without reconciliation")
+    func syncAllKeepsBackwardsCompatibleNotice() async {
+        let machines = syncTestMachines()
+        configureSyncResponses(for: machines, includeReconciliation: false)
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+
+        await store.syncAll()
+
+        #expect(store.notice == "Synced 3 of 3 machines")
+        #expect(store.machines.allSatisfy { $0.online })
+    }
+
+    @Test("Does not claim an empty configured fleet is in sync")
+    func syncAllReportsNoConfiguredMachines() async {
+        let store = FleetStore(machines: [])
+
+        await store.syncAll()
+
+        #expect(store.notice == "No machines configured")
+    }
+
+    private func syncTestMachines() -> [HerdrMachine] {
+        [
+            HerdrMachine(id: "studio", name: "RocketBot", urlString: "https://studio.example"),
+            HerdrMachine(id: "dev", name: "DevBox", urlString: "https://dev.example"),
+            HerdrMachine(id: "work", name: "Work Mac", urlString: "https://work.example"),
+        ]
+    }
+
+    private func makeSyncStore(machines: [HerdrMachine]) -> FleetStore {
+        let clients = Dictionary(uniqueKeysWithValues: machines.map { machine in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [FleetStoreURLProtocol.self]
+            let client = HerdrAPIClient(
+                configuration: ServerConfiguration(urlString: machine.urlString, token: "test")!,
+                session: URLSession(configuration: configuration)
+            )
+            return (machine.id, client)
+        })
+        return FleetStore(
+            machines: machines,
+            connectionStates: Dictionary(uniqueKeysWithValues: machines.map { ($0.id, ConnectionState.live) }),
+            clients: clients
+        )
+    }
+
+    private func configureSyncResponses(
+        for machines: [HerdrMachine],
+        counts: [String: FleetReconciliationCounts] = [:],
+        includeReconciliation: Bool = true,
+        failingHosts: Set<String> = []
+    ) {
+        let responses = Dictionary(uniqueKeysWithValues: machines.map { machine in
+            (
+                host(for: machine),
+                makeSyncResponseData(
+                    machineID: machine.id,
+                    counts: counts[machine.id] ?? FleetReconciliationCounts(),
+                    includeReconciliation: includeReconciliation
+                )
+            )
+        })
+        FleetStoreURLProtocol.router.configure(responses: responses, failingHosts: failingHosts)
+    }
+
+    private func host(for machine: HerdrMachine) -> String {
+        URL(string: machine.urlString)?.host ?? machine.urlString
+    }
+
+    private func makeSyncResponseData(
+        machineID: String,
+        counts: FleetReconciliationCounts,
+        includeReconciliation: Bool
+    ) -> Data {
+        var response: [String: Any] = [
+            "ok": true,
+            "machine": [
+                "machineID": machineID,
+                "online": true,
+                "skillsCount": 0,
+                "piExtensionsCount": 0,
+                "cliCount": 0,
+                "itemCount": 0,
+                "driftCount": 0,
+            ],
+            "items": [],
+            "generatedAt": "2026-09-02T00:00:00Z",
+        ]
+        if includeReconciliation {
+            response["reconciliation"] = [
+                "counts": [
+                    "total": counts.total,
+                    "eligible": counts.eligible,
+                    "attempted": counts.attempted,
+                    "updated": counts.updated,
+                    "restored": counts.restored,
+                    "unchanged": counts.unchanged,
+                    "skipped": counts.skipped,
+                    "failed": counts.failed,
+                    "current": counts.current,
+                    "rollbackRestored": counts.rollbackRestored,
+                    "skippedDrifted": counts.skippedDrifted,
+                ],
+                "items": [],
+            ]
+        }
+        return try! JSONSerialization.data(withJSONObject: response)
     }
 
     private func makeLargeSingleMachineResponse(machineID: String) -> FleetResponse {

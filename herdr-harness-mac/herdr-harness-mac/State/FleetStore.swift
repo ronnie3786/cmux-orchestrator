@@ -1,6 +1,28 @@
 import Foundation
 import Observation
 
+private struct FleetSyncTotals: Sendable {
+    var updated = 0
+    var restored = 0
+    var skipped = 0
+    var skippedDrifted = 0
+    var failed = 0
+
+    mutating func add(_ counts: FleetReconciliationCounts) {
+        updated += counts.updated
+        restored += counts.restored
+        skipped += counts.skipped
+        skippedDrifted += counts.skippedDrifted
+        failed += counts.failed
+    }
+
+    var hasItemIssues: Bool {
+        updated > 0 || restored > 0 || skipped > 0 || skippedDrifted > 0 || failed > 0
+    }
+
+    var guardedSkipped: Int { max(0, skipped - skippedDrifted) }
+}
+
 @MainActor
 @Observable
 final class FleetStore {
@@ -24,6 +46,12 @@ final class FleetStore {
     private struct FleetFetchResult: Sendable {
         let machineID: String
         let response: FleetResponse?
+        let errorMessage: String?
+    }
+
+    private struct FleetSyncFetchResult: Sendable {
+        let machineID: String
+        let response: FleetSyncResponse?
         let errorMessage: String?
     }
 
@@ -213,19 +241,20 @@ final class FleetStore {
             return
         }
 
-        let results = await withTaskGroup(of: FleetFetchResult.self, returning: [FleetFetchResult].self) { group in
+        let configuredMachineCount = machines.count
+        let results = await withTaskGroup(of: FleetSyncFetchResult.self, returning: [FleetSyncFetchResult].self) { group in
             for machine in machines {
                 guard let client = clients[machine.id] else { continue }
                 group.addTask {
                     do {
                         let response = try await client.syncFleet()
-                        return FleetFetchResult(
+                        return FleetSyncFetchResult(
                             machineID: machine.id,
-                            response: response.fleet,
+                            response: response,
                             errorMessage: nil
                         )
                     } catch {
-                        return FleetFetchResult(
+                        return FleetSyncFetchResult(
                             machineID: machine.id,
                             response: nil,
                             errorMessage: Self.userFacingError(error)
@@ -233,17 +262,26 @@ final class FleetStore {
                     }
                 }
             }
-            var results: [FleetFetchResult] = []
+            var results: [FleetSyncFetchResult] = []
             for await result in group { results.append(result) }
             return results
         }
 
+        var totals = FleetSyncTotals()
+        var reconciliationComplete = true
+        var successfulCount = 0
         for result in results {
             if let response = result.response {
-                apply(response, fallbackMachineID: result.machineID)
+                successfulCount += 1
+                apply(response.fleet, fallbackMachineID: result.machineID)
                 setMachineOnline(true, id: result.machineID)
-                setMachineLastSync(response.generatedAt, id: result.machineID)
+                setMachineLastSync(response.fleet.generatedAt, id: result.machineID)
                 setMachineError(nil, id: result.machineID)
+                if let reconciliation = response.reconciliation {
+                    totals.add(reconciliation.counts)
+                } else {
+                    reconciliationComplete = false
+                }
             } else {
                 setMachineOnline(false, id: result.machineID)
                 setMachineError(result.errorMessage, id: result.machineID)
@@ -255,10 +293,12 @@ final class FleetStore {
         }
 
         await refresh()
-        let succeeded = results.count(where: { $0.response != nil })
-        notice = succeeded == machines.count
-            ? "All machines are in sync"
-            : "Synced \(succeeded) of \(machines.count) machines"
+        notice = Self.syncNotice(
+            succeeded: successfulCount,
+            configured: configuredMachineCount,
+            totals: totals,
+            reconciliationComplete: reconciliationComplete
+        )
     }
 
     func perform(
@@ -640,6 +680,48 @@ final class FleetStore {
             }
         }
         return "Fleet could not complete that action."
+    }
+
+    nonisolated private static func syncNotice(
+        succeeded: Int,
+        configured: Int,
+        totals: FleetSyncTotals,
+        reconciliationComplete: Bool
+    ) -> String {
+        let allMachinesSucceeded = configured > 0 && succeeded == configured
+        if allMachinesSucceeded && reconciliationComplete && !totals.hasItemIssues {
+            return "All machines are in sync"
+        }
+
+        if configured == 0 {
+            return "No machines configured"
+        }
+
+        var details: [String] = []
+        if totals.updated > 0 {
+            details.append("\(totals.updated) updated")
+        }
+        if totals.restored > 0 {
+            details.append("\(totals.restored) restored")
+        }
+        if totals.skippedDrifted > 0 {
+            let suffix = totals.skippedDrifted == 1 ? "" : "s"
+            details.append("\(totals.skippedDrifted) local edit\(suffix) preserved")
+        }
+        if totals.guardedSkipped > 0 {
+            let suffix = totals.guardedSkipped == 1 ? "" : "s"
+            details.append("\(totals.guardedSkipped) guarded item\(suffix) skipped")
+        }
+        if totals.failed > 0 {
+            let suffix = totals.failed == 1 ? "" : "s"
+            details.append("\(totals.failed) item failure\(suffix)")
+        }
+
+        let machineSummary = "\(succeeded) of \(configured) machines"
+        if details.isEmpty {
+            return "Synced \(machineSummary)"
+        }
+        return "Synced \(machineSummary): \(details.joined(separator: ", "))"
     }
 
     nonisolated private static func successMessage(for action: FleetAction, item: String, machine: String) -> String {
