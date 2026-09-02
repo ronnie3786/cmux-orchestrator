@@ -181,7 +181,7 @@ struct FleetManagementSheet: View {
                         Label("Sync All", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.isSyncing || store.machines.isEmpty)
+                    .disabled(store.isLoading || store.isSyncing || store.machines.isEmpty)
                     .accessibilityIdentifier("fleet-sync-all-button")
 
                     Button {

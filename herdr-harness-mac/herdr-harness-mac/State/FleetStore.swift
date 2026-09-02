@@ -53,6 +53,7 @@ final class FleetStore {
 
     private let isDemoMode: Bool
     private var clients: [String: HerdrAPIClient]
+    private var fleetOperationGeneration: UInt64 = 0
 
     private struct FleetFetchResult: Sendable {
         let machineID: String
@@ -183,11 +184,14 @@ final class FleetStore {
     }
 
     func refresh() async {
-        guard !isLoading else { return }
+        guard !isLoading, !isSyncing else { return }
+        let generation = beginFleetOperation()
         isLoading = true
         defer {
             isLoading = false
-            lastRefreshAt = .now
+            if isCurrentFleetOperation(generation) {
+                lastRefreshAt = .now
+            }
         }
 
         if isDemoMode {
@@ -221,6 +225,11 @@ final class FleetStore {
             return results
         }
 
+        // Sync All can supersede a refresh that was already in flight. Its
+        // generation makes sure the slower GET cannot overwrite the newer
+        // POST-applied inventory or notice.
+        guard isCurrentFleetOperation(generation) else { return }
+
         var successfulIDs = Set<String>()
         for result in results {
             if let response = result.response {
@@ -243,6 +252,7 @@ final class FleetStore {
 
     func syncAll() async {
         guard !isSyncing else { return }
+        let generation = beginFleetOperation()
         isSyncing = true
         defer { isSyncing = false }
 
@@ -277,6 +287,8 @@ final class FleetStore {
             for await result in group { results.append(result) }
             return results
         }
+
+        guard isCurrentFleetOperation(generation) else { return }
 
         var totals = FleetSyncTotals()
         var reconciliationComplete = true
@@ -317,6 +329,15 @@ final class FleetStore {
             totals: totals,
             reconciliationComplete: reconciliationComplete
         )
+    }
+
+    private func beginFleetOperation() -> UInt64 {
+        fleetOperationGeneration &+= 1
+        return fleetOperationGeneration
+    }
+
+    private func isCurrentFleetOperation(_ generation: UInt64) -> Bool {
+        fleetOperationGeneration == generation
     }
 
     func perform(

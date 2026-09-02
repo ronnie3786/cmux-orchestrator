@@ -571,6 +571,56 @@ struct FleetTests {
         #expect(store.machines.first(where: { $0.id == machines[1].id })?.error == "The server could not complete that Fleet action.")
     }
 
+    @Test("Does not let a stale refresh overwrite a completed Sync All")
+    func syncAllSupersedesInFlightRefresh() async throws {
+        let machines = syncTestMachines()
+        let delayedHost = host(for: machines[0])
+        let syncResponses = Dictionary(uniqueKeysWithValues: machines.map { machine in
+            (
+                host(for: machine),
+                makeSyncResponseData(
+                    machineID: machine.id,
+                    counts: FleetReconciliationCounts(),
+                    includeReconciliation: true
+                )
+            )
+        })
+        let delayedRefreshData = try JSONEncoder().encode(
+            makeLargeSingleMachineResponse(machineID: machines[0].id)
+        )
+        FleetStoreURLProtocol.router.configure(
+            responses: syncResponses,
+            failingHosts: [],
+            pathOutcomes: [
+                delayedHost: [
+                    "/api/v1/fleet": .delayedSuccess(delayedRefreshData, seconds: 0.2)
+                ]
+            ]
+        )
+        defer { FleetStoreURLProtocol.router.reset() }
+        let store = makeSyncStore(machines: machines)
+        let refreshTask = Task { await store.refresh() }
+
+        var refreshStarted = false
+        for _ in 0..<500 {
+            if FleetStoreURLProtocol.router.requestPaths(for: delayedHost).contains("/api/v1/fleet") {
+                refreshStarted = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(refreshStarted)
+        #expect(store.isLoading)
+
+        await store.syncAll()
+
+        #expect(store.notice == "All machines are in sync")
+        #expect(store.items.isEmpty)
+        await refreshTask.value
+        #expect(store.notice == "All machines are in sync")
+        #expect(store.items.isEmpty)
+    }
+
     @Test("Does not claim all machines are in sync for older responses without reconciliation")
     func syncAllKeepsBackwardsCompatibleNotice() async {
         let machines = syncTestMachines()
@@ -857,8 +907,9 @@ private final class FleetStoreURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         Self.router.record(request)
-        guard let host = request.url?.host,
-              let outcome = Self.router.outcome(for: host)
+        guard let url = request.url,
+              let host = url.host,
+              let outcome = Self.router.outcome(for: host, path: url.path)
         else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
@@ -868,21 +919,29 @@ private final class FleetStoreURLProtocol: URLProtocol, @unchecked Sendable {
         case .failure:
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
         case let .success(data):
-            guard let url = request.url,
-                  let response = HTTPURLResponse(
-                    url: url,
-                    statusCode: 200,
-                    httpVersion: nil,
-                    headerFields: ["Content-Type": "application/json"]
-                  )
-            else {
-                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
-                return
+            deliverSuccess(data)
+        case let .delayedSuccess(data, seconds):
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + seconds) { [weak self] in
+                self?.deliverSuccess(data)
             }
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
         }
+    }
+
+    private func deliverSuccess(_ data: Data) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: nil,
+                  headerFields: ["Content-Type": "application/json"]
+              )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
@@ -892,16 +951,23 @@ private final class FleetStoreURLRouter: @unchecked Sendable {
     enum Outcome {
         case success(Data)
         case failure
+        case delayedSuccess(Data, seconds: TimeInterval)
     }
 
     private let lock = NSLock()
     private var outcomes: [String: Outcome] = [:]
+    private var pathOutcomes: [String: [String: Outcome]] = [:]
     private var pathsByHost: [String: [String]] = [:]
 
-    func configure(responses: [String: Data], failingHosts: Set<String>) {
+    func configure(
+        responses: [String: Data],
+        failingHosts: Set<String>,
+        pathOutcomes: [String: [String: Outcome]] = [:]
+    ) {
         lock.lock()
         defer { lock.unlock() }
         outcomes = responses.mapValues(Outcome.success)
+        self.pathOutcomes = pathOutcomes
         pathsByHost = [:]
         for host in failingHosts {
             outcomes[host] = .failure
@@ -923,16 +989,17 @@ private final class FleetStoreURLRouter: @unchecked Sendable {
         return pathsByHost[host] ?? []
     }
 
-    func outcome(for host: String) -> Outcome? {
+    func outcome(for host: String, path: String) -> Outcome? {
         lock.lock()
         defer { lock.unlock() }
-        return outcomes[host]
+        return pathOutcomes[host]?[path] ?? outcomes[host]
     }
 
     func reset() {
         lock.lock()
         defer { lock.unlock() }
         outcomes = [:]
+        pathOutcomes = [:]
         pathsByHost = [:]
     }
 }
