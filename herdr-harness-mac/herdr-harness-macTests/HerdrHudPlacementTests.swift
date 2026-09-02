@@ -85,7 +85,7 @@ struct HerdrHudPlacementTests {
 
     @Test("Collapsed HUD height grows by one fixed slot per visible chip")
     func collapsedContentSizeGrowsByChipSlots() {
-        for count in 1...HerdrHudPlacement.maxChips {
+        for count in 1...HerdrHudPlacement.maxExpandedChips {
             let size = HerdrHudPlacement.collapsedContentSize(chipCount: count)
             #expect(
                 size.width == max(HerdrHudPlacement.collapsedSize.width, HerdrHudPlacement.chipWidth)
@@ -97,11 +97,17 @@ struct HerdrHudPlacementTests {
         }
     }
 
-    @Test("Collapsed chip count clamps at the visible chip maximum")
+    /// The `+N` control reveals the grouped sessions, so the panel has to grow
+    /// past `maxChips`. It still stops at `maxExpandedChips`.
+    @Test("Collapsed chip count clamps at the expanded chip maximum")
     func collapsedContentSizeClampsChipCount() {
         #expect(
             HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips + 1)
-                == HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips)
+                != HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips)
+        )
+        #expect(
+            HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxExpandedChips + 1)
+                == HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxExpandedChips)
         )
     }
 

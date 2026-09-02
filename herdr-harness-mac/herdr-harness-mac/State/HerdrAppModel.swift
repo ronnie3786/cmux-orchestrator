@@ -1080,6 +1080,20 @@ final class HerdrAppModel {
         return try await client.fetchPiConversationSnapshot(paneID: pane.paneID)
     }
 
+    /// A pane's newest finished answer, without following its stream.
+    ///
+    /// The HUD chips need this for a pane whose session view is not on screen,
+    /// so there is no `PiConversationStore` to read. Projecting the snapshot
+    /// through the same reducer keeps the text identical to what the chat's own
+    /// response-audio control would read.
+    func latestCompletedAssistantResponse(for pane: HerdrPane) async throws -> String? {
+        let snapshot = try await fetchPiConversationSnapshot(for: pane)
+        guard snapshot.available else { return nil }
+        var reducer = PiConversationReducer()
+        reducer.replace(with: snapshot)
+        return reducer.turns.latestCompletedAssistantText
+    }
+
     func fetchResponseAudioCapabilities(for pane: HerdrPane) async throws -> ResponseAudioCapabilities {
         guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID) else {

@@ -83,6 +83,10 @@ struct HudRenderTests {
     @Test("HUD session chips render in the collapsed strip")
     func rendersHudSessionChips() async throws {
         let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
         let chips = [
             HerdrHudSessionChips.Chip(
                 id: "demo1|w1:p1",
@@ -106,6 +110,7 @@ struct HudRenderTests {
         ) {
             HerdrHudSessionChipsView(
                 model: model,
+                session: session,
                 chips: chips,
                 overflow: 0
             )

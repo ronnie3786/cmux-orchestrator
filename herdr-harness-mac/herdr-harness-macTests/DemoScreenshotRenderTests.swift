@@ -36,7 +36,6 @@ struct DemoScreenshotRenderTests {
         let model = HerdrRenderFixtures.demoModel()
         model.openPane(id: "demo1|w1:p2")
         let shell = HerdrShellState()
-        let activeWorkStore = demoActiveWorkStore()
         let pane = try #require(model.pane(id: model.selectedPaneID))
         #expect(shell.resolvedScope(for: model) == .session)
 
@@ -54,11 +53,8 @@ struct DemoScreenshotRenderTests {
             HStack(spacing: 0) {
                 HerdrSidebarView(
                     model: model,
-                    activeWorkStore: activeWorkStore,
                     openPane: { _ in },
-                    openWorkspace: { _ in },
-                    openActiveWork: {},
-                    isActiveWorkSelected: false
+                    openWorkspace: { _ in }
                 )
                     .frame(width: 360)
 
@@ -82,7 +78,6 @@ struct DemoScreenshotRenderTests {
         let model = HerdrRenderFixtures.demoModel()
         model.selectedPaneID = "demo1|w1:p2"
         model.starredChatIDs = ["demo1|w1:p1", "demo1|w2:p1"]
-        let activeWorkStore = demoActiveWorkStore()
         #expect(model.unreadPaneIDs == ["demo1|w1:p2", "demo1|w2:p1"])
 
         let result = try await HerdrRenderHarness.render(
@@ -91,11 +86,8 @@ struct DemoScreenshotRenderTests {
         ) {
             HerdrSidebarView(
                 model: model,
-                activeWorkStore: activeWorkStore,
                 openPane: { _ in },
-                openWorkspace: { _ in },
-                openActiveWork: {},
-                isActiveWorkSelected: false
+                openWorkspace: { _ in }
             )
         }
 
@@ -107,7 +99,6 @@ struct DemoScreenshotRenderTests {
         let model = HerdrRenderFixtures.demoModel()
         model.selectedPaneID = "demo1|w1:p2"
         model.starredChatIDs = ["demo1|w1:p1", "demo1|w2:p1"]
-        let activeWorkStore = demoActiveWorkStore()
 
         let defaultResult = try await HerdrRenderHarness.render(
             "02-sidebar.png",
@@ -115,11 +106,8 @@ struct DemoScreenshotRenderTests {
         ) {
             HerdrSidebarView(
                 model: model,
-                activeWorkStore: activeWorkStore,
                 openPane: { _ in },
-                openWorkspace: { _ in },
-                openActiveWork: {},
-                isActiveWorkSelected: false
+                openWorkspace: { _ in }
             )
         }
 
@@ -129,11 +117,8 @@ struct DemoScreenshotRenderTests {
         ) {
             HerdrSidebarView(
                 model: model,
-                activeWorkStore: activeWorkStore,
                 openPane: { _ in },
-                openWorkspace: { _ in },
-                openActiveWork: {},
-                isActiveWorkSelected: false
+                openWorkspace: { _ in }
             )
                 .environment(\.herdrFontScale, .xxLarge)
         }

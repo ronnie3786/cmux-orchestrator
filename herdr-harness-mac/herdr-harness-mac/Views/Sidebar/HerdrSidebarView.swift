@@ -3,14 +3,11 @@ import SwiftUI
 
 struct HerdrSidebarView: View {
     @Bindable var model: HerdrAppModel
-    @Bindable var activeWorkStore: ActiveWorkStore
     /// Routing is the shell's job — the sidebar states the intent, it does not
     /// infer it from a selection change (clicking the already-selected chat has
     /// to work too).
     let openPane: (HerdrPane) -> Void
     let openWorkspace: (HerdrWorkspace) -> Void
-    let openActiveWork: () -> Void
-    let isActiveWorkSelected: Bool
     @State private var query = ""
     @State private var isPresentingCreateWorkspace = false
     @State private var isPresentingMachines = false
@@ -109,6 +106,16 @@ struct HerdrSidebarView: View {
 
     private struct SidebarSnapshotFingerprint: Equatable {
         let fleetRevision: Int
+        /// Every rendered status, folded into one value.
+        ///
+        /// `fleetRevision` deliberately does not move for a refresh the model
+        /// judged uninteresting, so keying the cache on it alone let a chat row
+        /// keep an amber "working" dot after the session had finished — the HUD
+        /// chips, which read `model.workspaces` live, were right at the same
+        /// moment. Reading the statuses here also re-registers this view's
+        /// observation of `workspaces` on every pass, so the sidebar is woken by
+        /// a status change even when nothing else about the fleet moved.
+        let statusDigest: Int
         let query: String
         let machineScope: MachineScope
         let machines: [HerdrMachine]
@@ -127,10 +134,28 @@ struct HerdrSidebarView: View {
         var snapshot: SidebarSnapshot?
     }
 
+    /// Hashes what the rows draw as status: each pane's identity and state, and
+    /// each workspace's rolled-up one. Allocation-free so it can run on every
+    /// body pass, unlike rebuilding the tree.
+    static func statusDigest(_ workspaces: [HerdrWorkspace]) -> Int {
+        var hasher = Hasher()
+        for workspace in workspaces {
+            hasher.combine(workspace.id)
+            hasher.combine(workspace.agentStatus)
+            for pane in workspace.panes {
+                hasher.combine(pane.id)
+                hasher.combine(pane.agentStatus)
+                hasher.combine(pane.workingSince)
+            }
+        }
+        return hasher.finalize()
+    }
+
     var body: some View {
         @Bindable var cleanupPresenter = model.cleanupPresenter
         let fingerprint = SidebarSnapshotFingerprint(
             fleetRevision: model.fleetRevision,
+            statusDigest: Self.statusDigest(model.workspaces),
             query: query,
             machineScope: model.machineScope,
             machines: model.machines,
@@ -145,8 +170,6 @@ struct HerdrSidebarView: View {
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 12) {
             header
-
-            activeWorkCTA
 
             if model.machines.count > 1 {
                 machinePicker
@@ -318,86 +341,6 @@ struct HerdrSidebarView: View {
             .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
             .help("Show chats from \(model.sidebarRecency.title.lowercased())")
         }
-    }
-
-    private var activeWorkCTA: some View {
-        Button(action: openActiveWork) {
-            HStack(spacing: 10) {
-                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                    .herdrFont(.headline, weight: .bold)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .frame(width: 28, height: 28)
-                    .background(HerdrTheme.accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 8))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("active work")
-                        .herdrFont(.subheadline, weight: .bold)
-                        .foregroundStyle(HerdrTheme.text)
-                    Text(activeWorkSubtitle)
-                        .herdrFont(.caption2)
-                        .foregroundStyle(HerdrTheme.mist)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 8)
-
-                if activeWorkStore.attentionCount > 0 {
-                    Text("\(activeWorkStore.attentionCount)")
-                        .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.ink)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(HerdrTheme.alert, in: Capsule())
-                        .accessibilityLabel("\(activeWorkStore.attentionCount) need you")
-                } else {
-                    Image(systemName: "chevron.right")
-                        .herdrFont(.caption2, weight: .bold)
-                        .foregroundStyle(HerdrTheme.muted)
-                }
-            }
-            .padding(.leading, SidebarMetrics.containerLeadingPadding)
-            .padding(.trailing, SidebarMetrics.containerTrailingPadding)
-            .frame(minHeight: 48)
-            .background(isActiveWorkSelected ? HerdrTheme.elevated : HerdrTheme.graphite.opacity(0.42))
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(isActiveWorkSelected ? HerdrTheme.accent : Color.clear)
-                    .frame(width: 2)
-                    .padding(.vertical, 7)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(
-                        isActiveWorkSelected ? HerdrTheme.accent.opacity(0.48) : HerdrTheme.surface.opacity(0.72),
-                        lineWidth: 1
-                    )
-            }
-            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help("Show Active Work")
-        .accessibilityLabel(
-            "Active Work, \(activeWorkSubtitle)" +
-                (activeWorkStore.attentionCount > 0 ? ", \(activeWorkStore.attentionCount) need you" : "")
-        )
-        .accessibilityHint("Shows the Active Work board")
-        .accessibilityAddTraits(isActiveWorkSelected ? .isSelected : [])
-        .accessibilityIdentifier("sidebar-active-work")
-    }
-
-    private var activeWorkSubtitle: String {
-        guard activeWorkStore.hasLoaded else { return "loading board" }
-        let work = activeWorkStore.activeItemCount
-        if activeWorkStore.hasError {
-            return activeWorkStore.items.isEmpty ? "board unavailable" : "\(work) active · may be stale"
-        }
-        if !activeWorkStore.response.jiraCandidatesStatus.ok {
-            return "\(work) active · Jira stale"
-        }
-        let setup = activeWorkStore.jiraCandidates.filter { $0.workItemID == nil }.count
-        if setup > 0 { return "\(work) active · \(setup) to set up" }
-        return "\(work) active · \(activeWorkStore.activeAgentCount) agents"
     }
 
     private var machinePicker: some View {

@@ -89,6 +89,11 @@ final class HerdrHudSession {
     private(set) var validationError: String?
     private(set) var promoteErrorMessage: String?
     private(set) var audioErrorMessage: String?
+    /// The session chip whose last answer is being spoken, and the transcript
+    /// it is reading. Cached so pause/resume does not refetch.
+    private(set) var sessionAudioPaneID: String?
+    private(set) var loadingSessionAudioPaneID: String?
+    @ObservationIgnored private var sessionAudioText: String?
     private(set) var promotingExchangeIDs: Set<String> = []
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var defaultModel: PiModelIdentity?
@@ -417,6 +422,85 @@ final class HerdrHudSession {
 
     func setSelectedModel(_ candidate: PiAvailableModel?) {
         selectedModel = candidate?.id
+    }
+
+    func isSpeakingSession(_ paneID: String) -> Bool {
+        sessionAudioPaneID == paneID && responseAudioPlayer.phase.activeAction != nil
+    }
+
+    func isPreparingSessionAudio(_ paneID: String) -> Bool {
+        guard sessionAudioPaneID == paneID else { return false }
+        if loadingSessionAudioPaneID == paneID { return true }
+        return responseAudioPlayer.phase == .preparing(.tldr)
+    }
+
+    /// Speak a finished session's last answer from its HUD chip.
+    ///
+    /// The chip has no conversation store behind it — that only exists while a
+    /// pane's session view is on screen — so the transcript is fetched on
+    /// demand and cached for the length of this playback. Playback itself is
+    /// the same `.tldr` path the chat composer uses, so a second press
+    /// pauses/resumes exactly like the in-chat control.
+    func toggleSessionAudio(paneID: String, model: HerdrAppModel) async {
+        audioErrorMessage = nil
+        guard let pane = model.pane(id: paneID) else { return }
+
+        if sessionAudioPaneID == paneID,
+           let text = sessionAudioText,
+           responseAudioPlayer.phase.activeAction != nil {
+            activateSessionAudio(text: text, pane: pane, model: model)
+            return
+        }
+
+        responseAudioPlayer.stop()
+        sessionAudioPaneID = paneID
+        sessionAudioText = nil
+        loadingSessionAudioPaneID = paneID
+        defer {
+            if loadingSessionAudioPaneID == paneID { loadingSessionAudioPaneID = nil }
+        }
+
+        if !responseAudioPlayer.capabilities.available {
+            await responseAudioPlayer.loadCapabilities {
+                try await model.fetchResponseAudioCapabilities(for: pane)
+            }
+        }
+        guard responseAudioPlayer.capabilities.supports(.tldr) else {
+            audioErrorMessage = "This machine can't read responses aloud."
+            sessionAudioPaneID = nil
+            return
+        }
+
+        do {
+            guard let text = try await model.latestCompletedAssistantResponse(for: pane) else {
+                audioErrorMessage = "\(pane.displayTitle) hasn't answered yet."
+                sessionAudioPaneID = nil
+                return
+            }
+            guard sessionAudioPaneID == paneID else { return }
+            sessionAudioText = text
+            activateSessionAudio(text: text, pane: pane, model: model)
+        } catch {
+            audioErrorMessage = error.localizedDescription
+            sessionAudioPaneID = nil
+        }
+    }
+
+    private func activateSessionAudio(text: String, pane: HerdrPane, model: HerdrAppModel) {
+        responseAudioPlayer.activate(
+            .tldr,
+            text: text,
+            prepare: { action, text in
+                try await model.prepareResponseAudio(action: action, text: text, for: pane)
+            },
+            synthesize: { text in
+                try await model.synthesizeResponseAudio(text: text, for: pane)
+            },
+            failure: { [weak self] message in
+                self?.audioErrorMessage = message
+                self?.sessionAudioPaneID = nil
+            }
+        )
     }
 
     func activateResponseAudio(

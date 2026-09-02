@@ -74,14 +74,23 @@ final class HerdrSidebarUITests: HerdrUITestCase {
             workspaceTab.waitForNonExistence(timeout: 3),
             "Clicking the workspace row should collapse its nested tabs and chats"
         )
-        XCTAssertEqual(workspace.value as? String, "collapsed")
+        // The row appends ", N working" when its descendants are busy — the
+        // demo fleet's first workspace always has one. Pin the expansion state
+        // this test is about, not that suffix.
+        XCTAssertTrue(
+            (workspace.value as? String)?.hasPrefix("collapsed") == true,
+            "Expected a collapsed row, got \(String(describing: workspace.value))"
+        )
 
         workspace.click()
         XCTAssertTrue(
             workspaceTab.waitForExistence(timeout: 3),
             "Clicking it again should restore them"
         )
-        XCTAssertEqual(workspace.value as? String, "expanded")
+        XCTAssertTrue(
+            (workspace.value as? String)?.hasPrefix("expanded") == true,
+            "Expected an expanded row, got \(String(describing: workspace.value))"
+        )
     }
 
     @MainActor

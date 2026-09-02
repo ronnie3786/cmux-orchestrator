@@ -44,13 +44,24 @@ final class HerdrHudController {
     private(set) var focusRequest = 0
     private(set) var noteFocusRequest = 0
     private(set) var collapsedChipCount = 0
+    /// Whether the `+N` control has been clicked to reveal the grouped
+    /// sessions. Regrouped `chipRegroupDelay` after the pointer leaves them.
+    private(set) var isShowingAllChips = false
+
+    private let chipRegroupDelay: Duration
+    private var chipRegroupTask: Task<Void, Never>?
+    private var isHoveringChips = false
 
     #if DEBUG
     var panelFrameForTesting: CGRect? { panel?.frame }
     #endif
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(
+        userDefaults: UserDefaults = .standard,
+        chipRegroupDelay: Duration = .seconds(5)
+    ) {
         self.userDefaults = userDefaults
+        self.chipRegroupDelay = chipRegroupDelay
     }
 
     var isEnabled: Bool {
@@ -118,6 +129,7 @@ final class HerdrHudController {
         }
         guard let panel else { return }
         notes?.closeNote()
+        regroupChips()
         isExpanded = true
         if notes?.isHudExpanded == false { notes?.isHudExpanded = true }
         session?.isCollapsed = false
@@ -150,6 +162,7 @@ final class HerdrHudController {
 
     func setEnabled(_ enabled: Bool) {
         notes?.closeNote()
+        regroupChips()
         userDefaults.set(enabled, forKey: DefaultsKey.enabled)
         enabledRevision &+= 1
         guard let panel else { return }
@@ -172,11 +185,45 @@ final class HerdrHudController {
     }
 
     func setCollapsedChipCount(_ count: Int) {
-        let clampedCount = min(max(0, count), HerdrHudPlacement.maxChips)
+        let clampedCount = min(max(0, count), HerdrHudPlacement.maxExpandedChips)
         guard collapsedChipCount != clampedCount else { return }
         collapsedChipCount = clampedCount
         if !isExpanded {
             applyFrame(animated: true)
+        }
+    }
+
+    /// Reveal every session the `+N` control had grouped away.
+    func showAllChips() {
+        chipRegroupTask?.cancel()
+        chipRegroupTask = nil
+        guard !isShowingAllChips else { return }
+        isShowingAllChips = true
+    }
+
+    func regroupChips() {
+        chipRegroupTask?.cancel()
+        chipRegroupTask = nil
+        guard isShowingAllChips else { return }
+        isShowingAllChips = false
+    }
+
+    /// Hovering holds the revealed list open; leaving it starts the regroup
+    /// countdown. Deliberately a grace period rather than an immediate collapse
+    /// — the pointer crosses the gaps between chips on its way to one of them.
+    func setHoveringChips(_ hovering: Bool) {
+        isHoveringChips = hovering
+        guard isShowingAllChips else { return }
+        chipRegroupTask?.cancel()
+        guard !hovering else {
+            chipRegroupTask = nil
+            return
+        }
+        chipRegroupTask = Task { [weak self, chipRegroupDelay] in
+            try? await Task.sleep(for: chipRegroupDelay)
+            guard !Task.isCancelled, let self, !self.isHoveringChips else { return }
+            self.chipRegroupTask = nil
+            self.isShowingAllChips = false
         }
     }
 

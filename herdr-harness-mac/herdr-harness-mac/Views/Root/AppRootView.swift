@@ -7,6 +7,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case session
     case workspace
     case activeWork
+    case fleet
     case attention
     case activity
 
@@ -17,6 +18,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "Session"
         case .workspace: "Workspace"
         case .activeWork: "Active Work"
+        case .fleet: "Fleet"
         case .attention: "Attention"
         case .activity: "Activity"
         }
@@ -27,6 +29,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "bubble.left.and.bubble.right"
         case .workspace: "rectangle.3.group"
         case .activeWork: "point.topleft.down.to.point.bottomright.curvepath"
+        case .fleet: "macwindow.on.rectangle"
         case .attention: "bell.badge"
         case .activity: "clock.arrow.circlepath"
         }
@@ -120,6 +123,8 @@ final class HerdrShellState {
             return model.workspace(id: model.selectedWorkspaceID) != nil ? .workspace : .attention
         case .activeWork:
             return .activeWork
+        case .fleet:
+            return .fleet
         case .attention:
             return .attention
         case .activity:
@@ -137,6 +142,7 @@ final class HerdrShellState {
         case .session: model.selectedPaneID.map(HerdrDestination.pane)
         case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
         case .activeWork: .activeWork
+        case .fleet: .fleet
         case .attention: .attention
         case .activity: .activity
         }
@@ -215,6 +221,7 @@ final class HerdrShellState {
             model.selectedPaneID = nil      // mirrors showWorkspace(id:model:)
             detailScope = .workspace
         case .activeWork: detailScope = .activeWork
+        case .fleet: detailScope = .fleet
         case .attention: detailScope = .attention
         case .activity: detailScope = .activity
         }
@@ -225,7 +232,7 @@ final class HerdrShellState {
         switch destination {
         case let .pane(id): model.pane(id: id) != nil
         case let .workspace(id): model.workspace(id: id) != nil
-        case .activeWork, .attention, .activity: true
+        case .activeWork, .fleet, .attention, .activity: true
         }
     }
 

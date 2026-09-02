@@ -14,14 +14,20 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// type is deliberately pure CoreGraphics math with no SwiftUI dependency.
     static let chipHeight: CGFloat = 28
     static let chipSpacing: CGFloat = 6
+    /// How many session chips the collapsed HUD groups down to. The rest are
+    /// summarised by the `+N` control, which reveals them up to
+    /// `maxExpandedChips`.
     static let maxChips = 3
+    static let maxExpandedChips = 12
     enum NotesLayout: Equatable, Sendable { case hidden, compact(count: Int), rows(count: Int), card }
     static let notesGap: CGFloat = 10
     static let notesWidth: CGFloat = 236
     static let noteRowHeight: CGFloat = 30
     static let noteRowSpacing: CGFloat = 6
     static let noteCtaHeight: CGFloat = 30
-    static let noteCompactBarHeight: CGFloat = 8
+    /// Tall enough for one line of the note's title — the collapsed stack names
+    /// its notes rather than showing anonymous color bars.
+    static let noteCompactBarHeight: CGFloat = 22
     static let noteCompactBarSpacing: CGFloat = 4
     static let maxCompactNotes = 5
     static let maxNoteRows = 6
@@ -50,7 +56,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
     }
 
     static func collapsedContentSize(chipCount: Int) -> CGSize {
-        let count = min(max(0, chipCount), maxChips)
+        let count = min(max(0, chipCount), maxExpandedChips)
         guard count > 0 else { return collapsedSize }
         return CGSize(
             width: max(collapsedSize.width, chipWidth),

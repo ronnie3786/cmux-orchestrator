@@ -122,6 +122,35 @@ struct HerdrHudSessionChipsTests {
         #expect(result.overflow == 3)
     }
 
+    /// What the `+N` control does: the same projection at the expanded limit
+    /// returns every candidate and nothing left over.
+    @Test("The expanded limit reveals every grouped session")
+    func expandedLimitRevealsGroupedSessions() throws {
+        let panes = try (1...5).map { index in
+            try pane(id: "pane-\(index)", status: .working, revision: index)
+        }
+        let grouped = HerdrHudSessionChips.chips(
+            panes: panes,
+            mutedPaneIDs: [],
+            dismissedStatuses: [:],
+            revealTitles: true,
+            limit: HerdrHudPlacement.maxChips
+        )
+        let revealed = HerdrHudSessionChips.chips(
+            panes: panes,
+            mutedPaneIDs: [],
+            dismissedStatuses: [:],
+            revealTitles: true,
+            limit: HerdrHudPlacement.maxExpandedChips
+        )
+
+        #expect(grouped.chips.count == HerdrHudPlacement.maxChips)
+        #expect(grouped.overflow == panes.count - HerdrHudPlacement.maxChips)
+        #expect(revealed.chips.count == panes.count)
+        #expect(revealed.overflow == 0)
+        #expect(revealed.chips.prefix(grouped.chips.count).map(\.id) == grouped.chips.map(\.id))
+    }
+
     private func pane(
         id: String,
         status: AgentStatus,

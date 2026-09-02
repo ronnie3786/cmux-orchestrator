@@ -15,6 +15,7 @@ enum HerdrDestination: Hashable, Sendable {
     case pane(String)        // scoped pane id — MachineScopedID.compose
     case workspace(String)   // scoped workspace id
     case activeWork
+    case fleet
     case attention
     case activity
 }

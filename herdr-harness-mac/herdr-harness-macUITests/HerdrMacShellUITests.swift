@@ -234,6 +234,49 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         )
     }
 
+    /// Fleet used to be a toolbar button that threw up a modal sheet. It is a
+    /// destination now, so it has to live in the same picker as the other four
+    /// and land in the detail column.
+    @MainActor
+    func testScopePickerOpensFleetInTheDetailColumn() throws {
+        let app = launchDemoApp()
+        XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
+
+        guard let fleet = waitForFirst(
+            of: [
+                app.control(identifier: "detail-scope-picker").buttons["Fleet"],
+                app.control(identifier: "detail-scope-picker").radioButtons["Fleet"],
+                app.control(named: "Fleet"),
+            ],
+            timeout: 10
+        ) else {
+            return XCTFail("The scope picker should carry a Fleet segment")
+        }
+        fleet.click()
+
+        XCTAssertTrue(
+            app.control(identifier: "fleet-management-sheet").waitForExistence(timeout: 5),
+            "Fleet should render in the detail column"
+        )
+        XCTAssertFalse(
+            app.control(identifier: "fleet-close-button").exists,
+            "A destination has nothing to dismiss, so it must not carry the sheet's Done button"
+        )
+    }
+
+    /// The navigator used to carry an Active Work CTA above the tree. It moved
+    /// into the toolbar picker, which already owned every other destination.
+    @MainActor
+    func testSidebarNoLongerCarriesTheActiveWorkCTA() throws {
+        let app = launchDemoApp()
+        XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
+
+        XCTAssertFalse(
+            app.control(identifier: "sidebar-active-work").exists,
+            "Active Work lives in the toolbar scope picker now, not the sidebar"
+        )
+    }
+
     @MainActor
     func testPaneHeaderExposesWorkingFolderButton() throws {
         let app = launchDemoApp()

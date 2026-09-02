@@ -30,12 +30,27 @@ struct PaneSessionHeader: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
-                    Text(pane.displayAgentName.lowercased())
-                        .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                    // The chat's own name leads: the agent and status that used
+                    // to start this line say what kind of session it is, not
+                    // which one you are looking at.
+                    Text(pane.displayTitle)
+                        .herdrFont(.subheadline, weight: .bold)
                         .foregroundStyle(HerdrTheme.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .accessibilityIdentifier("pane-session-title")
+
+                    if showsAgentName {
+                        Text(pane.displayAgentName.lowercased())
+                            .herdrFont(.caption, monospaced: true, weight: .bold)
+                            .foregroundStyle(HerdrTheme.mist)
+                            .fixedSize()
+                    }
+
                     Text(sessionStatusTitle.lowercased())
                         .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(sessionStatusColor)
+                        .fixedSize()
                         .accessibilityIdentifier("pane-session-status")
                 }
 
@@ -130,6 +145,12 @@ struct PaneSessionHeader: View {
 
     private var showsCompaction: Bool {
         store.connection == .connected && store.compactionActivity != nil
+    }
+
+    /// `displayTitle` falls back to the agent name when a pane has no label of
+    /// its own, and "pi pi idle" reads like a rendering bug. Drop the duplicate.
+    private var showsAgentName: Bool {
+        pane.displayTitle.caseInsensitiveCompare(pane.displayAgentName) != .orderedSame
     }
 
     private var sessionStatusTitle: String {

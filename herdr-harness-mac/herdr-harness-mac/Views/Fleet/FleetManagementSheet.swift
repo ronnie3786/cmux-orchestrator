@@ -6,10 +6,19 @@ struct FleetManagementSheet: View {
     @State private var store: FleetStore
     @State private var selectedMachineID: String?
     @State private var pendingRemoval: FleetRemovalRequest?
+    /// Fleet is a destination in the detail column, not a sheet. Embedded it
+    /// fills whatever the window gives it and drops the Done button, because
+    /// there is nothing to dismiss — the segmented picker moves you on.
+    private let isEmbedded: Bool
 
-    init(model: HerdrAppModel, initiallySelectedMachineID: String? = nil) {
+    init(
+        model: HerdrAppModel,
+        initiallySelectedMachineID: String? = nil,
+        isEmbedded: Bool = false
+    ) {
         _store = State(initialValue: FleetStore(model: model))
         _selectedMachineID = State(initialValue: initiallySelectedMachineID)
+        self.isEmbedded = isEmbedded
     }
 
     var body: some View {
@@ -27,7 +36,14 @@ struct FleetManagementSheet: View {
             }
             .scrollIndicators(.automatic)
         }
-        .frame(minWidth: 940, idealWidth: 1_180, maxWidth: .infinity, minHeight: 680, idealHeight: 820)
+        .frame(
+            minWidth: isEmbedded ? nil : 940,
+            idealWidth: isEmbedded ? nil : 1_180,
+            maxWidth: .infinity,
+            minHeight: isEmbedded ? nil : 680,
+            idealHeight: isEmbedded ? nil : 820,
+            maxHeight: isEmbedded ? .infinity : nil
+        )
         .background(HerdrTheme.ink)
         .tint(HerdrTheme.signal)
         .accessibilityIdentifier("fleet-management-sheet")
@@ -89,10 +105,19 @@ struct FleetManagementSheet: View {
                     .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
             }
 
-            Button("Done") { dismiss() }
+            if isEmbedded {
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task { await store.refresh() }
+                }
                 .buttonStyle(.bordered)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityIdentifier("fleet-close-button")
+                .disabled(store.isLoading)
+                .accessibilityIdentifier("fleet-refresh-button")
+            } else {
+                Button("Done") { dismiss() }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("fleet-close-button")
+            }
         }
         .padding(.horizontal, 30)
         .padding(.vertical, 18)

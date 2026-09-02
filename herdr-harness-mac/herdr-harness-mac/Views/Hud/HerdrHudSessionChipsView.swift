@@ -13,23 +13,99 @@ enum HerdrHudChipMotion {
 
 struct HerdrHudSessionChipsView: View {
     @Bindable var model: HerdrAppModel
+    @Bindable var session: HerdrHudSession
     let chips: [HerdrHudSessionChips.Chip]
     let overflow: Int
+    var showAll: () -> Void = { }
+
+    @State private var hoveredChipID: String?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
             ForEach(chips) { chip in
                 chipButton(chip)
+                    .overlay(alignment: .trailing) {
+                        if chip.status == .done {
+                            speakButton(chip)
+                                .padding(.trailing, 5)
+                                .opacity(showsSpeakButton(chip) ? 1 : 0)
+                                .allowsHitTesting(showsSpeakButton(chip))
+                        }
+                    }
+                    .onHover { hovering in
+                        if hovering {
+                            hoveredChipID = chip.id
+                        } else if hoveredChipID == chip.id {
+                            hoveredChipID = nil
+                        }
+                    }
             }
             if overflow > 0 {
-                Text("+\(overflow)")
-                    .herdrFont(.caption2, monospaced: true, weight: .bold)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .padding(.horizontal, 4)
-                    .background(HerdrTheme.graphite.opacity(0.94), in: .capsule)
-                    .accessibilityLabel("\(overflow) more sessions")
+                overflowButton
             }
         }
+    }
+
+    /// The grouped-session control. Clicking it reveals the sessions the chip
+    /// limit folded away; the HUD regroups them a few seconds after the pointer
+    /// leaves the stack.
+    private var overflowButton: some View {
+        Button(action: showAll) {
+            Text("+\(overflow)")
+                .herdrFont(.caption2, monospaced: true, weight: .bold)
+                .foregroundStyle(HerdrTheme.mist)
+                .padding(.horizontal, 9)
+                .frame(minHeight: HerdrTheme.minHitTarget)
+                .herdrHitTarget()
+                .background(HerdrTheme.graphite.opacity(0.94), in: .capsule)
+                .overlay {
+                    Capsule().strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                }
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .help("Show \(overflow) more session\(overflow == 1 ? "" : "s")")
+        .accessibilityIdentifier("hud-session-chip-overflow")
+        .accessibilityLabel("\(overflow) more sessions")
+        .accessibilityHint("Shows every session; they regroup shortly after you move away")
+    }
+
+    private func showsSpeakButton(_ chip: HerdrHudSessionChips.Chip) -> Bool {
+        hoveredChipID == chip.id || session.isSpeakingSession(chip.id)
+    }
+
+    /// The same TL;DR playback the chat composer offers, reachable without
+    /// opening the session: hover a finished chip and press play.
+    private func speakButton(_ chip: HerdrHudSessionChips.Chip) -> some View {
+        Button {
+            Task { await session.toggleSessionAudio(paneID: chip.id, model: model) }
+        } label: {
+            Group {
+                if session.isPreparingSessionAudio(chip.id) {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: speakSymbol(chip))
+                        .herdrFont(.caption2, weight: .bold)
+                }
+            }
+            .foregroundStyle(session.isSpeakingSession(chip.id) ? HerdrTheme.working : HerdrTheme.accent)
+            .frame(width: 20, height: 20)
+            .background(HerdrTheme.graphite, in: .circle)
+            .overlay {
+                Circle().strokeBorder(HerdrTheme.accent.opacity(0.45), lineWidth: 1)
+            }
+            .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .help("Play a spoken summary of this session's last answer")
+        .accessibilityIdentifier("hud-session-chip-speak-\(chip.id)")
+        .accessibilityLabel("Listen to a summary of \(chip.title)")
+    }
+
+    private func speakSymbol(_ chip: HerdrHudSessionChips.Chip) -> String {
+        guard session.isSpeakingSession(chip.id) else { return "speaker.wave.2.fill" }
+        return session.responseAudioPlayer.phase == .paused(.tldr) ? "play.fill" : "pause.fill"
     }
 
     private func chipButton(_ chip: HerdrHudSessionChips.Chip) -> some View {
@@ -59,7 +135,8 @@ struct HerdrHudSessionChipsView: View {
             }
             .herdrFont(.caption2, monospaced: true, weight: .semibold)
             .foregroundStyle(HerdrTheme.text)
-            .padding(.horizontal, 9)
+            .padding(.leading, 9)
+            .padding(.trailing, chip.status == .done ? 29 : 9)
             .frame(width: HerdrHudPlacement.chipWidth, height: HerdrTheme.minHitTarget)
             .herdrHitTarget(
                 minWidth: HerdrHudPlacement.chipWidth,

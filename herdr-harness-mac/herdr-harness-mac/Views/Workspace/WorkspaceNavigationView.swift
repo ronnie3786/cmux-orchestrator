@@ -11,18 +11,14 @@ struct WorkspaceNavigationView: View {
     @Bindable var shell: HerdrShellState
     @Bindable var activeWorkStore: ActiveWorkStore
     @State private var columnVisibility = NavigationSplitViewVisibility.all
-    @State private var isFleetPresented = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             HerdrSidebarView(
                 model: model,
-                activeWorkStore: activeWorkStore,
                 openPane: openSession,
-                openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
-                openActiveWork: { shell.show(.activeWork, model: model) },
-                isActiveWorkSelected: shell.resolvedScope(for: model) == .activeWork
+                openWorkspace: { shell.showWorkspace(id: $0.id, model: model) }
             )
                 // AppKit remembers a column the user has dragged, so ideal only
                 // affects a fresh profile. Sidebar padding moves existing content.
@@ -35,9 +31,6 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
-        .sheet(isPresented: $isFleetPresented) {
-            FleetManagementSheet(model: model)
-        }
         // Revealing a pane in a column the user has hidden would be a silent
         // no-op, so ⇧⌘K brings the navigator back first.
         .onChange(of: model.sidebarRevealToken) { _, token in
@@ -133,6 +126,8 @@ struct WorkspaceNavigationView: View {
                         .accessibilityIdentifier("active-work-container")
                 }
             }
+        case .fleet:
+            FleetManagementSheet(model: model, isEmbedded: true)
         case .attention:
             AttentionView(model: model) { pane, _ in
                 openSession(pane)
@@ -244,18 +239,6 @@ struct WorkspaceNavigationView: View {
 
         ToolbarItem(placement: .primaryAction) {
             HerdPulseButton()
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-            Button("Fleet", systemImage: "macwindow.on.rectangle") {
-                isFleetPresented = true
-            }
-            .labelStyle(.iconOnly)
-            .foregroundStyle(HerdrTheme.mist)
-            .help("Manage the Fleet")
-            .accessibilityLabel("Fleet")
-            .accessibilityHint("Open Fleet management")
-            .accessibilityIdentifier("fleet-toolbar-button")
         }
 
         ToolbarItem(placement: .primaryAction) {

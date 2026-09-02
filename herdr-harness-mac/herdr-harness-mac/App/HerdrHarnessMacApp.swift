@@ -186,6 +186,11 @@ struct HerdrMacCommands: Commands {
             }
             .keyboardShortcut("6", modifiers: .command)
 
+            Button("Fleet") {
+                shell.show(.fleet, model: model)
+            }
+            .keyboardShortcut("7", modifiers: .command)
+
             Divider()
 
             // The only in-app way to start Pulse. The menu-bar extra is not

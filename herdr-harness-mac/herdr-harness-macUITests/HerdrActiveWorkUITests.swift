@@ -5,8 +5,8 @@ import XCTest
 /// The demo payload deliberately exercises the richer route relationships: an
 /// untracked Jira candidate on the board, plus a tracked item whose current
 /// phase owns both a Pi session and a Buzz thread. This test keeps those records
-/// read-only while proving the sidebar and segmented view switch drive the real
-/// shell.
+/// read-only while proving the toolbar scope picker and the board's own
+/// projection switch drive the real shell.
 final class HerdrActiveWorkUITests: HerdrUITestCase {
     private var extraLaunchArguments: [String] = []
 
@@ -24,19 +24,28 @@ final class HerdrActiveWorkUITests: HerdrUITestCase {
     }
 
     @MainActor
-    func testSidebarOpensBoardAndSwitchesToFocusRoute() throws {
+    func testScopePickerOpensBoardAndSwitchesToFocusRoute() throws {
         let app = launchLegacyDemoApp()
 
-        let activeWork = app.control(identifier: "sidebar-active-work")
         XCTAssertTrue(
-            activeWork.waitForExistence(timeout: 10),
-            "The persistent sidebar should expose Active Work above the workspace tree"
+            app.control(identifier: "detail-scope-picker").waitForExistence(timeout: 10),
+            "The detail toolbar should expose the scope picker that owns Active Work"
         )
+        guard let activeWork = waitForFirst(
+            of: [
+                app.control(identifier: "detail-scope-picker").buttons["Active Work"],
+                app.control(identifier: "detail-scope-picker").radioButtons["Active Work"],
+                app.control(named: "Active Work"),
+            ],
+            timeout: 10
+        ) else {
+            return XCTFail("The scope picker should carry an Active Work segment")
+        }
         activeWork.click()
 
         XCTAssertTrue(
             app.control(identifier: "active-work-container").waitForExistence(timeout: 5),
-            "The sidebar CTA should replace the detail column with Active Work"
+            "The Active Work segment should replace the detail column with Active Work"
         )
         XCTAssertTrue(
             app.control(identifier: "active-work-board").waitForExistence(timeout: 5),

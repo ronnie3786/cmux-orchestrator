@@ -13,7 +13,10 @@ struct HerdrHudRootView: View {
             panes: model.workspaces.flatMap(\.panes),
             mutedPaneIDs: model.mutedHudSessionIDs,
             dismissedStatuses: model.dismissedHudChipStatuses,
-            revealTitles: model.showSessionTitles
+            revealTitles: model.showSessionTitles,
+            limit: controller.isShowingAllChips
+                ? HerdrHudPlacement.maxExpandedChips
+                : HerdrHudPlacement.maxChips
         )
     }
 
@@ -44,9 +47,12 @@ struct HerdrHudRootView: View {
                                     )
                                 HerdrHudSessionChipsView(
                                     model: model,
+                                    session: session,
                                     chips: chipState.chips,
-                                    overflow: chipState.overflow
+                                    overflow: chipState.overflow,
+                                    showAll: controller.showAllChips
                                 )
+                                .onHover { controller.setHoveringChips($0) }
                             }
                         }
                     }

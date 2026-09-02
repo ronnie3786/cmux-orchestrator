@@ -63,16 +63,7 @@ final class PiConversationStore {
     }
 
     var latestCompletedAssistantResponse: String? {
-        for turn in turns.reversed() {
-            for item in turn.items.reversed() {
-                guard case let .assistant(block) = item,
-                      block.status == .complete
-                else { continue }
-                let text = block.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty { return text }
-            }
-        }
-        return nil
+        turns.latestCompletedAssistantText
     }
 
     var canSendCommands: Bool {
