@@ -234,24 +234,23 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         )
     }
 
-    /// Fleet used to be a toolbar button that threw up a modal sheet. It is a
-    /// destination now, so it has to live in the same picker as the other four
-    /// and land in the detail column.
+    /// Fleet is a detail destination reached from its dedicated toolbar
+    /// button. It should not be duplicated as a segment in the central picker.
     @MainActor
-    func testScopePickerOpensFleetInTheDetailColumn() throws {
+    func testFleetToolbarButtonOpensFleetInTheDetailColumn() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
 
-        guard let fleet = waitForFirst(
-            of: [
-                app.control(identifier: "detail-scope-picker").buttons["Fleet"],
-                app.control(identifier: "detail-scope-picker").radioButtons["Fleet"],
-                app.control(named: "Fleet"),
-            ],
-            timeout: 10
-        ) else {
-            return XCTFail("The scope picker should carry a Fleet segment")
-        }
+        let fleet = app.control(identifier: "fleet-toolbar-button")
+        XCTAssertTrue(fleet.waitForExistence(timeout: 10), "The detail toolbar should expose Fleet")
+        XCTAssertEqual(fleet.label, "Fleet")
+        XCTAssertTrue(fleet.isEnabled)
+
+        let picker = app.control(identifier: "detail-scope-picker")
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertFalse(picker.buttons["Fleet"].exists)
+        XCTAssertFalse(picker.radioButtons["Fleet"].exists)
+
         fleet.click()
 
         XCTAssertTrue(
@@ -262,6 +261,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
             app.control(identifier: "fleet-close-button").exists,
             "A destination has nothing to dismiss, so it must not carry the sheet's Done button"
         )
+        XCTAssertTrue(fleet.isSelected, "The Fleet toolbar button should expose its active state")
     }
 
     /// The navigator used to carry an Active Work CTA above the tree. It moved

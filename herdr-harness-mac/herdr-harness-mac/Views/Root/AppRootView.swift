@@ -13,6 +13,17 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var id: String { rawValue }
 
+    /// Destinations represented by the central segmented picker. Fleet has a
+    /// dedicated toolbar control so it remains easy to find without adding a
+    /// second Fleet affordance to the window chrome.
+    static let pickerCases: [HerdrDetailScope] = [
+        .session,
+        .workspace,
+        .activeWork,
+        .attention,
+        .activity,
+    ]
+
     var label: String {
         switch self {
         case .session: "Session"
@@ -103,8 +114,7 @@ final class HerdrShellState {
         recordVisit(for: model)
     }
 
-    /// Scope-only destinations (Active Work, Attention, Activity, and the
-    /// toolbar picker).
+    /// Scope-only destinations (Active Work, Fleet, Attention, and Activity).
     func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
         detailScope = scope
         recordVisit(for: model)

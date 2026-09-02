@@ -49,6 +49,24 @@ struct ShellNavigationHistoryTests {
         }
     }
 
+    @Test("Fleet is a standalone destination outside the detail picker")
+    func fleetIsExcludedFromDetailPickerAndRecordsNavigation() throws {
+        #expect(!HerdrDetailScope.pickerCases.contains(.fleet))
+
+        try withModel { model, firstPane, _, _, _ in
+            let shell = HerdrShellState()
+            shell.openPane(id: firstPane.id, model: model)
+            shell.show(.fleet, model: model)
+
+            #expect(shell.detailScope == .fleet)
+            #expect(shell.currentDestination(for: model) == .fleet)
+            #expect(shell.history.current == .fleet)
+            #expect(shell.goBack(model: model))
+            #expect(shell.detailScope == .session)
+            #expect(model.selectedPaneID == firstPane.id)
+        }
+    }
+
     @Test("Back restores the pane and the detail scope together")
     func backRestoresPaneAndScope() throws {
         try withModel { model, firstPane, _, firstWorkspace, _ in
