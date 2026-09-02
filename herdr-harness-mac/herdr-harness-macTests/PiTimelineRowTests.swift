@@ -102,6 +102,30 @@ struct PiTimelineRowTests {
         #expect(rows.allSatisfy { !$0.rail.isActive })
     }
 
+    @Test("The mounted window keeps only the newest rows until earlier rows are requested")
+    func windowBoundsMountedRows() {
+        let turns = (1...5).map { index in
+            turn(id: "turn:\(index)", items: [.assistant(assistant(id: "a\(index)", text: "Answer \(index)"))])
+        }
+        let rows = PiTimelineRow.rows(for: turns)
+        #expect(rows.count == 10)
+
+        let bounded = PiTimelineWindow(rows: rows, showsEarlierRows: false, limit: 4)
+        #expect(bounded.hiddenCount == 6)
+        #expect(bounded.rows.map(\.id) == ["turn:4|user", "turn:4|output:a4", "turn:5|user", "turn:5|output:a5"])
+        #expect(bounded.rows[0].isFirstInTimeline)
+        #expect(bounded.rows[0].topSpacing == 0)
+        #expect(bounded.rows[2].topSpacing == HerdrProse.turnSpacing)
+
+        let full = PiTimelineWindow(rows: rows, showsEarlierRows: true, limit: 4)
+        #expect(full.hiddenCount == 0)
+        #expect(full.rows == rows)
+
+        let small = PiTimelineWindow(rows: rows, showsEarlierRows: false, limit: 100)
+        #expect(small.hiddenCount == 0)
+        #expect(small.rows == rows)
+    }
+
     private func turn(id: String, items: [PiConversationItem], isActive: Bool = false) -> PiConversationTurn {
         PiConversationTurn(
             id: id,

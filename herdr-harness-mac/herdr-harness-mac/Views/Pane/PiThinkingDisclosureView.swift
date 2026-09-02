@@ -8,7 +8,7 @@ struct PiThinkingDisclosureView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
+        PiDisclosureCard(isExpanded: $isExpanded) {
             markdownContent()
         } label: {
             HStack(spacing: 9) {
@@ -42,7 +42,6 @@ struct PiThinkingDisclosureView: View {
                 }
             }
         }
-        .disclosureGroupStyle(PiDisclosureGroupStyle())
         .tint(HerdrTheme.mauve)
         // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)

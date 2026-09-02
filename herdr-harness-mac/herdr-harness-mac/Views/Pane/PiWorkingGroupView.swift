@@ -5,6 +5,7 @@ import SwiftUI
 /// assistant messages read as a conversation instead of a machine log.
 /// Collapsed by default; the individual `PiThinkingDisclosureView` /
 /// `PiToolCardView` cards inside keep their own per-card disclosure.
+/// Built on `PiDisclosureCard`, never `DisclosureGroup` (see that type).
 struct PiWorkingGroupView: View {
     let group: PiWorkingGroup
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -12,7 +13,7 @@ struct PiWorkingGroupView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
+        PiDisclosureCard(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(group.items) { item in
                     PiConversationItemView(item: item)
@@ -23,7 +24,6 @@ struct PiWorkingGroupView: View {
         } label: {
             label
         }
-        .disclosureGroupStyle(PiDisclosureGroupStyle())
         .tint(group.hasFailure ? HerdrTheme.alert : HerdrTheme.mist)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

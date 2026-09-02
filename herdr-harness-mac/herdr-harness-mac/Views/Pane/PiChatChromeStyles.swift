@@ -19,42 +19,55 @@ enum PiChatChrome {
     static let hoverAnimation = Animation.easeOut(duration: 0.12)
 }
 
-/// Mirrors the iOS `DisclosureGroup`: the label owns the full row and a
-/// tint-coloured chevron sits on the trailing edge, rotating when expanded.
+/// The collapsible card every Pi sub-output uses (thinking, tool calls,
+/// working groups): a full-width header button with a trailing chevron, and
+/// the content below it only while expanded.
 ///
-/// The rotation is animated by the caller's existing
+/// This is deliberately NOT a `DisclosureGroup`. Measured on macOS 26 with the
+/// offscreen probe (`HangReproTests.rowKindCosts`): 40 collapsed
+/// `DisclosureGroup` cards took 12–21 s to lay out (300–500 ms each, growing
+/// superlinearly with the count), while this plain stack of the same chrome
+/// takes ~5 ms per card. A transcript holds a hundred of these, so the
+/// difference is the whole main-thread budget.
+///
+/// The chevron rotation is animated by the caller's existing
 /// `.animation(PiChatMotion.disclosureAnimation(…), value: isExpanded)`, so the
-/// style adds no motion of its own beyond the hover cross-fade.
-struct PiDisclosureGroupStyle: DisclosureGroupStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PiDisclosureHeader(configuration: configuration)
+/// card adds no motion of its own beyond the hover cross-fade.
+struct PiDisclosureCard<Label: View, Content: View>: View {
+    @Binding var isExpanded: Bool
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let label: () -> Label
 
-            if configuration.isExpanded {
-                configuration.content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PiDisclosureHeader(isExpanded: $isExpanded, label: label)
+
+            if isExpanded {
+                content()
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 }
 
-private struct PiDisclosureHeader: View {
-    let configuration: DisclosureGroupStyleConfiguration
+private struct PiDisclosureHeader<Label: View>: View {
+    @Binding var isExpanded: Bool
+    @ViewBuilder let label: () -> Label
     @State private var isHovering = false
 
     var body: some View {
         Button {
-            configuration.isExpanded.toggle()
+            isExpanded.toggle()
         } label: {
             HStack(spacing: 8) {
-                configuration.label
+                label()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
                     .herdrFont(.caption2, weight: .semibold)
                     .foregroundStyle(.tint)
                     .opacity(isHovering ? 1 : 0.62)
-                    .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .accessibilityHidden(true)
             }
             .frame(minHeight: HerdrTheme.minHitTarget)

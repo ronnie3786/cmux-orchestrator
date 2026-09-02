@@ -331,6 +331,86 @@ struct HangReproTests {
         return String(text.dropFirst().dropLast())
     }
 
+    @Test("Layout cost per row kind (40 rows each)")
+    func rowKindCosts() async throws {
+        let clock = ContinuousClock()
+        func tool(_ i: Int, status: PiToolInvocation.Status = .succeeded) -> PiToolInvocation {
+            PiToolInvocation(id: "tool:\(i)", callID: "c\(i)", name: "bash", arguments: .string("ls -la /tmp/project/\(i)"), result: .string("done \(i)"), status: status, startedAt: Date(), finishedAt: Date())
+        }
+        func thinking(_ i: Int) -> PiThinkingBlock {
+            PiThinkingBlock(id: "t\(i)", text: "Thinking about step \(i) of the plan and what to do next.", isStreaming: false, isRedacted: false, startedAt: Date())
+        }
+        func assistant(_ i: Int) -> PiAssistantBlock {
+            PiAssistantBlock(id: "a\(i)", text: "Step \(i): checked the **repository** state and found `\(i)` files that need a closer look before moving on.", status: .complete, timestamp: nil)
+        }
+        let groups = (0..<40).map { i in PiTurnSegmentation.segments(for: [.thinking(thinking(i)), .tool(tool(i))]).compactMap { seg -> PiWorkingGroup? in if case let .working(g) = seg { return g }; return nil }.first! }
+        var results: [(String, Duration)] = []
+        func measure(_ name: String, @ViewBuilder content: () -> some View) async throws {
+            let start = clock.now
+            _ = try await HerdrRenderHarness.render("rowcost-\(name).png", size: CGSize(width: 980, height: 3000), settlePasses: 1) { content() }
+            results.append((name, start.duration(to: clock.now)))
+        }
+        try await measure("baseline-empty") { Color.clear }
+        try await measure("plainText") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in Text("Step \(i): plain text row") } } }
+        try await measure("assistantMarkdown") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiAssistantMessageView(block: assistant(i)) } } }
+        try await measure("workingGroupCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiWorkingGroupView(group: groups[i]) } } }
+        try await measure("toolCardCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiToolCardView(tool: tool(i)) } } }
+        try await measure("thinkingCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiThinkingDisclosureView(block: thinking(i)) } } }
+        try await measure("wgHeaderOnly-HStack") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            HStack(spacing: 9) {
+                Image(systemName: "gearshape.2").foregroundStyle(HerdrTheme.muted).frame(width: 18, height: 18)
+                Text("Clanking").herdrFont(.caption, weight: .semibold).foregroundStyle(HerdrTheme.mist)
+                Text("\(i) steps · Command").herdrFont(.caption).foregroundStyle(HerdrTheme.muted).lineLimit(1)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").herdrFont(.caption2, weight: .semibold)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+            .frame(minHeight: 44)
+        } } }
+        try await measure("wgHeader-noSymbols") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            HStack(spacing: 9) {
+                Circle().fill(HerdrTheme.muted).frame(width: 18, height: 18)
+                Text("Clanking").herdrFont(.caption, weight: .semibold).foregroundStyle(HerdrTheme.mist)
+                Text("\(i) steps · Command").herdrFont(.caption).foregroundStyle(HerdrTheme.muted).lineLimit(1)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+            .frame(minHeight: 44)
+        } } }
+        try await measure("wgHeader-systemFont") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            HStack(spacing: 9) {
+                Circle().fill(HerdrTheme.muted).frame(width: 18, height: 18)
+                Text("Clanking").font(.caption.weight(.semibold)).foregroundStyle(HerdrTheme.mist)
+                Text("\(i) steps · Command").font(.caption).foregroundStyle(HerdrTheme.muted).lineLimit(1)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+            .frame(minHeight: 44)
+        } } }
+        try await measure("wgHeader-inButton") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+            Button {} label: {
+                HStack(spacing: 9) {
+                    Circle().fill(HerdrTheme.muted).frame(width: 18, height: 18)
+                    Text("Clanking").font(.caption.weight(.semibold)).foregroundStyle(HerdrTheme.mist)
+                    Text("\(i) steps · Command").font(.caption).foregroundStyle(HerdrTheme.muted).lineLimit(1)
+                    Spacer(minLength: 8)
+                }
+                .frame(minHeight: HerdrTheme.minHitTarget)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+            .frame(minHeight: 44)
+        } } }
+        for (name, duration) in results {
+            print("HANGREPRO rowcost \(name) elapsed=\(duration)")
+        }
+    }
+
     nonisolated static func hasFixture(_ fixture: String) -> Bool {
         FileManager.default.fileExists(atPath: fixtureDirectory.appending(path: fixture).path)
     }

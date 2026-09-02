@@ -46,6 +46,17 @@ struct PiTimelineRow: Identifiable, Equatable {
         return startsTurn ? HerdrProse.turnSpacing : PiTimelineMetrics.itemSpacing
     }
 
+    func asFirstInTimeline() -> PiTimelineRow {
+        PiTimelineRow(
+            id: id,
+            turnID: turnID,
+            content: content,
+            rail: rail,
+            startsTurn: startsTurn,
+            isFirstInTimeline: true
+        )
+    }
+
     /// Flattens turns into rows, preserving the reducer's item order. Segments
     /// come from `PiTurnSegmentation` so working groups keep the identity they
     /// had as turn children (expansion state survives the flattening).
@@ -115,6 +126,34 @@ struct PiTimelineRow: Identifiable, Equatable {
         case .thinking:
             return false
         }
+    }
+}
+
+/// The slice of the timeline that is actually mounted. The transcript stack
+/// is eager (see `PiChatTimelineView`), so a session with thousands of rows
+/// must not mount them all up front: only the newest `limit` rows are, and the
+/// user can ask for the rest. The first mounted row is re-stamped as the
+/// first in the timeline so it carries no dangling top spacing.
+struct PiTimelineWindow: Equatable {
+    /// Rows mounted on the first frame of a transcript.
+    static let initialLimit = 36
+    /// Rows mounted once the first frame is up.
+    static let defaultLimit = 160
+
+    let rows: [PiTimelineRow]
+    let hiddenCount: Int
+
+    init(rows: [PiTimelineRow], showsEarlierRows: Bool, limit: Int = PiTimelineWindow.defaultLimit) {
+        let hidden = showsEarlierRows ? 0 : max(0, rows.count - max(1, limit))
+        guard hidden > 0 else {
+            self.rows = rows
+            self.hiddenCount = 0
+            return
+        }
+        var visible = Array(rows[hidden...])
+        visible[0] = visible[0].asFirstInTimeline()
+        self.rows = visible
+        self.hiddenCount = hidden
     }
 }
 

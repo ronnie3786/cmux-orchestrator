@@ -11,6 +11,11 @@ struct PiChatTimelineView: View {
     @State private var trackedHasContent = false
     @State private var revealState = PiChatRevealState()
     @State private var settleDebouncer = PiChatSettleDebouncer()
+    @State private var showsEarlierRows = false
+    /// Rows mounted right now. Starts small so the first paint of a long
+    /// transcript is quick, then grows to `PiTimelineWindow.defaultLimit`
+    /// once that first frame is on screen (`.task(id:)` below).
+    @State private var mountedLimit = PiTimelineWindow.initialLimit
 
     init(
         store: PiConversationStore,
@@ -25,18 +30,38 @@ struct PiChatTimelineView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
+                // An EAGER stack, deliberately. A `LazyVStack` here, under a
+                // bottom-anchored scroll view whose rows change height while
+                // streaming, produced a layout loop inside a single SwiftUI
+                // transaction on the work Mac: the lazy stack materialized rows
+                // during size estimation, that dirtied the window's root
+                // geometry, the root re-measured the tree, the lazy stack
+                // materialized again — for minutes, with the main thread
+                // pinned and memory climbing to gigabytes (2026-09-02 freeze
+                // samples). Eager rows give the scroll view exact sizes in one
+                // pass; unchanged rows stay cached through `.equatable()`, and
+                // `PiTimelineWindow` bounds how many rows are mounted.
+                //
                 // Spacing lives on the rows (`PiTimelineRow.topSpacing`) so the
                 // rail can run through it; the stack itself adds none.
-                LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
                     transcriptHeader
                         .padding(.bottom, HerdrProse.turnSpacing)
                         .transition(.opacity)
 
                     if store.hasContent {
+                        let window = PiTimelineWindow(
+                            rows: PiTimelineRow.rows(for: store.turns),
+                            showsEarlierRows: showsEarlierRows,
+                            limit: mountedLimit
+                        )
+                        if window.hiddenCount > 0 {
+                            earlierRowsButton(hiddenCount: window.hiddenCount)
+                                .transition(.opacity)
+                        }
                         // One row per segment, never per turn: a streamed token
-                        // invalidates a single row and the lazy stack lays out
-                        // only what is on screen. See `PiTimelineRow`.
-                        ForEach(PiTimelineRow.rows(for: store.turns)) { row in
+                        // invalidates a single row. See `PiTimelineRow`.
+                        ForEach(window.rows) { row in
                             PiTimelineRowView(row: row)
                                 .equatable()
                                 .transition(
@@ -59,7 +84,6 @@ struct PiChatTimelineView: View {
                     }
 
                 }
-                .scrollTargetLayout()
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 24)
@@ -105,6 +129,21 @@ struct PiChatTimelineView: View {
                     reduceMotion: reduceMotion
                 )
                 trackedHasContent = store.hasContent
+            }
+            .onChange(of: store.turns.first?.id) { _, _ in
+                // A different transcript (pane switch, session change): start
+                // bounded again instead of eagerly mounting a huge history.
+                showsEarlierRows = false
+                mountedLimit = PiTimelineWindow.initialLimit
+            }
+            .task(id: store.turns.first?.id) {
+                // Grow the mounted window only after the first frame with the
+                // newest rows has had a chance to render; the bottom anchor
+                // keeps the view in place while earlier rows are inserted.
+                guard mountedLimit < PiTimelineWindow.defaultLimit else { return }
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                mountedLimit = PiTimelineWindow.defaultLimit
             }
             .onChange(of: store.revision) { _, _ in
                 let structureChanged = lastStructureRevision != store.structureRevision
@@ -153,6 +192,22 @@ struct PiChatTimelineView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .accessibilityLabel("The beginning of this Pi transcript is not available")
         }
+    }
+
+    private func earlierRowsButton(hiddenCount: Int) -> some View {
+        Button {
+            showsEarlierRows = true
+        } label: {
+            Label(
+                "Show \(hiddenCount) earlier \(hiddenCount == 1 ? "row" : "rows")",
+                systemImage: "arrow.up.to.line"
+            )
+        }
+        .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.mist, emphasis: .soft))
+        .herdrFont(.caption, weight: .semibold)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.bottom, HerdrProse.turnSpacing)
+        .accessibilityIdentifier("pi-chat-show-earlier")
     }
 
     private var emptyTranscript: some View {

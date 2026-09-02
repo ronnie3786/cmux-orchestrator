@@ -8,12 +8,11 @@ struct PiToolCardView: View {
 
     var body: some View {
         let presentation = PiToolPresentation(tool: tool)
-        DisclosureGroup(isExpanded: $isExpanded) {
+        PiDisclosureCard(isExpanded: $isExpanded) {
             detail
         } label: {
             label(presentation)
         }
-        .disclosureGroupStyle(PiDisclosureGroupStyle())
         .tint(presentation.tint)
         // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)
