@@ -26,15 +26,8 @@ struct HerdrSidebarView: View {
             WorkspaceSearchField(text: $query, placeholder: "filter chats")
             creationControls
 
-            // The inbox rides inside the scroll region rather than above it.
-            // Pinned, an expanded inbox would permanently squeeze the chat
-            // list — which is what people actually open the drawer for — so the
-            // "chats" label comes along and the two read as peer sections.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) {
-                    SidebarWorkInboxView(model: model)
-                        .padding(.bottom, 8)
-
                     HerdrSectionLabel(
                         title: "chats",
                         detail: sidebarCountDetail(paneCount),

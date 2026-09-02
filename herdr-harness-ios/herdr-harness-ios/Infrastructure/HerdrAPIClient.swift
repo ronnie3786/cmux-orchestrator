@@ -138,10 +138,6 @@ actor HerdrAPIClient {
         )
     }
 
-    func fetchWorkInbox() async throws -> WorkInboxResponse {
-        try await request(path: "/api/v1/work-inbox")
-    }
-
     func uploadAttachment(
         workspaceID: String,
         fileURL: URL,
@@ -670,13 +666,11 @@ actor HerdrAPIClient {
         if path == "/api/v1/voice/transcriptions" {
             return 120
         }
-        if path == "/api/v1/work-inbox" ||
-            path.hasPrefix("/api/v1/jira/") ||
+        if path.hasPrefix("/api/v1/jira/") ||
             (path.hasPrefix("/api/v1/workspaces/") &&
                 (path.contains("/git") || path.hasSuffix("/skills") || path.hasSuffix("/files"))) {
             // cmux permits Git and Jira operations to run for up to 10 and 15
-            // seconds respectively, and the work inbox fans out to GitHub and
-            // Jira in one call. The client must outlive the upstream call.
+            // seconds respectively. The client must outlive the upstream call.
             return 30
         }
         return 15

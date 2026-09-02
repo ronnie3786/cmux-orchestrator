@@ -33,7 +33,6 @@ final class HerdrAppModel {
     var isSidebarPresented = false
     var agentRequest: HeadlessAgentRequest?
     var sidebarRecency: SidebarRecency = .all
-    var isWorkInboxExpanded: Bool
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
@@ -102,10 +101,6 @@ final class HerdrAppModel {
     /// server's stale unread copy.
     @ObservationIgnored private var pendingReadAcknowledgements: Set<String> = []
     /// The navigator drawer is torn down every time it closes, so a `@State`
-    /// store inside `HerdrSidebarView` would re-fetch the work inbox on every
-    /// open. The store hangs off the model instead; its own `@Observable`
-    /// tracking still drives the views that read through it.
-    @ObservationIgnored let workInbox = WorkInboxStore()
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
     /// Internal test seam for deterministic URLProtocol-backed clients.
@@ -148,7 +143,6 @@ final class HerdrAppModel {
             defaults.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
             defaults.removeObject(forKey: "herdr.sidebar.collapsedTabs")
             defaults.removeObject(forKey: "herdr.sidebar.starredChats")
-            defaults.removeObject(forKey: "herdr.sidebar.workInboxExpanded")
         }
         #else
         let uiTestServerURL: String? = nil
@@ -176,7 +170,6 @@ final class HerdrAppModel {
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
         showSessionTitles = defaults.object(forKey: "herdr.herdPulse.showSessionTitles") as? Bool ?? true
-        isWorkInboxExpanded = defaults.bool(forKey: "herdr.sidebar.workInboxExpanded")
         agentModel = defaults.string(forKey: "herdr.agent.model") ?? ""
         collapsedSidebarWorkspaceIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedWorkspaces") ?? []
@@ -634,20 +627,6 @@ final class HerdrAppModel {
             throw APIError.server(status: 404, message: response.error ?? "Jira ticket not found.")
         }
         return ticket
-    }
-
-    func fetchWorkInbox() async throws -> WorkInboxResponse {
-        if isDemoMode { return DemoData.workInbox }
-        // Read-only, and deliberately not behind `canControl`: the inbox is
-        // still worth showing while the event socket is reconnecting.
-        guard let client = primaryClient else { throw APIError.invalidResponse }
-        return try await client.fetchWorkInbox()
-    }
-
-    /// Refresh entry point for the navigator's work inbox. Routed through the
-    /// model so the store outlives the drawer.
-    func refreshWorkInbox() async {
-        await workInbox.refresh { try await self.fetchWorkInbox() }
     }
 
     func uploadAttachment(
@@ -1456,11 +1435,6 @@ final class HerdrAppModel {
             Array(collapsedSidebarMachineIDs),
             forKey: "herdr.sidebar.collapsedMachines"
         )
-    }
-
-    func setWorkInboxExpanded(_ isExpanded: Bool) {
-        isWorkInboxExpanded = isExpanded
-        userDefaults.set(isExpanded, forKey: "herdr.sidebar.workInboxExpanded")
     }
 
     func toggleStarredChat(_ paneID: String) {
