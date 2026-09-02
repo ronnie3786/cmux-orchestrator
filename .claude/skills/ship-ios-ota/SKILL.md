@@ -63,6 +63,25 @@ fail: the `serve.py` process does not survive reboots — restart with
 calendar service (openclaw workspace) now owns 8811 — if the served size is a few
 hundred bytes of calendar JSON, something re-took the port; check `lsof -nP -iTCP:8812`.
 
+Then update the install page's build label — `~/herdr-ota/index.html` is served
+statically with no script, so its `<div class="meta" id="meta">` line is whatever the
+last person typed. It sat at "build 2 · Aug 19, 2026" through every release up to 14,
+telling installers the wrong build:
+
+```bash
+# match the CFBundleVersion you just shipped
+sed -i '' 's/build [0-9]* &middot; [A-Z][a-z]* [0-9]*, [0-9]*/build 15 \&middot; Sep 2, 2026/' ~/herdr-ota/index.html
+curl -sk https://rocketbot.tail1db61d.ts.net:8462/ | grep -o 'id="meta">[^<]*'
+```
+
+Confirm the shipped IPA really carries the bumped build before publishing — the bump is
+easy to make in the wrong checkout:
+
+```bash
+unzip -q -o /tmp/herdr-ipa/herdr-harness-ios.ipa -d /tmp/ipa-check 'Payload/*.app/Info.plist'
+plutil -extract CFBundleVersion raw /tmp/ipa-check/Payload/*.app/Info.plist
+```
+
 ## Deliver
 
 Install link (Safari on a tailnet device): **https://rocketbot.tail1db61d.ts.net:8462/**
