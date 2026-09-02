@@ -138,6 +138,29 @@ class FleetBackendTests(unittest.TestCase):
         self._git("clone", str(self.repo), str(path))
         return path
 
+    def _add_accidental_gitlink(self):
+        """Add a gitlink without .gitmodules, matching the real regression."""
+
+        subrepo = Path(self.temporary.name) / "accidental-skill-repo"
+        subrepo.mkdir()
+        self._git("init", "-b", "main", str(subrepo))
+        self._git("-C", str(subrepo), "config", "user.email", "fleet-tests@example.invalid")
+        self._git("-C", str(subrepo), "config", "user.name", "Fleet Tests")
+        (subrepo / "SKILL.md").write_text("accidental gitlink\n", encoding="utf-8")
+        self._git("-C", str(subrepo), "add", ".")
+        self._git("-C", str(subrepo), "commit", "-m", "accidental skill")
+        revision = self._git("-C", str(subrepo), "rev-parse", "HEAD").stdout.strip()
+        self._git(
+            "-C",
+            str(self.repo),
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{revision},skills/work/accidental-gitlink",
+        )
+        self._git("-C", str(self.repo), "commit", "-m", "record accidental gitlink")
+        return subrepo, revision
+
     def sync_manager(self):
         manager = self.manager()
         result = manager.sync()
@@ -330,6 +353,92 @@ class FleetBackendTests(unittest.TestCase):
         )
         self.assertFalse((self.home / ".local" / "share" / "herdr-fleet" / "personal-claude-plugin").exists())
 
+    def test_accidental_gitlink_is_omitted_in_fresh_and_populated_checkouts(self):
+        subrepo, revision = self._add_accidental_gitlink()
+        manager = self.manager()
+        fresh = manager.sync()
+        self.assertEqual(fresh["catalog"]["itemCounts"]["skills"], 2)
+        self.assertNotIn("skill:work/accidental-gitlink", {item["id"] for item in fresh["skills"]})
+
+        # A populated nested checkout can appear on one machine when the
+        # parent tree is an accidental gitlink.  It is not a catalog source,
+        # and must not change the inventory reported for that same revision.
+        populated = manager.checkout / "skills" / "work" / "accidental-gitlink"
+        self._git("clone", str(subrepo), str(populated))
+        self._git("-C", str(populated), "checkout", "--detach", revision)
+        # Existing managed checkouts are intentionally rejected by the
+        # selection guard before a sync can mutate them.  Exercise the
+        # read-only parser directly to prove its immutable-tree omission is
+        # still independent of the populated working tree.
+        populated_catalog = manager._read_catalog(manager.checkout)
+        populated_inventory = manager._sync_response(populated_catalog, state=manager._load_state())
+        self.assertEqual(populated_inventory["catalog"]["itemCounts"]["skills"], 2)
+        self.assertEqual(
+            {item["id"] for item in populated_inventory["skills"]},
+            {item["id"] for item in fresh["skills"]},
+        )
+
+    def test_implicit_populated_gitlink_is_untouched_and_managed_checkout_is_selected(self):
+        subrepo, revision = self._add_accidental_gitlink()
+        environment = self._implicit_environment()
+        user_checkout = self._clone_checkout(
+            self.home / "Documents" / "Development" / "personal-claude-plugin"
+        )
+        populated = user_checkout / "skills" / "work" / "accidental-gitlink"
+        self._git("clone", str(subrepo), str(populated))
+        self._git("-C", str(populated), "checkout", "--detach", revision)
+        before_revision = self._git("-C", str(user_checkout), "rev-parse", "HEAD").stdout.strip()
+        before_status = self._git(
+            "-C",
+            str(user_checkout),
+            "status",
+            "--porcelain=v2",
+            "--untracked-files=all",
+            "--ignored=matching",
+        ).stdout
+
+        manager = FleetManager(environ=environment)
+        response = manager.sync()
+
+        managed_checkout = self.home / ".local" / "share" / "herdr-fleet" / "personal-claude-plugin"
+        self.assertTrue(response["ok"])
+        self.assertEqual(manager.checkout, managed_checkout.resolve())
+        self.assertEqual(
+            self._git("-C", str(user_checkout), "rev-parse", "HEAD").stdout.strip(),
+            before_revision,
+        )
+        self.assertEqual(
+            self._git(
+                "-C",
+                str(user_checkout),
+                "status",
+                "--porcelain=v2",
+                "--untracked-files=all",
+                "--ignored=matching",
+            ).stdout,
+            before_status,
+        )
+        self.assertTrue(populated.joinpath("SKILL.md").is_file())
+
+    def test_explicit_populated_gitlink_checkout_fails_before_sync_mutation(self):
+        subrepo, revision = self._add_accidental_gitlink()
+        managed_checkout = self._clone_checkout(self.home / "managed-catalog")
+        populated = managed_checkout / "skills" / "work" / "accidental-gitlink"
+        self._git("clone", str(subrepo), str(populated))
+        self._git("-C", str(populated), "checkout", "--detach", revision)
+        before_revision = self._git("-C", str(managed_checkout), "rev-parse", "HEAD").stdout.strip()
+        manager = self.manager()
+
+        with self.assertRaises(FleetError) as raised:
+            manager.sync()
+
+        self.assertEqual(raised.exception.code, "catalog_checkout_invalid")
+        self.assertEqual(
+            self._git("-C", str(managed_checkout), "rev-parse", "HEAD").stdout.strip(),
+            before_revision,
+        )
+        self.assertTrue(populated.joinpath("SKILL.md").is_file())
+
     def test_cli_checks_require_discarding_read_only_policy_and_are_inventory_only(self):
         manager = self.manager()
         base = {
@@ -460,10 +569,23 @@ class FleetBackendTests(unittest.TestCase):
             self.skipTest("exact local Fleet fixture is not available")
         home = Path(self.temporary.name) / "exact-home"
         home.mkdir()
-        manager = FleetManager(environ={"HOME": str(home), "HERDR_FLEET_CATALOG_PATH": str(fixture)})
+        # The operator's fixture may have an initialized accidental gitlink in
+        # its working tree.  Clone the committed parent tree so this schema
+        # check is independent of that local population and exercises the same
+        # state that a fresh machine receives.
+        clean_fixture = Path(self.temporary.name) / "exact-catalog"
+        self._git("clone", str(fixture), str(clean_fixture))
+        manager = FleetManager(
+            environ={
+                "HOME": str(home),
+                "HERDR_FLEET_CATALOG_PATH": str(clean_fixture),
+                "HERDR_FLEET_CATALOG_REPOSITORY": str(fixture),
+                "HERDR_FLEET_TEST_MODE": "1",
+            }
+        )
         response = manager.inventory()
-        self.assertEqual(response["catalog"]["itemCounts"], {"skills": 171, "piExtensions": 7, "cli": 7})
-        self.assertEqual(len(response["items"]), 185)
+        self.assertEqual(response["catalog"]["itemCounts"], {"skills": 172, "piExtensions": 7, "cli": 7})
+        self.assertEqual(len(response["items"]), 186)
         rocketbot = [item for item in response["skills"] if item["id"].startswith("skill:rocketbot/")]
         self.assertTrue(rocketbot)
         self.assertTrue(all(item["target"].startswith("~/.hermes/profiles/rocketbot/skills/") for item in rocketbot))

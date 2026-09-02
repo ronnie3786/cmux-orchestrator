@@ -685,6 +685,18 @@ class FleetManager:
             if git is None:
                 continue
             try:
+                if self._tracked_skill_gitlinks(candidate):
+                    if self._checkout_explicit or managed_candidate:
+                        raise FleetError(
+                            "managed catalog checkout contains unsupported gitlinks",
+                            code="catalog_checkout_invalid",
+                            status=409,
+                        )
+                    # A user checkout may have an accidentally populated
+                    # gitlink that is clean from the parent repository's
+                    # perspective.  Leave it untouched and allow the managed
+                    # fallback to be selected below.
+                    continue
                 # Implicit user checkouts are only reusable when they satisfy
                 # the same branch, upstream, and cleanliness boundary as a
                 # managed checkout.  A sync may still select a clean stale
@@ -703,6 +715,22 @@ class FleetManager:
 
     def _select_checkout(self, *, require_existing: bool = False, require_current: bool = True) -> Path:
         if self._checkout_explicit:
+            # An explicitly configured path is a strict operator choice.  Do
+            # not let an old populated gitlink reach _sync_existing, where a
+            # fetch/fast-forward could mutate that checkout before the
+            # parser's deterministic gitlink omission runs.
+            if self.managed_checkout.is_dir() and not self.managed_checkout.is_symlink():
+                git_metadata = self.managed_checkout / ".git"
+                if (
+                    not git_metadata.is_symlink()
+                    and (git_metadata.is_dir() or git_metadata.is_file())
+                    and self._tracked_skill_gitlinks(self.managed_checkout)
+                ):
+                    raise FleetError(
+                        "managed catalog checkout contains unsupported gitlinks",
+                        code="catalog_checkout_invalid",
+                        status=409,
+                    )
             return self.managed_checkout
         existing = self._trusted_existing_checkout(require_current=require_current)
         if existing is not None:
@@ -1084,16 +1112,78 @@ class FleetManager:
             )
         return specs
 
+    def _tracked_skill_gitlinks(self, checkout: Path) -> frozenset[str]:
+        """Return skills-relative paths recorded as Git gitlinks.
+
+        Git records a submodule as mode 160000, but a checkout may contain
+        either an empty directory or an independently populated repository at
+        that path.  Discovery must key off the immutable parent tree rather
+        than the current filesystem, otherwise two machines can report
+        different catalogs from the same revision.
+        """
+
+        result = _git(
+            self._git_executable(),
+            ["ls-tree", "-r", "-z", "--full-tree", "HEAD", "--", "skills"],
+            cwd=checkout,
+            timeout=self.timeout,
+            code="catalog_checkout_invalid",
+        )
+        raw = result.stdout or ""
+        if len(raw) > MAX_CATALOG_BYTES:
+            raise FleetError("catalog Git tree is too large", code="catalog_invalid", status=409)
+        paths: set[str] = set()
+        for record in raw.split("\x00"):
+            metadata, separator, path = record.partition("\t")
+            if not separator or not path.startswith("skills/"):
+                continue
+            fields = metadata.split(" ", 2)
+            if len(fields) != 3 or fields[0] != "160000" or fields[1] != "commit":
+                continue
+            relative = _safe_relative(path[len("skills/") :], "catalog gitlink path")
+            paths.add(relative)
+        return frozenset(paths)
+
     @staticmethod
-    def _skill_source_paths(root: Path, *, scan_depth: int, recursive: bool = False) -> list[tuple[str, Path]]:
+    def _tree_has_git_metadata(path: Path) -> bool:
+        """Identify an independently populated repository inside a skill."""
+
+        try:
+            for root, dirs, files in os.walk(path, topdown=True, followlinks=False):
+                if ".git" in dirs or ".git" in files:
+                    return True
+                dirs[:] = [name for name in dirs if not name.startswith(".")]
+        except OSError:
+            return True
+        return False
+
+    @staticmethod
+    def _is_gitlink_path(source: str, gitlinks: frozenset[str]) -> bool:
+        return any(source == path or source.startswith(path + "/") for path in gitlinks)
+
+    @staticmethod
+    def _skill_source_paths(
+        root: Path,
+        *,
+        scan_depth: int,
+        recursive: bool = False,
+        excluded_paths: frozenset[Path] = frozenset(),
+    ) -> list[tuple[str, Path]]:
         """Find skill package directories at exactly the requested depth."""
 
         if not root.is_dir() or root.is_symlink():
             return []
+        if any(root == excluded or excluded in root.parents for excluded in excluded_paths):
+            return []
         found: list[tuple[str, Path]] = []
         for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
-            dirs[:] = sorted(item for item in dirs if not item.startswith("."))
             current_path = Path(current)
+            dirs[:] = sorted(
+                item
+                for item in dirs
+                if not item.startswith(".")
+                and not any(current_path / item == excluded or excluded in (current_path / item).parents for excluded in excluded_paths)
+            )
             depth = len(current_path.relative_to(root).parts)
             # ``scan_depth`` is a hard traversal boundary for both direct and
             # recursive groups.  Without pruning recursive children here, a
@@ -1106,6 +1196,12 @@ class FleetManager:
             candidate = current_path / "SKILL.md"
             if candidate.is_symlink() or not candidate.is_file() or _tree_has_symlink(current_path):
                 raise FleetError("catalog skill contains a symlink", code="catalog_invalid", status=409)
+            if FleetManager._tree_has_git_metadata(current_path):
+                # An ordinary skill directory can also be populated with an
+                # accidental nested repository.  Treat its content as
+                # non-catalog data, just like a tracked gitlink, so a fresh
+                # clone and a populated checkout enumerate identically.
+                continue
             found.append((current_path.relative_to(root.parent).as_posix(), current_path))
         return found
 
@@ -1187,6 +1283,11 @@ class FleetManager:
         # any concrete package under skills/.
         discovered_skill_paths: dict[str, tuple[Path, dict[str, Any]]] = {}
         skills_dir = checkout / "skills"
+        tracked_gitlinks = self._tracked_skill_gitlinks(checkout)
+        excluded_gitlink_paths = frozenset(
+            (skills_dir / PurePosixPath(relative)).resolve(strict=False)
+            for relative in tracked_gitlinks
+        )
         roots_value = value.get("skillRoots", value.get("skill_roots", value.get("skillGroups", value.get("skill_groups"))))
         root_specs = self._skill_root_specs(roots_value)
         if not root_specs:
@@ -1201,8 +1302,11 @@ class FleetManager:
                 root,
                 scan_depth=spec["scan_depth"],
                 recursive=bool(spec.get("recursive")),
+                excluded_paths=excluded_gitlink_paths,
             ):
                 source = full_source.removeprefix("skills/")
+                if self._is_gitlink_path(source, tracked_gitlinks):
+                    continue
                 discovered_skill_paths[source] = (candidate, spec)
         explicit_skills = self._entries(value.get("skills"))
         explicit_skill_sources: set[str] = set()
@@ -1218,6 +1322,10 @@ class FleetManager:
             source = _safe_relative(raw_path, "skill path")
             if source.startswith("skills/"):
                 source = source[len("skills/") :]
+            if self._is_gitlink_path(source, tracked_gitlinks):
+                # Explicit declarations cannot opt an untrusted or
+                # accidentally embedded repository into installability.
+                continue
             explicit_skill_sources.add(source)
             classification = str(entry.get("classification") or entry.get("ownership") or "")
             writable = bool(entry.get("writable", entry.get("managed", classification.lower() not in {"external", "readonly", "read_only"})))
