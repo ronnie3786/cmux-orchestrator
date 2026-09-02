@@ -6,8 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
-from herdr_harness.fleet import FleetError, FleetManager
+from herdr_harness.fleet import FleetError, FleetManager, _run_command, _which
 from herdr_harness.server import HTTPValidationError, make_handler
 
 
@@ -32,6 +33,7 @@ class FleetBackendTests(unittest.TestCase):
         self.bin = root / "bin"
         self.bin.mkdir()
         self._write_executable("slack")
+        self._write_executable("acli")
         self.environ = dict(os.environ)
         self.environ.update(
             {
@@ -108,7 +110,23 @@ class FleetBackendTests(unittest.TestCase):
                                     "outputPolicy": "discard",
                                 }
                             ],
-                        }
+                        },
+                        {
+                            "id": "acli",
+                            "adapter": "inventory",
+                            "command": ["acli"],
+                            "authCheck": True,
+                            "authArgv": ["acli", "jira", "auth", "status"],
+                            "readOnlyChecks": [
+                                {
+                                    "command": ["acli"],
+                                    "args": ["jira", "auth", "status"],
+                                    "timeoutSeconds": 5,
+                                    "readOnly": True,
+                                    "outputPolicy": "discard",
+                                }
+                            ],
+                        },
                     ],
                 }
             ),
@@ -118,6 +136,12 @@ class FleetBackendTests(unittest.TestCase):
     def _write_executable(self, name):
         path = self.bin / name
         path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+    @staticmethod
+    def _write_executable_at(path, contents="#!/bin/sh\nexit 0\n"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
     def manager(self):
@@ -177,7 +201,7 @@ class FleetBackendTests(unittest.TestCase):
 
         manager = self.sync_manager()
         response = manager.inventory()
-        self.assertEqual(response["catalog"]["itemCounts"], {"skills": 2, "piExtensions": 1, "cli": 1})
+        self.assertEqual(response["catalog"]["itemCounts"], {"skills": 2, "piExtensions": 1, "cli": 2})
         self.assertNotIn("repository", response)
         self.assertNotIn("checkout", response)
         self.assertNotIn("hostname", response.get("machine", {}))
@@ -524,6 +548,144 @@ class FleetBackendTests(unittest.TestCase):
         self.assertEqual(response["item"]["auth"]["status"], "ok")
         self.assertNotIn("stdout", response["item"])
         self.assertIn("items", response["inventory"])
+
+    def test_acli_auth_check_uses_exact_fixed_read_only_probe(self):
+        manager = self.sync_manager()
+        response = manager.action("acli", "checkAuth")
+        self.assertEqual(response["item"]["auth"]["status"], "ok")
+        self.assertEqual(response["item"]["authCheckAvailable"], True)
+
+        parsed = manager._parse_catalog_items(
+            self.repo,
+            {
+                "cliCatalog": [
+                    {
+                        "id": "acli",
+                        "adapter": "inventory",
+                        "command": ["acli"],
+                        "readOnlyChecks": [
+                            {
+                                "command": ["acli"],
+                                "args": ["jira", "auth", "status"],
+                                "timeoutSeconds": 5,
+                                "readOnly": True,
+                                "outputPolicy": "discard",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )[0]
+        self.assertEqual(parsed.auth_argv, ("acli", "jira", "auth", "status"))
+        self.assertTrue(parsed.auth_check)
+
+        with self.assertRaises(FleetError) as raised:
+            manager._parse_catalog_items(
+                self.repo,
+                {
+                    "cliCatalog": [
+                        {
+                            "id": "acli",
+                            "adapter": "inventory",
+                            "command": ["acli"],
+                            "readOnlyChecks": [
+                                {
+                                    "command": ["acli"],
+                                    "args": ["jira", "auth", "whoami"],
+                                    "timeoutSeconds": 5,
+                                    "readOnly": True,
+                                    "outputPolicy": "discard",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+        self.assertEqual(raised.exception.code, "catalog_invalid")
+
+    def test_launchd_path_falls_back_to_standard_homebrew_and_user_bins(self):
+        """A minimal launchd PATH still finds the supported CLI locations."""
+
+        homebrew_bin = self.home / "homebrew" / "bin"
+        self._write_executable_at(homebrew_bin / "gh")
+        self._write_executable_at(self.home / ".local" / "bin" / "claude")
+        launchd_environment = {
+            "HOME": str(self.home),
+            "PATH": "/usr/bin:/bin",
+        }
+
+        with mock.patch("herdr_harness.fleet._STANDARD_EXECUTABLE_DIRECTORIES", (homebrew_bin,)):
+            self.assertEqual(_which(launchd_environment, "gh"), str((homebrew_bin / "gh").resolve()))
+            self.assertEqual(
+                _which(launchd_environment, "claude"),
+                str((self.home / ".local" / "bin" / "claude").resolve()),
+            )
+
+    def test_auth_check_runs_the_resolved_symlink_target(self):
+        """Auth probes use the validated executable, not catalog path data."""
+
+        homebrew_bin = self.home / "homebrew" / "bin"
+        actual = self.home / "installed" / "gh"
+        self._write_executable_at(
+            actual,
+            "#!/bin/sh\n"
+            "[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 42\n"
+            "exit 0\n",
+        )
+        homebrew_bin.mkdir(parents=True, exist_ok=True)
+        (homebrew_bin / "gh").symlink_to(actual)
+        launchd_environment = dict(self.environ)
+        launchd_environment.update({"HOME": str(self.home), "PATH": "/usr/bin:/bin"})
+        manager = FleetManager(environ=launchd_environment)
+        catalog = {
+            "cliCatalog": [
+                {
+                    "id": "gh",
+                    "adapter": "inventory",
+                    "command": ["gh"],
+                    "readOnlyChecks": [
+                        {
+                            "command": ["gh"],
+                            "args": ["auth", "status"],
+                            "timeoutSeconds": 5,
+                            "readOnly": True,
+                            "outputPolicy": "discard",
+                        }
+                    ],
+                }
+            ]
+        }
+        item = manager._parse_catalog_items(self.repo, catalog)[0]
+
+        with (
+            mock.patch("herdr_harness.fleet._STANDARD_EXECUTABLE_DIRECTORIES", (homebrew_bin,)),
+            mock.patch("herdr_harness.fleet._run_command", wraps=_run_command) as run_command,
+        ):
+            auth = manager._run_auth_check(item)
+
+        self.assertEqual(auth["status"], "ok")
+        self.assertEqual(run_command.call_args.args[0], str(actual.resolve()))
+
+    def test_command_resolution_ignores_relative_path_entries_and_invalid_targets(self):
+        """Relative PATH entries, directories, and broken links never resolve."""
+
+        relative_bin = Path(self.temporary.name) / "relative-bin"
+        relative_bin.mkdir()
+        self._write_executable_at(relative_bin / "relative-only")
+        standard_bin = self.home / "homebrew" / "bin"
+        standard_bin.mkdir(parents=True)
+        (standard_bin / "broken").symlink_to(standard_bin / "missing")
+        (standard_bin / "directory").mkdir()
+        environment = {
+            "HOME": str(self.home),
+            "PATH": f":{relative_bin.name}",
+        }
+
+        with mock.patch("herdr_harness.fleet._STANDARD_EXECUTABLE_DIRECTORIES", (standard_bin,)):
+            self.assertIsNone(_which(environment, "relative-only"))
+            self.assertIsNone(_which(environment, "broken"))
+            self.assertIsNone(_which(environment, "directory"))
+            self.assertIsNone(_which(environment, "../not-a-command"))
 
     def test_route_exposes_fleet_contract_without_network(self):
         manager = self.sync_manager()

@@ -43,10 +43,31 @@ MAX_SUBPROCESS_SECONDS = 120.0
 DEFAULT_SUBPROCESS_SECONDS = 30.0
 LOCAL_CLI_COMMANDS = ("gh", "acli", "slack", "pi", "codex", "claude", "herdr")
 CLI_COMMAND_ALLOWLIST = frozenset(LOCAL_CLI_COMMANDS)
+# launchd starts Herdr without reading a login shell's startup files.  Keep
+# command discovery deterministic by supplementing the service PATH with the
+# locations used by the three supported macOS machines.  These are directory
+# names only, never catalog-provided executable paths or shell fragments.
+_STANDARD_EXECUTABLE_DIRECTORIES = (
+    Path("/opt/homebrew/bin"),
+    Path("/usr/local/bin"),
+    Path("/usr/bin"),
+    Path("/bin"),
+    Path("/usr/sbin"),
+    Path("/sbin"),
+)
+_USER_EXECUTABLE_RELATIVE_DIRECTORIES = (
+    Path("bin"),
+    Path(".local/bin"),
+    Path(".bun/bin"),
+    Path(".npm-global/bin"),
+    Path(".volta/bin"),
+    Path(".asdf/shims"),
+)
 READONLY_CLASSIFICATIONS = frozenset({"external", "readonly", "read_only", "unclassified", "orphan"})
 READONLY_PROBE_ARGV = frozenset(
     {
         ("gh", "auth", "status"),
+        ("acli", "jira", "auth", "status"),
         ("slack", "auth", "list", "--no-color", "--skip-update"),
         ("pi", "--version"),
         ("pi", "--list-models"),
@@ -452,12 +473,74 @@ def _subprocess_timeout(environ: Mapping[str, Any]) -> float:
     return max(1.0, min(MAX_SUBPROCESS_SECONDS, value))
 
 
-def _which(environ: Mapping[str, Any], command: str) -> Optional[str]:
-    """Resolve an executable using the service's environment, not globals."""
+def _command_search_directories(environ: Mapping[str, Any]) -> tuple[Path, ...]:
+    """Return the service PATH plus fixed, safe macOS executable locations.
 
+    launchd's PATH is intentionally not treated as complete.  Empty and
+    relative entries are ignored so an accidental ``PATH=.:...`` cannot make
+    the current working directory part of Fleet's command boundary.  The
+    remaining PATH entries are process configuration, while the fallback
+    locations below are fixed by this application and do not come from the
+    catalog.
+    """
+
+    directories: list[Path] = []
     configured_path = environ.get("PATH")
-    path = configured_path if isinstance(configured_path, str) else None
-    return shutil.which(command, path=path)
+    if isinstance(configured_path, str) and "\x00" not in configured_path:
+        for raw_directory in configured_path.split(os.pathsep):
+            if not raw_directory or not os.path.isabs(raw_directory):
+                continue
+            directories.append(Path(raw_directory))
+
+    raw_home = environ.get("HOME")
+    if isinstance(raw_home, str) and raw_home and "\x00" not in raw_home and os.path.isabs(raw_home):
+        try:
+            home = Path(raw_home).resolve(strict=False)
+        except OSError:
+            home = None
+        if home is not None:
+            directories.extend(home / relative for relative in _USER_EXECUTABLE_RELATIVE_DIRECTORIES)
+
+    directories.extend(_STANDARD_EXECUTABLE_DIRECTORIES)
+
+    # Preserve search order while avoiding duplicate checks when launchd's
+    # PATH already includes one of the fixed directories.
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for directory in directories:
+        key = os.path.normpath(str(directory))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(directory)
+    return tuple(unique)
+
+
+def _which(environ: Mapping[str, Any], command: str) -> Optional[str]:
+    """Resolve an allowlisted executable without invoking a shell.
+
+    The catalog supplies only a command name.  Resolution is constrained to
+    a validated name and the service PATH plus deterministic macOS locations.
+    A symlink is acceptable when it resolves to a regular executable file,
+    which is required for normal Homebrew and per-user package-manager
+    installs.  The resolved path is returned so auth probes and inventory use
+    exactly the executable that was validated.
+    """
+
+    if not isinstance(command, str) or not _SAFE_NAME_RE.fullmatch(command):
+        return None
+    for directory in _command_search_directories(environ):
+        candidate = directory / command
+        try:
+            resolved = candidate.resolve(strict=True)
+            if not resolved.is_file() or not os.access(resolved, os.X_OK):
+                continue
+        except (OSError, RuntimeError):
+            # Broken/cyclic symlinks and disappearing files are simply not
+            # available.  Do not expose filesystem errors through inventory.
+            continue
+        return str(resolved)
+    return None
 
 
 def _run_command(
