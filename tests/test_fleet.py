@@ -750,19 +750,28 @@ class FleetBackendTests(unittest.TestCase):
 
     def test_malformed_catalog_state_is_safe_for_inventory_and_checkauth(self):
         manager = self.manager()
-        malformed_state = {
-            "version": 1,
-            "catalog": {"revision": [], "fleetFileDigest": "not-a-digest", "syncedAt": {}},
-            "managed": {},
-            "quarantine": [],
-        }
+        invalid_catalogs = (
+            {"revision": []},
+            {"fleetFileDigest": "not-a-digest"},
+            {"syncedAt": {}},
+        )
         manager.state_path.parent.mkdir(parents=True, exist_ok=True)
-        manager.state_path.write_text(json.dumps(malformed_state), encoding="utf-8")
-
-        response = manager.inventory()
-        self.assertTrue(response["ok"])
-        self.assertEqual(response["catalog"]["state"], "notSynced")
-        self.assertIsNone(response["catalogRevision"])
+        for malformed_catalog in invalid_catalogs:
+            with self.subTest(catalog=malformed_catalog):
+                malformed_state = {
+                    "version": 1,
+                    "catalog": malformed_catalog,
+                    "managed": {},
+                    "quarantine": [],
+                }
+                manager.state_path.write_text(json.dumps(malformed_state), encoding="utf-8")
+                response = manager.inventory()
+                self.assertTrue(response["ok"])
+                self.assertEqual(response["catalog"]["state"], "notSynced")
+                self.assertIsNone(response["catalogRevision"])
+                with self.assertRaises(FleetError) as raised:
+                    manager._load_state(strict=True)
+                self.assertEqual(raised.exception.code, "fleet_state_invalid")
 
         manager.state_path.unlink()
         manager.sync()
