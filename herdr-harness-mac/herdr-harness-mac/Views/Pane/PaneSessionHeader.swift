@@ -12,6 +12,8 @@ struct PaneSessionHeader: View {
     var gitIsAvailable = false
     var selectedMode: PaneDetailMode = .terminal
     var toggleGit: () -> Void = { }
+    var showsPiSessionSummary = false
+    var summarizePiSession: () -> Void = { }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -61,6 +63,16 @@ struct PaneSessionHeader: View {
             Spacer(minLength: 8)
 
             LastPromptPeekButton(message: store.lastUserMessage)
+
+            if showsPiSessionSummary {
+                Button("Summarize", systemImage: "list.bullet.clipboard", action: summarizePiSession)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!model.canControl(machineID: pane.machineID))
+                    .help("Summarize this Pi session and where you left off")
+                    .accessibilityIdentifier("pane-summarize-pi-session")
+                    .accessibilityHint("Opens a short summary generated in a separate headless Pi session")
+            }
 
             if gitIsAvailable {
                 Button(

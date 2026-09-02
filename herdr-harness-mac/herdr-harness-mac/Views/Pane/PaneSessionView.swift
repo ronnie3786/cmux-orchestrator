@@ -71,6 +71,7 @@ struct PaneSessionView: View {
     @State private var composerAttachments: [TerminalAttachment] = []
     @State private var composerFocusRequest = 0
     @State private var gitAvailability: PaneGitAvailability = .checking
+    @State private var piSessionSummaryRequest: PiSessionSummaryRequest?
 
     var body: some View {
         ZStack {
@@ -83,7 +84,9 @@ struct PaneSessionView: View {
                     store: piConversationStore,
                     gitIsAvailable: gitIsAvailable,
                     selectedMode: selectedMode,
-                    toggleGit: toggleGit
+                    toggleGit: toggleGit,
+                    showsPiSessionSummary: summaryRequest != nil,
+                    summarizePiSession: presentPiSessionSummary
                 )
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -143,6 +146,9 @@ struct PaneSessionView: View {
         }
         .task(id: gitProbeTaskID) {
             await refreshGitAvailability()
+        }
+        .sheet(item: $piSessionSummaryRequest) { request in
+            PiSessionSummaryView(model: model, request: request)
         }
         .onAppear {
             autoSelectChatIfNeeded()
@@ -328,6 +334,14 @@ struct PaneSessionView: View {
 
     private var workspace: HerdrWorkspace? {
         model.workspace(containing: currentPane)
+    }
+
+    private var summaryRequest: PiSessionSummaryRequest? {
+        PiSessionSummaryRequest(pane: currentPane)
+    }
+
+    private func presentPiSessionSummary() {
+        piSessionSummaryRequest = summaryRequest
     }
 
     private func unavailableMode(_ name: String, systemImage: String) -> some View {
