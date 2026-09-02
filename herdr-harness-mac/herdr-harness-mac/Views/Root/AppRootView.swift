@@ -13,13 +13,18 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var id: String { rawValue }
 
-    /// Destinations represented by the central segmented picker. Fleet has a
-    /// dedicated toolbar control so it remains easy to find without adding a
-    /// second Fleet affordance to the window chrome.
+    /// Destinations represented by the central segmented picker.
+    ///
+    /// Every destination is a segment today. The indirection stays because the
+    /// shell may yet grow a destination that does not belong in the picker —
+    /// Fleet briefly was one, and reaching it from its own toolbar button put a
+    /// second Fleet affordance in the window chrome that the picker already
+    /// had room for.
     static let pickerCases: [HerdrDetailScope] = [
         .session,
         .workspace,
         .activeWork,
+        .fleet,
         .attention,
         .activity,
     ]

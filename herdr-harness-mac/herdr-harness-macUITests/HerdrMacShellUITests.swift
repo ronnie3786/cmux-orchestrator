@@ -234,23 +234,31 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         )
     }
 
-    /// Fleet is a detail destination reached from its dedicated toolbar
-    /// button. It should not be duplicated as a segment in the central picker.
+    /// Fleet is a detail destination like every other, reached from the central
+    /// picker rather than a second affordance of its own in the window chrome.
     @MainActor
-    func testFleetToolbarButtonOpensFleetInTheDetailColumn() throws {
+    func testScopePickerOpensFleetInTheDetailColumn() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
 
-        let fleet = app.control(identifier: "fleet-toolbar-button")
-        XCTAssertTrue(fleet.waitForExistence(timeout: 10), "The detail toolbar should expose Fleet")
-        XCTAssertEqual(fleet.label, "Fleet")
-        XCTAssertTrue(fleet.isEnabled)
-
         let picker = app.control(identifier: "detail-scope-picker")
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
-        XCTAssertFalse(picker.buttons["Fleet"].exists)
-        XCTAssertFalse(picker.radioButtons["Fleet"].exists)
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
 
+        XCTAssertFalse(
+            app.control(identifier: "fleet-toolbar-button").exists,
+            "Fleet lives in the picker, so it must not also carry a dedicated toolbar button"
+        )
+
+        guard let fleet = waitForFirst(
+            of: [
+                picker.buttons["Fleet"],
+                picker.radioButtons["Fleet"],
+                app.control(named: "Fleet"),
+            ],
+            timeout: 10
+        ) else {
+            return XCTFail("The scope picker should carry a Fleet segment")
+        }
         fleet.click()
 
         XCTAssertTrue(
@@ -260,14 +268,6 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         XCTAssertFalse(
             app.control(identifier: "fleet-close-button").exists,
             "A destination has nothing to dismiss, so it must not carry the sheet's Done button"
-        )
-        XCTAssertTrue(fleet.isSelected, "The Fleet toolbar button should expose its active state")
-
-        let pickerSegments = picker.buttons.allElementsBoundByIndex
-            + picker.radioButtons.allElementsBoundByIndex
-        XCTAssertFalse(
-            pickerSegments.contains(where: { $0.isSelected }),
-            "No detail picker segment should be selected while Fleet is active"
         )
     }
 

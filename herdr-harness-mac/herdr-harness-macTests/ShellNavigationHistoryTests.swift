@@ -49,11 +49,14 @@ struct ShellNavigationHistoryTests {
         }
     }
 
-    @Test("Fleet is a standalone destination outside the detail picker")
-    func fleetIsExcludedFromDetailPickerAndRecordsNavigation() throws {
-        #expect(!HerdrDetailScope.pickerCases.contains(.fleet))
-        #expect(HerdrDetailScope.pickerSelection(for: .fleet) == nil)
+    @Test("Fleet is a detail-picker segment and records navigation")
+    func fleetIsADetailPickerSegmentAndRecordsNavigation() throws {
+        #expect(HerdrDetailScope.pickerCases.contains(.fleet))
+        #expect(HerdrDetailScope.pickerSelection(for: .fleet) == .fleet)
         #expect(HerdrDetailScope.pickerSelection(for: .attention) == .attention)
+        // Every destination is a segment today, so the proxy is the identity —
+        // pin that rather than let a dropped case pass unnoticed.
+        #expect(HerdrDetailScope.pickerCases == HerdrDetailScope.allCases)
 
         try withModel { model, firstPane, _, _, _ in
             let shell = HerdrShellState()

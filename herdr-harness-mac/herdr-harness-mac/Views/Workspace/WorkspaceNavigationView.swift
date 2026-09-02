@@ -11,7 +11,6 @@ struct WorkspaceNavigationView: View {
     @Bindable var shell: HerdrShellState
     @Bindable var activeWorkStore: ActiveWorkStore
     @State private var columnVisibility = NavigationSplitViewVisibility.all
-    @State private var isFleetButtonHovered = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -240,46 +239,6 @@ struct WorkspaceNavigationView: View {
 
         ToolbarItem(placement: .primaryAction) {
             HerdPulseButton()
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-            let isFleetActive = shell.resolvedScope(for: model) == .fleet
-
-            Button {
-                shell.show(.fleet, model: model)
-            } label: {
-                Label("Fleet", systemImage: HerdrDetailScope.fleet.symbol)
-                    .labelStyle(.iconOnly)
-                    .herdrHitTarget()
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(
-                isFleetActive
-                    ? HerdrTheme.accent
-                    : isFleetButtonHovered ? HerdrTheme.text : HerdrTheme.mist
-            )
-            .background(
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius, style: .continuous)
-                    .fill(
-                        isFleetActive
-                            ? HerdrTheme.accent.opacity(0.16)
-                            : isFleetButtonHovered ? HerdrTheme.elevated.opacity(0.78) : .clear
-                    )
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius, style: .continuous)
-                    .strokeBorder(
-                        isFleetActive ? HerdrTheme.accent.opacity(0.58) : .clear,
-                        lineWidth: 1
-                    )
-            }
-            .onHover { isFleetButtonHovered = $0 }
-            .help(isFleetActive ? "Fleet is open" : "Open Fleet management")
-            .accessibilityLabel("Fleet")
-            .accessibilityValue(isFleetActive ? "Selected" : "Not selected")
-            .accessibilityHint("Open Fleet management in the detail column")
-            .accessibilityAddTraits(isFleetActive ? .isSelected : [])
-            .accessibilityIdentifier("fleet-toolbar-button")
         }
 
         ToolbarItem(placement: .primaryAction) {
