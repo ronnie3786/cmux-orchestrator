@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from herdr_harness import response_audio
 
@@ -119,6 +120,93 @@ class ResponseAudioServiceTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def _write_local_tts_config(self, value):
+        path = Path(self.temporary.name) / ".config" / "herdr-harness" / "response-audio.json"
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path.write_text(json.dumps(value), encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
+    def _local_service(self, *, opener=None, extra_environment=None):
+        environment = {"HOME": self.temporary.name}
+        if extra_environment:
+            environment.update(extra_environment)
+        return response_audio.ResponseAudioService(
+            environment,
+            opener=opener or self.opener,
+            clock=lambda: 100,
+        )
+
+    def test_tts_environment_takes_precedence_over_local_config(self):
+        self._write_local_tts_config({"ttsUrl": "http://local.test"})
+        service = self._local_service(
+            extra_environment={"HERDR_RESPONSE_AUDIO_TTS_URL": "http://environment.test///"}
+        )
+        self.assertEqual(service.tts_endpoint, "http://environment.test/v1/audio/speech")
+        self.assertEqual(service.tts_health_endpoint, "http://environment.test/health")
+
+        service = self._local_service(extra_environment={"HERDR_RESPONSE_AUDIO_TTS_URL": "  "})
+        self.assertEqual(service.tts_endpoint, "http://local.test/v1/audio/speech")
+
+    def test_local_tts_base_and_full_speech_urls_are_normalized(self):
+        self._write_local_tts_config({"ttsUrl": "http://local.test///"})
+        service = self._local_service()
+        self.assertEqual(service.tts_endpoint, "http://local.test/v1/audio/speech")
+        self.assertEqual(service.tts_health_endpoint, "http://local.test/health")
+
+        self._write_local_tts_config({"ttsUrl": "http://local.test/v1/audio/speech///"})
+        service = self._local_service()
+        self.assertEqual(service.tts_endpoint, "http://local.test/v1/audio/speech")
+
+    def test_config_path_requires_absolute_non_nul_home(self):
+        self.assertIsNone(response_audio._response_audio_config_path({"HOME": "relative-home"}))
+        self.assertIsNone(response_audio._response_audio_config_path({"HOME": "/tmp/invalid\x00home"}))
+
+    def test_missing_malformed_unreadable_and_non_regular_config_are_safe(self):
+        opener = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network used"))
+        service = self._local_service(opener=opener)
+        self.assertIsNone(service.tts_endpoint)
+        self.assertEqual(
+            service.capabilities(),
+            {"ok": True, "available": False, "listen": False, "tldr": False},
+        )
+
+        path = self._write_local_tts_config({"ttsUrl": "http://local.test"})
+        path.write_text("not json", encoding="utf-8")
+        self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
+
+        path.write_bytes(b"\xff")
+        self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
+
+        path.write_text(json.dumps({"ttsUrl": "http://local.test"}), encoding="utf-8")
+        with mock.patch.object(Path, "open", side_effect=PermissionError("permission denied")):
+            self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
+
+        path.write_text(
+            json.dumps({"ttsUrl": "x" * (response_audio.RESPONSE_AUDIO_CONFIG_MAX_BYTES + 1)}),
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
+
+        path.unlink()
+        path.mkdir()
+        self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
+
+        path.rmdir()
+        target = path.with_name("response-audio-target.json")
+        target.write_text(json.dumps({"ttsUrl": "http://local.test"}), encoding="utf-8")
+        path.symlink_to(target)
+        self.assertIsNone(self._local_service(opener=opener).tts_endpoint)
+
+    def test_missing_tts_configuration_reports_unavailable_action(self):
+        service = self._local_service(
+            opener=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network used"))
+        )
+        with self.assertRaises(response_audio.ResponseAudioError) as raised:
+            service.prepare(action="listen", text="Hello")
+        self.assertEqual(raised.exception.code, "response_audio_unavailable")
+        self.assertEqual(raised.exception.status, 503)
 
     def test_capabilities_probe_private_services_and_cache_result(self):
         expected = {"ok": True, "available": True, "listen": True, "tldr": True}

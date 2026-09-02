@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 
-DEFAULT_TTS_URL = "http://100.120.49.92:8898"
 DEFAULT_SUMMARY_PROVIDER = "custom-lux-dspark"
 DEFAULT_SUMMARY_MODEL = "qwen3.8-27b-nvfp4-dspark"
 DEFAULT_CHUNK_CHARACTERS = 2_200
@@ -22,6 +21,8 @@ MAX_SOURCE_CHARACTERS = 131_072
 MAX_CHUNK_CHARACTERS = 5_000
 MAX_AUDIO_BYTES = 12 * 1024 * 1024
 CAPABILITY_CACHE_SECONDS = 30.0
+RESPONSE_AUDIO_CONFIG_RELATIVE_PATH = (".config", "herdr-harness", "response-audio.json")
+RESPONSE_AUDIO_CONFIG_MAX_BYTES = 64 * 1024
 
 
 class ResponseAudioError(ValueError):
@@ -58,13 +59,57 @@ def _bounded_float(
 
 
 def _normalized_tts_endpoint(value: str) -> str:
-    base = value.rstrip("/")
+    base = value.strip().rstrip("/")
     return base if base.endswith("/v1/audio/speech") else f"{base}/v1/audio/speech"
 
 
 def _tts_health_endpoint(value: str) -> str:
     endpoint = _normalized_tts_endpoint(value)
     return endpoint[: -len("/v1/audio/speech")] + "/health"
+
+
+def _response_audio_config_path(environ: Mapping[str, str]) -> Optional[Path]:
+    raw_home = environ.get("HOME")
+    try:
+        configured_home = raw_home.strip() if isinstance(raw_home, str) else ""
+        if "\x00" in configured_home:
+            return None
+        home = Path(configured_home).expanduser() if configured_home else Path.home()
+        if "\x00" in str(home) or not home.is_absolute():
+            return None
+        path = home.joinpath(*RESPONSE_AUDIO_CONFIG_RELATIVE_PATH)
+        if "\x00" in str(path) or not path.is_absolute():
+            return None
+        return path
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _local_response_audio_tts_url(environ: Mapping[str, str]) -> str:
+    path = _response_audio_config_path(environ)
+    if path is None:
+        return ""
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        with path.open("rb") as config_file:
+            raw = config_file.read(RESPONSE_AUDIO_CONFIG_MAX_BYTES + 1)
+        if len(raw) > RESPONSE_AUDIO_CONFIG_MAX_BYTES:
+            return ""
+        payload = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    value = payload.get("ttsUrl")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _response_audio_tts_url(environ: Mapping[str, str]) -> str:
+    configured = environ.get("HERDR_RESPONSE_AUDIO_TTS_URL")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    return _local_response_audio_tts_url(environ)
 
 
 def _summary_chat_endpoint(value: str) -> str:
@@ -244,9 +289,9 @@ class ResponseAudioService:
         self._capabilities_expire_at = 0.0
 
         self.enabled = _enabled(self.environ.get("HERDR_RESPONSE_AUDIO_ENABLED"))
-        tts_base = self.environ.get("HERDR_RESPONSE_AUDIO_TTS_URL") or DEFAULT_TTS_URL
-        self.tts_endpoint = _normalized_tts_endpoint(tts_base)
-        self.tts_health_endpoint = _tts_health_endpoint(tts_base)
+        tts_base = _response_audio_tts_url(self.environ)
+        self.tts_endpoint = _normalized_tts_endpoint(tts_base) if tts_base else None
+        self.tts_health_endpoint = _tts_health_endpoint(tts_base) if tts_base else None
         self.voice = self.environ.get("HERDR_RESPONSE_AUDIO_VOICE") or "af_jessica"
         self.speed = _bounded_float(
             self.environ.get("HERDR_RESPONSE_AUDIO_SPEED"),
@@ -344,7 +389,7 @@ class ResponseAudioService:
                 code="invalid_response_audio",
                 status=400,
             )
-        if not self.capabilities().get("listen"):
+        if not self.tts_endpoint or not self.capabilities().get("listen"):
             raise ResponseAudioError(
                 "response audio is not available",
                 code="response_audio_unavailable",
