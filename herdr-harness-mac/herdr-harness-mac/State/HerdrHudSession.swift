@@ -101,10 +101,6 @@ final class HerdrHudSession {
     /// happened to be promoted last.
     @ObservationIgnored private var speakingExchangeID: String?
     private(set) var voiceReplyTarget: String?
-    /// Set when the mic on a collapsed-HUD chip is clicked. The reply composer
-    /// only exists inside the expanded card, so the request has to outlive the
-    /// summon and be picked up once that card mounts.
-    private(set) var pendingVoiceReplyCapture = false
     private(set) var promotingExchangeIDs: Set<String> = []
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var defaultModel: PiModelIdentity?
@@ -572,14 +568,6 @@ final class HerdrHudSession {
 
     func clearVoiceReplyTarget() {
         voiceReplyTarget = nil
-        pendingVoiceReplyCapture = false
-    }
-
-    /// Ask the reply composer to start recording as soon as it appears, so the
-    /// mic on a chip records rather than just opening the HUD.
-    func requestVoiceReplyCapture() {
-        guard voiceReplyTarget != nil else { return }
-        pendingVoiceReplyCapture = true
     }
 
     #if DEBUG
@@ -587,12 +575,6 @@ final class HerdrHudSession {
         voiceReplyTarget = paneID
     }
     #endif
-
-    func consumeVoiceReplyCaptureRequest() -> Bool {
-        guard pendingVoiceReplyCapture else { return false }
-        pendingVoiceReplyCapture = false
-        return true
-    }
 
     func promote(exchange: HerdrHudExchange, model: HerdrAppModel) async -> HerdrPane? {
         beginSessionActivity()

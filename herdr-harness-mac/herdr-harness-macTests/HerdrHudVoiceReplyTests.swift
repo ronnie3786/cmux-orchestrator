@@ -125,35 +125,36 @@ struct HerdrHudVoiceReplyTests {
         #expect(reply.phase == .idle)
     }
 
-    @Test("The chip's mic asks the composer to start recording, not just to open")
-    func chipMicRequestsCapture() {
-        let session = makeSession()
+    @Test("The card only appears once there is a transcript to read")
+    func cardAppearsOnlyForTheEditableTranscript() {
+        let reply = HerdrHudVoiceReply()
+        #expect(!reply.showsCard)
 
-        // No target yet — nothing to reply to, so nothing is armed.
-        session.requestVoiceReplyCapture()
-        #expect(!session.pendingVoiceReplyCapture)
-        #expect(!session.consumeVoiceReplyCaptureRequest())
+        reply.target(paneID: "m1|a", title: "planner")
+        #expect(!reply.showsCard)
+        #expect(reply.paneTitle == "planner")
 
-        session.setVoiceReplyTargetForTesting("m1|a")
-        session.requestVoiceReplyCapture()
-        #expect(session.pendingVoiceReplyCapture)
+        // Recording and transcribing stay on the chip; the card is for the part
+        // that needs room.
+        reply.enterEditingForTesting(transcript: "ship it")
+        #expect(reply.showsCard)
 
-        // The card consumes it exactly once as it mounts, so re-summoning later
-        // does not start an unasked-for recording.
-        #expect(session.consumeVoiceReplyCaptureRequest())
-        #expect(!session.consumeVoiceReplyCaptureRequest())
+        reply.cancel()
+        #expect(!reply.showsCard)
+        #expect(reply.paneTitle.isEmpty)
     }
 
-    @Test("Clearing the reply target disarms a pending capture")
-    func clearingTargetDisarmsCapture() {
-        let session = makeSession()
-        session.setVoiceReplyTargetForTesting("m1|a")
-        session.requestVoiceReplyCapture()
+    @Test("Retargeting to the same session keeps an in-flight transcript")
+    func retargetingSameSessionIsANoop() {
+        let reply = HerdrHudVoiceReply()
+        reply.target(paneID: "m1|a", title: "planner")
+        reply.enterEditingForTesting(transcript: "keep me")
 
-        session.clearVoiceReplyTarget()
+        // Tapping the same chip's mic again must not wipe what was transcribed.
+        reply.target(paneID: "m1|a", title: "planner")
 
-        #expect(!session.pendingVoiceReplyCapture)
-        #expect(!session.consumeVoiceReplyCaptureRequest())
+        #expect(reply.draft == "keep me")
+        #expect(reply.showsCard)
     }
 
     private func makeSession() -> HerdrHudSession {

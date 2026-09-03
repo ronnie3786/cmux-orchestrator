@@ -372,4 +372,23 @@ struct HudRenderTests {
         )
         .stamped(machineID: "demo1")
     }
+
+    @Test("HUD voice reply card renders the editable transcript")
+    func rendersHudVoiceReplyCard() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let voiceReply = HerdrHudVoiceReply()
+        voiceReply.target(paneID: "demo1|p1", title: "release planner")
+        voiceReply.enterEditingForTesting(
+            transcript: "Ship the release notes once the changelog lands, then ping me."
+        )
+
+        let result = try await HerdrRenderHarness.render(
+            "23-hud-voice-reply-card.png",
+            size: HerdrHudPlacement.voiceReplyCardSize
+        ) {
+            HerdrHudVoiceReplyCardView(model: model, voiceReply: voiceReply)
+        }
+
+        result.expectSubstantial()
+    }
 }

@@ -62,6 +62,7 @@ final class HerdrHudController {
     private(set) var focusRequest = 0
     private(set) var noteFocusRequest = 0
     private(set) var collapsedChipCount = 0
+    private(set) var isVoiceReplyCardVisible = false
     private(set) var isCollapsedResultRailVisible = false
     /// Whether the `+N` control has been clicked to reveal the grouped
     /// sessions. Regrouped `chipRegroupDelay` after the pointer leaves them.
@@ -231,6 +232,12 @@ final class HerdrHudController {
             panel.orderOut(nil)
             hotKey?.unregister()
         }
+    }
+
+    func setVoiceReplyCardVisible(_ isVisible: Bool) {
+        guard isVoiceReplyCardVisible != isVisible else { return }
+        isVoiceReplyCardVisible = isVisible
+        applyFrame(animated: true)
     }
 
     func setCollapsedChipCount(_ count: Int) {
@@ -478,7 +485,8 @@ final class HerdrHudController {
             topRightOffset: placementOffset,
             chipCount: isExpanded ? 0 : collapsedChipCount,
             hasResultRail: !isExpanded && isCollapsedResultRailVisible,
-            notesSize: HerdrHudPlacement.notesContentSize(notes?.layout ?? .hidden, isExpanded: isExpanded)
+            notesSize: HerdrHudPlacement.notesContentSize(notes?.layout ?? .hidden, isExpanded: isExpanded),
+            voiceReplySize: isVoiceReplyCardVisible ? HerdrHudPlacement.voiceReplyCardSize : .zero
         )
     }
 

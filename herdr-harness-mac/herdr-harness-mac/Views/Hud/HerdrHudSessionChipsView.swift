@@ -18,6 +18,7 @@ struct HerdrHudSessionChipsView: View {
     let overflow: Int
     var showAll: () -> Void = { }
     var summon: () -> Void = { }
+    var voiceReply: HerdrHudVoiceReply?
 
     @State private var hoveredChipID: String?
 
@@ -40,7 +41,7 @@ struct HerdrHudSessionChipsView: View {
 
             chipButton(chip)
                 .overlay(alignment: .trailing) {
-                    if session.voiceReplyTarget == chip.id {
+                    if session.voiceReplyTarget == chip.id || voiceReply?.paneID == chip.id {
                         replyButton(chip)
                             .padding(.trailing, 5)
                     } else if chip.status == .done {
@@ -84,27 +85,40 @@ struct HerdrHudSessionChipsView: View {
         .accessibilityHint("Shows every session; they regroup shortly after you move away")
     }
 
-    /// Offered once this chip's answer has finished playing. The collapsed HUD
-    /// is far too narrow for an editable transcript, so this opens the card and
-    /// lets the reply strip there take over.
+    /// Offered once this chip's answer has finished playing. Recording happens
+    /// right here — tap to talk, tap again to stop — so a spoken reply never
+    /// drags the user into the HUD's own chat, which is a different agent.
     private func replyButton(_ chip: HerdrHudSessionChips.Chip) -> some View {
-        Button {
-            session.requestVoiceReplyCapture()
-            summon()
+        let isRecording = voiceReply?.isRecording == true
+        let isTranscribing = voiceReply?.phase == .transcribing
+        return Button {
+            guard let voiceReply else { return }
+            voiceReply.target(paneID: chip.id, title: chip.title)
+            Task { await voiceReply.toggleCapture(gateway: HerdrLiveVoiceReplyGateway(model: model)) }
         } label: {
-            Image(systemName: "mic.circle.fill")
-                .herdrFont(.caption2, weight: .bold)
-                .foregroundStyle(HerdrTheme.accent)
-                .frame(width: 20, height: 20)
-                .background(HerdrTheme.graphite, in: .circle)
-                .overlay {
-                    Circle().strokeBorder(HerdrTheme.accent.opacity(0.45), lineWidth: 1)
+            Group {
+                if isTranscribing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: isRecording ? "record.circle.fill" : "mic.circle.fill")
+                        .herdrFont(.caption2, weight: .bold)
+                        .foregroundStyle(isRecording ? HerdrTheme.alert : HerdrTheme.accent)
                 }
-                .contentShape(.circle)
+            }
+            .frame(width: 20, height: 20)
+            .background(HerdrTheme.graphite, in: .circle)
+            .overlay {
+                Circle().strokeBorder(
+                    (isRecording ? HerdrTheme.alert : HerdrTheme.accent).opacity(isRecording ? 0.9 : 0.45),
+                    lineWidth: 1
+                )
+            }
+            .contentShape(.circle)
         }
         .buttonStyle(.plain)
-        .help("Reply to this session by voice")
-        .accessibilityLabel("Reply by voice")
+        .disabled(isTranscribing)
+        .help(isRecording ? "Stop recording" : "Reply to this session by voice")
+        .accessibilityLabel(isRecording ? "Stop recording" : "Reply by voice")
         .accessibilityIdentifier("hud-session-chip-reply-\(chip.id)")
     }
 

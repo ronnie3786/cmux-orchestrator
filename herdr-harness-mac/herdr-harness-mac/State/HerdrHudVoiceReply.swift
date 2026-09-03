@@ -82,6 +82,9 @@ final class HerdrHudVoiceReply {
 
     private(set) var phase: Phase = .idle
     private(set) var paneID: String?
+    /// Named on the card so it is obvious which session the reply is going to.
+    /// Comes from the chip, so it is already redacted when titles are hidden.
+    private(set) var paneTitle: String = ""
     private(set) var usedFallback = false
     /// The transcript, editable before it is sent.
     var draft = ""
@@ -92,6 +95,15 @@ final class HerdrHudVoiceReply {
 
     var samples: [CGFloat] { capture.samples }
     var isBusy: Bool { phase == .transcribing || phase == .sending }
+    var isRecording: Bool { phase == .recording }
+    /// Recording and transcribing stay on the chip; the card is only for the
+    /// part that needs room — reading, editing and sending the transcript.
+    var showsCard: Bool {
+        switch phase {
+        case .idle, .recording, .transcribing: false
+        case .editing, .sending, .sent, .failed: true
+        }
+    }
     var canSend: Bool {
         phase == .editing && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -106,15 +118,28 @@ final class HerdrHudVoiceReply {
 
     /// Points the reply at a pi session. Retargeting mid-flight would send the
     /// recording to the wrong agent, so an in-progress reply wins.
-    func target(paneID: String) {
-        guard self.paneID != paneID else { return }
+    func target(paneID: String, title: String = "") {
         guard phase == .idle || phase == .sent else { return }
+        guard self.paneID != paneID || self.paneTitle != title else { return }
         dismissTask?.cancel()
         dismissTask = nil
         self.paneID = paneID
+        self.paneTitle = title
         draft = ""
         usedFallback = false
         phase = .idle
+    }
+
+    /// One control drives the whole capture: tap to talk, tap again to stop.
+    func toggleCapture(gateway: some HerdrHudVoiceReplyGateway) async {
+        switch phase {
+        case .idle, .failed:
+            start()
+        case .recording:
+            await stopAndTranscribe(gateway: gateway)
+        case .transcribing, .editing, .sending, .sent:
+            break
+        }
     }
 
     /// Also the retry path: a failed attempt re-enters recording cleanly.
@@ -216,6 +241,7 @@ final class HerdrHudVoiceReply {
         draft = ""
         usedFallback = false
         paneID = nil
+        paneTitle = ""
         phase = .idle
     }
 }

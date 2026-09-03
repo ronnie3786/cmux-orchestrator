@@ -8,6 +8,8 @@ struct HerdrHudRootView: View {
     let notes: HerdrHudNotesState
     let fontScale: HerdrFontScaleStore
 
+    @State private var voiceReply = HerdrHudVoiceReply()
+
     private var sessionChips: (
         chips: [HerdrHudSessionChips.Chip],
         overflow: Int,
@@ -56,7 +58,8 @@ struct HerdrHudRootView: View {
                                 chips: chipState.chips,
                                 overflow: chipState.overflow,
                                 showAll: controller.showAllChips,
-                                summon: controller.summon
+                                summon: controller.summon,
+                                voiceReply: voiceReply
                             )
                             .onHover { controller.setHoveringChips($0) }
                         }
@@ -69,7 +72,24 @@ struct HerdrHudRootView: View {
                     }
                 }
             }
+            if voiceReply.showsCard {
+                HerdrHudVoiceReplyCardView(model: model, voiceReply: voiceReply)
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))
+                    )
+            }
             HerdrHudNotesStripView(model: model, controller: controller, notes: notes)
+        }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: voiceReply.showsCard)
+        .onChange(of: voiceReply.showsCard, initial: true) { _, isVisible in
+            controller.setVoiceReplyCardVisible(isVisible)
+        }
+        .onChange(of: session.voiceReplyTarget, initial: true) { _, target in
+            // A new answer finishing retargets the reply; losing the target
+            // means the session it belonged to is gone.
+            if target == nil { voiceReply.cancel() }
         }
         .contentShape(Rectangle())
         .onHover { notes.setHovering($0) }

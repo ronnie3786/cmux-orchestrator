@@ -45,6 +45,9 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let maxNoteRows = 6
     static let maxNoteRowsWhenExpanded = 3
     static let noteCardSize = CGSize(width: 320, height: 360)
+    /// The reply composer is its own small surface beside the orb rather than a
+    /// row inside the chat, so a spoken reply never looks like a HUD prompt.
+    static let voiceReplyCardSize = CGSize(width: 300, height: 168)
 
     static func maxNoteRows(isExpanded: Bool) -> Int { isExpanded ? maxNoteRowsWhenExpanded : maxNoteRows }
     static func notesContentSize(_ layout: NotesLayout, isExpanded: Bool) -> CGSize {
@@ -92,11 +95,16 @@ struct HerdrHudPlacement: Equatable, Sendable {
         topRightOffset: CGSize,
         chipCount: Int = 0,
         hasResultRail: Bool = false,
-        notesSize: CGSize = .zero
+        notesSize: CGSize = .zero,
+        voiceReplySize: CGSize = .zero
     ) -> CGRect {
         var contentSize = isExpanded
             ? expandedSize
             : collapsedContentSize(chipCount: chipCount, hasResultRail: hasResultRail)
+        if voiceReplySize.height > 0 {
+            contentSize.width = max(contentSize.width, voiceReplySize.width)
+            contentSize.height += notesGap + voiceReplySize.height
+        }
         if notesSize.height > 0 {
             let availableContentHeight = max(0, visibleFrame.height - shadowMargin * 2)
             let excess = max(0, contentSize.height + notesGap + notesSize.height - availableContentHeight)
