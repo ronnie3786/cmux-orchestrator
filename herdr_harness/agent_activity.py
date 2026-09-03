@@ -239,7 +239,11 @@ class AgentActivityManager:
     def _log_pane_miss_locked(self, pane_id: str) -> None:
         """Log one structured line per pane per interval when activity finds no session."""
         now = time.monotonic()
-        if now - self._pane_miss_logged_at.get(pane_id, 0.0) < PANE_MISS_LOG_INTERVAL_SECONDS:
+        last_logged_at = self._pane_miss_logged_at.get(pane_id)
+        if (
+            last_logged_at is not None
+            and now - last_logged_at < PANE_MISS_LOG_INTERVAL_SECONDS
+        ):
             return
         self._pane_miss_logged_at[pane_id] = now
         logger.warning("activity pane miss pane_id=%s", pane_id)

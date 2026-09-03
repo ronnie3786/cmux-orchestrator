@@ -102,9 +102,9 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         XCTAssertTrue(nextPane.isEnabled)
         nextPane.click()
 
-        // Nothing was selected, so the first pane in sidebar order wins.
+        // Nothing was selected, so the first pane in canonical fleet order wins.
         XCTAssertTrue(
-            app.control(identifier: "terminal-demo1|w1:p1").waitForExistence(timeout: 5),
+            app.control(identifier: "terminal-demo2|w1:p1").waitForExistence(timeout: 5),
             "Next Pane should open a pane session in the detail column"
         )
 

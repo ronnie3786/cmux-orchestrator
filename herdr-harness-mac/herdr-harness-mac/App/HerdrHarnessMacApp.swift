@@ -307,8 +307,9 @@ struct HerdrMacCommands: Commands {
         selectedPane.map { model.canControl(machineID: $0.machineID) } == true
     }
 
-    /// Panes in the order the sidebar draws them, so ⇧⌘] walks the tree
-    /// top-to-bottom regardless of which sections happen to be collapsed.
+    /// Panes in stable workspace-name order across the fleet. Promoted sidebar
+    /// sections can duplicate chats, so navigation deliberately walks the
+    /// canonical workspace tree instead of the current visual presentation.
     private func orderedPanes() -> [HerdrPane] {
         SidebarTree
             .build(workspaces: model.workspaces, query: "", collapsedWorkspaceIDs: [])

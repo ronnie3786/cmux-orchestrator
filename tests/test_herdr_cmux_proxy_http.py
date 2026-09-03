@@ -322,7 +322,7 @@ class HerdrCmuxProxyHTTPTests(unittest.TestCase):
 
         self.assertEqual([status_code, diff_code, stage_code, unstage_code], [200] * 4)
         self.assertEqual(status["workspace_id"], "w1")
-        self.assertEqual(status["root_path"], "/upstream/repo")
+        self.assertEqual(status["root_path"], str(self.root.resolve()))
         self.assertNotIn("cwd", status)
         self.assertEqual(status["unstaged"], [{"status": "M", "file": "Pane.swift"}])
         self.assertEqual(diff["file"], "Views/Pane.swift")
