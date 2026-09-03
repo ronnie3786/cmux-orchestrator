@@ -72,6 +72,37 @@ export interface GitMutateResponse {
   file?: string;
 }
 
+export interface GitOpenFileResponse {
+  ok: boolean;
+  pane_id?: string;
+  file?: string;
+  absolute_path?: string | null;
+  revealed?: boolean | null;
+}
+
+/**
+ * Opens the file with its default application on the harness machine, or —
+ * with `reveal` — shows it in the machine's file manager instead.
+ */
+export function gitOpenFile(
+  paneId: string,
+  file: string,
+  expectedRoot: string,
+  reveal: boolean,
+  signal?: AbortSignal,
+): Promise<GitOpenFileResponse> {
+  return apiRequest<GitOpenFileResponse>(
+    `/panes/${encodeURIComponent(paneId)}/git/open`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file, expected_root: expectedRoot, reveal }),
+      signal,
+    },
+    GIT_TIMEOUT_MS,
+  );
+}
+
 export function gitStage(
   paneId: string,
   file: string,

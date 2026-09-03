@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureClient } from "./client";
-import { paneGitCommitDiff, paneGitCommitFiles, paneGitDiff } from "./git";
+import { gitOpenFile, paneGitCommitDiff, paneGitCommitFiles, paneGitDiff } from "./git";
 
 const BASE_URL = "http://127.0.0.1:9092/api/v1";
 
@@ -43,5 +43,20 @@ describe("pane Git read preconditions", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       `${BASE_URL}/panes/w1%3Ap1/git/commit-diff?hash=a1b2c3d&file=src%2Fa.ts&expected_root=%2Frepo`,
     );
+  });
+});
+
+describe("pane Git open-file requests", () => {
+  it("posts the file, precondition root, and reveal flag", async () => {
+    await gitOpenFile("w1:p1", "Sources/Pane.swift", "/repo with spaces", true);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${BASE_URL}/panes/w1%3Ap1/git/open`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      file: "Sources/Pane.swift",
+      expected_root: "/repo with spaces",
+      reveal: true,
+    });
   });
 });

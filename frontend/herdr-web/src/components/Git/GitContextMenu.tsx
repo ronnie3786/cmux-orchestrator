@@ -1,6 +1,8 @@
 import { useEffect, useRef, type KeyboardEvent } from "react";
-import { Copy, FileDiff, Minus, Plus } from "lucide-react";
+import { Copy, FolderOpen, Minus, Plus, SquarePen } from "lucide-react";
 import type { GitSection } from "../../api/git";
+import { gitOpenFile } from "../../api/git";
+import { isHostLocal } from "../../api/client";
 import { showToast } from "../../lib/toast";
 import { useGitStore } from "../../store/gitStore";
 
@@ -9,6 +11,8 @@ export interface GitContextTarget {
   y: number;
   path: string;
   section: GitSection;
+  /** Absolute repository root, sent as the mutation precondition. */
+  rootPath: string;
 }
 
 interface GitContextMenuProps {
@@ -35,6 +39,28 @@ async function copyPath(path: string): Promise<void> {
     showToast(`Copied ${path}`);
   } catch {
     showToast("Couldn't copy file path");
+  }
+}
+
+/**
+ * Opens (or reveals) the file on the harness machine. Only the machine in
+ * front of the user can meaningfully show it, so remote panes decline with a
+ * notice instead of popping windows on someone else's screen.
+ */
+async function openOnMachine(
+  paneId: string,
+  target: GitContextTarget,
+  reveal: boolean,
+): Promise<void> {
+  if (!isHostLocal()) {
+    showToast("This file is on a remote machine — opening it there isn't available yet");
+    return;
+  }
+  try {
+    await gitOpenFile(paneId, target.path, target.rootPath, reveal);
+    showToast(reveal ? `Revealed ${target.path}` : `Opened ${target.path}`);
+  } catch (error) {
+    showToast(error instanceof Error && error.message !== "" ? error.message : "Couldn't open the file");
   }
 }
 
@@ -74,7 +100,7 @@ export function GitContextMenu({ paneId, target, onClose }: GitContextMenuProps)
   };
 
   const left = Math.max(8, Math.min(target.x, window.innerWidth - 202));
-  const top = Math.max(8, Math.min(target.y, window.innerHeight - 146));
+  const top = Math.max(8, Math.min(target.y, window.innerHeight - 190));
 
   return (
     <div
@@ -89,13 +115,25 @@ export function GitContextMenu({ paneId, target, onClose }: GitContextMenuProps)
         type="button"
         role="menuitem"
         onClick={() => {
-          useGitStore.getState().diff(paneId, target.path, target.section);
+          void openOnMachine(paneId, target, false);
           onClose();
         }}
       >
-        <FileDiff size={14} aria-hidden />
-        <span>View diff</span>
+        <SquarePen size={14} aria-hidden />
+        <span>Open file</span>
       </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          void openOnMachine(paneId, target, true);
+          onClose();
+        }}
+      >
+        <FolderOpen size={14} aria-hidden />
+        <span>Open in Finder</span>
+      </button>
+      <div className="hz-git-context-rule" role="separator" />
       <button
         type="button"
         role="menuitem"
@@ -115,7 +153,6 @@ export function GitContextMenu({ paneId, target, onClose }: GitContextMenuProps)
         )}
         <span>{stageLabel}</span>
       </button>
-      <div className="hz-git-context-rule" role="separator" />
       <button
         type="button"
         role="menuitem"

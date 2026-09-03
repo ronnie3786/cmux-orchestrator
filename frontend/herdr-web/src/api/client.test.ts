@@ -5,6 +5,7 @@ import {
   configureClient,
   getServerUrl,
   getToken,
+  isHostLocal,
   setToken,
 } from "./client";
 
@@ -50,6 +51,40 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+describe("isHostLocal", () => {
+  it("trusts the native wrapper's explicit statement", () => {
+    vi.stubGlobal("window", {
+      __HERDR_NATIVE_CONFIG__: {
+        token: "native-token",
+        serverUrl: "https://remote.example",
+        hostIsLocal: false,
+      },
+    });
+    expect(isHostLocal()).toBe(false);
+
+    vi.stubGlobal("window", {
+      __HERDR_NATIVE_CONFIG__: {
+        token: "native-token",
+        serverUrl: "https://remote.example",
+        hostIsLocal: true,
+      },
+    });
+    expect(isHostLocal()).toBe(true);
+  });
+
+  it("falls back to loopback detection for plain browsers", () => {
+    vi.stubGlobal("window", {
+      location: { hostname: "localhost" },
+    });
+    expect(isHostLocal()).toBe(true);
+
+    vi.stubGlobal("window", {
+      location: { hostname: "Work-Mac.tailnet.example" },
+    });
+    expect(isHostLocal()).toBe(false);
+  });
+});
 
 describe("apiRequest", () => {
   it("sends Authorization: Bearer from the herdr.web.token storage key", async () => {

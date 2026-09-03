@@ -11,6 +11,8 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 export interface HerdrNativeConfig {
   token: string;
   serverUrl: string;
+  /** True when the native wrapper knows the harness runs on this machine. */
+  hostIsLocal?: boolean;
 }
 
 declare global {
@@ -30,6 +32,21 @@ function nativeConfig(): HerdrNativeConfig | null {
     return null;
   }
   return config;
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * Whether the harness serving this page runs on the machine in front of the
+ * user. The native wrapper states this explicitly; a plain browser falls
+ * back to treating loopback origins as local and everything else as remote.
+ */
+export function isHostLocal(): boolean {
+  const injected = nativeConfig();
+  if (injected !== null) return injected.hostIsLocal === true;
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname.toLowerCase();
+  return LOOPBACK_HOSTS.has(host);
 }
 
 /**

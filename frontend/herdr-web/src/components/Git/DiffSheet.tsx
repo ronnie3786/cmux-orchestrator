@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { registerCustomCSSVariableTheme } from "@pierre/diffs";
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import { Columns2, FileCode2, Rows3, TriangleAlert, WrapText } from "lucide-react";
@@ -8,6 +8,7 @@ import {
   type DiffSheetState,
 } from "../../store/gitStore";
 import { parseDiffPresentation } from "./diffPresentation";
+import { SelectionAskLauncher } from "./SelectionAskLauncher";
 import "./git.css";
 
 type DiffStyle = "unified" | "split";
@@ -49,12 +50,12 @@ const PIERRE_THEME_OVERRIDES = `
     --diffs-bg-context: #0b0e13;
     --diffs-bg-context-gutter: #0d1117;
     --diffs-bg-separator: rgba(56, 139, 253, 0.15);
-    --diffs-bg-addition-override: rgba(46, 160, 67, 0.15);
-    --diffs-bg-addition-number-override: rgba(46, 160, 67, 0.30);
-    --diffs-bg-addition-emphasis-override: rgba(46, 160, 67, 0.40);
-    --diffs-bg-deletion-override: rgba(248, 81, 73, 0.15);
-    --diffs-bg-deletion-number-override: rgba(248, 81, 73, 0.30);
-    --diffs-bg-deletion-emphasis-override: rgba(248, 81, 73, 0.40);
+    --diffs-bg-addition-override: rgba(46, 160, 67, 0.30);
+    --diffs-bg-addition-number-override: rgba(46, 160, 67, 0.42);
+    --diffs-bg-addition-emphasis-override: rgba(46, 160, 67, 0.55);
+    --diffs-bg-deletion-override: rgba(248, 81, 73, 0.30);
+    --diffs-bg-deletion-number-override: rgba(248, 81, 73, 0.42);
+    --diffs-bg-deletion-emphasis-override: rgba(248, 81, 73, 0.55);
     --diffs-bg-hover-override: rgba(47, 129, 247, 0.09);
     --diffs-bg-selection-override: rgba(47, 129, 247, 0.18);
     --diffs-bg-selection-number-override: rgba(47, 129, 247, 0.28);
@@ -75,6 +76,7 @@ export function DiffInspector({ paneId }: { paneId: string }) {
   const [diffOverflow, setDiffOverflow] = useState<DiffOverflow>(() =>
     storedPreference(DIFF_OVERFLOW_KEY, "scroll", ["scroll", "wrap"]),
   );
+  const diffBodyRef = useRef<HTMLDivElement | null>(null);
   const sheet = useGitStore((state) =>
     state.diffSheet?.paneId === paneId ? state.diffSheet : null,
   );
@@ -156,7 +158,7 @@ export function DiffInspector({ paneId }: { paneId: string }) {
           </div>
         </div>
       ) : null}
-      <div className="hz-diff-body">
+      <div className="hz-diff-body" ref={diffBodyRef}>
         {sheet.isLoading ? (
           <p className="hz-diff-state" role="status">Loading diff…</p>
         ) : sheet.error !== null ? (
@@ -195,6 +197,7 @@ export function DiffInspector({ paneId }: { paneId: string }) {
           </div>
         )}
       </div>
+      <SelectionAskLauncher paneId={paneId} file={sheet.file} containerRef={diffBodyRef} />
     </section>
   );
 }

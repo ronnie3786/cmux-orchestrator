@@ -38,6 +38,7 @@ struct PaneGitWebDocumentTests {
         #expect(route["embed"] == "1")
         #expect(document.bootstrapScript.contains("__HERDR_NATIVE_CONFIG__"))
         #expect(document.bootstrapScript.contains("secret-\\\"token\\\""))
+        #expect(document.bootstrapScript.contains("\"hostIsLocal\""))
     }
 
     @Test("Navigation is limited to the configured Herdr origin")
@@ -48,5 +49,32 @@ struct PaneGitWebDocumentTests {
         #expect(origin.contains(try #require(URL(string: "https://herdr.example.test:443/api/v1/panes/p1/git"))))
         #expect(!origin.contains(try #require(URL(string: "http://herdr.example.test/herdr-web/"))))
         #expect(!origin.contains(try #require(URL(string: "https://attacker.example/herdr-web/"))))
+    }
+
+    @Test("Loopback and same-machine harnesses count as local")
+    func hostIsLocal() throws {
+        let loopback = try #require(URL(string: "http://localhost:9092"))
+        let loopbackIP = try #require(URL(string: "http://127.0.0.1:9092"))
+        let remote = try #require(URL(string: "http://work-mac.tailnet.example:9092"))
+        #expect(PaneGitWebDocument.harnessRunsOnThisMachine(loopback))
+        #expect(PaneGitWebDocument.harnessRunsOnThisMachine(loopbackIP))
+        #expect(!PaneGitWebDocument.harnessRunsOnThisMachine(remote))
+
+        let hostName = ProcessInfo.processInfo.hostName.lowercased()
+        let labels = hostName.split(separator: ".")
+        guard let firstLabel = labels.first, !firstLabel.isEmpty else { return }
+        let short = String(firstLabel)
+        let byShort = try #require(URL(string: "http://" + short + ":9092"))
+        let byLocal = try #require(URL(string: "http://" + short + ".local:9092"))
+        let byFullName = try #require(URL(string: "http://" + hostName + ":9092"))
+        let byTailnet = try #require(URL(string: "http://some-other-mac.tailnet.example:9092"))
+        let byOwnTailnet = try #require(URL(string: "http://" + short + ".tailnet.example:9092"))
+        #expect(PaneGitWebDocument.harnessRunsOnThisMachine(byShort))
+        #expect(PaneGitWebDocument.harnessRunsOnThisMachine(byLocal))
+        #expect(PaneGitWebDocument.harnessRunsOnThisMachine(byFullName))
+        // First-label matches stay local even under dotted tailnet names…
+        #expect(PaneGitWebDocument.harnessRunsOnThisMachine(byOwnTailnet))
+        // …but a different machine's tailnet name is remote.
+        #expect(!PaneGitWebDocument.harnessRunsOnThisMachine(byTailnet))
     }
 }

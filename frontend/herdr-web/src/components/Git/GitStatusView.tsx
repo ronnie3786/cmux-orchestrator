@@ -1,9 +1,12 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
 } from "react";
 import {
   ChevronDown,
@@ -30,6 +33,39 @@ import { GitContextMenu, type GitContextTarget } from "./GitContextMenu";
 import "./git.css";
 
 const POLL_INTERVAL_MS = 10_000;
+const NAVIGATOR_WIDTH_KEY = "herdr.git.navigator-width";
+const DEFAULT_NAVIGATOR_WIDTH = 320;
+const MIN_NAVIGATOR_WIDTH = 220;
+const MAX_NAVIGATOR_WIDTH = 640;
+
+function storedNavigatorWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_NAVIGATOR_WIDTH;
+  try {
+    const raw = window.localStorage.getItem(NAVIGATOR_WIDTH_KEY);
+    const parsed = raw === null ? NaN : Number.parseInt(raw, 10);
+    return Number.isFinite(parsed)
+      ? clampNavigatorWidth(parsed)
+      : DEFAULT_NAVIGATOR_WIDTH;
+  } catch {
+    return DEFAULT_NAVIGATOR_WIDTH;
+  }
+}
+
+function clampNavigatorWidth(width: number): number {
+  return Math.min(
+    MAX_NAVIGATOR_WIDTH,
+    Math.max(MIN_NAVIGATOR_WIDTH, Math.round(width)),
+  );
+}
+
+function persistNavigatorWidth(width: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(NAVIGATOR_WIDTH_KEY, String(width));
+  } catch {
+    // Layout preference is optional when storage is unavailable.
+  }
+}
 
 interface GitStatusViewProps {
   paneId: string;
@@ -130,6 +166,14 @@ function GitBody({
 }) {
   const [contextTarget, setContextTarget] = useState<GitContextTarget | null>(null);
   const closeContextMenu = useCallback(() => setContextTarget(null), []);
+  const openContextMenu = useCallback(
+    (target: Omit<GitContextTarget, "rootPath">) =>
+      setContextTarget({ ...target, rootPath: snapshot.rootPath }),
+    [snapshot.rootPath],
+  );
+  const [navigatorWidth, setNavigatorWidth] = useState(storedNavigatorWidth);
+  const workbenchRef = useRef<HTMLDivElement | null>(null);
+  const [dividerDragging, setDividerDragging] = useState(false);
   const selectedDiff = useGitStore((state) =>
     state.diffSheet?.paneId === paneId ? state.diffSheet : null,
   );
@@ -149,8 +193,46 @@ function GitBody({
     }
   }, [paneId, selectedDiff, snapshot]);
 
+  const onDividerPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDividerDragging(true);
+  };
+
+  const onDividerPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!dividerDragging) return;
+    const bounds = workbenchRef.current?.getBoundingClientRect();
+    if (bounds === undefined) return;
+    setNavigatorWidth(clampNavigatorWidth(event.clientX - bounds.left));
+  };
+
+  const onDividerPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (!dividerDragging) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    setDividerDragging(false);
+    persistNavigatorWidth(navigatorWidth);
+  };
+
+  const resetNavigatorWidth = () => {
+    setNavigatorWidth(DEFAULT_NAVIGATOR_WIDTH);
+    persistNavigatorWidth(DEFAULT_NAVIGATOR_WIDTH);
+  };
+
+  useEffect(() => {
+    if (!dividerDragging) return;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [dividerDragging]);
+
   return (
-    <div className="hz-git-workbench">
+    <div
+      className={"hz-git-workbench"}
+      ref={workbenchRef}
+      style={{ "--hz-git-nav-width": `${navigatorWidth}px` } as CSSProperties}
+    >
       <aside className="hz-git-navigator" aria-label="Repository changes and history">
         <section className="hz-git-header" aria-label="Repository status">
         <div className="hz-git-header-main">
@@ -218,7 +300,7 @@ function GitBody({
             section="staged"
             files={snapshot.staged}
             selectedDiff={selectedDiff}
-            onContextMenu={setContextTarget}
+            onContextMenu={openContextMenu}
           />
           <GitFileSection
             paneId={paneId}
@@ -226,7 +308,7 @@ function GitBody({
             section="unstaged"
             files={snapshot.unstaged}
             selectedDiff={selectedDiff}
-            onContextMenu={setContextTarget}
+            onContextMenu={openContextMenu}
           />
           <GitFileSection
             paneId={paneId}
@@ -234,7 +316,7 @@ function GitBody({
             section="untracked"
             files={snapshot.untracked.map((file) => ({ status: "?", file }))}
             selectedDiff={selectedDiff}
-            onContextMenu={setContextTarget}
+            onContextMenu={openContextMenu}
           />
         </div>
       )}
@@ -244,6 +326,18 @@ function GitBody({
         ) : null}
         </div>
       </aside>
+
+      <div
+        className={`hz-git-divider${dividerDragging ? " hz-git-divider-active" : ""}`}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize repository navigator"
+        title="Drag to resize · double-click to reset"
+        onPointerDown={onDividerPointerDown}
+        onPointerMove={onDividerPointerMove}
+        onPointerUp={onDividerPointerUp}
+        onDoubleClick={resetNavigatorWidth}
+      />
 
       <DiffInspector paneId={paneId} />
 
@@ -280,7 +374,7 @@ interface GitFileSectionProps {
   section: GitSection;
   files: Array<{ status: string; file: string }>;
   selectedDiff: ReturnType<typeof useGitStore.getState>["diffSheet"];
-  onContextMenu: (target: GitContextTarget) => void;
+  onContextMenu: (target: Omit<GitContextTarget, "rootPath">) => void;
 }
 
 function GitFileSection({
@@ -325,7 +419,7 @@ interface GitFileRowProps {
   status: string;
   section: GitSection;
   selected: boolean;
-  onContextMenu: (target: GitContextTarget) => void;
+  onContextMenu: (target: Omit<GitContextTarget, "rootPath">) => void;
 }
 
 function GitFileRow({ paneId, path, status, section, selected, onContextMenu }: GitFileRowProps) {
@@ -344,6 +438,8 @@ function GitFileRow({ paneId, path, status, section, selected, onContextMenu }: 
     }
   };
   const actionLabel = section === "staged" ? "Unstage" : "Stage";
+  // Every untracked row is "?" — the section heading already says it.
+  const showsBadge = section !== "untracked";
 
   return (
     <div
@@ -357,10 +453,11 @@ function GitFileRow({ paneId, path, status, section, selected, onContextMenu }: 
         onClick={() => useGitStore.getState().diff(paneId, path, section)}
         onKeyDown={onKeyDown}
       >
-        <span className="hz-git-change-rail" aria-hidden />
-        <span className="hz-git-badge mono" aria-hidden>
-          {status}
-        </span>
+        {showsBadge ? (
+          <span className="hz-git-badge mono" aria-hidden>
+            {status}
+          </span>
+        ) : null}
         <span className="hz-git-file" title={path}>
           <span className="hz-git-file-name mono">{name}</span>
           {directory !== "" ? (
