@@ -25,7 +25,7 @@ struct HerdrHudSessionChipsTests {
                 try pane(id: "shell", status: .working, piCapable: false),
             ],
             mutedPaneIDs: [],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true,
             limit: 10
         )
@@ -47,7 +47,7 @@ struct HerdrHudSessionChipsTests {
                 try pane(id: "done-newer", status: .done, revision: 1, lastActivityAt: newer),
             ],
             mutedPaneIDs: [],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true,
             limit: 10
         )
@@ -66,16 +66,16 @@ struct HerdrHudSessionChipsTests {
     func dismissalIsStatusScoped() throws {
         let done = try pane(id: "transition", status: .done)
         let working = try pane(id: "transition", status: .working)
-        let dismissed = [done.id: AgentStatus.done]
+        let dismissed = [done.id: dismissal(done)]
 
         #expect(
             HerdrHudSessionChips.chips(
-                panes: [done], mutedPaneIDs: [], dismissedStatuses: dismissed, revealTitles: true
+                panes: [done], mutedPaneIDs: [], dismissed: dismissed, revealTitles: true
             ).chips.isEmpty
         )
         #expect(
             HerdrHudSessionChips.chips(
-                panes: [working], mutedPaneIDs: [], dismissedStatuses: dismissed, revealTitles: true
+                panes: [working], mutedPaneIDs: [], dismissed: dismissed, revealTitles: true
             ).chips.map(\.id) == [working.id]
         )
     }
@@ -88,7 +88,7 @@ struct HerdrHudSessionChipsTests {
         let result = HerdrHudSessionChips.chips(
             panes: [working, done, blocked],
             mutedPaneIDs: [working.id, done.id, blocked.id],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true
         )
 
@@ -100,7 +100,7 @@ struct HerdrHudSessionChipsTests {
     func redactsOnlyDisplayTitle() throws {
         let pane = try pane(id: "secret-work", status: .working, title: "Confidential launch plan")
         let result = HerdrHudSessionChips.chips(
-            panes: [pane], mutedPaneIDs: [], dismissedStatuses: [:], revealTitles: false
+            panes: [pane], mutedPaneIDs: [], dismissed: [:], revealTitles: false
         )
         let chip = try #require(result.chips.first)
 
@@ -115,7 +115,7 @@ struct HerdrHudSessionChipsTests {
             try pane(id: "pane-\(index)", status: .working, revision: index)
         }
         let result = HerdrHudSessionChips.chips(
-            panes: panes, mutedPaneIDs: [], dismissedStatuses: [:], revealTitles: true, limit: 2
+            panes: panes, mutedPaneIDs: [], dismissed: [:], revealTitles: true, limit: 2
         )
 
         #expect(result.chips.count == 2)
@@ -132,14 +132,14 @@ struct HerdrHudSessionChipsTests {
         let grouped = HerdrHudSessionChips.chips(
             panes: panes,
             mutedPaneIDs: [],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true,
             limit: HerdrHudPlacement.maxChips
         )
         let revealed = HerdrHudSessionChips.chips(
             panes: panes,
             mutedPaneIDs: [],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true,
             limit: HerdrHudPlacement.maxExpandedChips
         )
@@ -158,11 +158,11 @@ struct HerdrHudSessionChipsTests {
 
         // The user clicked the chip while the agent was finished, which both
         // opens the pane and dismisses the chip.
-        var dismissed: [String: AgentStatus] = ["m1|a": .done]
+        var dismissed: [String: HudChipDismissal] = ["m1|a": dismissal(done)]
         #expect(HerdrHudSessionChips.chips(
             panes: [done],
             mutedPaneIDs: [],
-            dismissedStatuses: dismissed,
+            dismissed: dismissed,
             revealTitles: true
         ).chips.isEmpty)
 
@@ -176,7 +176,7 @@ struct HerdrHudSessionChipsTests {
         #expect(HerdrHudSessionChips.chips(
             panes: [done],
             mutedPaneIDs: [],
-            dismissedStatuses: dismissed,
+            dismissed: dismissed,
             revealTitles: true
         ).chips.map(\.id) == ["m1|a"])
     }
@@ -185,39 +185,141 @@ struct HerdrHudSessionChipsTests {
     func dismissalSurvivesUnchangedStatus() throws {
         let done = try pane(id: "a", status: .done)
         let pruned = HerdrHudSessionChips.prunedDismissals(
-            ["m1|a": .done],
+            ["m1|a": dismissal(done)],
             machineID: "m1",
             panes: [done]
         )
-        #expect(pruned == ["m1|a": .done])
+        #expect(pruned == ["m1|a": dismissal(done)])
     }
 
     @Test("Pruning drops vanished panes but never another machine's dismissals")
     func pruningIsScopedToTheRefreshedMachine() throws {
+        let gone = try pane(id: "gone", status: .done)
+        let other = HudChipDismissal(status: .done, episode: "1", dismissedAt: Self.stamp)
         let pruned = HerdrHudSessionChips.prunedDismissals(
-            ["m1|gone": .done, "m2|other": .done],
+            ["m1|gone": dismissal(gone), "m2|other": other],
             machineID: "m1",
             panes: []
         )
-        #expect(pruned == ["m2|other": .done])
+        #expect(pruned == ["m2|other": other])
     }
 
-    @Test("An unviewed pane result survives idle, mute, and chip dismissal")
-    func resultKeepsPaneChipVisible() throws {
+    /// DELIBERATE BEHAVIOUR FLIP — this was `resultKeepsPaneChipVisible`, which
+    /// asserted the chip STAYED. An artifact used to defeat idle, mute and
+    /// dismissal all three, which is what made a clicked session reappear
+    /// forever: the click routes to the pane, the harness acks it to `.idle`,
+    /// and the artifact clause put the chip straight back on the next
+    /// projection. The invariant the old test protected — an unviewed result is
+    /// never silently buried — still holds, because the artifact now docks to
+    /// the orb rail instead of resurrecting the whole session chip.
+    @Test("An unviewed result docks to the orb once its chip is silenced")
+    func unviewedResultDocksToOrbWhenItsChipIsSilenced() throws {
         let idle = try pane(id: "finished", status: .idle)
         let resultArtifact = artifact(id: "artifact-1", originID: "finished")
 
         let result = HerdrHudSessionChips.chips(
             panes: [idle],
             mutedPaneIDs: [idle.id],
-            dismissedStatuses: [idle.id: .idle],
+            dismissed: [idle.id: dismissal(idle)],
             revealTitles: true,
             artifacts: [resultArtifact]
         )
 
-        #expect(result.chips.map(\.id) == [idle.id])
-        #expect(result.chips.first?.artifacts.map(\.id) == [resultArtifact.id])
-        #expect(result.detachedArtifacts.isEmpty)
+        #expect(result.chips.isEmpty)
+        #expect(result.detachedArtifacts.map(\.id) == [resultArtifact.id])
+    }
+
+    /// The exact user-reported repro: a finished session that produced a result,
+    /// clicked once, must stay gone.
+    @Test("A dismissed chip with an unopened result stays dismissed")
+    func dismissedChipWithResultStaysDismissed() throws {
+        let done = try pane(id: "finished", status: .done)
+        let resultArtifact = artifact(id: "artifact-1", originID: "finished")
+
+        let result = HerdrHudSessionChips.chips(
+            panes: [done],
+            mutedPaneIDs: [],
+            dismissed: [done.id: dismissal(done)],
+            revealTitles: true,
+            artifacts: [resultArtifact]
+        )
+
+        #expect(result.chips.isEmpty)
+        #expect(result.detachedArtifacts.map(\.id) == [resultArtifact.id])
+    }
+
+    @Test("Muting a session with a result hides its chip and docks the result")
+    func mutedSessionWithResultShowsNoChip() throws {
+        let done = try pane(id: "finished", status: .done)
+        let resultArtifact = artifact(id: "artifact-1", originID: "finished")
+
+        let result = HerdrHudSessionChips.chips(
+            panes: [done],
+            mutedPaneIDs: [done.id],
+            dismissed: [:],
+            revealTitles: true,
+            artifacts: [resultArtifact]
+        )
+
+        #expect(result.chips.isEmpty)
+        #expect(result.detachedArtifacts.map(\.id) == [resultArtifact.id])
+    }
+
+    /// The episode-not-status guarantee, and what makes persisting a dismissal
+    /// safe: a pane reads `.done` both before AND after it answers again, so a
+    /// restored dismissal must not silence tomorrow's answer.
+    @Test("A new answer at the same status brings the chip back")
+    func newAnswerAtSameStatusReturnsTheChip() throws {
+        let first = try pane(id: "a", status: .done, lastActivityAt: Date(timeIntervalSince1970: 100))
+        let answeredAgain = try pane(id: "a", status: .done, lastActivityAt: Date(timeIntervalSince1970: 500))
+        let dismissed = [first.id: dismissal(first)]
+
+        #expect(HerdrHudSessionChips.chips(
+            panes: [first], mutedPaneIDs: [], dismissed: dismissed, revealTitles: true
+        ).chips.isEmpty)
+
+        #expect(HerdrHudSessionChips.chips(
+            panes: [answeredAgain], mutedPaneIDs: [], dismissed: dismissed, revealTitles: true
+        ).chips.map(\.id) == ["m1|a"])
+
+        // ...and the prune agrees, so a restored map cannot silence it either.
+        #expect(HerdrHudSessionChips.prunedDismissals(
+            dismissed, machineID: "m1", panes: [answeredAgain]
+        ).isEmpty)
+    }
+
+    /// `.blocked` never self-heals through the server's ack projection the way
+    /// `.done` does, so its dismissal has to survive every refresh — otherwise
+    /// nothing the user can do ever quiets a stuck session.
+    @Test("A blocked session stays dismissed across repeated pruning")
+    func blockedPaneStaysDismissedAcrossPrune() throws {
+        let blocked = try pane(id: "stuck", status: .blocked, lastActivityAt: Date(timeIntervalSince1970: 10))
+        var dismissed = [blocked.id: dismissal(blocked)]
+
+        for _ in 0..<5 {
+            dismissed = HerdrHudSessionChips.prunedDismissals(dismissed, machineID: "m1", panes: [blocked])
+        }
+
+        #expect(dismissed == [blocked.id: dismissal(blocked)])
+        #expect(HerdrHudSessionChips.chips(
+            panes: [blocked], mutedPaneIDs: [], dismissed: dismissed, revealTitles: true
+        ).chips.isEmpty)
+    }
+
+    @Test("The persisted dismissal store is capped newest-first")
+    func cappedKeepsNewestDismissals() {
+        let dismissals = (1...10).reduce(into: [String: HudChipDismissal]()) { store, index in
+            store["m1|pane-\(index)"] = HudChipDismissal(
+                status: .done,
+                episode: "\(index)",
+                dismissedAt: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        let capped = HerdrHudSessionChips.capped(dismissals, limit: 3)
+
+        #expect(capped.count == 3)
+        #expect(Set(capped.keys) == ["m1|pane-8", "m1|pane-9", "m1|pane-10"])
+        #expect(HerdrHudSessionChips.capped(dismissals, limit: 50) == dismissals)
     }
 
     @Test("Headless and vanished-pane results dock to the HUD orb")
@@ -233,7 +335,7 @@ struct HerdrHudSessionChipsTests {
         let result = HerdrHudSessionChips.chips(
             panes: [livePane],
             mutedPaneIDs: [],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true,
             artifacts: [headless, vanished]
         )
@@ -251,7 +353,7 @@ struct HerdrHudSessionChipsTests {
         let grouped = HerdrHudSessionChips.chips(
             panes: panes,
             mutedPaneIDs: [],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true,
             artifacts: [overflowed],
             limit: 3
@@ -259,7 +361,7 @@ struct HerdrHudSessionChipsTests {
         let revealed = HerdrHudSessionChips.chips(
             panes: panes,
             mutedPaneIDs: [],
-            dismissedStatuses: [:],
+            dismissed: [:],
             revealTitles: true,
             artifacts: [overflowed],
             limit: 4
@@ -268,6 +370,14 @@ struct HerdrHudSessionChipsTests {
         #expect(grouped.detachedArtifacts.map(\.id) == [overflowed.id])
         #expect(revealed.detachedArtifacts.isEmpty)
         #expect(revealed.chips.last?.artifacts.map(\.id) == [overflowed.id])
+    }
+
+    private static let stamp = Date(timeIntervalSince1970: 0)
+
+    /// A dismissal recorded for `pane` exactly as it stands, which is what
+    /// `HerdrAppModel.dismissHudChip` writes.
+    private func dismissal(_ pane: HerdrPane) -> HudChipDismissal {
+        HudChipDismissal(pane: pane, dismissedAt: Self.stamp)
     }
 
     private func pane(

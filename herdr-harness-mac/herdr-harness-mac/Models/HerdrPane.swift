@@ -61,6 +61,16 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
             && scopedTabID == other.scopedTabID
     }
 
+    /// Identifies one *episode* of this pane's activity.
+    ///
+    /// A status value is not an episode: the same pane reads `.done` before AND
+    /// after it answers again. Anything remembered per status — a dismissed
+    /// chip, an acknowledged stale-done — must also remember which episode it
+    /// applied to, or it silently carries over into the next answer.
+    var episodeKey: String {
+        lastActivityAt.map(HerdrTimestamp.string) ?? String(revision)
+    }
+
     var displayTitle: String {
         for candidate in [label, title, terminalTitleStripped, displayAgent, agent] {
             if let candidate, !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

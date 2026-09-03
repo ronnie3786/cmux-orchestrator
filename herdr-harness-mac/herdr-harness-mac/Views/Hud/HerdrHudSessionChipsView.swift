@@ -70,8 +70,10 @@ struct HerdrHudSessionChipsView: View {
                 .herdrFont(.caption2, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.mist)
                 .padding(.horizontal, 9)
-                .frame(minHeight: HerdrTheme.minHitTarget)
-                .herdrHitTarget()
+                // Matches the chips it stands in for — and the height the
+                // collapsed panel reserves for this row.
+                .frame(minHeight: HerdrHudPlacement.chipHeight)
+                .herdrHitTarget(minHeight: HerdrHudPlacement.chipHeight)
                 .background(HerdrTheme.graphite.opacity(0.94), in: .capsule)
                 .overlay {
                     Capsule().strokeBorder(HerdrTheme.surface, lineWidth: 1)
@@ -189,10 +191,10 @@ struct HerdrHudSessionChipsView: View {
             .foregroundStyle(HerdrTheme.text)
             .padding(.leading, 9)
             .padding(.trailing, chip.status == .done ? 29 : 9)
-            .frame(width: HerdrHudPlacement.chipWidth, height: HerdrTheme.minHitTarget)
+            .frame(width: HerdrHudPlacement.chipWidth, height: HerdrHudPlacement.chipHeight)
             .herdrHitTarget(
                 minWidth: HerdrHudPlacement.chipWidth,
-                minHeight: HerdrTheme.minHitTarget
+                minHeight: HerdrHudPlacement.chipHeight
             )
             .background(HerdrTheme.elevated, in: .capsule)
             .overlay {

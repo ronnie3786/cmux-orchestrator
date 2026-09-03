@@ -9,10 +9,13 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let collapsedSize = CGSize(width: 72, height: 72)
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
-    static let chipWidth: CGFloat = 132
-    /// Mirrors `HerdrTheme.minHitTarget`. Duplicated as a literal because this
-    /// type is deliberately pure CoreGraphics math with no SwiftUI dependency.
-    static let chipHeight: CGFloat = 28
+    static let chipWidth: CGFloat = 158
+    /// The chip's rendered height AND the height the panel frame reserves for
+    /// it — `HerdrHudSessionChipsView` must read this, not `HerdrTheme`, or the
+    /// two disagree and the collapsed panel mis-sizes. Deliberately larger than
+    /// `HerdrTheme.minHitTarget`; a literal because this type is pure
+    /// CoreGraphics math with no SwiftUI dependency.
+    static let chipHeight: CGFloat = 42
     static let chipSpacing: CGFloat = 6
     /// A fixed accessory lane keeps result-node hover expansion inside the
     /// panel's bounds. The lane projects left from the session identity, so

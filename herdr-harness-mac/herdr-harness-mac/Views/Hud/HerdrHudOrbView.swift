@@ -50,6 +50,10 @@ struct HerdrHudOrbView: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     let session: HerdrHudSession
+    /// The attention the HUD is actually willing to SHOW, taken straight from
+    /// the chip projection. Defaulted so previews and render tests can mount
+    /// the orb alone.
+    var attentionChipCount: Int = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
@@ -191,12 +195,14 @@ struct HerdrHudOrbView: View {
         }
     }
 
+    /// One projection behind both surfaces. This used to recompute attention
+    /// from `model.attentionPanes`, which reads raw `agentStatus` and consults
+    /// neither dismissals nor mutes — so a `.blocked` session's badge and ring
+    /// could never be cleared by any gesture, because unlike `.done` it never
+    /// self-heals through the server's ack projection. Whatever the HUD is
+    /// willing to show as a chip is now what the orb counts.
     private var attentionCount: Int {
-        filteredUnreadAlertCount > 0 ? filteredUnreadAlertCount : filteredAttentionPanes.count
-    }
-
-    private var filteredAttentionPanes: [HerdrPane] {
-        HerdrHudNotificationFilter.panes(model.attentionPanes)
+        filteredUnreadAlertCount > 0 ? filteredUnreadAlertCount : attentionChipCount
     }
 
     private var filteredUnreadAlertCount: Int {

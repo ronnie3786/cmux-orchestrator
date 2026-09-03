@@ -18,13 +18,23 @@ struct HerdrHudRootView: View {
         HerdrHudSessionChips.chips(
             panes: model.workspaces.flatMap(\.panes),
             mutedPaneIDs: model.mutedHudSessionIDs,
-            dismissedStatuses: model.dismissedHudChipStatuses,
+            dismissed: model.dismissedHudChips,
             revealTitles: model.showSessionTitles,
             artifacts: model.unopenedResultArtifacts,
             limit: controller.isShowingAllChips
                 ? HerdrHudPlacement.maxExpandedChips
                 : HerdrHudPlacement.maxChips
         )
+    }
+
+    /// What the orb badges: the chips this projection is willing to show that
+    /// actually need attention, plus whatever is folded under `+N`. Counting
+    /// only `needsAttention` chips keeps a `.working` pane driving the orb's
+    /// working state rather than flipping it to attention.
+    private func attentionChipCount(
+        _ state: (chips: [HerdrHudSessionChips.Chip], overflow: Int, detachedArtifacts: [AgentResultArtifact])
+    ) -> Int {
+        state.chips.count(where: { $0.status.needsAttention }) + state.overflow
     }
 
     /// Recomputed whenever the target pane reports new work, which is the cue
@@ -54,7 +64,8 @@ struct HerdrHudRootView: View {
                             model: model,
                             controller: controller,
                             session: session,
-                            artifacts: chipState.detachedArtifacts
+                            artifacts: chipState.detachedArtifacts,
+                            attentionChipCount: attentionChipCount(chipState)
                         )
 
                         if !chipState.chips.isEmpty || chipState.overflow > 0 {

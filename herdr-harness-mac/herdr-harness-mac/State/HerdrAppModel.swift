@@ -56,7 +56,12 @@ final class HerdrAppModel {
     var collapsedSidebarTabIDs: Set<String>
     var starredChatIDs: Set<String>
     private(set) var mutedHudSessionIDs: Set<String>
-    private(set) var dismissedHudChipStatuses: [String: AgentStatus] = [:]
+    /// Scoped pane id -> the dismissal that silenced its chip. Persisted under
+    /// `herdr.hud.dismissedChips.v1`: this used to be in memory only, so every
+    /// relaunch resurrected every chip the user had already cleared. Safe to
+    /// persist only because the dismissal is keyed to an episode — see
+    /// `HudChipDismissal`.
+    private(set) var dismissedHudChips: [String: HudChipDismissal] = [:]
     /// Unsent composer text, per pane, so switching chats gives you that chat's
     /// own draft back instead of a blank field. In memory only: drafts carry
     /// pasted and dictated content, and their attachments are security-scoped
@@ -261,6 +266,7 @@ final class HerdrAppModel {
         )
         starredChatIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.starredChats") ?? [])
         mutedHudSessionIDs = Set(defaults.stringArray(forKey: "herdr.hud.mutedSessions") ?? [])
+        dismissedHudChips = Self.loadDismissedHudChips(defaults: defaults)
 
         if case let .machine(id) = machineScope, !persistedMachines.contains(where: { $0.id == id }) {
             machineScope = .all
@@ -2327,7 +2333,7 @@ final class HerdrAppModel {
         if hadUnread {
             shouldAcknowledgeRemotely = true
         } else if pane.agentStatus == .done {
-            let episodeKey = Self.doneEpisodeKey(for: pane)
+            let episodeKey = pane.episodeKey
             shouldAcknowledgeRemotely = lastAckedDoneEpisodeByPaneID[pane.id] != episodeKey
             if shouldAcknowledgeRemotely {
                 lastAckedDoneEpisodeByPaneID[pane.id] = episodeKey
@@ -2529,7 +2535,32 @@ final class HerdrAppModel {
 
     func dismissHudChip(_ paneID: String) {
         guard let pane = pane(id: paneID) else { return }
-        dismissedHudChipStatuses[paneID] = pane.agentStatus
+        dismissedHudChips[paneID] = HudChipDismissal(pane: pane, dismissedAt: Date())
+        persistDismissedHudChips()
+    }
+
+    private func persistDismissedHudChips() {
+        dismissedHudChips = HerdrHudSessionChips.capped(
+            dismissedHudChips,
+            limit: Self.maxPersistedHudChipDismissals
+        )
+        userDefaults.set(
+            try? JSONEncoder().encode(dismissedHudChips),
+            forKey: Self.dismissedHudChipsKey
+        )
+    }
+
+    private static let dismissedHudChipsKey = "herdr.hud.dismissedChips.v1"
+    private static let maxPersistedHudChipDismissals = 500
+
+    /// Total: a missing key or unreadable payload yields an empty map rather
+    /// than throwing. A lost dismissal only re-shows a chip; a crash at launch
+    /// would be far worse.
+    private static func loadDismissedHudChips(defaults: UserDefaults) -> [String: HudChipDismissal] {
+        guard let data = defaults.data(forKey: dismissedHudChipsKey),
+              let stored = try? JSONDecoder().decode([String: HudChipDismissal].self, from: data)
+        else { return [:] }
+        return HerdrHudSessionChips.capped(stored, limit: maxPersistedHudChipDismissals)
     }
 
     func openWorkspace(id: String) {
@@ -3277,14 +3308,12 @@ final class HerdrAppModel {
             collapsedSidebarTabIDs = prunedCollapsedTabs
             userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         }
-        let prunedChipStatuses = HerdrHudSessionChips.prunedDismissals(
-            dismissedHudChipStatuses,
-            machineID: machineID,
-            panes: freshWorkspaces.flatMap(\.panes)
-        )
         // A refresh that returned nothing is more likely a half-failed poll than
         // a machine with no panes, and dropping drafts is unrecoverable — so
-        // only prune when this machine actually reported panes.
+        // only prune when this machine actually reported panes. Chip dismissals
+        // need the same guard for the same reason: `prunedDismissals` drops any
+        // entry whose pane is absent, so an empty poll would un-dismiss every
+        // chip the user had cleared.
         if !validPaneIDs.isEmpty {
             let prunedDrafts = composerDrafts.filter { paneID, _ in
                 guard MachineScopedID.split(paneID)?.machineID == machineID else { return true }
@@ -3298,11 +3327,17 @@ final class HerdrAppModel {
             if prunedDoneEpisodes != lastAckedDoneEpisodeByPaneID {
                 lastAckedDoneEpisodeByPaneID = prunedDoneEpisodes
             }
-        }
-        // Observation notifies on write, not change. The always-mounted HUD's SwiftUI root is
-        // the sole observer, so assigning an equal value on every refresh invalidates it.
-        if prunedChipStatuses != dismissedHudChipStatuses {
-            dismissedHudChipStatuses = prunedChipStatuses
+            let prunedChipDismissals = HerdrHudSessionChips.prunedDismissals(
+                dismissedHudChips,
+                machineID: machineID,
+                panes: freshWorkspaces.flatMap(\.panes)
+            )
+            // Observation notifies on write, not change. The always-mounted HUD's SwiftUI root is
+            // the sole observer, so assigning an equal value on every refresh invalidates it.
+            if prunedChipDismissals != dismissedHudChips {
+                dismissedHudChips = prunedChipDismissals
+                persistDismissedHudChips()
+            }
         }
     }
 
@@ -3401,9 +3436,6 @@ final class HerdrAppModel {
         ).stamped(machineID: alert.machineID)
     }
 
-    private static func doneEpisodeKey(for pane: HerdrPane) -> String {
-        pane.lastActivityAt.map(HerdrTimestamp.string) ?? String(pane.revision)
-    }
 
     private func markPaneAlertsReadRemotely(_ pane: HerdrPane) {
         guard !isDemoMode else { return }
@@ -3558,9 +3590,10 @@ final class HerdrAppModel {
         }
         starredChatIDs = starredChatIDs.filter { MachineScopedID.split($0)?.machineID != id }
         mutedHudSessionIDs = mutedHudSessionIDs.filter { MachineScopedID.split($0)?.machineID != id }
-        dismissedHudChipStatuses = dismissedHudChipStatuses.filter {
+        dismissedHudChips = dismissedHudChips.filter {
             MachineScopedID.split($0.key)?.machineID != id
         }
+        persistDismissedHudChips()
         composerDrafts = composerDrafts.filter {
             MachineScopedID.split($0.key)?.machineID != id
         }

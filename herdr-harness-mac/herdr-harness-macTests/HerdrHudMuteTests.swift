@@ -64,8 +64,8 @@ struct HerdrHudMuteTests {
 
         #expect(!model.mutedHudSessionIDs.contains(demoOne))
         #expect(model.mutedHudSessionIDs.contains(demoTwo))
-        #expect(model.dismissedHudChipStatuses[demoOne] == nil)
-        #expect(model.dismissedHudChipStatuses[demoTwo] == .done)
+        #expect(model.dismissedHudChips[demoOne] == nil)
+        #expect(model.dismissedHudChips[demoTwo]?.status == .done)
     }
 
     @MainActor
@@ -77,8 +77,8 @@ struct HerdrHudMuteTests {
         model.dismissHudChip(paneID)
         model.dismissHudChip("demo1|missing")
 
-        #expect(model.dismissedHudChipStatuses[paneID] == .working)
-        #expect(model.dismissedHudChipStatuses["demo1|missing"] == nil)
+        #expect(model.dismissedHudChips[paneID]?.status == .working)
+        #expect(model.dismissedHudChips["demo1|missing"] == nil)
     }
 
     private func makeDefaults() -> UserDefaults {

@@ -1,8 +1,44 @@
 import Foundation
 
+/// One dismissal of one session chip, keyed to the *episode* it silenced.
+///
+/// Status alone cannot express "the thing I dismissed": a pane reads `.done`
+/// both before and after it answers again, so a status-only key is unsafe to
+/// persist — yesterday's dismissal would silence today's answer.
+struct HudChipDismissal: Codable, Equatable, Sendable {
+    let status: AgentStatus
+    /// `HerdrPane.episodeKey` at the moment of dismissal.
+    let episode: String
+    /// Only used to cap the persisted store newest-first; the projection
+    /// deliberately ignores it.
+    let dismissedAt: Date
+
+    init(status: AgentStatus, episode: String, dismissedAt: Date) {
+        self.status = status
+        self.episode = episode
+        self.dismissedAt = dismissedAt
+    }
+
+    init(pane: HerdrPane, dismissedAt: Date) {
+        self.init(status: pane.agentStatus, episode: pane.episodeKey, dismissedAt: dismissedAt)
+    }
+
+    func silences(_ pane: HerdrPane) -> Bool {
+        status == pane.agentStatus && episode == pane.episodeKey
+    }
+}
+
 /// Pure projection for the identity-bearing session chips shown alongside the
 /// collapsed HUD orb. The pi-chat gate stays shared with HUD notifications,
 /// while mute and dismissal remain local to this surface.
+///
+/// **Artifacts never create or resurrect a session chip.** They attach to a
+/// chip that is independently visible, and otherwise dock to the orb via
+/// `detachedArtifacts`. An unviewed result is still always reachable from the
+/// collapsed HUD — but it can no longer defeat a dismissal or a mute, which is
+/// what used to make a clicked session reappear forever: clicking the chip
+/// routes to the pane, the harness acks it to `.idle`, and the artifact clause
+/// put the chip straight back on the next projection.
 enum HerdrHudSessionChips {
     struct Chip: Identifiable, Equatable {
         let id: String
@@ -32,7 +68,7 @@ enum HerdrHudSessionChips {
     static func chips(
         panes: [HerdrPane],
         mutedPaneIDs: Set<String>,
-        dismissedStatuses: [String: AgentStatus],
+        dismissed: [String: HudChipDismissal],
         revealTitles: Bool,
         artifacts: [AgentResultArtifact] = [],
         limit: Int = HerdrHudPlacement.maxChips
@@ -46,16 +82,15 @@ enum HerdrHudSessionChips {
                 case .blocked, .done, .working:
                     true
                 case .idle, .unknown:
-                    !(paneArtifacts[pane.id] ?? []).isEmpty
+                    false
                 }
             }
             .filter { pane in
-                dismissedStatuses[pane.id] != pane.agentStatus || !(paneArtifacts[pane.id] ?? []).isEmpty
+                guard let dismissal = dismissed[pane.id] else { return true }
+                return !dismissal.silences(pane)
             }
             .filter { pane in
-                !(mutedPaneIDs.contains(pane.id)
-                    && pane.agentStatus != .blocked
-                    && (paneArtifacts[pane.id] ?? []).isEmpty)
+                !(mutedPaneIDs.contains(pane.id) && pane.agentStatus != .blocked)
             }
             .sorted { left, right in
                 let leftHasResults = !(paneArtifacts[left.id] ?? []).isEmpty
@@ -107,25 +142,45 @@ enum HerdrHudSessionChips {
         )
     }
 
-    /// Drops a dismissal as soon as its pane leaves the status it was dismissed
-    /// at, so a dismissal silences one *episode* rather than the status value
-    /// forever. Without this, clicking a finished session's chip once retired
-    /// every later `.done` for that pane and completed agents quietly stopped
-    /// appearing on the HUD. Entries for panes that vanished are dropped too.
+    /// Drops a dismissal as soon as its pane leaves the episode it was
+    /// dismissed at, so a dismissal silences one *episode* rather than the
+    /// status value forever. Without this, clicking a finished session's chip
+    /// once retired every later `.done` for that pane and completed agents
+    /// quietly stopped appearing on the HUD. Entries for panes that vanished
+    /// are dropped too.
+    ///
+    /// The episode check is what makes a dismissal safe to persist across
+    /// relaunch: a restored `.done` dismissal cannot silence a *new* `.done`
+    /// that arrived overnight, because the new answer carries a new stamp.
     static func prunedDismissals(
-        _ dismissed: [String: AgentStatus],
+        _ dismissed: [String: HudChipDismissal],
         machineID: String,
         panes: [HerdrPane]
-    ) -> [String: AgentStatus] {
-        var liveStatuses: [String: AgentStatus] = [:]
+    ) -> [String: HudChipDismissal] {
+        var livePanes: [String: HerdrPane] = [:]
         for pane in panes {
-            liveStatuses[pane.id] = pane.agentStatus
+            livePanes[pane.id] = pane
         }
-        return dismissed.filter { paneID, dismissedStatus in
+        return dismissed.filter { paneID, dismissal in
             guard MachineScopedID.split(paneID)?.machineID == machineID else { return true }
-            guard let status = liveStatuses[paneID] else { return false }
-            return status == dismissedStatus
+            guard let pane = livePanes[paneID] else { return false }
+            return dismissal.silences(pane)
         }
+    }
+
+    /// Newest-first cap for the persisted store, so a long-lived install cannot
+    /// grow the dismissal map without bound.
+    static func capped(_ dismissed: [String: HudChipDismissal], limit: Int) -> [String: HudChipDismissal] {
+        guard dismissed.count > limit else { return dismissed }
+        let newest = dismissed
+            .sorted { left, right in
+                if left.value.dismissedAt != right.value.dismissedAt {
+                    return left.value.dismissedAt > right.value.dismissedAt
+                }
+                return left.key < right.key
+            }
+            .prefix(max(0, limit))
+        return Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) })
     }
 
     private static func since(for pane: HerdrPane) -> Date? {
