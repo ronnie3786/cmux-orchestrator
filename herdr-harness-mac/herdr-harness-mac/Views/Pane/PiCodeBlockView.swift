@@ -4,8 +4,12 @@ import SwiftUI
 struct PiCodeBlockView: View {
     let language: String?
     let code: String
+    /// Composed into the copy control's identifier. `PiMarkdownBlock.id` is only
+    /// the block's index within its own message, so it collides across the
+    /// timeline without the owning message's id.
+    var ownerID: String = ""
+    var blockID: Int = 0
     @State private var copied = false
-    @State private var isHovering = false
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
@@ -30,9 +34,13 @@ struct PiCodeBlockView: View {
                 .herdrFont(.caption)
                 .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)
                 .buttonStyle(.plain)
-                .opacity(isHovering || copied ? 1 : 0)
-                .animation(PiChatChrome.hoverAnimation, value: isHovering)
+                // Was hidden until hover, which made it read as missing. It now
+                // rests at a low opacity — which also drops one tracking area
+                // per code block from the timeline.
+                .opacity(copied ? 1 : 0.55)
+                .animation(PiChatChrome.hoverAnimation, value: copied)
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")
+                .accessibilityIdentifier("pi-code-copy-\(ownerID)-\(blockID)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -59,7 +67,6 @@ struct PiCodeBlockView: View {
                 .stroke(HerdrTheme.surface.opacity(0.5), lineWidth: 1)
         }
         .herdrHaptic(trigger: hapticPulse)
-        .onHover { isHovering = $0 }
     }
 
     private func copyCode() {

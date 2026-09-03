@@ -17,10 +17,21 @@ struct PiUserMessageView: View {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(HerdrTheme.accent.opacity(0.16), lineWidth: 1)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel)
+            // Attached to the bubble rather than the row: the row is full width,
+            // so a row-level overlay strands the control at the far left while
+            // the bubble hugs the right. Offset into the leading gutter the
+            // 42pt pad already reserves, so it never sits over the text.
+            .piCopyAffordance(
+                message.text,
+                label: "Copy prompt",
+                identifier: "pi-user-copy-\(message.id)",
+                alignment: .topLeading,
+                offset: CGSize(width: -28, height: 4)
+            )
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 42)
-            .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
     }
 }
 

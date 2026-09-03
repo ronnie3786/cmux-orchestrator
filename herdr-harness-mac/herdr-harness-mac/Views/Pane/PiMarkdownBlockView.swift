@@ -3,6 +3,9 @@ import SwiftUI
 struct PiMarkdownBlockView: View {
     let block: PiMarkdownBlock
     var isFirst: Bool = false
+    /// The owning message's id, so a code block's copy control can carry an
+    /// identifier that is unique across the timeline.
+    var ownerID: String = ""
     @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
@@ -26,7 +29,7 @@ struct PiMarkdownBlockView: View {
                 .accessibilityAddTraits(.isHeader)
                 .padding(.top, isFirst ? 0 : HerdrProse.headingTopSpacing(level))
         case let .code(_, language, code):
-            PiCodeBlockView(language: language, code: code)
+            PiCodeBlockView(language: language, code: code, ownerID: ownerID, blockID: block.id)
         case let .list(_, items):
             PiMarkdownListView(items: items)
         case let .quote(_, text):

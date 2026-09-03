@@ -50,7 +50,7 @@ struct PiMarkdownMessageView: View {
             : PiMarkdownDocumentCache.shared.blocks(for: split.prefix, id: id)
         return VStack(alignment: .leading, spacing: HerdrProse.blockSpacing) {
             ForEach(blocks) { block in
-                PiMarkdownBlockView(block: block, isFirst: block.id == blocks.first?.id)
+                PiMarkdownBlockView(block: block, isFirst: block.id == blocks.first?.id, ownerID: id ?? "")
             }
             PiMarkdownText(
                 split.tail,
@@ -68,7 +68,7 @@ struct PiMarkdownMessageView: View {
         let blocks = PiMarkdownDocumentCache.shared.blocks(for: source, id: id)
         return VStack(alignment: .leading, spacing: HerdrProse.blockSpacing) {
             ForEach(blocks) { block in
-                PiMarkdownBlockView(block: block, isFirst: block.id == blocks.first?.id)
+                PiMarkdownBlockView(block: block, isFirst: block.id == blocks.first?.id, ownerID: id ?? "")
             }
         }
     }

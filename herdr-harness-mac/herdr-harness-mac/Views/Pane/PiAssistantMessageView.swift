@@ -16,5 +16,11 @@ struct PiAssistantMessageView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(block.status == .streaming ? "Pi is responding" : "Pi: \(block.text)")
+        .piCopyAffordance(
+            block.text,
+            label: "Copy response",
+            identifier: "pi-assistant-copy-\(block.id)",
+            isEnabled: block.status != .streaming
+        )
     }
 }
