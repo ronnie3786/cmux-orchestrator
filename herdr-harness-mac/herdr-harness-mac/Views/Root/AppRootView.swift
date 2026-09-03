@@ -5,6 +5,10 @@ import SwiftUI
 /// the workspace overview that only iPad ever showed as a middle column.
 enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case session
+    /// Picker-only. Git is a *pane* sub-mode, not a window destination, so this
+    /// case never lands in `detailScope` — the picker translates it into a
+    /// `.herdrFocusPaneMode` post and reads it back off the mounted session.
+    case git
     case workspace
     case activeWork
     case fleet
@@ -22,12 +26,20 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     /// had room for.
     static let pickerCases: [HerdrDetailScope] = [
         .session,
+        .git,
         .workspace,
         .activeWork,
         .fleet,
         .attention,
         .activity,
     ]
+
+    /// The segments actually rendered. Git only earns a segment when the pane
+    /// on screen has a repository, mirroring how the old header button came and
+    /// went with `gitIsAvailable`.
+    static func pickerCases(includingGit: Bool) -> [HerdrDetailScope] {
+        includingGit ? pickerCases : pickerCases.filter { $0 != .git }
+    }
 
     /// Returns a scope only when the central picker has a matching segment.
     /// Dedicated toolbar destinations intentionally resolve to no selection.
@@ -38,6 +50,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     var label: String {
         switch self {
         case .session: "Session"
+        case .git: "Git"
         case .workspace: "Workspace"
         case .activeWork: "Active Work"
         case .fleet: "Fleet"
@@ -49,6 +62,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     var symbol: String {
         switch self {
         case .session: "bubble.left.and.bubble.right"
+        case .git: "arrow.triangle.branch"
         case .workspace: "rectangle.3.group"
         case .activeWork: "point.topleft.down.to.point.bottomright.curvepath"
         case .fleet: "desktopcomputer"
@@ -136,7 +150,7 @@ final class HerdrShellState {
     /// nothing is selected at all.
     func resolvedScope(for model: HerdrAppModel) -> HerdrDetailScope {
         switch detailScope {
-        case .session:
+        case .session, .git:
             if model.pane(id: model.selectedPaneID) != nil { return .session }
             if model.workspace(id: model.selectedWorkspaceID) != nil { return .workspace }
             return .attention
@@ -160,7 +174,7 @@ final class HerdrShellState {
     /// (`WorkspaceNavigationView.scopeSelection`).
     func currentDestination(for model: HerdrAppModel) -> HerdrDestination? {
         switch resolvedScope(for: model) {
-        case .session: model.selectedPaneID.map(HerdrDestination.pane)
+        case .session, .git: model.selectedPaneID.map(HerdrDestination.pane)
         case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
         case .activeWork: .activeWork
         case .fleet: .fleet

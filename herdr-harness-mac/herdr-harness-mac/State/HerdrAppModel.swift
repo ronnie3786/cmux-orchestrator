@@ -42,6 +42,14 @@ final class HerdrAppModel {
     var starredChatIDs: Set<String>
     private(set) var mutedHudSessionIDs: Set<String>
     private(set) var dismissedHudChipStatuses: [String: AgentStatus] = [:]
+    /// What the mounted pane session is showing, published so the window
+    /// toolbar's scope picker can render and select a Git segment. The mode
+    /// itself still belongs to whichever `PaneSessionView` is mounted — this is
+    /// a read-only mirror, the same one-way shape as the `.herdrFocusPaneMode`
+    /// commands that drive it.
+    private(set) var currentPaneDetailMode: PaneDetailMode?
+    private(set) var currentPaneGitIsAvailable = false
+    @ObservationIgnored private var currentPaneDetailModeOwner: String?
     /// The pane ⇧⌘K last asked the sidebar to show, and a token that makes each
     /// ask distinct.
     ///
@@ -2320,6 +2328,24 @@ final class HerdrAppModel {
             mutedHudSessionIDs.insert(paneID)
         }
         userDefaults.set(Array(mutedHudSessionIDs), forKey: "herdr.hud.mutedSessions")
+    }
+
+    func notePaneDetailMode(_ mode: PaneDetailMode, gitIsAvailable: Bool, for paneID: String) {
+        currentPaneDetailModeOwner = paneID
+        // Observation notifies on write, not change, and the always-mounted
+        // toolbar observes both — only assign when something actually moved.
+        if currentPaneDetailMode != mode { currentPaneDetailMode = mode }
+        if currentPaneGitIsAvailable != gitIsAvailable { currentPaneGitIsAvailable = gitIsAvailable }
+    }
+
+    /// Only the pane that published the mode may retract it. Switching panes
+    /// mounts the replacement before the outgoing view disappears, so an
+    /// unconditional clear would wipe the value the new pane just wrote.
+    func clearPaneDetailMode(for paneID: String) {
+        guard currentPaneDetailModeOwner == paneID else { return }
+        currentPaneDetailModeOwner = nil
+        currentPaneDetailMode = nil
+        currentPaneGitIsAvailable = false
     }
 
     func dismissHudChip(_ paneID: String) {

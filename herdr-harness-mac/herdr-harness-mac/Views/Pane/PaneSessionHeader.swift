@@ -9,9 +9,6 @@ struct PaneSessionHeader: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     let store: PiConversationStore
-    var gitIsAvailable = false
-    var selectedMode: PaneDetailMode = .terminal
-    var toggleGit: () -> Void = { }
     var showsPiSessionSummary = false
     var summarizePiSession: () -> Void = { }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -105,36 +102,6 @@ struct PaneSessionHeader: View {
                     .accessibilityHint("Opens a short summary generated in a separate headless Pi session")
             }
 
-            if gitIsAvailable {
-                Button(
-                    selectedMode == .git ? gitReturnTitle : "Git changes",
-                    systemImage: PaneDetailMode.git.symbol,
-                    action: toggleGit
-                )
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(selectedMode == .git ? HerdrTheme.accent : HerdrTheme.mist)
-                    .frame(width: 30, height: 28)
-                    .contentShape(.rect)
-                    .background(HerdrTheme.graphite)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                            .strokeBorder(
-                                selectedMode == .git ? HerdrTheme.accent : HerdrTheme.surface,
-                                lineWidth: 1
-                            )
-                    }
-                    .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-                    .buttonStyle(.plain)
-                    .help(selectedMode == .git ? gitReturnTitle : "Show Git changes for this pane")
-                    .accessibilityIdentifier("pane-git-button")
-                    .accessibilityHint(
-                        selectedMode == .git
-                            ? "Returns to this pane's primary view"
-                            : "Shows modified files, diffs, and recent commits"
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.86)))
-            }
-
             Button("Focus on Mac", systemImage: pane.focused ? "scope" : "macwindow") {
                 Task { await model.focus(pane) }
             }
@@ -153,7 +120,6 @@ struct PaneSessionHeader: View {
             .help(pane.focused ? "This pane is focused in cmux" : "Focus this pane in cmux")
             .accessibilityHint(pane.focused ? "This pane is focused on your Mac" : "Focuses this pane on your Mac")
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: gitIsAvailable)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.compactionActivity)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.connection)
         .accessibilityElement(children: .contain)
@@ -229,7 +195,4 @@ struct PaneSessionHeader: View {
         model.toastMessage = message
     }
 
-    private var gitReturnTitle: String {
-        pane.supportsPiSemanticChat ? "Back to chat" : "Back to terminal"
-    }
 }

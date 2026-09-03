@@ -82,9 +82,6 @@ struct PaneSessionView: View {
                     model: model,
                     pane: currentPane,
                     store: piConversationStore,
-                    gitIsAvailable: gitIsAvailable,
-                    selectedMode: selectedMode,
-                    toggleGit: toggleGit,
                     showsPiSessionSummary: summaryRequest != nil,
                     summarizePiSession: presentPiSessionSummary
                 )
@@ -182,7 +179,14 @@ struct PaneSessionView: View {
                 selectedMode = .terminal
             }
         }
+        .onChange(of: selectedMode, initial: true) { _, mode in
+            model.notePaneDetailMode(mode, gitIsAvailable: gitIsAvailable, for: pane.id)
+        }
+        .onChange(of: gitIsAvailable, initial: true) { _, available in
+            model.notePaneDetailMode(selectedMode, gitIsAvailable: available, for: pane.id)
+        }
         .onDisappear {
+            model.clearPaneDetailMode(for: pane.id)
             composerAttachments.forEach { $0.removeSourceFileIfOwned() }
             keyboardRouter.discardPendingInput()
         }

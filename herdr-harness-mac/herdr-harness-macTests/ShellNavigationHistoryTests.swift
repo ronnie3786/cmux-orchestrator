@@ -5,6 +5,46 @@ import Testing
 @Suite("Shell navigation history", .serialized)
 @MainActor
 struct ShellNavigationHistoryTests {
+    @Test("Git only earns a picker segment when the pane on screen has a repo")
+    func gitSegmentFollowsRepoAvailability() {
+        let withGit = HerdrDetailScope.pickerCases(includingGit: true)
+        let withoutGit = HerdrDetailScope.pickerCases(includingGit: false)
+
+        #expect(withGit.contains(.git))
+        #expect(!withoutGit.contains(.git))
+        // Right of chat, as asked: Session is the chat-bubble segment.
+        #expect(withGit.firstIndex(of: .git) == 1)
+        #expect(withGit.first == .session)
+        #expect(withoutGit == withGit.filter { $0 != .git })
+    }
+
+    @Test("Only the publishing pane may retract the mode the toolbar reads")
+    func paneModeOwnershipSurvivesAPaneSwitch() {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        model.notePaneDetailMode(.git, gitIsAvailable: true, for: "m1|a")
+        // Switching panes mounts the replacement before the outgoing view
+        // disappears, so the stale clear must be ignored.
+        model.notePaneDetailMode(.chat, gitIsAvailable: false, for: "m1|b")
+        model.clearPaneDetailMode(for: "m1|a")
+
+        #expect(model.currentPaneDetailMode == .chat)
+        #expect(!model.currentPaneGitIsAvailable)
+
+        model.clearPaneDetailMode(for: "m1|b")
+        #expect(model.currentPaneDetailMode == nil)
+    }
+
+    @Test("Git is a pane sub-mode, so it never resolves to a window destination")
+    func gitScopeResolvesToTheSession() {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        let shell = HerdrShellState()
+        shell.detailScope = .git
+
+        // With no pane selected it degrades exactly like `.session` does rather
+        // than rendering an empty Git surface.
+        #expect(shell.resolvedScope(for: model) != .git)
+    }
+
     @Test("Opening a pane, a workspace, and Active Work records three visits")
     func openingDestinationsRecordsTrail() throws {
         try withModel { model, firstPane, _, firstWorkspace, _ in

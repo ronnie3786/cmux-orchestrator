@@ -55,7 +55,9 @@ struct WorkspaceNavigationView: View {
     @ViewBuilder
     private var detail: some View {
         switch shell.resolvedScope(for: model) {
-        case .session:
+        // `.git` never survives `resolvedScope` — it is a pane sub-mode the
+        // picker translates — but the switch still has to name it.
+        case .session, .git:
             if let pane = model.pane(id: model.selectedPaneID) {
                 PaneSessionView(model: model, pane: pane)
                     .id(pane.id)
@@ -205,7 +207,7 @@ struct WorkspaceNavigationView: View {
         ToolbarItem(placement: .principal) {
             ZStack(alignment: .topTrailing) {
                 Picker("Detail", selection: scopeSelection) {
-                    ForEach(HerdrDetailScope.pickerCases) { scope in
+                    ForEach(HerdrDetailScope.pickerCases(includingGit: model.currentPaneGitIsAvailable)) { scope in
                         Label(scope.label, systemImage: scope.symbol)
                             .tag(scope as HerdrDetailScope?)
                     }
@@ -252,11 +254,36 @@ struct WorkspaceNavigationView: View {
     private var scopeSelection: Binding<HerdrDetailScope?> {
         Binding(
             get: {
-                HerdrDetailScope.pickerSelection(for: shell.resolvedScope(for: model))
+                let resolved = shell.resolvedScope(for: model)
+                // Git is a pane sub-mode wearing a segment: it only reads as
+                // selected while the mounted session is actually showing Git.
+                if resolved == .session, model.currentPaneDetailMode == .git {
+                    return .git
+                }
+                return HerdrDetailScope.pickerSelection(for: resolved)
             },
             set: { scope in
                 guard let scope = scope,
                       HerdrDetailScope.pickerSelection(for: scope) != nil else { return }
+                if scope == .git {
+                    // `selectedMode` belongs to whichever session is mounted, so
+                    // the picker posts the same command the View menu does.
+                    shell.show(.session, model: model)
+                    NotificationCenter.default.post(
+                        name: .herdrFocusPaneMode,
+                        object: PaneDetailMode.git
+                    )
+                    return
+                }
+                // Leaving Git returns the pane to its primary surface, which is
+                // what the old header toggle's "Back to chat" did.
+                if model.currentPaneDetailMode == .git, scope == .session {
+                    let supportsChat = model.pane(id: model.selectedPaneID)?.supportsPiSemanticChat == true
+                    NotificationCenter.default.post(
+                        name: .herdrFocusPaneMode,
+                        object: supportsChat ? PaneDetailMode.chat : PaneDetailMode.terminal
+                    )
+                }
                 shell.show(scope, model: model)
             }
         )
