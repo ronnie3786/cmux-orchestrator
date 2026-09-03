@@ -20,12 +20,10 @@ struct PiCopyButton: View {
         Button(action: copy) {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .herdrFont(.caption)
-                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.mist)
+                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.mist.opacity(restingOpacity))
                 .herdrHitTarget(minWidth: 0)
         }
         .buttonStyle(.plain)
-        .opacity(copied ? 1 : restingOpacity)
-        .animation(PiChatChrome.hoverAnimation, value: copied)
         .help(label)
         .accessibilityLabel(copied ? "Copied" : label)
         .accessibilityIdentifier(accessibilityIdentifier ?? "")
