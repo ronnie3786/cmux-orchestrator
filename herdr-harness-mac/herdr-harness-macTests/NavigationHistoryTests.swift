@@ -133,6 +133,68 @@ struct NavigationHistoryTests {
         #expect(history.goForward(isAlive: alive) == nil)
     }
 
+    @Test("Snapshot round-trips through NavigationHistory init")
+    func snapshotRoundTripsThroughNavigationHistory() {
+        var history = trail(.pane("a"), .pane("b"), .pane("c"))
+        _ = history.goBack(isAlive: alive)
+
+        let restored = NavigationHistory(snapshot: history.snapshot)
+
+        #expect(restored.backward == history.backward)
+        #expect(restored.current == history.current)
+        #expect(restored.forward == history.forward)
+    }
+
+    @Test("An unrecognized kind is dropped without disturbing its neighbors")
+    func unrecognizedKindIsDroppedWithoutDisturbingNeighbors() {
+        let snapshot = NavigationHistorySnapshot(
+            version: NavigationHistorySnapshot.currentVersion,
+            backward: [
+                HerdrDestinationRecord(.pane("a"))!,
+                HerdrDestinationRecord(kind: "widgetPane", id: "z"),
+                HerdrDestinationRecord(.pane("c"))!,
+            ],
+            current: nil,
+            forward: []
+        )
+
+        let restored = NavigationHistory(snapshot: snapshot)
+
+        #expect(restored.backward == [.pane("a"), .pane("c")])
+    }
+
+    @Test("Restoring caps backward to the entries nearest to current")
+    func restoringCapsBackwardToEntriesNearestCurrent() {
+        let oversized = (0..<(NavigationHistory.capacity + 10)).map {
+            HerdrDestinationRecord(.pane("pane-\($0)"))!
+        }
+        let snapshot = NavigationHistorySnapshot(
+            version: NavigationHistorySnapshot.currentVersion,
+            backward: oversized,
+            current: nil,
+            forward: []
+        )
+
+        let restored = NavigationHistory(snapshot: snapshot)
+
+        #expect(restored.backward.count == NavigationHistory.capacity)
+        #expect(restored.backward.first == .pane("pane-10"))
+    }
+
+    @Test("Restoring a snapshot yields a usable Back")
+    func restoringSnapshotYieldsUsableBack() {
+        let snapshot = NavigationHistorySnapshot(
+            version: NavigationHistorySnapshot.currentVersion,
+            backward: [HerdrDestinationRecord(.pane("a"))!],
+            current: HerdrDestinationRecord(.workspace("w1")),
+            forward: []
+        )
+        var restored = NavigationHistory(snapshot: snapshot)
+
+        #expect(restored.canGoBack)
+        #expect(restored.goBack(isAlive: alive) == .pane("a"))
+    }
+
     private func trail(_ destinations: HerdrDestination...) -> NavigationHistory {
         trail(destinations)
     }

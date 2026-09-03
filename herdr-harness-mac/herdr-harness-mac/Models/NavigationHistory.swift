@@ -20,6 +20,16 @@ enum HerdrDestination: Hashable, Sendable {
     case activity
 }
 
+/// Stable, forward-compatible representation of a history destination.
+///
+/// `kind` intentionally remains a string rather than an enum, allowing an
+/// older build to decode a snapshot written by a newer build and drop only the
+/// destination kinds it does not yet understand.
+struct HerdrDestinationRecord: Codable, Equatable, Sendable {
+    let kind: String
+    let id: String?
+}
+
 /// Browser-shaped back/forward over `HerdrDestination`.
 ///
 /// Pure and value-typed so the semantics — dedupe, forward-stack
@@ -94,5 +104,66 @@ struct NavigationHistory: Equatable, Sendable {
         while backward.count > Self.capacity {
             backward.removeFirst()
         }
+    }
+}
+
+extension HerdrDestinationRecord {
+    init?(_ destination: HerdrDestination) {
+        switch destination {
+        case let .pane(id):
+            guard !id.isEmpty else { return nil }
+            kind = "pane"
+            self.id = id
+        case let .workspace(id):
+            guard !id.isEmpty else { return nil }
+            kind = "workspace"
+            self.id = id
+        case .activeWork:
+            kind = "activeWork"
+            id = nil
+        case .fleet:
+            kind = "fleet"
+            id = nil
+        case .attention:
+            kind = "attention"
+            id = nil
+        case .activity:
+            kind = "activity"
+            id = nil
+        }
+    }
+
+    var destination: HerdrDestination? {
+        switch kind {
+        case "pane":
+            guard let id, !id.isEmpty else { return nil }
+            return .pane(id)
+        case "workspace":
+            guard let id, !id.isEmpty else { return nil }
+            return .workspace(id)
+        case "activeWork": return .activeWork
+        case "fleet": return .fleet
+        case "attention": return .attention
+        case "activity": return .activity
+        default: return nil
+        }
+    }
+}
+
+extension NavigationHistory {
+    var snapshot: NavigationHistorySnapshot {
+        NavigationHistorySnapshot(
+            version: NavigationHistorySnapshot.currentVersion,
+            backward: backward.suffix(Self.capacity).compactMap(HerdrDestinationRecord.init),
+            current: current.flatMap(HerdrDestinationRecord.init),
+            forward: forward.prefix(Self.capacity).compactMap(HerdrDestinationRecord.init)
+        )
+    }
+
+    init(snapshot: NavigationHistorySnapshot) {
+        self.init()
+        backward = Array(snapshot.backward.compactMap(\.destination).suffix(Self.capacity))
+        current = snapshot.current?.destination
+        forward = Array(snapshot.forward.compactMap(\.destination).prefix(Self.capacity))
     }
 }

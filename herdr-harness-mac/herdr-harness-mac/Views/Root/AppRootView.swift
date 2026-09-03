@@ -92,9 +92,23 @@ final class HerdrShellState {
 
     /// Browser-style back/forward over the places the detail column has been.
     ///
-    /// Session-only by design: pane ids are machine-scoped and the fleet is
-    /// re-fetched on every launch, so a restored stack would be mostly dead ids.
-    private(set) var history = NavigationHistory()
+    /// Persisted to UserDefaults (`NavigationHistoryPersistenceStore`, key
+    /// `herdr.navigation.history`) so Back/Forward survive an app restart. Pane
+    /// and workspace ids are machine-scoped and the fleet is re-fetched on every
+    /// launch, so most restored entries are dead the instant the app relaunches;
+    /// `goBack`/`goForward` already skip dead destinations at traversal time via
+    /// `isAlive`, and `pruneHistory(for:)` sweeps both stacks once the fleet has
+    /// actually loaded. See the early return there for why it must NOT sweep
+    /// during the pre-load window, or it would delete the very stack this
+    /// feature exists to restore.
+    private(set) var history: NavigationHistory
+    @ObservationIgnored private let historyStore: NavigationHistoryPersistenceStore
+
+    init(userDefaults: UserDefaults = .standard) {
+        let historyStore = NavigationHistoryPersistenceStore(userDefaults: userDefaults)
+        self.historyStore = historyStore
+        self.history = NavigationHistory(snapshot: historyStore.load())
+    }
 
     /// Present the global pane navigator. Incrementing the request also lets a
     /// repeated ⌘K put keyboard focus back in its search field.
@@ -192,7 +206,7 @@ final class HerdrShellState {
     /// route that did not land records nothing.
     func recordVisit(for model: HerdrAppModel) {
         guard let destination = currentDestination(for: model) else { return }
-        history.record(destination)
+        mutateHistory { $0.record(destination) }
     }
 
     func openPane(id paneID: String, model: HerdrAppModel) {
@@ -232,14 +246,14 @@ final class HerdrShellState {
 
     @discardableResult
     func goBack(model: HerdrAppModel) -> Bool {
-        guard let destination = history.goBack(isAlive: { isAlive($0, model: model) }) else { return false }
+        guard let destination = mutateHistory({ $0.goBack(isAlive: { isAlive($0, model: model) }) }) else { return false }
         apply(destination, model: model)
         return true
     }
 
     @discardableResult
     func goForward(model: HerdrAppModel) -> Bool {
-        guard let destination = history.goForward(isAlive: { isAlive($0, model: model) }) else { return false }
+        guard let destination = mutateHistory({ $0.goForward(isAlive: { isAlive($0, model: model) }) }) else { return false }
         apply(destination, model: model)
         return true
     }
@@ -260,7 +274,7 @@ final class HerdrShellState {
         case .attention: detailScope = .attention
         case .activity: detailScope = .activity
         }
-        history.setCurrent(destination)     // bypasses record() deliberately, see NavigationHistory
+        mutateHistory { $0.setCurrent(destination) }     // bypasses record() deliberately, see NavigationHistory
     }
 
     private func isAlive(_ destination: HerdrDestination, model: HerdrAppModel) -> Bool {
@@ -272,11 +286,28 @@ final class HerdrShellState {
     }
 
     func pruneHistory(for model: HerdrAppModel) {
-        history.prune(isAlive: { isAlive($0, model: model) })
+        // A restored stack must survive the pre-load window: right after
+        // relaunch the fleet hasn't been fetched yet, `model.workspaces` is
+        // still empty, and every restored pane/workspace destination would look
+        // dead to `isAlive`; a sweep here would wipe the stack this feature
+        // exists to restore before the user ever gets a chance to use it.
+        // goBack/goForward already filter dead destinations at traversal time,
+        // so it is safe to simply skip the proactive sweep whenever there is no
+        // fleet to check liveness against (this also means a fully-disconnected
+        // fleet, not just first launch, defers its sweep).
+        guard !model.workspaces.isEmpty else { return }
+        mutateHistory { $0.prune(isAlive: { isAlive($0, model: model) }) }
     }
 
     var canGoBack: Bool { history.canGoBack }
     var canGoForward: Bool { history.canGoForward }
+
+    @discardableResult
+    private func mutateHistory<T>(_ mutation: (inout NavigationHistory) -> T) -> T {
+        let result = mutation(&history)
+        historyStore.save(history.snapshot)
+        return result
+    }
 }
 
 struct AppRootView: View {
