@@ -1,6 +1,6 @@
 {
   "workflow": "pr-review-watch",
-  "version": 1,
+  "version": 2,
   "title": "PR Review Watch",
   "description": "Watch the iOS PR review queue, assess each request, and run the chosen review pipeline with artifacts on the board.",
   "phases": [
@@ -15,7 +15,7 @@
       "phase": "queue",
       "skill": "buzz-check-pr-reviews-ios",
       "checkpoint": "human",
-      "next": ["manual-review", "ios-review", "explainer-video", "comprehensive-review", "custom-review"]
+      "next": ["manual-review", "ios-review", "explainer-video", "tech-explainer-video", "comprehensive-review", "custom-review", "complete"]
     },
     {
       "key": "manual-review",
@@ -35,9 +35,17 @@
     },
     {
       "key": "explainer-video",
-      "title": "Record the explainer video",
+      "title": "Record the PR explainer video",
       "phase": "review",
       "skill": "github-pr-explainer-video-v2",
+      "checkpoint": "none",
+      "next": ["complete"]
+    },
+    {
+      "key": "tech-explainer-video",
+      "title": "Record the tech explainer video",
+      "phase": "review",
+      "skill": "tech-explainer-video",
       "checkpoint": "none",
       "next": ["complete"]
     },

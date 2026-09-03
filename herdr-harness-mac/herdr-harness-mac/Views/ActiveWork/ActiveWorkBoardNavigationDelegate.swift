@@ -9,19 +9,22 @@ final class ActiveWorkBoardNavigationDelegate: NSObject, WKNavigationDelegate, W
     private let openExternal: (URL) -> Void
     private let copyText: (String) -> Void
     private let popOut: () -> Void
+    private let spawnReview: (ActiveWorkSpawnReviewPayload) -> Void
 
     init(
         phase: Binding<PaneGitWebLoadPhase>,
         openPane: @escaping (String, String?) -> Void,
         openExternal: @escaping (URL) -> Void,
         copyText: @escaping (String) -> Void,
-        popOut: @escaping () -> Void
+        popOut: @escaping () -> Void,
+        spawnReview: @escaping (ActiveWorkSpawnReviewPayload) -> Void
     ) {
         self.phase = phase
         self.openPane = openPane
         self.openExternal = openExternal
         self.copyText = copyText
         self.popOut = popOut
+        self.spawnReview = spawnReview
     }
 
     func load(_ document: ActiveWorkBoardDocument, in webView: WKWebView) {
@@ -95,6 +98,8 @@ final class ActiveWorkBoardNavigationDelegate: NSObject, WKNavigationDelegate, W
             copyText(text)
         case .popout:
             popOut()
+        case let .spawnReview(payload):
+            spawnReview(payload)
         }
     }
 }

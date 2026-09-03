@@ -950,7 +950,8 @@ actor HerdrAPIClient {
     func sendPiPrompt(
         paneID: String,
         text: String,
-        disposition: PiPromptDisposition
+        disposition: PiPromptDisposition,
+        waitForIdle: Bool = false
     ) async throws {
         let path: String
         switch disposition {
@@ -964,9 +965,23 @@ actor HerdrAPIClient {
         let response: PiCommandResponse = try await request(
             path: path,
             method: "POST",
-            body: APIActionBody(text: text)
+            body: APIActionBody(
+                text: text,
+                wait: waitForIdle ? true : nil,
+                until: waitForIdle ? "idle" : nil,
+                timeoutMs: waitForIdle ? 60_000 : nil
+            )
         )
         guard response.accepted else { throw APIError.invalidResponse }
+    }
+
+    func ingestActiveWork(_ body: ActiveWorkIngestionBody) async throws {
+        let response: MutationResponse = try await request(
+            path: "/api/v1/active-work/ingestions",
+            method: "POST",
+            body: body
+        )
+        guard response.ok else { throw APIError.invalidResponse }
     }
 
     func abortPiConversation(paneID: String) async throws {

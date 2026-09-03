@@ -2020,6 +2020,84 @@
         gap: 8px;
         margin-top: 14px;
       }
+      .chooser-card {
+        max-height: calc(100vh - 96px);
+        overflow-y: auto;
+      }
+      .assess-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .assess-chip {
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--dim);
+        font: 600 10.5px var(--mono);
+        white-space: nowrap;
+      }
+      .assess-chip.rating {
+        border-color: var(--gate-pink);
+        color: var(--gate-pink);
+      }
+      .assess-chip.draft {
+        opacity: 0.7;
+      }
+      .assess-chip .add {
+        color: #a6e3a1;
+      }
+      .assess-chip .del {
+        color: #f38ba8;
+      }
+      .assess-prose {
+        margin-top: 10px;
+        color: var(--text);
+        font-size: 12.5px;
+        line-height: 1.55;
+      }
+      .choice-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 12px;
+      }
+      .choice-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .choice-row:hover {
+        border-color: var(--dim);
+      }
+      .choice-row input {
+        accent-color: var(--gate-pink);
+      }
+      .choice-title {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .choice-skill {
+        margin-left: auto;
+        color: var(--dim);
+        font: 500 10.5px var(--mono);
+      }
+      .choice-text {
+        width: calc(100% - 20px);
+        margin-top: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text);
+        font: 12.5px var(--mono);
+        resize: vertical;
+      }
       .log-panel {
         top: 0;
         right: 0;
@@ -2590,7 +2668,7 @@
       // Live projection adapter. It deliberately writes the same small model
       // used by the prototype so the board's visual derivations stay shared.
       // ---------------------------------------------------------------------
-      let WORKFLOWS = {}, activeWorkflow = null, boardToken = null,
+      let WORKFLOWS = {}, WORKFLOWS_BY_ID = {}, activeWorkflow = null, boardToken = null,
         boardLoad = null, sseAbort = null, sseLastId = "", sseRetry = 1000,
         sseTimer = null, sseRefresh = null, connectionAt = 0, connected = false;
       const LIVE_PALETTE = ["#5b7fd6", "#e08bb8", "#7aa36a", "#c7a24f", "#d65b8f", "#6a7a8f", "#4fa8a0", "#9b8fb8"];
@@ -2665,11 +2743,16 @@
       }
       function adaptBoard(json) {
         const pipelines = json.pipelines?.length ? json.pipelines : json.pipeline ? [json.pipeline] : [];
-        WORKFLOWS = Object.fromEntries(pipelines.map((pipeline) => {
+        const normalizedPipelines = pipelines.map((pipeline) => {
           const stages = [...(pipeline.stages || [])].sort((a, b) => a.sequence - b.sequence);
           const phases = pipeline.phases?.length ? pipeline.phases : [...new Map(stages.map((stage) => [stage.phase_key, { key: stage.phase_key, title: titleCase(stage.phase_key) }])).values()];
-          return [pipeline.slug, { ...pipeline, stages, phases }];
-        }));
+          return { ...pipeline, stages, phases };
+        });
+        // Two pipelines can share a slug across versions; keep the newest for the
+        // board chrome and every version by id so each item resolves its own.
+        WORKFLOWS_BY_ID = Object.fromEntries(normalizedPipelines.map((pipeline) => [pipeline.id, pipeline]));
+        WORKFLOWS = {};
+        for (const pipeline of [...normalizedPipelines].sort((a, b) => (a.version || 0) - (b.version || 0))) WORKFLOWS[pipeline.slug] = pipeline;
         MACHINES = {};
         AGENTS = {};
         const ensureAgent = (agent) => { if (agent?.id && !AGENTS[agent.id]) AGENTS[agent.id] = liveAgent(agent); };
@@ -2689,13 +2772,16 @@
           const session = sessions[0];
           if (session?.machine_id) MACHINES[session.machine_id] ||= { name: session.machine_id, label: session.machine_id === "rocketbot" ? "local" : session.machine_id };
           const jira = item.jira_links?.[0];
-          const wf = WORKFLOWS[item.pipeline?.slug] || { stages: item.pipeline?.stages || [] };
+          const wf = WORKFLOWS_BY_ID[item.pipeline?.id] || WORKFLOWS[item.pipeline?.slug] || { stages: item.pipeline?.stages || [] };
           const current = stageMap[item.current_stage_key];
           const currentDef = (wf.stages || []).find((stage) => stage.stage_key === item.current_stage_key) || current;
           let gate_action = null;
           if (currentDef?.checkpoint_kind === "human" && ["pending", "changes_requested"].includes(current?.checkpoint_state)) gate_action = { label: "Review checkpoint", kind: "approve", to_stage_key: currentDef.next?.[0] || null };
           if (!currentDef?.next?.length && item.needs_attention && item.current_stage_key) gate_action = { label: item.metadata?.pr?.number ? `Merge PR #${item.metadata.pr.number}` : "Complete", kind: "complete", to_stage_key: null };
-          return { id: item.id, key: jira?.issue_key || item.metadata?.key || item.id.slice(-6).toUpperCase(), title: item.title, kind: item.kind, lifecycle: item.lifecycle, needs_attention: item.needs_attention, attention_reason: item.attention_reason, current_stage_key: item.current_stage_key, next_action: item.next_action, revision: item.revision, setup_state: item.setup_state, note: item.next_action, next_setup: item.setup_state === "board_created" ? "Link a Buzz channel" : "Attach driver", updated_label: "", _updatedAt: epoch(item.updated_at), progress: item.progress, pipeline_slug: item.pipeline?.slug, trail_color: LIVE_PALETTE[stableHash(item.id) % LIVE_PALETTE.length], jira: jira && { issue_key: jira.issue_key, issue_type: jira.issue_type, priority: jira.priority, url: jira.url }, pr: item.metadata?.pr && typeof item.metadata.pr === "object" ? item.metadata.pr : null, channel: item.buzz_channels?.[0] ? { name: item.buzz_channels[0].name, url: item.buzz_channels[0].url } : null, unscoped_threads: item.unscoped_threads || [], stages: stageMap, machine_id: session?.machine_id || null, pane: session?.pane_id || null, floor: session?.machine_id ? (MACHINES[session.machine_id]?.label || session.machine_id) : "—", handoff_cmd: session?.pane_id ? sessionHandoff(session) : null, done_label: item.metadata?.done_label || "merged · monitoring", gate_action };
+          if ((item.pipeline?.slug || "") === "pr-review-watch" && item.current_stage_key === "queued") {
+            gate_action = { label: gate_action ? "Pick review paths" : "Add paths / finish", kind: "chooser", to_stage_key: null };
+          }
+          return { id: item.id, key: jira?.issue_key || item.metadata?.key || item.id.slice(-6).toUpperCase(), title: item.title, kind: item.kind, lifecycle: item.lifecycle, needs_attention: item.needs_attention, attention_reason: item.attention_reason, current_stage_key: item.current_stage_key, next_action: item.next_action, revision: item.revision, setup_state: item.setup_state, note: item.next_action, next_setup: item.setup_state === "board_created" ? "Link a Buzz channel" : "Attach driver", updated_label: "", _updatedAt: epoch(item.updated_at), progress: item.progress, pipeline_slug: item.pipeline?.slug, pipeline_id: item.pipeline?.id, summary: item.summary || "", metadata: item.metadata && typeof item.metadata === "object" ? item.metadata : {}, trail_color: LIVE_PALETTE[stableHash(item.id) % LIVE_PALETTE.length], jira: jira && { issue_key: jira.issue_key, issue_type: jira.issue_type, priority: jira.priority, url: jira.url }, pr: item.metadata?.pr && typeof item.metadata.pr === "object" ? item.metadata.pr : null, channel: item.buzz_channels?.[0] ? { name: item.buzz_channels[0].name, url: item.buzz_channels[0].url } : null, unscoped_threads: item.unscoped_threads || [], stages: stageMap, machine_id: session?.machine_id || null, pane: session?.pane_id || null, floor: session?.machine_id ? (MACHINES[session.machine_id]?.label || session.machine_id) : "—", handoff_cmd: session?.pane_id ? sessionHandoff(session) : null, done_label: item.metadata?.done_label || "merged · monitoring", gate_action };
         });
         WORK_ITEMS = mapped;
         const allActivity = (json.items || []).flatMap((item) => (item.activity || []).map((entry) => ({ at: epoch(entry.occurred_at || entry.created_at), actor: entry.actor_kind === "user" ? "user" : (entry.actor_id || "unknown"), item: (item.jira_links?.[0]?.issue_key || item.metadata?.key || item.id.slice(-6).toUpperCase()), message: entry.message || "", stage_id: entry.stage_id, work_id: item.id }))).sort((a, b) => b.at - a.at).slice(0, 200);
@@ -3287,6 +3373,10 @@
           toast(
             `${ga.label} — the driver is still revising; it pings you when the plan is back`,
           );
+          return;
+        }
+        if (ga.kind === "chooser") {
+          openReviewChooser(item, opener);
           return;
         }
         openGateConfirm(item, opener);
@@ -3901,6 +3991,14 @@
               `<span>Checkpoint ${esc(rec.checkpoint_state || "pending")}</span><span class="task-capsule-detail-meta">waiting on you</span>`,
             );
         }
+        if ((item.pipeline_slug || "") === "pr-review-watch" && key === "queued" && assessLine(item))
+          row(
+            `<span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();openPrAssessment('${item.key}', this)" ${kd(`openPrAssessment('${item.key}', this)`)}>${esc(assessLine(item))} →</span><span class="task-capsule-detail-meta">assessment</span>`,
+          );
+        if ((item.pipeline_slug || "") === "pr-review-watch" && item.current_stage_key === "queued" && key === "queued" && item.gate_action?.kind === "chooser" && rec.attention !== "human")
+          row(
+            `<span class="cap-link" role="button" tabindex="0" onclick="event.stopPropagation();gateAct('${item.key}', this)" ${kd(`gateAct('${item.key}', this)`)}>${esc(item.gate_action.label)} →</span><span class="task-capsule-detail-meta">${rec.checkpoint_state === "approved" ? "review paths" : "waiting on you"}</span>`,
+          );
         if (item.lifecycle === "done" && item.done_label)
           row(
             `<span class="cap-approved">${esc(item.done_label)}</span><span class="task-capsule-detail-meta">done</span>`,
@@ -4652,6 +4750,139 @@
           `<div class="overlay-card confirm-card" role="dialog" aria-modal="true" aria-label="${esc(ga.label)}" tabindex="-1"><div class="confirm-kicker">human gate · ${esc(stage.title)}</div><div class="confirm-title">${esc(item.key)} — ${esc(ga.label)}</div><div class="confirm-body">${esc(item.attention_reason || item.next_action || "")}</div><div class="confirm-actions">${actions}</div></div>`,
           opener,
         );
+      }
+      // --- a1. pr-review-watch assessment (the watcher's AI triage of a PR) ---
+      function prAssessmentOf(item) {
+        const rec = (item.stages || {})["queued"] || {};
+        const a = (rec.content && rec.content.assessment) || null;
+        const meta = item.metadata || {};
+        return {
+          rating: a && typeof a.rating === "number" ? a.rating : null,
+          cr: (a && a.cr_estimate) || "",
+          prose: (a && a.summary) || item.summary || "",
+          scope: meta.review_scope || null,
+          kind: meta.requested_kind || "",
+          by: (a && a.assessed_by) || "",
+        };
+      }
+      function assessChipsHtml(item) {
+        const it = prAssessmentOf(item);
+        const chips = [];
+        if (it.rating !== null) chips.push(`<span class="assess-chip rating" title="Reviewer attention needed, 1-5">${it.rating}/5</span>`);
+        if (it.cr) chips.push(`<span class="assess-chip">${esc(it.cr)}</span>`);
+        if (it.scope) chips.push(`<span class="assess-chip diff"><span class="add">+${Number(it.scope.additions) || 0}</span> <span class="del">−${Number(it.scope.deletions) || 0}</span></span>`);
+        if (it.scope) chips.push(`<span class="assess-chip">${Number(it.scope.files) || 0} of ${Number(it.scope.total_files) || 0} files</span>`);
+        if (it.kind) chips.push(`<span class="assess-chip">${esc(it.kind)}</span>`);
+        if (item.pr && item.pr.author) chips.push(`<span class="assess-chip">@${esc(item.pr.author)}</span>`);
+        if (item.pr && item.pr.is_draft) chips.push(`<span class="assess-chip draft">draft</span>`);
+        return chips.length ? `<div class="assess-chips">${chips.join("")}</div>` : "";
+      }
+      function assessLine(item) {
+        const it = prAssessmentOf(item);
+        const bits = [];
+        if (it.rating !== null) bits.push(`${it.rating}/5`);
+        if (it.cr) bits.push(it.cr);
+        if (it.scope) bits.push(`+${Number(it.scope.additions) || 0}/−${Number(it.scope.deletions) || 0}`);
+        if (it.scope) bits.push(`${Number(it.scope.files) || 0} files`);
+        return bits.join(" · ");
+      }
+      function openPrAssessment(itemKey, opener) {
+        const item = itemByKey(itemKey);
+        if (!item) return;
+        const it = prAssessmentOf(item);
+        openOverlay(
+          "assessment",
+          `<div class="overlay-card confirm-card chooser-card" role="dialog" aria-modal="true" aria-label="PR assessment" tabindex="-1"><div class="confirm-kicker">pr assessment${it.by ? " · " + esc(it.by) : ""}</div><div class="confirm-title">${esc(item.title)}</div>${assessChipsHtml(item)}<div class="assess-prose">${esc(it.prose || "No assessment recorded yet.")}</div><div class="confirm-actions"><button class="btn accent" type="button" onclick="gateAct('${esc(item.key)}', this)">Pick review paths</button>${item.pr && item.pr.url ? `<button class="btn" type="button" onclick="openPR('${esc(item.key)}')">Open PR</button>` : ""}<button class="btn" type="button" onclick="closeOverlay()">Close</button></div></div>`,
+          opener,
+        );
+      }
+      // --- a2. pr-review-watch chooser (multi-select + custom text) ------
+      function openReviewChooser(item, opener) {
+        const wf = WORKFLOWS_BY_ID[item.pipeline_id] || WORKFLOWS[item.pipeline_slug] || { stages: [] };
+        const stages = (wf?.stages || []).filter((s) => s.phase_key === "review");
+        const rows = stages
+          .map(
+            (s) =>
+              `<label class="choice-row"><input type="checkbox" class="choice-check" data-stage="${esc(s.stage_key)}" data-skill="${esc(s.skill_name)}"><span class="choice-title">${esc(s.title)}</span><span class="choice-skill">${esc(s.skill_name)}</span></label>`,
+          )
+          .join("");
+        openOverlay(
+          "chooser",
+          `<div class="overlay-card confirm-card chooser-card" role="dialog" aria-modal="true" aria-label="Pick review paths" tabindex="-1"><div class="confirm-kicker">pr review watch · PR #${item.pr ? item.pr.number : "?"}</div><div class="confirm-title">${esc(item.title)}</div>${assessChipsHtml(item)}<div class="assess-prose">${esc(prAssessmentOf(item).prose || item.next_action || "")}</div><div class="choice-list">${rows}</div><textarea id="custom-review-text" class="choice-text" rows="3" placeholder="Custom instructions — passed verbatim when Custom review is checked"></textarea><div class="confirm-actions"><button class="btn accent" type="button" onclick="startChosenReviews('${esc(item.key)}')">Start selected</button><button class="btn" type="button" onclick="markPrHandled('${esc(item.key)}')">Mark handled</button><button class="btn" type="button" onclick="closeOverlay()">Cancel</button></div></div>`,
+          opener,
+        );
+      }
+      async function startChosenReviews(itemKey) {
+        const item = itemByKey(itemKey);
+        if (!item) return closeOverlay();
+        const checked = [...document.querySelectorAll("#overlay-root .choice-check:checked")].map((el) => ({ stage: el.dataset.stage, skill: el.dataset.skill }));
+        const customText = ($("custom-review-text")?.value || "").trim();
+        if (!checked.length) {
+          toast("Pick at least one review path — or Mark handled");
+          return;
+        }
+        if (DEMO) {
+          closeOverlay();
+          toast("Demo board — spawns live in the Herdr app");
+          return;
+        }
+        closeOverlay(false);
+        await mutateLive(item, `/api/v1/active-work/items/${encodeURIComponent(item.id)}/transitions`, {
+          to_stage_key: item.current_stage_key,
+          expected_revision: item.revision,
+          checkpoint_state: "approved",
+          attention: "none",
+          note: `Chose: ${checked.map((c) => c.stage).join(", ")}`,
+        }, "POST");
+        const fresh = WORK_ITEMS.find((w) => w.id === item.id) || item;
+        const prior = Array.isArray(fresh.metadata?.chosen_paths) ? fresh.metadata.chosen_paths : [];
+        const paths = [...new Set([...prior, ...checked.map((c) => c.stage)])];
+        const metadata = { ...(fresh.metadata || {}), chosen_paths: paths, chosen_at: new Date().toISOString() };
+        await mutateLive(fresh, `/api/v1/active-work/items/${encodeURIComponent(fresh.id)}`, {
+          metadata,
+          expected_revision: fresh.revision,
+        }, "PATCH");
+        const pr = metadata.pr || item.pr || {};
+        let spawned = 0;
+        for (const c of checked) {
+          if (c.stage === "manual-review") continue;
+          const stageRec = (fresh.stages || {})[c.stage];
+          if ((stageRec?.pi_sessions || []).some((s) => s.status === "running" || s.status === "queued")) continue;
+          if (
+            HerdrBridge.send("spawnReview", {
+              workId: fresh.id,
+              stageKey: c.stage,
+              skill: c.skill,
+              prUrl: String(pr.url || ""),
+              prNumber: typeof pr.number === "number" ? pr.number : null,
+              title: fresh.title,
+              customText: c.stage === "custom-review" ? customText : "",
+            })
+          )
+            spawned++;
+        }
+        toast(
+          spawned
+            ? `Starting ${spawned} review session${spawned === 1 ? "" : "s"} in PR Reviews — jump in from the Review region`
+            : checked.some((c) => (fresh.stages || {})[c.stage]?.pi_sessions?.some((s) => s.status === "running" || s.status === "queued"))
+              ? "Paths recorded — those sessions are already running"
+              : "Paths recorded — open the board in the Herdr app to spawn sessions",
+        );
+      }
+      async function markPrHandled(itemKey) {
+        const item = itemByKey(itemKey);
+        closeOverlay(false);
+        if (!item) return;
+        if (DEMO) {
+          toast("Demo board — spawns live in the Herdr app");
+          return;
+        }
+        await mutateLive(item, `/api/v1/active-work/items/${encodeURIComponent(item.id)}/transitions`, {
+          to_stage_key: "complete",
+          expected_revision: item.revision,
+          note: "Handled without agent review",
+        }, "POST");
+        toast("Moved to Outputs");
       }
       // --- d. buzz.log console ---------------------------------------------
       let logFilter = "all";

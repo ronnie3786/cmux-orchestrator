@@ -7,6 +7,7 @@ struct ActiveWorkBoardWebView: View {
     let openExternal: (URL) -> Void
     let copyText: (String) -> Void
     let popOut: (() -> Void)?
+    let spawnReview: (ActiveWorkSpawnReviewPayload) -> Void
 
     @State private var phase: PaneGitWebLoadPhase = .loading
     @State private var reloadID = 0
@@ -20,7 +21,8 @@ struct ActiveWorkBoardWebView: View {
                 openPane: openPane,
                 openExternal: openExternal,
                 copyText: copyText,
-                popOut: popOut ?? { localToastMessage = "Already in its own window" }
+                popOut: popOut ?? { localToastMessage = "Already in its own window" },
+                spawnReview: spawnReview
             )
             .id(reloadID)
 
@@ -115,7 +117,10 @@ struct ActiveWorkBoardWindowRoot: View {
                     }
                 },
                 copyText: { model.copyToPasteboard($0) },
-                popOut: nil
+                popOut: nil,
+                spawnReview: { payload in
+                    Task { await model.spawnPrReviewSession(payload) }
+                }
             )
         } else {
             ActiveWorkBoardEmptyStateView()

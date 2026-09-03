@@ -1760,6 +1760,89 @@ final class HerdrAppModel {
         }
     }
 
+    func spawnPrReviewSession(_ payload: ActiveWorkSpawnReviewPayload) async {
+        if isDemoMode {
+            toastMessage = "review spawns need a live connection"
+            return
+        }
+        guard let targetMachineID = machines.first?.id,
+              canControl(machineID: targetMachineID),
+              let client = client(forMachine: targetMachineID)
+        else {
+            toastMessage = "Reconnect before controlling Herdr"
+            return
+        }
+        noteUserInteraction(machineID: targetMachineID)
+        let requestID = UUID().uuidString
+        let prNumberText = payload.prNumber.map(String.init) ?? "review"
+        let label = "pr\(prNumberText)-\(payload.stageKey)"
+        let generation = connectionGeneration
+        do {
+            let response = try await createQuickPiSessionWithRetry(
+                client: client,
+                label: label,
+                requestID: requestID,
+                workspaceID: nil,
+                tabID: nil,
+                cwd: nil,
+                sessionFile: nil,
+                sessionID: nil,
+                workspaceLabel: "PR Reviews",
+                tabLabel: payload.tabLabel,
+                reuseNamedTab: true
+            )
+            guard generation == connectionGeneration else { return }
+            try await client.sendPiPrompt(
+                paneID: response.paneID,
+                text: payload.prompt,
+                disposition: .prompt,
+                waitForIdle: true
+            )
+            let sessionID = "spawn:\(payload.workID):\(payload.stageKey):\(response.paneID)"
+            let observation = ActiveWorkIngestionBody(
+                source: "pr-review-watch",
+                idempotencyKey: "pr-review-watch:\(sessionID)",
+                observedAt: ISO8601DateFormatter().string(from: Date()),
+                selector: .init(workItemID: payload.workID),
+                stages: [
+                    .init(
+                        stageKey: payload.stageKey,
+                        state: "active",
+                        piSessions: [
+                            .init(
+                                externalID: sessionID,
+                                title: "PR #\(prNumberText) · \(payload.skill)",
+                                provider: "pi",
+                                status: "running",
+                                machineID: targetMachineID,
+                                workspaceID: response.workspaceID,
+                                paneID: response.paneID,
+                                nativeSessionID: response.sessionID ?? "",
+                                role: "review",
+                                metadata: [
+                                    "workspace_label": "PR Reviews",
+                                    "tab": payload.tabLabel,
+                                    "skill": payload.skill,
+                                ]
+                            )
+                        ]
+                    )
+                ]
+            )
+            try await client.ingestActiveWork(observation)
+            toastMessage = "PR #\(prNumberText) — \(payload.skill) running in PR Reviews"
+            try? await refresh(
+                machineID: targetMachineID,
+                using: client,
+                showSpinner: false,
+                expectedGeneration: generation
+            )
+        } catch {
+            guard generation == connectionGeneration else { return }
+            toastMessage = "Review spawn failed — \(error.localizedDescription)"
+        }
+    }
+
     func createLinkedQuickPiSession(
         machineID: String,
         label: String,
@@ -1812,7 +1895,10 @@ final class HerdrAppModel {
         tabID: String?,
         cwd: String?,
         sessionFile: String?,
-        sessionID: String?
+        sessionID: String?,
+        workspaceLabel: String? = nil,
+        tabLabel: String? = nil,
+        reuseNamedTab: Bool? = nil
     ) async throws -> QuickPiSessionResponse {
         do {
             return try await client.createQuickPiSession(
@@ -1822,7 +1908,10 @@ final class HerdrAppModel {
                 tabID: tabID,
                 cwd: cwd,
                 sessionFile: sessionFile,
-                sessionID: sessionID
+                sessionID: sessionID,
+                workspaceLabel: workspaceLabel,
+                tabLabel: tabLabel,
+                reuseNamedTab: reuseNamedTab
             )
         } catch {
             guard Self.isTransientQuickPiSessionError(error) else { throw error }
@@ -1834,7 +1923,10 @@ final class HerdrAppModel {
                 tabID: tabID,
                 cwd: cwd,
                 sessionFile: sessionFile,
-                sessionID: sessionID
+                sessionID: sessionID,
+                workspaceLabel: workspaceLabel,
+                tabLabel: tabLabel,
+                reuseNamedTab: reuseNamedTab
             )
         }
     }

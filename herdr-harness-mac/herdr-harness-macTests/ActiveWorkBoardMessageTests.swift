@@ -26,6 +26,49 @@ struct ActiveWorkBoardMessageTests {
                 == .copy(text: "some text")
         )
         #expect(ActiveWorkBoardMessage.parse(["type": "popout"]) == .popout)
+        #expect(
+            ActiveWorkBoardMessage.parse([
+                "type": "spawnReview",
+                "workId": "pr-watch-doximity-ios-doximity-11918",
+                "stageKey": "ios-review",
+                "skill": "ios-review-remote-pr",
+                "prUrl": "https://github.com/doximity/iOS-Doximity/pull/11918",
+                "prNumber": 11918,
+                "title": "PR #11918 · Fix notifications",
+                "customText": "",
+            ])
+                == .spawnReview(
+                    ActiveWorkSpawnReviewPayload(
+                        workID: "pr-watch-doximity-ios-doximity-11918",
+                        stageKey: "ios-review",
+                        skill: "ios-review-remote-pr",
+                        prURL: "https://github.com/doximity/iOS-Doximity/pull/11918",
+                        prNumber: 11918,
+                        title: "PR #11918 · Fix notifications",
+                        customText: ""
+                    )
+                )
+        )
+        #expect(
+            ActiveWorkBoardMessage.parse([
+                "type": "spawnReview",
+                "workId": "w1",
+                "stageKey": "custom-review",
+                "skill": "custom-review",
+                "customText": "Check the error handling only",
+            ])
+                == .spawnReview(
+                    ActiveWorkSpawnReviewPayload(
+                        workID: "w1",
+                        stageKey: "custom-review",
+                        skill: "custom-review",
+                        prURL: "",
+                        prNumber: nil,
+                        title: "",
+                        customText: "Check the error handling only"
+                    )
+                )
+        )
     }
 
     @Test("Rejects malformed board bridge messages")
@@ -36,5 +79,8 @@ struct ActiveWorkBoardMessageTests {
         #expect(ActiveWorkBoardMessage.parse(["type": "openExternal"]) == nil)
         #expect(ActiveWorkBoardMessage.parse(["type": "copy"]) == nil)
         #expect(ActiveWorkBoardMessage.parse(["type": 42]) == nil)
+        #expect(ActiveWorkBoardMessage.parse(["type": "spawnReview", "stageKey": "ios-review", "skill": "x"]) == nil)
+        #expect(ActiveWorkBoardMessage.parse(["type": "spawnReview", "workId": "w1", "skill": "x"]) == nil)
+        #expect(ActiveWorkBoardMessage.parse(["type": "spawnReview", "workId": "w1", "stageKey": "ios-review"]) == nil)
     }
 }

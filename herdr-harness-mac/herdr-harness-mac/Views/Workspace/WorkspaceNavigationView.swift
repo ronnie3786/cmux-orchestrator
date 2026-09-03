@@ -120,7 +120,10 @@ struct WorkspaceNavigationView: View {
                             }
                         },
                         copyText: { model.copyToPasteboard($0) },
-                        popOut: { openWindow(id: HerdrWindowID.activeWorkBoard) }
+                        popOut: { openWindow(id: HerdrWindowID.activeWorkBoard) },
+                        spawnReview: { payload in
+                            Task { await model.spawnPrReviewSession(payload) }
+                        }
                     )
                     .accessibilityIdentifier("active-work-container")
                 } else {

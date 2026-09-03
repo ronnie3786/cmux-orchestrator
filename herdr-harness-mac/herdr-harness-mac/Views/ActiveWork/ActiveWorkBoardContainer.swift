@@ -8,6 +8,7 @@ struct ActiveWorkBoardContainer: NSViewRepresentable {
     let openExternal: (URL) -> Void
     let copyText: (String) -> Void
     let popOut: () -> Void
+    let spawnReview: (ActiveWorkSpawnReviewPayload) -> Void
 
     func makeCoordinator() -> ActiveWorkBoardNavigationDelegate {
         ActiveWorkBoardNavigationDelegate(
@@ -15,7 +16,8 @@ struct ActiveWorkBoardContainer: NSViewRepresentable {
             openPane: openPane,
             openExternal: openExternal,
             copyText: copyText,
-            popOut: popOut
+            popOut: popOut,
+            spawnReview: spawnReview
         )
     }
 
@@ -64,6 +66,7 @@ enum ActiveWorkBoardMessage: Equatable {
     case openExternal(url: String)
     case copy(text: String)
     case popout
+    case spawnReview(ActiveWorkSpawnReviewPayload)
 
     static func parse(_ body: [String: Any]) -> ActiveWorkBoardMessage? {
         guard let type = body["type"] as? String else { return nil }
@@ -79,8 +82,42 @@ enum ActiveWorkBoardMessage: Equatable {
             return .copy(text: text)
         case "popout":
             return .popout
+        case "spawnReview":
+            guard let workID = body["workId"] as? String,
+                  let stageKey = body["stageKey"] as? String,
+                  let skill = body["skill"] as? String
+            else { return nil }
+            return .spawnReview(
+                ActiveWorkSpawnReviewPayload(
+                    workID: workID,
+                    stageKey: stageKey,
+                    skill: skill,
+                    prURL: body["prUrl"] as? String ?? "",
+                    prNumber: body["prNumber"] as? Int,
+                    title: body["title"] as? String ?? "",
+                    customText: body["customText"] as? String ?? ""
+                )
+            )
         default:
             return nil
         }
+    }
+}
+
+struct ActiveWorkSpawnReviewPayload: Equatable, Sendable {
+    let workID: String
+    let stageKey: String
+    let skill: String
+    let prURL: String
+    let prNumber: Int?
+    let title: String
+    let customText: String
+
+    var tabLabel: String {
+        prNumber.map { "PR #\($0)" } ?? "PR review"
+    }
+
+    var prompt: String {
+        customText.isEmpty ? "\(prURL)\n\nRun the \(skill) skill on this PR." : customText
     }
 }
