@@ -104,8 +104,8 @@ struct HerdrAlertTests {
         ])
     }
 
-    @Test("Active session engagement posts only for a locally unread pane")
-    func activeSessionEngagementRequiresUnreadAlert() async throws {
+    @Test("Stale done panes acknowledge once per episode; new activity re-arms the ack")
+    func activeSessionEngagementDedupesStaleDoneByEpisode() async throws {
         await AlertReadOnOpenRequestRecorder.shared.reset()
         let suiteName = "HerdrAlertTests.activeEngagement.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -135,10 +135,17 @@ struct HerdrAlertTests {
         let pane = try #require(model.pane(id: "m1|w1:p1"))
         model.selectedPaneID = pane.id
 
+        // This deliberately flips the old behavior: a stale done pane with no
+        // locally unread alert self-heals with one acknowledgement.
         model.alerts = []
         model.acknowledgeUnreadAlerts(for: pane)
-        for _ in 0..<5 { await Task.yield() }
-        #expect(await AlertReadOnOpenRequestRecorder.shared.requests().isEmpty)
+        for _ in 0..<20 {
+            if !(await AlertReadOnOpenRequestRecorder.shared.requests()).isEmpty { break }
+            await Task.yield()
+        }
+        #expect(await AlertReadOnOpenRequestRecorder.shared.requests() == [
+            .init(method: "POST", path: "/api/v1/panes/w1:p1/alerts/read"),
+        ])
 
         model.alerts = [HerdrAlert(
             id: "alert-1",
@@ -156,16 +163,37 @@ struct HerdrAlertTests {
         #expect(model.alerts[0].isRead)
         #expect(model.unreadPaneIDs.isEmpty)
         for _ in 0..<20 {
-            if !(await AlertReadOnOpenRequestRecorder.shared.requests()).isEmpty { break }
+            if await AlertReadOnOpenRequestRecorder.shared.requests().count == 2 { break }
             await Task.yield()
         }
-        #expect(await AlertReadOnOpenRequestRecorder.shared.requests() == [
-            .init(method: "POST", path: "/api/v1/panes/w1:p1/alerts/read"),
-        ])
+        #expect(await AlertReadOnOpenRequestRecorder.shared.requests().count == 2)
 
+        // Repeated taps in the same done episode must not create more POSTs.
         model.acknowledgeUnreadAlerts(for: pane)
         for _ in 0..<5 { await Task.yield() }
-        #expect(await AlertReadOnOpenRequestRecorder.shared.requests().count == 1)
+        #expect(await AlertReadOnOpenRequestRecorder.shared.requests().count == 2)
+
+        // A fresh done episode re-arms the dedupe instead of leaving it
+        // permanently open or permanently closed.
+        let updatedRawPane = HerdrPane(
+            paneID: "w1:p1", terminalID: "w1:p1", workspaceID: "w1", tabID: "",
+            focused: true, agentStatus: .done, revision: 1, cwd: nil, foregroundCWD: nil,
+            label: nil, title: nil, agent: nil, displayAgent: nil, terminalTitle: nil,
+            terminalTitleStripped: nil,
+            lastActivityAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        model.workspaces = [HerdrWorkspace(
+            workspaceID: "w1", number: 1, label: "Workspace", focused: true,
+            paneCount: 1, tabCount: 0, activeTabID: "", agentStatus: .done, panes: [updatedRawPane]
+        ).stamped(machineID: machine.id)]
+        let updatedPane = try #require(model.pane(id: "m1|w1:p1"))
+        model.alerts = []
+        model.acknowledgeUnreadAlerts(for: updatedPane)
+        for _ in 0..<20 {
+            if await AlertReadOnOpenRequestRecorder.shared.requests().count == 3 { break }
+            await Task.yield()
+        }
+        #expect(await AlertReadOnOpenRequestRecorder.shared.requests().count == 3)
     }
 }
 

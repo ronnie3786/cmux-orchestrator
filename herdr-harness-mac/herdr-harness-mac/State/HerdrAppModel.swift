@@ -137,6 +137,17 @@ final class HerdrAppModel {
     /// the server. A refresh that overlaps the POST must not resurrect the
     /// server's stale unread copy.
     @ObservationIgnored private var pendingReadAcknowledgements: Set<String> = []
+    /// Scoped pane IDs whose acknowledgement could not be sent because their
+    /// machine did not have a connected client. Replayed when it returns live.
+    @ObservationIgnored private var pendingRemoteReadAcknowledgements: Set<String> = []
+    /// Scoped pane id -> the "episode" key (see `doneEpisodeKey(for:)`) it was
+    /// last acknowledged-as-stale-done at. A `.done` status alone does not
+    /// identify a unique episode: the same pane can read `.done`, answer
+    /// again, and read `.done` again, so keying on status alone would either
+    /// re-POST on every tap (if never remembered) or silently stop
+    /// acknowledging forever (if remembered without a way to invalidate). This
+    /// map lets `acknowledgeUnreadAlerts` post once per episode.
+    @ObservationIgnored private var lastAckedDoneEpisodeByPaneID: [String: String] = [:]
     @ObservationIgnored private var promptOverrideSupport: [String: (generation: Int, supported: Bool, probedAt: Date)] = [:]
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
@@ -2305,11 +2316,26 @@ final class HerdrAppModel {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    /// Acknowledges a pane only when this client currently knows about an
-    /// unread alert for it. The mounted session uses this for clicks and focus
-    /// changes so normal interaction does not POST on every tap.
+    /// Acknowledges a pane when this client knows about an unread alert, or
+    /// once per stale-`.done` episode, when its done status may be a stale
+    /// server projection. The mounted session's tap gesture calls this on
+    /// every interaction, so neither idle/working panes with nothing unread
+    /// nor a repeat tap within the same done episode may POST.
     func acknowledgeUnreadAlerts(for pane: HerdrPane) {
-        guard markPaneAlertsReadLocally(pane.id) else { return }
+        let hadUnread = markPaneAlertsReadLocally(pane.id)
+        let shouldAcknowledgeRemotely: Bool
+        if hadUnread {
+            shouldAcknowledgeRemotely = true
+        } else if pane.agentStatus == .done {
+            let episodeKey = Self.doneEpisodeKey(for: pane)
+            shouldAcknowledgeRemotely = lastAckedDoneEpisodeByPaneID[pane.id] != episodeKey
+            if shouldAcknowledgeRemotely {
+                lastAckedDoneEpisodeByPaneID[pane.id] = episodeKey
+            }
+        } else {
+            shouldAcknowledgeRemotely = false
+        }
+        guard shouldAcknowledgeRemotely else { return }
         noteUserInteraction(machineID: pane.machineID)
         markPaneAlertsReadRemotely(pane)
     }
@@ -3265,6 +3291,13 @@ final class HerdrAppModel {
                 return validPaneIDs.contains(paneID)
             }
             if prunedDrafts != composerDrafts { composerDrafts = prunedDrafts }
+            let prunedDoneEpisodes = lastAckedDoneEpisodeByPaneID.filter { paneID, _ in
+                guard MachineScopedID.split(paneID)?.machineID == machineID else { return true }
+                return validPaneIDs.contains(paneID)
+            }
+            if prunedDoneEpisodes != lastAckedDoneEpisodeByPaneID {
+                lastAckedDoneEpisodeByPaneID = prunedDoneEpisodes
+            }
         }
         // Observation notifies on write, not change. The always-mounted HUD's SwiftUI root is
         // the sole observer, so assigning an equal value on every refresh invalidates it.
@@ -3333,7 +3366,12 @@ final class HerdrAppModel {
 
     @discardableResult
     private func markPaneAlertsReadLocally(_ paneID: String) -> Bool {
-        guard alerts.contains(where: { $0.scopedPaneID == paneID && !$0.isRead }) else {
+        let newlyReadAlertIDs = Set(
+            alerts.lazy
+                .filter { $0.scopedPaneID == paneID && !$0.isRead }
+                .map(\.id)
+        )
+        guard !newlyReadAlertIDs.isEmpty else {
             return false
         }
 
@@ -3342,6 +3380,11 @@ final class HerdrAppModel {
             return Self.markedRead(alert)
         }
         updateBadgeIfNeeded()
+        // Withdraw immediately for the optimistic local read: the banner should
+        // disappear the instant the user reads the pane. If the pending POST later
+        // fails permanently and a refresh restores the server's unread alert, do
+        // not re-post the banner. That policy is intentional.
+        Task { await NotificationManager.removeDelivered(alertIDs: newlyReadAlertIDs) }
         return true
     }
 
@@ -3358,8 +3401,25 @@ final class HerdrAppModel {
         ).stamped(machineID: alert.machineID)
     }
 
+    private static func doneEpisodeKey(for pane: HerdrPane) -> String {
+        pane.lastActivityAt.map(HerdrTimestamp.string) ?? String(pane.revision)
+    }
+
     private func markPaneAlertsReadRemotely(_ pane: HerdrPane) {
-        guard !isDemoMode, let client = client(forMachine: pane.machineID) else { return }
+        guard !isDemoMode else { return }
+        guard let client = client(forMachine: pane.machineID) else {
+            // No client is connected for this machine right now. Queue the ack
+            // instead of dropping it. It is replayed once this machine's
+            // connection reaches `.live` again, see `setRuntimeState` and
+            // `drainPendingRemoteReadAcknowledgements` below. Demo mode never
+            // reaches here (guarded above), so it stays a pure no-op as before.
+            pendingRemoteReadAcknowledgements.insert(pane.id)
+            return
+        }
+        performMarkPaneAlertsReadRemotely(pane, client: client)
+    }
+
+    private func performMarkPaneAlertsReadRemotely(_ pane: HerdrPane, client: HerdrAPIClient) {
         let scopedPaneID = pane.id
         // Hold the optimistic local read until the server confirms it. A refresh
         // landing before this POST would otherwise restore the server's unread
@@ -3383,6 +3443,21 @@ final class HerdrAppModel {
             // Releasing the hold after a permanent failure lets the next refresh
             // show the server's truth instead of a read state it never received.
             self?.pendingReadAcknowledgements.remove(scopedPaneID)
+        }
+    }
+
+    private func drainPendingRemoteReadAcknowledgements(machineID: String) {
+        guard !pendingRemoteReadAcknowledgements.isEmpty,
+              let client = client(forMachine: machineID)
+        else { return }
+        let scopedIDs = pendingRemoteReadAcknowledgements.filter {
+            MachineScopedID.split($0)?.machineID == machineID
+        }
+        guard !scopedIDs.isEmpty else { return }
+        pendingRemoteReadAcknowledgements.subtract(scopedIDs)
+        for scopedID in scopedIDs {
+            guard let pane = pane(id: scopedID) else { continue }
+            performMarkPaneAlertsReadRemotely(pane, client: client)
         }
     }
 
@@ -3489,8 +3564,14 @@ final class HerdrAppModel {
         composerDrafts = composerDrafts.filter {
             MachineScopedID.split($0.key)?.machineID != id
         }
+        lastAckedDoneEpisodeByPaneID = lastAckedDoneEpisodeByPaneID.filter {
+            MachineScopedID.split($0.key)?.machineID != id
+        }
         collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarTabIDs = collapsedSidebarTabIDs.filter { MachineScopedID.split($0)?.machineID != id }
+        pendingRemoteReadAcknowledgements = pendingRemoteReadAcknowledgements.filter {
+            MachineScopedID.split($0)?.machineID != id
+        }
         collapsedSidebarMachineIDs.remove(id)
         userDefaults.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
         userDefaults.set(Array(mutedHudSessionIDs), forKey: "herdr.hud.mutedSessions")
@@ -3760,6 +3841,9 @@ final class HerdrAppModel {
         machineStates[machineID] = state
         updateAggregateConnectionState()
         mirrorPrimaryConnection()
+        if state == .live {
+            drainPendingRemoteReadAcknowledgements(machineID: machineID)
+        }
     }
 
     private func updateAggregateConnectionState() {

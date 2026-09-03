@@ -2,6 +2,13 @@ import UserNotifications
 
 @MainActor
 enum NotificationManager {
+    /// Test seam: production code leaves this `nil` and falls through to
+    /// the real `UNUserNotificationCenter` call below. Tests substitute a
+    /// closure to observe (or stub) delivered-notification withdrawal
+    /// without touching the real notification center. Always reset to
+    /// `nil` when a test is done with it.
+    static var removeDeliveredOverride: ((Set<String>) -> Void)?
+
     static func requestAuthorization() async -> Bool {
         do {
             return try await UNUserNotificationCenter.current().requestAuthorization(
@@ -49,6 +56,10 @@ enum NotificationManager {
 
     static func removeDelivered(alertIDs: Set<String>) async {
         guard !alertIDs.isEmpty else { return }
+        if let removeDeliveredOverride {
+            removeDeliveredOverride(alertIDs)
+            return
+        }
         let center = UNUserNotificationCenter.current()
         let identifiers = await center.deliveredNotifications().compactMap { notification -> String? in
             let content = notification.request.content
