@@ -10,7 +10,6 @@ struct PiCodeBlockView: View {
     var ownerID: String = ""
     var blockID: Int = 0
     @State private var copied = false
-    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,7 +21,6 @@ struct PiCodeBlockView: View {
                 Button {
                     copyCode()
                     copied = true
-                    hapticPulse.fire(.completed)
                     Task {
                         try? await Task.sleep(for: .seconds(1.4))
                         copied = false
@@ -66,7 +64,6 @@ struct PiCodeBlockView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(HerdrTheme.surface.opacity(0.5), lineWidth: 1)
         }
-        .herdrHaptic(trigger: hapticPulse)
     }
 
     private func copyCode() {

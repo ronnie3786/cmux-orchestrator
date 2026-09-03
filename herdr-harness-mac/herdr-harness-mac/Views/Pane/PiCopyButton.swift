@@ -15,7 +15,6 @@ struct PiCopyButton: View {
     var restingOpacity: Double = 0.35
 
     @State private var copied = false
-    @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         Button(action: copy) {
@@ -27,7 +26,6 @@ struct PiCopyButton: View {
         .buttonStyle(.plain)
         .opacity(copied ? 1 : restingOpacity)
         .animation(PiChatChrome.hoverAnimation, value: copied)
-        .herdrHaptic(trigger: hapticPulse)
         .help(label)
         .accessibilityLabel(copied ? "Copied" : label)
         .accessibilityIdentifier(accessibilityIdentifier ?? "")
@@ -37,7 +35,6 @@ struct PiCopyButton: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         copied = true
-        hapticPulse.fire(.completed)
         Task {
             try? await Task.sleep(for: .seconds(1.4))
             copied = false
