@@ -2451,9 +2451,13 @@ final class HerdrAppModel {
             setMachineScope(.machine(pane.machineID))
         }
 
-        // `.all` is the only recency that is guaranteed to include the pane,
-        // whatever its timestamps say.
-        if !sidebarRecency.includes(pane, now: Date(), calendar: .autoupdatingCurrent) {
+        // `.all` is the only recency guaranteed to include the pane, whatever
+        // its timestamps say. `.recents` ranks rather than filters, so its
+        // always-true predicate needs a top-ten check to keep reveals visible.
+        if sidebarRecency == .recents,
+           !SidebarTree.recentChats(workspaces: workspaces, query: "").contains(where: { $0.id == pane.id }) {
+            sidebarRecency = .all
+        } else if !sidebarRecency.includes(pane, now: Date(), calendar: .autoupdatingCurrent) {
             sidebarRecency = .all
         }
 
@@ -2535,6 +2539,9 @@ final class HerdrAppModel {
 
     func dismissHudChip(_ paneID: String) {
         guard let pane = pane(id: paneID) else { return }
+        // Working chips are live indicators, so clicking through to watch one
+        // must not retire the session from the HUD.
+        guard pane.agentStatus != .working else { return }
         dismissedHudChips[paneID] = HudChipDismissal(pane: pane, dismissedAt: Date())
         persistDismissedHudChips()
     }

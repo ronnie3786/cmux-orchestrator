@@ -30,6 +30,8 @@ struct HerdrSidebarView: View {
         let unreadGroups: [SidebarTree.UnreadGroup]
         let starredGroups: [SidebarTree.StarredGroup]
         let staleGroups: [SidebarTree.StaleGroup]
+        let recentChats: [HerdrPane]
+        let isRecentsMode: Bool
         let showsMachineChrome: Bool
 
         init(model: HerdrAppModel, query: String) {
@@ -38,7 +40,19 @@ struct HerdrSidebarView: View {
             } else {
                 scopedWorkspaces = model.workspaces
             }
+            isRecentsMode = model.sidebarRecency == .recents
             showsMachineChrome = model.machineScope == .all && model.machines.count > 1
+            if isRecentsMode {
+                recentChats = SidebarTree.recentChats(workspaces: scopedWorkspaces, query: query)
+                tree = []
+                machineGroups = []
+                unreadGroups = []
+                starredGroups = []
+                staleGroups = []
+                return
+            }
+
+            recentChats = []
             let now = Date()
             let scopedPaneIDs = Set(scopedWorkspaces.flatMap(\.panes).map(\.id))
             let unreadPaneIDs = model.unreadPaneIDs.intersection(scopedPaneIDs)
@@ -98,7 +112,8 @@ struct HerdrSidebarView: View {
             showsMachineChrome ? machineGroups.flatMap(\.entries).map(\.id) : tree.map(\.id)
         }
         var paneCount: Int {
-            unreadCount + starredCount + staleCount + HerdrSidebarView.paneCount(
+            if isRecentsMode { return recentChats.count }
+            return unreadCount + starredCount + staleCount + HerdrSidebarView.paneCount(
                 in: showsMachineChrome ? machineGroups.flatMap(\.entries) : tree
             )
         }
@@ -116,6 +131,10 @@ struct HerdrSidebarView: View {
         /// observation of `workspaces` on every pass, so the sidebar is woken by
         /// a status change even when nothing else about the fleet moved.
         let statusDigest: Int
+        /// Recents depends on `lastActivityAt`, which statusDigest omits and
+        /// fleetRevision does not reliably move for. Keep it separate so the
+        /// normal sidebar does not invalidate more often for activity changes.
+        let recentsDigest: Int
         let query: String
         let machineScope: MachineScope
         let machines: [HerdrMachine]
@@ -151,11 +170,23 @@ struct HerdrSidebarView: View {
         return hasher.finalize()
     }
 
+    static func recentsDigest(_ workspaces: [HerdrWorkspace]) -> Int {
+        var hasher = Hasher()
+        for workspace in workspaces {
+            for pane in workspace.panes {
+                hasher.combine(pane.id)
+                hasher.combine(pane.lastActivityAt)
+            }
+        }
+        return hasher.finalize()
+    }
+
     var body: some View {
         @Bindable var cleanupPresenter = model.cleanupPresenter
         let fingerprint = SidebarSnapshotFingerprint(
             fleetRevision: model.fleetRevision,
             statusDigest: Self.statusDigest(model.workspaces),
+            recentsDigest: model.sidebarRecency == .recents ? Self.recentsDigest(model.workspaces) : 0,
             query: query,
             machineScope: model.machineScope,
             machines: model.machines,
@@ -187,6 +218,7 @@ struct HerdrSidebarView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
+                        recentsSection(snapshot)
                         unreadSection(snapshot)
                         starredSection(snapshot)
                         staleSection(snapshot)
@@ -552,8 +584,45 @@ struct HerdrSidebarView: View {
     }
 
     @ViewBuilder
+    private func recentsSection(_ snapshot: SidebarSnapshot) -> some View {
+        if !snapshot.recentChats.isEmpty {
+            HStack(spacing: 7) {
+                Label("recents", systemImage: "clock.arrow.circlepath")
+                    .herdrFont(.caption, weight: .bold)
+                    .foregroundStyle(HerdrTheme.mist)
+
+                Text("\(snapshot.recentChats.count)")
+                    .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
+                    .foregroundStyle(HerdrTheme.ink)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(HerdrTheme.mist)
+                    .clipShape(.capsule)
+
+                Spacer()
+            }
+            .padding(.leading, SidebarMetrics.containerLeadingPadding)
+            .padding(.trailing, SidebarMetrics.containerTrailingPadding)
+            .padding(.top, 6)
+            .frame(minHeight: 28)
+            .accessibilityElement(children: .contain)
+
+            ForEach(snapshot.recentChats) { chatRow($0) }
+            separator
+        }
+    }
+
+    @ViewBuilder
     private func workspaceContent(_ snapshot: SidebarSnapshot) -> some View {
-        if snapshot.showsMachineChrome {
+        if snapshot.isRecentsMode {
+            if snapshot.recentChats.isEmpty {
+                Text("no recent chats")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 42)
+            }
+        } else if snapshot.showsMachineChrome {
             ForEach(snapshot.machineGroups) { group in
                 SidebarMachineRow(
                     machine: group.machine,
@@ -752,6 +821,7 @@ struct HerdrSidebarView: View {
         case .last3Days: "\(count) in 3 days"
         case .thisWeek: "\(count) this week"
         case .all: "\(count) total shown"
+        case .recents: "\(count) recent"
         }
     }
 

@@ -5,6 +5,9 @@ enum SidebarRecency: String, CaseIterable, Identifiable, Sendable {
     case last3Days
     case thisWeek
     case all
+    case recents
+
+    static let recentsLimit = 10
 
     var id: Self { self }
 
@@ -14,6 +17,7 @@ enum SidebarRecency: String, CaseIterable, Identifiable, Sendable {
         case .last3Days: "Last 3 days"
         case .thisWeek: "This week"
         case .all: "All"
+        case .recents: "Recents"
         }
     }
 
@@ -23,11 +27,14 @@ enum SidebarRecency: String, CaseIterable, Identifiable, Sendable {
         case .last3Days: "calendar.day.timeline.left"
         case .thisWeek: "calendar"
         case .all: "clock"
+        case .recents: "clock.arrow.circlepath"
         }
     }
 
     func includes(_ pane: HerdrPane, now: Date, calendar: Calendar) -> Bool {
-        guard self != .all else { return true }
+        // Recents is a ranking, not a predicate. Callers needing its top N use
+        // `SidebarTree.recentChats`; this keeps the common filter API total.
+        guard self != .all && self != .recents else { return true }
         guard let activity = pane.lastActivityAt ?? pane.firstSeenAt else { return false }
         switch self {
         case .today:
@@ -43,6 +50,8 @@ enum SidebarRecency: String, CaseIterable, Identifiable, Sendable {
         case .thisWeek:
             return calendar.dateInterval(of: .weekOfYear, for: now)?.contains(activity) == true
         case .all:
+            return true
+        case .recents:
             return true
         }
     }

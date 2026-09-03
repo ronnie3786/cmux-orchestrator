@@ -111,6 +111,88 @@ struct SidebarTreeTests {
         #expect(tree[0].sections.map(\.id) == ["mixed:t2"])
     }
 
+    @Test("Recents lists the most recently active chats newest first")
+    func recentsListsNewestChatsFirst() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let alphaTab = tab(id: "alpha:t1", workspaceID: "alpha", number: 1, label: "Alpha", paneCount: 6)
+        let betaTab = tab(id: "beta:t1", workspaceID: "beta", number: 1, label: "Beta", paneCount: 6)
+        let alphaPanes = stride(from: 0, through: 10, by: 2).map { index in
+            pane(
+                id: "alpha:p\(index)", workspaceID: "alpha", tabID: alphaTab.id,
+                title: "Alpha \(index)", lastActivityAt: now.addingTimeInterval(-Double(index) * 3_600)
+            )
+        }
+        let betaPanes = stride(from: 1, through: 11, by: 2).map { index in
+            pane(
+                id: "beta:p\(index)", workspaceID: "beta", tabID: betaTab.id,
+                title: "Beta \(index)", lastActivityAt: now.addingTimeInterval(-Double(index) * 3_600)
+            )
+        }
+
+        let chats = SidebarTree.recentChats(
+            workspaces: [
+                workspace(id: "alpha", number: 1, label: "Alpha", tabs: [alphaTab], panes: alphaPanes),
+                workspace(id: "beta", number: 2, label: "Beta", tabs: [betaTab], panes: betaPanes),
+            ],
+            query: ""
+        )
+
+        #expect(chats.count == SidebarRecency.recentsLimit)
+        #expect(chats.map(\.id) == (0..<10).map { index in
+            index.isMultiple(of: 2) ? "alpha:p\(index)" : "beta:p\(index)"
+        })
+        #expect(!chats.contains(where: { $0.id == "alpha:p10" }))
+    }
+
+    @Test("Recents falls back to first seen and sorts undated chats last")
+    func recentsFallsBackToFirstSeen() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let chatTab = tab(id: "dates:t1", workspaceID: "dates", number: 1, label: "Chats", paneCount: 4)
+        let chats = SidebarTree.recentChats(
+            workspaces: [workspace(
+                id: "dates",
+                number: 1,
+                label: "Dates",
+                tabs: [chatTab],
+                panes: [
+                    pane(id: "dates:activity", workspaceID: "dates", tabID: chatTab.id, title: "Activity", lastActivityAt: now.addingTimeInterval(-60)),
+                    pane(id: "dates:first-seen", workspaceID: "dates", tabID: chatTab.id, title: "First seen", firstSeenAt: now),
+                    pane(id: "dates:older", workspaceID: "dates", tabID: chatTab.id, title: "Older", firstSeenAt: now.addingTimeInterval(-120)),
+                    pane(id: "dates:undated", workspaceID: "dates", tabID: chatTab.id, title: "Undated"),
+                ]
+            )],
+            query: ""
+        )
+
+        #expect(chats.map(\.id) == ["dates:first-seen", "dates:activity", "dates:older", "dates:undated"])
+    }
+
+    @Test("Recents honours the search query")
+    func recentsHonoursSearchQuery() {
+        let now = Date(timeIntervalSince1970: 1_735_732_800)
+        let alphaTab = tab(id: "alpha:t1", workspaceID: "alpha", number: 1, label: "Chats", paneCount: 2)
+        let betaTab = tab(id: "beta:t1", workspaceID: "beta", number: 1, label: "Chats", paneCount: 1)
+        let workspaces = [
+            workspace(
+                id: "alpha", number: 1, label: "Alpha Project", tabs: [alphaTab],
+                panes: [
+                    pane(id: "alpha:p1", workspaceID: "alpha", tabID: alphaTab.id, title: "Older Alpha", lastActivityAt: now.addingTimeInterval(-120)),
+                    pane(id: "alpha:p2", workspaceID: "alpha", tabID: alphaTab.id, title: "Newer Alpha", lastActivityAt: now.addingTimeInterval(-60)),
+                ]
+            ),
+            workspace(
+                id: "beta", number: 2, label: "Beta Project", tabs: [betaTab],
+                panes: [
+                    pane(id: "beta:p1", workspaceID: "beta", tabID: betaTab.id, title: "Newest overall", lastActivityAt: now),
+                ]
+            ),
+        ]
+
+        let chats = SidebarTree.recentChats(workspaces: workspaces, query: "alpha")
+
+        #expect(chats.map(\.id) == ["alpha:p2", "alpha:p1"])
+    }
+
     @Test("Disabling recent-only filtering preserves dated panes")
     func disabledRecentOnlyKeepsAllPanes() {
         let now = Date(timeIntervalSince1970: 1_735_732_800)

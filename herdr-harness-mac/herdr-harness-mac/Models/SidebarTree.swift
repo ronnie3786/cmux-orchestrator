@@ -238,6 +238,37 @@ enum SidebarTree {
         }
     }
 
+    /// The flat "Recents" list ranks the fleet's newest chats instead of
+    /// applying a range predicate. Rebuilding it under workspace chrome would
+    /// erase the only order the mode has to offer.
+    static func recentChats(
+        workspaces: [HerdrWorkspace],
+        query: String,
+        limit: Int = SidebarRecency.recentsLimit
+    ) -> [HerdrPane] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Array(workspaces.flatMap { workspace in
+            let workspaceMatches = trimmedQuery.isEmpty
+                || workspace.label.localizedStandardContains(trimmedQuery)
+                || workspace.displayPath.localizedStandardContains(trimmedQuery)
+            let matchingTabIDs = Set(workspace.tabs.filter {
+                $0.label.localizedStandardContains(trimmedQuery)
+            }.map(\.id))
+            return workspace.panes.filter {
+                workspaceMatches
+                    || matchingTabIDs.contains($0.scopedTabID)
+                    || matchesPaneQuery($0, query: trimmedQuery)
+            }
+        }
+        .sorted {
+            let lhsActivity = $0.lastActivityAt ?? $0.firstSeenAt ?? .distantPast
+            let rhsActivity = $1.lastActivityAt ?? $1.firstSeenAt ?? .distantPast
+            if lhsActivity != rhsActivity { return lhsActivity > rhsActivity }
+            return $0.id < $1.id
+        }
+        .prefix(limit))
+    }
+
     static func machineGroups(
         machines: [HerdrMachine],
         states: [String: ConnectionState],

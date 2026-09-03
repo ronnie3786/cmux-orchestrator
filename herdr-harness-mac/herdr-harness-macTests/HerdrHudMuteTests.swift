@@ -53,7 +53,7 @@ struct HerdrHudMuteTests {
     func removingMachinePurgesOnlyMatchingSessionState() {
         let defaults = makeDefaults()
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: defaults)
-        let demoOne = "demo1|w1:p1"
+        let demoOne = "demo1|w1:p2"
         let demoTwo = "demo2|w2:p1"
         model.toggleMutedHudSession(demoOne)
         model.toggleMutedHudSession(demoTwo)
@@ -72,13 +72,24 @@ struct HerdrHudMuteTests {
     @Test("Dismissal records the current status and ignores unknown panes")
     func dismissalRecordsCurrentStatusAndIgnoresUnknownPane() {
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: makeDefaults())
-        let paneID = "demo1|w1:p1"
+        let paneID = "demo1|w1:p2"
 
         model.dismissHudChip(paneID)
         model.dismissHudChip("demo1|missing")
 
-        #expect(model.dismissedHudChips[paneID]?.status == .working)
+        #expect(model.dismissedHudChips[paneID]?.status == .blocked)
         #expect(model.dismissedHudChips["demo1|missing"] == nil)
+    }
+
+    /// A working chip is a live indicator, so following it must not hide it.
+    @MainActor
+    @Test("Clicking a working session's chip leaves it on the HUD")
+    func dismissingWorkingChipDoesNothing() {
+        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: makeDefaults())
+
+        model.dismissHudChip("demo1|w1:p1")
+
+        #expect(model.dismissedHudChips["demo1|w1:p1"] == nil)
     }
 
     private func makeDefaults() -> UserDefaults {

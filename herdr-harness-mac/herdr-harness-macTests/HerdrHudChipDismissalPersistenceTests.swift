@@ -20,7 +20,7 @@ struct HerdrHudChipDismissalPersistenceTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: defaults)
-        let paneID = "demo1|w1:p1"
+        let paneID = "demo1|w1:p2"
         model.dismissHudChip(paneID)
         let recorded = try #require(model.dismissedHudChips[paneID])
 
@@ -37,12 +37,12 @@ struct HerdrHudChipDismissalPersistenceTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: defaults)
-        model.dismissHudChip("demo1|w1:p1")
+        model.dismissHudChip("demo1|w1:p2")
         model.dismissHudChip("demo2|w2:p1")
         model.removeMachine(id: "demo1")
 
         let relaunched = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: defaults)
-        #expect(relaunched.dismissedHudChips["demo1|w1:p1"] == nil)
+        #expect(relaunched.dismissedHudChips["demo1|w1:p2"] == nil)
         #expect(relaunched.dismissedHudChips["demo2|w2:p1"] != nil)
     }
 
