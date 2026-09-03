@@ -56,6 +56,11 @@ struct HerdrHudCardView: View {
         .onChange(of: session.voiceReplyTarget, initial: true) { _, target in
             if let target {
                 voiceReply.target(paneID: target)
+                // `initial: true` matters: the chip's mic sets the request while
+                // the card is still unmounted, so this fires on the summon.
+                if session.consumeVoiceReplyCaptureRequest() {
+                    voiceReply.start()
+                }
             } else {
                 voiceReply.cancel()
             }

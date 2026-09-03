@@ -88,7 +88,10 @@ struct HerdrHudSessionChipsView: View {
     /// is far too narrow for an editable transcript, so this opens the card and
     /// lets the reply strip there take over.
     private func replyButton(_ chip: HerdrHudSessionChips.Chip) -> some View {
-        Button(action: summon) {
+        Button {
+            session.requestVoiceReplyCapture()
+            summon()
+        } label: {
             Image(systemName: "mic.circle.fill")
                 .herdrFont(.caption2, weight: .bold)
                 .foregroundStyle(HerdrTheme.accent)

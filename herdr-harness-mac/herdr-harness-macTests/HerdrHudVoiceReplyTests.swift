@@ -125,6 +125,49 @@ struct HerdrHudVoiceReplyTests {
         #expect(reply.phase == .idle)
     }
 
+    @Test("The chip's mic asks the composer to start recording, not just to open")
+    func chipMicRequestsCapture() {
+        let session = makeSession()
+
+        // No target yet — nothing to reply to, so nothing is armed.
+        session.requestVoiceReplyCapture()
+        #expect(!session.pendingVoiceReplyCapture)
+        #expect(!session.consumeVoiceReplyCaptureRequest())
+
+        session.setVoiceReplyTargetForTesting("m1|a")
+        session.requestVoiceReplyCapture()
+        #expect(session.pendingVoiceReplyCapture)
+
+        // The card consumes it exactly once as it mounts, so re-summoning later
+        // does not start an unasked-for recording.
+        #expect(session.consumeVoiceReplyCaptureRequest())
+        #expect(!session.consumeVoiceReplyCaptureRequest())
+    }
+
+    @Test("Clearing the reply target disarms a pending capture")
+    func clearingTargetDisarmsCapture() {
+        let session = makeSession()
+        session.setVoiceReplyTargetForTesting("m1|a")
+        session.requestVoiceReplyCapture()
+
+        session.clearVoiceReplyTarget()
+
+        #expect(!session.pendingVoiceReplyCapture)
+        #expect(!session.consumeVoiceReplyCaptureRequest())
+    }
+
+    private func makeSession() -> HerdrHudSession {
+        let suiteName = "HerdrHudVoiceReplyTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return HerdrHudSession(
+            userDefaults: defaults,
+            agentSettings: AgentModelSettingsStore(defaults: defaults),
+            persistenceURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString)-hud-thread.json")
+        )
+    }
+
     private func pane(id: String) throws -> HerdrPane {
         let payload: [String: Any] = [
             "pane_id": id,
