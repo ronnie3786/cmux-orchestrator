@@ -67,7 +67,6 @@ struct PaneSessionView: View {
     @State private var piConversationStore = PiConversationStore()
     @State private var piInteractionResponder = PiInteractionResponder()
     @State private var didAutoSelectChat = false
-    @State private var composerDraft = ""
     @State private var composerAttachments: [TerminalAttachment] = []
     @State private var composerFocusRequest = 0
     @State private var gitAvailability: PaneGitAvailability = .checking
@@ -208,6 +207,16 @@ struct PaneSessionView: View {
         model.pane(id: pane.id) ?? pane
     }
 
+    /// `PaneSessionView` is mounted with `.id(pane.id)`, so switching chats
+    /// destroys the view and any `@State` with it. The draft is held on the
+    /// model instead, keyed by pane, and written through per keystroke.
+    private var composerDraft: Binding<String> {
+        Binding(
+            get: { model.composerDraft(for: pane.id) },
+            set: { model.setComposerDraft($0, for: pane.id) }
+        )
+    }
+
     private var modeSelection: Binding<PaneDetailMode> {
         Binding(
             get: { selectedMode },
@@ -230,7 +239,7 @@ struct PaneSessionView: View {
                     interactionResponseAvailable: currentPane.piSemantic?.capabilities.interactionResponse ?? false,
                     composerPane: currentPane,
                     workspace: workspace,
-                    draft: $composerDraft,
+                    draft: composerDraft,
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest,
                     interactionResponder: piInteractionResponder
@@ -323,7 +332,7 @@ struct PaneSessionView: View {
                     model: model,
                     pane: currentPane,
                     workspace: workspace,
-                    draft: $composerDraft,
+                    draft: composerDraft,
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest
                 )
@@ -359,8 +368,8 @@ struct PaneSessionView: View {
     }
 
     private func insertComposerToken(_ token: String) {
-        let trimmed = composerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        composerDraft = trimmed.isEmpty ? token : "\(trimmed) \(token)"
+        let trimmed = composerDraft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        composerDraft.wrappedValue = trimmed.isEmpty ? token : "\(trimmed) \(token)"
         selectedMode = .terminal
         composerFocusRequest &+= 1
     }
@@ -404,8 +413,6 @@ struct PaneSessionView: View {
     private func discardComposerState() {
         composerAttachments.forEach { $0.removeSourceFileIfOwned() }
         composerAttachments = []
-        composerDraft = ""
-        composerFocusRequest = 0
     }
 
     private func autoSelectChatIfNeeded() {

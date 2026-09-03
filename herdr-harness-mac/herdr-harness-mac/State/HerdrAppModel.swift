@@ -57,6 +57,11 @@ final class HerdrAppModel {
     var starredChatIDs: Set<String>
     private(set) var mutedHudSessionIDs: Set<String>
     private(set) var dismissedHudChipStatuses: [String: AgentStatus] = [:]
+    /// Unsent composer text, per pane, so switching chats gives you that chat's
+    /// own draft back instead of a blank field. In memory only: drafts carry
+    /// pasted and dictated content, and their attachments are security-scoped
+    /// URLs that cannot survive a relaunch anyway.
+    private(set) var composerDrafts: [String: String] = [:]
     /// What the mounted pane session is showing, published so the window
     /// toolbar's scope picker can render and select a Git segment. The mode
     /// itself still belongs to whichever `PaneSessionView` is mounted — this is
@@ -2371,6 +2376,21 @@ final class HerdrAppModel {
         userDefaults.set(Array(mutedHudSessionIDs), forKey: "herdr.hud.mutedSessions")
     }
 
+    func composerDraft(for paneID: String) -> String {
+        composerDrafts[paneID] ?? ""
+    }
+
+    func setComposerDraft(_ text: String, for paneID: String) {
+        // Blank drafts are dropped rather than stored, so clicking through
+        // panes costs nothing and the dictionary only holds real work.
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if composerDrafts.removeValue(forKey: paneID) != nil { return }
+            return
+        }
+        guard composerDrafts[paneID] != text else { return }
+        composerDrafts[paneID] = text
+    }
+
     func notePaneDetailMode(_ mode: PaneDetailMode, gitIsAvailable: Bool, for paneID: String) {
         currentPaneDetailModeOwner = paneID
         // Observation notifies on write, not change, and the always-mounted
@@ -3144,6 +3164,16 @@ final class HerdrAppModel {
             machineID: machineID,
             panes: freshWorkspaces.flatMap(\.panes)
         )
+        // A refresh that returned nothing is more likely a half-failed poll than
+        // a machine with no panes, and dropping drafts is unrecoverable — so
+        // only prune when this machine actually reported panes.
+        if !validPaneIDs.isEmpty {
+            let prunedDrafts = composerDrafts.filter { paneID, _ in
+                guard MachineScopedID.split(paneID)?.machineID == machineID else { return true }
+                return validPaneIDs.contains(paneID)
+            }
+            if prunedDrafts != composerDrafts { composerDrafts = prunedDrafts }
+        }
         // Observation notifies on write, not change. The always-mounted HUD's SwiftUI root is
         // the sole observer, so assigning an equal value on every refresh invalidates it.
         if prunedChipStatuses != dismissedHudChipStatuses {
@@ -3362,6 +3392,9 @@ final class HerdrAppModel {
         starredChatIDs = starredChatIDs.filter { MachineScopedID.split($0)?.machineID != id }
         mutedHudSessionIDs = mutedHudSessionIDs.filter { MachineScopedID.split($0)?.machineID != id }
         dismissedHudChipStatuses = dismissedHudChipStatuses.filter {
+            MachineScopedID.split($0.key)?.machineID != id
+        }
+        composerDrafts = composerDrafts.filter {
             MachineScopedID.split($0.key)?.machineID != id
         }
         collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
