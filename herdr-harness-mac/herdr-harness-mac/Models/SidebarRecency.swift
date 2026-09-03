@@ -7,7 +7,7 @@ enum SidebarRecency: String, CaseIterable, Identifiable, Sendable {
     case all
     case recents
 
-    static let recentsLimit = 10
+    static let recentsLimit = 20
 
     var id: Self { self }
 

@@ -607,7 +607,7 @@ struct HerdrSidebarView: View {
             .frame(minHeight: 28)
             .accessibilityElement(children: .contain)
 
-            ForEach(snapshot.recentChats) { chatRow($0) }
+            ForEach(snapshot.recentChats) { chatRow($0, showingLastActivity: true) }
             separator
         }
     }
@@ -936,12 +936,18 @@ struct HerdrSidebarView: View {
         }
     }
 
-    private func chatRow(_ pane: HerdrPane) -> some View {
+    private func chatRow(_ pane: HerdrPane, showingLastActivity: Bool = false) -> some View {
         SidebarChatRow(
             pane: pane,
             isSelected: pane.id == model.selectedPaneID,
             isStarred: model.starredChatIDs.contains(pane.id),
-            statusSince: statusSince(for: pane),
+            // Recents ages the very key it sorts on — including the
+            // `firstSeenAt` fallback — so the number on a row explains why the
+            // row sits where it does.
+            since: showingLastActivity
+                ? (pane.lastActivityAt ?? pane.firstSeenAt)
+                : statusSince(for: pane),
+            describesLastActivity: showingLastActivity,
             action: { open(pane) },
             toggleStar: { model.toggleStarredChat(pane.id) }
         )

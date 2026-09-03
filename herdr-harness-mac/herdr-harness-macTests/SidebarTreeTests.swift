@@ -114,17 +114,25 @@ struct SidebarTreeTests {
     @Test("Recents lists the most recently active chats newest first")
     func recentsListsNewestChatsFirst() {
         let now = Date(timeIntervalSince1970: 1_735_732_800)
-        let alphaTab = tab(id: "alpha:t1", workspaceID: "alpha", number: 1, label: "Alpha", paneCount: 6)
-        let betaTab = tab(id: "beta:t1", workspaceID: "beta", number: 1, label: "Beta", paneCount: 6)
-        let alphaPanes = stride(from: 0, through: 10, by: 2).map { index in
+        // Two more candidates than the limit, and derived from it, so this goes
+        // on proving truncation if the limit moves again. Even ranks sit in one
+        // workspace and odd in the other, so the expected order also shows
+        // Recents ignoring workspace grouping.
+        let indices = Array(0..<(SidebarRecency.recentsLimit + 2))
+        let paneID = { (index: Int) in index.isMultiple(of: 2) ? "alpha:p\(index)" : "beta:p\(index)" }
+        let alphaIndices = indices.filter { $0.isMultiple(of: 2) }
+        let betaIndices = indices.filter { !$0.isMultiple(of: 2) }
+        let alphaTab = tab(id: "alpha:t1", workspaceID: "alpha", number: 1, label: "Alpha", paneCount: alphaIndices.count)
+        let betaTab = tab(id: "beta:t1", workspaceID: "beta", number: 1, label: "Beta", paneCount: betaIndices.count)
+        let alphaPanes = alphaIndices.map { index in
             pane(
-                id: "alpha:p\(index)", workspaceID: "alpha", tabID: alphaTab.id,
+                id: paneID(index), workspaceID: "alpha", tabID: alphaTab.id,
                 title: "Alpha \(index)", lastActivityAt: now.addingTimeInterval(-Double(index) * 3_600)
             )
         }
-        let betaPanes = stride(from: 1, through: 11, by: 2).map { index in
+        let betaPanes = betaIndices.map { index in
             pane(
-                id: "beta:p\(index)", workspaceID: "beta", tabID: betaTab.id,
+                id: paneID(index), workspaceID: "beta", tabID: betaTab.id,
                 title: "Beta \(index)", lastActivityAt: now.addingTimeInterval(-Double(index) * 3_600)
             )
         }
@@ -138,10 +146,8 @@ struct SidebarTreeTests {
         )
 
         #expect(chats.count == SidebarRecency.recentsLimit)
-        #expect(chats.map(\.id) == (0..<10).map { index in
-            index.isMultiple(of: 2) ? "alpha:p\(index)" : "beta:p\(index)"
-        })
-        #expect(!chats.contains(where: { $0.id == "alpha:p10" }))
+        #expect(chats.map(\.id) == (0..<SidebarRecency.recentsLimit).map(paneID))
+        #expect(!chats.contains(where: { $0.id == paneID(SidebarRecency.recentsLimit) }))
     }
 
     @Test("Recents falls back to first seen and sorts undated chats last")

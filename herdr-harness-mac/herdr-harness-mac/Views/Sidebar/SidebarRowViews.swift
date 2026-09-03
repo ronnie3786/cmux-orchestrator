@@ -269,7 +269,9 @@ struct SidebarChatRow: View {
     let pane: HerdrPane
     let isSelected: Bool
     var isStarred: Bool = false
-    var statusSince: Date?
+    /// The status age everywhere but Recents, which passes its own ranking key.
+    var since: Date?
+    var describesLastActivity = false
     let action: () -> Void
     /// Quick-star. Nil leaves the row read-only, which is what the render
     /// tests and any non-interactive host want.
@@ -293,7 +295,11 @@ struct SidebarChatRow: View {
 
                 starControl
 
-                SidebarStatusAgeLabel(status: pane.agentStatus, since: statusSince)
+                SidebarStatusAgeLabel(
+                    status: pane.agentStatus,
+                    since: since,
+                    describesLastActivity: describesLastActivity
+                )
                     .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
@@ -350,10 +356,10 @@ struct SidebarChatRow: View {
     }
 
     private var accessibilityLabel: String {
-        guard let statusSince else {
-            return "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
-        }
-        return "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title), \(HerdrTimestamp.spokenAge(since: statusSince))"
+        let identity = "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
+        guard let since else { return identity }
+        let age = HerdrTimestamp.spokenAge(since: since)
+        return describesLastActivity ? "\(identity), last active \(age)" : "\(identity), \(age)"
     }
 
     private var rowBackground: Color {
