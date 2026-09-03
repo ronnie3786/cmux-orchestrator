@@ -80,28 +80,22 @@ struct HerdrNoteRowView: View {
             controller.openNote(note.id)
         } label: {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(note.color.fill)
-                    .frame(width: 4, height: 16)
                 Text(note.displayTitle)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.text)
+                    .foregroundStyle(note.color.ink)
                 Spacer(minLength: 0)
                 trailingIndicator
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 12)
             .frame(width: HerdrHudPlacement.notesWidth, height: HerdrHudPlacement.noteRowHeight)
             .herdrHitTarget(
                 minWidth: HerdrHudPlacement.notesWidth,
                 minHeight: HerdrHudPlacement.noteRowHeight
             )
-            .background(HerdrTheme.elevated, in: .rect(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-            }
+            .background(note.color.fill, in: .capsule)
+            .shadow(color: HerdrTheme.ink.opacity(0.3), radius: 2, y: 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -129,18 +123,20 @@ struct HerdrNoteRowView: View {
     @ViewBuilder
     private var trailingIndicator: some View {
         if notes.isBusy(note.id) {
-            ProgressView().controlSize(.small)
+            ProgressView()
+                .controlSize(.small)
+                .tint(note.color.ink)
         } else if !note.links.isEmpty {
             HStack(spacing: 3) {
                 Image(systemName: "link")
                 Text("\(note.links.count)")
             }
             .herdrFont(.caption2, monospaced: true, weight: .semibold)
-            .foregroundStyle(HerdrTheme.mist)
+            .foregroundStyle(note.color.ink.opacity(0.7))
         } else if note.actions.contains(where: { $0.status == .ready }) {
             Image(systemName: "bolt.fill")
                 .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.accent)
+                .foregroundStyle(note.color.ink)
         }
     }
 }
