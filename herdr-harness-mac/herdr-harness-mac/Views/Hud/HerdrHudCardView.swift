@@ -7,6 +7,7 @@ struct HerdrHudCardView: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     @Bindable var session: HerdrHudSession
+    @State private var voiceReply = HerdrHudVoiceReply()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +24,10 @@ struct HerdrHudCardView: View {
                 openPaneInMainWindow: openPaneInMainWindow,
                 collapse: controller.collapse
             )
+            if session.voiceReplyTarget != nil {
+                Divider().overlay { HerdrTheme.surface }
+                HerdrHudVoiceReplyView(model: model, session: session, voiceReply: voiceReply)
+            }
             Divider().overlay { HerdrTheme.surface }
             HerdrHudComposerView(model: model, controller: controller, session: session)
         }
@@ -47,6 +52,13 @@ struct HerdrHudCardView: View {
         }
         .onChange(of: session.exchangesRevision) { _, _ in
             updateResponseAudioAvailability()
+        }
+        .onChange(of: session.voiceReplyTarget, initial: true) { _, target in
+            if let target {
+                voiceReply.target(paneID: target)
+            } else {
+                voiceReply.cancel()
+            }
         }
     }
 

@@ -12,6 +12,8 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
     private(set) var phase: ResponseAudioPlaybackPhase = .unavailable
     private(set) var progressText: String?
     private(set) var hasPlayableResponse = false
+    private(set) var completedPlaybackRevision = 0
+    var onPlaybackCompleted: (() -> Void)?
 
     @ObservationIgnored private var renderTask: Task<Void, Never>?
     @ObservationIgnored private var player: AVAudioPlayer?
@@ -34,6 +36,12 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
         player.phase = phase
         player.hasPlayableResponse = hasPlayableResponse
         return player
+    }
+    #endif
+
+    #if DEBUG
+    func finishPlaybackForTesting() {
+        finishPlayback()
     }
     #endif
 
@@ -196,6 +204,8 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
         progressText = nil
         phase = capabilities.available ? .idle : .unavailable
         deactivateAudioSession()
+        completedPlaybackRevision &+= 1
+        onPlaybackCompleted?()
     }
 
     private func activateAudioSession() throws {

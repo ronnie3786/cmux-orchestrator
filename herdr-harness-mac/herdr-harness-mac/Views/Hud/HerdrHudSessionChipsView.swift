@@ -17,6 +17,7 @@ struct HerdrHudSessionChipsView: View {
     let chips: [HerdrHudSessionChips.Chip]
     let overflow: Int
     var showAll: () -> Void = { }
+    var summon: () -> Void = { }
 
     @State private var hoveredChipID: String?
 
@@ -25,7 +26,10 @@ struct HerdrHudSessionChipsView: View {
             ForEach(chips) { chip in
                 chipButton(chip)
                     .overlay(alignment: .trailing) {
-                        if chip.status == .done {
+                        if session.voiceReplyTarget == chip.id {
+                            replyButton(chip)
+                                .padding(.trailing, 5)
+                        } else if chip.status == .done {
                             speakButton(chip)
                                 .padding(.trailing, 5)
                                 .opacity(showsSpeakButton(chip) ? 1 : 0)
@@ -68,6 +72,27 @@ struct HerdrHudSessionChipsView: View {
         .accessibilityIdentifier("hud-session-chip-overflow")
         .accessibilityLabel("\(overflow) more sessions")
         .accessibilityHint("Shows every session; they regroup shortly after you move away")
+    }
+
+    /// Offered once this chip's answer has finished playing. The collapsed HUD
+    /// is far too narrow for an editable transcript, so this opens the card and
+    /// lets the reply strip there take over.
+    private func replyButton(_ chip: HerdrHudSessionChips.Chip) -> some View {
+        Button(action: summon) {
+            Image(systemName: "mic.circle.fill")
+                .herdrFont(.caption2, weight: .bold)
+                .foregroundStyle(HerdrTheme.accent)
+                .frame(width: 20, height: 20)
+                .background(HerdrTheme.graphite, in: .circle)
+                .overlay {
+                    Circle().strokeBorder(HerdrTheme.accent.opacity(0.45), lineWidth: 1)
+                }
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .help("Reply to this session by voice")
+        .accessibilityLabel("Reply by voice")
+        .accessibilityIdentifier("hud-session-chip-reply-\(chip.id)")
     }
 
     private func showsSpeakButton(_ chip: HerdrHudSessionChips.Chip) -> Bool {

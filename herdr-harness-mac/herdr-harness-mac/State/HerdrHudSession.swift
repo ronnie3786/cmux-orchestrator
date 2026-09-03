@@ -94,6 +94,11 @@ final class HerdrHudSession {
     private(set) var sessionAudioPaneID: String?
     private(set) var loadingSessionAudioPaneID: String?
     @ObservationIgnored private var sessionAudioText: String?
+    /// Which exchange the transcript-row player is speaking, so a completed
+    /// playback resolves back to *that* exchange rather than whichever one
+    /// happened to be promoted last.
+    @ObservationIgnored private var speakingExchangeID: String?
+    private(set) var voiceReplyTarget: String?
     private(set) var promotingExchangeIDs: Set<String> = []
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var defaultModel: PiModelIdentity?
@@ -121,6 +126,9 @@ final class HerdrHudSession {
             fileURL: persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
         )
         self.selectedMachineID = userDefaults.string(forKey: Self.machineIDDefaultsKey)
+        responseAudioPlayer.onPlaybackCompleted = { [weak self] in
+            self?.captureVoiceReplyTarget()
+        }
         let persistence = self.persistence
         restoreTask = Task { [weak self, persistence] in
             guard let snapshot = await persistence.load(), !Task.isCancelled else { return }
@@ -455,6 +463,7 @@ final class HerdrHudSession {
         responseAudioPlayer.stop()
         sessionAudioPaneID = paneID
         sessionAudioText = nil
+        speakingExchangeID = nil
         loadingSessionAudioPaneID = paneID
         defer {
             if loadingSessionAudioPaneID == paneID { loadingSessionAudioPaneID = nil }
@@ -506,8 +515,12 @@ final class HerdrHudSession {
     func activateResponseAudio(
         _ action: ResponseAudioAction,
         text: String,
+        exchangeID: String? = nil,
         model: HerdrAppModel
     ) {
+        sessionAudioPaneID = nil
+        sessionAudioText = nil
+        speakingExchangeID = exchangeID
         audioErrorMessage = nil
         guard let machineID = resolvedMachineIDReadOnly(in: model) else { return }
         responseAudioPlayer.activate(
@@ -523,6 +536,32 @@ final class HerdrHudSession {
                 self?.audioErrorMessage = message
             }
         )
+    }
+
+    /// Runs when playback reaches its natural end. The target is captured here
+    /// rather than read later because collapsing the HUD, switching machines and
+    /// appending a run all call `stop()`, which tears the audio state down.
+    private func captureVoiceReplyTarget() {
+        if let sessionAudioPaneID {
+            voiceReplyTarget = sessionAudioPaneID
+            return
+        }
+        // A headless HUD exchange only has a pi session once it was promoted.
+        // `promotedPaneID` is a raw id while panes are addressed machine-scoped.
+        if let speakingExchangeID,
+           let exchange = exchanges.first(where: { $0.id == speakingExchangeID }),
+           let promotedPaneID = exchange.promotedPaneID {
+            voiceReplyTarget = MachineScopedID.compose(
+                machineID: exchange.machineID,
+                rawID: promotedPaneID
+            )
+            return
+        }
+        voiceReplyTarget = nil
+    }
+
+    func clearVoiceReplyTarget() {
+        voiceReplyTarget = nil
     }
 
     func promote(exchange: HerdrHudExchange, model: HerdrAppModel) async -> HerdrPane? {

@@ -95,7 +95,12 @@ struct HerdrHudTranscriptRowView: View {
                     player: session.responseAudioPlayer,
                     showsTitles: false,
                     activate: { action in
-                        session.activateResponseAudio(action, text: response, model: model)
+                        session.activateResponseAudio(
+                            action,
+                            text: response,
+                            exchangeID: exchange.id,
+                            model: model
+                        )
                     }
                 )
             }
