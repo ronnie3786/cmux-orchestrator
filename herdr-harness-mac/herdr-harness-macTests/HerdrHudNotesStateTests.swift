@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
@@ -184,6 +185,28 @@ struct HerdrHudNotesStateTests {
         harness.state.undoAI(id)
         note = try #require(harness.state.note(id: id))
         #expect(note.body == "Edited by hand")
+    }
+
+    @Test("Tidy flattens formatting but undo gives it back")
+    func undoRestoresFormattingATidyFlattened() async throws {
+        let harness = await makeHarness()
+        let id = harness.state.createNote()
+        var rich = AttributedString("keep me bold")
+        rich.font = .body.bold()
+        harness.state.updateBody(rich, for: id)
+
+        // Tidy rewrites the note from a plain-text model reply, so the styling
+        // goes — deliberately. The rich snapshot is the way back.
+        harness.ai.mode = .succeed("# Tidy\n\n• flattened")
+        await harness.state.cleanUp(id, model: harness.model)
+        var note = try #require(harness.state.note(id: id))
+        #expect(note.body == "• flattened")
+        #expect(note.richBody.runs.allSatisfy { $0.font == nil })
+        #expect(note.previousVersion?.richBody == rich)
+
+        harness.state.undoAI(id)
+        note = try #require(harness.state.note(id: id))
+        #expect(note.richBody == rich)
     }
 
     @Test("Deleting a note mid-cleanup cancels the run and leaves no residue")

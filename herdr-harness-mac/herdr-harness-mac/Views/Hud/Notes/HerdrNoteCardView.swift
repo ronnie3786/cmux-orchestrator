@@ -8,6 +8,7 @@ struct HerdrNoteCardView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isBodyFocused: Bool
+    @State private var bodySelection = AttributedTextSelection()
     @State private var isDeleteArmed = false
     @State private var deleteArmTask: Task<Void, Never>?
 
@@ -133,7 +134,7 @@ struct HerdrNoteCardView: View {
                     .padding(.vertical, 8)
                     .allowsHitTesting(false)
             }
-            TextEditor(text: bodyBinding(for: note))
+            TextEditor(text: bodyBinding(for: note), selection: $bodySelection)
                 .scrollContentBackground(.hidden)
                 .herdrFont(.callout)
                 .foregroundStyle(note.color.ink)
@@ -348,9 +349,9 @@ struct HerdrNoteCardView: View {
         )
     }
 
-    private func bodyBinding(for note: HerdrNote) -> Binding<String> {
+    private func bodyBinding(for note: HerdrNote) -> Binding<AttributedString> {
         Binding(
-            get: { notes.note(id: note.id)?.body ?? "" },
+            get: { notes.note(id: note.id)?.richBody ?? AttributedString() },
             set: { newValue in
                 guard notes.activities[note.id] != .cleaning else { return }
                 notes.updateBody(newValue, for: note.id)
@@ -359,6 +360,7 @@ struct HerdrNoteCardView: View {
     }
 
     private func refocusAfterReveal() {
+        bodySelection = AttributedTextSelection()
         isBodyFocused = false
         Task { @MainActor in isBodyFocused = true }
     }

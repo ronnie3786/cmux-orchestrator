@@ -1,9 +1,52 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
 @Suite("Herdr notes persistence")
 struct HerdrNotesPersistenceTests {
+    @Test("Rich body survives a persistence round trip")
+    func richBodyRoundTrips() throws {
+        var rich = AttributedString("bold and plain")
+        if let boldRange = rich.range(of: "bold") {
+            rich[boldRange].font = .body.bold()
+        }
+        var note = HerdrNote(title: "Styled")
+        note.richBody = rich
+        let url = try makeTemporaryDirectory().appendingPathComponent("hud-notes.json")
+        try HerdrNotesSnapshot(notes: [note]).save(to: url)
+        let restored = try #require(HerdrNotesSnapshot.load(from: url))
+
+        #expect(restored.notes[0].richBody == rich)
+        #expect(restored.notes[0].body == "bold and plain")
+    }
+
+    @Test("A note written before rich text still loads, as plain text")
+    func legacyPlainBodyDecodes() throws {
+        // Version stays pinned at 1 on purpose: load() rejects any other value,
+        // so bumping it would silently discard every existing note.
+        let json = """
+        {"version":1,"notes":[{"id":"\(UUID().uuidString)","title":"Legacy","body":"just words",\
+        "createdAt":0,"updatedAt":0,"actions":[],"links":[]}]}
+        """.replacingOccurrences(of: "\\\n", with: "")
+        let snapshot = try JSONDecoder().decode(HerdrNotesSnapshot.self, from: Data(json.utf8))
+
+        #expect(snapshot.notes[0].body == "just words")
+        #expect(snapshot.notes[0].richBody == AttributedString("just words"))
+    }
+
+    @Test("The 20k cap truncates the rich body without dropping its attributes")
+    func capsRichBodyLength() throws {
+        var rich = AttributedString(String(repeating: "a", count: HerdrNotesSnapshot.maximumBodyLength + 50))
+        rich.font = .body.bold()
+        var note = HerdrNote(title: "Long")
+        note.richBody = rich
+        let snapshot = HerdrNotesSnapshot(notes: [note])
+
+        #expect(snapshot.notes[0].richBody.characters.count == HerdrNotesSnapshot.maximumBodyLength)
+        #expect(snapshot.notes[0].richBody.runs.first?.font == .body.bold())
+    }
+
     @Test("Notes round-trip through the persistence file")
     func roundTrip() throws {
         let directory = try makeTemporaryDirectory()

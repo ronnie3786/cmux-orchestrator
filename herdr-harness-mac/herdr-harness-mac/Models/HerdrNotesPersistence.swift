@@ -16,9 +16,9 @@ struct HerdrNotesSnapshot: Codable, Sendable {
             trimmed = trimmed.filter { idsToKeep.contains($0.id) }
         }
         self.notes = trimmed.map { note in
-            guard note.body.count > Self.maximumBodyLength else { return note }
+            guard note.richBody.characters.count > Self.maximumBodyLength else { return note }
             var copy = note
-            copy.body = String(note.body.prefix(Self.maximumBodyLength))
+            copy.richBody = HerdrNoteRichText.truncated(note.richBody, to: Self.maximumBodyLength)
             return copy
         }
     }
