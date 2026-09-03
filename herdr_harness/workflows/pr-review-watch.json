@@ -1,0 +1,68 @@
+{
+  "workflow": "pr-review-watch",
+  "version": 1,
+  "title": "PR Review Watch",
+  "description": "Watch the iOS PR review queue, assess each request, and run the chosen review pipeline with artifacts on the board.",
+  "phases": [
+    { "key": "queue", "title": "Queue" },
+    { "key": "review", "title": "Review" },
+    { "key": "outputs", "title": "Outputs" }
+  ],
+  "stages": [
+    {
+      "key": "queued",
+      "title": "Assess the PR",
+      "phase": "queue",
+      "skill": "buzz-check-pr-reviews-ios",
+      "checkpoint": "human",
+      "next": ["manual-review", "ios-review", "explainer-video", "comprehensive-review", "custom-review"]
+    },
+    {
+      "key": "manual-review",
+      "title": "Review it yourself",
+      "phase": "review",
+      "skill": "manual-review",
+      "checkpoint": "none",
+      "next": ["complete"]
+    },
+    {
+      "key": "ios-review",
+      "title": "Run the seven-reviewer iOS review",
+      "phase": "review",
+      "skill": "ios-review-remote-pr",
+      "checkpoint": "none",
+      "next": ["complete"]
+    },
+    {
+      "key": "explainer-video",
+      "title": "Record the explainer video",
+      "phase": "review",
+      "skill": "github-pr-explainer-video-v2",
+      "checkpoint": "none",
+      "next": ["complete"]
+    },
+    {
+      "key": "comprehensive-review",
+      "title": "Run the comprehensive review",
+      "phase": "review",
+      "skill": "comprehensive-pr-review",
+      "checkpoint": "none",
+      "next": ["complete"]
+    },
+    {
+      "key": "custom-review",
+      "title": "Run a custom review",
+      "phase": "review",
+      "skill": "custom-review",
+      "checkpoint": "none",
+      "next": ["complete"]
+    },
+    {
+      "key": "complete",
+      "title": "Collect the artifacts",
+      "phase": "outputs",
+      "skill": "herdr-active-work",
+      "checkpoint": "none"
+    }
+  ]
+}
