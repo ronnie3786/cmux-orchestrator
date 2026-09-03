@@ -15,7 +15,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping, Optional
 
-from . import attachments, response_audio, voice
+from . import attachments, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
@@ -410,6 +410,8 @@ def api_description() -> dict:
             "responseAudioCapabilities": "/api/v1/response-audio/capabilities",
             "responseAudioPrepare": "/api/v1/response-audio/prepare",
             "responseAudioSpeech": "/api/v1/response-audio/speech",
+            "resultArtifacts": "/api/v1/result-artifacts",
+            "resultArtifactContent": "/api/v1/result-artifacts/{artifactId}/content",
             "events": "/api/v1/events",
             "paneOutput": "/api/v1/panes/{paneId}/output",
             "paneStream": "/api/v1/panes/{paneId}/stream",
@@ -467,6 +469,7 @@ def api_description() -> dict:
             "POST /api/v1/active-work/jira/{issueKey}/setup",
             "POST /api/v1/active-work/ingestions",
             "POST /api/v1/response-audio/prepare|speech",
+            "POST /api/v1/result-artifacts",
             "POST /api/v1/quick-sessions/pi",
             "POST /api/v1/agent-runs",
             "POST /api/v1/agent-runs/{runId}/cancel|promote",
@@ -485,6 +488,7 @@ def api_description() -> dict:
             "stars.changed",
             "cleanup.run_updated",
             "active_work.updated",
+            "result_artifact.created",
         ],
         "generatedAt": utc_now(),
     }
@@ -802,6 +806,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(exc.status, exc.code, str(exc))
             except response_audio.ResponseAudioError as exc:
                 self._error(exc.status, exc.code, str(exc))
+            except result_artifacts.ResultArtifactError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except FleetError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -936,6 +942,62 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return fleet_manager.action(item_id, action)
             if method == "GET" and tail == ["health"]:
                 return service.health_response()
+            if method == "GET" and tail == ["result-artifacts"]:
+                return service.list_result_artifacts()
+            if method == "POST" and tail == ["result-artifacts"]:
+                allowed_fields = {
+                    "originType",
+                    "originId",
+                    "sessionId",
+                    "kind",
+                    "location",
+                    "title",
+                    "idempotencyKey",
+                }
+                if set(body) - allowed_fields:
+                    raise HTTPValidationError(
+                        "Result artifact request contains an unsupported field"
+                    )
+                origin_type = _string(
+                    body.get("originType"), "originType", maximum=32
+                )
+                origin_id = _string(body.get("originId"), "originId", maximum=256)
+                kind = _string(body.get("kind"), "kind", maximum=16)
+                location = _string(
+                    body.get("location"), "location", maximum=16_384
+                )
+                session_id = None
+                if body.get("sessionId") is not None:
+                    session_id = _string(
+                        body.get("sessionId"), "sessionId", maximum=512
+                    )
+                title = None
+                if body.get("title") is not None:
+                    title = _string(body.get("title"), "title", maximum=240)
+                idempotency_key = None
+                if body.get("idempotencyKey") is not None:
+                    idempotency_key = _string(
+                        body.get("idempotencyKey"),
+                        "idempotencyKey",
+                        maximum=256,
+                    )
+                return service.create_result_artifact(
+                    origin_type=origin_type,
+                    origin_id=origin_id,
+                    session_id=session_id,
+                    kind=kind,
+                    location=location,
+                    title=title,
+                    idempotency_key=idempotency_key,
+                ), 201
+            if (
+                method == "GET"
+                and len(tail) == 3
+                and tail[0] == "result-artifacts"
+                and tail[2] == "content"
+            ):
+                self._serve_result_artifact_content(tail[1])
+                return None
             if method == "GET" and tail == ["response-audio", "capabilities"]:
                 return service.response_audio_capabilities()
             if method == "POST" and tail == ["response-audio", "prepare"]:
@@ -1788,6 +1850,32 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 "agent.start",
                 {"pane_id": pane_id, "name": name, "kind": kind, "args": clean_args, "timeout_ms": timeout},
             )
+
+        def _serve_result_artifact_content(self, artifact_id: str) -> None:
+            content = service.open_result_artifact_content(artifact_id)
+            with content:
+                artifact = content.artifact
+                filename = str(artifact.get("filename") or "result-artifact")
+                fallback = re.sub(r"[^A-Za-z0-9._ -]", "_", filename).strip(" .")
+                fallback = (fallback or "result-artifact")[:160]
+                encoded_filename = urllib.parse.quote(filename, safe="")
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    str(artifact.get("contentType") or "application/octet-stream"),
+                )
+                self.send_header("Content-Length", str(content.byte_size))
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded_filename}',
+                )
+                self._common_headers()
+                self.end_headers()
+                while True:
+                    chunk = content.handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
 
         def _serve_events(self, query: dict[str, list[str]]) -> None:
             header_id = self.headers.get("Last-Event-ID")

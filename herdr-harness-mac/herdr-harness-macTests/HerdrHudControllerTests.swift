@@ -114,8 +114,30 @@ struct HerdrHudControllerTests {
         harness.controller.setCollapsedChipCount(HerdrHudPlacement.maxChips + 2)
         #expect(harness.controller.collapsedChipCount == HerdrHudPlacement.maxChips + 2)
 
-        harness.controller.setCollapsedChipCount(HerdrHudPlacement.maxExpandedChips + 5)
-        #expect(harness.controller.collapsedChipCount == HerdrHudPlacement.maxExpandedChips)
+        harness.controller.setCollapsedChipCount(HerdrHudPlacement.maxCollapsedRows + 5)
+        #expect(harness.controller.collapsedChipCount == HerdrHudPlacement.maxCollapsedRows)
+    }
+
+    @Test("Result nodes reserve their lane only while visible")
+    func resultRailResizesTheCollapsedPanel() async throws {
+        let harness = makeHarness()
+        // Let the hosted root publish its initial, artifact-free projection
+        // before this test drives the controller directly. Otherwise that
+        // initial `onChange` can race the explicit `true` below.
+        try await Task.sleep(for: .milliseconds(100))
+        let original = try #require(harness.controller.panelFrameForTesting)
+
+        harness.controller.setCollapsedResultRailVisible(true)
+        try await Task.sleep(for: .milliseconds(300))
+        let widened = try #require(harness.controller.panelFrameForTesting)
+        #expect(widened.width - original.width == HerdrHudPlacement.resultRailWidth)
+        #expect(widened.maxX == original.maxX)
+
+        harness.controller.setCollapsedResultRailVisible(false)
+        try await Task.sleep(for: .milliseconds(300))
+        let restored = try #require(harness.controller.panelFrameForTesting)
+        #expect(restored.width == original.width)
+        #expect(restored.maxX == original.maxX)
     }
 
     @Test("Opening and closing a note card retain their panel animation")

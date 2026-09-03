@@ -559,6 +559,75 @@ actor HerdrAPIClient {
         )
     }
 
+    func fetchResultArtifacts() async throws -> ResultArtifactsResponse {
+        try await request(path: "/api/v1/result-artifacts")
+    }
+
+    /// Streams an authenticated result payload to a temporary download and
+    /// atomically installs it at the caller's cache destination. Result IDs are
+    /// deliberately restricted to one URL path segment.
+    func downloadResultArtifactContent(
+        id: String,
+        expectedByteSize: Int64,
+        to destinationURL: URL
+    ) async throws {
+        guard Self.isValidResultArtifactID(id),
+              destinationURL.isFileURL,
+              (0...AgentResultArtifact.maximumDownloadByteSize).contains(expectedByteSize)
+        else {
+            throw APIError.invalidResponse
+        }
+
+        var request = makeRequest(
+            path: "/api/v1/result-artifacts/\(id)/content",
+            method: "GET"
+        )
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        let limiter = ResultArtifactDownloadLimiter(maximumByteCount: expectedByteSize)
+        let downloadURL: URL
+        let response: URLResponse
+        do {
+            (downloadURL, response) = try await session.download(for: request, delegate: limiter)
+        } catch {
+            if limiter.exceededLimit { throw APIError.invalidResponse }
+            throw error
+        }
+        try Self.validate(response: response)
+        try Task.checkCancellation()
+
+        guard response.expectedContentLength == expectedByteSize else {
+            throw APIError.invalidResponse
+        }
+        let downloadedValues = try downloadURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+        ])
+        guard downloadedValues.isRegularFile == true,
+              downloadedValues.isSymbolicLink != true,
+              Int64(downloadedValues.fileSize ?? -1) == expectedByteSize
+        else { throw APIError.invalidResponse }
+
+        let fileManager = FileManager.default
+        let directory = destinationURL.deletingLastPathComponent()
+        let directoryValues = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard directoryValues.isDirectory == true, directoryValues.isSymbolicLink != true else {
+            throw APIError.invalidResponse
+        }
+        let stagingURL = directory.appending(
+            path: ".\(destinationURL.lastPathComponent).\(UUID().uuidString).partial",
+            directoryHint: .notDirectory
+        )
+        defer { try? fileManager.removeItem(at: stagingURL) }
+        try fileManager.copyItem(at: downloadURL, to: stagingURL)
+        try Task.checkCancellation()
+
+        // Artifact content is immutable. Another task winning the same cache
+        // install race is therefore equivalent to this download succeeding.
+        if fileManager.fileExists(atPath: destinationURL.path) { return }
+        try fileManager.moveItem(at: stagingURL, to: destinationURL)
+    }
+
     func startHeadlessAgent(
         prompt: String,
         mode: HeadlessAgentRunMode = .ask,
@@ -1026,6 +1095,9 @@ actor HerdrAPIClient {
         if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") {
             return 30
         }
+        if path.hasPrefix("/api/v1/result-artifacts/") && path.hasSuffix("/content") {
+            return 10 * 60
+        }
         if method != "GET", ["/send-text", "/send-keys", "/run"].contains(where: path.hasSuffix) {
             return 5
         }
@@ -1051,6 +1123,12 @@ actor HerdrAPIClient {
             return 30
         }
         return 15
+    }
+
+    private static func isValidResultArtifactID(_ id: String) -> Bool {
+        guard !id.isEmpty, id.count <= 128 else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        return id.unicodeScalars.allSatisfy(allowed.contains) && id != "." && id != ".."
     }
 
     private static func validate(response: URLResponse, data: Data = Data()) throws {
@@ -1134,12 +1212,60 @@ struct TerminalSSEParser {
     }
 }
 
+/// Cancels a URLSession download as soon as transport progress exceeds the
+/// trusted metadata ceiling. The final response and on-disk size are checked
+/// independently before the temporary file enters Herdr's cache.
+private final class ResultArtifactDownloadLimiter: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let maximumByteCount: Int64
+    private let lock = NSLock()
+    private var _exceededLimit = false
+
+    init(maximumByteCount: Int64) {
+        self.maximumByteCount = maximumByteCount
+    }
+
+    var exceededLimit: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _exceededLimit
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        _ = session
+        _ = bytesWritten
+        if totalBytesWritten > maximumByteCount
+            || (totalBytesExpectedToWrite >= 0 && totalBytesExpectedToWrite > maximumByteCount) {
+            lock.lock()
+            _exceededLimit = true
+            lock.unlock()
+            downloadTask.cancel()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        _ = session
+        _ = downloadTask
+        _ = location
+    }
+}
+
 /// Parses Herdr's SSE records, which are either broker envelopes containing an
 /// inner event payload or hand-written records whose JSON payload is the event data.
 struct HerdrSSEParser {
     static let decodedEventNames: Set<String> = [
         "snapshot.updated", "alert.created", "alert.updated", "alerts.read_state_changed",
         "stars.changed", "push.delivery", "ready", "stream.reset", "cleanup.run_updated",
+        "result_artifact.created",
         "pi.bridge.connection", "pi.session_start", "pi.session_shutdown", "pi.session_info_changed",
         "pi.session_tree", "pi.session_compact",
     ]

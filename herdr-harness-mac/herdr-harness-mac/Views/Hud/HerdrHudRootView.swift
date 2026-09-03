@@ -8,12 +8,17 @@ struct HerdrHudRootView: View {
     let notes: HerdrHudNotesState
     let fontScale: HerdrFontScaleStore
 
-    private var sessionChips: (chips: [HerdrHudSessionChips.Chip], overflow: Int) {
+    private var sessionChips: (
+        chips: [HerdrHudSessionChips.Chip],
+        overflow: Int,
+        detachedArtifacts: [AgentResultArtifact]
+    ) {
         HerdrHudSessionChips.chips(
             panes: model.workspaces.flatMap(\.panes),
             mutedPaneIDs: model.mutedHudSessionIDs,
             dismissedStatuses: model.dismissedHudChipStatuses,
             revealTitles: model.showSessionTitles,
+            artifacts: model.unopenedResultArtifacts,
             limit: controller.isShowingAllChips
                 ? HerdrHudPlacement.maxExpandedChips
                 : HerdrHudPlacement.maxChips
@@ -22,6 +27,7 @@ struct HerdrHudRootView: View {
 
     var body: some View {
         let chipState = sessionChips
+        let collapsedRowCount = chipState.chips.count + (chipState.overflow > 0 ? 1 : 0)
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.notesGap) {
             Group {
                 if controller.isExpanded {
@@ -35,30 +41,31 @@ struct HerdrHudRootView: View {
                                 )
                         )
                 } else {
-                    Group {
-                        if chipState.chips.isEmpty {
-                            HerdrHudOrbView(model: model, controller: controller, session: session)
-                        } else {
-                            VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
-                                HerdrHudOrbView(model: model, controller: controller, session: session)
-                                    .frame(
-                                        width: HerdrHudPlacement.collapsedSize.width,
-                                        height: HerdrHudPlacement.collapsedSize.height
-                                    )
-                                HerdrHudSessionChipsView(
-                                    model: model,
-                                    session: session,
-                                    chips: chipState.chips,
-                                    overflow: chipState.overflow,
-                                    showAll: controller.showAllChips,
-                                    summon: controller.summon
-                                )
-                                .onHover { controller.setHoveringChips($0) }
-                            }
+                    VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
+                        HerdrHudOrbResultRow(
+                            model: model,
+                            controller: controller,
+                            session: session,
+                            artifacts: chipState.detachedArtifacts
+                        )
+
+                        if !chipState.chips.isEmpty || chipState.overflow > 0 {
+                            HerdrHudSessionChipsView(
+                                model: model,
+                                session: session,
+                                chips: chipState.chips,
+                                overflow: chipState.overflow,
+                                showAll: controller.showAllChips,
+                                summon: controller.summon
+                            )
+                            .onHover { controller.setHoveringChips($0) }
                         }
                     }
-                    .onChange(of: chipState.chips.count, initial: true) { _, count in
+                    .onChange(of: collapsedRowCount, initial: true) { _, count in
                         controller.setCollapsedChipCount(count)
+                    }
+                    .onChange(of: hasResultRail(chipState), initial: true) { _, isVisible in
+                        controller.setCollapsedResultRailVisible(isVisible)
                     }
                 }
             }
@@ -84,5 +91,15 @@ struct HerdrHudRootView: View {
         .environment(\.herdrFontScale, fontScale.scale)
         .preferredColorScheme(.dark)
         .tint(HerdrTheme.accent)
+    }
+
+    private func hasResultRail(
+        _ chipState: (
+            chips: [HerdrHudSessionChips.Chip],
+            overflow: Int,
+            detachedArtifacts: [AgentResultArtifact]
+        )
+    ) -> Bool {
+        !chipState.detachedArtifacts.isEmpty || chipState.chips.contains { !$0.artifacts.isEmpty }
     }
 }

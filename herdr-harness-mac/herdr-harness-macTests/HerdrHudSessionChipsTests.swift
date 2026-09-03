@@ -202,6 +202,74 @@ struct HerdrHudSessionChipsTests {
         #expect(pruned == ["m2|other": .done])
     }
 
+    @Test("An unviewed pane result survives idle, mute, and chip dismissal")
+    func resultKeepsPaneChipVisible() throws {
+        let idle = try pane(id: "finished", status: .idle)
+        let resultArtifact = artifact(id: "artifact-1", originID: "finished")
+
+        let result = HerdrHudSessionChips.chips(
+            panes: [idle],
+            mutedPaneIDs: [idle.id],
+            dismissedStatuses: [idle.id: .idle],
+            revealTitles: true,
+            artifacts: [resultArtifact]
+        )
+
+        #expect(result.chips.map(\.id) == [idle.id])
+        #expect(result.chips.first?.artifacts.map(\.id) == [resultArtifact.id])
+        #expect(result.detachedArtifacts.isEmpty)
+    }
+
+    @Test("Headless and vanished-pane results dock to the HUD orb")
+    func detachedResultsDockToOrb() throws {
+        let livePane = try pane(id: "live", status: .done)
+        let headless = artifact(
+            id: "run-result",
+            originType: .agentRun,
+            originID: "run-1"
+        )
+        let vanished = artifact(id: "pane-result", originID: "gone")
+
+        let result = HerdrHudSessionChips.chips(
+            panes: [livePane],
+            mutedPaneIDs: [],
+            dismissedStatuses: [:],
+            revealTitles: true,
+            artifacts: [headless, vanished]
+        )
+
+        #expect(Set(result.detachedArtifacts.map(\.id)) == [headless.id, vanished.id])
+    }
+
+    @Test("A result from an overflowed session remains visible at the orb")
+    func overflowedResultRemainsVisible() throws {
+        let panes = try (1...4).map { index in
+            try pane(id: "blocked-\(index)", status: .blocked, revision: index)
+        }
+        let overflowed = artifact(id: "overflowed", originID: "blocked-1")
+
+        let grouped = HerdrHudSessionChips.chips(
+            panes: panes,
+            mutedPaneIDs: [],
+            dismissedStatuses: [:],
+            revealTitles: true,
+            artifacts: [overflowed],
+            limit: 3
+        )
+        let revealed = HerdrHudSessionChips.chips(
+            panes: panes,
+            mutedPaneIDs: [],
+            dismissedStatuses: [:],
+            revealTitles: true,
+            artifacts: [overflowed],
+            limit: 4
+        )
+
+        #expect(grouped.detachedArtifacts.map(\.id) == [overflowed.id])
+        #expect(revealed.detachedArtifacts.isEmpty)
+        #expect(revealed.chips.last?.artifacts.map(\.id) == [overflowed.id])
+    }
+
     private func pane(
         id: String,
         status: AgentStatus,
@@ -231,6 +299,26 @@ struct HerdrHudSessionChipsTests {
         return try JSONDecoder().decode(
             HerdrPane.self,
             from: try JSONSerialization.data(withJSONObject: payload)
+        )
+        .stamped(machineID: "m1")
+    }
+
+    private func artifact(
+        id: String,
+        originType: AgentResultArtifact.OriginType = .pane,
+        originID: String
+    ) -> AgentResultArtifact {
+        AgentResultArtifact(
+            id: id,
+            originType: originType,
+            originID: originID,
+            kind: .file,
+            title: "Result \(id)",
+            filename: "result.pdf",
+            contentType: "application/pdf",
+            byteSize: 42,
+            createdAt: HerdrTimestamp.string(from: .now),
+            downloadPath: "/api/v1/result-artifacts/\(id)/content"
         )
         .stamped(machineID: "m1")
     }

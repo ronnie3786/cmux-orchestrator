@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, TypeVar
 
 from .alerts import AlertStore, utc_now
-from . import attachments, cmux_tools, response_audio, voice, workspace_tools
+from . import attachments, cmux_tools, response_audio, result_artifacts, voice, workspace_tools
 from .active_work import ActiveWorkError
 from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAULT_ACTIVE_WORK_STORE_PATH
 from .agent_activity import AgentActivityManager
@@ -117,6 +117,7 @@ class HerdrService:
         active_work: Optional[ActiveWorkRepository] = None,
         agent_activity: Optional[AgentActivityManager] = None,
         remote_activity: Optional[RemoteActivityPoller] = None,
+        result_artifact_store: Optional[result_artifacts.ResultArtifactStore] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -135,6 +136,8 @@ class HerdrService:
                 )
         self.panes_seen = panes_seen or PaneFirstSeenStore(store_path=pane_seen_store_path)
         self.broker = broker or EventBroker()
+        self._result_artifact_store = result_artifact_store
+        self._result_artifact_store_lock = threading.Lock()
         self.push = push or APNsManager(environ=self.environ)
         self.pi_semantic = pi_semantic or PiSemanticManager(
             self.client.socket_path,
@@ -214,6 +217,50 @@ class HerdrService:
             maximum=86400,
         )
         self._terminal_slots = threading.BoundedSemaphore(self._terminal_limit)
+
+    @property
+    def result_artifact_store(self) -> result_artifacts.ResultArtifactStore:
+        """Lazily open private result storage only when the feature is used."""
+
+        if self._result_artifact_store is None:
+            with self._result_artifact_store_lock:
+                if self._result_artifact_store is None:
+                    self._result_artifact_store = result_artifacts.ResultArtifactStore(
+                        environ=self.environ
+                    )
+        return self._result_artifact_store
+
+    def create_result_artifact(
+        self,
+        *,
+        origin_type: str,
+        origin_id: str,
+        session_id: Optional[str],
+        kind: str,
+        location: str,
+        title: Optional[str],
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
+        artifact, created = self.result_artifact_store.create_with_status(
+            origin_type=origin_type,
+            origin_id=origin_id,
+            session_id=session_id,
+            kind=kind,
+            location=location,
+            title=title,
+            idempotency_key=idempotency_key,
+        )
+        if created:
+            self.broker.publish("result_artifact.created", artifact)
+        return {"ok": True, "artifact": artifact}
+
+    def list_result_artifacts(self) -> dict:
+        return {"ok": True, "artifacts": self.result_artifact_store.list()}
+
+    def open_result_artifact_content(
+        self, artifact_id: str
+    ) -> result_artifacts.ResultArtifactContent:
+        return self.result_artifact_store.open_content(artifact_id)
 
     @staticmethod
     def _herd_pulse_state(

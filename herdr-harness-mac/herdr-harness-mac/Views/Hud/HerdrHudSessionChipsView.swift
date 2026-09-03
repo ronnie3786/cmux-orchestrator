@@ -24,29 +24,39 @@ struct HerdrHudSessionChipsView: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
             ForEach(chips) { chip in
-                chipButton(chip)
-                    .overlay(alignment: .trailing) {
-                        if session.voiceReplyTarget == chip.id {
-                            replyButton(chip)
-                                .padding(.trailing, 5)
-                        } else if chip.status == .done {
-                            speakButton(chip)
-                                .padding(.trailing, 5)
-                                .opacity(showsSpeakButton(chip) ? 1 : 0)
-                                .allowsHitTesting(showsSpeakButton(chip))
-                        }
-                    }
-                    .onHover { hovering in
-                        if hovering {
-                            hoveredChipID = chip.id
-                        } else if hoveredChipID == chip.id {
-                            hoveredChipID = nil
-                        }
-                    }
+                sessionRow(chip)
             }
             if overflow > 0 {
                 overflowButton
             }
+        }
+    }
+
+    private func sessionRow(_ chip: HerdrHudSessionChips.Chip) -> some View {
+        HStack(spacing: 0) {
+            if !chip.artifacts.isEmpty {
+                HerdrHudResultArtifactRailView(model: model, artifacts: chip.artifacts)
+            }
+
+            chipButton(chip)
+                .overlay(alignment: .trailing) {
+                    if session.voiceReplyTarget == chip.id {
+                        replyButton(chip)
+                            .padding(.trailing, 5)
+                    } else if chip.status == .done {
+                        speakButton(chip)
+                            .padding(.trailing, 5)
+                            .opacity(showsSpeakButton(chip) ? 1 : 0)
+                            .allowsHitTesting(showsSpeakButton(chip))
+                    }
+                }
+                .onHover { hovering in
+                    if hovering {
+                        hoveredChipID = chip.id
+                    } else if hoveredChipID == chip.id {
+                        hoveredChipID = nil
+                    }
+                }
         }
     }
 

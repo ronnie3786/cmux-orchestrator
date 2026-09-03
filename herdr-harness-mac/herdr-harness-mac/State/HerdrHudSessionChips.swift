@@ -10,6 +10,23 @@ enum HerdrHudSessionChips {
         let status: AgentStatus
         let isMuted: Bool
         let since: Date?
+        let artifacts: [AgentResultArtifact]
+
+        init(
+            id: String,
+            title: String,
+            status: AgentStatus,
+            isMuted: Bool,
+            since: Date?,
+            artifacts: [AgentResultArtifact] = []
+        ) {
+            self.id = id
+            self.title = title
+            self.status = status
+            self.isMuted = isMuted
+            self.since = since
+            self.artifacts = artifacts
+        }
     }
 
     static func chips(
@@ -17,22 +34,36 @@ enum HerdrHudSessionChips {
         mutedPaneIDs: Set<String>,
         dismissedStatuses: [String: AgentStatus],
         revealTitles: Bool,
+        artifacts: [AgentResultArtifact] = [],
         limit: Int = HerdrHudPlacement.maxChips
-    ) -> (chips: [Chip], overflow: Int) {
+    ) -> (chips: [Chip], overflow: Int, detachedArtifacts: [AgentResultArtifact]) {
+        let paneArtifacts = Dictionary(grouping: artifacts.filter { $0.originType == .pane }) { artifact in
+            MachineScopedID.compose(machineID: artifact.machineID, rawID: artifact.originID)
+        }
         let candidates = HerdrHudNotificationFilter.panes(panes)
             .filter { pane in
                 switch pane.agentStatus {
                 case .blocked, .done, .working:
                     true
                 case .idle, .unknown:
-                    false
+                    !(paneArtifacts[pane.id] ?? []).isEmpty
                 }
             }
-            .filter { dismissedStatuses[$0.id] != $0.agentStatus }
             .filter { pane in
-                !(mutedPaneIDs.contains(pane.id) && pane.agentStatus != .blocked)
+                dismissedStatuses[pane.id] != pane.agentStatus || !(paneArtifacts[pane.id] ?? []).isEmpty
+            }
+            .filter { pane in
+                !(mutedPaneIDs.contains(pane.id)
+                    && pane.agentStatus != .blocked
+                    && (paneArtifacts[pane.id] ?? []).isEmpty)
             }
             .sorted { left, right in
+                let leftHasResults = !(paneArtifacts[left.id] ?? []).isEmpty
+                let rightHasResults = !(paneArtifacts[right.id] ?? []).isEmpty
+                if left.agentStatus != .blocked, right.agentStatus != .blocked,
+                   leftHasResults != rightHasResults {
+                    return leftHasResults
+                }
                 if left.agentStatus.attentionRank != right.agentStatus.attentionRank {
                     return left.agentStatus.attentionRank < right.agentStatus.attentionRank
                 }
@@ -60,10 +91,20 @@ enum HerdrHudSessionChips {
                 title: revealTitles ? pane.displayTitle : "session \(index + 1)",
                 status: pane.agentStatus,
                 isMuted: mutedPaneIDs.contains(pane.id) && pane.agentStatus == .blocked,
-                since: since(for: pane)
+                since: since(for: pane),
+                artifacts: sortedArtifacts(paneArtifacts[pane.id] ?? [])
             )
         }
-        return (Array(result), max(0, candidates.count - chipLimit))
+        // Results belonging to a chip folded under `+N` dock to the orb until
+        // that chip is revealed. An unviewed result is therefore always on the
+        // visible HUD, never hidden merely because its session overflowed.
+        let attachedArtifactIDs = Set(visibleCandidates.flatMap { paneArtifacts[$0.id] ?? [] }.map(\.id))
+        let detachedArtifacts = artifacts.filter { !attachedArtifactIDs.contains($0.id) }
+        return (
+            Array(result),
+            max(0, candidates.count - chipLimit),
+            sortedArtifacts(detachedArtifacts)
+        )
     }
 
     /// Drops a dismissal as soon as its pane leaves the status it was dismissed
@@ -89,5 +130,14 @@ enum HerdrHudSessionChips {
 
     private static func since(for pane: HerdrPane) -> Date? {
         pane.agentStatus == .working ? pane.workingSince : pane.lastActivityAt
+    }
+
+    private static func sortedArtifacts(_ artifacts: [AgentResultArtifact]) -> [AgentResultArtifact] {
+        artifacts.sorted { left, right in
+            let leftDate = left.createdDate ?? .distantPast
+            let rightDate = right.createdDate ?? .distantPast
+            if leftDate != rightDate { return leftDate > rightDate }
+            return left.id > right.id
+        }
     }
 }

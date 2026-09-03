@@ -14,11 +14,23 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// type is deliberately pure CoreGraphics math with no SwiftUI dependency.
     static let chipHeight: CGFloat = 28
     static let chipSpacing: CGFloat = 6
+    /// A fixed accessory lane keeps result-node hover expansion inside the
+    /// panel's bounds. The lane projects left from the session identity, so
+    /// the HUD's top-right anchor remains visually immovable.
+    static let resultRailWidth: CGFloat = 224
+    static let resultNodeSize: CGFloat = 30
+    static let resultNodeSpacing: CGFloat = 5
+    static let resultConnectorWidth: CGFloat = 13
+    static let resultNodeExpandedWidth: CGFloat = 136
+    static let maxVisibleResults = 3
     /// How many session chips the collapsed HUD groups down to. The rest are
     /// summarised by the `+N` control, which reveals them up to
     /// `maxExpandedChips`.
     static let maxChips = 3
     static let maxExpandedChips = 12
+    /// A fully revealed stack may still need one final `+N` row when more than
+    /// `maxExpandedChips` sessions exist.
+    static let maxCollapsedRows = maxExpandedChips + 1
     enum NotesLayout: Equatable, Sendable { case hidden, compact(count: Int), rows(count: Int), card }
     static let notesGap: CGFloat = 10
     static let notesWidth: CGFloat = 236
@@ -55,12 +67,22 @@ struct HerdrHudPlacement: Equatable, Sendable {
         CGSize(width: defaultInset, height: defaultInset)
     }
 
-    static func collapsedContentSize(chipCount: Int) -> CGSize {
-        let count = min(max(0, chipCount), maxExpandedChips)
-        guard count > 0 else { return collapsedSize }
+    static func collapsedContentSize(
+        chipCount: Int,
+        hasResultRail: Bool = false
+    ) -> CGSize {
+        let count = min(max(0, chipCount), maxCollapsedRows)
+        let baseSize = if count > 0 {
+            CGSize(
+                width: max(collapsedSize.width, chipWidth),
+                height: collapsedSize.height + CGFloat(count) * (chipHeight + chipSpacing)
+            )
+        } else {
+            collapsedSize
+        }
         return CGSize(
-            width: max(collapsedSize.width, chipWidth),
-            height: collapsedSize.height + CGFloat(count) * (chipHeight + chipSpacing)
+            width: baseSize.width + (hasResultRail ? resultRailWidth : 0),
+            height: baseSize.height
         )
     }
 
@@ -69,9 +91,12 @@ struct HerdrHudPlacement: Equatable, Sendable {
         visibleFrame: CGRect,
         topRightOffset: CGSize,
         chipCount: Int = 0,
+        hasResultRail: Bool = false,
         notesSize: CGSize = .zero
     ) -> CGRect {
-        var contentSize = isExpanded ? expandedSize : collapsedContentSize(chipCount: chipCount)
+        var contentSize = isExpanded
+            ? expandedSize
+            : collapsedContentSize(chipCount: chipCount, hasResultRail: hasResultRail)
         if notesSize.height > 0 {
             let availableContentHeight = max(0, visibleFrame.height - shadowMargin * 2)
             let excess = max(0, contentSize.height + notesGap + notesSize.height - availableContentHeight)

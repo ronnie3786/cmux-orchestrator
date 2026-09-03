@@ -249,6 +249,43 @@ struct HerdrAppModelRefreshGatingTests {
         #expect(workspace.machineID == "m1")
     }
 
+    @Test("Post-ready result refresh closes the initial list-to-stream gap")
+    func postReadyResultRefreshRecoversGapArtifact() async throws {
+        let suiteName = "HerdrAppModelRefreshGatingTests.resultGap"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        ResultArtifactGapURLProtocol.reset()
+        let model = HerdrAppModel(arguments: [], userDefaults: defaults)
+        let configuration = try #require(
+            ServerConfiguration(urlString: "http://localhost:9092", token: "test")
+        )
+        let client = HerdrAPIClient(
+            configuration: configuration,
+            session: session(ResultArtifactGapURLProtocol.self)
+        )
+
+        // The canonical list taken before SSE subscription is empty.
+        try await model.refresh(
+            machineID: "m1",
+            using: client,
+            expectedGeneration: model.connectionGeneration
+        )
+        #expect(model.resultArtifacts.isEmpty)
+
+        // A result commits in the gap and the cursorless stream starts after
+        // its event. The mandatory list taken on `ready` recovers it.
+        try await model.refreshResultArtifactsAfterEventStreamReady(
+            machineID: "m1",
+            using: client,
+            expectedGeneration: model.connectionGeneration
+        )
+
+        #expect(ResultArtifactGapURLProtocol.resultListRequestCount == 2)
+        #expect(model.resultArtifacts.map(\.rawID) == ["art_0123456789abcdef01234567"])
+    }
+
     private func session(_ protocolClass: URLProtocol.Type) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [protocolClass]
@@ -393,6 +430,46 @@ private final class RemovedPaneFleetURLProtocol: FleetURLProtocol {
     }
 }
 
+private final class ResultArtifactGapURLProtocol: FleetURLProtocol {
+    private static let listRequests = FlakyFleetAttemptCounter()
+
+    static var resultListRequestCount: Int { listRequests.currentCount() }
+
+    static func reset() {
+        listRequests.reset()
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: nil,
+                  headerFields: nil
+              )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        let data: Data
+        if url.path == "/api/v1/result-artifacts" {
+            let attempt = Self.listRequests.recordAttempt()
+            data = Data(
+                (attempt == 1
+                    ? #"{"ok":true,"artifacts":[]}"#
+                    : #"{"ok":true,"artifacts":[{"id":"art_0123456789abcdef01234567","originType":"agent_run","originId":"agr_012345abcdef","sessionId":"session-gap","kind":"link","title":"Recovered result","filename":null,"contentType":null,"byteSize":null,"createdAt":"2026-09-02T20:00:00.000Z","url":"https://example.com/result"}]}"#
+                ).utf8
+            )
+        } else {
+            data = StableFleetURLProtocol.responseData
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 private final class FlakyFleetURLProtocol: FleetURLProtocol {
     private static let attempts = FlakyFleetAttemptCounter()
 
@@ -427,6 +504,12 @@ private final class FlakyFleetAttemptCounter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         count += 1
+        return count
+    }
+
+    func currentCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
         return count
     }
 }

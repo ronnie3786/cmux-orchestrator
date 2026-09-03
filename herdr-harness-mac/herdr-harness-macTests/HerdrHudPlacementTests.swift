@@ -103,9 +103,9 @@ struct HerdrHudPlacementTests {
         #expect(HerdrHudPlacement.collapsedContentSize(chipCount: 0) == HerdrHudPlacement.collapsedSize)
     }
 
-    @Test("Collapsed HUD height grows by one fixed slot per visible chip")
-    func collapsedContentSizeGrowsByChipSlots() {
-        for count in 1...HerdrHudPlacement.maxExpandedChips {
+    @Test("Collapsed HUD height grows by one fixed slot per visible row")
+    func collapsedContentSizeGrowsByVisibleRows() {
+        for count in 1...HerdrHudPlacement.maxCollapsedRows {
             let size = HerdrHudPlacement.collapsedContentSize(chipCount: count)
             #expect(
                 size.width == max(HerdrHudPlacement.collapsedSize.width, HerdrHudPlacement.chipWidth)
@@ -117,9 +117,30 @@ struct HerdrHudPlacementTests {
         }
     }
 
+    @Test("A result constellation reserves a fixed lane without changing height")
+    func resultRailWidensCollapsedContent() {
+        for count in 0...3 {
+            let base = HerdrHudPlacement.collapsedContentSize(chipCount: count)
+            let withResults = HerdrHudPlacement.collapsedContentSize(
+                chipCount: count,
+                hasResultRail: true
+            )
+            #expect(withResults.width - base.width == HerdrHudPlacement.resultRailWidth)
+            #expect(withResults.height == base.height)
+        }
+        #expect(
+            HerdrHudPlacement.resultRailWidth
+                >= HerdrHudPlacement.resultNodeExpandedWidth
+                    + 2 * HerdrHudPlacement.resultNodeSize
+                    + 3 * HerdrHudPlacement.resultNodeSpacing
+                    + HerdrHudPlacement.resultConnectorWidth
+        )
+    }
+
     /// The `+N` control reveals the grouped sessions, so the panel has to grow
-    /// past `maxChips`. It still stops at `maxExpandedChips`.
-    @Test("Collapsed chip count clamps at the expanded chip maximum")
+    /// past `maxChips`. Even a fully revealed stack can have one final overflow
+    /// control, so geometry reserves one row beyond `maxExpandedChips`.
+    @Test("Collapsed row count includes and clamps after the overflow control")
     func collapsedContentSizeClampsChipCount() {
         #expect(
             HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips + 1)
@@ -127,7 +148,11 @@ struct HerdrHudPlacementTests {
         )
         #expect(
             HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxExpandedChips + 1)
-                == HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxExpandedChips)
+                != HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxExpandedChips)
+        )
+        #expect(
+            HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxCollapsedRows + 1)
+                == HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxCollapsedRows)
         )
     }
 
@@ -151,6 +176,29 @@ struct HerdrHudPlacementTests {
         #expect(withChips.maxY == withoutChips.maxY)
     }
 
+    @Test("Result nodes grow left while keeping the HUD anchor fixed")
+    func resultRailKeepsTopRightAnchorFixed() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let offset = CGSize(width: 24, height: 32)
+        let withoutResults = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset,
+            chipCount: 2
+        )
+        let withResults = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset,
+            chipCount: 2,
+            hasResultRail: true
+        )
+
+        #expect(withResults.maxX == withoutResults.maxX)
+        #expect(withResults.maxY == withoutResults.maxY)
+        #expect(withResults.minX < withoutResults.minX)
+    }
+
     @Test("Expanded geometry ignores the collapsed session chip count")
     func expandedGeometryIgnoresChipCount() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
@@ -168,6 +216,25 @@ struct HerdrHudPlacementTests {
         )
 
         #expect(withChips == withoutChips)
+    }
+
+    @Test("Expanded geometry ignores the collapsed result lane")
+    func expandedGeometryIgnoresResultRail() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let offset = HerdrHudPlacement.defaultOffset()
+        let withoutResults = HerdrHudPlacement.frame(
+            isExpanded: true,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset
+        )
+        let withResults = HerdrHudPlacement.frame(
+            isExpanded: true,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset,
+            hasResultRail: true
+        )
+
+        #expect(withResults == withoutResults)
     }
 
     // MARK: - Offset persistence

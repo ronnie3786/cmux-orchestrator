@@ -51,6 +51,8 @@ def write_fake_pi(directory: Path) -> Path:
                     "prompt": prompt,
                     "cwd": os.getcwd(),
                     "herdrPaneId": os.environ.get("HERDR_PANE_ID"),
+                    "herdrAgentRunId": os.environ.get("HERDR_AGENT_RUN_ID"),
+                    "herdrAgentRunMode": os.environ.get("HERDR_AGENT_RUN_MODE"),
                 }), encoding="utf-8")
             mode = os.environ.get("FAKE_AGENT_MODE", "success")
             if mode == "hang":
@@ -397,13 +399,19 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertNotIn("secret prompt", " ".join(capture["argv"]))
             self.assertEqual(capture["cwd"], str((directory / "home").resolve()))
             self.assertIsNone(capture["herdrPaneId"])
+            self.assertEqual(capture["herdrAgentRunId"], started["run"]["id"])
+            self.assertEqual(capture["herdrAgentRunMode"], "ask")
             self.assertEqual(capture["argv"][0:3], ["-p", "--mode", "json"])
-            self.assertIn("read,bash,grep,find,ls", capture["argv"])
+            self.assertIn("read,bash,grep,find,ls,present_result", capture["argv"])
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertIn("use CLI commands", charter)
             self.assertIn("investigative only", charter)
             self.assertIn("--no-context-files", capture["argv"])
             self.assertIn("--no-extensions", capture["argv"])
+            self.assertEqual(
+                capture["argv"][capture["argv"].index("--extension") + 1],
+                str(Path(__file__).resolve().parent.parent / "pi-semantic-bridge"),
+            )
             manager.stop()
 
     def test_act_mode_uses_state_changing_tools_and_charter(self):
@@ -423,7 +431,8 @@ class AgentRunManagerTests(unittest.TestCase):
 
             self.assertEqual(finished["run"]["mode"], "act")
             capture = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertIn("read,bash,grep,find,ls,write,edit", capture["argv"])
+            self.assertIn("read,bash,grep,find,ls,write,edit,present_result", capture["argv"])
+            self.assertEqual(capture["herdrAgentRunMode"], "act")
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertIn("ACT mode", charter)
             self.assertIn("MAY execute state-changing commands", charter)
@@ -449,10 +458,13 @@ class AgentRunManagerTests(unittest.TestCase):
             capture = json.loads(capture_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 capture["argv"][capture["argv"].index("--tools") + 1],
-                "read,bash,grep,find,ls",
+                "read,bash,grep,find,ls,present_result",
             )
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertNotIn("ACT mode", charter)
+            self.assertIn("sole permitted side effect", charter)
+            self.assertIn("HTTP(S) link", charter)
+            self.assertIn("do not register local files in ASK mode", charter)
             manager.stop()
 
     def test_custom_system_prompt_uses_act_tools_and_keeps_topology_note(self):
@@ -474,7 +486,7 @@ class AgentRunManagerTests(unittest.TestCase):
             capture = json.loads(capture_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 capture["argv"][capture["argv"].index("--tools") + 1],
-                "read,bash,grep,find,ls,write,edit",
+                "read,bash,grep,find,ls,write,edit,present_result",
             )
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertTrue(charter.startswith("Custom instructions here "))
@@ -500,7 +512,7 @@ class AgentRunManagerTests(unittest.TestCase):
             capture = json.loads(capture_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 capture["argv"][capture["argv"].index("--tools") + 1],
-                "read,bash,grep,find,ls",
+                "read,bash,grep,find,ls,present_result",
             )
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertTrue(charter.startswith("Custom instructions here "))

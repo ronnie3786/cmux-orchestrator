@@ -8,7 +8,8 @@
   "pi": {
     "extensions": [
       "./extensions/pi-semantic-bridge.ts",
-      "./extensions/send-to-herdr.ts"
+      "./extensions/send-to-herdr.ts",
+      "./extensions/present-result.ts"
     ]
   },
   "peerDependencies": {

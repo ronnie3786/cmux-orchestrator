@@ -6,6 +6,18 @@ import os
 @MainActor
 @Observable
 final class HerdrAppModel {
+    struct ResultArtifactListRequest: Equatable, Sendable {
+        let machineID: String
+        let requestRevision: UInt64
+        let eventBaseline: UInt64
+    }
+
+    private struct ResultArtifactReconciliationState {
+        var latestEventRevision: UInt64 = 0
+        var latestListRequestRevision: UInt64 = 0
+        var eventRevisionByArtifactID: [String: UInt64] = [:]
+    }
+
     struct MachineRuntime {
         var client: HerdrAPIClient?
         var connection: ActiveServerConnection?
@@ -26,6 +38,9 @@ final class HerdrAppModel {
         didSet { rebuildPaneIndex() }
     }
     var alerts: [HerdrAlert] = []
+    private(set) var resultArtifacts: [AgentResultArtifact] = []
+    private(set) var resultArtifactPhases: [String: AgentResultArtifactPhase] = [:]
+    private(set) var recentlyOpenedResultArtifactIDs: Set<String> = []
     private(set) var activityHistoryAlerts: [HerdrAlert] = []
     var isRefreshingActivity = false
     var activityFeedError: String?
@@ -101,6 +116,13 @@ final class HerdrAppModel {
     let cleanupPresenter = CleanupSheetPresenter()
 
     private let userDefaults: UserDefaults
+    @ObservationIgnored private let resultArtifactOpenedLedger: AgentResultArtifactOpenedLedger
+    @ObservationIgnored private let resultArtifactOpener: AgentResultArtifactOpener
+    @ObservationIgnored private var resultArtifactRetirementTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var resultArtifactReconciliation: [String: ResultArtifactReconciliationState] = [:]
+    /// Internal test seam for holding an open operation across a suspension.
+    @ObservationIgnored var resultArtifactOpenOverride:
+        (@MainActor (AgentResultArtifact, HerdrAPIClient?) async throws -> Void)?
     @ObservationIgnored private var runtimes: [String: MachineRuntime] = [:]
     @ObservationIgnored private var pendingPushToken: String?
     @ObservationIgnored private var pendingPaneRoutes: [PendingPaneRouteKey: PendingPaneRoute] = [:]
@@ -166,6 +188,12 @@ final class HerdrAppModel {
         userDefaults: UserDefaults = .standard
     ) {
         self.userDefaults = userDefaults
+        let resultArtifactOpenedLedger = AgentResultArtifactOpenedLedger(userDefaults: userDefaults)
+        self.resultArtifactOpenedLedger = resultArtifactOpenedLedger
+        resultArtifactOpener = AgentResultArtifactOpener(
+            cache: AgentResultArtifactCache(),
+            ledger: resultArtifactOpenedLedger
+        )
         let defaults = userDefaults
         let forcedDemo = arguments.contains("-HerdrDemoMode")
         #if DEBUG
@@ -279,6 +307,14 @@ final class HerdrAppModel {
     var activityFeedAlerts: [HerdrAlert] {
         ActivityFeed.merged(current: alerts, history: activityHistoryAlerts)
     }
+    /// Artifacts remain here for a brief confirmation window after a successful
+    /// open, allowing the HUD to render its green check before retiring them.
+    var unopenedResultArtifacts: [AgentResultArtifact] {
+        resultArtifacts.filter { artifact in
+            resultArtifactPhase(id: artifact.id) != .opened
+                || recentlyOpenedResultArtifactIDs.contains(artifact.id)
+        }
+    }
 
     func canControl(machineID: String) -> Bool {
         isDemoMode || connectionState(forMachine: machineID) == .live
@@ -286,6 +322,11 @@ final class HerdrAppModel {
 
     func connectionState(forMachine id: String) -> ConnectionState {
         machineStates[id] ?? (isDemoMode ? .demo : .disconnected)
+    }
+
+    func resultArtifactPhase(id: String) -> AgentResultArtifactPhase {
+        if let phase = resultArtifactPhases[id] { return phase }
+        return resultArtifactOpenedLedger.contains(id) ? .opened : .available
     }
 
     func setMachineScope(_ scope: MachineScope) {
@@ -2369,6 +2410,212 @@ final class HerdrAppModel {
         }
     }
 
+    @discardableResult
+    func refreshResultArtifacts(machineID: String) async throws -> [AgentResultArtifact] {
+        if isDemoMode {
+            return resultArtifacts.filter { $0.machineID == machineID }
+        }
+        guard let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineID)
+        }
+        return try await refreshResultArtifacts(
+            machineID: machineID,
+            using: client,
+            expectedGeneration: connectionGeneration
+        )
+    }
+
+    func openResultArtifact(_ artifact: AgentResultArtifact) async {
+        let presentationID = artifact.id
+        switch resultArtifactPhase(id: presentationID) {
+        case .opening, .downloading:
+            return
+        case .available, .opened, .failed:
+            break
+        }
+        recentlyOpenedResultArtifactIDs.remove(presentationID)
+        resultArtifactRetirementTasks[presentationID]?.cancel()
+        resultArtifactRetirementTasks[presentationID] = nil
+        resultArtifactPhases[presentationID] = artifact.kind == .file ? .downloading : .opening
+
+        do {
+            let sourceClient = client(forMachine: artifact.machineID)
+            if let resultArtifactOpenOverride {
+                try await resultArtifactOpenOverride(artifact, sourceClient)
+            } else {
+                switch artifact.kind {
+                case .link:
+                    try await resultArtifactOpener.open(artifact)
+                case .file:
+                    guard let sourceClient else {
+                        throw APIError.noActiveConnection(machineID: artifact.machineID)
+                    }
+                    try await resultArtifactOpener.open(
+                        artifact,
+                        downloadFile: { destinationURL in
+                            try await sourceClient.downloadResultArtifactContent(
+                                id: artifact.rawID,
+                                expectedByteSize: artifact.byteSize ?? -1,
+                                to: destinationURL
+                            )
+                        }
+                    )
+                }
+            }
+            resultArtifactPhases[presentationID] = .opened
+            recentlyOpenedResultArtifactIDs.insert(presentationID)
+            resultArtifactRetirementTasks[presentationID] = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .milliseconds(650)) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                self?.recentlyOpenedResultArtifactIDs.remove(presentationID)
+                self?.resultArtifactRetirementTasks[presentationID] = nil
+            }
+        } catch {
+            resultArtifactPhases[presentationID] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Removes an unwanted result without launching it. The durable handled
+    /// ledger prevents a canonical refresh or app restart from resurfacing it.
+    func dismissResultArtifact(_ artifact: AgentResultArtifact) {
+        let presentationID = artifact.id
+        switch resultArtifactPhase(id: presentationID) {
+        case .available, .failed:
+            break
+        case .opening, .downloading, .opened:
+            return
+        }
+        resultArtifactRetirementTasks[presentationID]?.cancel()
+        resultArtifactRetirementTasks[presentationID] = nil
+        recentlyOpenedResultArtifactIDs.remove(presentationID)
+        resultArtifactOpenedLedger.markOpened(presentationID)
+        resultArtifactPhases[presentationID] = .opened
+    }
+
+    /// Internal visibility is intentional: focused tests exercise fleet-wide
+    /// deduping without needing to manufacture a complete connection loop.
+    func ingestResultArtifacts(
+        _ artifacts: [AgentResultArtifact],
+        machineID: String,
+        replacingMachineSlice: Bool
+    ) {
+        var seenRawIDs: Set<String> = []
+        var stamped: [AgentResultArtifact] = []
+        stamped.reserveCapacity(artifacts.count)
+        for artifact in artifacts where seenRawIDs.insert(artifact.rawID).inserted {
+            stamped.append(artifact.stamped(machineID: machineID))
+        }
+
+        var merged = resultArtifacts
+        if replacingMachineSlice {
+            let insertionIndex = merged.firstIndex(where: { $0.machineID == machineID }) ?? merged.endIndex
+            merged.removeAll { $0.machineID == machineID }
+            merged.insert(contentsOf: stamped, at: min(insertionIndex, merged.endIndex))
+        } else {
+            for artifact in stamped.reversed() {
+                merged.removeAll { $0.id == artifact.id }
+                merged.insert(artifact, at: 0)
+            }
+        }
+
+        if merged != resultArtifacts { resultArtifacts = merged }
+        let validIDs = Set(merged.map(\.id))
+        var phases = resultArtifactPhases.filter { validIDs.contains($0.key) }
+        for artifact in merged where phases[artifact.id] == nil {
+            phases[artifact.id] = resultArtifactOpenedLedger.contains(artifact.id) ? .opened : .available
+        }
+        if phases != resultArtifactPhases { resultArtifactPhases = phases }
+    }
+
+    /// Captures the event clock at the exact point a canonical list request is
+    /// launched. The request revision also prevents an older overlapping
+    /// response from applying after a newer request has started.
+    func beginResultArtifactListRequest(machineID: String) -> ResultArtifactListRequest {
+        var state = resultArtifactReconciliation[machineID] ?? ResultArtifactReconciliationState()
+        state.latestListRequestRevision &+= 1
+        let request = ResultArtifactListRequest(
+            machineID: machineID,
+            requestRevision: state.latestListRequestRevision,
+            eventBaseline: state.latestEventRevision
+        )
+        resultArtifactReconciliation[machineID] = state
+        return request
+    }
+
+    /// Records an SSE presentation before publishing it to observable state.
+    /// Its revision lets a stale in-flight list response identify the result as
+    /// newer than that response's request baseline.
+    func ingestResultArtifactEvent(_ artifact: AgentResultArtifact, machineID: String) {
+        let presentationID = MachineScopedID.compose(machineID: machineID, rawID: artifact.rawID)
+        var state = resultArtifactReconciliation[machineID] ?? ResultArtifactReconciliationState()
+        state.latestEventRevision &+= 1
+        state.eventRevisionByArtifactID[presentationID] = state.latestEventRevision
+        resultArtifactReconciliation[machineID] = state
+        ingestResultArtifacts(
+            [artifact],
+            machineID: machineID,
+            replacingMachineSlice: false
+        )
+    }
+
+    /// Applies a canonical server list while retaining any SSE artifacts that
+    /// arrived after this request began. A subsequent list starts at the newer
+    /// event baseline, so it can authoritatively prune a result that is absent.
+    @discardableResult
+    func reconcileResultArtifactList(
+        _ artifacts: [AgentResultArtifact],
+        machineID: String,
+        request: ResultArtifactListRequest
+    ) -> Bool {
+        guard request.machineID == machineID,
+              var state = resultArtifactReconciliation[machineID],
+              request.requestRevision == state.latestListRequestRevision
+        else { return false }
+
+        let canonicalIDs = Set(artifacts.map {
+            MachineScopedID.compose(machineID: machineID, rawID: $0.rawID)
+        })
+        let lateEvents = resultArtifacts.filter { artifact in
+            artifact.machineID == machineID
+                && !canonicalIDs.contains(artifact.id)
+                && (state.eventRevisionByArtifactID[artifact.id] ?? 0) > request.eventBaseline
+        }
+        ingestResultArtifacts(
+            lateEvents + artifacts,
+            machineID: machineID,
+            replacingMachineSlice: true
+        )
+
+        let retainedIDs = Set(resultArtifacts.lazy.filter { $0.machineID == machineID }.map(\.id))
+        resultArtifactOpenedLedger.reconcile(
+            machineID: machineID,
+            activePresentationIDs: retainedIDs
+        )
+        state.eventRevisionByArtifactID = state.eventRevisionByArtifactID.filter { presentationID, revision in
+            revision > request.eventBaseline && retainedIDs.contains(presentationID)
+        }
+        resultArtifactReconciliation[machineID] = state
+        return true
+    }
+
+    private func refreshResultArtifacts(
+        machineID: String,
+        using client: HerdrAPIClient,
+        expectedGeneration: Int
+    ) async throws -> [AgentResultArtifact] {
+        let listRequest = beginResultArtifactListRequest(machineID: machineID)
+        let response = try await client.fetchResultArtifacts()
+        guard response.ok else { throw APIError.invalidResponse }
+        guard expectedGeneration == connectionGeneration else { throw CancellationError() }
+        reconcileResultArtifactList(
+            response.artifacts,
+            machineID: machineID,
+            request: listRequest
+        )
+        return resultArtifacts.filter { $0.machineID == machineID }
+    }
+
     /// Resolves a pane ID from `herdr://pane/{id}` custom-scheme links and
     /// `https://{host}/open/pane/{id}` universal links, plus the
     /// `?pane=`/`?paneId=`/`?pane_id=` query forms of either.
@@ -2490,6 +2737,18 @@ final class HerdrAppModel {
         for alert in freshAlerts where !alert.isRead && pendingLocalAlertIDs.contains(alert.id) {
             await NotificationManager.post(alert)
             pendingLocalAlertIDs.remove(alert.id)
+        }
+        do {
+            _ = try await refreshResultArtifacts(
+                machineID: machineID,
+                using: client,
+                expectedGeneration: expectedGeneration
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Result presentation is additive. A mixed-version server must not
+            // take the core fleet connection offline while it rolls forward.
         }
         updateBadgeIfNeeded()
     }
@@ -2803,6 +3062,9 @@ final class HerdrAppModel {
 
     private func resetConnectionState() {
         cancelDeferredRefreshes()
+        for task in resultArtifactRetirementTasks.values { task.cancel() }
+        resultArtifactRetirementTasks = [:]
+        resultArtifactReconciliation = [:]
         runtimes = [:]
         machineStates = [:]
         activeServerConnection = nil
@@ -2810,6 +3072,9 @@ final class HerdrAppModel {
         let hadFleetContent = !workspaces.isEmpty || !alerts.isEmpty
         workspaces = []
         alerts = []
+        resultArtifacts = []
+        resultArtifactPhases = [:]
+        recentlyOpenedResultArtifactIDs = []
         activityHistoryAlerts = []
         activityFeedError = nil
         isRefreshingActivity = false
@@ -3025,6 +3290,26 @@ final class HerdrAppModel {
         }
     }
 
+    private func handleResultArtifactCreated(
+        _ event: HerdrEvent,
+        machineID: String,
+        using client: HerdrAPIClient,
+        expectedGeneration: Int
+    ) async {
+        if let artifact = AgentResultArtifact(eventData: event.data) {
+            ingestResultArtifactEvent(artifact, machineID: machineID)
+            return
+        }
+
+        // If a future server enriches or wraps the event differently, recover
+        // through the canonical endpoint rather than silently losing a result.
+        _ = try? await refreshResultArtifacts(
+            machineID: machineID,
+            using: client,
+            expectedGeneration: expectedGeneration
+        )
+    }
+
     nonisolated static func aggregateConnectionState(
         machineStates: [ConnectionState],
         isDemoMode: Bool,
@@ -3049,6 +3334,13 @@ final class HerdrAppModel {
 
     func removeMachine(id: String) {
         runtimes[id]?.deferredRefreshTask?.cancel()
+        resultArtifactReconciliation[id] = nil
+        let removedArtifactIDs = Set(resultArtifacts.lazy.filter { $0.machineID == id }.map(\.id))
+        resultArtifactOpenedLedger.reconcile(machineID: id, activePresentationIDs: [])
+        for artifactID in removedArtifactIDs {
+            resultArtifactRetirementTasks[artifactID]?.cancel()
+            resultArtifactRetirementTasks[artifactID] = nil
+        }
         machines.removeAll { $0.id == id }
         if !isDemoMode {
             persistMachines()
@@ -3060,6 +3352,9 @@ final class HerdrAppModel {
         let alertCount = alerts.count
         workspaces.removeAll { $0.machineID == id }
         alerts.removeAll { $0.machineID == id }
+        resultArtifacts.removeAll { $0.machineID == id }
+        resultArtifactPhases = resultArtifactPhases.filter { !removedArtifactIDs.contains($0.key) }
+        recentlyOpenedResultArtifactIDs.subtract(removedArtifactIDs)
         activityHistoryAlerts.removeAll { $0.machineID == id }
         if workspaces.count != workspaceCount || alerts.count != alertCount {
             fleetRevision &+= 1
@@ -3129,12 +3424,33 @@ final class HerdrAppModel {
                 for try await event in await client.events(after: runtimes[machine.id]?.lastEventID) {
                     try Task.checkCancellation()
                     guard expectedGeneration == connectionGeneration else { return }
-                    if event.event == "ready" { seedLastEventIDFromReady(event, for: machine.id) }
+                    if event.event == "ready" {
+                        seedLastEventIDFromReady(event, for: machine.id)
+                        do {
+                            try await refreshResultArtifactsAfterEventStreamReady(
+                                machineID: machine.id,
+                                using: client,
+                                expectedGeneration: expectedGeneration
+                            )
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            // Older servers do not expose result artifacts. The
+                            // stream and core fleet connection remain usable.
+                        }
+                    }
                     recordLastEventID(event.id, for: machine.id)
                     if event.event == "stream.reset", streamResetIsBackendRestart(event) {
                         resetLastEventID(for: machine.id)
                     }
-                    if event.event == "active_work.updated" {
+                    if event.event == "result_artifact.created" {
+                        await handleResultArtifactCreated(
+                            event,
+                            machineID: machine.id,
+                            using: client,
+                            expectedGeneration: expectedGeneration
+                        )
+                    } else if event.event == "active_work.updated" {
                         activeWorkRefreshTick &+= 1
                     } else if event.event == "snapshot.updated" || event.event == "alert.created" ||
                         event.event == "alert.updated" || event.event == "alerts.read_state_changed" ||
@@ -3202,6 +3518,23 @@ final class HerdrAppModel {
               let completed = runtimes[machineID]?.lastRefreshCompletedAt
         else { return false }
         return completed.duration(to: ContinuousClock().now) < .seconds(2)
+    }
+
+    /// Closes the list-to-stream subscription gap for a fresh connection. The
+    /// server intentionally starts a cursorless SSE client at its newest event,
+    /// so a result committed after the initial list but before subscription
+    /// would otherwise be skipped. Reconciliation preserves any event that
+    /// races this lightweight post-ready list.
+    func refreshResultArtifactsAfterEventStreamReady(
+        machineID: String,
+        using client: HerdrAPIClient,
+        expectedGeneration: Int
+    ) async throws {
+        _ = try await refreshResultArtifacts(
+            machineID: machineID,
+            using: client,
+            expectedGeneration: expectedGeneration
+        )
     }
 
     /// Exposed at internal visibility for deterministic tests.

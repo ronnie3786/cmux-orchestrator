@@ -7,12 +7,17 @@ struct HerdrHudCardView: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     @Bindable var session: HerdrHudSession
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var voiceReply = HerdrHudVoiceReply()
 
     var body: some View {
         VStack(spacing: 0) {
             HerdrHudHeaderView(model: model, controller: controller, session: session)
             Divider().overlay { HerdrTheme.surface }
+            if !model.unopenedResultArtifacts.isEmpty {
+                HerdrHudExpandedResultStripView(model: model)
+                Divider().overlay { HerdrTheme.surface }
+            }
             HerdrHudTranscriptView(
                 model: model,
                 session: session,
@@ -60,6 +65,10 @@ struct HerdrHudCardView: View {
                 voiceReply.cancel()
             }
         }
+        .animation(
+            reduceMotion ? nil : .snappy(duration: 0.24),
+            value: model.unopenedResultArtifacts.map(\.id)
+        )
     }
 
     private func updateResponseAudioAvailability() {

@@ -119,6 +119,92 @@ struct HudRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("HUD result artifacts render as a luminous dock beside their session")
+    func rendersHudResultArtifacts() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
+        let artifacts = [
+            renderArtifact(id: "report", filename: "launch-report.pdf", contentType: "application/pdf"),
+            renderArtifact(id: "prototype", filename: "agent-console.html", contentType: "text/html"),
+            renderArtifact(id: "demo", filename: "workflow-demo.mp4", contentType: "video/mp4"),
+            renderArtifact(id: "source", filename: "ResultPipeline.swift", contentType: "text/x-swift"),
+        ]
+        let chip = HerdrHudSessionChips.Chip(
+            id: "demo1|w1:p1",
+            title: "Finished agent",
+            status: .done,
+            isMuted: false,
+            since: .now,
+            artifacts: artifacts
+        )
+
+        let result = try await HerdrRenderHarness.render(
+            "21-hud-result-artifacts.png",
+            size: CGSize(
+                width: HerdrHudPlacement.resultRailWidth + HerdrHudPlacement.chipWidth,
+                height: 64
+            )
+        ) {
+            HerdrHudSessionChipsView(
+                model: model,
+                session: session,
+                chips: [chip],
+                overflow: 0
+            )
+        }
+
+        result.expectSubstantial(minimumBytes: 2_000)
+    }
+
+    @Test("Expanded HUD keeps completed Agent outputs visible")
+    func rendersExpandedHudResultStrip() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
+        session.seedExchangesForTesting([
+            HerdrHudExchange(
+                id: "expanded-output",
+                machineID: "demo1",
+                prompt: "Build the launch package",
+                sentPrompt: "Build the launch package",
+                response: "The launch report, interactive preview, and walkthrough are ready.",
+                error: nil,
+                status: .completed,
+                costUSD: 0.008,
+                createdAt: .now,
+                promotedPaneID: nil,
+                attachmentFilenames: []
+            ),
+        ])
+        model.ingestResultArtifacts(
+            [
+                renderArtifact(id: "expanded-report", filename: "launch-report.pdf", contentType: "application/pdf"),
+                renderArtifact(id: "expanded-preview", filename: "agent-console.html", contentType: "text/html"),
+                renderArtifact(id: "expanded-video", filename: "walkthrough.mp4", contentType: "video/mp4"),
+            ],
+            machineID: "demo1",
+            replacingMachineSlice: true
+        )
+
+        let result = try await HerdrRenderHarness.render(
+            "22-hud-expanded-result-strip.png",
+            size: HerdrHudPlacement.expandedSize
+        ) {
+            HerdrHudCardView(
+                model: model,
+                controller: HerdrHudController(),
+                session: session
+            )
+        }
+
+        result.expectSubstantial(minimumBytes: 10_000)
+    }
+
     @Test("HUD note card renders actions and links")
     func rendersHudNoteCard() async throws {
         let model = HerdrRenderFixtures.demoModel()
@@ -265,5 +351,25 @@ struct HudRenderTests {
     private func temporaryPersistenceURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("HudRenderTests-\(UUID().uuidString)-hud-thread.json")
+    }
+
+    private func renderArtifact(
+        id: String,
+        filename: String,
+        contentType: String
+    ) -> AgentResultArtifact {
+        AgentResultArtifact(
+            id: id,
+            originType: .pane,
+            originID: "w1:p1",
+            kind: .file,
+            title: filename,
+            filename: filename,
+            contentType: contentType,
+            byteSize: 2_048,
+            createdAt: HerdrTimestamp.string(from: .now),
+            downloadPath: "/api/v1/result-artifacts/\(id)/content"
+        )
+        .stamped(machineID: "demo1")
     }
 }

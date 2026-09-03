@@ -1,11 +1,14 @@
 # Herdr Pi integration
 
-This Pi package adds two integrations to the stock interactive TUI:
+This Pi package adds three integrations to the stock interactive TUI:
 
 - a local, pane-specific semantic side channel for Pi processes launched by
   Herdr, without replacing or parsing the terminal;
 - `/send-to-herdr`, which hands a persisted Pi session running outside Herdr to
-  the local Herdr Harness and opens the resulting pane in the Mac app.
+  the local Herdr Harness and opens the resulting pane in the Mac app;
+- `present_result`, an agent tool that explicitly registers a finished file or
+  HTTP(S) link for the floating Herdr HUD. The Mac app shows only unviewed
+  results and opens them with their native default application.
 
 For an isolated local test, launch Pi through Herdr with this directory as a
 temporary extension:
@@ -70,6 +73,24 @@ rejected so the bearer token cannot be forwarded elsewhere.
 The command is deliberately a no-op inside an already Herdr-managed Pi pane.
 Existing Pi processes started before installation can load the command with
 `/reload`; newly started processes discover it automatically.
+
+## Present finished results in the HUD
+
+Herdr-managed interactive panes and headless Agent runs expose the
+`present_result` tool to the model. Agents call it for intentional deliverables
+such as documents, HTML pages, images, audio, video, and useful web links. They
+do not infer attachments by scraping prose from a final answer, and they do not
+register ordinary source edits, logs, or intermediate build products.
+
+File locations may be absolute or relative to the Agent's working directory.
+The harness validates the allowlisted file type, rejects symlinks and executable
+content, then copies the bytes into private durable storage before publishing an
+authenticated `result_artifact.created` event. Registration retries carry a
+stable idempotency key, so a lost HTTP response cannot create duplicate HUD
+nodes. The Mac independently rejects missing or oversized file metadata, caps
+each transfer at 512 MiB, and refuses symlinked cache destinations before
+opening a result. ASK-mode headless runs can present HTTP(S) links only; ACT runs and
+interactive panes can also present finished local files.
 
 The extension socket is derived from the complete Herdr socket path and a full
 SHA-256 of `HERDR_PANE_ID`, so multiple Pi panes coexist safely. The socket is

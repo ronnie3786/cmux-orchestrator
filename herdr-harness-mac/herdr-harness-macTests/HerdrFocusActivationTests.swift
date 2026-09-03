@@ -17,7 +17,9 @@ struct HerdrFocusActivationTests {
         await fixture.model.focus(fixture.pane)
 
         #expect(requestsSeenAtActivation == ["/api/v1/panes/w1:p1/focus"])
-        #expect(FocusHandoffURLProtocol.recorder.paths().last == "/api/v1/workspaces")
+        let refreshPaths = FocusHandoffURLProtocol.recorder.paths()
+        #expect(refreshPaths.contains("/api/v1/workspaces"))
+        #expect(refreshPaths.contains("/api/v1/result-artifacts"))
         #expect(fixture.model.toastMessage == "Focused on Mac")
     }
 
@@ -114,9 +116,14 @@ private final class FocusHandoffURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
-        let body = url.path == "/api/v1/workspaces"
-            ? #"{"ok":true,"workspaces":[],"alerts":[]}"#
-            : #"{"ok":true}"#
+        let body = switch url.path {
+        case "/api/v1/workspaces":
+            #"{"ok":true,"workspaces":[],"alerts":[]}"#
+        case "/api/v1/result-artifacts":
+            #"{"ok":true,"artifacts":[]}"#
+        default:
+            #"{"ok":true}"#
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(body.utf8))
         client?.urlProtocolDidFinishLoading(self)
