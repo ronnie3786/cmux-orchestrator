@@ -151,6 +151,57 @@ struct HerdrHudSessionChipsTests {
         #expect(revealed.chips.prefix(grouped.chips.count).map(\.id) == grouped.chips.map(\.id))
     }
 
+    @Test("A dismissed chip returns once its agent finishes again")
+    func dismissalSilencesOneEpisodeNotTheStatus() throws {
+        let working = try pane(id: "a", status: .working)
+        let done = try pane(id: "a", status: .done)
+
+        // The user clicked the chip while the agent was finished, which both
+        // opens the pane and dismisses the chip.
+        var dismissed: [String: AgentStatus] = ["m1|a": .done]
+        #expect(HerdrHudSessionChips.chips(
+            panes: [done],
+            mutedPaneIDs: [],
+            dismissedStatuses: dismissed,
+            revealTitles: true
+        ).chips.isEmpty)
+
+        // The agent picks the work back up: the dismissal no longer applies.
+        dismissed = HerdrHudSessionChips.prunedDismissals(dismissed, machineID: "m1", panes: [working])
+        #expect(dismissed.isEmpty)
+
+        // ...and when it finishes again the chip is back, which is the bug that
+        // had completed agents disappearing from the HUD one session at a time.
+        dismissed = HerdrHudSessionChips.prunedDismissals(dismissed, machineID: "m1", panes: [done])
+        #expect(HerdrHudSessionChips.chips(
+            panes: [done],
+            mutedPaneIDs: [],
+            dismissedStatuses: dismissed,
+            revealTitles: true
+        ).chips.map(\.id) == ["m1|a"])
+    }
+
+    @Test("A dismissal survives while its pane stays in the dismissed status")
+    func dismissalSurvivesUnchangedStatus() throws {
+        let done = try pane(id: "a", status: .done)
+        let pruned = HerdrHudSessionChips.prunedDismissals(
+            ["m1|a": .done],
+            machineID: "m1",
+            panes: [done]
+        )
+        #expect(pruned == ["m1|a": .done])
+    }
+
+    @Test("Pruning drops vanished panes but never another machine's dismissals")
+    func pruningIsScopedToTheRefreshedMachine() throws {
+        let pruned = HerdrHudSessionChips.prunedDismissals(
+            ["m1|gone": .done, "m2|other": .done],
+            machineID: "m1",
+            panes: []
+        )
+        #expect(pruned == ["m2|other": .done])
+    }
+
     private func pane(
         id: String,
         status: AgentStatus,

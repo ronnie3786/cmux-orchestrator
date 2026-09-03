@@ -2848,9 +2848,11 @@ final class HerdrAppModel {
             collapsedSidebarTabIDs = prunedCollapsedTabs
             userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         }
-        let prunedChipStatuses = dismissedHudChipStatuses.filter { paneID, _ in
-            MachineScopedID.split(paneID)?.machineID != machineID || validPaneIDs.contains(paneID)
-        }
+        let prunedChipStatuses = HerdrHudSessionChips.prunedDismissals(
+            dismissedHudChipStatuses,
+            machineID: machineID,
+            panes: freshWorkspaces.flatMap(\.panes)
+        )
         // Observation notifies on write, not change. The always-mounted HUD's SwiftUI root is
         // the sole observer, so assigning an equal value on every refresh invalidates it.
         if prunedChipStatuses != dismissedHudChipStatuses {

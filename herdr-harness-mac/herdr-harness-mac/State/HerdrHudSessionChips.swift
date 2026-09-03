@@ -66,6 +66,27 @@ enum HerdrHudSessionChips {
         return (Array(result), max(0, candidates.count - chipLimit))
     }
 
+    /// Drops a dismissal as soon as its pane leaves the status it was dismissed
+    /// at, so a dismissal silences one *episode* rather than the status value
+    /// forever. Without this, clicking a finished session's chip once retired
+    /// every later `.done` for that pane and completed agents quietly stopped
+    /// appearing on the HUD. Entries for panes that vanished are dropped too.
+    static func prunedDismissals(
+        _ dismissed: [String: AgentStatus],
+        machineID: String,
+        panes: [HerdrPane]
+    ) -> [String: AgentStatus] {
+        var liveStatuses: [String: AgentStatus] = [:]
+        for pane in panes {
+            liveStatuses[pane.id] = pane.agentStatus
+        }
+        return dismissed.filter { paneID, dismissedStatus in
+            guard MachineScopedID.split(paneID)?.machineID == machineID else { return true }
+            guard let status = liveStatuses[paneID] else { return false }
+            return status == dismissedStatus
+        }
+    }
+
     private static func since(for pane: HerdrPane) -> Date? {
         pane.agentStatus == .working ? pane.workingSince : pane.lastActivityAt
     }
