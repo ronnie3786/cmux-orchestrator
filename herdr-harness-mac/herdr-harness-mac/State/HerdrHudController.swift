@@ -33,6 +33,7 @@ final class HerdrHudController {
     private var notificationTokens: [NSObjectProtocol] = []
     private var isConfigured = false
     private var isProgrammaticMove = false
+    private var needsFrameSyncAfterDrag = false
     /// Hover-driven notes layouts can start a new frame animation while the
     /// previous one is still running. Only the newest animation's completion
     /// may clear `isProgrammaticMove`, or an intermediate frame gets persisted
@@ -41,6 +42,13 @@ final class HerdrHudController {
     private var enabledRevision = 0
 
     private(set) var isExpanded = false
+    private(set) var isDraggingPanel = false
+    /// Set while a HUD prompt runs with the card auto-collapsed, so the run's
+    /// completion knows it is allowed to reopen. `isExpanded == false` cannot
+    /// answer that on its own — it also means "user collapsed", "a note is
+    /// open" and "the HUD is disabled" — so intent gets its own flag, cleared
+    /// by every user action that means "leave it shut".
+    private(set) var isAwaitingRunAutoOpen = false
     private(set) var focusRequest = 0
     private(set) var noteFocusRequest = 0
     private(set) var collapsedChipCount = 0
@@ -54,6 +62,8 @@ final class HerdrHudController {
 
     #if DEBUG
     var panelFrameForTesting: CGRect? { panel?.frame }
+    var placementOffsetForTesting: CGSize { placementOffset }
+    func setPanelFrameForTesting(_ frame: CGRect) { panel?.setFrame(frame, display: true) }
     #endif
 
     init(
@@ -95,7 +105,7 @@ final class HerdrHudController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .utilityWindow
@@ -124,6 +134,7 @@ final class HerdrHudController {
     }
 
     func summon() {
+        isAwaitingRunAutoOpen = false
         if !isEnabled {
             setEnabled(true)
         }
@@ -140,15 +151,41 @@ final class HerdrHudController {
     }
 
     func collapse() {
+        isAwaitingRunAutoOpen = false
         guard let panel else { return }
         isExpanded = false
         if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
         session?.isCollapsed = true
         applyFrame(animated: true)
         if panel.isKeyWindow {
-            panel.orderOut(nil)
+            refocusPanelWithoutFade(panel)
+        } else {
+            panel.orderFrontRegardless()
         }
-        panel.orderFrontRegardless()
+    }
+
+    /// Gets the HUD out of the way for the length of a run.
+    ///
+    /// Only collapses a card that is actually open — a submit from a HUD the
+    /// user already tucked away should not arm an auto-open they never asked
+    /// for. Returns whether the caller now owes an `endRunAutoCollapse()`.
+    @discardableResult
+    func beginRunAutoCollapse() -> Bool {
+        guard isEnabled, isExpanded, panel != nil, !isDraggingPanel else { return false }
+        collapse()
+        isAwaitingRunAutoOpen = true
+        return true
+    }
+
+    /// Reopens after the run finishes, unless the user has since taken the HUD
+    /// somewhere else. `summon()` clears the flag, so this is idempotent.
+    func endRunAutoCollapse() {
+        guard isAwaitingRunAutoOpen else { return }
+        isAwaitingRunAutoOpen = false
+        guard isEnabled, panel != nil, !isExpanded, !isDraggingPanel,
+              notes?.openNoteID == nil
+        else { return }
+        summon()
     }
 
     func toggleFromHotKey() {
@@ -161,6 +198,7 @@ final class HerdrHudController {
     }
 
     func setEnabled(_ enabled: Bool) {
+        if !enabled { isAwaitingRunAutoOpen = false }
         notes?.closeNote()
         regroupChips()
         userDefaults.set(enabled, forKey: DefaultsKey.enabled)
@@ -193,24 +231,29 @@ final class HerdrHudController {
         }
     }
 
-    /// Nudge the panel while the orb is being dragged.
-    ///
-    /// `isMovableByWindowBackground` cannot serve here: a SwiftUI control
-    /// consumes the mouse-down before AppKit can start a window drag, so the
-    /// orb has to move the panel itself. Deltas rather than a cumulative
-    /// translation, and the y axis flips — SwiftUI measures down from the top,
-    /// AppKit screen coordinates up from the bottom.
-    func moveOrb(by delta: CGSize) {
-        guard let panel else { return }
-        panel.setFrameOrigin(
-            CGPoint(x: panel.frame.origin.x + delta.width, y: panel.frame.origin.y - delta.height)
-        )
+    func beginPanelDrag() {
+        isDraggingPanel = true
+        notes?.isHoverSuspended = true
+        needsFrameSyncAfterDrag = false
     }
 
-    /// Keep where the drag left the panel. Deliberately not `isProgrammaticMove`
-    /// — this is the user placing it, which is exactly what should persist.
-    func endOrbDrag() {
-        persistCurrentPlacement()
+    func endPanelDrag() {
+        isDraggingPanel = false
+        if let panel {
+            let visibleFrame = visibleFrame(for: panel)
+            let offset = HerdrHudPlacement.offset(forFrame: panel.frame, visibleFrame: visibleFrame)
+            placementOffset = HerdrHudPlacement.reclamp(
+                topRightOffset: offset,
+                isExpanded: isExpanded,
+                visibleFrame: visibleFrame
+            )
+            savePlacementOffset()
+        }
+        notes?.isHoverSuspended = false
+        if needsFrameSyncAfterDrag {
+            needsFrameSyncAfterDrag = false
+            applyFrame(animated: false)
+        }
     }
 
     /// Reveal every session the `+N` control had grouped away.
@@ -257,9 +300,9 @@ final class HerdrHudController {
         if case .card = lastNotesLayout,
            !Self.isCardLayout(currentLayout),
            !isExpanded,
+           !isDraggingPanel,
            panel.isKeyWindow {
-            panel.orderOut(nil)
-            panel.orderFrontRegardless()
+            refocusPanelWithoutFade(panel)
         }
         lastNotesLayout = currentLayout
     }
@@ -278,6 +321,7 @@ final class HerdrHudController {
     }
 
     func openNote(_ id: UUID) {
+        isAwaitingRunAutoOpen = false
         guard let panel, let notes else { return }
         if isExpanded {
             isExpanded = false
@@ -303,6 +347,14 @@ final class HerdrHudController {
     private static func isCardLayout(_ layout: HerdrHudPlacement.NotesLayout) -> Bool {
         if case .card = layout { return true }
         return false
+    }
+
+    private func refocusPanelWithoutFade(_ panel: HerdrHudPanel) {
+        let previousBehavior = panel.animationBehavior
+        panel.animationBehavior = .none
+        panel.orderOut(nil)
+        panel.orderFrontRegardless()
+        panel.animationBehavior = previousBehavior
     }
 
     private func installHotKey() {
@@ -340,8 +392,15 @@ final class HerdrHudController {
     }
 
     private func persistCurrentPlacement() {
-        guard !isProgrammaticMove else { return }
         guard let panel else { return }
+        if isDraggingPanel {
+            placementOffset = HerdrHudPlacement.offset(
+                forFrame: panel.frame,
+                visibleFrame: visibleFrame(for: panel)
+            )
+            return
+        }
+        guard !isProgrammaticMove else { return }
         placementOffset = HerdrHudPlacement.offset(
             forFrame: panel.frame,
             visibleFrame: visibleFrame(for: panel)
@@ -350,6 +409,7 @@ final class HerdrHudController {
     }
 
     private func reclampPlacement() {
+        if isDraggingPanel { return }
         guard let panel else { return }
         isProgrammaticMove = true
         frameAnimationGeneration &+= 1
@@ -362,6 +422,10 @@ final class HerdrHudController {
     }
 
     private func applyFrame(animated: Bool) {
+        if isDraggingPanel {
+            needsFrameSyncAfterDrag = true
+            return
+        }
         guard let panel else { return }
         let newFrame = frame(for: isExpanded)
         let shouldAnimate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

@@ -50,7 +50,8 @@ struct HerdrHudRootView: View {
                                     session: session,
                                     chips: chipState.chips,
                                     overflow: chipState.overflow,
-                                    showAll: controller.showAllChips
+                                    showAll: controller.showAllChips,
+                                    summon: controller.summon
                                 )
                                 .onHover { controller.setHoveringChips($0) }
                             }
@@ -66,6 +67,12 @@ struct HerdrHudRootView: View {
         .contentShape(Rectangle())
         .onHover { notes.setHovering($0) }
         .onChange(of: notes.layout, initial: true) { _, _ in controller.notesLayoutDidChange() }
+        .background(
+            HerdrHudWindowDragHandle(
+                onDragBegan: controller.beginPanelDrag,
+                onDragEnded: controller.endPanelDrag
+            )
+        )
         // The panel is placed by its top-right corner and grows downward, so the
         // content must be pinned there too. Centering (the default) let content
         // that had already taken its final size overflow above the screen for

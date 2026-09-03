@@ -211,6 +211,7 @@ final class HerdrHudNotesState {
     @ObservationIgnored private let hoverGrace: Duration
     @ObservationIgnored private let hoverDelay: Duration
     @ObservationIgnored private let saveDelay: Duration
+    @ObservationIgnored var isHoverSuspended = false
     @ObservationIgnored private var hasRestored = false
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var hoverTask: Task<Void, Never>?
@@ -290,12 +291,18 @@ final class HerdrHudNotesState {
     }
 
     func updateBody(_ body: String, for id: UUID) {
+        updateBody(AttributedString(body), for: id)
+    }
+
+    func updateBody(_ body: AttributedString, for id: UUID) {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
-        let capped = String(body.prefix(HerdrNotesSnapshot.maximumBodyLength))
-        guard notes[index].body != capped else { return }
-        notes[index].body = capped
+        let capped = HerdrNoteRichText.truncated(body, to: HerdrNotesSnapshot.maximumBodyLength)
+        guard notes[index].richBody != capped else { return }
+        notes[index].richBody = capped
         notes[index].updatedAt = .now
-        let nextError = capped.count < body.count ? "Notes are limited to 20,000 characters." : nil
+        let nextError = capped.characters.count < body.characters.count
+            ? "Notes are limited to 20,000 characters."
+            : nil
         if noteErrors[id] != nextError { noteErrors[id] = nextError }
         schedulePersistedSave()
     }
@@ -341,6 +348,11 @@ final class HerdrHudNotesState {
     }
 
     func setHovering(_ hovering: Bool) {
+        if isHoverSuspended {
+            hoverTask?.cancel()
+            hoverTask = nil
+            return
+        }
         guard hovering != isHovering || hoverTask != nil else { return }
         hoverTask?.cancel()
         let delay = hovering ? hoverDelay : hoverGrace
@@ -357,7 +369,7 @@ final class HerdrHudNotesState {
     func undoAI(_ id: UUID) {
         guard !isBusy(id), let index = notes.firstIndex(where: { $0.id == id }), let previous = notes[index].previousVersion else { return }
         notes[index].title = previous.title
-        notes[index].body = previous.body
+        notes[index].richBody = previous.richBody
         notes[index].previousVersion = nil
         bumpRevealRevision(id)
         schedulePersistedSave()
@@ -389,10 +401,10 @@ final class HerdrHudNotesState {
                 guard let freshIndex = self.notes.firstIndex(where: { $0.id == id }) else { return }
                 guard let cleanup = HerdrNoteAIParsing.cleanup(response) else { self.setError("Couldn't tidy this note — try again.", for: id); return }
                 if shouldSnapshot {
-                    self.notes[freshIndex].previousVersion = HerdrNoteVersion(title: self.notes[freshIndex].title, body: self.notes[freshIndex].body, replacedAt: .now)
+                    self.notes[freshIndex].previousVersion = HerdrNoteVersion(title: self.notes[freshIndex].title, richBody: self.notes[freshIndex].richBody, replacedAt: .now)
                 }
                 if let title = cleanup.title { self.notes[freshIndex].title = title }
-                self.notes[freshIndex].body = cleanup.body
+                self.notes[freshIndex].richBody = AttributedString(cleanup.body)
                 let now = Date.now
                 self.notes[freshIndex].lastCleanedAt = now
                 self.notes[freshIndex].updatedAt = now

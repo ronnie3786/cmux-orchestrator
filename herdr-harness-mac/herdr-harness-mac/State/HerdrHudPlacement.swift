@@ -22,7 +22,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
     enum NotesLayout: Equatable, Sendable { case hidden, compact(count: Int), rows(count: Int), card }
     static let notesGap: CGFloat = 10
     static let notesWidth: CGFloat = 236
-    static let noteRowHeight: CGFloat = 30
+    static let noteRowHeight: CGFloat = 40
     static let noteRowSpacing: CGFloat = 6
     static let noteCtaHeight: CGFloat = 30
     /// Tall enough for one line of the note's title — the collapsed stack names
@@ -91,8 +91,8 @@ struct HerdrHudPlacement: Equatable, Sendable {
         )
         let desiredX = visibleFrame.maxX - topRightOffset.width - size.width
         let desiredY = visibleFrame.maxY - topRightOffset.height - size.height
-        let x = min(max(desiredX, visibleFrame.minX), visibleFrame.maxX - size.width)
-        let y = min(max(desiredY, visibleFrame.minY), visibleFrame.maxY - size.height)
+        let x = min(max(desiredX, visibleFrame.minX - shadowMargin), visibleFrame.maxX - size.width + shadowMargin)
+        let y = min(max(desiredY, visibleFrame.minY - shadowMargin), visibleFrame.maxY - size.height + shadowMargin)
         return CGRect(origin: CGPoint(x: x, y: y), size: size)
     }
 

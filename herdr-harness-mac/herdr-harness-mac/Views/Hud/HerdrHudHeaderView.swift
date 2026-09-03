@@ -54,6 +54,12 @@ struct HerdrHudHeaderView: View {
         }
         .padding(.horizontal, HerdrTheme.cardPadding)
         .padding(.vertical, 12)
+        .background(
+            HerdrHudWindowDragHandle(
+                onDragBegan: controller.beginPanelDrag,
+                onDragEnded: controller.endPanelDrag
+            )
+        )
     }
 
     @ViewBuilder

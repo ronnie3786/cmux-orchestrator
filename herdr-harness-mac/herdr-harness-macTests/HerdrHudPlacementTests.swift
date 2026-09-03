@@ -25,7 +25,7 @@ struct HerdrHudPlacementTests {
         #expect(frame.origin.y == visibleFrame.maxY - HerdrHudPlacement.defaultInset - frame.height)
     }
 
-    @Test("Extreme offsets keep the HUD fully inside its visible frame")
+    @Test("Extreme offsets keep the HUD content inside its visible frame")
     func extremeOffsetsAreClampedToVisibleFrame() {
         let visibleFrame = CGRect(x: 100, y: 200, width: 300, height: 250)
         let frame = HerdrHudPlacement.frame(
@@ -34,10 +34,30 @@ struct HerdrHudPlacementTests {
             topRightOffset: CGSize(width: 10_000, height: -10_000)
         )
 
-        #expect(frame.minX >= visibleFrame.minX)
-        #expect(frame.maxX <= visibleFrame.maxX)
-        #expect(frame.minY >= visibleFrame.minY)
-        #expect(frame.maxY <= visibleFrame.maxY)
+        #expect(frame.minX >= visibleFrame.minX - HerdrHudPlacement.shadowMargin)
+        #expect(frame.maxX <= visibleFrame.maxX + HerdrHudPlacement.shadowMargin)
+        #expect(frame.minY >= visibleFrame.minY - HerdrHudPlacement.shadowMargin)
+        #expect(frame.maxY <= visibleFrame.maxY + HerdrHudPlacement.shadowMargin)
+    }
+
+    @Test("Extreme offsets let visible HUD content reach every screen edge")
+    func extremeOffsetsLetVisibleContentReachScreenEdges() {
+        let visibleFrame = CGRect(x: 100, y: 200, width: 1_920, height: 1_080)
+        let lowerLeft = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: CGSize(width: 10_000, height: 10_000)
+        )
+        let upperRight = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: CGSize(width: -10_000, height: -10_000)
+        )
+
+        #expect(lowerLeft.minX == visibleFrame.minX - HerdrHudPlacement.shadowMargin)
+        #expect(lowerLeft.minY == visibleFrame.minY - HerdrHudPlacement.shadowMargin)
+        #expect(upperRight.maxX == visibleFrame.maxX + HerdrHudPlacement.shadowMargin)
+        #expect(upperRight.maxY == visibleFrame.maxY + HerdrHudPlacement.shadowMargin)
     }
 
     @Test("Expanding retains the HUD top-right anchor")
@@ -195,10 +215,10 @@ struct HerdrHudPlacementTests {
             topRightOffset: reclamped
         )
 
-        #expect(frame.minX >= smallFrame.minX)
-        #expect(frame.maxX <= smallFrame.maxX)
-        #expect(frame.minY >= smallFrame.minY)
-        #expect(frame.maxY <= smallFrame.maxY)
+        #expect(frame.minX >= smallFrame.minX - HerdrHudPlacement.shadowMargin)
+        #expect(frame.maxX <= smallFrame.maxX + HerdrHudPlacement.shadowMargin)
+        #expect(frame.minY >= smallFrame.minY - HerdrHudPlacement.shadowMargin)
+        #expect(frame.maxY <= smallFrame.maxY + HerdrHudPlacement.shadowMargin)
     }
 
     @Test("A tall chip stack still clamps inside a constrained display")
@@ -211,10 +231,10 @@ struct HerdrHudPlacementTests {
             chipCount: 3
         )
 
-        #expect(frame.minX >= visibleFrame.minX)
-        #expect(frame.maxX <= visibleFrame.maxX)
-        #expect(frame.minY >= visibleFrame.minY)
-        #expect(frame.maxY <= visibleFrame.maxY)
+        #expect(frame.minX >= visibleFrame.minX - HerdrHudPlacement.shadowMargin)
+        #expect(frame.maxX <= visibleFrame.maxX + HerdrHudPlacement.shadowMargin)
+        #expect(frame.minY >= visibleFrame.minY - HerdrHudPlacement.shadowMargin)
+        #expect(frame.maxY <= visibleFrame.maxY + HerdrHudPlacement.shadowMargin)
     }
 
     @Test("notesContentSize matches each layout's formula")
@@ -265,13 +285,45 @@ struct HerdrHudPlacementTests {
         #expect(frame.height == unclampedHeight)
     }
 
+    @Test("Three expanded note rows at the taller row height still fit a common laptop-scale visible frame")
+    func threeRowsExpandedAtTallerRowHeightFitsCommonVisibleFrame() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_512, height: 887)
+        let notesSize = HerdrHudPlacement.notesContentSize(
+            .rows(count: HerdrHudPlacement.maxNoteRowsWhenExpanded),
+            isExpanded: true
+        )
+        let expectedNotesHeight = HerdrHudPlacement.noteCtaHeight
+            + CGFloat(HerdrHudPlacement.maxNoteRowsWhenExpanded)
+            * (HerdrHudPlacement.noteRowHeight + HerdrHudPlacement.noteRowSpacing)
+        #expect(notesSize.height == expectedNotesHeight)
+
+        let frame = HerdrHudPlacement.frame(
+            isExpanded: true,
+            visibleFrame: visibleFrame,
+            topRightOffset: HerdrHudPlacement.defaultOffset(),
+            notesSize: notesSize
+        )
+        let unclampedHeight = HerdrHudPlacement.expandedSize.height
+            + HerdrHudPlacement.notesGap
+            + notesSize.height
+            + HerdrHudPlacement.shadowMargin * 2
+        #expect(unclampedHeight <= visibleFrame.height)
+        #expect(frame.height == unclampedHeight)
+    }
+
     @Test("An oversized notes height shrinks toward the CTA floor before the card itself is clamped")
     func oversizedNotesShrinksTowardFloor() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 700)
         let frame = HerdrHudPlacement.frame(isExpanded: true, visibleFrame: visibleFrame, topRightOffset: HerdrHudPlacement.defaultOffset(), notesSize: CGSize(width: HerdrHudPlacement.notesWidth, height: 1_000))
         #expect(frame.height <= visibleFrame.height)
-        #expect(frame.maxY <= visibleFrame.maxY)
-        #expect(frame.minY >= visibleFrame.minY)
+        // The frame may hang off screen by up to the transparent shadow margin —
+        // that is what lets the HUD's visible content sit flush with the edge —
+        // but never further, and the content itself always stays on screen.
+        #expect(frame.maxY <= visibleFrame.maxY + HerdrHudPlacement.shadowMargin)
+        #expect(frame.minY >= visibleFrame.minY - HerdrHudPlacement.shadowMargin)
+        let content = frame.insetBy(dx: HerdrHudPlacement.shadowMargin, dy: HerdrHudPlacement.shadowMargin)
+        #expect(content.minY >= visibleFrame.minY)
+        #expect(content.maxY <= visibleFrame.maxY)
     }
 
     private func paddedSize(for contentSize: CGSize) -> CGSize {
