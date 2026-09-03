@@ -53,6 +53,7 @@ struct HerdrHudOrbView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
+    @State private var isDropTargeted = false
 
     private let orbSize: CGFloat = 56
 
@@ -74,6 +75,14 @@ struct HerdrHudOrbView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { controller.summon() }
             .onHover { isHovered = $0 }
+            .dropDestination(for: URL.self) { urls, _ in
+                guard !urls.isEmpty else { return false }
+                session.addAttachments(urls)
+                controller.summon()
+                return true
+            } isTargeted: { targeted in
+                isDropTargeted = targeted
+            }
             .accessibilityIdentifier("hud-orb")
             .accessibilityLabel("Herdr HUD")
             .accessibilityValue(accessibilityValue)
@@ -91,6 +100,13 @@ struct HerdrHudOrbView: View {
                     .shadow(color: HerdrTheme.ink.opacity(0.5), radius: 10, y: 4)
 
                 stateRing
+
+                if isDropTargeted {
+                    Circle()
+                        .strokeBorder(HerdrTheme.accent, lineWidth: 2.5)
+                        .padding(2)
+                        .accessibilityHidden(true)
+                }
 
                 Group {
                     if let appIcon = NSApp.applicationIconImage {
@@ -129,6 +145,7 @@ struct HerdrHudOrbView: View {
             .scaleEffect(isHovered ? 1.06 : 1)
             .brightness(isHovered ? 0.04 : 0)
             .animation(.snappy(duration: 0.15), value: isHovered)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: isDropTargeted)
         }
     }
 

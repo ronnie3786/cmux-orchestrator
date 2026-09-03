@@ -1,11 +1,12 @@
 import Foundation
 import Observation
 
-struct HerdrHudImageAttachment: Identifiable, Equatable, Sendable {
+struct HerdrHudAttachment: Identifiable, Equatable, Sendable {
     let id: UUID
     let url: URL
     let filename: String
     let byteCount: Int
+    let isImage: Bool
 }
 
 struct HerdrHudStep: Codable, Identifiable, Equatable, Sendable {
@@ -47,9 +48,8 @@ final class HerdrHudSession {
     }
 
     static let machineIDDefaultsKey = "herdr.hud.machineID"
-    static let maxImageAttachments = 4
-    static let maxCombinedImageBytes: Int64 = 21 * 1024 * 1024
-    static let allowedImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic"]
+    static let maxAttachments = 4
+    static let maxCombinedAttachmentBytes: Int64 = 21 * 1024 * 1024
 
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
@@ -66,7 +66,7 @@ final class HerdrHudSession {
     private(set) var latestPromotableExchangeID: String?
     private(set) var thread: HerdrHudThread?
     var draft = ""
-    var imageAttachments: [HerdrHudImageAttachment] = []
+    var pendingAttachments: [HerdrHudAttachment] = []
     var selectedMachineID: String? {
         didSet { userDefaults.set(selectedMachineID, forKey: Self.machineIDDefaultsKey) }
     }
@@ -153,10 +153,10 @@ final class HerdrHudSession {
         hasUnseenAnswer = false
     }
 
-    func addImageAttachments(_ urls: [URL]) {
+    func addAttachments(_ urls: [URL]) {
         for url in urls {
-            guard imageAttachments.count < Self.maxImageAttachments else {
-                validationError = "You can attach up to 4 images."
+            guard pendingAttachments.count < Self.maxAttachments else {
+                validationError = "You can attach up to 4 files."
                 return
             }
 
@@ -170,8 +170,8 @@ final class HerdrHudSession {
                     validationError = "\(url.lastPathComponent) is not a readable file."
                     continue
                 }
-                guard Self.allowedImageExtensions.contains(url.pathExtension.lowercased()) else {
-                    validationError = "\(url.lastPathComponent) isn't a supported image type. Use PNG, JPEG, GIF, WebP, or HEIC."
+                guard HerdrAttachmentTypes.isAllowed(url) else {
+                    validationError = "\(url.lastPathComponent) isn't a supported file type."
                     continue
                 }
                 guard fileSize > 0 else {
@@ -182,17 +182,18 @@ final class HerdrHudSession {
                     validationError = "\(url.lastPathComponent) is larger than 20 MB."
                     continue
                 }
-                let currentTotal = imageAttachments.reduce(Int64(0)) { $0 + Int64($1.byteCount) }
-                guard currentTotal + Int64(fileSize) <= Self.maxCombinedImageBytes else {
+                let currentTotal = pendingAttachments.reduce(Int64(0)) { $0 + Int64($1.byteCount) }
+                guard currentTotal + Int64(fileSize) <= Self.maxCombinedAttachmentBytes else {
                     validationError = "Attachments can total up to 21 MB per message."
                     continue
                 }
-                imageAttachments.append(
-                    HerdrHudImageAttachment(
+                pendingAttachments.append(
+                    HerdrHudAttachment(
                         id: UUID(),
                         url: url,
                         filename: url.lastPathComponent,
-                        byteCount: fileSize
+                        byteCount: fileSize,
+                        isImage: HerdrAttachmentTypes.isImage(url)
                     )
                 )
             } catch {
@@ -201,8 +202,8 @@ final class HerdrHudSession {
         }
     }
 
-    func removeImageAttachment(_ id: UUID) {
-        imageAttachments.removeAll { $0.id == id }
+    func removeAttachment(_ id: UUID) {
+        pendingAttachments.removeAll { $0.id == id }
     }
 
     func reportAttachmentError(_ message: String) {
@@ -250,14 +251,15 @@ final class HerdrHudSession {
             return
         }
 
-        let pendingImageAttachments = imageAttachments
-        guard pendingImageAttachments.reduce(Int64(0), { $0 + Int64($1.byteCount) }) <= Self.maxCombinedImageBytes else {
+        let attachmentsToSend = pendingAttachments
+        guard attachmentsToSend.reduce(Int64(0), { $0 + Int64($1.byteCount) }) <= Self.maxCombinedAttachmentBytes else {
             validationError = "Attachments can total up to 21 MB per message."
             return
         }
 
-        let attachmentFilenames = pendingImageAttachments.map(\.filename)
-        let hasAttachments = !pendingImageAttachments.isEmpty
+        let attachmentFilenames = attachmentsToSend.map(\.filename)
+        let hasAttachments = !attachmentsToSend.isEmpty
+        let hasImageAttachments = attachmentsToSend.contains(where: \.isImage)
         let resolution = AgentModelResolver.resolve(
             preference: selectedModel,
             catalog: availableModels,
@@ -266,7 +268,7 @@ final class HerdrHudSession {
         let agentModel = HerdrHudModelRouting.model(
             selection: resolution.modelID,
             selectionSupportsImages: selectedModelSupportsImages,
-            hasAttachments: hasAttachments,
+            hasImageAttachments: hasImageAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
         let thinkingLevel = agentSettings.hudThinkingLevel.rawValue
@@ -294,7 +296,7 @@ final class HerdrHudSession {
             )
         )
         draft = ""
-        imageAttachments = []
+        pendingAttachments = []
         // Past every validation guard, so a run is genuinely in flight. The
         // composer waits for this before auto-collapsing the HUD — collapsing
         // on a validation failure would hide the error it needs to show.
@@ -302,8 +304,8 @@ final class HerdrHudSession {
 
         let wireAttachments: [HeadlessAgentAttachment]
         do {
-            wireAttachments = pendingImageAttachments.isEmpty ? [] : try await Task.detached(priority: .userInitiated) {
-                try pendingImageAttachments.map { attachment in
+            wireAttachments = attachmentsToSend.isEmpty ? [] : try await Task.detached(priority: .userInitiated) {
+                try attachmentsToSend.map { attachment in
                     let accessed = attachment.url.startAccessingSecurityScopedResource()
                     defer { if accessed { attachment.url.stopAccessingSecurityScopedResource() } }
                     let data = try Data(contentsOf: attachment.url)
@@ -319,10 +321,10 @@ final class HerdrHudSession {
                 return
             }
             exchanges[index].status = .failed
-            exchanges[index].error = "Couldn't read \(pendingImageAttachments.first?.filename ?? "attachment"): \(error.localizedDescription)"
+            exchanges[index].error = "Couldn't read \(attachmentsToSend.first?.filename ?? "attachment"): \(error.localizedDescription)"
             markExchangesChanged()
             if draft.isEmpty { draft = prompt }
-            if imageAttachments.isEmpty { imageAttachments = pendingImageAttachments }
+            if pendingAttachments.isEmpty { pendingAttachments = attachmentsToSend }
             controller.reset()
             await schedulePersistenceSave()
             return
@@ -359,7 +361,7 @@ final class HerdrHudSession {
             )
             markExchangesChanged()
             if draft.isEmpty { draft = prompt }
-            if imageAttachments.isEmpty { imageAttachments = pendingImageAttachments }
+            if pendingAttachments.isEmpty { pendingAttachments = attachmentsToSend }
             controller.reset()
             await schedulePersistenceSave()
             return
@@ -639,6 +641,9 @@ final class HerdrHudSession {
         promoteErrorMessage = nil
         audioErrorMessage = nil
         let hasAttachments = !exchange.attachments.isEmpty
+        let hasImageAttachments = exchange.attachments.contains {
+            HerdrAttachmentTypes.isImage(URL(fileURLWithPath: $0.filename))
+        }
         let resolution = AgentModelResolver.resolve(
             preference: selectedModel,
             catalog: availableModels,
@@ -647,7 +652,7 @@ final class HerdrHudSession {
         let agentModel = HerdrHudModelRouting.model(
             selection: resolution.modelID,
             selectionSupportsImages: selectedModelSupportsImages,
-            hasAttachments: hasAttachments,
+            hasImageAttachments: hasImageAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
         let thinkingLevel = agentSettings.hudThinkingLevel.rawValue

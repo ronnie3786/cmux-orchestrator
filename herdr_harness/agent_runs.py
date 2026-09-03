@@ -50,7 +50,20 @@ PUBLIC_RUN_KEYS = (
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "promoted"})
 MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._/:-]{1,200}$")
 THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh", "max"})
-ATTACHMENT_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "heic"})
+# Keep this exact set in sync with HerdrAttachmentTypes in
+# herdr-harness-mac/herdr-harness-mac/Models/HerdrAttachmentTypes.swift.
+ATTACHMENT_EXTENSIONS = frozenset({
+    # images
+    "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif", "svg",
+    # documents
+    "pdf", "txt", "md", "markdown", "rtf", "csv", "tsv", "log",
+    # data/config
+    "json", "yaml", "yml", "toml", "xml", "plist", "ini", "conf",
+    # code
+    "swift", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "rb", "go", "rs", "java",
+    "kt", "kts", "c", "h", "cc", "cpp", "hpp", "m", "mm", "cs", "php", "sh", "bash",
+    "zsh", "sql", "gradle", "patch", "diff",
+})
 MAX_ATTACHMENTS = 4
 _RUN_ID_RE = re.compile(r"^agr_[0-9a-f]{12}$")
 MAX_RESPONSE_CHARS = 512 * 1024

@@ -1,3 +1,5 @@
+/// Routes HUD submissions. Only image attachments require a vision-capable model,
+/// and `hasImageAttachments` means at least one attachment is an image.
 enum HerdrHudModelRouting {
     /// Retained as the built-in fallback. Settings can now override it via
     /// `AgentModelSettings.visionModel`; this value is what ships in the app.
@@ -7,13 +9,13 @@ enum HerdrHudModelRouting {
     static func model(
         selection: String?,
         selectionSupportsImages: Bool,
-        hasAttachments: Bool,
+        hasImageAttachments: Bool,
         visionModel: String = Self.visionModel
     ) -> String? {
         if let selection {
-            if !hasAttachments { return selection }
+            if !hasImageAttachments { return selection }
             return selectionSupportsImages ? selection : visionModel
         }
-        return hasAttachments ? visionModel : nil
+        return hasImageAttachments ? visionModel : nil
     }
 }

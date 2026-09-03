@@ -10,7 +10,7 @@ struct HerdrHudComposerView: View {
     @FocusState private var isComposerFocused: Bool
     @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
     @State private var voiceErrorMessage: String?
-    @State private var isShowingImagePicker = false
+    @State private var isShowingFilePicker = false
 
     /// A submission clears validation within a turn or two; the ceiling only
     /// exists so a failed submit cannot leave this polling forever.
@@ -19,7 +19,7 @@ struct HerdrHudComposerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if !session.imageAttachments.isEmpty {
+            if !session.pendingAttachments.isEmpty {
                 attachmentChips
             }
             if let voiceErrorMessage, !voiceErrorMessage.isEmpty {
@@ -63,15 +63,15 @@ struct HerdrHudComposerView: View {
                 .accessibilityIdentifier("hud-mic")
 
                 Button {
-                    isShowingImagePicker = true
+                    isShowingFilePicker = true
                 } label: {
                     Image(systemName: "paperclip")
                         .foregroundStyle(HerdrTheme.mist)
                         .herdrHitTarget()
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Attach image")
-                .accessibilityIdentifier("hud-attach-image")
+                .accessibilityLabel("Attach file")
+                .accessibilityIdentifier("hud-attach-file")
 
                 if let thread = session.thread {
                     Label("Thread · \(thread.turnCount) turns", systemImage: "link")
@@ -84,13 +84,13 @@ struct HerdrHudComposerView: View {
         }
         .padding(12)
         .fileImporter(
-            isPresented: $isShowingImagePicker,
-            allowedContentTypes: [.png, .jpeg, .gif, .webP, .heic],
+            isPresented: $isShowingFilePicker,
+            allowedContentTypes: [.image, .pdf, .text, .sourceCode, .json, .commaSeparatedText, .data],
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case let .success(urls):
-                session.addImageAttachments(urls)
+                session.addAttachments(urls)
             case let .failure(error):
                 session.reportAttachmentError(error.localizedDescription)
             }
@@ -111,10 +111,10 @@ struct HerdrHudComposerView: View {
     private var attachmentChips: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 6) {
-                ForEach(session.imageAttachments) { attachment in
+                ForEach(session.pendingAttachments) { attachment in
                     HerdrHudAttachmentChipView(
                         attachment: attachment,
-                        remove: { session.removeImageAttachment(attachment.id) }
+                        remove: { session.removeAttachment(attachment.id) }
                     )
                 }
             }

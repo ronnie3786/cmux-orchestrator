@@ -815,6 +815,8 @@ class AgentRunManagerTests(unittest.TestCase):
             capture_path = directory / "capture.json"
             manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
             data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL2NwAAAABJRU5ErkJggg==")
+            text_data = b"notes for the agent"
+            pdf_data = b"%PDF-1.4\nexample\n"
 
             started = manager.start(
                 prompt="Look at this",
@@ -822,7 +824,9 @@ class AgentRunManagerTests(unittest.TestCase):
                 cwd=str(directory / "home"),
                 topology={},
                 attachments=[
-                    {"filename": "photo.png", "dataBase64": base64.b64encode(data).decode()}
+                    {"filename": "photo.png", "dataBase64": base64.b64encode(data).decode()},
+                    {"filename": "notes.txt", "dataBase64": base64.b64encode(text_data).decode()},
+                    {"filename": "report.pdf", "dataBase64": base64.b64encode(pdf_data).decode()},
                 ],
             )
             run_id = started["run"]["id"]
@@ -830,7 +834,15 @@ class AgentRunManagerTests(unittest.TestCase):
             attachment_path = manager.runs_root / run_id / "attachments" / "photo.png"
 
             self.assertEqual(attachment_path.read_bytes(), data)
-            self.assertEqual(finished["run"]["attachments"], ["photo.png"])
+            self.assertEqual(
+                (manager.runs_root / run_id / "attachments" / "notes.txt").read_bytes(), text_data
+            )
+            self.assertEqual(
+                (manager.runs_root / run_id / "attachments" / "report.pdf").read_bytes(), pdf_data
+            )
+            self.assertEqual(
+                finished["run"]["attachments"], ["photo.png", "notes.txt", "report.pdf"]
+            )
             capture = json.loads(capture_path.read_text(encoding="utf-8"))
             self.assertIn("@" + str(attachment_path), capture["argv"])
             manager.stop()

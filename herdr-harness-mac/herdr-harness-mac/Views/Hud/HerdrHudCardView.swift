@@ -1,13 +1,11 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct HerdrHudCardView: View {
-    private static let allowedImageContentTypes: [UTType] = [.png, .jpeg, .gif, .webP, .heic]
-
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     @Bindable var session: HerdrHudSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,12 +30,19 @@ struct HerdrHudCardView: View {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
                 .strokeBorder(HerdrTheme.surface, lineWidth: 1)
         }
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                    .strokeBorder(HerdrTheme.accent, lineWidth: 2)
+            }
+        }
         .shadow(color: HerdrTheme.ink.opacity(0.7), radius: 28, y: 12)
         .dropDestination(for: URL.self) { urls, _ in
-            let imageURLs = urls.filter { isImageURL($0) }
-            guard !imageURLs.isEmpty else { return false }
-            session.addImageAttachments(imageURLs)
+            guard !urls.isEmpty else { return false }
+            session.addAttachments(urls)
             return true
+        } isTargeted: { targeted in
+            isDropTargeted = targeted
         }
         .task(id: session.selectedMachineID) {
             updateResponseAudioAvailability()
@@ -52,6 +57,7 @@ struct HerdrHudCardView: View {
             reduceMotion ? nil : .snappy(duration: 0.24),
             value: model.unopenedResultArtifacts.map(\.id)
         )
+        .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: isDropTargeted)
     }
 
     private func updateResponseAudioAvailability() {
@@ -64,12 +70,5 @@ struct HerdrHudCardView: View {
 
     private func openPaneInMainWindow(_ paneID: String) {
         HerdrMacAppDelegate.openPaneURLWithFallback(paneID)
-    }
-
-    private func isImageURL(_ url: URL) -> Bool {
-        let values = try? url.resourceValues(forKeys: [.contentTypeKey])
-        let contentType = values?.contentType ?? UTType(filenameExtension: url.pathExtension)
-        guard let contentType else { return false }
-        return Self.allowedImageContentTypes.contains { contentType.conforms(to: $0) }
     }
 }

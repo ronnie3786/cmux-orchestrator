@@ -181,7 +181,7 @@ struct HerdrHudSessionTests {
 
         let model = makeDemoModel()
         let session = makeSession()
-        session.addImageAttachments([url])
+        session.addAttachments([url])
         session.draft = "Describe this image"
 
         await session.submit(model: model)
@@ -219,41 +219,41 @@ struct HerdrHudSessionTests {
         #expect(demoRun.thinkingLevel == HerdrHudModelRouting.thinkingLevel)
     }
 
-    @Test("Model routing only selects vision for attachments")
+    @Test("Model routing only selects vision for image attachments")
     func modelRoutingOnlySelectsVisionForAttachments() {
         #expect(
             HerdrHudModelRouting.model(
                 selection: nil,
                 selectionSupportsImages: false,
-                hasAttachments: false
+                hasImageAttachments: false
             ) == nil
         )
         #expect(
             HerdrHudModelRouting.model(
                 selection: nil,
                 selectionSupportsImages: false,
-                hasAttachments: true
+                hasImageAttachments: true
             ) == HerdrHudModelRouting.visionModel
         )
         #expect(
             HerdrHudModelRouting.model(
                 selection: "provider/text-only",
                 selectionSupportsImages: false,
-                hasAttachments: false
+                hasImageAttachments: false
             ) == "provider/text-only"
         )
         #expect(
             HerdrHudModelRouting.model(
                 selection: "provider/vision",
                 selectionSupportsImages: true,
-                hasAttachments: true
+                hasImageAttachments: true
             ) == "provider/vision"
         )
         #expect(
             HerdrHudModelRouting.model(
                 selection: "provider/text-only",
                 selectionSupportsImages: false,
-                hasAttachments: true
+                hasImageAttachments: true
             ) == HerdrHudModelRouting.visionModel
         )
     }
@@ -276,7 +276,7 @@ struct HerdrHudSessionTests {
         )
         session.seedModelsForTesting([selected], default: nil)
         session.setSelectedModel(selected)
-        session.addImageAttachments([url])
+        session.addAttachments([url])
         session.draft = "Describe this image"
 
         await session.submit(model: model)
@@ -302,7 +302,7 @@ struct HerdrHudSessionTests {
         )
         session.seedModelsForTesting([selected], default: nil)
         session.setSelectedModel(selected)
-        session.addImageAttachments([url])
+        session.addAttachments([url])
         session.draft = "Describe this image"
 
         await session.submit(model: model)
@@ -334,8 +334,8 @@ struct HerdrHudSessionTests {
         #expect(session.exchanges.last?.modelLabel == "Selected Choice")
     }
 
-    @Test("Image attachments enforce count and file-size limits")
-    func imageAttachmentsEnforceCountAndFileSizeLimits() throws {
+    @Test("Attachments enforce count and file-size limits")
+    func attachmentsEnforceCountAndFileSizeLimits() throws {
         let regularURL = temporaryURL(named: "attachment.png")
         let oversizedURL = temporaryURL(named: "oversized.png")
         defer {
@@ -346,18 +346,18 @@ struct HerdrHudSessionTests {
         try Data(repeating: 0, count: 21 * 1024 * 1024).write(to: oversizedURL)
 
         let countSession = makeSession()
-        countSession.addImageAttachments(Array(repeating: regularURL, count: 5))
-        #expect(countSession.imageAttachments.count == 4)
+        countSession.addAttachments(Array(repeating: regularURL, count: 5))
+        #expect(countSession.pendingAttachments.count == 4)
         #expect(countSession.validationError != nil)
 
         let sizeSession = makeSession()
-        sizeSession.addImageAttachments([oversizedURL])
-        #expect(sizeSession.imageAttachments.isEmpty)
+        sizeSession.addAttachments([oversizedURL])
+        #expect(sizeSession.pendingAttachments.isEmpty)
         #expect(sizeSession.validationError != nil)
     }
 
-    @Test("Image attachments enforce the combined message-size limit")
-    func imageAttachmentsEnforceCombinedMessageSizeLimit() throws {
+    @Test("Attachments enforce the combined message-size limit")
+    func attachmentsEnforceCombinedMessageSizeLimit() throws {
         let firstURL = temporaryURL(named: "first.png")
         let secondURL = temporaryURL(named: "second.png")
         defer {
@@ -368,23 +368,23 @@ struct HerdrHudSessionTests {
         try Data(repeating: 0, count: 11 * 1024 * 1024).write(to: secondURL)
 
         let session = makeSession()
-        session.addImageAttachments([firstURL, secondURL])
+        session.addAttachments([firstURL, secondURL])
 
-        #expect(session.imageAttachments.map(\.filename) == [firstURL.lastPathComponent])
+        #expect(session.pendingAttachments.map(\.filename) == [firstURL.lastPathComponent])
         #expect(session.validationError == "Attachments can total up to 21 MB per message.")
     }
 
-    @Test("Image attachments reject unsupported file extensions")
-    func imageAttachmentsRejectUnsupportedFileExtensions() throws {
-        let url = temporaryURL(named: "unsupported.tiff")
+    @Test("Attachments reject unsupported file extensions")
+    func attachmentsRejectUnsupportedFileExtensions() throws {
+        let url = temporaryURL(named: "unsupported.exe")
         defer { try? FileManager.default.removeItem(at: url) }
         try Data([1]).write(to: url)
 
         let session = makeSession()
-        session.addImageAttachments([url])
+        session.addAttachments([url])
 
-        #expect(session.imageAttachments.isEmpty)
-        #expect(session.validationError?.contains("isn't a supported image type") == true)
+        #expect(session.pendingAttachments.isEmpty)
+        #expect(session.validationError?.contains("isn't a supported file type") == true)
     }
 
     @Test("The exchange history retains the newest twenty entries")
@@ -507,7 +507,7 @@ struct HerdrHudSessionTests {
             agentSettings: store,
             persistenceURL: temporaryURL(named: "hud-thread.json")
         )
-        session.addImageAttachments([url])
+        session.addAttachments([url])
         session.draft = "Describe this image"
 
         await session.submit(model: makeDemoModel())
