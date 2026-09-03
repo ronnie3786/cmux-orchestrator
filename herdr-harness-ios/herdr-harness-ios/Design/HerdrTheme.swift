@@ -15,6 +15,9 @@ enum HerdrTheme {
     static let success = Color(red: 0.651, green: 0.890, blue: 0.631)
     static let working = Color(red: 0.976, green: 0.886, blue: 0.686)
     static let alert = Color(red: 0.953, green: 0.545, blue: 0.659)
+    static let diffAdd = Color(red: 0.180, green: 0.627, blue: 0.263)
+    static let diffRemove = Color(red: 0.973, green: 0.318, blue: 0.286)
+    static let diffHunk = Color(red: 0.220, green: 0.545, blue: 0.992)
     static let warning = Color(red: 0.980, green: 0.702, blue: 0.529)
     static let code = Color(red: 0.961, green: 0.761, blue: 0.906)     // ≈ #F5C2E7
     static let crust = Color(red: 0.067, green: 0.067, blue: 0.106)     // ≈ #11111B

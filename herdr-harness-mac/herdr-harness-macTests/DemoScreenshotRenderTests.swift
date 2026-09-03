@@ -230,6 +230,29 @@ struct DemoScreenshotRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Workspace Git renders a selected diff")
+    func rendersWorkspaceGitDiff() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let workspace = try #require(model.workspace(id: "demo1|w1"))
+
+        let result = try await HerdrRenderHarness.render(
+            "09-workspace-git-diff.png",
+            size: CGSize(width: 900, height: 700)
+        ) {
+            WorkspaceGitView(
+                workspace: workspace,
+                loadStatus: { try await model.fetchGitStatus(for: workspace) },
+                loadDiff: { file, section in
+                    try await model.fetchGitDiff(for: workspace, file: file, section: section)
+                },
+                stageFile: { file in try await model.stageGitFile(file, in: workspace) },
+                unstageFile: { file in try await model.unstageGitFile(file, in: workspace) }
+            )
+        }
+
+        result.expectSubstantial()
+    }
+
     // MARK: - 05 · Pane session, terminal mode
 
     @Test("Pane session renders a streamed terminal frame above the composer")
@@ -262,8 +285,7 @@ struct DemoScreenshotRenderTests {
                     PaneSessionHeader(
                         model: model,
                         pane: pane,
-                        store: PiConversationStore(),
-                        gitIsAvailable: true
+                        store: PiConversationStore()
                     )
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)

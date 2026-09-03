@@ -48,11 +48,13 @@ const PIERRE_THEME_OVERRIDES = `
     --diffs-bg: #0b0e13;
     --diffs-bg-context: #0b0e13;
     --diffs-bg-context-gutter: #0d1117;
-    --diffs-bg-separator: #11161e;
-    --diffs-bg-addition-override: rgba(48, 209, 88, 0.11);
-    --diffs-bg-addition-number-override: rgba(48, 209, 88, 0.16);
-    --diffs-bg-deletion-override: rgba(255, 69, 58, 0.11);
-    --diffs-bg-deletion-number-override: rgba(255, 69, 58, 0.16);
+    --diffs-bg-separator: rgba(56, 139, 253, 0.15);
+    --diffs-bg-addition-override: rgba(46, 160, 67, 0.15);
+    --diffs-bg-addition-number-override: rgba(46, 160, 67, 0.30);
+    --diffs-bg-addition-emphasis-override: rgba(46, 160, 67, 0.40);
+    --diffs-bg-deletion-override: rgba(248, 81, 73, 0.15);
+    --diffs-bg-deletion-number-override: rgba(248, 81, 73, 0.30);
+    --diffs-bg-deletion-emphasis-override: rgba(248, 81, 73, 0.40);
     --diffs-bg-hover-override: rgba(47, 129, 247, 0.09);
     --diffs-bg-selection-override: rgba(47, 129, 247, 0.18);
     --diffs-bg-selection-number-override: rgba(47, 129, 247, 0.28);

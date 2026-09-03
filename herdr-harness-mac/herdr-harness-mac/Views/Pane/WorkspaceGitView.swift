@@ -479,13 +479,32 @@ private struct WorkspaceGitDiffView: View {
                         ScrollView([.horizontal, .vertical]) {
                             LazyVStack(alignment: .leading, spacing: 0) {
                                 ForEach(Array(diffLines(diff).enumerated()), id: \.offset) { _, line in
-                                    Text(line.isEmpty ? " " : line)
-                                        .herdrFont(.caption, monospaced: true)
-                                        .foregroundStyle(diffColor(line))
-                                        .padding(.horizontal, 10)
+                                    if isMetadata(line) || isHunk(line) {
+                                        Text(line.isEmpty ? " " : line)
+                                            .herdrFont(.caption, monospaced: true)
+                                            .foregroundStyle(diffColor(line))
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 2)
+                                            .frame(minWidth: proxy.size.width, alignment: .leading)
+                                            .background(diffBackground(line))
+                                    } else {
+                                        HStack(spacing: 0) {
+                                            Text(diffMarker(line))
+                                                .herdrFont(.caption, monospaced: true, weight: .bold)
+                                                .foregroundStyle(diffColor(line))
+                                                .frame(width: 14)
+                                                .background(diffMarkerBackground(line))
+
+                                            Text(diffContent(line))
+                                                .herdrFont(.caption, monospaced: true)
+                                                .foregroundStyle(diffColor(line))
+                                                .padding(.trailing, 10)
+                                        }
+                                        .padding(.leading, 10)
                                         .padding(.vertical, 2)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .frame(minWidth: proxy.size.width, alignment: .leading)
                                         .background(diffBackground(line))
+                                    }
                                 }
                             }
                             .frame(
@@ -532,18 +551,53 @@ private struct WorkspaceGitDiffView: View {
     }
 
     private func diffColor(_ line: String) -> Color {
-        if line.hasPrefix("+") && !line.hasPrefix("+++") { return HerdrTheme.success }
-        if line.hasPrefix("-") && !line.hasPrefix("---") { return HerdrTheme.alert }
-        if line.hasPrefix("@@") { return HerdrTheme.mauve }
-        if line.hasPrefix("diff ") || line.hasPrefix("index ") { return HerdrTheme.accent }
+        if isAddition(line) { return HerdrTheme.diffAdd }
+        if isRemoval(line) { return HerdrTheme.diffRemove }
+        if isHunk(line) { return HerdrTheme.mist }
+        if isMetadata(line) { return HerdrTheme.muted }
         return HerdrTheme.text
     }
 
     private func diffBackground(_ line: String) -> Color {
-        if line.hasPrefix("+") && !line.hasPrefix("+++") { return HerdrTheme.success.opacity(0.10) }
-        if line.hasPrefix("-") && !line.hasPrefix("---") { return HerdrTheme.alert.opacity(0.10) }
-        if line.hasPrefix("@@") { return HerdrTheme.mauve.opacity(0.10) }
+        if isAddition(line) { return HerdrTheme.diffAdd.opacity(0.15) }
+        if isRemoval(line) { return HerdrTheme.diffRemove.opacity(0.15) }
+        if isHunk(line) { return HerdrTheme.diffHunk.opacity(0.15) }
         return .clear
+    }
+
+    private func diffMarkerBackground(_ line: String) -> Color {
+        if isAddition(line) { return HerdrTheme.diffAdd.opacity(0.30) }
+        if isRemoval(line) { return HerdrTheme.diffRemove.opacity(0.30) }
+        return .clear
+    }
+
+    private func diffMarker(_ line: String) -> String {
+        if isAddition(line) { return "+" }
+        if isRemoval(line) { return "-" }
+        return " "
+    }
+
+    private func diffContent(_ line: String) -> String {
+        guard line.hasPrefix(" ") || isAddition(line) || isRemoval(line) else {
+            return line.isEmpty ? " " : line
+        }
+        return String(line.dropFirst())
+    }
+
+    private func isAddition(_ line: String) -> Bool {
+        line.hasPrefix("+") && !line.hasPrefix("+++ ")
+    }
+
+    private func isRemoval(_ line: String) -> Bool {
+        line.hasPrefix("-") && !line.hasPrefix("--- ")
+    }
+
+    private func isHunk(_ line: String) -> Bool {
+        line.hasPrefix("@@")
+    }
+
+    private func isMetadata(_ line: String) -> Bool {
+        line.hasPrefix("diff ") || line.hasPrefix("index ") || line.hasPrefix("--- ") || line.hasPrefix("+++ ")
     }
 }
 
