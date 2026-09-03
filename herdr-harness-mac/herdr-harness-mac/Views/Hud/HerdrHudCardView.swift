@@ -24,11 +24,6 @@ struct HerdrHudCardView: View {
                 openPaneInMainWindow: openPaneInMainWindow,
                 collapse: controller.collapse
             )
-            HerdrHudAttentionStripView(
-                model: model,
-                openPaneInMainWindow: openPaneInMainWindow,
-                collapse: controller.collapse
-            )
             if session.voiceReplyTarget != nil {
                 Divider().overlay { HerdrTheme.surface }
                 HerdrHudVoiceReplyView(model: model, session: session, voiceReply: voiceReply)
