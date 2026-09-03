@@ -129,6 +129,11 @@ struct HerdrMacCommands: Commands {
     let hudController: HerdrHudController
 
     var body: some Commands {
+        // On macOS ⌘B/⌘I/⌘U are Format ▸ Font key equivalents, not text-view
+        // key bindings. Without this menu nothing claims them and AppKit beeps,
+        // which is exactly what the rich-text note editor was doing.
+        TextFormattingCommands()
+
         CommandGroup(replacing: .newItem) {
             Button("New Workspace") {
                 shell.isCreatingWorkspace = true

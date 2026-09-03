@@ -10,6 +10,16 @@ final class HerdrHudPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    /// A `.nonactivatingPanel` is key while another app owns the menu bar, so
+    /// AppKit may never offer the event to our own main menu — and Format ▸
+    /// Font is where ⌘B/⌘I/⌘U live. Offer it by hand in that case, so the note
+    /// editor formats whether or not Herdr happens to be frontmost.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if super.performKeyEquivalent(with: event) { return true }
+        guard !NSApp.isActive, let mainMenu = NSApp.mainMenu else { return false }
+        return mainMenu.performKeyEquivalent(with: event)
+    }
+
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
     }
