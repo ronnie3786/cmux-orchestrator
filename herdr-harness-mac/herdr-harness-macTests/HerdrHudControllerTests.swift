@@ -124,7 +124,119 @@ struct HerdrHudControllerTests {
         #expect(HerdrHudController.shouldAnimateNotesFrameTransition(from: .card, to: .compact(count: 2)))
     }
 
+    @Test("Panel frame changes are deferred while dragging")
+    func applyFrameIsSuppressedWhileDragging() throws {
+        let harness = makeHarness()
+        let before = try #require(harness.controller.panelFrameForTesting)
+
+        harness.controller.beginPanelDrag()
+        harness.controller.setCollapsedChipCount(2)
+
+        #expect(harness.controller.panelFrameForTesting == before)
+        harness.controller.endPanelDrag()
+    }
+
+    @Test("Ending a drag adopts the panel's actual frame as its placement")
+    func endingDragAdoptsActualPanelFrame() throws {
+        let harness = makeHarness()
+        let initialOffset = harness.controller.placementOffsetForTesting
+        let initialFrame = try #require(harness.controller.panelFrameForTesting)
+        let movedFrame = initialFrame.offsetBy(dx: -100, dy: -100)
+
+        harness.controller.beginPanelDrag()
+        harness.controller.setPanelFrameForTesting(movedFrame)
+        harness.controller.endPanelDrag()
+
+        let adoptedOffset = harness.controller.placementOffsetForTesting
+        #expect(adoptedOffset.width == initialOffset.width + 100)
+        #expect(adoptedOffset.height == initialOffset.height + 100)
+        let savedOffset = try #require(harness.defaults.array(forKey: "herdr.hud.offset.v2") as? [NSNumber])
+        #expect(savedOffset.map(\.doubleValue) == [Double(adoptedOffset.width), Double(adoptedOffset.height)])
+    }
+
+    @Test("Panel dragging tracks its active state")
+    func panelDraggingTracksItsActiveState() {
+        let harness = makeHarness()
+        #expect(!harness.controller.isDraggingPanel)
+        harness.controller.beginPanelDrag()
+        #expect(harness.controller.isDraggingPanel)
+        harness.controller.endPanelDrag()
+        #expect(!harness.controller.isDraggingPanel)
+    }
+
+    @Test("Suspended notes hover does not change hover state")
+    func suspendedNotesHoverIsIgnored() async throws {
+        let harness = makeHarness()
+        harness.notes.isHoverSuspended = true
+        harness.notes.setHovering(true)
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(!harness.notes.isHovering)
+    }
+
+    @Test("A run auto-collapses the card and reopens it when the answer lands")
+    func runAutoCollapseRoundTrip() {
+        let harness = makeHarness()
+        harness.controller.summon()
+        #expect(harness.controller.isExpanded)
+
+        #expect(harness.controller.beginRunAutoCollapse())
+        #expect(!harness.controller.isExpanded)
+        #expect(harness.controller.isAwaitingRunAutoOpen)
+
+        harness.controller.endRunAutoCollapse()
+        #expect(harness.controller.isExpanded)
+        #expect(!harness.controller.isAwaitingRunAutoOpen)
+    }
+
+    @Test("Submitting from an already-collapsed HUD does not arm an auto-open")
+    func autoCollapseIgnoresAnAlreadyCollapsedHud() {
+        let harness = makeHarness()
+        #expect(!harness.controller.isExpanded)
+
+        #expect(!harness.controller.beginRunAutoCollapse())
+        #expect(!harness.controller.isAwaitingRunAutoOpen)
+
+        harness.controller.endRunAutoCollapse()
+        #expect(!harness.controller.isExpanded)
+    }
+
+    @Test("Reopening or dismissing the HUD mid-run cancels the pending auto-open")
+    func userGesturesCancelTheAutoOpen() {
+        for gesture in ["summon", "collapse", "note"] {
+            let harness = makeHarness()
+            harness.controller.summon()
+            harness.controller.beginRunAutoCollapse()
+            #expect(harness.controller.isAwaitingRunAutoOpen)
+
+            switch gesture {
+            case "summon": harness.controller.summon()
+            case "collapse": harness.controller.collapse()
+            default: harness.controller.openNote(harness.notes.createNote())
+            }
+            #expect(!harness.controller.isAwaitingRunAutoOpen)
+
+            // The run finishing must not now yank the HUD around.
+            let before = harness.controller.isExpanded
+            harness.controller.endRunAutoCollapse()
+            #expect(harness.controller.isExpanded == before)
+        }
+    }
+
+    @Test("A note opened while the run was in flight keeps the card shut")
+    func autoOpenYieldsToAnOpenNote() {
+        let harness = makeHarness()
+        harness.controller.summon()
+        harness.controller.beginRunAutoCollapse()
+        let id = harness.notes.createNote()
+        harness.notes.openNote(id)
+
+        harness.controller.endRunAutoCollapse()
+
+        #expect(!harness.controller.isExpanded)
+    }
+
     private struct Harness {
+        let defaults: UserDefaults
         let model: HerdrAppModel
         let session: HerdrHudSession
         let notes: HerdrHudNotesState
@@ -140,7 +252,7 @@ struct HerdrHudControllerTests {
         let notes = HerdrHudNotesState(userDefaults: defaults, agentSettings: agentSettings, promptSettings: promptSettings, persistenceURL: temporaryURL(named: "hud-notes.json"), hoverGrace: .zero, hoverDelay: .zero, saveDelay: .zero)
         let controller = HerdrHudController(userDefaults: defaults, chipRegroupDelay: chipRegroupDelay)
         controller.configure(model: model, session: session, notes: notes, fontScale: HerdrFontScaleStore())
-        return Harness(model: model, session: session, notes: notes, controller: controller)
+        return Harness(defaults: defaults, model: model, session: session, notes: notes, controller: controller)
     }
 
     private func makeDefaults() -> UserDefaults {

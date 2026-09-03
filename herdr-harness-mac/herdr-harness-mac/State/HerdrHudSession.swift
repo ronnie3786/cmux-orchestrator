@@ -84,6 +84,8 @@ final class HerdrHudSession {
         }
     }
     private(set) var hasUnseenAnswer = false
+    /// Bumped once per submission that clears validation and actually starts.
+    private(set) var runStartedRevision = 0
     private(set) var elapsedSeconds = 0
     private(set) var liveStepCount = 0
     private(set) var validationError: String?
@@ -287,6 +289,10 @@ final class HerdrHudSession {
         )
         draft = ""
         imageAttachments = []
+        // Past every validation guard, so a run is genuinely in flight. The
+        // composer waits for this before auto-collapsing the HUD — collapsing
+        // on a validation failure would hide the error it needs to show.
+        runStartedRevision &+= 1
 
         let wireAttachments: [HeadlessAgentAttachment]
         do {

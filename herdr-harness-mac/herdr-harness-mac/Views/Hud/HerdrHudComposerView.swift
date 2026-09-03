@@ -12,6 +12,11 @@ struct HerdrHudComposerView: View {
     @State private var voiceErrorMessage: String?
     @State private var isShowingImagePicker = false
 
+    /// A submission clears validation within a turn or two; the ceiling only
+    /// exists so a failed submit cannot leave this polling forever.
+    private static let runStartPollInterval = Duration.milliseconds(40)
+    private static let runStartPollAttempts = 25
+
     var body: some View {
         VStack(spacing: 8) {
             if !session.imageAttachments.isEmpty {
@@ -203,7 +208,26 @@ struct HerdrHudComposerView: View {
 
     private func submit() {
         guard canSubmit else { return }
-        Task { await session.submit(model: model) }
+        Task {
+            let startedBefore = session.runStartedRevision
+            let submission = Task { await session.submit(model: model) }
+            // Get out of the way for the length of the run, then come back with
+            // the answer. Waiting for the run to actually start keeps a
+            // validation failure — which never starts one — on screen.
+            let didCollapse = await collapseOnceRunning(startedBefore: startedBefore)
+            await submission.value
+            if didCollapse { controller.endRunAutoCollapse() }
+        }
+    }
+
+    private func collapseOnceRunning(startedBefore: Int) async -> Bool {
+        for _ in 0..<Self.runStartPollAttempts {
+            if session.runStartedRevision != startedBefore {
+                return controller.beginRunAutoCollapse()
+            }
+            try? await Task.sleep(for: Self.runStartPollInterval)
+        }
+        return false
     }
 
     private func toggleVoiceCapture() {
