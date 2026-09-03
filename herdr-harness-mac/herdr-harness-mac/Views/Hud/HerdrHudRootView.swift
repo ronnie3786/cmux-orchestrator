@@ -27,6 +27,12 @@ struct HerdrHudRootView: View {
         )
     }
 
+    /// Recomputed whenever the target pane reports new work, which is the cue
+    /// that the answer the reply offer belongs to has been superseded.
+    private var replyTargetActivity: Date? {
+        session.voiceReplyTarget.flatMap { model.pane(id: $0) }?.lastActivityAt
+    }
+
     var body: some View {
         let chipState = sessionChips
         let collapsedRowCount = chipState.chips.count + (chipState.overflow > 0 ? 1 : 0)
@@ -90,6 +96,18 @@ struct HerdrHudRootView: View {
             // A new answer finishing retargets the reply; losing the target
             // means the session it belonged to is gone.
             if target == nil { voiceReply.cancel() }
+        }
+        // Sending or dismissing ends the reply. Without this the offer stayed
+        // pinned to the chip forever, so the speaker never came back for the
+        // next answer.
+        .onChange(of: voiceReply.paneID) { previous, current in
+            if previous != nil, current == nil { session.clearVoiceReplyTarget() }
+        }
+        .onChange(of: replyTargetActivity, initial: true) { _, _ in
+            session.expireVoiceReplyTargetIfStale(
+                pane: session.voiceReplyTarget.flatMap { model.pane(id: $0) },
+                isReplyInFlight: voiceReply.paneID != nil
+            )
         }
         .contentShape(Rectangle())
         .onHover { notes.setHovering($0) }

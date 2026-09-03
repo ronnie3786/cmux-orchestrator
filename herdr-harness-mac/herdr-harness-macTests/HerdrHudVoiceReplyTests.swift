@@ -157,6 +157,45 @@ struct HerdrHudVoiceReplyTests {
         #expect(reply.showsCard)
     }
 
+    @Test("A superseded answer retires its reply offer so the speaker returns")
+    func staleReplyOfferExpires() throws {
+        let session = makeSession()
+        let spoken = try pane(id: "a", lastActivityAt: Date(timeIntervalSince1970: 100))
+        session.setVoiceReplyTargetForTesting(spoken.id, activityAt: spoken.lastActivityAt)
+
+        // Same answer still on screen — the offer stands.
+        session.expireVoiceReplyTargetIfStale(pane: spoken, isReplyInFlight: false)
+        #expect(session.voiceReplyTarget == spoken.id)
+
+        // The agent answers again. Keying this on status alone would miss it:
+        // the pane is .done both before and after.
+        let answeredAgain = try pane(id: "a", lastActivityAt: Date(timeIntervalSince1970: 200))
+        session.expireVoiceReplyTargetIfStale(pane: answeredAgain, isReplyInFlight: false)
+        #expect(session.voiceReplyTarget == nil)
+    }
+
+    @Test("A reply being written is never yanked away by new pane activity")
+    func inFlightReplySurvivesNewActivity() throws {
+        let session = makeSession()
+        let spoken = try pane(id: "a", lastActivityAt: Date(timeIntervalSince1970: 100))
+        session.setVoiceReplyTargetForTesting(spoken.id, activityAt: spoken.lastActivityAt)
+        let answeredAgain = try pane(id: "a", lastActivityAt: Date(timeIntervalSince1970: 200))
+
+        session.expireVoiceReplyTargetIfStale(pane: answeredAgain, isReplyInFlight: true)
+
+        #expect(session.voiceReplyTarget == spoken.id)
+    }
+
+    @Test("A vanished pane takes its reply offer with it")
+    func missingPaneClearsTheOffer() throws {
+        let session = makeSession()
+        session.setVoiceReplyTargetForTesting("m1|a", activityAt: Date(timeIntervalSince1970: 100))
+
+        session.expireVoiceReplyTargetIfStale(pane: nil, isReplyInFlight: false)
+
+        #expect(session.voiceReplyTarget == nil)
+    }
+
     private func makeSession() -> HerdrHudSession {
         let suiteName = "HerdrHudVoiceReplyTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -169,8 +208,8 @@ struct HerdrHudVoiceReplyTests {
         )
     }
 
-    private func pane(id: String) throws -> HerdrPane {
-        let payload: [String: Any] = [
+    private func pane(id: String, lastActivityAt: Date? = nil) throws -> HerdrPane {
+        var payload: [String: Any] = [
             "pane_id": id,
             "workspace_id": "w1",
             "tab_id": "t1",
@@ -178,6 +217,9 @@ struct HerdrHudVoiceReplyTests {
             "revision": 1,
             "pi_semantic": ["available": true, "protocol_version": 1],
         ]
+        if let lastActivityAt {
+            payload["last_activity_at"] = HerdrTimestamp.string(from: lastActivityAt)
+        }
         return try JSONDecoder().decode(
             HerdrPane.self,
             from: try JSONSerialization.data(withJSONObject: payload)

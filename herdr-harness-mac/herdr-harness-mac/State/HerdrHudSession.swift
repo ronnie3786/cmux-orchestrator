@@ -101,6 +101,12 @@ final class HerdrHudSession {
     /// happened to be promoted last.
     @ObservationIgnored private var speakingExchangeID: String?
     private(set) var voiceReplyTarget: String?
+    /// The activity stamp of the answer that was read aloud. The reply offer
+    /// belongs to *that* answer, so when the pane moves on the offer is stale —
+    /// keying it on status alone would not notice, because a pane is `.done`
+    /// both before and after it produces a new response.
+    private(set) var voiceReplyTargetActivityAt: Date?
+    @ObservationIgnored private var sessionAudioActivityAt: Date?
     private(set) var promotingExchangeIDs: Set<String> = []
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var defaultModel: PiModelIdentity?
@@ -469,6 +475,7 @@ final class HerdrHudSession {
         responseAudioPlayer.stop()
         sessionAudioPaneID = paneID
         sessionAudioText = nil
+        sessionAudioActivityAt = pane.lastActivityAt
         speakingExchangeID = nil
         loadingSessionAudioPaneID = paneID
         defer {
@@ -550,6 +557,7 @@ final class HerdrHudSession {
     private func captureVoiceReplyTarget() {
         if let sessionAudioPaneID {
             voiceReplyTarget = sessionAudioPaneID
+            voiceReplyTargetActivityAt = sessionAudioActivityAt
             return
         }
         // A headless HUD exchange only has a pi session once it was promoted.
@@ -564,15 +572,36 @@ final class HerdrHudSession {
             return
         }
         voiceReplyTarget = nil
+        voiceReplyTargetActivityAt = nil
     }
 
     func clearVoiceReplyTarget() {
         voiceReplyTarget = nil
+        voiceReplyTargetActivityAt = nil
+    }
+
+    /// Retires a reply offer whose answer has been superseded, so the chip goes
+    /// back to offering the speaker for the newer response.
+    ///
+    /// Skipped while a reply is actually being spoken or edited: the pane can
+    /// tick its activity underneath the user, and pulling the composer out from
+    /// under them mid-sentence would be worse than a stale offer.
+    func expireVoiceReplyTargetIfStale(pane: HerdrPane?, isReplyInFlight: Bool) {
+        guard !isReplyInFlight, voiceReplyTarget != nil else { return }
+        guard let pane, pane.id == voiceReplyTarget else {
+            clearVoiceReplyTarget()
+            return
+        }
+        guard pane.lastActivityAt == voiceReplyTargetActivityAt else {
+            clearVoiceReplyTarget()
+            return
+        }
     }
 
     #if DEBUG
-    func setVoiceReplyTargetForTesting(_ paneID: String?) {
+    func setVoiceReplyTargetForTesting(_ paneID: String?, activityAt: Date? = nil) {
         voiceReplyTarget = paneID
+        voiceReplyTargetActivityAt = activityAt
     }
     #endif
 
