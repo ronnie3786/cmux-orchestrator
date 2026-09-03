@@ -12,5 +12,6 @@ extension PromptComposerView: Equatable {
             && lhs.piConfiguration == rhs.piConfiguration
             && lhs.responseAudioPlayer === rhs.responseAudioPlayer
             && lhs.toolRowFit == rhs.toolRowFit
+            && lhs.modelFavorites === rhs.modelFavorites
     }
 }

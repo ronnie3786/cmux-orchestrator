@@ -48,6 +48,7 @@ struct HerdrHudComposerView: View {
                     defaultModel: session.defaultModel,
                     isLoading: session.isLoadingModels,
                     errorMessage: session.modelsError,
+                    favorites: session.modelFavorites,
                     selectModel: { session.setSelectedModel($0) },
                     retry: { Task { await session.loadModels(model: model) } }
                 )

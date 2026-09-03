@@ -31,15 +31,18 @@ struct HerdrHarnessMacApp: App {
     @State private var hudController = HerdrHudController()
     @State private var agentSettings: AgentModelSettingsStore
     @State private var promptSettings: HerdrPromptSettingsStore
+    @State private var modelFavorites: ModelFavoritesStore
     @State private var hudSession: HerdrHudSession
     @State private var hudNotes: HerdrHudNotesState
 
     init() {
         let settings = AgentModelSettingsStore()
         let prompts = HerdrPromptSettingsStore()
+        let favorites = ModelFavoritesStore()
         _agentSettings = State(initialValue: settings)
         _promptSettings = State(initialValue: prompts)
-        _hudSession = State(initialValue: HerdrHudSession(agentSettings: settings, promptSettings: prompts))
+        _modelFavorites = State(initialValue: favorites)
+        _hudSession = State(initialValue: HerdrHudSession(agentSettings: settings, promptSettings: prompts, modelFavorites: favorites))
         _hudNotes = State(initialValue: HerdrHudNotesState(agentSettings: settings, promptSettings: prompts))
     }
 
@@ -58,6 +61,7 @@ struct HerdrHarnessMacApp: App {
                 hudNotes: hudNotes,
                 agentSettings: agentSettings,
                 promptSettings: promptSettings,
+                modelFavorites: modelFavorites,
                 fontScale: fontScale
             )
                 .environment(herdPulse)
@@ -104,6 +108,7 @@ struct HerdrHarnessMacApp: App {
                 cleanupSettings: cleanupSettings,
                 agentSettings: agentSettings,
                 promptSettings: promptSettings,
+                modelFavorites: modelFavorites,
                 hudController: hudController
             )
                 .environment(\.herdrFontScale, fontScale.scale)

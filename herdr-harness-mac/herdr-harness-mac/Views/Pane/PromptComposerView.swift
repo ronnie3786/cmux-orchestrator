@@ -46,6 +46,7 @@ struct PromptComposerView: View {
     let responseAudioPlayer: ResponseAudioPlayer?
     let activateResponseAudio: ((ResponseAudioAction) -> Void)?
     let toolRowFit: ComposerToolRowFit
+    let modelFavorites: ModelFavoritesStore
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -76,7 +77,8 @@ struct PromptComposerView: View {
         piConfiguration: PiPromptComposerConfiguration? = nil,
         responseAudioPlayer: ResponseAudioPlayer? = nil,
         activateResponseAudio: ((ResponseAudioAction) -> Void)? = nil,
-        toolRowFit: ComposerToolRowFit = .automatic
+        toolRowFit: ComposerToolRowFit = .automatic,
+        modelFavorites: ModelFavoritesStore
     ) {
         self.model = model
         self.pane = pane
@@ -89,6 +91,7 @@ struct PromptComposerView: View {
         self.responseAudioPlayer = responseAudioPlayer
         self.activateResponseAudio = activateResponseAudio
         self.toolRowFit = toolRowFit
+        self.modelFavorites = modelFavorites
         _disposition = State(initialValue: piConfiguration?.preferredDisposition ?? .prompt)
     }
 
@@ -121,7 +124,8 @@ struct PromptComposerView: View {
                 PiComposerOptionsBar(
                     configuration: piConfiguration,
                     responseAudioPlayer: responseAudioPlayer,
-                    activateResponseAudio: activateResponseAudio
+                    activateResponseAudio: activateResponseAudio,
+                    modelFavorites: modelFavorites
                 )
             }
 

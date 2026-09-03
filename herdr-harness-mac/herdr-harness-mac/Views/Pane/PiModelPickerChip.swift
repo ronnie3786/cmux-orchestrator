@@ -10,6 +10,7 @@ struct PiModelPickerChip: View {
     let errorMessage: String?
     let selectModel: (PiAvailableModel) -> Void
     let retry: () -> Void
+    let modelFavorites: ModelFavoritesStore
 
     var body: some View {
         if isInteractive {
@@ -22,20 +23,12 @@ struct PiModelPickerChip: View {
                 } else if availableModels.isEmpty {
                     Text("No models available").disabled(true)
                 } else {
-                    ForEach(groupedProviders, id: \.self) { provider in
-                        Section(provider) {
-                            ForEach(modelsByProvider[provider] ?? []) { candidate in
-                                Button {
-                                    selectModel(candidate)
-                                } label: {
-                                    Label(
-                                        candidate.displayName,
-                                        systemImage: isCurrent(candidate) ? "checkmark.circle.fill" : "cpu"
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    PiModelMenuContent(
+                        models: availableModels,
+                        favorites: modelFavorites,
+                        isSelected: isCurrent,
+                        select: selectModel
+                    )
                 }
             } label: {
                 chipLabel
@@ -78,14 +71,6 @@ struct PiModelPickerChip: View {
         .opacity(isInteractive && !isEnabled ? 0.45 : 1)
     }
 
-    private var modelsByProvider: [String: [PiAvailableModel]] {
-        Dictionary(grouping: availableModels, by: \.provider)
-    }
-
-    private var groupedProviders: [String] {
-        modelsByProvider.keys.sorted()
-    }
-
     private func isCurrent(_ candidate: PiAvailableModel) -> Bool {
         currentModel?.provider == candidate.provider && currentModel?.id == candidate.modelID
     }
@@ -106,7 +91,8 @@ struct PiModelPickerChip: View {
             isInteractive: true,
             errorMessage: nil,
             selectModel: { _ in },
-            retry: {}
+            retry: {},
+            modelFavorites: ModelFavoritesStore()
         )
         PiThinkingLevelChip(
             currentLevel: PiThinkingLevel.xhigh.rawValue,

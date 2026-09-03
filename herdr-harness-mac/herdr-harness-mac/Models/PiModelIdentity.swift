@@ -5,7 +5,8 @@ struct PiModelIdentity: Codable, Equatable, Hashable, Sendable {
     let id: String
     let name: String?
 
-    var displayName: String { name?.nonEmpty ?? id }
+    var displayName: String { PiModelDisplayName.short(provider: provider, modelID: id, name: name) }
+    var rawDisplayName: String { name?.nonEmpty ?? id }
 
     /// Matches `PiAvailableModel.id`, so a stored preference can be compared
     /// against the catalog's own `default` entry.

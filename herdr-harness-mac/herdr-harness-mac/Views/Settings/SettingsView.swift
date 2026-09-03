@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Bindable var cleanupSettings: CleanupSettingsStore
     @Bindable var agentSettings: AgentModelSettingsStore
     let promptSettings: HerdrPromptSettingsStore
+    let modelFavorites: ModelFavoritesStore
     let hudController: HerdrHudController
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
@@ -301,20 +302,12 @@ struct SettingsView: View {
                 Button("Retry") { Task { await loadAgentModels() } }
                     .accessibilityIdentifier("settings-agent-model-retry")
             } else {
-                ForEach(groupedAgentProviders, id: \.self) { provider in
-                    Section(provider) {
-                        ForEach(agentModelsByProvider[provider] ?? []) { candidate in
-                            Button {
-                                selection.wrappedValue = candidate.id
-                            } label: {
-                                Label(
-                                    candidate.displayName,
-                                    systemImage: candidate.id == selection.wrappedValue ? "checkmark.circle.fill" : "cpu"
-                                )
-                            }
-                        }
-                    }
-                }
+                PiModelMenuContent(
+                    models: agentCatalog?.models ?? [],
+                    favorites: modelFavorites,
+                    isSelected: { $0.id == selection.wrappedValue },
+                    select: { selection.wrappedValue = $0.id }
+                )
             }
         } label: {
             HStack(spacing: 5) {
@@ -345,12 +338,6 @@ struct SettingsView: View {
         return agentCatalog?.models.first(where: { $0.id == selection })?.displayName ?? selection
     }
 
-    private var agentModelsByProvider: [String: [PiAvailableModel]] {
-        Dictionary(grouping: agentCatalog?.models ?? [], by: \.provider)
-    }
-
-    private var groupedAgentProviders: [String] { agentModelsByProvider.keys.sorted() }
-
     private func loadAgentModels() async {
         guard !isLoadingAgentModels else { return }
         isLoadingAgentModels = true
@@ -375,20 +362,12 @@ struct SettingsView: View {
                         Button("Retry") { Task { await loadCleanupModels() } }
                             .accessibilityIdentifier("settings-cleanup-model-retry")
                     } else if let cleanupCatalog, !cleanupCatalog.models.isEmpty {
-                        ForEach(groupedCleanupProviders, id: \.self) { provider in
-                            Section(provider) {
-                                ForEach(cleanupModelsByProvider[provider] ?? []) { candidate in
-                                    Button {
-                                        cleanupSettings.model = candidate.id
-                                    } label: {
-                                        Label(
-                                            candidate.displayName,
-                                            systemImage: selectedCleanupModel == candidate.id ? "checkmark.circle.fill" : "cpu"
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        PiModelMenuContent(
+                            models: cleanupDisplayModels,
+                            favorites: modelFavorites,
+                            isSelected: { $0.id == selectedCleanupModel },
+                            select: { cleanupSettings.model = $0.id }
+                        )
                     } else {
                         Text("No models available").disabled(true)
                         Button("Retry") { Task { await loadCleanupModels() } }
@@ -397,7 +376,7 @@ struct SettingsView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "cpu")
-                        Text(selectedCleanupModel)
+                        Text(selectedCleanupModelDisplayName)
                             .lineLimit(1)
                         Image(systemName: "chevron.up.chevron.down")
                             .herdrFont(.caption2)
@@ -436,16 +415,39 @@ struct SettingsView: View {
         }
     }
 
-    private var cleanupModelsByProvider: [String: [CleanupAvailableModel]] {
-        Dictionary(grouping: cleanupCatalog?.models ?? [], by: \.provider)
+    private var cleanupDisplayModels: [PiAvailableModel] {
+        (cleanupCatalog?.models ?? []).map {
+            PiAvailableModel(
+                provider: $0.provider,
+                modelID: $0.modelID,
+                name: $0.name,
+                reasoning: nil,
+                contextWindow: $0.contextWindow,
+                supportsImages: nil
+            )
+        }
     }
-
-    private var groupedCleanupProviders: [String] { cleanupModelsByProvider.keys.sorted() }
 
     private var selectedCleanupModel: String {
         if !cleanupSettings.model.isEmpty { return cleanupSettings.model }
         if let fullID = cleanupCatalog?.defaultModel?.fullID { return fullID }
         return "Server default"
+    }
+
+    private var selectedCleanupModelDisplayName: String {
+        guard !cleanupSettings.model.isEmpty else {
+            guard let defaultModel = cleanupCatalog?.defaultModel, let modelID = defaultModel.modelID else {
+                return "Server default"
+            }
+            let shortName = PiModelDisplayName.short(provider: defaultModel.provider ?? "", modelID: modelID, name: nil)
+            return "Server default: \(shortName)"
+        }
+        if let model = cleanupCatalog?.models.first(where: { $0.id == cleanupSettings.model }) {
+            return PiModelDisplayName.short(provider: model.provider, modelID: model.modelID, name: model.name)
+        }
+        let parts = cleanupSettings.model.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return cleanupSettings.model }
+        return PiModelDisplayName.short(provider: String(parts[0]), modelID: String(parts[1]), name: nil)
     }
 
     private func loadCleanupModels() async {

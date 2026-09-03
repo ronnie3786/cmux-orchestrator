@@ -34,6 +34,7 @@ struct DemoScreenshotRenderTests {
     @Test("Root shell renders the navigator beside the detail column")
     func rendersRootShell() async throws {
         let model = HerdrRenderFixtures.demoModel()
+        let modelFavorites = ModelFavoritesStore()
         model.openPane(id: "demo1|w1:p2")
         let shell = HerdrShellState()
         let pane = try #require(model.pane(id: model.selectedPaneID))
@@ -62,7 +63,7 @@ struct DemoScreenshotRenderTests {
                     .fill(HerdrTheme.surface)
                     .frame(width: 1)
 
-                PaneSessionView(model: model, pane: pane)
+                PaneSessionView(model: model, pane: pane, modelFavorites: modelFavorites)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(HerdrTheme.ink)
@@ -258,6 +259,7 @@ struct DemoScreenshotRenderTests {
     @Test("Pane session renders a streamed terminal frame above the composer")
     func rendersTerminalSession() async throws {
         let model = HerdrRenderFixtures.demoModel()
+        let modelFavorites = ModelFavoritesStore()
         let pane = try #require(model.pane(id: "demo1|w1:p2"))
         let workspace = try #require(model.workspace(containing: pane))
         let grid = HerdrRenderFixtures.cannedTerminalGrid(
@@ -315,7 +317,8 @@ struct DemoScreenshotRenderTests {
                             workspace: workspace,
                             draft: .constant("yes, update and verify"),
                             attachments: .constant([]),
-                            focusRequest: 0
+                            focusRequest: 0,
+                            modelFavorites: modelFavorites
                         )
                         .padding(.horizontal, 12)
                         .padding(.top, 8)
@@ -333,6 +336,7 @@ struct DemoScreenshotRenderTests {
     @Test("Pi chat renders a synthetic transcript with thinking, code, and tools")
     func rendersPiChatTimeline() async throws {
         let model = HerdrRenderFixtures.demoModel()
+        let modelFavorites = ModelFavoritesStore()
         let workspace = try #require(model.workspace(id: "demo1|w1"))
         let pane = try HerdrRenderFixtures.piCapablePane()
         let store = try await HerdrRenderFixtures.populatedPiStore()
@@ -358,7 +362,8 @@ struct DemoScreenshotRenderTests {
                 draft: .constant(""),
                 attachments: .constant([]),
                 focusRequest: 0,
-                interactionResponder: PiInteractionResponder()
+                interactionResponder: PiInteractionResponder(),
+                modelFavorites: modelFavorites
             )
         }
 
@@ -409,6 +414,7 @@ struct DemoScreenshotRenderTests {
     @Test("Composer renders the tool row above the input")
     func rendersComposerWithAuxiliaryBar() async throws {
         let model = HerdrRenderFixtures.demoModel()
+        let modelFavorites = ModelFavoritesStore()
         let pane = try HerdrRenderFixtures.piCapablePane()
         let workspace = try #require(model.workspace(id: "demo1|w1"))
         let responseAudioPlayer = ResponseAudioPlayer.preview(
@@ -440,7 +446,8 @@ struct DemoScreenshotRenderTests {
                 piConfiguration: HerdrRenderFixtures.composerConfiguration(),
                 responseAudioPlayer: responseAudioPlayer,
                 activateResponseAudio: { _ in },
-                toolRowFit: .pinnedWidest
+                toolRowFit: .pinnedWidest,
+                modelFavorites: modelFavorites
             )
             .padding(12)
         }

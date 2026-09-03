@@ -320,6 +320,7 @@ struct AppRootView: View {
     let hudNotes: HerdrHudNotesState
     let agentSettings: AgentModelSettingsStore
     let promptSettings: HerdrPromptSettingsStore
+    let modelFavorites: ModelFavoritesStore
     let fontScale: HerdrFontScaleStore
     @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -341,7 +342,8 @@ struct AppRootView: View {
                 WorkspaceNavigationView(
                     model: model,
                     shell: shell,
-                    activeWorkStore: activeWorkStore
+                    activeWorkStore: activeWorkStore,
+                    modelFavorites: modelFavorites
                 )
             } else {
                 OnboardingView(model: model)

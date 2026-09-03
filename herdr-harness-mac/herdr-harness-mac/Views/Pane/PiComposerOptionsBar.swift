@@ -4,6 +4,7 @@ struct PiComposerOptionsBar: View {
     let configuration: PiPromptComposerConfiguration
     let responseAudioPlayer: ResponseAudioPlayer?
     let activateResponseAudio: ((ResponseAudioAction) -> Void)?
+    let modelFavorites: ModelFavoritesStore
 
     var body: some View {
         HStack(spacing: 6) {
@@ -20,7 +21,8 @@ struct PiComposerOptionsBar: View {
                 },
                 retry: {
                     Task { await configuration.retryLoadModels() }
-                }
+                },
+                modelFavorites: modelFavorites
             )
             PiThinkingLevelChip(
                 currentLevel: configuration.thinkingLevel,

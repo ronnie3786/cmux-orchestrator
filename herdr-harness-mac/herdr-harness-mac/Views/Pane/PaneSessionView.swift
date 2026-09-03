@@ -42,6 +42,7 @@ final class PiInteractionResponder {
 struct PaneSessionView: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
+    let modelFavorites: ModelFavoritesStore
     /// iOS hid the app tab bar on this screen. The Mac has no tab bar; the flag
     /// survives only so existing call sites keep compiling.
     var hidesAppTabBar = true
@@ -242,7 +243,8 @@ struct PaneSessionView: View {
                     draft: composerDraft,
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest,
-                    interactionResponder: piInteractionResponder
+                    interactionResponder: piInteractionResponder,
+                    modelFavorites: modelFavorites
                 )
                     .equatable()
                     .transition(.opacity)
@@ -334,7 +336,8 @@ struct PaneSessionView: View {
                     workspace: workspace,
                     draft: composerDraft,
                     attachments: $composerAttachments,
-                    focusRequest: composerFocusRequest
+                    focusRequest: composerFocusRequest,
+                    modelFavorites: modelFavorites
                 )
                 .equatable()
                 .id(currentPane.id)

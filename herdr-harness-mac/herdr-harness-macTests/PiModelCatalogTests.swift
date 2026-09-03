@@ -28,9 +28,9 @@ struct PiModelCatalogTests {
         #expect(identity?.provider == "anthropic")
         #expect(identity?.id == "claude-3")
         #expect(identity?.name == "Claude 3")
-        #expect(identity?.displayName == "Claude 3")
+        #expect(identity?.displayName == "Claude-3")
         #expect(fallbackIdentity?.id == "gpt-5")
-        #expect(fallbackIdentity?.displayName == "gpt-5")
+        #expect(fallbackIdentity?.displayName == "GPT-5")
         #expect(PiModelIdentity(json: nil) == nil)
         #expect(PiModelIdentity(json: .null) == nil)
     }

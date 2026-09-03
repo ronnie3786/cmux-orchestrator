@@ -55,6 +55,7 @@ final class HerdrHudSession {
     private let userDefaults: UserDefaults
     @ObservationIgnored private let agentSettings: AgentModelSettingsStore
     @ObservationIgnored private let promptSettings: HerdrPromptSettingsStore
+    @ObservationIgnored let modelFavorites: ModelFavoritesStore
     @ObservationIgnored private let persistence: HerdrHudPersistenceStore
     @ObservationIgnored private var elapsedTask: Task<Void, Never>?
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
@@ -125,11 +126,13 @@ final class HerdrHudSession {
         userDefaults: UserDefaults = .standard,
         agentSettings: AgentModelSettingsStore? = nil,
         persistenceURL: URL? = nil,
-        promptSettings: HerdrPromptSettingsStore? = nil
+        promptSettings: HerdrPromptSettingsStore? = nil,
+        modelFavorites: ModelFavoritesStore? = nil
     ) {
         self.userDefaults = userDefaults
         self.agentSettings = agentSettings ?? AgentModelSettingsStore(defaults: userDefaults)
         self.promptSettings = promptSettings ?? HerdrPromptSettingsStore(defaults: userDefaults)
+        self.modelFavorites = modelFavorites ?? ModelFavoritesStore(userDefaults: userDefaults)
         self.persistence = HerdrHudPersistenceStore(
             fileURL: persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
         )

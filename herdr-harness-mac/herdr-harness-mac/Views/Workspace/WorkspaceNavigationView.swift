@@ -10,6 +10,7 @@ struct WorkspaceNavigationView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
     @Bindable var activeWorkStore: ActiveWorkStore
+    let modelFavorites: ModelFavoritesStore
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @Environment(\.openWindow) private var openWindow
 
@@ -59,7 +60,7 @@ struct WorkspaceNavigationView: View {
         // picker translates — but the switch still has to name it.
         case .session, .git:
             if let pane = model.pane(id: model.selectedPaneID) {
-                PaneSessionView(model: model, pane: pane)
+                PaneSessionView(model: model, pane: pane, modelFavorites: modelFavorites)
                     .id(pane.id)
             } else {
                 placeholder(

@@ -9,7 +9,8 @@ struct PiAvailableModel: Codable, Equatable, Hashable, Sendable, Identifiable {
     let supportsImages: Bool?
 
     var id: String { "\(provider)/\(modelID)" }
-    var displayName: String { name?.nonEmpty ?? modelID }
+    var displayName: String { PiModelDisplayName.short(provider: provider, modelID: modelID, name: name) }
+    var rawDisplayName: String { name?.nonEmpty ?? modelID }
 
     enum CodingKeys: String, CodingKey {
         case provider

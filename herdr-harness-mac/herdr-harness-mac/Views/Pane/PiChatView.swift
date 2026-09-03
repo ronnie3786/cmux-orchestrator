@@ -11,6 +11,7 @@ struct PiChatView: View {
     @Binding var attachments: [TerminalAttachment]
     let focusRequest: Int
     let interactionResponder: PiInteractionResponder
+    let modelFavorites: ModelFavoritesStore
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var responseAudioPlayer = ResponseAudioPlayer()
 
@@ -62,7 +63,8 @@ struct PiChatView: View {
                 focusRequest: focusRequest,
                 piConfiguration: composerConfiguration,
                 responseAudioPlayer: responseAudioPlayer,
-                activateResponseAudio: activateResponseAudio
+                activateResponseAudio: activateResponseAudio,
+                modelFavorites: modelFavorites
             )
             .equatable()
             .id(paneID)
@@ -185,5 +187,6 @@ extension PiChatView: Equatable {
             && lhs.attachments == rhs.attachments
             && lhs.focusRequest == rhs.focusRequest
             && lhs.interactionResponder === rhs.interactionResponder
+            && lhs.modelFavorites === rhs.modelFavorites
     }
 }

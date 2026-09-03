@@ -6,6 +6,7 @@ struct HerdrHudModelChip: View {
     let defaultModel: PiModelIdentity?
     let isLoading: Bool
     let errorMessage: String?
+    let favorites: ModelFavoritesStore
     let selectModel: (PiAvailableModel?) -> Void
     let retry: () -> Void
 
@@ -25,20 +26,12 @@ struct HerdrHudModelChip: View {
             } else if availableModels.isEmpty {
                 Text("No models available").disabled(true)
             } else {
-                ForEach(groupedProviders, id: \.self) { provider in
-                    Section(provider) {
-                        ForEach(modelsByProvider[provider] ?? []) { candidate in
-                            Button {
-                                selectModel(candidate)
-                            } label: {
-                                Label(
-                                    candidate.displayName,
-                                    systemImage: candidate.id == currentSelectionID ? "checkmark.circle.fill" : "cpu"
-                                )
-                            }
-                        }
-                    }
-                }
+                PiModelMenuContent(
+                    models: availableModels,
+                    favorites: favorites,
+                    isSelected: { $0.id == currentSelectionID },
+                    select: { selectModel($0) }
+                )
             }
         } label: {
             chipLabel
@@ -75,11 +68,4 @@ struct HerdrHudModelChip: View {
         .clipShape(.capsule)
     }
 
-    private var modelsByProvider: [String: [PiAvailableModel]] {
-        Dictionary(grouping: availableModels, by: \.provider)
-    }
-
-    private var groupedProviders: [String] {
-        modelsByProvider.keys.sorted()
-    }
 }

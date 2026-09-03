@@ -274,6 +274,7 @@ struct HangReproTests {
         }
         let pane = try HerdrRenderFixtures.piCapablePane()
         let model = HerdrRenderFixtures.demoModel()
+        let modelFavorites = ModelFavoritesStore()
         let workspace = try #require(model.workspace(id: "demo1|w1"))
         let task = Task { @MainActor in
             await store.follow(model: model, pane: pane)
@@ -306,7 +307,8 @@ struct HangReproTests {
                 draft: .constant(""),
                 attachments: .constant([]),
                 focusRequest: 0,
-                interactionResponder: PiInteractionResponder()
+                interactionResponder: PiInteractionResponder(),
+                modelFavorites: modelFavorites
             )
         }
         print("HANGREPRO streaming render elapsed=\(start.duration(to: clock.now)) phase=\(store.phase) turns=\(store.turns.count) maxStall=\(probe.maxStall)")
