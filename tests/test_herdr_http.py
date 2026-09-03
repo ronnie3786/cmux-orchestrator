@@ -174,6 +174,24 @@ class FakeHTTPService:
         ))
         return {"ok": True, "pane_id": pane_id, "file": file}
 
+    def pane_git_open(self, pane_id, *, file, expected_root, reveal):
+        self.calls.append((
+            "pane.git.open",
+            {
+                "pane_id": pane_id,
+                "file": file,
+                "expected_root": expected_root,
+                "reveal": reveal,
+            },
+        ))
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "file": file,
+            "absolute_path": "/server/resolved/pane-repo/" + file,
+            "revealed": reveal,
+        }
+
     def pane_git_commit_files(self, pane_id, *, commit_hash, expected_root):
         self.calls.append(
             (
@@ -334,6 +352,7 @@ class FakeHTTPService:
         attachments=None,
         system_prompt=None,
         continue_from_run_id=None,
+        pane_id=None,
     ):
         self.calls.append(
             (
@@ -347,6 +366,7 @@ class FakeHTTPService:
                     "attachments": attachments,
                     "system_prompt": system_prompt,
                     "continue_from_run_id": continue_from_run_id,
+                    "pane_id": pane_id,
                 },
             )
         )
@@ -976,9 +996,29 @@ class HerdrHTTPTests(unittest.TestCase):
                     "attachments": None,
                     "system_prompt": None,
                     "continue_from_run_id": None,
+                    "pane_id": None,
                 },
             ),
         )
+
+        pane_scoped_status, _, pane_scoped_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Why is this here?", "paneId": "w1:p1"},
+        )
+        self.assertEqual(pane_scoped_status, 202)
+        self.assertEqual(
+            self.service.calls[-1][1]["pane_id"],
+            "w1:p1",
+        )
+
+        invalid_pane_status, _, invalid_pane_body = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Why?", "paneId": "not a pane id"},
+        )
+        self.assertEqual(invalid_pane_status, 400)
+        self.assertEqual(invalid_pane_body["error"]["code"], "invalid_request")
 
         get_status, _, get_body = self.request("/api/v1/agent-runs/agr_0123456789ab")
         self.assertEqual(get_status, 200)
@@ -1090,6 +1130,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "attachments": None,
                     "system_prompt": None,
                     "continue_from_run_id": None,
+                    "pane_id": None,
                 },
             ),
         )
@@ -1165,6 +1206,7 @@ class HerdrHTTPTests(unittest.TestCase):
                     "attachments": None,
                     "system_prompt": None,
                     "continue_from_run_id": None,
+                    "pane_id": None,
                 },
             ),
         )
@@ -1590,6 +1632,93 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(missing_diff_root_body["error"]["code"], "invalid_request")
         self.assertEqual(missing_files_root_body["error"]["code"], "invalid_request")
         self.assertEqual(missing_commit_diff_root_body["error"]["code"], "invalid_request")
+
+    def test_pane_git_open_route_forwards_reveal_and_validates_body(self):
+        open_code, _, open_body = self.request(
+            "/api/v1/panes/w1:p1/git/open",
+            method="POST",
+            payload={
+                "file": "Sources/Pane.swift",
+                "expected_root": "/server/resolved/pane-repo",
+            },
+        )
+        reveal_code, _, reveal_body = self.request(
+            "/api/v1/panes/w1:p1/git/open",
+            method="POST",
+            payload={
+                "file": "Sources/Pane.swift",
+                "expected_root": "/server/resolved/pane-repo",
+                "reveal": True,
+            },
+        )
+        bad_reveal_code, _, bad_reveal_body = self.request(
+            "/api/v1/panes/w1:p1/git/open",
+            method="POST",
+            payload={
+                "file": "Sources/Pane.swift",
+                "expected_root": "/server/resolved/pane-repo",
+                "reveal": "yes",
+            },
+        )
+        unsupported_field_code, _, _ = self.request(
+            "/api/v1/panes/w1:p1/git/open",
+            method="POST",
+            payload={
+                "file": "Sources/Pane.swift",
+                "expected_root": "/server/resolved/pane-repo",
+                "path": "/client/cannot/choose",
+            },
+        )
+        missing_file_code, _, missing_file_body = self.request(
+            "/api/v1/panes/w1:p1/git/open",
+            method="POST",
+            payload={"expected_root": "/server/resolved/pane-repo"},
+        )
+        unauthorized, _, auth_body = self.request(
+            "/api/v1/panes/w1:p1/git/open",
+            method="POST",
+            token=None,
+            payload={
+                "file": "Sources/Pane.swift",
+                "expected_root": "/server/resolved/pane-repo",
+            },
+        )
+
+        self.assertEqual(
+            [open_code, reveal_code, bad_reveal_code, unsupported_field_code, missing_file_code],
+            [200, 200, 400, 400, 400],
+        )
+        self.assertEqual(open_body["revealed"], False)
+        self.assertEqual(reveal_body["revealed"], True)
+        self.assertEqual(bad_reveal_body["error"]["code"], "invalid_request")
+        self.assertEqual(missing_file_body["error"]["code"], "invalid_request")
+        self.assertEqual(unauthorized, 401)
+        self.assertEqual(auth_body["error"]["code"], "unauthorized")
+        self.assertIn(
+            (
+                "pane.git.open",
+                {
+                    "pane_id": "w1:p1",
+                    "file": "Sources/Pane.swift",
+                    "expected_root": "/server/resolved/pane-repo",
+                    "reveal": False,
+                },
+            ),
+            self.service.calls,
+        )
+        self.assertIn(
+            (
+                "pane.git.open",
+                {
+                    "pane_id": "w1:p1",
+                    "file": "Sources/Pane.swift",
+                    "expected_root": "/server/resolved/pane-repo",
+                    "reveal": True,
+                },
+            ),
+            self.service.calls,
+        )
+        self.assertNotIn("/client/cannot/choose", repr(self.service.calls))
 
     def test_jira_routes_validate_and_forward_queries(self):
         assigned_status, _, _ = self.request("/api/v1/jira/assigned?project=HERD&limit=9")

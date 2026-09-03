@@ -2,12 +2,13 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.error
 import urllib.parse
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from herdr_harness import cmux_tools
 
@@ -480,6 +481,149 @@ class CmuxToolsContractTests(unittest.TestCase):
                 "file": "outside-link",
             },
         )
+
+    def _opener_delegate(self):
+        """Intercept only the system opener; let git subprocesses run for real."""
+
+        real_run = subprocess.run
+        recorded: list[list[str]] = []
+
+        def delegate(command, **kwargs):
+            if command and command[0] == "herdr-test-opener":
+                recorded.append(list(command))
+                return subprocess.CompletedProcess(command, 0, "", "")
+            return real_run(command, **kwargs)
+
+        def opener(reveal):
+            return ["herdr-test-opener", "-R"] if reveal else ["herdr-test-opener"]
+
+        run = MagicMock(side_effect=delegate)
+        return run, opener, recorded, delegate
+
+    def test_git_open_command_matches_the_platform(self):
+        with patch("sys.platform", "darwin"):
+            self.assertEqual(cmux_tools._open_command(False), ["open"])
+            self.assertEqual(cmux_tools._open_command(True), ["open", "-R"])
+        with patch("sys.platform", "linux"):
+            self.assertEqual(cmux_tools._open_command(False), ["xdg-open"])
+            self.assertEqual(cmux_tools._open_command(True), ["xdg-open"])
+        with patch("sys.platform", "win32"):
+            self.assertIsNone(cmux_tools._open_command(False))
+
+    def test_git_open_file_uses_the_platform_opener_never_cmux(self):
+        sources = self.root / "Sources"
+        sources.mkdir()
+        (sources / "Pane.swift").write_text("print(1)", encoding="utf-8")
+        client = cmux_tools.CmuxToolsClient()
+        root = str(self.root.resolve())
+        run, opener, recorded, _ = self._opener_delegate()
+
+        with patch("herdr_harness.cmux_tools._open_command", side_effect=opener), patch(
+            "herdr_harness.cmux_tools.subprocess.run", new=run
+        ):
+            opened = client.git_open_file(self.root, "Sources/Pane.swift", expected_root=root)
+            revealed = client.git_open_file(
+                self.root,
+                "Sources/Pane.swift",
+                reveal=True,
+                expected_root=root,
+            )
+
+        expected_target = str((self.root / "Sources" / "Pane.swift").resolve())
+        self.assertTrue(opened["ok"])
+        self.assertFalse(opened["revealed"])
+        self.assertEqual(opened["absolute_path"], expected_target)
+        self.assertTrue(revealed["revealed"])
+        self.assertEqual(revealed["absolute_path"], expected_target)
+        self.assertEqual(len(self.requests), 0)
+        self.assertEqual(
+            recorded,
+            [
+                ["herdr-test-opener", expected_target],
+                ["herdr-test-opener", "-R", expected_target],
+            ],
+        )
+
+    def test_git_open_file_rejects_missing_files_traversal_and_stale_roots(self):
+        sources = self.root / "Sources"
+        sources.mkdir()
+        (sources / "Pane.swift").write_text("print(1)", encoding="utf-8")
+        client = cmux_tools.CmuxToolsClient()
+        stale_root = str(self.root.parent / "moved-away")
+        run, opener, recorded, _ = self._opener_delegate()
+
+        with patch("herdr_harness.cmux_tools._open_command", side_effect=opener), patch(
+            "herdr_harness.cmux_tools.subprocess.run", new=run
+        ):
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_open_file(self.root, "Sources/Missing.swift")
+            self.assertEqual(error.exception.code, "git_file_not_in_working_tree")
+            self.assertEqual(error.exception.status, 404)
+
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_open_file(self.root, "../outside.txt")
+            self.assertEqual(error.exception.code, "invalid_git_path")
+
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_open_file(
+                    self.root,
+                    "Sources/Pane.swift",
+                    expected_root=stale_root,
+                )
+            self.assertEqual(error.exception.code, "git_repository_changed")
+
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_open_file(self.root, "Sources/Pane.swift", reveal="yes")
+            self.assertEqual(error.exception.code, "invalid_git_open_reveal")
+
+            # Reveal falls back to the closest surviving ancestor for paths
+            # that no longer exist (deleted or renamed files).
+            revealed = client.git_open_file(self.root, "Sources/Missing.swift", reveal=True)
+            self.assertEqual(revealed["absolute_path"], str(sources.resolve()))
+
+        self.assertEqual(
+            recorded,
+            [["herdr-test-opener", "-R", str(sources.resolve())]],
+        )
+
+    def test_git_open_file_surfaces_opener_failures(self):
+        sources = self.root / "Sources"
+        sources.mkdir()
+        (sources / "Pane.swift").write_text("print(1)", encoding="utf-8")
+        client = cmux_tools.CmuxToolsClient()
+        real_run = subprocess.run
+
+        def opener(reveal):
+            return ["herdr-test-opener"]
+
+        def opener_result(command, **kwargs):
+            return subprocess.CompletedProcess([], 51, "", "The file doesn't exist.")
+
+        def opener_timeout(command, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="open", timeout=10)
+
+        opener_behavior = MagicMock(side_effect=opener_result)
+
+        def delegate(command, **kwargs):
+            if command and command[0] == "herdr-test-opener":
+                return opener_behavior(command, **kwargs)
+            return real_run(command, **kwargs)
+
+        run = MagicMock(side_effect=delegate)
+        with patch("herdr_harness.cmux_tools._open_command", side_effect=opener), patch(
+            "herdr_harness.cmux_tools.subprocess.run", new=run
+        ):
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_open_file(self.root, "Sources/Pane.swift")
+            self.assertEqual(error.exception.code, "git_open_rejected")
+            self.assertEqual(error.exception.status, 502)
+            self.assertIn("The file doesn't exist.", str(error.exception))
+
+            opener_behavior.side_effect = opener_timeout
+            with self.assertRaises(cmux_tools.CmuxToolsError) as error:
+                client.git_open_file(self.root, "Sources/Pane.swift")
+            self.assertEqual(error.exception.code, "git_open_timeout")
+            self.assertEqual(error.exception.status, 504)
 
     def test_queries_and_limits_are_rejected_before_network_access(self):
         client = cmux_tools.CmuxToolsClient()

@@ -2020,6 +2020,14 @@ class HerdrServiceTests(unittest.TestCase):
                 "file": "Sources/Pane.swift",
                 "diff": "+historical",
             }
+            tools.git_open_file.side_effect = (
+                lambda root, file, *, reveal=False, expected_root=None: {
+                    "ok": True,
+                    "path": file,
+                    "absolute_path": str(foreground_cwd / "Sources" / "Pane.swift"),
+                    "revealed": reveal,
+                }
+            )
             service = HerdrService(FakeClient([raw]), environ={}, tools=tools)
             service.refresh_snapshot()
 
@@ -2052,6 +2060,18 @@ class HerdrServiceTests(unittest.TestCase):
                 file="Sources/Pane.swift",
                 expected_root=expected_root,
             )
+            opened = service.pane_git_open(
+                "w1:p1",
+                file="Sources/Pane.swift",
+                expected_root=expected_root,
+                reveal=False,
+            )
+            revealed = service.pane_git_open(
+                "w1:p1",
+                file="Sources/Pane.swift",
+                expected_root=expected_root,
+                reveal=True,
+            )
 
             root = foreground_cwd.resolve()
             tools.git_status.assert_called_once_with(root)
@@ -2082,11 +2102,30 @@ class HerdrServiceTests(unittest.TestCase):
                 "Sources/Pane.swift",
                 expected_root=expected_root,
             )
+            tools.git_open_file.assert_any_call(
+                root,
+                "Sources/Pane.swift",
+                reveal=False,
+                expected_root=expected_root,
+            )
+            tools.git_open_file.assert_any_call(
+                root,
+                "Sources/Pane.swift",
+                reveal=True,
+                expected_root=expected_root,
+            )
             self.assertEqual(status["pane_id"], "w1:p1")
             self.assertEqual(status["branch"], "feature/git-view")
             self.assertEqual(diff["diff"], "+change")
             self.assertEqual(files["files"][0]["status"], "M")
             self.assertEqual(historical["diff"], "+historical")
+            self.assertEqual(opened["file"], "Sources/Pane.swift")
+            self.assertEqual(opened["revealed"], False)
+            self.assertEqual(revealed["revealed"], True)
+            self.assertEqual(
+                revealed["absolute_path"],
+                str(foreground_cwd / "Sources" / "Pane.swift"),
+            )
 
     def test_pane_git_context_falls_back_to_cwd_and_rejects_unknown_panes(self):
         with tempfile.TemporaryDirectory() as temp_dir:

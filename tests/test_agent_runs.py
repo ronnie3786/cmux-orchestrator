@@ -14,6 +14,7 @@ from herdr_harness.agent_runs import (
     AgentRunManager,
 )
 from herdr_harness.service import HerdrService
+from herdr_harness import workspace_tools
 from tests.test_herdr_service import FakeQuickSessionClient, FakeReadyPiSemantic
 
 
@@ -1441,6 +1442,71 @@ class AgentRunServiceTests(unittest.TestCase):
                 start_request["args"],
                 ["--session", completed["run"]["sessionFile"], "--extension", str(extension)],
             )
+            manager.stop()
+
+    def test_pane_scoped_runs_use_the_pane_working_directory(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            home = directory / "home"
+            home.mkdir()
+            pane_cwd = directory / "projects" / "checkout"
+            pane_cwd.mkdir(parents=True)
+            extension = directory / "bridge"
+            extension.mkdir()
+            fake_pi = write_fake_pi(directory)
+            environ = {
+                "HOME": str(home),
+                "HERDR_HARNESS_AGENT_RUNS_ROOT": str(directory / "runs"),
+                "HERDR_HARNESS_AGENT_PI_BIN": str(fake_pi),
+                "HERDR_HARNESS_PI_EXTENSION_PATH": str(extension),
+            }
+            manager = AgentRunManager(
+                environ=environ,
+                herdr_socket_path="/tmp/fake.sock",
+                herdr_session="fleet-machine",
+            )
+            snapshot = {
+                "focused_workspace_id": "w1",
+                "focused_pane_id": "w1:p1",
+                "workspaces": [{"workspace_id": "w1", "label": "Fleet"}],
+                "panes": [
+                    {
+                        "pane_id": "w1:p1",
+                        "workspace_id": "w1",
+                        "title": "Repo pane",
+                        "agent": "pi",
+                        "agent_status": "idle",
+                        "foreground_cwd": str(pane_cwd),
+                        "revision": 3,
+                    }
+                ],
+                "agents": [],
+                "tabs": [],
+                "layouts": [],
+            }
+            client = FakeQuickSessionClient(snapshot, {})
+            service = HerdrService(
+                client,
+                environ=environ,
+                agent_runs=manager,
+                pi_semantic=FakeReadyPiSemantic(),
+            )
+            service.refresh_snapshot()
+
+            started = service.start_agent_run(
+                prompt="Why is this line here?",
+                pane_id="w1:p1",
+            )
+            run_id = started["run"]["id"]
+            completed = wait_for_status(manager, run_id, {"completed", "failed"})
+            self.assertEqual(completed["run"]["status"], "completed")
+            with (manager.runs_root / run_id / "run.json").open(encoding="utf-8") as handle:
+                persisted = json.load(handle)
+            self.assertEqual(persisted["cwd"], str(pane_cwd.resolve()))
+
+            with self.assertRaises(workspace_tools.WorkspaceToolError) as error:
+                service.start_agent_run(prompt="Why?", pane_id="w9:missing")
+            self.assertEqual(error.exception.code, "pane_not_found")
             manager.stop()
 
 

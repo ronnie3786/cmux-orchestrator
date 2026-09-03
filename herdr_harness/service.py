@@ -1061,6 +1061,31 @@ class HerdrService:
             "file": payload.get("file", file),
         }
 
+    def pane_git_open(
+        self,
+        pane_id: str,
+        *,
+        file: str,
+        expected_root: str,
+        reveal: bool,
+    ) -> dict:
+        pane, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(
+            self.cmux_tools.git_open_file,
+            root,
+            file,
+            reveal=reveal,
+            expected_root=expected_root,
+        )
+        return {
+            "ok": True,
+            "pane_id": pane_id,
+            "workspace_id": pane.get("workspace_id"),
+            "file": payload.get("path", file),
+            "absolute_path": payload.get("absolute_path"),
+            "revealed": bool(payload.get("revealed", reveal)),
+        }
+
     def pane_git_commit_files(
         self,
         pane_id: str,
@@ -2506,6 +2531,7 @@ class HerdrService:
         attachments: Optional[list] = None,
         system_prompt: Optional[str] = None,
         continue_from_run_id: Optional[str] = None,
+        pane_id: Optional[str] = None,
     ) -> dict:
         display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
         try:
@@ -2514,10 +2540,16 @@ class HerdrService:
             # A recent cached fleet summary is still useful during a brief
             # Herdr reconnect. _agent_topology will retry if no cache exists.
             pass
+        # Inline surfaces (such as the Git workbench) scope the agent to the
+        # pane's working directory instead of the server home.
+        cwd = str(self._server_home())
+        if pane_id is not None:
+            _, pane_root = self._pane_tool_context(pane_id)
+            cwd = str(pane_root)
         return self.agent_runs.start(
             prompt=prompt,
             label=display_label,
-            cwd=str(self._server_home()),
+            cwd=cwd,
             topology=self._agent_topology(),
             mode=mode,
             model=model,

@@ -14,6 +14,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -528,6 +529,87 @@ def _git_commit_hash(value: Any) -> str:
     return value.lower()
 
 
+OPEN_TIMEOUT_SECONDS = 10.0
+
+
+def _open_command(reveal: bool) -> Optional[list[str]]:
+    """Return the platform launcher for opening a file or revealing it."""
+
+    if sys.platform == "darwin":
+        return ["open", "-R"] if reveal else ["open"]
+    if sys.platform.startswith("linux"):
+        return ["xdg-open"]
+    return None
+
+
+def _open_repository_file(root: str, relative: str, *, reveal: bool) -> str:
+    """Open (or reveal) a repository file with the machine's default tools."""
+
+    absolute = Path(root) / relative
+    try:
+        exists = absolute.exists()
+    except OSError:
+        exists = False
+    if reveal:
+        # Deletions and renames legitimately reference paths that no longer
+        # exist; revealing the closest surviving ancestor is still useful.
+        target = absolute
+        repository_root = Path(root)
+        while not target.exists() and target != repository_root and target.parent != target:
+            target = target.parent
+        target_path = str(target)
+    elif not exists:
+        raise CmuxToolsError(
+            "This file is not present in the working tree",
+            code="git_file_not_in_working_tree",
+            status=404,
+        )
+    else:
+        target_path = str(absolute)
+
+    command = _open_command(reveal)
+    if command is None:
+        raise CmuxToolsError(
+            "Opening files is not supported on this platform",
+            code="git_open_unsupported_platform",
+            status=503,
+        )
+    try:
+        completed = subprocess.run(
+            [*command, target_path],
+            capture_output=True,
+            text=True,
+            timeout=OPEN_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise CmuxToolsError(
+            "The system opener is unavailable",
+            code="git_open_unavailable",
+            status=503,
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CmuxToolsError(
+            "Opening the file timed out",
+            code="git_open_timeout",
+            status=504,
+        ) from exc
+    except OSError as exc:
+        raise CmuxToolsError(
+            "Opening the file failed",
+            code="git_open_failed",
+            status=502,
+        ) from exc
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "").strip().splitlines()
+        raise CmuxToolsError(
+            message[0][:200] if message else "The system could not open the file",
+            code="git_open_rejected",
+            status=502,
+        )
+    return target_path
+
+
 def _require_expected_git_root(current_root: str, expected_root: Any) -> None:
     """Compare a client snapshot root without ever using it as a selector."""
 
@@ -793,6 +875,40 @@ class CmuxToolsClient:
         )
         payload.setdefault("file", relative)
         return payload
+
+    def git_open_file(
+        self,
+        root: Path | str,
+        file: Any,
+        *,
+        reveal: bool = False,
+        expected_root: Any = None,
+    ) -> dict:
+        """Open a repository file locally, or reveal it in the file manager.
+
+        Unlike the other Git operations this runs entirely on the Herdr
+        machine: cmux has no "open file" route, and the request only ever
+        names a repository-relative path resolved against the server-side
+        repository root.
+        """
+
+        if not isinstance(reveal, bool):
+            raise CmuxToolsError(
+                "reveal must be a boolean",
+                code="invalid_git_open_reveal",
+                status=400,
+            )
+        path = _git_root_path(root)
+        if expected_root is not None:
+            _require_expected_git_root(path, expected_root)
+        relative = _relative_git_path(path, file)
+        opened_path = _open_repository_file(path, relative, reveal=reveal)
+        return {
+            "ok": True,
+            "path": relative,
+            "absolute_path": opened_path,
+            "revealed": reveal,
+        }
 
     def git_commit_files(
         self,

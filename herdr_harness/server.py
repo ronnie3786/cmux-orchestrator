@@ -450,7 +450,7 @@ def api_description() -> dict:
             "PATCH|DELETE /api/v1/tabs/{tabId}",
             "POST /api/v1/tabs/{tabId}/focus",
             "PATCH|DELETE /api/v1/panes/{paneId}",
-            "POST /api/v1/panes/{paneId}/git/stage|git/unstage",
+            "POST /api/v1/panes/{paneId}/git/stage|git/unstage|git/open",
             "POST /api/v1/panes/{paneId}/focus|zoom|split|send-text|send-keys|run|prompt|start-agent",
             "POST /api/v1/panes/{paneId}/star",
             "POST /api/v1/panes/{paneId}/alerts/read",
@@ -1151,6 +1151,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             file=file,
                             expected_root=expected_root,
                         )
+                    if tail[3] == "open":
+                        if any(key not in {"file", "expected_root", "reveal"} for key in body):
+                            raise HTTPValidationError("Open file request contains an unsupported field")
+                        reveal = body.get("reveal", False)
+                        if not isinstance(reveal, bool):
+                            raise HTTPValidationError("reveal must be true or false")
+                        return service.pane_git_open(
+                            pane_id,
+                            file=file,
+                            expected_root=expected_root,
+                            reveal=reveal,
+                        )
             if method == "GET" and tail == ["active-work"]:
                 return service.active_work_board()
             if method == "GET" and tail == ["active-work", "workflows"]:
@@ -1625,6 +1637,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "attachments",
                         "continueFromRunId",
                         "systemPrompt",
+                        "paneId",
                     }
                     for key in body
                 ):
@@ -1635,6 +1648,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 label = None
                 if body.get("label") is not None:
                     label = _string(body.get("label"), "label", maximum=120)
+                pane_id = None
+                if body.get("paneId") is not None:
+                    pane_id = _identifier(body.get("paneId"), "pane ID")
                 mode = body.get("mode", "ask")
                 if not isinstance(mode, str) or mode not in {"ask", "act"}:
                     raise HTTPValidationError("mode must be ask or act")
@@ -1664,6 +1680,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         attachments=request_attachments,
                         system_prompt=system_prompt,
                         continue_from_run_id=continue_from_run_id,
+                        pane_id=pane_id,
                     ),
                     202,
                 )
