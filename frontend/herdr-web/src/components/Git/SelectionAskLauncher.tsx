@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
-import {
-  clampAnchor,
-  selectionAskContext,
-  type SelectionAskContext,
-} from "./selectionAsk";
+import { clampAnchor, selectionAskContext, type SelectionAskContext } from "./selectionAsk";
 import { InlineAskPanel, type InlineAskAnchor } from "./InlineAskPanel";
 
 const BUTTON_WIDTH = 108;
@@ -45,16 +41,43 @@ export function SelectionAskLauncher({ paneId, file, containerRef }: SelectionAs
     const container = containerRef.current;
     if (container === null) return;
     const selection = window.getSelection();
-    if (selection === null || selection.isCollapsed || selection.rangeCount === 0) {
+    if (selection === null || selection.rangeCount === 0) {
       setPending(null);
       return;
     }
-    const text = selection.toString();
-    if (text.trim().length < 2 || !selectionTouches(container, selection)) {
+
+    // Pierre renders the diff inside an open shadow root. WebKit retargets
+    // `selection.anchorNode`/`focusNode` (and reports `isCollapsed: true`)
+    // for any selection that crosses out of the shadow tree, but the real
+    // boundary points survive in `getComposedRanges`.
+    const diffHost = container.querySelector("diffs-container");
+    const shadow = (diffHost as (Element & { shadowRoot?: ShadowRoot | null }) | null)?.shadowRoot ?? null;
+
+    let range: Range | null = null;
+    if (shadow !== null && typeof selection.getComposedRanges === "function") {
+      const composed = selection.getComposedRanges({ shadowRoots: [shadow] })[0] ?? null;
+      if (composed !== null) {
+        const live = document.createRange();
+        try {
+          live.setStart(composed.startContainer as Node, composed.startOffset);
+          live.setEnd(composed.endContainer as Node, composed.endOffset);
+          range = live;
+        } catch {
+          range = null;
+        }
+      }
+    }
+    if (range === null) range = selection.getRangeAt(0);
+    if (range.collapsed) {
       setPending(null);
       return;
     }
-    const range = selection.getRangeAt(0);
+
+    const text = range.toString();
+    if (text.trim().length < 2 || !selectionTouches(container, range)) {
+      setPending(null);
+      return;
+    }
     const rects = Array.from(range.getClientRects()).filter(
       (rect) => rect.width > 0 && rect.height > 0,
     );
@@ -73,13 +96,14 @@ export function SelectionAskLauncher({ paneId, file, containerRef }: SelectionAs
       window.innerWidth,
       window.innerHeight,
     );
-    const diffHost = container.querySelector("diffs-container") ?? container;
-    const context = selectionAskContext(diffHost, text, range);
+    const context = selectionAskContext(diffHost ?? container, text, range);
     if (context.code === "") {
       setPending(null);
       return;
     }
-    setPending({ anchor, context });
+    const target = { anchor, context };
+    pendingRef.current = target;
+    setPending(target);
   }, [containerRef]);
 
   // A new file resets the conversation surface entirely.
@@ -174,14 +198,12 @@ export function SelectionAskLauncher({ paneId, file, containerRef }: SelectionAs
 }
 
 /**
- * True when the selection's nodes belong to the container's light DOM or to a
- * shadow root the container hosts (Pierre renders inside one).
+ * True when the resolved range's boundary points belong to the container's
+ * light DOM or to a shadow root the container hosts (Pierre renders inside
+ * one).
  */
-function selectionTouches(container: HTMLElement, selection: Selection): boolean {
-  const anchor = selection.anchorNode;
-  const focus = selection.focusNode;
-  if (anchor === null || focus === null) return false;
-  return nodeTouches(container, anchor) && nodeTouches(container, focus);
+function selectionTouches(container: HTMLElement, range: Range): boolean {
+  return nodeTouches(container, range.startContainer) && nodeTouches(container, range.endContainer);
 }
 
 function nodeTouches(container: HTMLElement, node: Node): boolean {

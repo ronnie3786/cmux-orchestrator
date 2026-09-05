@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildAskPrompt,
   clampAnchor,
@@ -11,8 +11,9 @@ import {
   type DiffLineContainer,
 } from "./selectionAsk";
 
-function fakeLine(line: number, type: string): Element {
+function fakeLine(line: number, type: string, textContent = ""): Element {
   return {
+    textContent,
     getAttribute: (name: string) => (name === "data-line" ? String(line) : type),
   } as unknown as Element;
 }
@@ -30,6 +31,27 @@ function fakeRange(hitLines: Element[]): Range {
   } as unknown as Range;
 }
 
+function slicingRange(hitLines: Element[], textForLine: Map<Element, string>): Range {
+  let selectedElement: Element | undefined;
+  return {
+    intersectsNode: (node: Node) => hitLines.includes(node as Element),
+    cloneRange: () => ({
+      selectNodeContents: (element: Element) => {
+        selectedElement = element;
+      },
+      compareBoundaryPoints: () => 0,
+      setStart: () => undefined,
+      setEnd: () => undefined,
+      toString: () => textForLine.get(selectedElement!) ?? "",
+    }),
+    compareBoundaryPoints: () => 0,
+    startContainer: {} as Node,
+    startOffset: 0,
+    endContainer: {} as Node,
+    endOffset: 0,
+  } as unknown as Range;
+}
+
 describe("selectionAskContext", () => {
   it("collects the line range the selection touches", () => {
     const lines = [fakeLine(120, "context"), fakeLine(121, "change-addition"), fakeLine(122, "change-deletion")];
@@ -42,6 +64,23 @@ describe("selectionAskContext", () => {
     expect(context.code).toBe("let x = 1\nlet y = 2\n-let z = 3");
     expect(context.startLine).toBe(121);
     expect(context.endLine).toBe(122);
+  });
+
+  it("rejoins each selected diff line with newlines", () => {
+    const lines = [fakeLine(9, "context"), fakeLine(10, "context"), fakeLine(11, "context")];
+    vi.stubGlobal("Range", { START_TO_START: 0, END_TO_END: 2 });
+    try {
+      const context = selectionAskContext(
+        fakeContainer(lines),
+        "alphabetagamma",
+        slicingRange(lines, new Map([[lines[0], "alpha"], [lines[1], "beta"], [lines[2], "gamma"]])),
+      );
+
+      expect(context.code).toBe("alpha\nbeta\ngamma");
+      expect(context.code).not.toBe("alphabetagamma");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("survives selections without line metadata (raw fallback)", () => {
@@ -58,6 +97,34 @@ describe("selectionAskContext", () => {
       fakeRange([]),
     );
     expect(context.code).toBe("one\n\ntwo");
+  });
+});
+
+describe("selectionAskContext with a real shadow root", () => {
+  it("reads line elements from the shadow root, not the light DOM", () => {
+    // Pierre renders the diff inside an open shadow root. A fixture that
+    // hardcodes `shadowRoot: null` (as the fixtures above do) never
+    // exercises that path, which is exactly how this class of bug shipped
+    // unnoticed before: `container.shadowRoot ?? container` always fell
+    // through to `container`. Give the container a real shadow root here,
+    // and make the light-DOM `querySelectorAll` blow up if it's ever
+    // reached, so this test fails loudly if that regresses.
+    const shadowLines = [fakeLine(5, "context"), fakeLine(6, "change-addition")];
+    const shadowRoot = {
+      querySelectorAll: () => shadowLines,
+    } as unknown as ShadowRoot;
+    const container = {
+      shadowRoot,
+      querySelectorAll: () => {
+        throw new Error("selectedLineElements must read the shadow root, not the light DOM");
+      },
+    } as unknown as DiffLineContainer;
+
+    const context = selectionAskContext(container, "let a = 5\nlet b = 6", fakeRange(shadowLines));
+
+    expect(context.code).toBe("let a = 5\nlet b = 6");
+    expect(context.startLine).toBe(5);
+    expect(context.endLine).toBe(6);
   });
 });
 

@@ -9,7 +9,7 @@ import {
 } from "../../api/agentRuns";
 import { MarkdownText } from "../Pi/MarkdownBlocks";
 import "../Pi/pi.css";
-import { formatLineRange, summarizeCode, type SelectionAskContext } from "./selectionAsk";
+import { buildAskPrompt, formatLineRange, summarizeCode, type SelectionAskContext } from "./selectionAsk";
 
 const POLL_INTERVAL_MS = 900;
 const MAX_VISIBLE_STEPS = 24;
@@ -90,10 +90,19 @@ export function InlineAskPanel({ paneId, file, context, anchor, onClose }: Inlin
       steps: [],
     };
     const turnIndex = turns.length;
+    const prompt = turnIndex === 0
+      ? buildAskPrompt({
+          file,
+          startLine: context.startLine,
+          endLine: context.endLine,
+          code: context.code,
+          question,
+        })
+      : question;
     setTurns((current) => [...current, turn]);
     try {
       const started = await startAgentRun({
-        prompt: question,
+        prompt,
         mode: "ask",
         label: `Ask about ${file}`.slice(0, 120),
         paneId,

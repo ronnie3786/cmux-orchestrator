@@ -36,6 +36,27 @@ export function selectedLineElements(container: DiffLineContainer, range: Range)
   return hits;
 }
 
+/**
+ * The selected text within one diff line. Pierre renders each line as its
+ * own element with no newline between them, so a multi-line selection has
+ * to be sliced per line and rejoined — otherwise the lines run together.
+ */
+export function selectedTextWithinElement(element: Element, range: Range): string {
+  try {
+    const slice = range.cloneRange();
+    slice.selectNodeContents(element);
+    if (range.compareBoundaryPoints(Range.START_TO_START, slice) > 0) {
+      slice.setStart(range.startContainer, range.startOffset);
+    }
+    if (range.compareBoundaryPoints(Range.END_TO_END, slice) < 0) {
+      slice.setEnd(range.endContainer, range.endOffset);
+    }
+    return slice.toString();
+  } catch {
+    return "";
+  }
+}
+
 function lineNumberFor(element: Element): number | null {
   const raw = element.getAttribute("data-line");
   if (raw === null) return null;
@@ -55,6 +76,7 @@ export function selectionAskContext(
   range: Range,
 ): SelectionAskContext {
   const elements = selectedLineElements(container, range);
+  const perLine = elements.map((el) => selectedTextWithinElement(el, range)).filter((s) => s.trim().length > 0);
   const lines: SelectedDiffLine[] = elements.map((element) => ({
     lineNumber: lineNumberFor(element),
     lineType: element.getAttribute("data-line-type"),
@@ -62,8 +84,9 @@ export function selectionAskContext(
   const numbers = lines
     .map((line) => line.lineNumber)
     .filter((value): value is number => value !== null);
+  const code = perLine.length > 0 ? normalizeSelectedCode(perLine.join("\n")) : normalizeSelectedCode(selectionText);
   return {
-    code: normalizeSelectedCode(selectionText),
+    code,
     startLine: numbers.length > 0 ? Math.min(...numbers) : null,
     endLine: numbers.length > 0 ? Math.max(...numbers) : null,
   };
