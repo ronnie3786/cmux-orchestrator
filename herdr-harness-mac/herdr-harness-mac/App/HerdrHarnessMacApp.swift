@@ -29,6 +29,7 @@ struct HerdrHarnessMacApp: App {
     @State private var fontScale = HerdrFontScaleStore()
     @State private var cleanupSettings = CleanupSettingsStore()
     @State private var hudController = HerdrHudController()
+    @State private var quickVoiceController = QuickVoicePanelController()
     @State private var agentSettings: AgentModelSettingsStore
     @State private var promptSettings: HerdrPromptSettingsStore
     @State private var modelFavorites: ModelFavoritesStore
@@ -57,6 +58,7 @@ struct HerdrHarnessMacApp: App {
                 activeWorkStore: activeWorkStore,
                 driver: connectionDriver,
                 hudController: hudController,
+                quickVoiceController: quickVoiceController,
                 hudSession: hudSession,
                 hudNotes: hudNotes,
                 agentSettings: agentSettings,
@@ -86,7 +88,8 @@ struct HerdrHarnessMacApp: App {
                 shell: shell,
                 herdPulse: herdPulse,
                 fontScale: fontScale,
-                hudController: hudController
+                hudController: hudController,
+                quickVoiceController: quickVoiceController
             )
         }
 
@@ -132,6 +135,7 @@ struct HerdrMacCommands: Commands {
     @Bindable var herdPulse: HerdPulseCoordinator
     @Bindable var fontScale: HerdrFontScaleStore
     let hudController: HerdrHudController
+    let quickVoiceController: QuickVoicePanelController
 
     var body: some Commands {
         // On macOS ⌘B/⌘I/⌘U are Format ▸ Font key equivalents, not text-view
@@ -156,6 +160,15 @@ struct HerdrMacCommands: Commands {
         // View menu, after the system's own "Toggle Sidebar" item.
         CommandGroup(after: .sidebar) {
             Divider()
+
+            Button("Record Quick Voice Note") {
+                quickVoiceController.capture()
+            }
+            .keyboardShortcut("v", modifiers: [.command, .control])
+
+            Button(quickVoiceController.isEnabled ? "Hide Quick Voice Button" : "Show Quick Voice Button") {
+                quickVoiceController.setEnabled(!quickVoiceController.isEnabled)
+            }
 
             Button("Summon HUD") {
                 hudController.summon()

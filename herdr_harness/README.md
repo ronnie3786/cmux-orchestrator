@@ -563,3 +563,23 @@ Starting real agents may consume provider quota. The script therefore requires
 the explicit `--start-agents` flag. Partial failures report every agent that
 was started plus a scoped recovery command. Stop the complete fixture with
 `herdr session stop herdr-ios-fixtures --json`.
+
+### Quick voice orchestration
+
+Authenticated endpoints:
+
+- `POST /api/v1/quick-voice`: `{requestId, text, cwd?}`; returns `202` with a durable job.
+  Repeating the same ID and payload returns the existing job. Different content returns `409`.
+- `GET /api/v1/quick-voice`: active jobs plus the 40 most recent finished notes, without
+  full internal agent prompts in the polling payload.
+- `GET /api/v1/quick-voice/{id}`: one job, including task states, pane IDs and audio-message text.
+- `GET /api/v1/quick-voice/{id}/audio/ack|report`: prepared Kokoro MP3 as the existing
+  `{ok, audioBase64, contentType}` response.
+
+The planner uses the private Qwen provider configuration already used by response audio.
+Kokoro failures do not block execution. Pi commands are sent once; uncertain acknowledgments
+remain visible as needing attention. Completion requires the submitted user message, an idle
+bridge, and a final assistant answer, rather than merely observing an idle newly-created pane.
+The store defaults to `~/.config/herdr-harness/quick-voice`; tests can override
+`HERDR_QUICK_VOICE_STORE_PATH`. Files are created with owner-only permissions. The harness
+recovers monitoring on startup without replaying launches or prompts.

@@ -136,3 +136,32 @@ and the design system are ported **verbatim** from `herdr-harness-ios/` (same ty
 names); only the shell differs (NavigationSplitView window + menu bar instead of stack/split
 navigation + Live Activity). When the iOS app gains a feature in a shared layer, the same file
 usually drops into this project unchanged.
+
+## Quick voice side quests
+
+A separate floating microphone stays available across Spaces even when the chat HUD or main
+window is closed. Click it to record, then click **Stop and send** to submit automatically.
+Escape or **Discard** cancels an unfinished recording. The chat-bubble button opens history;
+its number shows active voice notes. Drag the grip to move the control. View > Record Quick
+Voice Note (Control-Command-V while Herdr is active) and View > Hide/Show Quick Voice Button
+provide menu access independently of the HUD.
+
+Choose the target Mac in the card. New notes inherit the selected chat's working folder on that
+Mac, or its home folder otherwise. Parakeet transcribes through the authenticated harness.
+The private `custom-lux-dspark/qwen3.8-27b-nvfp4-dspark` model chooses one to four independent
+assignments and meaningful titles. Pi chats are grouped under **Quick Voice**, use Pi's normal
+configured agent model, and run without focusing their terminals. Coupled work stays in one
+assignment. Up to four voice notes can run at once.
+
+Kokoro acknowledges receipt while planning and dispatch proceed. When all chats settle, Qwen
+writes a short report based on their actual results, which Kokoro reads aloud. Click a chat in
+the card to inspect or answer it, replay either audio message, or mute automatic playback.
+Recording pauses this feature's playback. Text survives audio failures. Failed transcription
+keeps the recording for retry, and an unconfirmed submission retries with the same identity.
+The **Keep any chats and clear note** action clears only the local retry record.
+
+Jobs and audio live privately in `~/.config/herdr-harness/quick-voice` on the target Mac.
+Restarting the harness resumes monitoring already-dispatched work; ambiguous dispatches are
+flagged for inspection instead of being repeated. A chat that needs input, fails, or has no
+confirmed result after 45 minutes is reported as needing attention. The timeout does not stop
+its Pi session. Audio plays while Herdr is running, including with its main window closed.

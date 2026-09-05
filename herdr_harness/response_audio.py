@@ -425,12 +425,17 @@ class ResponseAudioService:
         return headers
 
     def _summarize(self, response: str) -> str:
+        return self.generate_text(build_summary_prompt(response), max_tokens=700)
+
+    def generate_text(self, prompt: str, *, max_tokens: int = 1800, system: str = "") -> str:
+        """Use the configured private Qwen endpoint without requiring TTS availability."""
         if not self.summary_endpoint:
             raise ResponseAudioError("the TL;DR model is not configured", code="response_audio_unavailable", status=503)
         payload = {
             "model": self.summary_model,
-            "messages": [{"role": "user", "content": build_summary_prompt(response)}],
-            "max_tokens": 700,
+            "messages": ([{"role": "system", "content": system}] if system else [])
+            + [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
             "temperature": 0.2,
             "chat_template_kwargs": {"enable_thinking": False},
         }

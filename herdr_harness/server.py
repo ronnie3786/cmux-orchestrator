@@ -1000,6 +1000,22 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return None
             if method == "GET" and tail == ["response-audio", "capabilities"]:
                 return service.response_audio_capabilities()
+            if method == "GET" and tail == ["quick-voice"]:
+                return service.quick_voice.list()
+            if method == "POST" and tail == ["quick-voice"]:
+                if any(key not in {"requestId", "text", "cwd"} for key in body):
+                    raise HTTPValidationError("Voice note request contains an unsupported field")
+                return service.quick_voice.start(
+                    request_id=_identifier(body.get("requestId"), "request ID"),
+                    text=_string(body.get("text"), "text", maximum=16000),
+                    cwd=_string(body["cwd"], "cwd", maximum=4096) if body.get("cwd") is not None else None,
+                ), 202
+            if method == "GET" and len(tail) == 2 and tail[0] == "quick-voice":
+                return service.quick_voice.get(_identifier(tail[1], "voice note ID"))
+            if method == "GET" and len(tail) == 4 and tail[0] == "quick-voice" and tail[2] == "audio":
+                if tail[3] not in {"ack", "report"}:
+                    raise HTTPValidationError("Unknown voice message", status=404)
+                return service.quick_voice.audio(_identifier(tail[1], "voice note ID"), tail[3])
             if method == "POST" and tail == ["response-audio", "prepare"]:
                 if any(key not in {"action", "text"} for key in body):
                     raise HTTPValidationError("Response audio request contains an unsupported field")

@@ -29,6 +29,7 @@ from .normalization import composite_workspaces, pane_index
 from .pi_semantic import PiSemanticError, PiSemanticManager
 from .panes_seen import PaneFirstSeenStore
 from .push_notifications import APNsManager
+from .quick_voice import QuickVoiceManager
 from .remote_activity import RemoteActivityPoller
 from .stars import StarStore
 from .terminal import TerminalObserver, TerminalObserverError
@@ -165,6 +166,9 @@ class HerdrService:
         # a subprocess manager, and delaying creation avoids touching its
         # private persistence directory until the feature is actually used.
         self._agent_runs = agent_runs
+        self._quick_voice = None
+        self._quick_voice_recovery_enabled = production_environment or "HERDR_QUICK_VOICE_STORE_PATH" in self.environ
+        self._quick_voice_lock = threading.Lock()
         self._lock = threading.RLock()
         self._quick_session_lock = threading.Lock()
         self._quick_session_results: dict[str, tuple[float, str, dict]] = {}
@@ -429,8 +433,12 @@ class HerdrService:
         )
         self._event_thread.start()
         self._refresh_thread.start()
+        if self._quick_voice_recovery_enabled:
+            self.quick_voice.recover()
 
     def stop(self) -> None:
+        if self._quick_voice is not None:
+            self._quick_voice.stop()
         self._stop_event.set()
         self._refresh_event.set()
         self._restart_subscription.set()
@@ -719,6 +727,15 @@ class HerdrService:
 
     def pi_snapshot_response(self, pane_id: str) -> dict:
         return self.pi_semantic.snapshot_response(pane_id)
+
+    @property
+    def quick_voice(self) -> QuickVoiceManager:
+        with self._quick_voice_lock:
+            if self._quick_voice is None:
+                root = Path(self.environ.get("HOME") or str(Path.home()))
+                path = self.environ.get("HERDR_QUICK_VOICE_STORE_PATH") or root / ".config/herdr-harness/quick-voice"
+                self._quick_voice = QuickVoiceManager(self, store_path=Path(path))
+            return self._quick_voice
 
     def pi_command(self, pane_id: str, command: str, payload: Optional[dict] = None) -> dict:
         return self.pi_semantic.command(pane_id, command, payload)
@@ -2049,6 +2066,7 @@ class HerdrService:
         workspace_label: Optional[str] = None,
         tab_label: Optional[str] = None,
         reuse_named_tab: bool = True,
+        focus: bool = True,
     ) -> dict:
         """Create an interactive Pi pane, optionally resuming an exact session."""
 
@@ -2068,6 +2086,7 @@ class HerdrService:
                     "workspace_label": workspace_label,
                     "tab_label": tab_label,
                     "reuse_named_tab": reuse_named_tab,
+                    "focus": focus,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -2220,7 +2239,7 @@ class HerdrService:
                     }
                     raw = self._request_native(
                         "workspace.create",
-                        {"label": desired_workspace_label, "cwd": str(target_cwd), "focus": True},
+                        {"label": desired_workspace_label, "cwd": str(target_cwd), "focus": focus},
                     )
                     provisional_workspace_id = self._quick_new_identifier(
                         raw,
@@ -2269,7 +2288,7 @@ class HerdrService:
                             "target_pane_id": str(anchor["pane_id"]),
                             "direction": "right",
                             "cwd": str(target_cwd),
-                            "focus": True,
+                            "focus": focus,
                         },
                     )
                     provisional_pane_id = self._quick_new_identifier(
@@ -2302,7 +2321,7 @@ class HerdrService:
                     params: dict[str, object] = {
                         "workspace_id": workspace_id,
                         "cwd": str(target_cwd),
-                        "focus": True,
+                        "focus": focus,
                     }
                     if reuse_named_tab or tab_label is not None:
                         params["label"] = tab_label or QUICK_PI_TAB_LABEL

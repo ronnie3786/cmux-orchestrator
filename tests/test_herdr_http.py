@@ -2,6 +2,7 @@ import http.client
 import json
 import threading
 import unittest
+from unittest.mock import Mock
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -564,6 +565,24 @@ class HerdrHTTPTests(unittest.TestCase):
                 return response.status, response.headers, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, exc.headers, json.loads(exc.read())
+
+    def test_quick_voice_routes_authenticate_and_validate_before_dispatch(self):
+        self.service.quick_voice = Mock()
+        self.service.quick_voice.start.return_value = {"ok": True, "job": {"id": "note-1"}}
+        self.service.quick_voice.list.return_value = {"ok": True, "jobs": []}
+        self.service.quick_voice.get.return_value = {"ok": True, "job": {"id": "note-1"}}
+        self.service.quick_voice.audio.return_value = {"ok": True, "audioBase64": "SUQz", "contentType": "audio/mpeg"}
+        payload = {"requestId": "note-1", "text": "Investigate this", "cwd": "/tmp"}
+        self.assertEqual(self.request("/api/v1/quick-voice", method="POST", payload=payload, token=None)[0], 401)
+        self.service.quick_voice.start.assert_not_called()
+        self.assertEqual(self.request("/api/v1/quick-voice", method="POST", payload={**payload, "shell": "ignored"})[0], 400)
+        self.service.quick_voice.start.assert_not_called()
+        self.assertEqual(self.request("/api/v1/quick-voice", method="POST", payload=payload)[0], 202)
+        self.service.quick_voice.start.assert_called_once_with(request_id="note-1", text="Investigate this", cwd="/tmp")
+        self.assertEqual(self.request("/api/v1/quick-voice")[0], 200)
+        self.assertEqual(self.request("/api/v1/quick-voice/note-1")[0], 200)
+        self.assertEqual(self.request("/api/v1/quick-voice/note-1/audio/report")[0], 200)
+        self.assertEqual(self.request("/api/v1/quick-voice/note-1/audio/unknown")[0], 404)
 
     def test_setup_page_is_public_but_api_requires_bearer_token(self):
         with urllib.request.urlopen(self.base + "/", timeout=2) as response:

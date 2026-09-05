@@ -1132,6 +1132,22 @@ final class HerdrAppModel {
         )
     }
 
+    func quickVoiceClient(machineID: String) throws -> HerdrAPIClient {
+        guard !isDemoMode, canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineID)
+        }
+        return client
+    }
+
+    func transcribeQuickVoice(at url: URL, machineID: String) async throws -> String {
+        // This automatic capture flow always uses the private Parakeet route.
+        let response = try await quickVoiceClient(machineID: machineID).transcribeVoice(fileURL: url)
+        guard response.ok, !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw VoiceTranscriptionError.emptyTranscript
+        }
+        return response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func terminalEvents(for pane: HerdrPane) async -> AsyncThrowingStream<TerminalStreamEvent, any Error>? {
         guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID) else { return nil }

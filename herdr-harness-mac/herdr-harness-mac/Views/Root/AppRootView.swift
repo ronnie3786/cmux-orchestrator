@@ -316,6 +316,7 @@ struct AppRootView: View {
     @Bindable var activeWorkStore: ActiveWorkStore
     let driver: HerdrConnectionDriver
     let hudController: HerdrHudController
+    let quickVoiceController: QuickVoicePanelController
     let hudSession: HerdrHudSession
     let hudNotes: HerdrHudNotesState
     let agentSettings: AgentModelSettingsStore
@@ -360,6 +361,7 @@ struct AppRootView: View {
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
             hudController.configure(model: model, session: hudSession, notes: hudNotes, fontScale: fontScale)
+            quickVoiceController.configure(model: model, fontScale: fontScale)
         }
         .task {
             if let paneID = HerdrMacAppDelegate.takePendingPaneID() {

@@ -81,6 +81,18 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/response-audio/capabilities")
     }
 
+    func submitQuickVoice(_ body: QuickVoiceRequest) async throws -> QuickVoiceEnvelope {
+        try await request(path: "/api/v1/quick-voice", method: "POST", body: body)
+    }
+
+    func fetchQuickVoiceNotes() async throws -> QuickVoiceList {
+        try await request(path: "/api/v1/quick-voice")
+    }
+
+    func fetchQuickVoiceAudio(jobID: String, messageID: String) async throws -> ResponseAudioSpeechResponse {
+        try await request(path: "/api/v1/quick-voice/\(jobID)/audio/\(messageID)")
+    }
+
     func prepareResponseAudio(
         action: ResponseAudioAction,
         text: String
