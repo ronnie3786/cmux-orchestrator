@@ -360,8 +360,7 @@ struct AppRootView: View {
         }
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
-            hudController.configure(model: model, session: hudSession, notes: hudNotes, fontScale: fontScale)
-            quickVoiceController.configure(model: model, fontScale: fontScale)
+            hudController.configure(model: model, session: hudSession, notes: hudNotes, fontScale: fontScale, quickVoice: quickVoiceController)
         }
         .task {
             if let paneID = HerdrMacAppDelegate.takePendingPaneID() {

@@ -6,7 +6,7 @@ import Observation
 @Observable
 final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
     enum Phase: Equatable { case idle, recording, transcribing, submitting }
-    struct Note: Identifiable {
+    struct Note: Identifiable, Equatable {
         let machineID: String
         let job: QuickVoiceJob
         var id: String { machineID + ":" + job.id }
@@ -18,6 +18,9 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
 
     private(set) var phase: Phase = .idle
     private(set) var notes: [Note] = []
+    private(set) var selectedNoteID: String? {
+        didSet { defaults.set(selectedNoteID, forKey: "herdr.quickVoice.selectedNote") }
+    }
     private(set) var transcript = ""
     private(set) var error: String?
     private(set) var connectionError: String?
@@ -43,6 +46,7 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
     @ObservationIgnored private var captureMachineID = ""
     @ObservationIgnored private var captureCWD: String?
     @ObservationIgnored private var audioGeneration = 0
+    @ObservationIgnored private var refreshGeneration = 0
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -53,6 +57,7 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
         super.init()
         machineID = defaults.string(forKey: "herdr.quickVoice.machine") ?? ""
         isMuted = defaults.bool(forKey: "herdr.quickVoice.muted")
+        selectedNoteID = defaults.string(forKey: "herdr.quickVoice.selectedNote")
         if let pending {
             transcript = pending.request.text
             error = "A voice note has an unconfirmed submission. Retry to recover it without creating duplicate chats."
@@ -60,6 +65,11 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
     }
 
     var hasPendingSubmission: Bool { pending != nil }
+    var selectedNote: Note? {
+        guard phase == .idle, pending == nil else { return nil }
+        return notes.first { $0.id == selectedNoteID }
+    }
+    var machineName: String { model?.machines.first { $0.id == machineID }?.name ?? "Choose a Mac" }
     var activeCount: Int { notes.filter { !$0.job.isFinished }.count }
     var contextFolder: String {
         let pane = model?.pane(id: model?.selectedPaneID)
@@ -82,22 +92,28 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
 
     func refresh() async {
         guard let model else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
         let live = model.machines.filter { model.canControl(machineID: $0.id) && !model.isDemoMode }
         if machineID.isEmpty { machineID = live.first?.id ?? "" }
-        var failures: [String] = []
+        var selectedFailure: String?
         for machine in live {
             do {
                 let response = try await model.quickVoiceClient(machineID: machine.id).fetchQuickVoiceNotes()
+                guard generation == refreshGeneration else { return }
                 guard response.ok else { throw APIError.invalidResponse }
                 notes.removeAll { $0.machineID == machine.id }
                 notes += response.jobs.map { Note(machineID: machine.id, job: $0) }
             } catch {
-                failures.append("\(machine.name): \(error.localizedDescription)")
+                guard generation == refreshGeneration else { return }
+                if machine.id == machineID {
+                    selectedFailure = "Can't refresh voice requests on \(machine.name). Check the connection or choose another Mac."
+                }
             }
         }
         notes.removeAll { note in !model.machines.contains { $0.id == note.machineID } }
         notes.sort { $0.job.createdAt > $1.job.createdAt }
-        connectionError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+        connectionError = selectedFailure
         playNextAutomaticMessage()
     }
 
@@ -107,6 +123,7 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
         stopAudio()
         error = nil
         transcript = ""
+        selectedNoteID = nil
         captureMachineID = machineID
         let pane = model?.pane(id: model?.selectedPaneID)
         let cwd = pane?.machineID == machineID ? pane?.foregroundCWD ?? pane?.cwd : nil
@@ -178,11 +195,16 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
         do {
             let response = try await model.quickVoiceClient(machineID: pending.machineID).submitQuickVoice(pending.request)
             guard response.ok else { throw APIError.invalidResponse }
+            refreshGeneration += 1
             notes.removeAll { $0.machineID == pending.machineID && $0.job.id == response.job.id }
             notes.insert(Note(machineID: pending.machineID, job: response.job), at: 0)
+            selectedNoteID = pending.machineID + ":" + response.job.id
             self.pending = nil
             defaults.removeObject(forKey: "herdr.quickVoice.pending")
             error = nil
+            // Deliver the acknowledgment promptly instead of waiting for an
+            // idle eight-second poll. Agent state arrives independently.
+            Task { await refresh() }
         } catch {
             self.error = "Submission isn’t confirmed. Retry uses the same request ID to avoid duplicate chats. \(error.localizedDescription)"
         }
@@ -202,6 +224,29 @@ final class QuickVoiceSession: NSObject, AVAudioPlayerDelegate {
         transcript = ""
         error = nil
     }
+
+    func selectNote(_ id: String) {
+        guard phase == .idle, pending == nil else { return }
+        selectedNoteID = id
+        error = nil
+    }
+
+    func openAgent(_ task: QuickVoiceJob.Quest, in note: Note) {
+        guard let paneID = task.paneID, let model else { return }
+        let scopedID = MachineScopedID.compose(machineID: note.machineID, rawID: paneID)
+        Task {
+            if model.pane(id: scopedID) == nil { await model.refresh() }
+            HerdrMacAppDelegate.openPaneURLWithFallback(scopedID)
+        }
+    }
+
+    #if DEBUG
+    func seedForTesting(notes: [Note], selectedNoteID: String? = nil, phase: Phase = .idle) {
+        self.notes = notes
+        self.selectedNoteID = selectedNoteID
+        self.phase = phase
+    }
+    #endif
 
     private func playNextAutomaticMessage() {
         guard !isMuted, phase == .idle, audioTask == nil, playingMessageID == nil else { return }

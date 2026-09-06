@@ -38,6 +38,8 @@ final class HerdrHudController {
     private var hotKey: HerdrGlobalHotKey?
     private var session: HerdrHudSession?
     private var notes: HerdrHudNotesState?
+    private(set) var quickVoice: QuickVoicePanelController?
+    private(set) var hasVoiceChips = false
     private var lastNotesLayout: HerdrHudPlacement.NotesLayout = .hidden
     private var placementOffset = HerdrHudPlacement.defaultOffset()
     private var notificationTokens: [NSObjectProtocol] = []
@@ -96,12 +98,15 @@ final class HerdrHudController {
         model: HerdrAppModel,
         session: HerdrHudSession,
         notes: HerdrHudNotesState,
-        fontScale: HerdrFontScaleStore
+        fontScale: HerdrFontScaleStore,
+        quickVoice: QuickVoicePanelController? = nil
     ) {
         guard !isConfigured else { return }
         isConfigured = true
         self.session = session
         self.notes = notes
+        self.quickVoice = quickVoice
+        quickVoice?.configure(model: model, hud: self)
         lastNotesLayout = notes.layout
         placementOffset = loadPlacementOffset()
 
@@ -147,6 +152,7 @@ final class HerdrHudController {
 
     func summon() {
         isAwaitingRunAutoOpen = false
+        quickVoice?.collapse()
         if !isEnabled {
             setEnabled(true)
         }
@@ -210,6 +216,7 @@ final class HerdrHudController {
     }
 
     func setEnabled(_ enabled: Bool) {
+        if !enabled { quickVoice?.collapse() }
         if !enabled { isAwaitingRunAutoOpen = false }
         notes?.closeNote()
         regroupChips()
@@ -238,6 +245,25 @@ final class HerdrHudController {
         guard isVoiceReplyCardVisible != isVisible else { return }
         isVoiceReplyCardVisible = isVisible
         applyFrame(animated: true)
+    }
+
+    func presentQuickVoice() {
+        isAwaitingRunAutoOpen = false
+        if !isEnabled { setEnabled(true) }
+        notes?.closeNote()
+        isExpanded = false
+        notes?.isHudExpanded = false
+        session?.isCollapsed = true
+        applyFrame(animated: false)
+        panel?.makeKeyAndOrderFront(nil)
+    }
+
+    func quickVoiceLayoutDidChange() { applyFrame(animated: false) }
+
+    func setHasVoiceChips(_ hasVoiceChips: Bool) {
+        guard self.hasVoiceChips != hasVoiceChips else { return }
+        self.hasVoiceChips = hasVoiceChips
+        applyFrame(animated: false)
     }
 
     func setCollapsedChipCount(_ count: Int) {
@@ -348,6 +374,7 @@ final class HerdrHudController {
 
     func openNote(_ id: UUID) {
         isAwaitingRunAutoOpen = false
+        quickVoice?.collapse()
         guard let panel, let notes else { return }
         if isExpanded {
             isExpanded = false
@@ -363,7 +390,9 @@ final class HerdrHudController {
     func closeNote() { notes?.closeNote() }
 
     func handleCancel() {
-        if notes?.openNoteID != nil {
+        if quickVoice?.isExpanded == true {
+            quickVoice?.collapse()
+        } else if notes?.openNoteID != nil {
             closeNote()
         } else {
             collapse()
@@ -486,7 +515,9 @@ final class HerdrHudController {
             chipCount: isExpanded ? 0 : collapsedChipCount,
             hasResultRail: !isExpanded && isCollapsedResultRailVisible,
             notesSize: HerdrHudPlacement.notesContentSize(notes?.layout ?? .hidden, isExpanded: isExpanded),
-            voiceReplySize: isVoiceReplyCardVisible ? HerdrHudPlacement.voiceReplyCardSize : .zero
+            voiceReplySize: isVoiceReplyCardVisible ? HerdrHudPlacement.voiceReplyCardSize : .zero,
+            quickVoiceSize: quickVoice?.isExpanded == true ? HerdrHudPlacement.quickVoiceCardSize : .zero,
+            hasVoiceChips: hasVoiceChips
         )
     }
 

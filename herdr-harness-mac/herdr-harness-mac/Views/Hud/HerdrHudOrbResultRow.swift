@@ -15,16 +15,20 @@ struct HerdrHudOrbResultRow: View {
                 HerdrHudResultArtifactRailView(model: model, artifacts: artifacts)
             }
 
-            HerdrHudOrbView(
+            ZStack(alignment: .topLeading) {
+                HerdrHudOrbView(
                 model: model,
                 controller: controller,
                 session: session,
                 attentionChipCount: attentionChipCount
-            )
-                .frame(
-                    width: HerdrHudPlacement.collapsedSize.width,
-                    height: HerdrHudPlacement.collapsedSize.height
                 )
+                .frame(width: 56, height: 56)
+                if let voice = controller.quickVoice, voice.isEnabled {
+                    QuickVoicePanelView(controller: voice, session: voice.session)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
+            }
+            .frame(width: HerdrHudPlacement.collapsedSize.width, height: HerdrHudPlacement.collapsedSize.height)
         }
     }
 }

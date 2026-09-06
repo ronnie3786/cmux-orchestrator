@@ -141,7 +141,7 @@ struct HerdrHudOrbView: View {
                         .fill(HerdrTheme.accent)
                         .frame(width: 10, height: 10)
                         .shadow(color: HerdrTheme.accent, radius: 5)
-                        .offset(x: 20, y: 20)
+                        .offset(x: -20, y: 20)
                         .accessibilityHidden(true)
                 }
             }

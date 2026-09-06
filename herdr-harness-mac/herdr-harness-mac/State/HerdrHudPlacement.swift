@@ -51,6 +51,8 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// The reply composer is its own small surface beside the orb rather than a
     /// row inside the chat, so a spoken reply never looks like a HUD prompt.
     static let voiceReplyCardSize = CGSize(width: 300, height: 168)
+    static let quickVoiceCardSize = CGSize(width: 336, height: 320)
+    static let voiceChipWidth: CGFloat = 238
 
     static func maxNoteRows(isExpanded: Bool) -> Int { isExpanded ? maxNoteRowsWhenExpanded : maxNoteRows }
     static func notesContentSize(_ layout: NotesLayout, isExpanded: Bool) -> CGSize {
@@ -75,12 +77,13 @@ struct HerdrHudPlacement: Equatable, Sendable {
 
     static func collapsedContentSize(
         chipCount: Int,
-        hasResultRail: Bool = false
+        hasResultRail: Bool = false,
+        hasVoiceChips: Bool = false
     ) -> CGSize {
         let count = min(max(0, chipCount), maxCollapsedRows)
         let baseSize = if count > 0 {
             CGSize(
-                width: max(collapsedSize.width, chipWidth),
+                width: max(collapsedSize.width, hasVoiceChips ? voiceChipWidth : chipWidth),
                 height: collapsedSize.height + CGFloat(count) * (chipHeight + chipSpacing)
             )
         } else {
@@ -99,11 +102,17 @@ struct HerdrHudPlacement: Equatable, Sendable {
         chipCount: Int = 0,
         hasResultRail: Bool = false,
         notesSize: CGSize = .zero,
-        voiceReplySize: CGSize = .zero
+        voiceReplySize: CGSize = .zero,
+        quickVoiceSize: CGSize = .zero,
+        hasVoiceChips: Bool = false
     ) -> CGRect {
         var contentSize = isExpanded
             ? expandedSize
-            : collapsedContentSize(chipCount: chipCount, hasResultRail: hasResultRail)
+            : collapsedContentSize(chipCount: chipCount, hasResultRail: hasResultRail, hasVoiceChips: hasVoiceChips)
+        if quickVoiceSize.height > 0 {
+            contentSize.width = max(contentSize.width, quickVoiceSize.width)
+            contentSize.height += chipSpacing + quickVoiceSize.height
+        }
         if voiceReplySize.height > 0 {
             contentSize.width = max(contentSize.width, voiceReplySize.width)
             contentSize.height += notesGap + voiceReplySize.height

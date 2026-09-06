@@ -47,6 +47,9 @@ enum HerdrHudSessionChips {
         let isMuted: Bool
         let since: Date?
         let artifacts: [AgentResultArtifact]
+        let voiceNoteID: String?
+        let detail: String?
+        let symbol: String?
 
         init(
             id: String,
@@ -54,7 +57,10 @@ enum HerdrHudSessionChips {
             status: AgentStatus,
             isMuted: Bool,
             since: Date?,
-            artifacts: [AgentResultArtifact] = []
+            artifacts: [AgentResultArtifact] = [],
+            voiceNoteID: String? = nil,
+            detail: String? = nil,
+            symbol: String? = nil
         ) {
             self.id = id
             self.title = title
@@ -62,6 +68,9 @@ enum HerdrHudSessionChips {
             self.isMuted = isMuted
             self.since = since
             self.artifacts = artifacts
+            self.voiceNoteID = voiceNoteID
+            self.detail = detail
+            self.symbol = symbol
         }
     }
 

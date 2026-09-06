@@ -19,6 +19,7 @@ struct HerdrHudSessionChipsView: View {
     var showAll: () -> Void = { }
     var summon: () -> Void = { }
     var voiceReply: HerdrHudVoiceReply?
+    var openVoiceRequest: ((String) -> Void)?
 
     @State private var hoveredChipID: String?
 
@@ -164,34 +165,47 @@ struct HerdrHudSessionChipsView: View {
 
     private func chipButton(_ chip: HerdrHudSessionChips.Chip) -> some View {
         Button {
-            model.dismissHudChip(chip.id)
-            HerdrMacAppDelegate.openPaneURLWithFallback(chip.id)
+            if model.pane(id: chip.id) == nil, let noteID = chip.voiceNoteID {
+                openVoiceRequest?(noteID)
+            } else {
+                model.dismissHudChip(chip.id)
+                HerdrMacAppDelegate.openPaneURLWithFallback(chip.id)
+            }
         } label: {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(chip.status.color)
-                    .frame(width: 6, height: 6)
-                    .shadow(
-                        color: HerdrHudChipMotion.showsStaticGlow(for: chip.status)
-                            ? chip.status.color.opacity(HerdrHudChipMotion.workingGlowOpacity)
-                            : .clear,
-                        radius: 3
-                    )
-                    .accessibilityHidden(true)
-                Text(chip.title)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if let symbol = chip.symbol {
+                    Image(systemName: symbol).foregroundStyle(chip.status.color)
+                        .accessibilityHidden(true)
+                } else {
+                    Circle()
+                        .fill(chip.status.color)
+                        .frame(width: 6, height: 6)
+                        .shadow(
+                            color: HerdrHudChipMotion.showsStaticGlow(for: chip.status)
+                                ? chip.status.color.opacity(HerdrHudChipMotion.workingGlowOpacity)
+                                : .clear,
+                            radius: 3
+                        )
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(chip.title).lineLimit(1).truncationMode(.tail)
+                    if let detail = chip.detail {
+                        Text(detail).herdrFont(.caption).foregroundStyle(chip.status.color).lineLimit(1)
+                    }
+                }
+                if chip.voiceNoteID != nil { Spacer(minLength: 0) }
                 if chip.isMuted {
                     Image(systemName: "bell.slash.fill")
                         .herdrFont(.caption2)
                         .accessibilityHidden(true)
                 }
             }
-            .herdrFont(.caption2, monospaced: true, weight: .semibold)
+            .herdrFont(chip.voiceNoteID == nil ? .caption2 : .callout, monospaced: chip.voiceNoteID == nil, weight: .semibold)
             .foregroundStyle(HerdrTheme.text)
             .padding(.leading, 9)
             .padding(.trailing, chip.status == .done ? 29 : 9)
-            .frame(width: HerdrHudPlacement.chipWidth, height: HerdrHudPlacement.chipHeight)
+            .frame(width: chip.voiceNoteID == nil ? HerdrHudPlacement.chipWidth : HerdrHudPlacement.voiceChipWidth, height: HerdrHudPlacement.chipHeight)
             .herdrHitTarget(
                 minWidth: HerdrHudPlacement.chipWidth,
                 minHeight: HerdrHudPlacement.chipHeight
@@ -203,6 +217,9 @@ struct HerdrHudSessionChipsView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            if let noteID = chip.voiceNoteID {
+                Button("Show voice request", systemImage: "waveform") { openVoiceRequest?(noteID) }
+            }
             Button(
                 chip.isMuted ? "Unmute session" : "Mute session",
                 systemImage: chip.isMuted ? "bell" : "bell.slash"
@@ -211,6 +228,7 @@ struct HerdrHudSessionChipsView: View {
             }
         }
         .accessibilityIdentifier("hud-session-chip-\(chip.id)")
-        .accessibilityLabel("Open \(chip.title), \(chip.status.title)")
+        .accessibilityLabel("Open \(chip.title), \(chip.detail ?? chip.status.title)")
+        .help(chip.detail.map { "\(chip.title): \($0)" } ?? chip.title)
     }
 }

@@ -1,55 +1,51 @@
-import AppKit
 import SwiftUI
 
+/// A receipt for one request. Agent progress lives in the HUD notifications;
+/// acknowledgments do not compete with the transcript or final report here.
 struct QuickVoiceNoteView: View {
     let note: QuickVoiceSession.Note
     let session: QuickVoiceSession
     let model: HerdrAppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(model.showSessionTitles ? note.job.title : "Voice side quest").font(.headline)
-            Text(note.job.statusLabel).font(.caption).foregroundStyle(note.job.status == "done" ? HerdrTheme.accent : .secondary)
-            DisclosureGroup("Your voice note") {
-                Text(note.job.text).font(.callout).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Heard you", systemImage: "checkmark.circle.fill")
+                .herdrFont(.headline).foregroundStyle(HerdrTheme.signal)
+            Text(note.job.text)
+                .herdrFont(.body).textSelection(.enabled)
+                .accessibilityIdentifier("quick-voice-confirmed-transcript")
+            Label(note.job.statusLabel, systemImage: note.job.statusSymbol)
+                .herdrFont(.callout, weight: .semibold)
+                .foregroundStyle(note.job.needsAttention ? HerdrTheme.warning : HerdrTheme.accent)
+            if let error = note.job.error {
+                Text(error).herdrFont(.callout).foregroundStyle(HerdrTheme.warning).textSelection(.enabled)
             }
-            ForEach(note.job.tasks) { task in
-                Button {
-                    open(task)
-                } label: {
-                    Label(model.showSessionTitles ? task.title : "Side quest", systemImage: task.status == "done" ? "checkmark.circle" : task.status == "needs_attention" || task.status == "failed" ? "exclamationmark.circle" : "bubble.left")
-                        .font(.callout).multilineTextAlignment(.leading)
+            if let report = note.job.messages.first(where: { $0.id == "report" }) {
+                Divider()
+                Text(report.text).herdrFont(.callout).textSelection(.enabled)
+                Button(session.playingMessageID == note.id + ":report" ? "Stop report" : "Listen to report", systemImage: session.playingMessageID == note.id + ":report" ? "stop.circle" : "play.circle") {
+                    if session.playingMessageID == note.id + ":report" { session.stopAudio() }
+                    else { session.play(note: note, message: report) }
                 }
                 .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
-                .disabled(task.paneID == nil)
-            }
-            ForEach(note.job.messages) { message in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(message.text).font(.callout).textSelection(.enabled)
-                    Button(message.id == "ack" ? "Replay acknowledgment" : "Replay report", systemImage: "play.circle") {
-                        session.play(note: note, message: message)
-                    }
-                    .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
-                    .disabled(message.audioStatus != "ready" || session.phase == .recording || session.phase == .transcribing)
-                    if message.audioStatus == "failed" {
-                        Text("Audio unavailable. Your text report is saved.").font(.caption).foregroundStyle(.secondary)
+                .disabled(report.audioStatus != "ready")
+                if report.audioStatus == "failed" {
+                    Text("Audio unavailable. Your report is saved above.").herdrFont(.callout).foregroundStyle(HerdrTheme.mist)
+                }
+                DisclosureGroup("Agent chats") {
+                    ForEach(note.job.tasks) { task in
+                        Button(model.showSessionTitles ? task.title : "Agent", systemImage: task.statusSymbol) {
+                            session.openAgent(task, in: note)
+                        }
+                        .buttonStyle(.plain).disabled(task.paneID == nil)
+                        .padding(.vertical, 4)
                     }
                 }
-                .padding(10)
-                .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                .herdrFont(.callout)
+            } else {
+                Text(note.job.tasks.isEmpty ? "Finding the work that can run in parallel." : "Follow your agents below. You can record another request while they work.")
+                    .herdrFont(.callout).foregroundStyle(HerdrTheme.mist)
             }
         }
-        .padding(12)
-        .background(.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func open(_ task: QuickVoiceJob.Quest) {
-        guard let paneID = task.paneID,
-              let pane = model.workspaces.flatMap(\.panes).first(where: { $0.machineID == note.machineID && $0.paneID == paneID })
-        else {
-            Task { await model.refresh() }
-            return
-        }
-        HerdrMacAppDelegate.openPaneURLWithFallback(pane.id)
     }
 }

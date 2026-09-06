@@ -15,15 +15,14 @@ struct HerdrHudRootView: View {
         overflow: Int,
         detachedArtifacts: [AgentResultArtifact]
     ) {
-        HerdrHudSessionChips.chips(
+        QuickVoiceHudProjection.chips(
             panes: model.workspaces.flatMap(\.panes),
+            notes: controller.quickVoice?.session.notes ?? [],
             mutedPaneIDs: model.mutedHudSessionIDs,
             dismissed: model.dismissedHudChips,
             revealTitles: model.showSessionTitles,
             artifacts: model.unopenedResultArtifacts,
-            limit: controller.isShowingAllChips
-                ? HerdrHudPlacement.maxExpandedChips
-                : HerdrHudPlacement.maxChips
+            showAll: controller.isShowingAllChips
         )
     }
 
@@ -68,6 +67,10 @@ struct HerdrHudRootView: View {
                             attentionChipCount: attentionChipCount(chipState)
                         )
 
+                        if let voice = controller.quickVoice, voice.isExpanded {
+                            QuickVoiceDetailsView(controller: voice, session: voice.session, model: model)
+                        }
+
                         if !chipState.chips.isEmpty || chipState.overflow > 0 {
                             HerdrHudSessionChipsView(
                                 model: model,
@@ -76,7 +79,8 @@ struct HerdrHudRootView: View {
                                 overflow: chipState.overflow,
                                 showAll: controller.showAllChips,
                                 summon: controller.summon,
-                                voiceReply: voiceReply
+                                voiceReply: voiceReply,
+                                openVoiceRequest: { controller.quickVoice?.showDetails(noteID: $0) }
                             )
                             .onHover { controller.setHoveringChips($0) }
                         }
@@ -86,6 +90,9 @@ struct HerdrHudRootView: View {
                     }
                     .onChange(of: hasResultRail(chipState), initial: true) { _, isVisible in
                         controller.setCollapsedResultRailVisible(isVisible)
+                    }
+                    .onChange(of: chipState.chips.contains { $0.voiceNoteID != nil }, initial: true) { _, hasVoiceChips in
+                        controller.setHasVoiceChips(hasVoiceChips)
                     }
                 }
             }
@@ -102,6 +109,18 @@ struct HerdrHudRootView: View {
         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: voiceReply.showsCard)
         .onChange(of: voiceReply.showsCard, initial: true) { _, isVisible in
             controller.setVoiceReplyCardVisible(isVisible)
+        }
+        .onChange(of: controller.quickVoice?.session.recorder.status) { _, _ in
+            controller.quickVoice?.session.recordingStateChanged()
+        }
+        .onChange(of: controller.quickVoice?.session.recorder.errorMessage) { _, _ in
+            controller.quickVoice?.session.recordingStateChanged()
+        }
+        .onChange(of: controller.quickVoice?.session.phase) { _, phase in
+            if phase == .recording {
+                voiceReply.cancel()
+                session.responseAudioPlayer.stop()
+            }
         }
         .onChange(of: session.voiceReplyTarget, initial: true) { _, target in
             // A new answer finishing retargets the reply; losing the target

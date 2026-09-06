@@ -161,12 +161,16 @@ struct HerdrMacCommands: Commands {
         CommandGroup(after: .sidebar) {
             Divider()
 
-            Button("Record Quick Voice Note") {
+            Button("Record Voice Request") {
                 quickVoiceController.capture()
             }
             .keyboardShortcut("v", modifiers: [.command, .control])
 
-            Button(quickVoiceController.isEnabled ? "Hide Quick Voice Button" : "Show Quick Voice Button") {
+            Button("Voice Requests and Reports") {
+                quickVoiceController.showDetails()
+            }
+
+            Button(quickVoiceController.isEnabled ? "Hide HUD Microphone" : "Show HUD Microphone") {
                 quickVoiceController.setEnabled(!quickVoiceController.isEnabled)
             }
 

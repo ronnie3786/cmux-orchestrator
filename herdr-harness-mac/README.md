@@ -139,26 +139,34 @@ usually drops into this project unchanged.
 
 ## Quick voice side quests
 
-A separate floating microphone stays available across Spaces even when the chat HUD or main
-window is closed. Click it to record, then click **Stop and send** to submit automatically.
-Escape or **Discard** cancels an unfinished recording. The chat-bubble button opens history;
-its number shows active voice notes. Drag the grip to move the control. View > Record Quick
-Voice Note (Control-Command-V while Herdr is active) and View > Hide/Show Quick Voice Button
-provide menu access independently of the HUD.
+The microphone attaches to the bottom-right of the HUD orb and moves across Spaces with it.
+Click it to record, then click **Stop and send** to submit automatically. The main chat HUD
+stays closed. The request card shows **Listening**, transcription progress, then **Heard you**
+with the full transcript. Named agent notifications appear beneath it during dispatch and show
+**Starting**, **Running**, **Finished**, or **Needs your attention**. A four-agent request can
+show all four notifications without expanding the list.
+
+Escape or **Cancel recording** discards an unfinished recording. Closing the card after sending
+leaves the agents running. The clock menu opens recent requests; right-click an agent notification
+and choose **Show voice request** to return to its receipt. View > Record Voice Request
+(Control-Command-V while Herdr is active), Voice Requests and Reports, and Hide/Show HUD Microphone
+provide menu access. Hiding the HUD hides its microphone too.
 
 Choose the target Mac in the card. New notes inherit the selected chat's working folder on that
 Mac, or its home folder otherwise. Parakeet transcribes through the authenticated harness.
 The private `custom-lux-dspark/qwen3.8-27b-nvfp4-dspark` model chooses one to four independent
 assignments and meaningful titles. Pi chats are grouped under **Quick Voice**, use Pi's normal
-configured agent model, and run without focusing their terminals. Coupled work stays in one
-assignment. Up to four voice notes can run at once.
+configured agent model, and run without focusing their terminals. Independent service checks
+get separate agents even without a working folder. Coupled work stays in one assignment.
+Up to four voice notes can run at once.
 
 Kokoro acknowledges receipt while planning and dispatch proceed. When all chats settle, Qwen
-writes a short report based on their actual results, which Kokoro reads aloud. Click a chat in
-the card to inspect or answer it, replay either audio message, or mute automatic playback.
+writes a short report based on their results, which Kokoro reads aloud. Click an agent notification
+to open its chat. The request card keeps the final report, audio replay, and an **Agent chats**
+disclosure for revisiting finished work. Its speaker button mutes automatic playback.
 Recording pauses this feature's playback. Text survives audio failures. Failed transcription
 keeps the recording for retry, and an unconfirmed submission retries with the same identity.
-The **Keep any chats and clear note** action clears only the local retry record.
+The **Clear this request** action clears only the local retry record and leaves any agents running.
 
 Jobs and audio live privately in `~/.config/herdr-harness/quick-voice` on the target Mac.
 Restarting the harness resumes monitoring already-dispatched work; ambiguous dispatches are
