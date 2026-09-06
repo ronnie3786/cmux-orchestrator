@@ -308,7 +308,7 @@ struct HerdrHudPlacementTests {
     func notesContentSizeMatchesFormula() {
         #expect(HerdrHudPlacement.notesContentSize(.hidden, isExpanded: false) == .zero)
         #expect(HerdrHudPlacement.notesContentSize(.compact(count: 0), isExpanded: false) == .zero)
-        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 3), isExpanded: false) == CGSize(width: HerdrHudPlacement.chipWidth, height: 3 * HerdrHudPlacement.noteCompactBarHeight + 2 * HerdrHudPlacement.noteCompactBarSpacing))
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 3), isExpanded: false) == CGSize(width: HerdrHudPlacement.noteCompactWidth, height: 3 * HerdrHudPlacement.noteCompactBarHeight + 2 * HerdrHudPlacement.noteCompactBarSpacing))
         #expect(HerdrHudPlacement.notesContentSize(.compact(count: 99), isExpanded: false) == HerdrHudPlacement.notesContentSize(.compact(count: HerdrHudPlacement.maxCompactNotes), isExpanded: false))
         #expect(HerdrHudPlacement.notesContentSize(.rows(count: 0), isExpanded: false) == CGSize(width: HerdrHudPlacement.notesWidth, height: HerdrHudPlacement.noteCtaHeight))
         #expect(HerdrHudPlacement.notesContentSize(.rows(count: 6), isExpanded: false) == CGSize(width: HerdrHudPlacement.notesWidth, height: HerdrHudPlacement.noteCtaHeight + 6 * (HerdrHudPlacement.noteRowHeight + HerdrHudPlacement.noteRowSpacing)))

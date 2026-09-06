@@ -20,7 +20,7 @@ from . import attachments, cmux_tools, response_audio, result_artifacts, voice, 
 from .active_work import ActiveWorkError
 from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAULT_ACTIVE_WORK_STORE_PATH
 from .agent_activity import AgentActivityManager
-from .agent_runs import ACT_CHARTER, ASK_CHARTER, AgentRunError, AgentRunManager
+from .agent_runs import ACT_CHARTER, ASK_CHARTER, THINKING_LEVELS, AgentRunError, AgentRunManager
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
@@ -2067,10 +2067,19 @@ class HerdrService:
         tab_label: Optional[str] = None,
         reuse_named_tab: bool = True,
         focus: bool = True,
+        model: Optional[dict] = None,
+        thinking_level: Optional[str] = None,
     ) -> dict:
         """Create an interactive Pi pane, optionally resuming an exact session."""
 
         with self._quick_session_lock:
+            if model is not None and (
+                not isinstance(model, dict) or set(model) != {"provider", "id"}
+                or any(not isinstance(value, str) or not value.strip() or len(value) > 256 or "\x00" in value for value in model.values())
+            ):
+                raise HerdrClientError("model requires provider and id", code="invalid_agent_model")
+            if thinking_level is not None and (not isinstance(thinking_level, str) or thinking_level not in THINKING_LEVELS):
+                raise HerdrClientError("thinkingLevel is invalid", code="invalid_agent_thinking_level")
             if request_id is not None and (
                 not isinstance(request_id, str) or not request_id or len(request_id) > 128
             ):
@@ -2087,6 +2096,8 @@ class HerdrService:
                     "tab_label": tab_label,
                     "reuse_named_tab": reuse_named_tab,
                     "focus": focus,
+                    "model": model,
+                    "thinking_level": thinking_level,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -2141,6 +2152,13 @@ class HerdrService:
                     )
                 session_id = expected_session_id
                 agent_args = ["--session", str(session_path), *extension_args]
+
+            # CLI overrides apply to this session without Pi's set_model RPC
+            # changing the user's global default for unrelated future chats.
+            if model is not None:
+                agent_args.extend(["--provider", model["provider"], "--model", model["id"]])
+            if thinking_level is not None:
+                agent_args.extend(["--thinking", thinking_level])
 
             workspaces = [
                 item for item in snapshot.get("workspaces", []) if isinstance(item, dict)

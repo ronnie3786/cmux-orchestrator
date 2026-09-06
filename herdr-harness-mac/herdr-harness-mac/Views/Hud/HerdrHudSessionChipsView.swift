@@ -173,39 +173,25 @@ struct HerdrHudSessionChipsView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                if let symbol = chip.symbol {
-                    Image(systemName: symbol).foregroundStyle(chip.status.color)
-                        .accessibilityHidden(true)
-                } else {
-                    Circle()
-                        .fill(chip.status.color)
-                        .frame(width: 6, height: 6)
-                        .shadow(
-                            color: HerdrHudChipMotion.showsStaticGlow(for: chip.status)
-                                ? chip.status.color.opacity(HerdrHudChipMotion.workingGlowOpacity)
-                                : .clear,
-                            radius: 3
-                        )
-                        .accessibilityHidden(true)
-                }
+                Image(systemName: chip.statusSymbol)
+                    .foregroundStyle(chip.status.color)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(chip.title).lineLimit(1).truncationMode(.tail)
-                    if let detail = chip.detail {
-                        Text(detail).herdrFont(.caption).foregroundStyle(chip.status.color).lineLimit(1)
-                    }
+                    Text(chip.statusLabel).herdrFont(.caption).foregroundStyle(chip.status.color).lineLimit(1)
                 }
-                if chip.voiceNoteID != nil { Spacer(minLength: 0) }
+                Spacer(minLength: 0)
                 if chip.isMuted {
                     Image(systemName: "bell.slash.fill")
                         .herdrFont(.caption2)
                         .accessibilityHidden(true)
                 }
             }
-            .herdrFont(chip.voiceNoteID == nil ? .caption2 : .callout, monospaced: chip.voiceNoteID == nil, weight: .semibold)
+            .herdrFont(.callout, weight: .semibold)
             .foregroundStyle(HerdrTheme.text)
             .padding(.leading, 9)
             .padding(.trailing, chip.status == .done ? 29 : 9)
-            .frame(width: chip.voiceNoteID == nil ? HerdrHudPlacement.chipWidth : HerdrHudPlacement.voiceChipWidth, height: HerdrHudPlacement.chipHeight)
+            .frame(width: HerdrHudPlacement.chipWidth, height: HerdrHudPlacement.chipHeight)
             .herdrHitTarget(
                 minWidth: HerdrHudPlacement.chipWidth,
                 minHeight: HerdrHudPlacement.chipHeight
@@ -228,7 +214,7 @@ struct HerdrHudSessionChipsView: View {
             }
         }
         .accessibilityIdentifier("hud-session-chip-\(chip.id)")
-        .accessibilityLabel("Open \(chip.title), \(chip.detail ?? chip.status.title)")
-        .help(chip.detail.map { "\(chip.title): \($0)" } ?? chip.title)
+        .accessibilityLabel("Open \(chip.title), \(chip.statusLabel)")
+        .help("\(chip.title): \(chip.statusLabel)")
     }
 }

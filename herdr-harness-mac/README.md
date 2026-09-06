@@ -155,10 +155,15 @@ provide menu access. Hiding the HUD hides its microphone too.
 Choose the target Mac in the card. New notes inherit the selected chat's working folder on that
 Mac, or its home folder otherwise. Parakeet transcribes through the authenticated harness.
 The private `custom-lux-dspark/qwen3.8-27b-nvfp4-dspark` model chooses one to four independent
-assignments and meaningful titles. Pi chats are grouped under **Quick Voice**, use Pi's normal
-configured agent model, and run without focusing their terminals. Independent service checks
+assignments and meaningful titles. Pi chats are grouped under **Quick Voice**, start on
+`custom-lux-dspark/qwen3.8-27b-nvfp4-dspark` with **high** thinking, and run without focusing
+their terminals. Herdr confirms those settings before sending each assignment. These launch
+overrides leave Pi's default model for other chats unchanged. Independent service checks
 get separate agents even without a working folder. Coupled work stays in one assignment.
 Up to four voice notes can run at once.
+
+All HUD agent notifications share the same wide, two-line layout: a readable session title,
+a status icon, and a plain-English status such as **Running**, **Finished**, or **Needs your attention**.
 
 Kokoro acknowledges receipt while planning and dispatch proceed. When all chats settle, Qwen
 writes a short report based on their results, which Kokoro reads aloud. Click an agent notification

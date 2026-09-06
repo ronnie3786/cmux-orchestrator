@@ -91,9 +91,6 @@ struct HerdrHudRootView: View {
                     .onChange(of: hasResultRail(chipState), initial: true) { _, isVisible in
                         controller.setCollapsedResultRailVisible(isVisible)
                     }
-                    .onChange(of: chipState.chips.contains { $0.voiceNoteID != nil }, initial: true) { _, hasVoiceChips in
-                        controller.setHasVoiceChips(hasVoiceChips)
-                    }
                 }
             }
             if voiceReply.showsCard {

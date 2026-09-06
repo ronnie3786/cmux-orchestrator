@@ -14,6 +14,8 @@ from pathlib import Path
 from .response_audio import DEFAULT_SUMMARY_MODEL, DEFAULT_SUMMARY_PROVIDER, ResponseAudioError, ResponseAudioService
 
 MAX_AGENTS = 4
+VOICE_AGENT_MODEL = {"provider": "custom-lux-dspark", "id": "qwen3.8-27b-nvfp4-dspark"}
+VOICE_AGENT_THINKING_LEVEL = "high"
 TERMINAL = {"done", "failed", "needs_attention"}
 ACKNOWLEDGMENT = "Got it. I’m working on your request now. I’ll report back with what you need to know."
 PLAN_SYSTEM = """You are a personal assistant planning a voice request for Pi coding agents.
@@ -269,10 +271,14 @@ class QuickVoiceManager:
                 try:
                     session = self.service.quick_pi_session(
                         task["title"], cwd=job["cwd"], request_id=f"voice-{hashlib.sha256(job_id.encode()).hexdigest()[:32]}-{index}",
-                        workspace_label="Quick Voice", tab_label=plan["title"], reuse_named_tab=True, focus=False)
+                        workspace_label="Quick Voice", tab_label=plan["title"], reuse_named_tab=True, focus=False,
+                        model=dict(VOICE_AGENT_MODEL), thinking_level=VOICE_AGENT_THINKING_LEVEL)
                     pane_id = session["pane_id"]
-                    self._task_update(job_id, index, paneID=pane_id, status="sending")
+                    self._task_update(job_id, index, paneID=pane_id)
                     self.service._quick_wait_for_pi_session(pane_id, None)
+                    if not self._confirm_agent_configuration(pane_id):
+                        return
+                    self._task_update(job_id, index, status="sending", model=dict(VOICE_AGENT_MODEL), thinkingLevel=VOICE_AGENT_THINKING_LEVEL)
                     # One send only: a transport timeout can mean the prompt was accepted.
                     prompt = ("Complete only the assigned side quest below. Other agents may be working independently. "
                               "Respect repository instructions and the user's authority. Do not expand scope or duplicate other assignments. "
@@ -283,6 +289,8 @@ class QuickVoiceManager:
                         return
                     self.service.pi_command(pane_id, "prompt", {"text": prompt})
                     self._task_update(job_id, index, status="running")
+                except QuickVoiceError as exc:
+                    self._task_update(job_id, index, status="failed", result=f"The request was not sent. {exc}")
                 except Exception as exc:
                     self._task_update(job_id, index, status="needs_attention", result=f"Dispatch could not be confirmed. Check the chat before retrying. {exc}")
             self._update(job_id, lambda j: j.update(status="running"))
@@ -290,6 +298,26 @@ class QuickVoiceManager:
             self._update(job_id, lambda j: j.update(status="failed", error=str(exc)))
         if not self._stop.is_set():
             self._monitor_and_report(job_id)
+
+    def _confirm_agent_configuration(self, pane_id):
+        deadline = time.monotonic() + 5
+        while not self._stop.is_set():
+            try:
+                snapshot = self.service.pi_snapshot_response(pane_id)
+                state = snapshot.get("state") or {}
+                model = state.get("model") or {}
+                if snapshot.get("connected") and model and state.get("thinkingLevel") is not None:
+                    if all(model.get(key) == value for key, value in VOICE_AGENT_MODEL.items()) and state["thinkingLevel"] == VOICE_AGENT_THINKING_LEVEL:
+                        return True
+                    raise QuickVoiceError("This agent did not start on Qwen3.8 27B NVFP4 DSPARK with high thinking. Check its model settings.")
+            except QuickVoiceError:
+                raise
+            except Exception:
+                pass  # The bridge can connect before its first snapshot arrives.
+            if time.monotonic() >= deadline:
+                raise QuickVoiceError("Could not confirm this agent's Qwen model and high thinking setting. Check its chat before retrying.")
+            self._stop.wait(0.1)
+        return False
 
     def _monitor_and_report(self, job_id):
         while not self._stop.is_set():

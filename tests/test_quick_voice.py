@@ -25,6 +25,9 @@ class FakeService:
         self.environ = {}
         self.launches = []
         self.prompts = {}
+        self.model = {"provider": "custom-lux-dspark", "id": "qwen3.8-27b-nvfp4-dspark"}
+        self.thinking_level = "high"
+        self.snapshot_reads = []
         self.finished = False
         self.audio_gate = threading.Event()
         self.audio_gate.set()
@@ -51,9 +54,13 @@ class FakeService:
             raise TimeoutError("reply lost")
 
     def pi_snapshot_response(self, pane_id):
-        return {"connected": True, "state": {"idle": self.finished, "isStreaming": not self.finished}, "entries": [
+        self.snapshot_reads.append(pane_id)
+        entries = [
             {"message": {"role": "user", "content": self.prompts[pane_id]}},
-            {"message": {"role": "assistant", "content": [{"type": "text", "text": "Verified result"}], "stopReason": "stop"}}]}
+            {"message": {"role": "assistant", "content": [{"type": "text", "text": "Verified result"}], "stopReason": "stop"}}
+        ] if pane_id in self.prompts else []
+        return {"connected": True, "state": {"idle": self.finished, "isStreaming": not self.finished,
+                "model": self.model, "thinkingLevel": self.thinking_level}, "entries": entries}
 
 
 class QuickVoiceTests(unittest.TestCase):
@@ -97,6 +104,38 @@ class QuickVoiceTests(unittest.TestCase):
             self.manager.start(request_id="note-1", text="Different request")
         self.assertEqual(caught.exception.status, 409)
         self.assertEqual(first["job"]["id"], "note-1")
+
+    def test_each_agent_launches_with_qwen_high_and_records_confirmed_settings(self):
+        original_prompt = self.service.pi_command
+        def prompt_after_confirmation(pane_id, command, payload):
+            self.assertIn(pane_id, self.service.snapshot_reads)
+            return original_prompt(pane_id, command, payload)
+        self.service.pi_command = prompt_after_confirmation
+        self.manager.start(request_id="note-1", text="Check both")
+        job = self.wait_for(lambda j: j["status"] == "running")
+        expected_model = {"provider": "custom-lux-dspark", "id": "qwen3.8-27b-nvfp4-dspark"}
+        self.assertEqual(len(self.service.prompts), 2)
+        for _, options in self.service.launches:
+            self.assertEqual(options["model"], expected_model)
+            self.assertEqual(options["thinking_level"], "high")
+        for task in job["tasks"]:
+            self.assertEqual(task["model"], expected_model)
+            self.assertEqual(task["thinkingLevel"], "high")
+
+    def test_fallback_model_never_receives_the_request(self):
+        self.service.model = {"provider": "fireworks", "id": "another-model"}
+        self.manager.start(request_id="note-1", text="Check both")
+        job = self.wait_for(lambda j: j["status"] == "needs_attention")
+        self.assertFalse(self.service.prompts)
+        self.assertTrue(all(t["status"] == "failed" for t in job["tasks"]))
+        self.assertTrue(all("request was not sent" in t["result"] for t in job["tasks"]))
+
+    def test_clamped_thinking_level_never_receives_the_request(self):
+        self.service.thinking_level = "off"
+        self.manager.start(request_id="note-1", text="Check both")
+        job = self.wait_for(lambda j: j["status"] == "needs_attention")
+        self.assertFalse(self.service.prompts)
+        self.assertTrue(all("high thinking" in t["result"] for t in job["tasks"]))
 
     def test_audio_failure_does_not_fail_work(self):
         self.service.fail_audio = True

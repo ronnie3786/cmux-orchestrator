@@ -20,7 +20,7 @@ struct HerdrNoteCompactStackView: View {
                     .truncationMode(.tail)
                     .padding(.horizontal, 9)
                     .frame(
-                        width: HerdrHudPlacement.chipWidth,
+                        width: HerdrHudPlacement.noteCompactWidth,
                         height: HerdrHudPlacement.noteCompactBarHeight,
                         alignment: .leading
                     )

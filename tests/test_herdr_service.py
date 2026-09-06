@@ -870,6 +870,33 @@ class HerdrServiceTests(unittest.TestCase):
         )
         self.assertEqual(client.snapshot_calls, 3)
 
+    def test_quick_pi_session_launch_overrides_are_session_scoped_and_idempotent(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [], "tabs": [], "panes": []},
+            {"workspace.create": {
+                "workspace": {"workspace_id": "w-random", "active_tab_id": "w-random:t1"},
+                "pane": {"pane_id": "w-random:p1", "tab_id": "w-random:t1"},
+            }},
+        )
+        with tempfile.TemporaryDirectory() as extension_path:
+            service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": extension_path}, pi_semantic=FakeReadyPiSemantic())
+            options = {"model": {"provider": "custom-lux-dspark", "id": "qwen3.8-27b-nvfp4-dspark"}, "thinking_level": "high", "request_id": "voice-model"}
+            first = service.quick_pi_session("Voice agent", **options)
+            self.assertEqual(service.quick_pi_session("Voice agent", **options), first)
+            starts = [payload for method, payload in client.requests if method == "agent.start"]
+            self.assertEqual(len(starts), 1)
+            self.assertEqual(starts[0]["args"], ["--extension", extension_path, "--provider", "custom-lux-dspark", "--model", "qwen3.8-27b-nvfp4-dspark", "--thinking", "high"])
+            with self.assertRaises(HerdrClientError):
+                service.quick_pi_session("Voice agent", **{**options, "thinking_level": "low"})
+
+    def test_quick_pi_session_rejects_invalid_model_options_before_creating_a_pane(self):
+        client = FakeQuickSessionClient({"workspaces": [], "tabs": [], "panes": []}, {})
+        service = HerdrService(client, environ={})
+        for options in ({"model": {"id": "missing-provider"}}, {"model": {"provider": "p", "id": ""}}, {"thinking_level": "ultra"}):
+            with self.subTest(options=options), self.assertRaises(HerdrClientError):
+                service.quick_pi_session("Voice agent", **options)
+        self.assertEqual(client.requests, [])
+
     def test_quick_pi_session_keeps_new_pane_when_semantic_bridge_never_connects(self):
         client = FakeQuickSessionClient(
             {"workspaces": [], "tabs": [], "panes": []},

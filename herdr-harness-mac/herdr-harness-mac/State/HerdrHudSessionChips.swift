@@ -51,6 +51,27 @@ enum HerdrHudSessionChips {
         let detail: String?
         let symbol: String?
 
+        var statusLabel: String {
+            if let detail { return detail }
+            switch status {
+            case .working: return "Running"
+            case .done: return "Finished"
+            case .blocked: return "Needs your attention"
+            case .idle: return "Idle"
+            case .unknown: return "Checking status"
+            }
+        }
+
+        var statusSymbol: String {
+            if let symbol { return symbol }
+            switch status {
+            case .working: return "bolt.circle.fill"
+            case .done: return "checkmark.circle.fill"
+            case .blocked: return "exclamationmark.circle.fill"
+            case .idle, .unknown: return "clock"
+            }
+        }
+
         init(
             id: String,
             title: String,

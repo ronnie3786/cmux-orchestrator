@@ -9,7 +9,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let collapsedSize = CGSize(width: 72, height: 72)
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
-    static let chipWidth: CGFloat = 158
+    static let chipWidth: CGFloat = 238
     /// The chip's rendered height AND the height the panel frame reserves for
     /// it — `HerdrHudSessionChipsView` must read this, not `HerdrTheme`, or the
     /// two disagree and the collapsed panel mis-sizes. Deliberately larger than
@@ -43,6 +43,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// Tall enough for one line of the note's title — the collapsed stack names
     /// its notes rather than showing anonymous color bars.
     static let noteCompactBarHeight: CGFloat = 22
+    static let noteCompactWidth: CGFloat = 158
     static let noteCompactBarSpacing: CGFloat = 4
     static let maxCompactNotes = 5
     static let maxNoteRows = 6
@@ -52,7 +53,6 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// row inside the chat, so a spoken reply never looks like a HUD prompt.
     static let voiceReplyCardSize = CGSize(width: 300, height: 168)
     static let quickVoiceCardSize = CGSize(width: 336, height: 320)
-    static let voiceChipWidth: CGFloat = 238
 
     static func maxNoteRows(isExpanded: Bool) -> Int { isExpanded ? maxNoteRowsWhenExpanded : maxNoteRows }
     static func notesContentSize(_ layout: NotesLayout, isExpanded: Bool) -> CGSize {
@@ -62,7 +62,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
         case let .compact(count):
             let k = min(max(count, 0), maxCompactNotes)
             guard k > 0 else { return .zero }
-            return CGSize(width: chipWidth, height: CGFloat(k) * noteCompactBarHeight + CGFloat(k - 1) * noteCompactBarSpacing)
+            return CGSize(width: noteCompactWidth, height: CGFloat(k) * noteCompactBarHeight + CGFloat(k - 1) * noteCompactBarSpacing)
         case let .rows(count):
             let k = min(max(count, 0), maxNoteRows(isExpanded: isExpanded))
             return CGSize(width: notesWidth, height: noteCtaHeight + CGFloat(k) * (noteRowHeight + noteRowSpacing))
@@ -77,13 +77,12 @@ struct HerdrHudPlacement: Equatable, Sendable {
 
     static func collapsedContentSize(
         chipCount: Int,
-        hasResultRail: Bool = false,
-        hasVoiceChips: Bool = false
+        hasResultRail: Bool = false
     ) -> CGSize {
         let count = min(max(0, chipCount), maxCollapsedRows)
         let baseSize = if count > 0 {
             CGSize(
-                width: max(collapsedSize.width, hasVoiceChips ? voiceChipWidth : chipWidth),
+                width: max(collapsedSize.width, chipWidth),
                 height: collapsedSize.height + CGFloat(count) * (chipHeight + chipSpacing)
             )
         } else {
@@ -103,12 +102,11 @@ struct HerdrHudPlacement: Equatable, Sendable {
         hasResultRail: Bool = false,
         notesSize: CGSize = .zero,
         voiceReplySize: CGSize = .zero,
-        quickVoiceSize: CGSize = .zero,
-        hasVoiceChips: Bool = false
+        quickVoiceSize: CGSize = .zero
     ) -> CGRect {
         var contentSize = isExpanded
             ? expandedSize
-            : collapsedContentSize(chipCount: chipCount, hasResultRail: hasResultRail, hasVoiceChips: hasVoiceChips)
+            : collapsedContentSize(chipCount: chipCount, hasResultRail: hasResultRail)
         if quickVoiceSize.height > 0 {
             contentSize.width = max(contentSize.width, quickVoiceSize.width)
             contentSize.height += chipSpacing + quickVoiceSize.height

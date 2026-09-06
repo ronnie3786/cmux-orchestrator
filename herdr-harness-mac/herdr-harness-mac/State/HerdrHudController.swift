@@ -39,7 +39,6 @@ final class HerdrHudController {
     private var session: HerdrHudSession?
     private var notes: HerdrHudNotesState?
     private(set) var quickVoice: QuickVoicePanelController?
-    private(set) var hasVoiceChips = false
     private var lastNotesLayout: HerdrHudPlacement.NotesLayout = .hidden
     private var placementOffset = HerdrHudPlacement.defaultOffset()
     private var notificationTokens: [NSObjectProtocol] = []
@@ -259,12 +258,6 @@ final class HerdrHudController {
     }
 
     func quickVoiceLayoutDidChange() { applyFrame(animated: false) }
-
-    func setHasVoiceChips(_ hasVoiceChips: Bool) {
-        guard self.hasVoiceChips != hasVoiceChips else { return }
-        self.hasVoiceChips = hasVoiceChips
-        applyFrame(animated: false)
-    }
 
     func setCollapsedChipCount(_ count: Int) {
         let clampedCount = min(max(0, count), HerdrHudPlacement.maxCollapsedRows)
@@ -516,8 +509,7 @@ final class HerdrHudController {
             hasResultRail: !isExpanded && isCollapsedResultRailVisible,
             notesSize: HerdrHudPlacement.notesContentSize(notes?.layout ?? .hidden, isExpanded: isExpanded),
             voiceReplySize: isVoiceReplyCardVisible ? HerdrHudPlacement.voiceReplyCardSize : .zero,
-            quickVoiceSize: quickVoice?.isExpanded == true ? HerdrHudPlacement.quickVoiceCardSize : .zero,
-            hasVoiceChips: hasVoiceChips
+            quickVoiceSize: quickVoice?.isExpanded == true ? HerdrHudPlacement.quickVoiceCardSize : .zero
         )
     }
 

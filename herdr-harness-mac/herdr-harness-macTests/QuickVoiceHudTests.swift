@@ -71,8 +71,8 @@ struct QuickVoiceHudTests {
     @Test("Voice receipt grows downward while keeping the orb's anchor fixed")
     func placement() {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let collapsed = HerdrHudPlacement.frame(isExpanded: false, visibleFrame: screen, topRightOffset: .zero, chipCount: 3, hasVoiceChips: true)
-        let receipt = HerdrHudPlacement.frame(isExpanded: false, visibleFrame: screen, topRightOffset: .zero, chipCount: 3, quickVoiceSize: HerdrHudPlacement.quickVoiceCardSize, hasVoiceChips: true)
+        let collapsed = HerdrHudPlacement.frame(isExpanded: false, visibleFrame: screen, topRightOffset: .zero, chipCount: 3)
+        let receipt = HerdrHudPlacement.frame(isExpanded: false, visibleFrame: screen, topRightOffset: .zero, chipCount: 3, quickVoiceSize: HerdrHudPlacement.quickVoiceCardSize)
         #expect(receipt.maxX == collapsed.maxX)
         #expect(receipt.maxY == collapsed.maxY)
         #expect(receipt.height == collapsed.height + HerdrHudPlacement.quickVoiceCardSize.height + HerdrHudPlacement.chipSpacing)
