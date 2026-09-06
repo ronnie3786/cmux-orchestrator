@@ -307,7 +307,7 @@ struct HerdrHudSessionTests {
 
         await session.submit(model: model)
 
-        #expect(session.exchanges.last?.modelLabel == HerdrHudModelRouting.visionModel)
+        #expect(session.exchanges.last?.modelLabel == "GPT-5.6 Luna")
         #expect(session.lastHeadlessRunForTesting?.model == HerdrHudModelRouting.visionModel)
     }
 
@@ -513,7 +513,7 @@ struct HerdrHudSessionTests {
         await session.submit(model: makeDemoModel())
 
         #expect(session.lastHeadlessRunForTesting?.model == "custom/vision")
-        #expect(session.exchanges.last?.modelLabel == "custom/vision")
+        #expect(session.exchanges.last?.modelLabel == "Vision")
     }
 
     @Test("HUD submissions use the configured thinking level")

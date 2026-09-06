@@ -44,10 +44,10 @@ struct HerdrHudSessionChipsView: View {
                 .overlay(alignment: .trailing) {
                     if session.voiceReplyTarget == chip.id || voiceReply?.paneID == chip.id {
                         replyButton(chip)
-                            .padding(.trailing, 5)
+                            .offset(x: 2, y: 12)
                     } else if chip.status == .done {
                         speakButton(chip)
-                            .padding(.trailing, 5)
+                            .offset(x: 2, y: 12)
                             .opacity(showsSpeakButton(chip) ? 1 : 0)
                             .allowsHitTesting(showsSpeakButton(chip))
                     }
@@ -172,34 +172,7 @@ struct HerdrHudSessionChipsView: View {
                 HerdrMacAppDelegate.openPaneURLWithFallback(chip.id)
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: chip.statusSymbol)
-                    .foregroundStyle(chip.status.color)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(chip.title).lineLimit(1).truncationMode(.tail)
-                    Text(chip.statusLabel).herdrFont(.caption).foregroundStyle(chip.status.color).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if chip.isMuted {
-                    Image(systemName: "bell.slash.fill")
-                        .herdrFont(.caption2)
-                        .accessibilityHidden(true)
-                }
-            }
-            .herdrFont(.callout, weight: .semibold)
-            .foregroundStyle(HerdrTheme.text)
-            .padding(.leading, 9)
-            .padding(.trailing, chip.status == .done ? 29 : 9)
-            .frame(width: HerdrHudPlacement.chipWidth, height: HerdrHudPlacement.chipHeight)
-            .herdrHitTarget(
-                minWidth: HerdrHudPlacement.chipWidth,
-                minHeight: HerdrHudPlacement.chipHeight
-            )
-            .background(HerdrTheme.elevated, in: .capsule)
-            .overlay {
-                Capsule().strokeBorder(chip.status.color.opacity(0.4), lineWidth: 1)
-            }
+            HerdrHudSessionBubbleLabel(chip: chip)
         }
         .buttonStyle(.plain)
         .contextMenu {

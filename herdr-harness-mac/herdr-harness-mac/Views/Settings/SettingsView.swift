@@ -31,6 +31,7 @@ struct SettingsView: View {
             cleanupSection
             textSizeSection
             privacySection
+            ScreenRecordingSettingsSection()
             aboutSection
         }
         .formStyle(.grouped)
@@ -335,7 +336,8 @@ struct SettingsView: View {
 
     private func agentModelMenuSelectionLabel(for selection: String, defaultTitle: String) -> String {
         guard !selection.isEmpty else { return defaultTitle }
-        return agentCatalog?.models.first(where: { $0.id == selection })?.displayName ?? selection
+        return agentCatalog?.models.first(where: { $0.id == selection })?.displayName
+            ?? PiModelDisplayName.short(fullID: selection)
     }
 
     private func loadAgentModels() async {
@@ -486,13 +488,14 @@ struct SettingsView: View {
     }
 
     private var aboutSection: some View {
-        Section {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        return Section {
             HStack(spacing: 13) {
                 HerdrBrandMark(size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Herdr")
                         .herdrFont(.headline, weight: .bold)
-                    Text("Remote command deck · 0.1")
+                    Text("Remote command deck · \(version)")
                         .herdrFont(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -16,6 +16,7 @@ struct HerdrHudTranscriptRowView: View {
                 HerdrHudWorkingGroupView(exchange: exchange)
             }
             answer
+            HerdrHudInlineResultArtifactsView(model: model, exchange: exchange)
             if isCompletedResponse {
                 footer
             }
@@ -32,12 +33,15 @@ struct HerdrHudTranscriptRowView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-            if !exchange.attachmentFilenames.isEmpty {
+            if !exchange.localAttachments.isEmpty {
+                ForEach(exchange.localAttachments) { attachment in
+                    HerdrHudSentAttachmentView(attachment: attachment)
+                }
+            } else if !exchange.attachmentFilenames.isEmpty {
                 Label(exchange.attachmentFilenames.joined(separator: ", "), systemImage: "paperclip")
                     .herdrFont(.caption2, monospaced: true)
                     .foregroundStyle(HerdrTheme.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .lineLimit(2)
             }
             Text(exchange.createdAt, format: .dateTime.hour().minute())
                 .herdrFont(.caption2, monospaced: true)

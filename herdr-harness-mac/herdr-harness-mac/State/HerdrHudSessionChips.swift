@@ -32,17 +32,13 @@ struct HudChipDismissal: Codable, Equatable, Sendable {
 /// collapsed HUD orb. The pi-chat gate stays shared with HUD notifications,
 /// while mute and dismissal remain local to this surface.
 ///
-/// **Artifacts never create or resurrect a session chip.** They attach to a
-/// chip that is independently visible, and otherwise dock to the orb via
-/// `detachedArtifacts`. An unviewed result is still always reachable from the
-/// collapsed HUD — but it can no longer defeat a dismissal or a mute, which is
-/// what used to make a clicked session reappear forever: clicking the chip
-/// routes to the pane, the harness acks it to `.idle`, and the artifact clause
-/// put the chip straight back on the next projection.
+/// Pane outputs stay attached to their owning session, including when its
+/// bubble is folded under +N. Only HUD run outputs belong to the orb.
 enum HerdrHudSessionChips {
     struct Chip: Identifiable, Equatable {
         let id: String
         let title: String
+        let emoji: String
         let status: AgentStatus
         let isMuted: Bool
         let since: Date?
@@ -81,10 +77,12 @@ enum HerdrHudSessionChips {
             artifacts: [AgentResultArtifact] = [],
             voiceNoteID: String? = nil,
             detail: String? = nil,
-            symbol: String? = nil
+            symbol: String? = nil,
+            emoji: String = "💬"
         ) {
             self.id = id
             self.title = title
+            self.emoji = emoji
             self.status = status
             self.isMuted = isMuted
             self.since = since
@@ -153,18 +151,15 @@ enum HerdrHudSessionChips {
         let result = visibleCandidates.enumerated().map { index, pane in
             Chip(
                 id: pane.id,
-                title: revealTitles ? pane.displayTitle : "session \(index + 1)",
+                title: revealTitles ? (pane.sessionTitle ?? pane.displayTitle) : "session \(index + 1)",
                 status: pane.agentStatus,
                 isMuted: mutedPaneIDs.contains(pane.id) && pane.agentStatus == .blocked,
                 since: since(for: pane),
-                artifacts: sortedArtifacts(paneArtifacts[pane.id] ?? [])
+                artifacts: sortedArtifacts(paneArtifacts[pane.id] ?? []),
+                emoji: revealTitles ? (pane.sessionEmoji ?? "💬") : "💬"
             )
         }
-        // Results belonging to a chip folded under `+N` dock to the orb until
-        // that chip is revealed. An unviewed result is therefore always on the
-        // visible HUD, never hidden merely because its session overflowed.
-        let attachedArtifactIDs = Set(visibleCandidates.flatMap { paneArtifacts[$0.id] ?? [] }.map(\.id))
-        let detachedArtifacts = artifacts.filter { !attachedArtifactIDs.contains($0.id) }
+        let detachedArtifacts = artifacts.filter { $0.originType == .agentRun }
         return (
             Array(result),
             max(0, candidates.count - chipLimit),

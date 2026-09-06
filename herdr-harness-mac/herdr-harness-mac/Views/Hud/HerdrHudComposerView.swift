@@ -74,6 +74,18 @@ struct HerdrHudComposerView: View {
                 .accessibilityLabel("Attach file")
                 .accessibilityIdentifier("hud-attach-file")
 
+                Button("Paste Code Block", systemImage: "chevron.left.forwardslash.chevron.right") {
+                    if !ComposerCodeBlockPaste.paste(into: &session.draft) {
+                        session.reportAttachmentError("Copy some text before pasting a code block.")
+                    }
+                    isComposerFocused = true
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(HerdrTheme.mist)
+                .help("Paste clipboard as a fenced code block")
+                .accessibilityIdentifier("hud-code-block-paste")
+
                 if let thread = session.thread {
                     Label("Thread · \(thread.turnCount) turns", systemImage: "link")
                         .herdrFont(.caption2, monospaced: true)
@@ -171,7 +183,7 @@ struct HerdrHudComposerView: View {
     }
 
     private var canSubmit: Bool {
-        !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.isRunning
+        (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.pendingAttachments.isEmpty) && !session.isRunning
     }
 
     private var isVoiceCaptureActive: Bool {

@@ -604,6 +604,31 @@ struct AgentResultArtifactTests {
         #expect(reloaded.unopenedResultArtifacts.isEmpty)
     }
 
+    @Test("Reading a pane clears only that machine's session outputs and retains inline history")
+    func paneReadRetainsResults() throws {
+        let suiteName = "AgentResultArtifactTests.pane-read"
+        let defaults = try testDefaults(suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"], userDefaults: defaults)
+        let pane = try JSONDecoder().decode(HerdrPane.self, from: Data(
+            #"{"pane_id":"p1","workspace_id":"w1","tab_id":"t1","agent_status":"idle"}"#.utf8
+        )).stamped(machineID: "work-mac")
+        let artifact = AgentResultArtifact(
+            id: "result", originType: .pane, originID: "p1", kind: .link,
+            title: "Report", createdAt: "2026-09-06T12:00:00Z", url: URL(string: "https://example.com/report")
+        )
+        model.ingestResultArtifacts([artifact], machineID: "work-mac", replacingMachineSlice: true)
+        model.ingestResultArtifacts([artifact], machineID: "devbox", replacingMachineSlice: true)
+
+        model.acknowledgeUnreadAlerts(for: pane)
+
+        #expect(model.resultArtifacts.count == 2)
+        #expect(model.unopenedResultArtifacts.map(\.machineID) == ["devbox"])
+        #expect(model.resultArtifactPhase(id: "work-mac|result") == .opened)
+        model.ingestResultArtifacts([artifact], machineID: "work-mac", replacingMachineSlice: true)
+        #expect(model.unopenedResultArtifacts.map(\.machineID) == ["devbox"])
+    }
+
     @Test("Client lists and atomically downloads authenticated artifact content")
     func authenticatedClientDownload() async throws {
         ResultArtifactURLProtocol.recorder.reset()

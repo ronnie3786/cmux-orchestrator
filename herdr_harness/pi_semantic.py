@@ -681,6 +681,15 @@ class PiSemanticJournal:
             oldest = int(row["oldest"] or (latest + 1))
             return oldest, latest
 
+    def session_label_checkpoint(self, pane_id: str, *, namespace: str = "") -> Optional[tuple[str, int]]:
+        """Identify label input changes without loading a transcript body."""
+        storage_pane_id = self._storage_pane_id(pane_id, namespace)
+        with self._lock:
+            row = self._database.execute(
+                "SELECT session_id, snapshot_cursor FROM pi_semantic_state WHERE pane_id = ?", (storage_pane_id,),
+            ).fetchone()
+            return (str(row["session_id"] or ""), int(row["snapshot_cursor"] or 0)) if row else None
+
     def capability_state(self, pane_id: str, *, namespace: str = "") -> dict:
         """Read capability scalars without deserializing a large Pi snapshot."""
 
@@ -1123,6 +1132,11 @@ class PiSemanticManager:
             "capabilities": capabilities,
             "generated_at": utc_now(),
         }
+
+    def session_label_checkpoint(self, pane_id: str) -> Optional[tuple[str, int]]:
+        if pane_id not in self._known_pi_panes:
+            return None
+        return self.journal.session_label_checkpoint(pane_id, namespace=self.namespace)
 
     def snapshot_response(self, pane_id: str) -> dict:
         if pane_id not in self._known_pi_panes:

@@ -1754,11 +1754,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 environment = str(body.get("environment") or "sandbox").strip().lower()
                 if environment not in {"sandbox", "production"}:
                     raise HTTPValidationError("environment must be sandbox or production")
+                machine_id = body.get("machineId", "")
+                if not isinstance(machine_id, str) or len(machine_id) > 200:
+                    raise HTTPValidationError("machineId is invalid")
                 try:
                     return service.register_push_device(
                         token,
                         bundle_id=bundle_id,
                         environment=environment,
+                        **({"machine_id": machine_id} if machine_id else {}),
                     )
                 except ValueError as exc:
                     raise HTTPValidationError(str(exc)) from exc

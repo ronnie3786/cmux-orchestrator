@@ -12,6 +12,19 @@ those three affordances are dropped rather than reproduced.
 
 Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party dependencies · macOS 26.
 
+## September Mac improvements
+
+- **Session bubbles:** Pi sessions have a short AI title and emoji in a speech bubble. The harness generates labels from bounded user-prompt text through the configured private model. Until a label is available, the existing session title remains usable.
+- **HUD attachments:** Drop a Finder file or image into the open HUD, or use Attach. Send a file by itself or with a prompt. Sent attachments appear inline and are copied into app storage so their history and retries survive a moved source file or app restart.
+- **Models:** Every shared model menu puts favorites first. Use the current model's star action or Manage Favorites. Short names are consistent while provider identities remain distinct.
+- **Code-block paste:** Use the code-block paste button in either composer to insert clipboard text surrounded by literal backtick fences. Existing clipboard fences are enclosed safely.
+- **Unread results:** Extra sessions in `+N` do not create an unread orb badge. Links and results remain attached to their session bubble. Reading that session clears its result indicators and preserves the inline chat cards.
+- **Prompt history:** Click Prompt History in a pane's header to search, copy, or reuse earlier submissions. Reuse edits the draft; it does not send automatically. The local archive survives restarts and transcript compaction and is scoped to the machine and pane.
+- **Notes:** Unopened notes stay compact. Click a note to edit it, scroll to older notes, or use New note in the header or orb menu. The hover region follows visible content more closely.
+- **Delayed iOS alerts:** The harness waits a minute before pushing an unread agent alert, cancels read or superseded alerts, and retries failed device deliveries without repeating successful ones. Requires configured APNs and the updated harness; see the harness README.
+- **Recording permissions:** Settings identifies this running app, checks access, explicitly requests it, and verifies ScreenCaptureKit access. See [recording permission recovery](RECORDING_PERMISSIONS.md) for the ad-hoc signing diagnosis.
+- **App updates:** Self-updates are deferred until the Mac harness moves into its own repository. This release continues to use the existing Work Mac deployment workflow.
+
 ## What's in the app
 
 - **Sidebar navigator** — workspaces at the top level, panes grouped by tab beneath them, click a

@@ -90,7 +90,11 @@ struct PaneSessionHeader: View {
 
             Spacer(minLength: 8)
 
-            LastPromptPeekButton(message: store.lastUserMessage)
+            PromptHistoryButton(
+                history: model.promptHistory,
+                paneID: pane.id,
+                reuse: { model.setComposerDraft($0, for: pane.id) }
+            )
 
             if showsPiSessionSummary {
                 Button("Summarize", systemImage: "list.bullet.clipboard", action: summarizePiSession)

@@ -26,14 +26,18 @@ struct HerdrHudRootView: View {
         )
     }
 
-    /// What the orb badges: the chips this projection is willing to show that
-    /// actually need attention, plus whatever is folded under `+N`. Counting
-    /// only `needsAttention` chips keeps a `.working` pane driving the orb's
-    /// working state rather than flipping it to attention.
-    private func attentionChipCount(
-        _ state: (chips: [HerdrHudSessionChips.Chip], overflow: Int, detachedArtifacts: [AgentResultArtifact])
-    ) -> Int {
-        state.chips.count(where: { $0.status.needsAttention }) + state.overflow
+    /// Overflow is navigation, not unread attention. Project every session so
+    /// hidden working sessions never create a notification count.
+    private var attentionChipCount: Int {
+        QuickVoiceHudProjection.chips(
+            panes: model.workspaces.flatMap(\.panes),
+            notes: controller.quickVoice?.session.notes ?? [],
+            mutedPaneIDs: model.mutedHudSessionIDs,
+            dismissed: model.dismissedHudChips,
+            revealTitles: false,
+            artifacts: [],
+            showAll: true
+        ).chips.count(where: { $0.status.needsAttention })
     }
 
     /// Recomputed whenever the target pane reports new work, which is the cue
@@ -64,7 +68,7 @@ struct HerdrHudRootView: View {
                             controller: controller,
                             session: session,
                             artifacts: chipState.detachedArtifacts,
-                            attentionChipCount: attentionChipCount(chipState)
+                            attentionChipCount: attentionChipCount
                         )
 
                         if let voice = controller.quickVoice, voice.isExpanded {
@@ -136,8 +140,6 @@ struct HerdrHudRootView: View {
                 isReplyInFlight: voiceReply.paneID != nil
             )
         }
-        .contentShape(Rectangle())
-        .onHover { notes.setHovering($0) }
         .onChange(of: notes.layout, initial: true) { _, _ in controller.notesLayoutDidChange() }
         .background(
             HerdrHudWindowDragHandle(

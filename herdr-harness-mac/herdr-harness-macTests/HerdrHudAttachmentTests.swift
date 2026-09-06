@@ -1,10 +1,56 @@
+import AppKit
 import Foundation
+import UniformTypeIdentifiers
 import Testing
 @testable import herdr_harness_mac
 
 @Suite("Herdr HUD attachments")
 @MainActor
 struct HerdrHudAttachmentTests {
+    @Test("Dropped image data becomes a durable sendable attachment")
+    func imageDataDrop() async throws {
+        let provider = NSItemProvider()
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47])
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+            completion(bytes, nil)
+            return nil
+        }
+        let session = makeSession()
+        #expect(session.acceptAttachmentDrop([provider]))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while session.pendingAttachments.isEmpty && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let attachment = try #require(session.pendingAttachments.first)
+        #expect(attachment.isImage)
+        #expect(try Data(contentsOf: attachment.url) == bytes)
+        session.removeAttachment(attachment.id)
+        #expect(!FileManager.default.fileExists(atPath: attachment.url.path))
+    }
+
+    @Test("Attachment-only sends retain inline files after the source is removed and history restored")
+    func attachmentOnlySubmissionRetainsInlineFile() async throws {
+        let source = temporaryURL(named: "notes.txt")
+        let bytes = Data("Keep this attachment".utf8)
+        try bytes.write(to: source)
+        let session = makeSession()
+        session.addAttachments([source])
+        let attachment = try #require(session.pendingAttachments.first)
+        try FileManager.default.removeItem(at: source)
+        await session.submit(model: makeDemoModel())
+        let exchange = try #require(session.exchanges.last)
+        #expect(exchange.status == .completed)
+        #expect(exchange.localAttachments == [attachment])
+        #expect(exchange.attachments.isEmpty)
+        #expect(try Data(contentsOf: attachment.url) == bytes)
+
+        let snapshot = HerdrHudPersistenceSnapshot(thread: session.thread, exchanges: session.exchanges)
+        let restored = try JSONDecoder().decode(HerdrHudPersistenceSnapshot.self, from: JSONEncoder().encode(snapshot))
+        #expect(restored.restoredValues().exchanges.last?.localAttachments == [attachment])
+        await session.clear(model: makeDemoModel())
+        #expect(!FileManager.default.fileExists(atPath: attachment.url.path))
+    }
+
     @Test("Allowed files are accepted and image classification is retained")
     func allowedFilesAreAcceptedAndClassified() throws {
         let textURL = temporaryURL(named: "notes.txt")

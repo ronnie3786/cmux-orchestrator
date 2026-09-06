@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Keeps the HUD's always-mounted orb informative without pinning SwiftUI's
 /// display link at animation rate. The timeline cadence is deliberately capped
@@ -79,13 +80,13 @@ struct HerdrHudOrbView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { controller.summon() }
             .onHover { isHovered = $0 }
-            .dropDestination(for: URL.self) { urls, _ in
-                guard !urls.isEmpty else { return false }
-                session.addAttachments(urls)
-                controller.summon()
-                return true
-            } isTargeted: { targeted in
-                isDropTargeted = targeted
+            .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+                let accepted = session.acceptAttachmentDrop(providers)
+                if accepted { controller.summon() }
+                return accepted
+            }
+            .contextMenu {
+                Button("New note", systemImage: "note.text.badge.plus", action: controller.createNote)
             }
             .accessibilityIdentifier("hud-orb")
             .accessibilityLabel("Herdr HUD")
@@ -148,7 +149,7 @@ struct HerdrHudOrbView: View {
             .frame(width: orbSize, height: orbSize)
             .scaleEffect(isHovered ? 1.06 : 1)
             .brightness(isHovered ? 0.04 : 0)
-            .animation(.snappy(duration: 0.15), value: isHovered)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: isHovered)
             .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: isDropTargeted)
         }
     }

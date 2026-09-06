@@ -9,27 +9,39 @@ import SwiftUI
 struct HerdrNoteCompactStackView: View {
     let notes: HerdrHudNotesState
     let count: Int
+    var openNote: (UUID) -> Void = { _ in }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: HerdrHudPlacement.noteCompactBarSpacing) {
-            ForEach(Array(notes.notes.prefix(min(count, HerdrHudPlacement.maxCompactNotes)))) { note in
-                Text(note.displayTitle)
-                    .herdrFont(.caption2, weight: .semibold)
-                    .foregroundStyle(note.color.ink)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.horizontal, 9)
-                    .frame(
-                        width: HerdrHudPlacement.noteCompactWidth,
-                        height: HerdrHudPlacement.noteCompactBarHeight,
-                        alignment: .leading
-                    )
-                    .background(note.color.fill, in: .capsule)
-                    .shadow(color: HerdrTheme.ink.opacity(0.3), radius: 2, y: 1)
-                    .accessibilityLabel(note.displayTitle)
+        ScrollView(.vertical) {
+            VStack(alignment: .trailing, spacing: HerdrHudPlacement.noteCompactBarSpacing) {
+                ForEach(notes.notes) { note in
+                    Button { openNote(note.id) } label: {
+                        Text(note.displayTitle)
+                        .herdrFont(.caption2, weight: .semibold)
+                        .foregroundStyle(note.color.ink)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.horizontal, 9)
+                        .frame(
+                            width: HerdrHudPlacement.noteCompactWidth,
+                            height: HerdrHudPlacement.noteCompactBarHeight,
+                            alignment: .leading
+                        )
+                        .background(note.color.fill, in: .capsule)
+                        .shadow(color: HerdrTheme.ink.opacity(0.3), radius: 2, y: 1)
+                        .contentShape(.capsule)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open note: \(note.displayTitle)")
+                    .accessibilityIdentifier("hud-note-compact-\(note.id)")
+                }
             }
         }
-        .allowsHitTesting(false)
+        .scrollIndicators(.hidden)
+        .frame(
+            width: HerdrHudPlacement.noteCompactWidth,
+            height: HerdrHudPlacement.notesContentSize(.compact(count: count), isExpanded: false).height
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(count) notes")
     }

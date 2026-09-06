@@ -10,6 +10,7 @@ safe, no-op delivery layer while device registration still persists locally.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -186,7 +187,7 @@ class APNsManager:
                 except OSError:
                     pass
 
-    def register(self, device_token: str, *, bundle_id: str = "", environment: str = "") -> dict:
+    def register(self, device_token: str, *, bundle_id: str = "", environment: str = "", machine_id: str = "") -> dict:
         token = _normalize_token(device_token)
         bundle = str(bundle_id or "").strip()
         if bundle and not _BUNDLE_RE.fullmatch(bundle):
@@ -198,6 +199,7 @@ class APNsManager:
                 "token": token,
                 "bundleId": bundle,
                 "environment": selected_environment,
+                "machineId": str(machine_id).strip()[:200],
                 "updatedAt": utc_now(),
             }
             self._write(payload)
@@ -442,12 +444,18 @@ class APNsManager:
         ]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return False, f"APNs send failed: {exc}"
+        except (OSError, subprocess.TimeoutExpired):
+            return False, "APNs send failed or timed out"
         response_body, _, status_text = (result.stdout or "").rpartition("\n")
         if result.returncode == 0 and status_text.isdigit() and 200 <= int(status_text) < 300:
             return True, ""
-        reason = response_body.strip() or (result.stderr or "").strip() or f"HTTP {status_text or result.returncode}"
+        try:
+            response = json.loads(response_body)
+            reason = response.get("reason") if isinstance(response, dict) else None
+        except (ValueError, TypeError):
+            reason = None
+        if not isinstance(reason, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,79}", reason):
+            reason = f"HTTP {status_text}" if status_text.isdigit() else "transport error"
         return False, f"APNs rejected ...{token[-8:]}: {reason}"
 
     def _send_live_activity(
@@ -541,10 +549,17 @@ class APNsManager:
             reason=apns_reason,
         )
 
-    def notify_alert(self, alert: dict, *, unread_count: int = 1) -> dict:
+    def notify_alert(self, alert: dict, *, unread_count: int = 1,
+                     excluding_device_ids: Optional[set[str]] = None,
+                     should_deliver: Optional[Callable[[], bool]] = None) -> dict:
         devices = self._devices()
         if not devices:
             return {"configured": self.configuration()["configured"], "sent": 0, "errors": ["no registered devices"]}
+        excluded = excluding_device_ids or set()
+        deliveries = [(self._alert_device_id(device), device) for device in devices]
+        deliveries = [(key, device) for key, device in deliveries if key not in excluded]
+        if not deliveries:
+            return {"configured": self.configuration()["configured"], "sent": 0, "errors": [], "complete": True}
         bearer, error = self._auth_token()
         if not bearer:
             return {"configured": False, "sent": 0, "errors": [error or "APNs is not configured"]}
@@ -569,13 +584,31 @@ class APNsManager:
         }
         sent = 0
         errors = []
-        for device in devices:
-            success, send_error = self._send(device, payload, bearer, alert_id)
+        delivered_ids = []
+        cancelled = False
+        for device_id, device in deliveries:
+            # Recheck after signing and between devices so opening the session
+            # during a slow delivery cancels the remaining sends.
+            if should_deliver is not None and not should_deliver():
+                cancelled = True
+                break
+            device_payload = dict(payload)
+            if device.get("machineId"):
+                device_payload["machine_id"] = device["machineId"]
+            success, send_error = self._send(device, device_payload, bearer, alert_id)
             if success:
                 sent += 1
+                delivered_ids.append(device_id)
             elif send_error:
                 errors.append(send_error)
-        return {"configured": True, "sent": sent, "errors": errors}
+        return {"configured": True, "sent": sent, "errors": errors,
+                "deliveredDeviceIds": delivered_ids, "complete": len(delivered_ids) == len(deliveries), "cancelled": cancelled}
+
+    def _alert_device_id(self, device: dict) -> str:
+        """Persist delivery receipts without copying APNs tokens to the alert journal."""
+        values = [device.get("token"), self.environ.get("HERDR_APNS_TOPIC") or device.get("bundleId"),
+                  self.environ.get("HERDR_APNS_ENV") or device.get("environment")]
+        return hashlib.sha256(json.dumps(values).encode("utf-8")).hexdigest()
 
     def notify_alert_async(
         self,

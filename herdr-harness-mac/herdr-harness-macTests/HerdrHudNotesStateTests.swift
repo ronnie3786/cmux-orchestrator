@@ -56,10 +56,10 @@ struct HerdrHudNotesStateTests {
         #expect(harness.state.layout == .card)
         harness.state.isHudExpanded = true
         harness.state.closeNote()
-        #expect(harness.state.layout == .rows(count: 1))
+        #expect(harness.state.layout == .compact(count: 1))
     }
 
-    @Test("Hover and expansion select rows while rest uses compact notes")
+    @Test("Hover and HUD expansion keep unopened notes compact")
     func hoverAndExpansionLayouts() async throws {
         let harness = await makeHarness()
         let id = harness.state.createNote()
@@ -67,14 +67,18 @@ struct HerdrHudNotesStateTests {
         #expect(harness.state.layout == .compact(count: 1))
         harness.state.setHovering(true)
         try await Task.sleep(for: .milliseconds(20))
-        #expect(harness.state.layout == .rows(count: 1))
+        #expect(harness.state.layout == .compact(count: 1))
         harness.state.setHovering(false)
         try await Task.sleep(for: .milliseconds(20))
         #expect(harness.state.layout == .compact(count: 1))
         harness.state.isHudExpanded = true
-        #expect(harness.state.layout == .rows(count: 1))
+        #expect(harness.state.layout == .compact(count: 1))
+        harness.state.openNote(id)
+        #expect(harness.state.layout == .card)
+        harness.state.closeNote()
+        #expect(harness.state.layout == .compact(count: 1))
         harness.state.deleteNote(id)
-        #expect(harness.state.layout == .rows(count: 0))
+        #expect(harness.state.layout == .hidden)
     }
 
     @Test("Edits, undo, and deletion preserve note invariants")

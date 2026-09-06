@@ -197,6 +197,11 @@ class FakePush:
         self.alerts.append((copy.deepcopy(alert), unread_count))
         return True
 
+    def notify_alert(self, alert, *, unread_count, excluding_device_ids=None, should_deliver=None):
+        if should_deliver is None or should_deliver():
+            self.alerts.append((copy.deepcopy(alert), unread_count))
+        return {"configured": True, "sent": 1, "errors": [], "complete": True}
+
     def configuration(self):
         return {"configured": False, "deviceCount": 0}
 
@@ -2191,7 +2196,7 @@ class HerdrServiceTests(unittest.TestCase):
         self.assertEqual(context.exception.status, 413)
         self.assertEqual(context.exception.code, "attachment_too_large")
 
-    def test_alert_transition_queues_optional_push_without_blocking(self):
+    def test_alert_transition_waits_one_minute_before_optional_push(self):
         client = FakeClient([snapshot_with_status("working"), snapshot_with_status("blocked")])
         push = FakePush()
         service = HerdrService(client, environ={}, push=push)
@@ -2199,9 +2204,36 @@ class HerdrServiceTests(unittest.TestCase):
         service.refresh_snapshot()
         service.refresh_snapshot()
 
+        self.assertEqual(push.alerts, [])
+        service.unread_notifications.clock = lambda: time.time() + 61
+        service.unread_notifications.process_due()
+
         self.assertEqual(len(push.alerts), 1)
         self.assertEqual(push.alerts[0][0]["status"], "blocked")
         self.assertEqual(push.alerts[0][1], 1)
+
+        service.unread_notifications.process_due()
+        self.assertEqual(len(push.alerts), 1)
+
+    def test_session_labels_skip_unchanged_transcript_reads_but_observe_new_prompts(self):
+        semantic = Mock()
+        semantic.session_label_checkpoint.return_value = ("session-one", 10)
+        semantic.snapshot_response.return_value = {"session": {"id": "session-one"}, "entries": []}
+        service = HerdrService(FakeClient([snapshot_with_status("working")]), environ={},
+                               pi_semantic=semantic, push=FakePush())
+        service.refresh_snapshot()
+        service.refresh_snapshot()
+        self.assertEqual(semantic.snapshot_response.call_count, 1)
+        semantic.session_label_checkpoint.return_value = ("session-one", 20)
+        service.refresh_snapshot()
+        self.assertEqual(semantic.snapshot_response.call_count, 2)
+        service._dispatch_pi_event({"pane_id": "w1:p1", "session_id": "session-one", "event": {
+            "type": "message_start", "message": {"role": "user", "content": "Fix notification delays"},
+        }})
+        self.assertEqual(semantic.snapshot_response.call_count, 3)
+        service.refresh_snapshot()
+        self.assertEqual(semantic.snapshot_response.call_count, 3)
+        self.assertIn("Fix notification delays", service.session_labels._pending["w1:p1"][2])
 
     def test_alert_store_persists_journal_read_state_and_transition_baseline(self):
         with tempfile.TemporaryDirectory() as temp_dir:

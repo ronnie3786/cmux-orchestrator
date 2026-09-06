@@ -103,6 +103,12 @@ struct PaneSessionView: View {
             }
         )
         .navigationTitle(currentPane.displayTitle)
+        .onChange(of: piConversationStore.userMessages, initial: true) { _, messages in
+            model.promptHistory.merge(
+                messages,
+                paneID: pane.id
+            )
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 PaneActionsMenu(

@@ -3,14 +3,13 @@ import Observation
 
 struct ModelFavorites: Equatable, Sendable {
     private(set) var ids: [String]
-    static let capacity = 12
 
     init(ids: [String] = []) {
         var uniqueIDs: [String] = []
         for id in ids where !id.isEmpty && !uniqueIDs.contains(id) {
             uniqueIDs.append(id)
         }
-        self.ids = Array(uniqueIDs.suffix(Self.capacity))
+        self.ids = uniqueIDs
     }
 
     func contains(_ id: String) -> Bool {
@@ -58,6 +57,6 @@ final class ModelFavoritesStore {
         for model in models where modelsByID[model.id] == nil {
             modelsByID[model.id] = model
         }
-        return favorites.compactMap { modelsByID[$0] }
+        return ModelFavorites(ids: favorites).ids.compactMap { modelsByID[$0] }
     }
 }

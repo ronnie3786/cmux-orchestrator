@@ -26,6 +26,14 @@ struct PiModelDisplayNameTests {
         }
     }
 
+    @Test("Provider marketing labels and namespace prefixes use the same short name")
+    func canonicalLabels() {
+        #expect(PiModelDisplayName.short(provider: "anthropic", modelID: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5 (latest, thinking)") == "Claude Sonnet 4.5")
+        #expect(PiModelDisplayName.short(provider: "openrouter", modelID: "anthropic/claude-sonnet-4-5", name: "Anthropic: Claude Sonnet 4.5") == "Claude Sonnet 4.5")
+        #expect(PiModelDisplayName.short(provider: "openai", modelID: "gpt-5.4-2026-03-05", name: nil) == "GPT-5.4")
+        #expect(PiModelDisplayName.short(fullID: "openai-codex/gpt-5.6-sol") == "GPT-5.6 Sol")
+    }
+
     @Test("Handles edge cases")
     func edgeCases() {
         #expect(PiModelDisplayName.short(provider: "anthropic", modelID: "20250929", name: nil) == "20250929")

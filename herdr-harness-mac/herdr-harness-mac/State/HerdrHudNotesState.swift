@@ -520,8 +520,6 @@ final class HerdrHudNotesState {
         let next: Layout
         if let openNoteID, notes.contains(where: { $0.id == openNoteID }) {
             next = .card
-        } else if isHovering || isHudExpanded {
-            next = .rows(count: notes.count)
         } else if notes.isEmpty {
             next = .hidden
         } else {

@@ -48,7 +48,7 @@ struct HerdrHudModelChip: View {
 
     private var selectedDisplayName: String {
         guard let currentSelectionID else { return "Default" }
-        return availableModels.first(where: { $0.id == currentSelectionID })?.displayName ?? currentSelectionID
+        return availableModels.first(where: { $0.id == currentSelectionID })?.displayName ?? PiModelDisplayName.short(fullID: currentSelectionID)
     }
 
     private var chipLabel: some View {

@@ -25,6 +25,7 @@ struct ComposerAuxiliaryBar: View {
     let beginVoiceHold: () -> Void
     let endVoiceHold: () -> Void
     let finishLockedVoiceCapture: () -> Void
+    var pasteCodeBlock: () -> Void = { }
     /// `nil` lets the bar pick its own fit. The composer's tool row sets it
     /// explicitly, because the fit has to be decided for the whole row — keys
     /// included — not for these four buttons in isolation.
@@ -72,6 +73,16 @@ struct ComposerAuxiliaryBar: View {
                 showsTitle: showsTitles,
                 action: attach
             )
+            auxiliaryButton(
+                identity: "code-block-paste",
+                title: "paste code",
+                systemImage: "chevron.left.forwardslash.chevron.right",
+                accessibilityLabel: "Paste Code Block",
+                help: "Paste clipboard text inside a Markdown code block",
+                showsTitle: showsTitles,
+                action: pasteCodeBlock
+            )
+            .accessibilityIdentifier("composer-code-block-paste")
             voiceButton(showsTitle: showsTitles)
             auxiliaryButton(
                 identity: "file",

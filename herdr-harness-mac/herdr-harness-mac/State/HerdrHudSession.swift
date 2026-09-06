@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-struct HerdrHudAttachment: Identifiable, Equatable, Sendable {
+struct HerdrHudAttachment: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     let url: URL
     let filename: String
@@ -31,6 +31,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     var promotedPaneID: String?
     let attachmentFilenames: [String]
     var attachments: [HeadlessAgentAttachment] = []
+    var localAttachments: [HerdrHudAttachment] = []
     var modelLabel: String = "default"
     var steps: [HerdrHudStep] = []
     var stepsTruncated = false
@@ -53,6 +54,7 @@ final class HerdrHudSession {
 
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
+    private let attachmentDirectory: URL
     @ObservationIgnored private let agentSettings: AgentModelSettingsStore
     @ObservationIgnored private let promptSettings: HerdrPromptSettingsStore
     @ObservationIgnored let modelFavorites: ModelFavoritesStore
@@ -130,6 +132,8 @@ final class HerdrHudSession {
         modelFavorites: ModelFavoritesStore? = nil
     ) {
         self.userDefaults = userDefaults
+        let storeURL = persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
+        self.attachmentDirectory = storeURL.deletingPathExtension().appendingPathExtension("attachments")
         self.agentSettings = agentSettings ?? AgentModelSettingsStore(defaults: userDefaults)
         self.promptSettings = promptSettings ?? HerdrPromptSettingsStore(defaults: userDefaults)
         self.modelFavorites = modelFavorites ?? ModelFavoritesStore(userDefaults: userDefaults)
@@ -157,6 +161,7 @@ final class HerdrHudSession {
     }
 
     func addAttachments(_ urls: [URL]) {
+        validationError = nil
         for url in urls {
             guard pendingAttachments.count < Self.maxAttachments else {
                 validationError = "You can attach up to 4 files."
@@ -190,10 +195,15 @@ final class HerdrHudSession {
                     validationError = "Attachments can total up to 21 MB per message."
                     continue
                 }
+                let attachmentID = UUID()
+                let directory = attachmentDirectory.appendingPathComponent(attachmentID.uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let retainedURL = directory.appendingPathComponent(url.lastPathComponent)
+                try FileManager.default.copyItem(at: url, to: retainedURL)
                 pendingAttachments.append(
                     HerdrHudAttachment(
-                        id: UUID(),
-                        url: url,
+                        id: attachmentID,
+                        url: retainedURL,
                         filename: url.lastPathComponent,
                         byteCount: fileSize,
                         isImage: HerdrAttachmentTypes.isImage(url)
@@ -207,6 +217,7 @@ final class HerdrHudSession {
 
     func removeAttachment(_ id: UUID) {
         pendingAttachments.removeAll { $0.id == id }
+        pruneStoredAttachments()
     }
 
     func reportAttachmentError(_ message: String) {
@@ -243,8 +254,9 @@ final class HerdrHudSession {
         promoteErrorMessage = nil
         audioErrorMessage = nil
 
-        let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !controller.isRunning else { return }
+        let enteredPrompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !enteredPrompt.isEmpty || !pendingAttachments.isEmpty, !controller.isRunning else { return }
+        let prompt = enteredPrompt.isEmpty ? "Please review the attached files." : enteredPrompt
         guard let machineID = resolvedMachineID(in: model) else {
             validationError = "No machine is available for the HUD."
             return
@@ -295,6 +307,7 @@ final class HerdrHudSession {
                 createdAt: submittedAt,
                 promotedPaneID: nil,
                 attachmentFilenames: attachmentFilenames,
+                localAttachments: attachmentsToSend,
                 modelLabel: label
             )
         )
@@ -360,6 +373,7 @@ final class HerdrHudSession {
                 promotedPaneID: nil,
                 attachmentFilenames: attachmentFilenames,
                 attachments: wireAttachments,
+                localAttachments: attachmentsToSend,
                 modelLabel: label
             )
             markExchangesChanged()
@@ -389,6 +403,7 @@ final class HerdrHudSession {
             promotedPaneID: run.promotedPaneID,
             attachmentFilenames: attachmentFilenames,
             attachments: retainedAttachments,
+            localAttachments: attachmentsToSend,
             modelLabel: label,
             steps: Self.hudSteps(from: run.steps ?? []),
             stepsTruncated: run.stepsTruncated == true
@@ -643,8 +658,25 @@ final class HerdrHudSession {
         validationError = nil
         promoteErrorMessage = nil
         audioErrorMessage = nil
-        let hasAttachments = !exchange.attachments.isEmpty
-        let hasImageAttachments = exchange.attachments.contains {
+        let retryAttachments: [HeadlessAgentAttachment]
+        do {
+            if !exchange.attachments.isEmpty {
+                retryAttachments = exchange.attachments
+            } else {
+                let files = exchange.localAttachments
+                retryAttachments = try await Task.detached(priority: .userInitiated) {
+                    try files.map { attachment in
+                        let data = try Data(contentsOf: attachment.url)
+                        return HeadlessAgentAttachment(filename: attachment.filename, dataBase64: data.base64EncodedString())
+                    }
+                }.value
+            }
+        } catch {
+            validationError = "Couldn't read the saved attachments: \(error.localizedDescription)"
+            return
+        }
+        let hasAttachments = !retryAttachments.isEmpty
+        let hasImageAttachments = retryAttachments.contains {
             HerdrAttachmentTypes.isImage(URL(fileURLWithPath: $0.filename))
         }
         let resolution = AgentModelResolver.resolve(
@@ -668,7 +700,7 @@ final class HerdrHudSession {
             machineID: exchange.machineID,
             agentModel: agentModel,
             thinkingLevel: thinkingLevel,
-            attachments: hasAttachments ? exchange.attachments : nil,
+            attachments: hasAttachments ? retryAttachments : nil,
             model: model
         ) else {
             validationError = controller.errorMessage
@@ -679,7 +711,7 @@ final class HerdrHudSession {
         lastHeadlessRunForTesting = run
         #endif
         let isSuccess = run.status == .completed || run.status == .promoted
-        let retainedAttachments = isSuccess ? [] : exchange.attachments
+        let retainedAttachments = isSuccess ? [] : retryAttachments
         append(
             HerdrHudExchange(
                 id: run.id,
@@ -694,6 +726,7 @@ final class HerdrHudSession {
                 promotedPaneID: run.promotedPaneID,
                 attachmentFilenames: exchange.attachmentFilenames,
                 attachments: retainedAttachments,
+                localAttachments: exchange.localAttachments,
                 modelLabel: label,
                 steps: Self.hudSteps(from: run.steps ?? []),
                 stepsTruncated: run.stepsTruncated == true
@@ -719,6 +752,7 @@ final class HerdrHudSession {
         markExchangesChanged()
         thread = nil
         await persistence.remove()
+        pruneStoredAttachments()
     }
 
     private func resolvedMachineID(in model: HerdrAppModel) -> String? {
@@ -746,12 +780,13 @@ final class HerdrHudSession {
 
     private func modelLabel(for requestedModel: String?) -> String {
         guard let requestedModel else { return defaultModel?.displayName ?? "default" }
-        return availableModels.first(where: { $0.id == requestedModel })?.displayName ?? requestedModel
+        return availableModels.first(where: { $0.id == requestedModel })?.displayName ?? PiModelDisplayName.short(fullID: requestedModel)
     }
 
     private func append(_ exchange: HerdrHudExchange) {
         exchanges.append(exchange)
         trimExceedingCap()
+        pruneStoredAttachments()
         markExchangesChanged()
     }
 
@@ -769,6 +804,18 @@ final class HerdrHudSession {
         }
     }
 
+    /// Attachment bytes follow the same retention policy as the transcript.
+    private func pruneStoredAttachments() {
+        let retained = Set((pendingAttachments + exchanges.flatMap(\.localAttachments)).map { $0.id.uuidString })
+        guard let directories = try? FileManager.default.contentsOfDirectory(
+            at: attachmentDirectory, includingPropertiesForKeys: nil
+        ) else { return }
+        for directory in directories where UUID(uuidString: directory.lastPathComponent) != nil
+            && !retained.contains(directory.lastPathComponent) {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
     private func markExchangesChanged() {
         let latestPromotableExchangeID = exchanges.last(where: { $0.status == .completed })?.id
         if latestPromotableExchangeID != self.latestPromotableExchangeID {
@@ -782,6 +829,7 @@ final class HerdrHudSession {
         let restored = snapshot.restoredValues()
         exchanges = restored.exchanges
         thread = restored.thread
+        pruneStoredAttachments()
         markExchangesChanged()
     }
 

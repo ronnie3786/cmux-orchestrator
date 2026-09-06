@@ -3,6 +3,8 @@ import SwiftUI
 struct PiChatTimelineView: View {
     @Bindable var store: PiConversationStore
     let isConnected: Bool
+    let resultArtifacts: [AgentResultArtifact]
+    let artifactModel: HerdrAppModel?
     let respond: (PiPendingInteraction, PiInteractionResponseBody) async -> Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
@@ -20,10 +22,14 @@ struct PiChatTimelineView: View {
     init(
         store: PiConversationStore,
         isConnected: Bool,
+        resultArtifacts: [AgentResultArtifact] = [],
+        artifactModel: HerdrAppModel? = nil,
         respond: @escaping (PiPendingInteraction, PiInteractionResponseBody) async -> Bool
     ) {
         self.store = store
         self.isConnected = isConnected
+        self.resultArtifacts = resultArtifacts
+        self.artifactModel = artifactModel
         self.respond = respond
     }
 
@@ -81,6 +87,18 @@ struct PiChatTimelineView: View {
                         }
                         .padding(.top, HerdrProse.turnSpacing)
                         .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
+                    }
+
+                    if let artifactModel, !resultArtifacts.isEmpty {
+                        Label("Session attachments", systemImage: "paperclip")
+                            .herdrFont(.caption, weight: .semibold)
+                            .foregroundStyle(HerdrTheme.mist)
+                            .padding(.top, HerdrProse.turnSpacing)
+                            .padding(.bottom, 8)
+                        ForEach(resultArtifacts) { artifact in
+                            PaneResultArtifactView(model: artifactModel, artifact: artifact)
+                                .padding(.bottom, 8)
+                        }
                     }
 
                 }
@@ -159,6 +177,9 @@ struct PiChatTimelineView: View {
                     isNearBottom: isNearBottom,
                     reduceMotion: reduceMotion
                 )
+            }
+            .onChange(of: resultArtifacts.map(\.id)) { _, _ in
+                if isNearBottom { scrollPosition.scrollTo(edge: .bottom) }
             }
 
             Group {

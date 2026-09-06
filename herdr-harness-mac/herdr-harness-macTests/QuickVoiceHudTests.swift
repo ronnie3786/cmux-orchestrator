@@ -27,6 +27,23 @@ struct QuickVoiceHudTests {
         #expect(result.chips.first?.detail == "Running")
     }
 
+    @Test("An AI session title replaces the voice request title and respects privacy")
+    func aiTitleOverridesVoiceRequest() throws {
+        let pane = try makePane(status: "working", sessionTitle: "Slack inbox cleanup", sessionEmoji: "📬")
+        let note = makeNote(statuses: ["running"])
+        let result = project(notes: [note], panes: [pane])
+        #expect(result.chips.first?.title == "Slack inbox cleanup")
+        #expect(result.chips.first?.emoji == "📬")
+        #expect(project(notes: [note], panes: [pane], revealTitles: false).chips.first?.title == "Voice agent 1")
+    }
+
+    @Test("An empty AI title preserves the useful voice request title")
+    func emptyAITitlePreservesVoiceRequest() throws {
+        let pane = try makePane(status: "working", sessionTitle: "  ")
+        let result = project(notes: [makeNote(statuses: ["running"])], panes: [pane])
+        #expect(result.chips.first?.title == "Check Slack notifications")
+    }
+
     @Test("Voice history respects dismissal and does not bring back idle or vanished panes")
     func respectsHistoryAndDismissal() throws {
         let done = try makePane(status: "done")
@@ -134,8 +151,10 @@ struct QuickVoiceHudTests {
         return .init(machineID: "demo1", job: job)
     }
 
-    private func makePane(status: String) throws -> HerdrPane {
-        let payload: [String: Any] = ["pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "t1", "agent_status": status, "pi_semantic": ["available": true, "protocol_version": 1]]
+    private func makePane(status: String, sessionTitle: String? = nil, sessionEmoji: String? = nil) throws -> HerdrPane {
+        var payload: [String: Any] = ["pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "t1", "agent_status": status, "pi_semantic": ["available": true, "protocol_version": 1]]
+        payload["session_title"] = sessionTitle
+        payload["session_emoji"] = sessionEmoji
         return try JSONDecoder().decode(HerdrPane.self, from: JSONSerialization.data(withJSONObject: payload)).stamped(machineID: "demo1")
     }
 

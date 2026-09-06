@@ -31,8 +31,10 @@ from .panes_seen import PaneFirstSeenStore
 from .push_notifications import APNsManager
 from .quick_voice import QuickVoiceManager
 from .remote_activity import RemoteActivityPoller
+from .session_labels import SessionLabelManager, session_prompt_context
 from .stars import StarStore
 from .terminal import TerminalObserver, TerminalObserverError
+from .unread_notifications import UnreadNotificationManager
 from .workflows import parse_workflow_config
 
 
@@ -140,12 +142,28 @@ class HerdrService:
         self._result_artifact_store = result_artifact_store
         self._result_artifact_store_lock = threading.Lock()
         self.push = push or APNsManager(environ=self.environ)
+        self.unread_notifications = UnreadNotificationManager(
+            self.alerts, self.push,
+            callback=lambda result: self.broker.publish("push.delivery", result),
+        )
         self.pi_semantic = pi_semantic or PiSemanticManager(
             self.client.socket_path,
             environ=None if production_environment else self.environ,
             on_event=self._dispatch_pi_event,
         )
         self.response_audio = response_audio_service or response_audio.ResponseAudioService(self.environ)
+        label_store = self.environ.get("HERDR_HARNESS_SESSION_LABEL_STORE_PATH")
+        if not label_store and (production_environment or self.environ.get("HOME")):
+            label_store = str(Path(self.environ.get("HOME") or Path.home()) / ".config" / "herdr-harness" / "session-labels.json")
+        self.session_labels = SessionLabelManager(
+            self.response_audio.generate_text, namespace=self.client.socket_path,
+            store_path=Path(label_store).expanduser() if label_store else None,
+            callback=lambda pane_id: self.broker.publish("snapshot.updated", {
+                "paneId": pane_id, "change": "session_label", "generatedAt": utc_now(),
+            }),
+        )
+        self._label_observation_lock = threading.Lock()
+        self._label_observed_checkpoints: dict[str, tuple[str, int]] = {}
         self.cleanup = cleanup or CleanupManager(self, environ=self.environ)
         active_work_store_path = self.environ.get("HERDR_HARNESS_ACTIVE_WORK_STORE_PATH")
         if not active_work_store_path:
@@ -433,10 +451,14 @@ class HerdrService:
         )
         self._event_thread.start()
         self._refresh_thread.start()
+        self.unread_notifications.start()
+        self.session_labels.start()
         if self._quick_voice_recovery_enabled:
             self.quick_voice.recover()
 
     def stop(self) -> None:
+        self.unread_notifications.stop()
+        self.session_labels.stop()
         if self._quick_voice is not None:
             self._quick_voice.stop()
         self._stop_event.set()
@@ -482,9 +504,33 @@ class HerdrService:
 
     def _dispatch_pi_event(self, envelope: dict) -> None:
         self._publish_pi_event(envelope)
+        event = envelope.get("event") if isinstance(envelope, dict) else None
+        message = event.get("message") if isinstance(event, dict) else None
+        is_user_message = isinstance(message, dict) and message.get("role") == "user"
+        if isinstance(event, dict) and (event.get("type") in GLOBAL_PI_EVENT_TYPES or (event.get("type") == "message_start" and is_user_message)):
+            message = event.get("message")
+            live_prompt = session_prompt_context({"entries": [{"message": message}]}) if isinstance(message, dict) else None
+            self._observe_session_label(str(envelope.get("pane_id") or ""), live_prompt=live_prompt,
+                                        session_id=envelope.get("session_id"), force=True)
         try:
             self.agent_activity.handle_event(envelope)
         except Exception:
+            pass
+
+    def _observe_session_label(self, pane_id: str, *, live_prompt: Optional[str] = None,
+                               session_id: Optional[str] = None, force: bool = False) -> None:
+        if not pane_id:
+            return
+        try:
+            with self._label_observation_lock:
+                checkpoint = self.pi_semantic.session_label_checkpoint(pane_id)
+                if not force and (checkpoint is None or self._label_observed_checkpoints.get(pane_id) == checkpoint):
+                    return
+                self.session_labels.observe(pane_id, self.pi_semantic.snapshot_response(pane_id),
+                                            live_prompt=live_prompt, session_id=session_id)
+                if checkpoint is not None:
+                    self._label_observed_checkpoints[pane_id] = checkpoint
+        except (PiSemanticError, AttributeError):
             pass
 
     def _publish_pi_event(self, envelope: dict) -> None:
@@ -535,6 +581,12 @@ class HerdrService:
             if self._events_connected:
                 self._last_error = None
         self.pi_semantic.sync_snapshot(snapshot)
+        for pane_id in current_pane_ids:
+            self._observe_session_label(pane_id)
+        self.session_labels.prune(current_pane_ids)
+        with self._label_observation_lock:
+            for pane_id in set(self._label_observed_checkpoints) - current_pane_ids:
+                self._label_observed_checkpoints.pop(pane_id, None)
         if had_snapshot and previous_pane_ids != current_pane_ids:
             # Rebuild pane-specific status subscriptions only after the cache
             # contains the new topology.
@@ -663,9 +715,13 @@ class HerdrService:
 
     def snapshot_response(self) -> dict:
         snapshot, generated_at = self._cached_snapshot()
+        enriched = self.pi_semantic.enrich_snapshot(snapshot)
+        for pane in enriched.get("panes", []):
+            if isinstance(pane, dict):
+                pane.update(self.session_labels.label_for(str(pane.get("pane_id") or "")))
         return {
             "ok": True,
-            "snapshot": self.pi_semantic.enrich_snapshot(snapshot),
+            "snapshot": enriched,
             "generatedAt": generated_at,
         }
 
@@ -684,6 +740,7 @@ class HerdrService:
                 if not isinstance(pane, dict):
                     continue
                 pane_id = str(pane.get("pane_id"))
+                pane.update(self.session_labels.label_for(pane_id))
                 if pane.get("agent_status") == "done" and pane_id in acked_done_panes:
                     pane["agent_status"] = "idle"
                 lifecycle = lifecycle_by_pane.get(pane_id)
@@ -2741,17 +2798,13 @@ class HerdrService:
 
     def _publish_alert(self, alert: dict) -> None:
         self.broker.publish("alert.created", alert)
-        self.push.notify_alert_async(
-            alert,
-            unread_count=self.alerts.unread_count(),
-            callback=lambda result: self.broker.publish("push.delivery", result),
-        )
 
     def push_status(self) -> dict:
         return {"ok": True, "apns": self.push.configuration(), "generatedAt": utc_now()}
 
-    def register_push_device(self, device_token: str, *, bundle_id: str, environment: str) -> dict:
-        return self.push.register(device_token, bundle_id=bundle_id, environment=environment)
+    def register_push_device(self, device_token: str, *, bundle_id: str, environment: str, machine_id: str = "") -> dict:
+        options = {"machine_id": machine_id} if machine_id else {}
+        return self.push.register(device_token, bundle_id=bundle_id, environment=environment, **options)
 
     def unregister_push_device(self, device_token: str) -> dict:
         return self.push.unregister(device_token)

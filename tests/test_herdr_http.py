@@ -492,11 +492,11 @@ class FakeHTTPService:
     def push_status(self):
         return {"ok": True, "apns": {"configured": False, "deviceCount": 0}}
 
-    def register_push_device(self, device_token, *, bundle_id, environment):
+    def register_push_device(self, device_token, *, bundle_id, environment, machine_id=""):
         self.calls.append(
             (
                 "push.register",
-                {"deviceToken": device_token, "bundleId": bundle_id, "environment": environment},
+                {"deviceToken": device_token, "bundleId": bundle_id, "environment": environment, "machineId": machine_id},
             )
         )
         return {"ok": True, "registered": True, "deviceCount": 1}
@@ -2071,6 +2071,7 @@ class HerdrHTTPTests(unittest.TestCase):
                 "deviceToken": token,
                 "bundleId": "com.example.App",
                 "environment": "sandbox",
+                "machineId": "work-mac",
             },
         )
         unregistered, _, _ = self.request(
@@ -2084,6 +2085,7 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertTrue(body["registered"])
         self.assertEqual(unregistered, 200)
         self.assertEqual(self.service.calls[-2][0], "push.register")
+        self.assertEqual(self.service.calls[-2][1]["machineId"], "work-mac")
         self.assertEqual(self.service.calls[-1][0], "push.unregister")
 
     def test_push_registration_requires_server_token_even_in_open_dev_mode(self):

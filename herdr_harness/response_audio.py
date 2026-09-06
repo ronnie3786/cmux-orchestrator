@@ -427,7 +427,7 @@ class ResponseAudioService:
     def _summarize(self, response: str) -> str:
         return self.generate_text(build_summary_prompt(response), max_tokens=700)
 
-    def generate_text(self, prompt: str, *, max_tokens: int = 1800, system: str = "") -> str:
+    def generate_text(self, prompt: str, *, max_tokens: int = 1800, system: str = "", timeout: float = 120.0) -> str:
         """Use the configured private Qwen endpoint without requiring TTS availability."""
         if not self.summary_endpoint:
             raise ResponseAudioError("the TL;DR model is not configured", code="response_audio_unavailable", status=503)
@@ -445,7 +445,7 @@ class ResponseAudioService:
             headers=self._summary_headers(),
             method="POST",
         )
-        result = self._open_json(request, timeout=120.0)
+        result = self._open_json(request, timeout=timeout)
         choices = result.get("choices") if isinstance(result, dict) else None
         message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None

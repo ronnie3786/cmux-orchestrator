@@ -362,6 +362,7 @@ struct PromptComposerView: View {
                 beginVoiceHold: beginQuickVoiceCapture,
                 endVoiceHold: finishQuickVoiceCapture,
                 finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
+                pasteCodeBlock: pasteCodeBlock,
                 showsTitles: showsToolTitles
             )
             .fixedSize(horizontal: true, vertical: false)
@@ -697,6 +698,15 @@ struct PromptComposerView: View {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = trimmed.isEmpty ? token : "\(trimmed) \(token)"
         isFocused = true
+    }
+
+    private func pasteCodeBlock() {
+        guard !isSubmitting, canControl, !isPiCompacting else { return }
+        if ComposerCodeBlockPaste.paste(into: &draft) {
+            isFocused = true
+        } else {
+            model.toastMessage = "Copy some text before pasting a code block"
+        }
     }
 
     private func appendTranscript(_ transcript: String) {

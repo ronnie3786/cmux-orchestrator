@@ -359,12 +359,14 @@ actor HerdrAPIClient {
     func registerPushDevice(
         token: String,
         bundleID: String,
-        environment: String
+        environment: String,
+        machineID: String = ""
     ) async throws -> Bool {
         let body = PushDeviceBody(
             deviceToken: token,
             bundleId: bundleID,
-            environment: environment
+            environment: environment,
+            machineId: machineID
         )
         let _: MutationResponse = try await request(
             path: "/api/v1/push/devices",

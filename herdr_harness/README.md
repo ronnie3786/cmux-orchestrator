@@ -89,6 +89,9 @@ Configuration:
 - `HERDR_HARNESS_PUSH_STORE_PATH`: optional persisted-device file override.
 - `HERDR_HARNESS_ALERT_STORE_PATH`: persisted alert journal. The launcher
   defaults to `~/.config/herdr-harness/alerts.json` with mode `0600`.
+- `HERDR_HARNESS_SESSION_LABEL_STORE_PATH`: cached Pi chat titles and emoji,
+  default `~/.config/herdr-harness/session-labels.json`. Generation uses the
+  private Qwen provider configured for response audio, without requiring TTS.
 - `HERDR_HARNESS_ACTIVE_WORK_STORE_PATH`: Herdr-owned SQLite source of truth
   for Active Work. The launcher defaults to
   `~/.config/herdr-harness/active-work.sqlite3`; WAL files and the database are
@@ -434,8 +437,20 @@ responses, non-WAV input, and unbounded timeouts.
 
 APNs device registration is protected by the API bearer token and persisted in
 a mode-0600 JSON file. Delivery is disabled until all signing credentials and a
-topic are available. Agent `blocked` and `done` transitions enqueue delivery on
-a background thread, so APNs latency never stalls the native Herdr event loop.
+topic are available. Agent `blocked` and `done` transitions become eligible for
+delivery after 60 seconds unread. Reading, closing, or resuming the session
+cancels pending delivery. A background worker checks once per second, retains
+successful per-device delivery receipts across restarts, and retries failures
+with a 15-second to 5-minute backoff. Partial failures retry only undelivered
+devices. APNs latency never stalls the native Herdr event loop. Device
+registration accepts the app's `machineId` so notifications open the correct
+machine when pane IDs overlap.
+
+Pi panes expose optional `session_title` and `session_emoji` fields. Their
+labels are generated asynchronously from bounded opening/recent user prompts,
+cached by session identity, and updated at most once per minute. Tool output
+and image contents are excluded. Until the private model responds, clients
+keep the original chat title. The generated label never renames the Pi session.
 Herd Pulse registrations use the same credentials and the ActivityKit topic
 derived from the registered app bundle identifier. Their Lock Screen payload is
 limited to aggregate workspace, pane, working, blocked, and ready counts. It
@@ -520,7 +535,7 @@ unless noted. Identifiers are URL-encoded path components.
 - `POST /panes/{id}/prompt`: `{text, wait?, until?, timeoutMs?}`
 - `POST /panes/{id}/start-agent`: `{name, kind, args?, timeoutMs?}`
 - `POST /alerts/{id}/read` and `POST /alerts/read-all`: `{}`
-- `POST /push/devices`: `{deviceToken, bundleId, environment}`
+- `POST /push/devices`: `{deviceToken, bundleId, environment, machineId?}`
 - `POST /push/unregister`: `{deviceToken}`. Tokens never appear in URLs.
 - `POST /live-activities`: `{activityId, pushToken, bundleId, environment}`
 - `POST /live-activities/unregister`: `{activityId, pushToken?}`

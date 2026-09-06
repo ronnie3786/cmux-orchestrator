@@ -13,7 +13,7 @@ struct HerdrHudNotesStripView: View {
             case .hidden:
                 EmptyView()
             case let .compact(count):
-                HerdrNoteCompactStackView(notes: notes, count: count)
+                HerdrNoteCompactStackView(notes: notes, count: count, openNote: controller.openNote)
                     .transition(fadeTransition)
             case .rows:
                 HerdrNoteRowsView(model: model, controller: controller, notes: notes)

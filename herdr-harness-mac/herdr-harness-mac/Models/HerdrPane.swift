@@ -12,6 +12,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     let foregroundCWD: String?
     let label: String?
     let title: String?
+    let sessionTitle: String?
+    let sessionEmoji: String?
     let agent: String?
     let displayAgent: String?
     let terminalTitle: String?
@@ -46,6 +48,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
             && foregroundCWD == other.foregroundCWD
             && label == other.label
             && title == other.title
+            && sessionTitle == other.sessionTitle
+            && sessionEmoji == other.sessionEmoji
             && agent == other.agent
             && displayAgent == other.displayAgent
             && terminalTitle == other.terminalTitle
@@ -105,6 +109,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         case foregroundCWD = "foreground_cwd"
         case label
         case title
+        case sessionTitle = "session_title"
+        case sessionEmoji = "session_emoji"
         case agent
         case displayAgent = "display_agent"
         case terminalTitle = "terminal_title"
@@ -130,6 +136,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         foregroundCWD = try container.decodeIfPresent(String.self, forKey: .foregroundCWD)
         label = try container.decodeIfPresent(String.self, forKey: .label)
         title = try container.decodeIfPresent(String.self, forKey: .title)
+        sessionTitle = try container.decodeIfPresent(String.self, forKey: .sessionTitle)
+        sessionEmoji = try container.decodeIfPresent(String.self, forKey: .sessionEmoji)
         agent = try container.decodeIfPresent(String.self, forKey: .agent)
         displayAgent = try container.decodeIfPresent(String.self, forKey: .displayAgent)
         terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
@@ -157,6 +165,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encodeIfPresent(foregroundCWD, forKey: .foregroundCWD)
         try container.encodeIfPresent(label, forKey: .label)
         try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(sessionTitle, forKey: .sessionTitle)
+        try container.encodeIfPresent(sessionEmoji, forKey: .sessionEmoji)
         try container.encodeIfPresent(agent, forKey: .agent)
         try container.encodeIfPresent(displayAgent, forKey: .displayAgent)
         try container.encodeIfPresent(terminalTitle, forKey: .terminalTitle)
@@ -190,7 +200,9 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         piSemantic: PiSemanticCapability? = nil,
         firstSeenAt: Date? = nil,
         lastActivityAt: Date? = nil,
-        workingSince: Date? = nil
+        workingSince: Date? = nil,
+        sessionTitle: String? = nil,
+        sessionEmoji: String? = nil
     ) {
         self.paneID = paneID
         self.terminalID = terminalID
@@ -203,6 +215,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.foregroundCWD = foregroundCWD
         self.label = label
         self.title = title
+        self.sessionTitle = sessionTitle
+        self.sessionEmoji = sessionEmoji
         self.agent = agent
         self.displayAgent = displayAgent
         self.terminalTitle = terminalTitle

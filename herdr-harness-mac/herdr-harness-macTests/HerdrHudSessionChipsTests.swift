@@ -4,6 +4,22 @@ import Testing
 
 @Suite("Herdr HUD session chips")
 struct HerdrHudSessionChipsTests {
+    @Test("AI session labels decode, round trip, and respect title privacy")
+    func sessionIdentity() throws {
+        let data = Data(#"{"pane_id":"p1","workspace_id":"w1","tab_id":"t1","agent_status":"working","session_title":"Fix image uploads","session_emoji":"📷","pi_semantic":{"available":true,"protocol_version":1}}"#.utf8)
+        let decoded = try JSONDecoder().decode(HerdrPane.self, from: data)
+        let roundTrip = try JSONDecoder().decode(HerdrPane.self, from: JSONEncoder().encode(decoded))
+        #expect(roundTrip.sessionTitle == "Fix image uploads")
+        #expect(roundTrip.sessionEmoji == "📷")
+        let panes = [decoded.stamped(machineID: "m1")]
+        let visible = HerdrHudSessionChips.chips(panes: panes, mutedPaneIDs: [], dismissed: [:], revealTitles: true)
+        #expect(visible.chips.first?.title == "Fix image uploads")
+        #expect(visible.chips.first?.emoji == "📷")
+        let privateState = HerdrHudSessionChips.chips(panes: panes, mutedPaneIDs: [], dismissed: [:], revealTitles: false)
+        #expect(privateState.chips.first?.title == "session 1")
+        #expect(privateState.chips.first?.emoji == "💬")
+    }
+
     @Test("Working chip glow is static, so collapsed HUD chips do not animate")
     func chipMotionPolicy() {
         #expect(HerdrHudChipMotion.showsStaticGlow(for: .working))
@@ -204,15 +220,7 @@ struct HerdrHudSessionChipsTests {
         #expect(pruned == ["m2|other": other])
     }
 
-    /// DELIBERATE BEHAVIOUR FLIP — this was `resultKeepsPaneChipVisible`, which
-    /// asserted the chip STAYED. An artifact used to defeat idle, mute and
-    /// dismissal all three, which is what made a clicked session reappear
-    /// forever: the click routes to the pane, the harness acks it to `.idle`,
-    /// and the artifact clause put the chip straight back on the next
-    /// projection. The invariant the old test protected — an unviewed result is
-    /// never silently buried — still holds, because the artifact now docks to
-    /// the orb rail instead of resurrecting the whole session chip.
-    @Test("An unviewed result docks to the orb once its chip is silenced")
+    @Test("A silenced session does not move its result onto the orb")
     func unviewedResultDocksToOrbWhenItsChipIsSilenced() throws {
         let idle = try pane(id: "finished", status: .idle)
         let resultArtifact = artifact(id: "artifact-1", originID: "finished")
@@ -226,7 +234,7 @@ struct HerdrHudSessionChipsTests {
         )
 
         #expect(result.chips.isEmpty)
-        #expect(result.detachedArtifacts.map(\.id) == [resultArtifact.id])
+        #expect(result.detachedArtifacts.isEmpty)
     }
 
     /// The exact user-reported repro: a finished session that produced a result,
@@ -245,10 +253,10 @@ struct HerdrHudSessionChipsTests {
         )
 
         #expect(result.chips.isEmpty)
-        #expect(result.detachedArtifacts.map(\.id) == [resultArtifact.id])
+        #expect(result.detachedArtifacts.isEmpty)
     }
 
-    @Test("Muting a session with a result hides its chip and docks the result")
+    @Test("Muting a session keeps its result off the orb")
     func mutedSessionWithResultShowsNoChip() throws {
         let done = try pane(id: "finished", status: .done)
         let resultArtifact = artifact(id: "artifact-1", originID: "finished")
@@ -262,7 +270,7 @@ struct HerdrHudSessionChipsTests {
         )
 
         #expect(result.chips.isEmpty)
-        #expect(result.detachedArtifacts.map(\.id) == [resultArtifact.id])
+        #expect(result.detachedArtifacts.isEmpty)
     }
 
     /// The episode-not-status guarantee, and what makes persisting a dismissal
@@ -322,7 +330,7 @@ struct HerdrHudSessionChipsTests {
         #expect(HerdrHudSessionChips.capped(dismissals, limit: 50) == dismissals)
     }
 
-    @Test("Headless and vanished-pane results dock to the HUD orb")
+    @Test("Only headless outputs belong to the HUD orb")
     func detachedResultsDockToOrb() throws {
         let livePane = try pane(id: "live", status: .done)
         let headless = artifact(
@@ -340,10 +348,10 @@ struct HerdrHudSessionChipsTests {
             artifacts: [headless, vanished]
         )
 
-        #expect(Set(result.detachedArtifacts.map(\.id)) == [headless.id, vanished.id])
+        #expect(Set(result.detachedArtifacts.map(\.id)) == [headless.id])
     }
 
-    @Test("A result from an overflowed session remains visible at the orb")
+    @Test("An overflowed result stays associated with its session")
     func overflowedResultRemainsVisible() throws {
         let panes = try (1...4).map { index in
             try pane(id: "blocked-\(index)", status: .blocked, revision: index)
@@ -367,7 +375,8 @@ struct HerdrHudSessionChipsTests {
             limit: 4
         )
 
-        #expect(grouped.detachedArtifacts.map(\.id) == [overflowed.id])
+        #expect(grouped.detachedArtifacts.isEmpty)
+        #expect(grouped.overflow == 1)
         #expect(revealed.detachedArtifacts.isEmpty)
         #expect(revealed.chips.last?.artifacts.map(\.id) == [overflowed.id])
     }

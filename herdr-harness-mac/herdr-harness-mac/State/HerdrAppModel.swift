@@ -67,6 +67,7 @@ final class HerdrAppModel {
     /// pasted and dictated content, and their attachments are security-scoped
     /// URLs that cannot survive a relaunch anyway.
     private(set) var composerDrafts: [String: String] = [:]
+    let promptHistory: PromptHistoryStore
     /// What the mounted pane session is showing, published so the window
     /// toolbar's scope picker can render and select a Git segment. The mode
     /// itself still belongs to whichever `PaneSessionView` is mounted — this is
@@ -209,6 +210,7 @@ final class HerdrAppModel {
         userDefaults: UserDefaults = .standard
     ) {
         self.userDefaults = userDefaults
+        promptHistory = PromptHistoryStore(userDefaults: userDefaults)
         let resultArtifactOpenedLedger = AgentResultArtifactOpenedLedger(userDefaults: userDefaults)
         self.resultArtifactOpenedLedger = resultArtifactOpenedLedger
         resultArtifactOpener = AgentResultArtifactOpener(
@@ -1361,6 +1363,7 @@ final class HerdrAppModel {
         disposition: PiPromptDisposition,
         to pane: HerdrPane
     ) async throws {
+        let submittedAt = Date.now
         noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if DEBUG
@@ -1376,9 +1379,11 @@ final class HerdrAppModel {
               let client = client(forMachine: pane.machineID)
         else { throw APIError.invalidResponse }
         try await client.sendPiPrompt(paneID: pane.paneID, text: prompt, disposition: disposition)
+        promptHistory.record(prompt, paneID: pane.id, submittedAt: submittedAt)
     }
 
     func sendPiPrompt(paneID scopedPaneID: String, text: String) async throws {
+        let submittedAt = Date.now
         guard let scope = MachineScopedID.split(scopedPaneID) else {
             throw APIError.invalidResponse
         }
@@ -1389,6 +1394,7 @@ final class HerdrAppModel {
             )
         }
         try await client.sendPiPrompt(paneID: scope.rawID, text: text, disposition: .prompt)
+        promptHistory.record(text, paneID: scopedPaneID, submittedAt: submittedAt)
     }
 
     func abortPiConversation(for pane: HerdrPane) async throws {
@@ -1442,11 +1448,13 @@ final class HerdrAppModel {
     }
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
+        let submittedAt = Date.now
         noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return false }
         if isDemoMode {
             toastMessage = "Sent to \(pane.displayAgentName)"
+            promptHistory.record(prompt, paneID: pane.id, submittedAt: submittedAt)
             return true
         }
         guard !isSending, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
@@ -1460,6 +1468,7 @@ final class HerdrAppModel {
                 try await client.promptPane(id: pane.paneID, text: prompt)
             }
             toastMessage = "Sent to \(pane.displayAgentName)"
+            promptHistory.record(prompt, paneID: pane.id, submittedAt: submittedAt)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -2344,6 +2353,7 @@ final class HerdrAppModel {
     /// every interaction, so neither idle/working panes with nothing unread
     /// nor a repeat tap within the same done episode may POST.
     func acknowledgeUnreadAlerts(for pane: HerdrPane) {
+        markPaneResultArtifactsRead(pane)
         let hadUnread = markPaneAlertsReadLocally(pane.id)
         let shouldAcknowledgeRemotely: Bool
         if hadUnread {
@@ -2555,6 +2565,7 @@ final class HerdrAppModel {
 
     func dismissHudChip(_ paneID: String) {
         guard let pane = pane(id: paneID) else { return }
+        markPaneResultArtifactsRead(pane)
         // Working chips are live indicators, so clicking through to watch one
         // must not retire the session from the HUD.
         guard pane.agentStatus != .working else { return }
@@ -2665,6 +2676,15 @@ final class HerdrAppModel {
             }
         } catch {
             resultArtifactPhases[presentationID] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Reading a session acknowledges its outputs without opening a browser or
+    /// downloading files. The full records remain available in the chat.
+    func markPaneResultArtifactsRead(_ pane: HerdrPane) {
+        for artifact in resultArtifacts where artifact.originType == .pane
+            && artifact.machineID == pane.machineID && artifact.originID == pane.paneID {
+            dismissResultArtifact(artifact)
         }
     }
 
@@ -3409,6 +3429,7 @@ final class HerdrAppModel {
     }
 
     private func route(to pane: HerdrPane) {
+        markPaneResultArtifactsRead(pane)
         isSidebarPresented = false
         selectedTab = .workspaces
         selectedWorkspaceID = workspace(containing: pane)?.id

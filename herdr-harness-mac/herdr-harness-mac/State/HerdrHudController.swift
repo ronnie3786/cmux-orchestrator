@@ -365,6 +365,11 @@ final class HerdrHudController {
         isCardLayout(oldLayout) || isCardLayout(newLayout)
     }
 
+    func createNote() {
+        guard let notes else { return }
+        openNote(notes.createNote())
+    }
+
     func openNote(_ id: UUID) {
         isAwaitingRunAutoOpen = false
         quickVoice?.collapse()

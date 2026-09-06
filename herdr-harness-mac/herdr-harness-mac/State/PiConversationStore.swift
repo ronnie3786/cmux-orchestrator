@@ -21,6 +21,7 @@ final class PiConversationStore {
     private(set) var revision = 0
     private(set) var structureRevision = 0
     private(set) var lastUserMessage: PiUserMessage?
+    private(set) var userMessages: [PiUserMessage] = []
     private(set) var isTruncated = false
     private(set) var bridgeConnected = false
     private(set) var contextUsage: PiContextUsage?
@@ -407,6 +408,7 @@ final class PiConversationStore {
         revision &+= 1
         structureRevision = 0
         lastUserMessage = nil
+        userMessages = []
         isTruncated = false
         bridgeConnected = false
         contextUsage = nil
@@ -539,6 +541,8 @@ final class PiConversationStore {
         structureRevision = reducer.structureRevision
         if structureRevision != previousStructureRevision {
             lastUserMessage = PiLastPrompt.lastUserMessage(in: turns)
+            let messages = turns.compactMap(\.user)
+            if messages != userMessages { userMessages = messages }
         }
         phase = reducer.phase
         compactionActivity = reducer.compactionActivity

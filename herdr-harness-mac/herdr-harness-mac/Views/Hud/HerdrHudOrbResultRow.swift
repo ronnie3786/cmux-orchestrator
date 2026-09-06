@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Results from HUD runs, or from panes that have since disappeared, dock to
-/// the orb so an unviewed artifact can never be stranded without an owner.
+/// HUD run results belong to the orb. Pane outputs remain on their sessions.
 struct HerdrHudOrbResultRow: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController

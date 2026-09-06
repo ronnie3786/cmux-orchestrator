@@ -64,6 +64,7 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
         let createdAt: Date
         let promotedPaneID: String?
         let attachmentFilenames: [String]
+        let localAttachments: [HerdrHudAttachment]?
         let modelLabel: String
         let steps: [HerdrHudStep]
         let stepsTruncated: Bool
@@ -80,6 +81,7 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
             createdAt = exchange.createdAt
             promotedPaneID = exchange.promotedPaneID
             attachmentFilenames = exchange.attachmentFilenames
+            localAttachments = exchange.localAttachments.isEmpty ? nil : exchange.localAttachments
             modelLabel = exchange.modelLabel
             steps = exchange.steps
             stepsTruncated = exchange.stepsTruncated
@@ -99,6 +101,7 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
                 promotedPaneID: promotedPaneID,
                 attachmentFilenames: attachmentFilenames,
                 attachments: [],
+                localAttachments: localAttachments ?? [],
                 modelLabel: modelLabel,
                 steps: steps,
                 stepsTruncated: stepsTruncated

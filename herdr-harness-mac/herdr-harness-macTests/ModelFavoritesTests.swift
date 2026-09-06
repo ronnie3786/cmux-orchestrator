@@ -26,12 +26,12 @@ struct ModelFavoritesTests {
     }
 
     @MainActor
-    @Test("Capacity retains the newest twelve favorites")
-    func capacity() throws {
+    @Test("Adding favorites never silently removes earlier choices")
+    func retainsAllFavorites() throws {
         let (store, defaults, suiteName) = try makeStore()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         for index in 0...12 { store.toggle("M\(index)") }
-        #expect(store.ids == (1...12).map { "M\($0)" })
+        #expect(store.ids == (0...12).map { "M\($0)" })
     }
 
     @Test("Ordering skips stale favorites")
@@ -39,6 +39,7 @@ struct ModelFavoritesTests {
         let models = [model("A"), model("B"), model("C")]
         let ordered = ModelFavoritesStore.ordered(models, favorites: [models[2].id, "missing/model", models[0].id])
         #expect(ordered.map(\.id) == [models[2].id, models[0].id])
+        #expect(ModelFavoritesStore.ordered(models + models, favorites: [models[0].id, models[0].id]).map(\.id) == [models[0].id])
     }
 
     @MainActor

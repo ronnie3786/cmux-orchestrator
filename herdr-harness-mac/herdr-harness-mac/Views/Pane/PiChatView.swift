@@ -12,6 +12,7 @@ struct PiChatView: View {
     let focusRequest: Int
     let interactionResponder: PiInteractionResponder
     let modelFavorites: ModelFavoritesStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var responseAudioPlayer = ResponseAudioPlayer()
 
@@ -28,7 +29,9 @@ struct PiChatView: View {
             PiChatTimelineView(
                 store: store,
                 isConnected: store.canSendCommands
-                    && interactionResponseAvailable
+                    && interactionResponseAvailable,
+                resultArtifacts: paneArtifacts,
+                artifactModel: model
             ) { interaction, response in
                 await interactionResponder.respond(
                     to: interaction,
@@ -78,6 +81,12 @@ struct PiChatView: View {
                     .frame(height: 1)
             }
         }
+        .onChange(of: paneArtifacts.map(\.id), initial: true) { _, _ in
+            markVisibleArtifactsRead()
+        }
+        .onChange(of: scenePhase) { _, _ in
+            markVisibleArtifactsRead()
+        }
         .onChange(of: store.phase) { oldPhase, newPhase in
             if oldPhase == .working, newPhase == .idle {
                 hapticPulse.fire(.completed)
@@ -108,6 +117,15 @@ struct PiChatView: View {
         }
         .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("pi-chat-view")
+    }
+
+    private var paneArtifacts: [AgentResultArtifact] {
+        PaneResultArtifacts.matching(model.resultArtifacts, pane: composerPane)
+    }
+
+    private func markVisibleArtifactsRead() {
+        guard scenePhase == .active, model.selectedPaneID == paneID else { return }
+        model.markPaneResultArtifactsRead(composerPane)
     }
 
     private var composerConfiguration: PiPromptComposerConfiguration {

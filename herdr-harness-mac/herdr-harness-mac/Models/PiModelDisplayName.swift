@@ -1,16 +1,38 @@
 import Foundation
 
 enum PiModelDisplayName {
+    static func short(fullID: String) -> String {
+        guard let separator = fullID.firstIndex(of: "/") else {
+            return short(provider: "", modelID: fullID, name: nil)
+        }
+        return short(
+            provider: String(fullID[..<separator]),
+            modelID: String(fullID[fullID.index(after: separator)...]),
+            name: nil
+        )
+    }
+
     static func short(provider: String, modelID: String, name: String?) -> String {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = trimmedName.flatMap { $0.isEmpty ? nil : $0 } ?? modelID
+        let canonicalID = modelID.split(separator: "/").last.map(String.init) ?? modelID
+        let knownPrefixes = ["gpt", "claude", "gemini", "qwen", "deepseek", "glm", "llama", "mistral", "mixtral", "phi", "o1", "o3", "o4"]
+        let usesCanonicalID = knownPrefixes.contains { canonicalID.lowercased().hasPrefix($0) }
+        // Provider display labels frequently append dates, capabilities, or
+        // marketing descriptions. A recognized model ID is the stable name.
+        let base = usesCanonicalID ? canonicalID : trimmedName.flatMap { $0.isEmpty ? nil : $0 } ?? canonicalID
         var tokens = base.split(whereSeparator: { character in
             character == "-" || character == "_" || character.isWhitespace
         }).map(String.init)
 
         guard !tokens.isEmpty else { return modelID }
 
-        if let last = tokens.last, isDigits(last), (last.count == 4 || (6...8).contains(last.count)) {
+        if tokens.count >= 3,
+           tokens[tokens.count - 3].count == 4,
+           tokens.suffix(3).allSatisfy({ isDigits($0) }),
+           Int(tokens[tokens.count - 3]).map({ (2000...2099).contains($0) }) == true,
+           tokens[tokens.count - 2].count == 2, tokens[tokens.count - 1].count == 2 {
+            tokens.removeLast(3)
+        } else if let last = tokens.last, isDigits(last), (last.count == 4 || (6...8).contains(last.count)) {
             tokens.removeLast()
         }
 

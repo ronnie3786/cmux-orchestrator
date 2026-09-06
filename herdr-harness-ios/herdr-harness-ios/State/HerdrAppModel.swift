@@ -1299,6 +1299,8 @@ final class HerdrAppModel {
     /// Covered by `HerdrAlertTests.openingPaneWithoutUnreadAlertsAcknowledgesPane`.
     func clearAlertsForPaneOnOpen(_ pane: HerdrPane) {
         noteUserInteraction(machineID: pane.machineID)
+        let notificationIDs = Set(alerts.filter { $0.scopedPaneID == pane.id }.map(\.id))
+        Task { await NotificationManager.removeDelivered(alertIDs: notificationIDs) }
         _ = markPaneAlertsReadLocally(pane.id)
         markPaneAlertsReadRemotely(pane)
     }
@@ -1769,7 +1771,8 @@ final class HerdrAppModel {
             let configured = try await client.registerPushDevice(
                 token: token,
                 bundleID: bundleID,
-                environment: environment
+                environment: environment,
+                machineID: machineID
             )
             guard expectedGeneration == connectionGeneration else { return }
             remotePushConfigured = configured

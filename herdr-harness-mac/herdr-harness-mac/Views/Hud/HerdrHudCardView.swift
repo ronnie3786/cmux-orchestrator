@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HerdrHudCardView: View {
     @Bindable var model: HerdrAppModel
@@ -11,10 +12,6 @@ struct HerdrHudCardView: View {
         VStack(spacing: 0) {
             HerdrHudHeaderView(model: model, controller: controller, session: session)
             Divider().overlay { HerdrTheme.surface }
-            if !model.unopenedResultArtifacts.isEmpty {
-                HerdrHudExpandedResultStripView(model: model)
-                Divider().overlay { HerdrTheme.surface }
-            }
             HerdrHudTranscriptView(
                 model: model,
                 session: session,
@@ -37,12 +34,8 @@ struct HerdrHudCardView: View {
             }
         }
         .shadow(color: HerdrTheme.ink.opacity(0.7), radius: 28, y: 12)
-        .dropDestination(for: URL.self) { urls, _ in
-            guard !urls.isEmpty else { return false }
-            session.addAttachments(urls)
-            return true
-        } isTargeted: { targeted in
-            isDropTargeted = targeted
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+            session.acceptAttachmentDrop(providers)
         }
         .task(id: session.selectedMachineID) {
             updateResponseAudioAvailability()

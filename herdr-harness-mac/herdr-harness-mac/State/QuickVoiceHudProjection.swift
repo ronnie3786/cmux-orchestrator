@@ -37,16 +37,20 @@ enum QuickVoiceHudProjection {
                 guard !mutedPaneIDs.contains(id) || status == .blocked else { continue }
                 if let pane = livePanes[id], dismissed[id]?.silences(pane) == true { continue }
                 remaining.removeValue(forKey: id)
+                let title = [livePanes[id]?.sessionTitle, task.title, existing?.title]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first { !$0.isEmpty } ?? "Voice agent \(index + 1)"
                 voiceChips.append(.init(
                     id: id,
-                    title: revealTitles ? task.title : "Voice agent \(index + 1)",
+                    title: revealTitles ? title : "Voice agent \(index + 1)",
                     status: status,
                     isMuted: mutedPaneIDs.contains(id),
                     since: existing?.since ?? Date(timeIntervalSince1970: note.job.createdAt),
                     artifacts: existing?.artifacts ?? [],
                     voiceNoteID: note.id,
                     detail: note.job.isFinished && status != task.hudStatus ? status.title : task.statusLabel,
-                    symbol: note.job.isFinished && status != task.hudStatus ? nil : task.statusSymbol
+                    symbol: note.job.isFinished && status != task.hudStatus ? nil : task.statusSymbol,
+                    emoji: existing?.emoji ?? "🎙️"
                 ))
             }
         }
@@ -55,7 +59,6 @@ enum QuickVoiceHudProjection {
         // extra click, while keeping the ordinary HUD's three-row default.
         let limit = showAll ? HerdrHudPlacement.maxExpandedChips : max(HerdrHudPlacement.maxChips, min(4, voiceChips.count))
         let visible = Array(all.prefix(limit))
-        let attachedIDs = Set(visible.flatMap(\.artifacts).map(\.id))
-        return (visible, max(0, all.count - limit), artifacts.filter { !attachedIDs.contains($0.id) })
+        return (visible, max(0, all.count - limit), base.detachedArtifacts)
     }
 }

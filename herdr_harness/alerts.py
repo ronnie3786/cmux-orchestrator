@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import threading
@@ -374,6 +375,57 @@ class AlertStore:
     def unread_count(self) -> int:
         with self._lock:
             return sum(1 for item in self._alerts if not item.get("isRead"))
+
+    def unread_push_candidates(self, *, now: float, delay: float = 60.0) -> list[dict]:
+        """Return the latest unread transition per pane after its grace period."""
+        with self._lock:
+            latest: dict[str, dict] = {}
+            for alert in self._alerts:
+                if not alert.get("isRead"):
+                    latest[str(alert.get("paneId") or alert["id"])] = alert
+            candidates = []
+            for alert in latest.values():
+                if alert.get("pushDeliveredAt"):
+                    continue
+                try:
+                    created = datetime.fromisoformat(str(alert["createdAt"]).replace("Z", "+00:00")).timestamp()
+                    retry_at = float(alert.get("pushRetryAt") or 0)
+                except (KeyError, ValueError, TypeError, OverflowError):
+                    continue
+                if math.isfinite(retry_at) and now >= max(created + delay, retry_at):
+                    candidates.append(dict(alert))
+            return candidates
+
+    def is_push_pending(self, alert_id: str) -> bool:
+        with self._lock:
+            newer_panes: set[str] = set()
+            for alert in reversed(self._alerts):
+                if alert.get("id") == alert_id:
+                    return not alert.get("isRead") and not alert.get("pushDeliveredAt") and alert.get("paneId") not in newer_panes
+                if not alert.get("isRead"):
+                    newer_panes.add(str(alert.get("paneId") or ""))
+        return False
+
+    def record_push_attempt(self, alert_id: str, *, now: float, delivered_device_ids: list[str], complete: bool) -> None:
+        with self._lock:
+            for alert in self._alerts:
+                if alert.get("id") != alert_id:
+                    continue
+                prior = alert.get("pushDeliveredDeviceIds")
+                receipts = {value for value in prior if isinstance(value, str)} if isinstance(prior, list) else set()
+                receipts.update(value for value in delivered_device_ids if isinstance(value, str))
+                alert["pushDeliveredDeviceIds"] = sorted(receipts)
+                try:
+                    attempts = max(1, min(20, int(alert.get("pushAttempts") or 0) + 1))
+                except (TypeError, ValueError, OverflowError):
+                    attempts = 1
+                alert["pushAttempts"] = attempts
+                alert["pushRetryAt"] = now + min(300, 15 * 2 ** min(attempts - 1, 5))
+                if complete:
+                    alert["pushDeliveredAt"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
+                self._mark_dirty_locked()
+                self._persist_locked()
+                return
 
     def mark_read(self, alert_id: str) -> Optional[dict]:
         with self._lock:
