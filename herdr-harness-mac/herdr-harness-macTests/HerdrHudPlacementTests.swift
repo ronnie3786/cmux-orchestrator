@@ -125,7 +125,7 @@ struct HerdrHudPlacementTests {
                 chipCount: count,
                 hasResultRail: true
             )
-            #expect(withResults.width - base.width == HerdrHudPlacement.resultRailWidth)
+            #expect(abs(withResults.width - base.width - HerdrHudPlacement.resultRailWidth) < 0.000_001)
             #expect(withResults.height == base.height)
         }
         #expect(

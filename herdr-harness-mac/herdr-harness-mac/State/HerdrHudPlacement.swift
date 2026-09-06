@@ -9,7 +9,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let collapsedSize = CGSize(width: 72, height: 72)
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
-    static let chipWidth: CGFloat = 238
+    static let chipWidth: CGFloat = 166.6
     /// The chip's rendered height AND the height the panel frame reserves for
     /// it — `HerdrHudSessionChipsView` must read this, not `HerdrTheme`, or the
     /// two disagree and the collapsed panel mis-sizes. Deliberately larger than

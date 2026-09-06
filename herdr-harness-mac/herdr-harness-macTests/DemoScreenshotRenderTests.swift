@@ -584,8 +584,13 @@ enum HerdrRenderHarness {
                 "\(name) is only \(byteCount) bytes — the view probably did not lay out",
                 sourceLocation: sourceLocation
             )
+            // Bitmap dimensions are whole pixels, including for fractional point sizes.
+            let expectedPixelSize = CGSize(
+                width: Int(pointSize.width * scale),
+                height: Int(pointSize.height * scale)
+            )
             #expect(
-                pixelSize == CGSize(width: pointSize.width * scale, height: pointSize.height * scale),
+                pixelSize == expectedPixelSize,
                 "\(name) rendered at \(pixelSize) instead of \(pointSize) at \(scale)x",
                 sourceLocation: sourceLocation
             )
