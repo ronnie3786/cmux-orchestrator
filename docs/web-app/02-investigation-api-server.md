@@ -158,11 +158,10 @@ builders (`server.py` `_network_payload`, iOS `harnessURLFromHost`) hardcode `ht
 Consequence: an HTTPS-hosted web app hits **mixed-content** blocks calling it; also APNs-style
 bearer tokens, Jira/GitHub data, and terminal contents transit unencrypted on LAN/tailnet.
 
-## herdr/cmux Integration
+## cmux Integration
 
-- **No "herdr" anywhere.** Neither `cmux_harness/` nor the iOS app references herdr; the "sessions"
-  the iOS app shows are **cmux workspaces/surfaces** (which may happen to run agents like
-  claude/codex/opencode inside).
+- The sessions shown in the iOS app are **cmux workspaces/surfaces**, which may run
+  agents such as Claude, Codex, or OpenCode.
 - The server talks to the **cmux macOS app** (must be running locally) over a **Unix domain
   socket**, JSON-RPC "v2" (`cmux_api.py`): socket path discovery probes env `CMUX_SOCKET_PATH`,
   `~/Library/Application Support/cmux/last-socket-path`, `cmux.sock` files and tagged sockets
