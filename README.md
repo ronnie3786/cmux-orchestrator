@@ -1,28 +1,8 @@
-# cmux and Herdr harness
+# cmux orchestrator
 
-Local web and iOS companion tools for monitoring and controlling
-[cmux](https://cmux.com) and [Herdr](https://herdr.dev) sessions from your Mac,
-browser, and iPhone.
+Local companion tools for monitoring and controlling [cmux](https://cmux.com) sessions.
 
-## Herdr Harness for iPhone
-
-The Herdr-native app and backend live alongside the original cmux
-implementation on the `codex/herdr-harness` branch. To install this exact build
-on a work Mac:
-
-```bash
-git clone --branch codex/herdr-harness git@github.com:ronnie3786/cmux-orchestrator.git
-cd cmux-orchestrator
-```
-
-Continue with the [fresh work Mac runbook](HERDR_HARNESS.md#fresh-work-mac-setup).
-It covers installing and verifying Herdr, creating the isolated Command Center,
-Feature Lab, and Review Deck workspaces, starting a real Codex pane, keeping the
-pairing token stable across restarts, publishing the API safely through
-Tailscale, building the iOS 26 app, and connecting a simulator or physical
-iPhone.
-
-The original cmux instructions continue below.
+The Herdr Mac and iOS apps, web client, companion server, and Pi integration now live in the independent [Herdr companion repository](https://github.com/ronnie3786/herdr-companion). This repository runs without Herdr code.
 
 This project is in active development. The main supported workflow today is the **cmux harness**: run the local server, open `/harness`, connect the iOS app, and control active cmux sessions from wherever your Mac is reachable.
 
